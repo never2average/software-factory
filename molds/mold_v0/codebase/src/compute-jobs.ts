@@ -6,6 +6,9 @@ import { classifyOrchestrator, classifySession, FIX_LINKS, ROUTINE_REAPS, reapKi
 import { BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { ENGINE_SETTINGS } from "./settings.js";
+import { jobKinds } from "./runs.js";
+import { RUN_USD } from "./run-spend.js";
+import { word } from "./vocabulary.js";
 
 /**
  * The Compute page's Jobs table and Failures by reason (docs/compute-and-traces-spec.md §2.2 F, G). A job is a
@@ -408,4 +411,40 @@ export async function computeFailures(q: Record<string, unknown>) {
   const [{ ended }] = await db.query<{ ended: unknown }>(
     "/* tenant: internal: admin Compute page, sessions that ended across all orgs (a count) */ SELECT count(*) AS ended FROM agent_sessions WHERE ended_at > now() - make_interval(hours => $1)", [hours]);
   return { hours, launches, reaps, unattended, sessions: groupSessionFailures(failed, n(ended), scheduled), ended: n(ended) };
+}
+
+// ---------------------------------------------------------------- the packs' runs per job kind (mold_v0-104)
+
+const RUN_RANGES: Record<string, number> = { "24h": 24, "7d": 168, "30d": 720 };
+/**
+ * Health's runs tab in a build without the session engine (whose Jobs and Sessions tables are its own): every job kind
+ * the packs declare, by its label (the pack's words), with how its runs in the range ended, across every account, what
+ * they cost, how long they took and the latest failure. Kinds with no run in the range are listed too (zero), and a
+ * kind runs still carry but no pack declares any more is listed under its name. Read only.
+ */
+export async function runKinds(q: Record<string, unknown>) {
+  const since = typeof q.since === "string" && RUN_RANGES[q.since] ? q.since : "7d";
+  const hours = RUN_RANGES[since]!;
+  const kinds = jobKinds();
+  const rows = !kinds.length ? [] : await (await getDb()).query<{ pack: string; kind: string; total: unknown; queued: unknown; running: unknown; succeeded: unknown;
+    failed: unknown; cancelled: unknown; accounts: unknown; usd: unknown; avg_s: unknown; last_at: Date | null; last_error: string | null; last_failed_at: Date | null }>(
+    `/* tenant: internal: admin Health (onboarding admin routes), every account's runs */
+     SELECT r.pack, r.kind, count(*) AS total, count(*) FILTER (WHERE r.status = 'queued') AS queued, count(*) FILTER (WHERE r.status = 'running') AS running,
+            count(*) FILTER (WHERE r.status = 'succeeded') AS succeeded, count(*) FILTER (WHERE r.status = 'failed') AS failed,
+            count(*) FILTER (WHERE r.status = 'cancelled') AS cancelled, count(DISTINCT r.org_id) AS accounts, coalesce(sum(${RUN_USD}), 0) AS usd,
+            avg(extract(epoch FROM r.ended_at - r.started_at)) FILTER (WHERE r.ended_at IS NOT NULL AND r.started_at IS NOT NULL) AS avg_s,
+            max(r.created_at) AS last_at, (array_agg(r.error ORDER BY r.created_at DESC) FILTER (WHERE r.status = 'failed'))[1] AS last_error,
+            max(r.ended_at) FILTER (WHERE r.status = 'failed') AS last_failed_at
+       FROM runs r WHERE r.created_at >= now() - make_interval(hours => $1) GROUP BY r.pack, r.kind`, [hours]);
+  const by = new Map(rows.map((r) => [`${r.pack}/${r.kind}`, r]));
+  const shape = (pack: string, name: string, label: string, description: string | null) => {
+    const r = by.get(`${pack}/${name}`);
+    by.delete(`${pack}/${name}`);
+    return { pack, kind: name, label, description, total: n(r?.total), queued: n(r?.queued), running: n(r?.running), succeeded: n(r?.succeeded),
+      failed: n(r?.failed), cancelled: n(r?.cancelled), accounts: n(r?.accounts), usd: usd(n(r?.usd)), avg_seconds: r?.avg_s == null ? null : Math.round(n(r.avg_s)),
+      last_at: iso(r?.last_at), last_error: r?.last_error ?? null, last_failed_at: iso(r?.last_failed_at) };
+  };
+  const list = kinds.map((k) => shape(k.pack, k.name, k.label ?? k.name, k.description ?? null));
+  for (const r of [...by.values()]) list.push(shape(r.pack, r.kind, r.kind, null));
+  return { since, hours, words: { one: word("Run"), many: word("Runs") }, kinds: list };
 }

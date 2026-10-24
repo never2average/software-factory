@@ -650,6 +650,8 @@ export function createApp() {
   ob.get("/compute/jobs", async (req, res) => void res.json(await jobs.listJobs(req.query as Record<string, unknown>)));
   ob.get("/compute/jobs/:id", async (req, res) => void res.json(await jobs.jobDetail(String(req.params.id))));
   ob.get("/compute/failures", async (req, res) => void res.json(await jobs.computeFailures(req.query as Record<string, unknown>)));
+  // The packs' runs per job kind, in their words (a build without the session engine: Health's runs tab). Read only.
+  ob.get("/compute/runs", async (req, res) => void res.json(await jobs.runKinds(req.query as Record<string, unknown>)));
   // The autoscaler's history (src/autoscaler-ticks.ts): its decisions log and the Activity chart. Read only.
   ob.get("/compute/ticks", async (req, res) => void res.json(await ticks.listTicks(req.query as Record<string, unknown>)));
   ob.get("/compute/activity", async (req, res) => void res.json(await ticks.computeActivity(req.query as Record<string, unknown>)));

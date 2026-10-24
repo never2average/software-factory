@@ -37,6 +37,8 @@ import { AMBER, Chip, cents, PeekSection, UrlTabs } from './compute-common';
 import { MiniTable } from './compute-sessions';
 import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
+import { W } from '@/lib/vocabulary';
+import { kindLabel, sessionEngine } from './engine';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -743,8 +745,12 @@ function PlanExperiment({ plan, experiments, onClose }: { plan: RevenuePlan; exp
   );
 }
 
-/** A starting point for New plan › JSON: a base fee with metered model spend over an included amount (src/plan-config.ts). */
-const PLAN_TEMPLATE = {
+/**
+ * A starting point for New plan › JSON: a base fee with metered model spend over an included amount (src/plan-config.ts).
+ * The session engine's builds also meter its agent sessions, its runs and their sandbox hours (src/billing.ts reports
+ * those for its sessions only); a build without it meters model spend.
+ */
+const PLAN_TEMPLATE = sessionEngine() ? {
   name: 'Growth', description: 'For product teams tracking their agent pick rate every week', interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
   usage: [
     { metric: 'model_spend', included_usd: 150, tiers: [{ up_to_usd: 2000, markup: 1.3 }, { up_to_usd: null, markup: 1.15 }] },
@@ -753,7 +759,19 @@ const PLAN_TEMPLATE = {
     { metric: 'sandbox_hours', included_hours: 50, unit_price_usd: 0.6 }
   ],
   experiment: '', weight: 1, metadata: {}
+} : {
+  name: 'Growth', description: `For teams using ${profile.name} every week`, interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
+  usage: [
+    { metric: 'model_spend', included_usd: 150, tiers: [{ up_to_usd: 2000, markup: 1.3 }, { up_to_usd: null, markup: 1.15 }] }
+  ],
+  experiment: '', weight: 1, metadata: {}
 };
+/** The packs' runs (the generic run engine) in the build's word; a host pack's word names its own engine's, not these. */
+const RUNS_WORD = sessionEngine() ? 'Runs' : W.Runs;
+/** What New plan says can be metered: the session engine's units too in a build with it. */
+const METERED = sessionEngine() ? { blurb: `model spend, agent sessions, ${W.runs} and sandbox hours (a Stripe billing meter each, graduated tiers)`,
+  note: `Usage-based pricing (model spend, agent sessions, ${W.runs}, sandbox hours, with tiers) is on the JSON tab.`, placeholder: `For teams running weekly ${W.runs}` }
+  : { blurb: 'model spend (a Stripe billing meter, graduated tiers)', note: 'Usage-based pricing on model spend (with tiers) is on the JSON tab.', placeholder: `For teams using ${profile.name} every week` };
 
 function NewPlanDialog({ onClose, experiments, initialJson, control }: { onClose: () => void; experiments: string[]; initialJson?: string; control?: { price_id: string; experiment: string; weight: number } }) {
   const [mode, setMode] = useState<'form' | 'json'>(initialJson ? 'json' : 'form');
@@ -792,7 +810,7 @@ function NewPlanDialog({ onClose, experiments, initialJson, control }: { onClose
     </div>
   );
   const blurb = mode === 'json'
-    ? 'The whole plan as JSON: a base fee, usage pricing on model spend, agent sessions, simulations and sandbox hours (a Stripe billing meter each, graduated tiers), a trial, the monthly spend cap, an experiment and metadata.'
+    ? `The whole plan as JSON: a base fee, usage pricing on ${METERED.blurb}, a trial, the monthly spend cap, an experiment and metadata.`
     : 'A product and recurring price in Stripe. Accounts allowed plans see it on Billing and can check out; put it in an experiment to A/B test it against other plans.';
   return (
     <PlanDialogShell onClose={onClose} title='New plan' description={blurb} tabs={tabs}>
@@ -803,7 +821,7 @@ function NewPlanDialog({ onClose, experiments, initialJson, control }: { onClose
               <Input id='np-name' required autoFocus minLength={2} maxLength={60} value={name} onChange={(e) => setName(e.target.value)} placeholder='Growth' />
             </FormRow>
             <FormRow id='np-desc' label='Description' hint='Optional. Shown at checkout.'>
-              <Input id='np-desc' maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} placeholder='For teams running weekly simulations' />
+              <Input id='np-desc' maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={METERED.placeholder} />
             </FormRow>
             <FormRow id='np-interval' label='Billed every'>
               <NativeSelect id='np-interval' value={interval} onChange={(e) => setIv(e.target.value as 'month' | 'year')} className='w-full'>
@@ -827,7 +845,7 @@ function NewPlanDialog({ onClose, experiments, initialJson, control }: { onClose
             <FormRow id='np-weight' label='Traffic weight' hint={experiment.trim() ? 'Its share of accounts, relative to the other variants (1 and 1 is 50/50).' : 'With an experiment only.'}>
               <Input id='np-weight' type='number' inputMode='decimal' min='0.01' max='100' step='any' disabled={!experiment.trim()} value={weight} onChange={(e) => setWeight(e.target.value)} />
             </FormRow>
-            <p className='text-muted-foreground text-sm sm:col-span-2'>Usage-based pricing (model spend, agent sessions, simulations, sandbox hours, with tiers) is on the JSON tab.</p>
+            <p className='text-muted-foreground text-sm sm:col-span-2'>{METERED.note}</p>
             {err && <p className='text-destructive text-sm sm:col-span-2'>{err}</p>}
           </div>
           <DialogFooter className='m-0 rounded-b-xl'>
@@ -1020,7 +1038,7 @@ function AccountPeek({ a, days, range }: { a: AccountRow; days: string[]; range:
         <p className='text-sm'>{cents(a.spent_usd)} in range: sessions {cents(a.session_usd)}, orchestrators {cents(a.orchestrator_usd)}{a.run_usd ? <>, runs {cents(a.run_usd)}</> : null}.</p>
         <DailyBars days={days} format={(v) => `$${v < 10 ? v.toFixed(2) : Math.round(v)}`}
           series={[{ key: 'session', label: 'Sessions', values: a.daily_session }, { key: 'orchestrator', label: 'Orchestrators', values: a.daily_orchestrator },
-            ...(a.run_usd && a.daily_run ? [{ key: 'run', label: 'Runs', values: a.daily_run }] : [])]} />
+            ...(a.run_usd && a.daily_run ? [{ key: 'run', label: RUNS_WORD, values: a.daily_run }] : [])]} />
       </PeekSection>
       {isLoading ? <Skeleton className='h-40' /> : !data ? <ErrorBox error={error} /> : (
         <>
@@ -1034,7 +1052,7 @@ function AccountPeek({ a, days, range }: { a: AccountRow; days: string[]; range:
           )}
           {data.by_run_kind && (
             <PeekSection title='Runs by kind'>
-              <MiniTable head={['Kind', 'Runs', 'Spend']} rows={data.by_run_kind.map((k) => [<Mono key='k'>{k.kind}</Mono>, k.runs, cents(k.usd)])} />
+              <MiniTable head={['Kind', RUNS_WORD, 'Spend']} rows={data.by_run_kind.map((k) => [<span key='k' className='flex flex-col'><span>{kindLabel(k.kind)}</span><Mono>{k.kind}</Mono></span>, k.runs, cents(k.usd)])} />
             </PeekSection>
           )}
           <PeekSection title={a.shared ? 'Orchestrator models (all orchestrator spend)' : 'By model'}>
@@ -1209,7 +1227,7 @@ function ComputeTab({ data, loading, bar, group }: TabProps<Compute>) {
           </PeekSection>
           <PeekSection title='Top jobs'>
             {a.by_job.length ? <MiniTable head={['Job', 'Orchestrator hours', 'Agent hours', 'Total']} rows={a.by_job.map((j) => [
-              <span key='j' className='flex flex-col'><span>{j.name ?? (j.kind === 'research' ? 'Research' : 'Simulation')}</span><Mono>{j.job_id}</Mono></span>,
+              <span key='j' className='flex flex-col'><span>{j.name ?? (j.kind === 'research' ? 'Research' : W.Run)}</span><Mono>{j.job_id}</Mono></span>,
               hrs(j.orchestrator_hours), hrs(j.agent_hours), <span key='t' className='font-medium'>{hrs(j.total_hours)}</span>])} /> : none('No job ran in this range.')}
           </PeekSection>
         </div>

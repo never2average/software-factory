@@ -19,8 +19,16 @@ import { StatStrip } from '@/components/layout/section';
 import { ConfirmButton, copyText, DataList, ErrorBox, Mono, Notice, Section, StatusBadge, SubBadge, When, type Tone } from './ui';
 import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
+import { W } from '@/lib/vocabulary';
+import { sessionEngine } from './engine';
 
 type Detail = any; // GET /orgs/:slug (src/admin.ts orgDetail)
+/** An account's pack runs (src/admin.ts accountRuns), in a build without the session engine; null with no job kind. */
+export interface AccountRuns {
+  word: { one: string; many: string };
+  by_kind: { pack: string; kind: string; label: string; total: number; running: number; succeeded: number; failed: number; last_at: string | null; usd: number }[];
+  recent: { id: string; pack: string; kind: string; label: string; status: string; error: string | null; created_at: string; ended_at: string | null }[];
+}
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : '—');
 
 export function AdminAccountDetail({ slug }: { slug: string }) {
@@ -29,6 +37,8 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
   const { data: list } = useAdmin<OrgList>('/orgs');
   const result = useResult();
   const labelOf = (k: string) => list?.stages.find((s) => s.id === k)?.label ?? STAGE_LABELS[k] ?? k;
+  // The session engine's products and runs (a host pack's), else the packs' runs per job kind (mold_v0-104).
+  const engine = sessionEngine() && d?.engine !== false;
   const show = (r: InviteResult, t: string) => result.show(r, t);
 
   return (
@@ -56,7 +66,9 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
               { label: 'Calls in 7 days', value: d.org.calls_7d, spark: d.daily?.calls },
               { label: 'Errors in 7 days', value: d.org.errors_7d, spark: d.daily?.errors },
               { label: 'Model spend this month', value: usd(d.org.month_spend_usd), spark: d.daily?.spend, hint: d.org.budget_usd ? `of ${usd(d.org.budget_usd)} budget` : 'no cap' },
-              { label: 'Agent sessions, 30 days', value: d.daily ? d.daily.sessions.reduce((a: number, b: number) => a + b, 0) : '—', spark: d.daily?.sessions }
+              // The session engine's sessions, else the packs' runs (mold_v0-104); neither with zero packs.
+              ...(engine ? [{ label: 'Agent sessions, 30 days', value: d.daily ? d.daily.sessions.reduce((a: number, b: number) => a + b, 0) : '—', spark: d.daily?.sessions }]
+                : d.runs ? [{ label: `${W.Runs}, 30 days`, value: d.daily?.runs ? d.daily.runs.reduce((a: number, b: number) => a + b, 0) : '—', spark: d.daily?.runs }] : [])
             ]}
           />
 
@@ -95,7 +107,7 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
                 <TabsTrigger value='people'>People</TabsTrigger>
                 <TabsTrigger value='billing'>Billing</TabsTrigger>
                 <TabsTrigger value='activity'>Activity</TabsTrigger>
-                <TabsTrigger value='products'>Products & runs</TabsTrigger>
+                {engine ? <TabsTrigger value='products'>Products & runs</TabsTrigger> : d.runs && <TabsTrigger value='runs'>{W.Runs}</TabsTrigger>}
                 <TabsTrigger value='keys'>Legacy keys</TabsTrigger>
               </TabsList>
             </div>
@@ -108,9 +120,15 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
             <TabsContent value='activity'>
               <Activity d={d} />
             </TabsContent>
-            <TabsContent value='products'>
-              <Products d={d} />
-            </TabsContent>
+            {engine ? (
+              <TabsContent value='products'>
+                <Products d={d} />
+              </TabsContent>
+            ) : d.runs && (
+              <TabsContent value='runs'>
+                <PackRuns runs={d.runs} />
+              </TabsContent>
+            )}
             <TabsContent value='keys'>
               <Keys d={d} path={path} onResult={show} />
             </TabsContent>
@@ -468,16 +486,53 @@ function Products({ d }: { d: Detail }) {
           ]}
         />
       </Section>
-      <Section title='Simulations'>
+      <Section title={W.Runs}>
         <DataList
           rows={d.simulations}
-          empty='No simulations yet.'
+          empty={`No ${W.runs} yet.`}
           minWidth={520}
           cols={[
-            { label: 'Simulation', render: (s: any) => s.name },
+            { label: W.Run, render: (s: any) => s.name },
             { label: 'Status', render: (s: any) => <StatusBadge tone={s.status === 'completed' ? 'ok' : s.status === 'cancelled' ? 'neutral' : 'info'}>{s.status}</StatusBadge> },
             { label: 'Sessions', render: (s: any) => `${s.completed} / ${s.sessions}` },
             { label: 'Started', render: (s: any) => <When d={s.created_at} /> }
+          ]}
+        />
+      </Section>
+    </div>
+  );
+}
+
+/** The account's pack runs (src/admin.ts accountRuns): per job kind, in the pack's words, then the latest. */
+export function PackRuns({ runs }: { runs: AccountRuns }) {
+  const tone = (s: string): Tone => (s === 'succeeded' ? 'ok' : s === 'failed' ? 'bad' : s === 'cancelled' ? 'neutral' : 'info');
+  return (
+    <div className='flex flex-col gap-8'>
+      <Section title={`${runs.word.many} by kind`}>
+        <DataList
+          rows={runs.by_kind}
+          empty={`No ${runs.word.many.toLowerCase()} yet.`}
+          minWidth={520}
+          cols={[
+            { label: 'Kind', render: (k) => k.label },
+            { label: runs.word.many, render: (k) => <span className='tabular-nums'>{k.total}</span> },
+            { label: 'Succeeded', render: (k) => <span className='tabular-nums'>{k.succeeded}</span> },
+            { label: 'Failed', render: (k) => (k.failed ? <span className='text-destructive tabular-nums'>{k.failed}</span> : <span className='tabular-nums'>0</span>) },
+            { label: 'Spend', render: (k) => <span className='tabular-nums'>{usd(k.usd)}</span> },
+            { label: 'Last', render: (k) => <When d={k.last_at} /> }
+          ]}
+        />
+      </Section>
+      <Section title={`Latest ${runs.word.many.toLowerCase()}`}>
+        <DataList
+          rows={runs.recent}
+          empty={`No ${runs.word.many.toLowerCase()} yet.`}
+          minWidth={520}
+          cols={[
+            { label: runs.word.one, render: (r) => <span className='flex flex-col'><span>{r.label}</span><Mono>{r.id}</Mono></span> },
+            { label: 'Status', render: (r) => <StatusBadge tone={tone(r.status)}>{r.status}</StatusBadge> },
+            { label: 'Started', render: (r) => <When d={r.created_at} /> },
+            ...(runs.recent.some((r) => r.error) ? [{ label: 'Detail', render: (r: AccountRuns['recent'][number]) => <span className='text-sm'>{r.error || ''}</span> }] : [])
           ]}
         />
       </Section>

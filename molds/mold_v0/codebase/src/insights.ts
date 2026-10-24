@@ -14,6 +14,8 @@ import * as clerk from "./clerk.js";
 import { people as directory } from "./people.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
+import { jobKinds } from "./runs.js";
+import { fill } from "./vocabulary.js";
 
 const DAY = 86_400_000;
 const isoDay = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? new Date(`${v}T00:00:00Z`) : null);
@@ -128,6 +130,8 @@ export async function parseFilters(q: AnalyticsQuery, range: ReturnType<typeof r
     CL: (a = "") => orgOf(a) + userOf(a) + clientOnly(a),
     /** Simulations, sessions and research. */
     ORG: (a = "", kind: "" | "sim" | "session" | "research" = "") => orgOf(a) + (P ? ` AND ${a}product_id = ANY(${P})` : "") + byUser(a, kind),
+    /** The packs' runs (a build without the session engine): the account and person filters; a product filter matches none. */
+    RUNS: (a = "") => orgOf(a) + (P ? " AND false" : "") + (U ? ` AND ${a}requested_by = ANY(${U})` : ""),
     O, P, scoped: Boolean(O || P || U),
   };
   return { filters, orgIds, productIds, sql };
@@ -152,14 +156,17 @@ const CLIENT_TOP = 5;
  *   client_mix      tool calls per week by AI client family (split_part(client, ' ', 1)). Tool calls carry no client, so
  *                   each call counts for the client of its caller's latest handshake (same account and person) before
  *                   it, else "unknown"; the top 5 families over the window, the rest as Other
- *   sims_weekly     simulations created per week, completed vs the rest (account, product and user filters)
+ *   sims_weekly     the session engine's runs created per week, completed vs the rest (account, product and user
+ *                   filters); in a build without it, the packs' runs (succeeded vs the rest, mold_v0-104); null when
+ *                   the build has neither
  *   funnel          access requests made in the range, then the overview funnel (admin.funnelOf, same stages and rule)
  *                   for the accounts created in the range; access requests ignore the filters (they have no account)
  */
 async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Awaited<ReturnType<typeof parseFilters>>, orgsOnce: () => Promise<Orgs>,
   newDailyP: Promise<{ day: string; n: number }[]>) {
   const db = await getDb();
-  const { F, T } = range.sql, { EV, CL, ORG, O } = sql;
+  const { F, T } = range.sql, { EV, CL, ORG, RUNS, O } = sql;
+  const eng = sessionEngine(), packRuns = !eng && jobKinds().length > 0;
   const calls = "method = 'tools/call'", person = "coalesce(user_id, 'org:' || org_id)";
   const endMs = range.end.getTime(), lastWeek = mondayOf(endMs - DAY);
   const firstWeek = Math.min(mondayOf(range.start.getTime()), lastWeek - 11 * WEEK);
@@ -193,9 +200,12 @@ async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Aw
        tagged AS (SELECT at, is_call, max(fam) OVER (PARTITION BY org_id, p, g) AS fam FROM grouped)
        SELECT ${wk("at")} AS week, coalesce(nullif(fam, ''), 'unknown') AS client, count(*) AS calls
          FROM tagged WHERE is_call AND at >= ${W0} GROUP BY 1, 2`),
-    !sessionEngine() ? Promise.resolve([] as { week: string; completed: unknown; other: unknown }[]) : db.query<{ week: string; completed: unknown; other: unknown }>(
+    eng ? db.query<{ week: string; completed: unknown; other: unknown }>(
       `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT ${wk("created_at")} AS week, count(*) FILTER (WHERE status = 'completed') AS completed, count(*) FILTER (WHERE status IS DISTINCT FROM 'completed') AS other
-         FROM simulations WHERE created_at >= ${W0} AND created_at < ${T}${ORG("", "sim")} GROUP BY 1`),
+         FROM simulations WHERE created_at >= ${W0} AND created_at < ${T}${ORG("", "sim")} GROUP BY 1`)
+      : !packRuns ? Promise.resolve([] as { week: string; completed: unknown; other: unknown }[]) : db.query<{ week: string; completed: unknown; other: unknown }>(
+      `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT ${wk("created_at")} AS week, count(*) FILTER (WHERE status = 'succeeded') AS completed, count(*) FILTER (WHERE status <> 'succeeded') AS other
+         FROM runs WHERE created_at >= ${W0} AND created_at < ${T}${RUNS()} GROUP BY 1`),
     orgsOnce().then((x) => x.orgs, () => null),
     newDailyP,
   ]);
@@ -234,7 +244,7 @@ async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Aw
   const client_mix = { clients: clientsList, weeks: weeks.map((week) => ({ week, calls: mixBy.get(week)! })) };
 
   const simBy = new Map(sims.map((r) => [r.week, r]));
-  const sims_weekly = weeks.map((week) => ({ week, completed: Number(simBy.get(week)?.completed ?? 0), other: Number(simBy.get(week)?.other ?? 0) }));
+  const sims_weekly = !eng && !packRuns ? null : weeks.map((week) => ({ week, completed: Number(simBy.get(week)?.completed ?? 0), other: Number(simBy.get(week)?.other ?? 0) }));
 
   // The overview's funnel (same stages, same rule), for the accounts created in the range.
   let funnel: { id: string; label: string; reached: number; pct: number | null }[] | null = null;
@@ -242,13 +252,19 @@ async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Aw
     const { funnelOf } = await import("./admin.js");
     const ids = orgIds ? new Set(orgIds) : null;
     const cohort = orgs.filter((o) => { const t = new Date(o.created_at).getTime(); return t >= range.start.getTime() && t < endMs && (!ids || ids.has(Number(o.id))); });
-    const f = new Map(funnelOf(cohort).map((s) => [s.id, s.reached]));
+    const all = funnelOf(cohort), f = new Map(all.map((s) => [s.id, s.reached]));
     const steps = [
       { id: "requests", label: "Access requests", reached: Number(base[0]?.requests ?? 0) },
       { id: "created", label: "Accounts", reached: f.get("created") ?? 0 },
-      { id: "onboarded", label: "Onboarded", reached: f.get("onboarded") ?? 0 },
-      { id: "simulated", label: "First simulation", reached: f.get("simulated") ?? 0 },
-      { id: "reported", label: "First report", reached: f.get("reported") ?? 0 },
+      ...(eng ? [
+        { id: "onboarded", label: "Onboarded", reached: f.get("onboarded") ?? 0 },
+        { id: "simulated", label: fill("First {run}"), reached: f.get("simulated") ?? 0 },
+        { id: "reported", label: "First report", reached: f.get("reported") ?? 0 },
+      ] : [
+        // The shell's first tool call, then the packs' onboarding steps (src/admin.ts accountStages).
+        { id: "first_call", label: "First tool call", reached: f.get("first_call") ?? 0 },
+        ...all.slice(all.findIndex((s) => s.id === "first_call") + 1),
+      ]),
     ];
     funnel = steps.map((s, i) => ({ ...s, pct: i && steps[i - 1].reached ? Math.round((s.reached / steps[i - 1].reached) * 100) : null }));
   }

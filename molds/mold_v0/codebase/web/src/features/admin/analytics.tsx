@@ -33,6 +33,9 @@ import { ErrorBox, LoadingCards, Mono, Section, StatusBadge, Trend, When } from 
 import { ComputeJobs } from './compute-jobs';
 import { UrlTabs } from './compute-common';
 import { ComputeSessions } from './compute-sessions';
+import { PackRunKinds } from './compute-runs';
+import { packRuns, sessionEngine } from './engine';
+import { W } from '@/lib/vocabulary';
 import { NS } from '@/lib/namespace';
 
 type ErrorKind = 'tool' | 'session' | 'onboarding';
@@ -71,7 +74,8 @@ interface Growth {
   weekly: { week: string; accounts: number; people: number; calls: number; calls_per_person: number | null; change_pct: number | null; partial: boolean }[];
   stickiness: { day: string; dau: number; mau: number; pct: number | null }[];
   client_mix: { clients: string[]; weeks: { week: string; calls: number[] }[] };
-  sims_weekly: { week: string; completed: number; other: number }[];
+  /** The session engine's runs per week, else the packs' runs (mold_v0-104); null when the build has neither. */
+  sims_weekly: { week: string; completed: number; other: number }[] | null;
   /** null when the accounts listing could not load */
   funnel: { id: string; label: string; reached: number; pct: number | null }[] | null;
 }
@@ -405,22 +409,26 @@ export function AdminAnalytics({ view = 'analytics' }: { view?: 'analytics' | 'h
   return <Suspense fallback={<PageContainer><LoadingCards count={4} /></PageContainer>}><Report view={view} /></Suspense>;
 }
 
-/** Health's tabs: errors (this report), and the Jobs and Sessions record tables (?section=jobs|sessions). */
-const HEALTH_TABS = [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']] as const;
+/**
+ * Health's tabs: errors (this report), and the session engine's Jobs and Sessions record tables (?section=jobs|sessions);
+ * in a build without it, the packs' runs per job kind (?section=runs, mold_v0-104), or nothing more with no job kind.
+ */
+const HEALTH_TABS: readonly (readonly [string, string])[] = sessionEngine() ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']]
+  : packRuns() ? [['errors', 'Errors'], ['runs', W.Runs]] : [['errors', 'Errors']];
 
 function HealthTabs({ tab }: { tab: string }) {
-  return <UrlTabs tabs={HEALTH_TABS} tab={tab} base='/admin/health' />;
+  return HEALTH_TABS.length > 1 ? <UrlTabs tabs={HEALTH_TABS} tab={tab} base='/admin/health' /> : null;
 }
 
 function Report({ view }: { view: 'analytics' | 'health' }) {
   const section = useSearchParams().get('section');
-  const tab = view === 'health' && (section === 'jobs' || section === 'sessions') ? section : 'errors';
+  const tab = view === 'health' && section && section !== 'errors' && HEALTH_TABS.some(([id]) => id === section) ? section : 'errors';
   if (tab !== 'errors') {
     return (
       <PageContainer>
         <div className='flex min-w-0 flex-col gap-3'>
           <HealthTabs tab={tab} />
-          {tab === 'jobs' ? <ComputeJobs /> : <ComputeSessions />}
+          {tab === 'jobs' ? <ComputeJobs /> : tab === 'runs' ? <PackRunKinds /> : <ComputeSessions />}
         </div>
       </PageContainer>
     );
@@ -630,7 +638,7 @@ const CLIENT_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'va
 /** The Growth block: four rows of two at the top of the Analytics grid. */
 function GrowthRows({ g }: { g: Growth }) {
   const weekly = useMemo(() => {
-    const sims = new Map(g.sims_weekly.map((w) => [w.week, w])), mix = new Map(g.client_mix.weeks.map((w) => [w.week, w.calls]));
+    const sims = new Map((g.sims_weekly ?? []).map((w) => [w.week, w])), mix = new Map(g.client_mix.weeks.map((w) => [w.week, w.calls]));
     return g.weekly.map((w) => ({ ...w, completed: sims.get(w.week)?.completed ?? 0, other: sims.get(w.week)?.other ?? 0,
       ...Object.fromEntries(g.client_mix.clients.map((_, i) => [`c${i}`, mix.get(w.week)?.[i] ?? 0])) }));
   }, [g]);
@@ -739,8 +747,9 @@ function GrowthRows({ g }: { g: Growth }) {
           ) : <Empty>No tool calls in these weeks.</Empty>}
         </Box>
       </div>
-      <div className='grid lg:grid-cols-2'>
-        <Box title='Simulations per week' description='Simulations created each week, completed and the rest. Tool and client filters do not apply.'>
+      <div className={cn('grid', g.sims_weekly && 'lg:grid-cols-2')}>
+        {g.sims_weekly && (
+        <Box title={`${W.Runs} per week`} description={`${W.Runs} created each week, completed and the rest. Tool and client filters do not apply.`}>
           {g.sims_weekly.some((w) => w.completed + w.other > 0) ? (
             <ChartContainer config={{ completed: { label: 'Completed', color: 'var(--chart-2)' }, other: { label: 'Not completed', color: 'var(--chart-4)' } }} className='aspect-auto h-[240px] w-full'>
               <BarChart data={weekly} margin={{ left: 0, right: 8, top: 8 }}>
@@ -753,8 +762,9 @@ function GrowthRows({ g }: { g: Growth }) {
                 <ChartLegend content={<ChartLegendContent />} />
               </BarChart>
             </ChartContainer>
-          ) : <Empty>No simulations in these weeks.</Empty>}
+          ) : <Empty>No {W.runs} in these weeks.</Empty>}
         </Box>
+        )}
         <Box title='Activation funnel' description='Access requests made in this period, then the accounts created in it and how far they got. Requests ignore the filters.'>
           {!g.funnel ? <Empty>Accounts could not be loaded.</Empty> : g.funnel.every((f) => !f.reached) ? <Empty>No access requests or new accounts in this period.</Empty> : (
             <ol className='grid gap-3'>

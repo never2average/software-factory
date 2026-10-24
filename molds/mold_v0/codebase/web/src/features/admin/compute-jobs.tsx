@@ -15,6 +15,7 @@ import { Icons } from '@/components/icons';
 import { counted } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { useAdmin } from './lib';
+import { W } from '@/lib/vocabulary';
 import { copyText, ErrorBox, Mono, Notice, StatusBadge, When, type Tone } from './ui';
 import { Chip, cents, dur, jobSessions, PeekSection, since, useComputeParams, useNow, nextPinned, useScrollTo } from './compute-common';
 import { JobsStats } from './compute-stats';
@@ -46,7 +47,8 @@ const STATES: { id: string; label: string }[] = [
   { id: 'running', label: 'Running' }, { id: 'draining', label: 'Draining' }, { id: 'finished', label: 'Finished' }, { id: 'failed', label: 'Failed' }
 ];
 const STATE_TONE: Record<JobState, Tone> = { waiting: 'warn', queued: 'info', booting: 'info', running: 'ok', draining: 'warn', failed: 'bad', finished: 'neutral' };
-const KIND_LABEL: Record<Kind, string> = { simulation: 'Simulation', research: 'Research', prospect: 'Prospect research' };
+/** The session engine's job kinds (this table is its own: Health shows it only in a build with it, src/host-tables.ts). */
+const KIND_LABEL: Record<Kind, string> = { simulation: W.Run, research: 'Research', prospect: 'Prospect research' };
 const ORCH_TONE: Record<string, Tone> = { booting: 'info', running: 'ok', draining: 'warn', deleted: 'neutral' };
 const RESEARCH_SPEND = 'Research spend is metered only through its orchestrator.';
 /** Rows asked for at once; the table pages them 25 at a time. */

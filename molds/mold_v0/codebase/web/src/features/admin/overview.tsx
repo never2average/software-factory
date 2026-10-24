@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import PageContainer from '@/components/layout/page-container';
 import { Icons } from '@/components/icons';
 import { useAdmin } from './lib';
+import { packSteps, sessionEngine } from './engine';
 import { StatStrip } from '@/components/layout/section';
 import { DataList, ErrorBox, LoadingCards, Notice, Section, StatusBadge, When } from './ui';
 
@@ -32,9 +33,12 @@ export function AdminOverview() {
     return (o?.attention ?? []).filter((a) => words.every((w) => `${a.name} ${a.slug} ${a.contact ?? ''} ${a.stage_label} ${a.attention.join(' ')}`.toLowerCase().includes(w)));
   }, [o, q]);
   const reported = o ? o.funnel[o.funnel.length - 1]?.reached ?? 0 : 0;
+  // The funnel's last step: the session engine's report; else the packs' last onboarding step, or the first tool call.
+  const last = sessionEngine() ? null : o?.funnel.at(-1)?.id ?? null;
+  const lastLabel = sessionEngine() ? 'Reached a report' : last === 'first_call' ? 'Called a tool' : 'Finished onboarding';
   const max = o ? Math.max(1, o.funnel[0]?.reached ?? 1) : 1;
   return (
-    <PageContainer pageTitle='Onboarding' pageDescription='From access request to first report, across every account.'>
+    <PageContainer pageTitle='Onboarding' pageDescription={sessionEngine() ? 'From access request to first report, across every account.' : packSteps() ? 'From access request to the last onboarding step, across every account.' : 'From access request to the first tool call, across every account.'}>
       <ErrorBox error={error} />
       {isLoading || !o ? (
         <LoadingCards count={5} />
@@ -48,7 +52,7 @@ export function AdminOverview() {
               { label: 'Accounts', value: o.orgs, spark: o.daily.accounts, hint: `${o.requests.approved} approved, ${o.requests.declined} declined` },
               { label: 'Active in 7 days', value: o.active_7d, spark: o.daily.active_7d, hint: 'called a tool' },
               { label: 'Paying', value: o.paying, spark: o.daily.paying, hint: `${o.trialing || 0} trialing` },
-              { label: 'Reached a report', value: reported, spark: o.daily.reported, hint: o.orgs ? `${Math.round((reported / o.orgs) * 100)}% of accounts` : '' }
+              { label: lastLabel, value: reported, spark: o.daily.reported, hint: o.orgs ? `${Math.round((reported / o.orgs) * 100)}% of accounts` : '' }
             ]}
           />
 

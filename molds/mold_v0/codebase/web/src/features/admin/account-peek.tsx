@@ -21,7 +21,9 @@ import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { cn } from '@/lib/utils';
 import { Sparkline } from '@/components/layout/section';
 import { Dock } from '@/components/layout/dock';
-import { ACCOUNT_ROLES, accountRoleLabel, accountRoleOf, post, STAGE_LABELS, useAdmin, type InviteResult, type OrgRow } from './lib';
+import { ACCOUNT_ROLES, accountRoleLabel, accountRoleOf, post, STAGE_LABELS, useAdmin, type InviteResult, type OrgList, type OrgRow } from './lib';
+import { sessionEngine } from './engine';
+import { fill, W } from '@/lib/vocabulary';
 import { copyText, ErrorBox, Mono, When, type Tone } from './ui';
 import { Gate, useAdminRole, type AdminPermission } from './role';
 import { profile } from '@/config/profile.generated';
@@ -33,12 +35,18 @@ export type Org = OrgRow & {
   id: number; created_at: string; stripe_customer_id: string | null; reached: Record<string, string | null>;
   key_last_used: string | null; onboarding_running: number; sims_running: number;
 };
+/** An account's pack runs (src/admin.ts accountRuns; account-detail.tsx). */
+type AccountRuns = import('./account-detail').AccountRuns;
 
 /** GET /orgs/:slug (src/admin.ts orgDetail). */
 export interface OrgDetail {
   org: Org;
-  /** Tool calls, errors and agent sessions per day for 30 days; model spend per day this month. */
-  daily?: { days: string[]; calls: number[]; errors: number[]; sessions: number[]; month_days: string[]; spend: number[] };
+  /** Tool calls, errors and agent sessions (or the packs' runs) per day for 30 days; model spend per day this month. */
+  daily?: { days: string[]; calls: number[]; errors: number[]; sessions: number[]; runs?: number[]; month_days: string[]; spend: number[] };
+  /** False in a build without the session engine (mold_v0-104): its products, research and runs are not there. */
+  engine?: false;
+  /** The packs' runs per job kind and the latest, in a build without the session engine; null with no job kind. */
+  runs?: AccountRuns | null;
   integrations: { clerk?: boolean; stripe?: boolean; stripe_test_mode?: boolean; default_budget_usd?: number };
   connect: { connector_url: string; secret: boolean; email: { subject: string; body: string } };
   members: { id: string; user_id: string; email: string | null; name?: string | null; role?: string | null; status: string; created_at: string | null }[];
@@ -335,7 +343,7 @@ export function List<T>({ title, rows, cols, empty, actions, rowClassName }: {
 // Status is a plain word: colour only for warn and bad.
 const toneText: Record<Tone, string> = { ok: 'text-muted-foreground', neutral: 'text-muted-foreground', warn: 'text-amber-700 dark:text-amber-400', bad: 'text-destructive', info: '' };
 const word = (tone: Tone, s: ReactNode) => <span className={toneText[tone]}>{s}</span>;
-const runTone = (s: string): Tone => (s === 'completed' ? 'ok' : s === 'failed' ? 'bad' : s === 'cancelled' ? 'neutral' : 'info');
+const runTone = (s: string): Tone => (s === 'completed' || s === 'succeeded' ? 'ok' : s === 'failed' ? 'bad' : s === 'cancelled' ? 'neutral' : 'info');
 const count = (n: number | null | undefined) => (n == null ? dash : Number(n) ? <span className='tabular-nums'>{n}</span> : <span className='text-muted-foreground tabular-nums'>0</span>);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const host = (u: string) => { try { return new URL(u).host; } catch { return u.replace(/^https?:\/\//, ''); } };
@@ -363,7 +371,7 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
     return { label: 'Resend', onSelect: () => void ctl.run(() => Promise.all(expired.map((i) => post(`${p}/invitations/${encodeURIComponent(i.id)}/resend`))), 'Invitation resent'), need: 'invite' };
   }
   if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Copy welcome email', onSelect: x.welcome };
-  if (hostFeature('tips') && ['Using tools but has not onboarded', 'Product onboarded, no simulation', 'Simulation ran, report never opened'].some((m) => a.startsWith(m))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
+  if (hostFeature('tips') && ['Using tools but has not onboarded', fill('Product onboarded, no {run}'), fill('{Run} ran, report never opened')].some((m) => a.startsWith(m))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
   if (a.startsWith('Stripe subscription is') || a.startsWith('Subscription cancels')) return { label: 'Copy portal link', onSelect: x.portal, need: 'accounts' };
   if (a.startsWith('Product onboarding failed') || a.includes('tool errors')) return { label: 'View', onSelect: () => view('usage') };
   return null;
@@ -417,7 +425,11 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
   const access = org.clerk_org_id
     ? ['Clerk', org.members > 0 && plural(org.members, 'member'), org.pending_invites > 0 && `${org.pending_invites} invited`, org.active_keys > 0 && plural(org.active_keys, 'key')]
     : ['Key links', org.active_keys > 0 && plural(org.active_keys, 'key')];
-  const running = org.onboarding_running + org.sims_running;
+  const running = org.onboarding_running + org.sims_running + (org.runs_running ?? 0);
+  // The session engine's products and runs (a host pack's), else the packs' runs per job kind (mold_v0-104).
+  const engine = sessionEngine() && d?.engine !== false;
+  const { data: list } = useAdmin<OrgList>('/orgs');
+  const labelOf = (k: string) => list?.stages.find((x) => x.id === k)?.label ?? STAGE_LABELS[k] ?? k;
   const over = org.budget_usd > 0 && org.month_spend_usd >= org.budget_usd * 0.8;
   const stages = Object.keys(org.reached ?? STAGE_LABELS);
   const keys = d ? [...d.keys].sort((a, b) => Number(!!a.revoked_at) - Number(!!b.revoked_at)) : [];
@@ -533,6 +545,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
               ['Calls', (c) => count(c.n), 'text-right tabular-nums'],
               ['Last', (c) => <When d={c.last} />]
             ]} />
+            {engine && (<>
             <List title='Products' rows={d.products} empty='No product yet.' cols={[
               ['Product', (x) => x.name],
               ['Website', (x) => (x.website_url ? <a href={x.website_url} target='_blank' rel='noopener noreferrer' className='text-muted-foreground hover:text-foreground'>{host(x.website_url)}</a> : dash)],
@@ -544,12 +557,27 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
               ['Started', (r) => <When d={r.created_at} />],
               ...(d.research.some((r) => r.error) ? [['Detail', (r: OrgDetail['research'][number]) => (r.error ? <span className='text-destructive'>{r.error}</span> : null), 'whitespace-normal leading-snug'] as [string, (r: OrgDetail['research'][number]) => ReactNode, string]] : [])
             ]} />
-            <List title='Simulations' rows={d.simulations} empty='No simulations yet.' cols={[
-              ['Simulation', (x) => x.name],
+            <List title={W.Runs} rows={d.simulations} empty={`No ${W.runs} yet.`} cols={[
+              [W.Run, (x) => x.name],
               ['Status', (x) => word(runTone(x.status), x.status)],
               ['Sessions', (x) => `${x.completed} / ${x.sessions}`, 'text-right tabular-nums'],
               ['Started', (x) => <When d={x.created_at} />]
             ]} />
+            </>)}
+            {!engine && d.runs && (<>
+              <List title={`${d.runs.word.many} by kind`} rows={d.runs.by_kind} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
+                ['Kind', (k) => k.label],
+                [d.runs.word.many, (k) => count(k.total), 'text-right tabular-nums'],
+                ['Failed', (k) => (k.failed ? <span className='text-destructive'>{k.failed}</span> : count(0)), 'text-right tabular-nums'],
+                ['Last', (k) => <When d={k.last_at} />]
+              ]} />
+              <List title={`Latest ${d.runs.word.many.toLowerCase()}`} rows={d.runs.recent} empty={`No ${d.runs.word.many.toLowerCase()} yet.`} cols={[
+                [d.runs.word.one, (r) => r.label],
+                ['Status', (r) => word(runTone(r.status), r.status)],
+                ['Started', (r) => <When d={r.created_at} />],
+                ...(d.runs.recent.some((r) => r.error) ? [['Detail', (r: AccountRuns['recent'][number]) => (r.error ? <span className='text-destructive'>{r.error}</span> : null), 'whitespace-normal leading-snug'] as [string, (r: AccountRuns['recent'][number]) => ReactNode, string]] : [])
+              ]} />
+            </>)}
           </section>
 
           <section id='peek-billing' className='grid scroll-mt-4 gap-6'>
@@ -566,7 +594,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
 
           <section id='peek-onboarding' className='grid scroll-mt-4 gap-6'>
             <List title='Milestones' empty='No milestone reached yet.' rows={stages.filter((k) => org.reached?.[k]).map((k) => ({ k, at: org.reached[k] }))} cols={[
-              ['Milestone', (m) => STAGE_LABELS[m.k] ?? m.k],
+              ['Milestone', (m) => labelOf(m.k)],
               ['Reached', (m) => <When d={m.at} />]
             ]} />
           </section>
