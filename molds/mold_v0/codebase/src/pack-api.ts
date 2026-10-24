@@ -718,7 +718,8 @@ const WorkspaceFilesSchema = z.object({
   .refine((r) => r.files === undefined || r.dir !== undefined, "files are read inside each dir: declare dir");
 /**
  * An upstream catalog at a pinned commit: `upstream` (pack.json#upstream, or {repo, commit}) is fetched at the pin only
- * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas by staff,
+ * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas (by the server
+ * itself whenever its pin changes, unless `index` is "manual"; by staff at any time),
  * idempotently (by fingerprint), pruning only rows it wrote (and refusing to empty an area or prune more than
  * `prune.max_fraction` of it). Other keys are the pack's loader's own settings.
  */
@@ -729,6 +730,12 @@ const UpstreamCatalogSchema = z.object({
   files: z.record(fileKey, repoPath).optional(),
   map: z.record(name, RowMapSchema).optional(),
   prune: z.object({ max_fraction: z.number().min(0).max(1).optional(), allow_empty: z.boolean().optional() }).strict().optional(),
+  /**
+   * Who indexes it (mold_v0-128, src/repository-index.ts): "automatic" (the default) the server itself, whenever the pin
+   * it last indexed is not the declared one (at startup, on the first read of an empty area, after a deploy), and staff
+   * at any time; "manual" staff only (the admin MCP's admin_sync_<repository>, the console's Repositories page).
+   */
+  index: z.enum(["automatic", "manual"]).optional(),
 }).catchall(z.unknown());
 /**
  * An external HTTP API, read live and read only: `base_url` (its host among `egress`, the only hosts it may reach; a
