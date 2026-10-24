@@ -18,6 +18,12 @@ export interface LandingBlock {
   seo?: { title?: string; description?: string };
 }
 
+/**
+ * Who may open an account (mold_v0-098; the API's /api/auth/config `accounts`): under `invite_only` every call to action
+ * that leads to sign-up (/auth/sign-up) leads to the request form (/request-access) instead.
+ */
+export type AccountsMode = 'invite_only' | 'self_serve';
+
 /** One sentence of the source offer (src/source-offer.ts offerFooterItems): the commit it names and its link, if any. */
 export interface OfferFooterItem { text: string; commit?: string; link?: { href: string; label: string } }
 

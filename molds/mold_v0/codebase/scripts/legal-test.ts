@@ -16,7 +16,7 @@
 //    jurisdiction paragraph only when one is given; the landing page's footer and the sign-in page link both; an own
 //    terms_url wins (the page redirects there, the links go there, the sitemap leaves /terms out). The install pages
 //    (src/install-pages.ts) link them only when set. robots.txt keeps crawlers out of /app, /admin, /api and /auth and
-//    names the sitemap on the console's own address; the sitemap lists the landing, install and own legal pages on it,
+//    names the sitemap on the console's own address; the sitemap lists the landing, install, request-access and own legal pages on it,
 //    and every public page under web/src/app/(site) is listed.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -184,7 +184,7 @@ process.stdout.write("\\u0001" + JSON.stringify({ install: body }));
       assert.ok(!/\/terms|\/privacy|aria-label="Legal"/.test(html), `no legal: no legal link on ${where}`);
     assert.deepEqual(n.robots.rules, [{ userAgent: "*", allow: "/", disallow: ["/app", "/admin", "/api", "/auth"] }], "robots: public pages allowed, the console, API and sign-in not");
     assert.equal(n.robots.sitemap, "https://console.acme.example/sitemap.xml", "robots names the sitemap on the console's own address (APP_CONSOLE_URL, its origin only)");
-    assert.deepEqual(n.sitemap.map((e) => e.url), ["https://console.acme.example/", "https://console.acme.example/install"], "the sitemap without legal: the landing and install pages");
+    assert.deepEqual(n.sitemap.map((e) => e.url), ["https://console.acme.example/", "https://console.acme.example/install", "https://console.acme.example/request-access"], "the sitemap without legal: the landing, install and request-access pages");
     const v = await render("vercel", { name: "Acme" }, { VERCEL_PROJECT_PRODUCTION_URL: "acme.example.org" });
     assert.equal(v.robots.sitemap, "https://acme.example.org/sitemap.xml", "on Vercel: the project's production address");
     const loc = await render("local", { name: "Acme" }, { APP_CONSOLE_URL: "javascript:alert(1)", NEXT_PUBLIC_APP_URL: "https://pub.acme.example" });
@@ -211,8 +211,8 @@ process.stdout.write("\\u0001" + JSON.stringify({ install: body }));
     for (const [where, html] of [["the footer", s.footer], ["the sign-in page", s.auth], ["the install pages", s.install]] as const)
       assert.ok(/href="\/terms"[^>]*>Terms</.test(html) && /href="\/privacy"[^>]*>Privacy</.test(html), `legal set: Terms and Privacy on ${where}`);
     assert.match(s.auth, /<nav aria-label="Legal"/, "the sign-in page's links are a labelled navigation");
-    assert.deepEqual(s.sitemap.map((e) => e.url), ["https://desk.acme.example/", "https://desk.acme.example/install", "https://desk.acme.example/terms", "https://desk.acme.example/privacy"], "the sitemap with legal");
-    assert.equal(s.sitemap[2]!.lastModified, "2026-10-23", "a legal page's last change is its effective date");
+    assert.deepEqual(s.sitemap.map((e) => e.url), ["https://desk.acme.example/", "https://desk.acme.example/install", "https://desk.acme.example/request-access", "https://desk.acme.example/terms", "https://desk.acme.example/privacy"], "the sitemap with legal");
+    assert.equal(s.sitemap.find((e) => e.url.endsWith("/terms"))!.lastModified, "2026-10-23", "a legal page's last change is its effective date");
     const noJ = await render("nojur", { name: "Acme", legal: { company_name: "Acme Ltd", contact_email: "legal@acme.example", effective_date: "2026-10-23" } });
     assert.ok(!/governed by|Governing law/.test(noJ.terms.html!), "no jurisdiction: no governing-law section");
 
@@ -223,7 +223,7 @@ process.stdout.write("\\u0001" + JSON.stringify({ install: body }));
     for (const [where, html] of [["the footer", own.footer], ["the sign-in page", own.auth], ["the install pages", own.install]] as const)
       assert.ok(/href="https:\/\/acme\.example\/legal\/terms"[^>]* rel="noopener noreferrer"[^>]*>Terms<|href="https:\/\/acme\.example\/legal\/terms" rel="noopener noreferrer">Terms</.test(html) && /href="\/privacy"/.test(html), `the own terms on ${where}: ${html.slice(0, 0)}`);
     assert.ok(/href="https:\/\/acme\.example\/legal\/terms"[^>]*>terms of use</.test(own.privacy.html!), "the privacy page links the own terms");
-    assert.deepEqual(own.sitemap.map((e) => e.url), ["https://desk.acme.example/", "https://desk.acme.example/install", "https://desk.acme.example/privacy"], "the sitemap leaves out a page the company keeps itself");
+    assert.deepEqual(own.sitemap.map((e) => e.url), ["https://desk.acme.example/", "https://desk.acme.example/install", "https://desk.acme.example/request-access", "https://desk.acme.example/privacy"], "the sitemap leaves out a page the company keeps itself");
     for (const f of ["render-entry.tsx", "render-link.tsx", "render-nav.ts"]) rmSync(path.join(webDir, f), { force: true });
     console.log("✓ the pages: none and no links without legal; with it both pages in the build's words, the facts as text, links on the footer, sign-in and install pages; an own page wins; robots and the sitemap on the console's address");
   }

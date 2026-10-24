@@ -8,7 +8,8 @@
 //      unlocked throwaway vault) and its offline Clerk (scripts/lib/mock-providers.ts) on 127.0.0.1.
 //   3. The lane copy's API (src/http.ts createApp) on 127.0.0.1:<api port>, the port the console was built against.
 //   4. One workspace ("Lane workspace") linked to a mock Clerk organisation, and one person, its owner, who is also
-//      platform staff, so both /app and /admin render signed in. The session is a token the mock signs and the API
+//      platform staff, so both /app and /admin render signed in; and two people in no workspace (one of them staff), for
+//      the portal's page for no account (a page's `as` in surface.mts picks them). The session is a token the mock signs and the API
 //      verifies; a fresh one is minted for every page (they live five minutes).
 //   5. The console: `next start` on 127.0.0.1 (a free port), killed with this process (PR_SET_PDEATHSIG).
 //   6. The harness's run({origin, pages, packs, session, argv}): pages from surface.mts, a row per pack.
@@ -96,6 +97,17 @@ try {
       { name: "__lane_identity", value: encodeURIComponent(JSON.stringify(identity)), url: origin },
     ];
   };
+  // Two people with no account here (mold_v0-098), so the portal's page for them is graded as well: someone who signed up
+  // and is in no workspace, and platform staff with no workspace of their own (pages with `as` in surface.mts).
+  const nobody = async (email: string, first: string, staff: boolean) => {
+    const u = await post("/_mock/clerk/users", { email, first_name: first, verified: true, ...(staff ? { platform_admin: true } : {}) });
+    const who = { email, first, last: "Person", org: "" };
+    return async () => [
+      { name: "__session", value: (await post("/_mock/session", { user_id: u.id })).token as string, url: origin },
+      { name: "__lane_identity", value: encodeURIComponent(JSON.stringify(who)), url: origin },
+    ];
+  };
+  const sessionAs = { no_account: await nobody("lane.outsider@example.org", "Lane", false), staff_no_account: await nobody("lane.staff@example.org", "Staff", true) };
 
   // 5. The console, killed with this process even if this process is killed outright.
   const pdeath = "import ctypes,os,signal,sys; ctypes.CDLL(None).prctl(1, signal.SIGTERM); os.execvp(sys.argv[1], sys.argv[1:])";
@@ -118,7 +130,7 @@ try {
   const { surface } = await import(pathToFileURL(path.join(import.meta.dirname, "surface.mts")).href);
   const s = await surface(lane);
   const h = await import(pathToFileURL(harness).href);
-  code = await h.run({ origin, pages: s.pages, packs: s.packs, session, argv: rest });
+  code = await h.run({ origin, pages: s.pages, packs: s.packs, session, sessionAs, argv: rest });
 } catch (e) {
   console.error(`lane world: ${(e as Error).stack ?? e}`);
   code = 1;

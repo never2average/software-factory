@@ -25,6 +25,7 @@ import { endpointLimit } from "./rate-limits.js";
 import { currentPopulation } from "./agent-mix.js";
 import { hosts } from "./host.js";
 import { PROFILE } from "./profile.js";
+import { fill } from "./vocabulary.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
 import * as limits from "./limits.js";
@@ -43,9 +44,6 @@ const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.e
 export interface Session { org: number; slug: string; user: string | null; email: string | null; role: "admin" | "member"; accountRole: roles.AccountRole; clerkOrgId: string | null }
 
 const identified = new Set<string>();
-
-/** "a" or "an" before a name, as it is read (the profile's name in a sentence). */
-const an = (name: string) => `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name}`;
 
 export class AppError extends Error { constructor(message: string, public status = 400, public info: Record<string, unknown> = {}) { super(message); } }
 
@@ -454,8 +452,8 @@ export async function customerSession(req: Request, res: Response, next: NextFun
     if (got) { m = got.m; org = got.org; ms = (await dir.memberships.forUser(c.userId)).filter((x) => x.organization).sort((a, b) => a.created_at - b.created_at); }
   }
   if (!m && ms.some((x) => clerk.isSuspended(x))) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
-  if (!m && !ms.length) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
-  if (!m || !org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
+  if (!m && !ms.length) return void res.status(403).json({ error: fill("You are not in a {product} {account} yet. Ask your admin to invite you."), code: "no_account" });
+  if (!m || !org) return void res.status(403).json({ error: fill("This organization is not a {product} {account}. {product} is invite-only for now: ask your {product} contact for an invitation."), code: "no_account" });
   const user = await dir.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
@@ -499,6 +497,9 @@ export function appRouter() {
   const orgOf = async (res: Response): Promise<Org> => ({ orgId: S(res).org, slug: S(res).slug, name: (await admin.accountFacts(S(res).slug)).name, userId: S(res).user ?? undefined, role: S(res).accountRole });
   // A host pack's own portal routes (src/host.ts, mold_v0-039) come first: a path it serves replaces the shell's (its
   // Setup and Usage pages in place of the neutral ones below).
+  // The console's portal layout asks this before it draws a page (mold_v0-098): 200 when the person has an account open
+  // here, else customerSession's 403 (no_account: the console shows its own page for it). Ahead of the host packs' routes.
+  api.get("/access", (_req, res) => void res.json({ ok: true }));
   for (const h of hosts()) h.routes?.app?.(api, { S, need, can, actor, orgOf, AppError });
 
   api.get("/me", async (_req, res) => {

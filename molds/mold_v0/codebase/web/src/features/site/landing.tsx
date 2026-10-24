@@ -5,7 +5,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { landing as declared, sourceOfferItems } from '@/config/landing.generated';
 import { profile } from '@/config/profile.generated';
 import { cn } from '@/lib/utils';
-import { linkable, type LandingBlock, type LandingItem, type LandingLink } from './landing-types';
+import { linkable, type AccountsMode, type LandingBlock, type LandingItem, type LandingLink } from './landing-types';
 import { buildLegal } from './legal';
 import { legalLinks } from './legal-types';
 
@@ -17,6 +17,19 @@ import { legalLinks } from './legal-types';
  */
 
 const SIGN_UP: LandingLink = { label: 'Get started', href: '/auth/sign-up' };
+const REQUEST: LandingLink = { label: 'Request access', href: '/request-access' };
+
+/**
+ * Under invite-only accounts (mold_v0-098), sign-up leads nowhere for someone nobody invited: a call to action to
+ * /auth/sign-up (the shell's own, or a block's, whose label is kept) leads to the request form instead. Without a mode
+ * (a render that did not ask the API) every link is as declared.
+ */
+function forAccess(link: LandingLink, access?: AccountsMode): LandingLink;
+function forAccess(link: LandingLink | undefined, access?: AccountsMode): LandingLink | undefined;
+function forAccess(link: LandingLink | undefined, access?: AccountsMode) {
+  if (!link || access !== 'invite_only' || link.href !== SIGN_UP.href) return link;
+  return link === SIGN_UP ? REQUEST : { ...link, href: REQUEST.href };
+}
 const SIGN_IN: LandingLink = { label: 'Sign in', href: '/app' };
 const INSTALL: LandingLink = { label: 'Connect an MCP client', href: '/install' };
 
@@ -41,7 +54,7 @@ const NEUTRAL: LandingBlock = {
 };
 
 /** The block this build shows, with the hero filled in from the profile where the block leaves it out. */
-export function resolvedLanding(block: LandingBlock | null = declared) {
+export function resolvedLanding(block: LandingBlock | null = declared, access?: AccountsMode) {
   const b = block ?? NEUTRAL;
   const hero = b.hero ?? {};
   const headline = hero.headline ?? profile.short_description;
@@ -52,8 +65,8 @@ export function resolvedLanding(block: LandingBlock | null = declared) {
       headline,
       // The console's description, unless it only repeats the headline (a brand's is "<name> — <tagline>").
       subheadline: hero.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? undefined : profile.console_description),
-      primary_cta: hero.primary_cta ?? SIGN_UP,
-      secondary_cta: hero.secondary_cta ?? INSTALL,
+      primary_cta: forAccess(hero.primary_cta ?? SIGN_UP, access),
+      secondary_cta: forAccess(hero.secondary_cta ?? INSTALL, access),
       note: hero.note
     }
   };
@@ -120,8 +133,8 @@ function Cards({ items, columns }: { items: LandingItem[]; columns: string }) {
 }
 
 /** The page's sections, in order. Each section is a labelled region, so a screen reader can jump between them. */
-export function LandingSections() {
-  const l = resolvedLanding();
+export function LandingSections({ access }: { access?: AccountsMode } = {}) {
+  const l = resolvedLanding(declared, access);
   return (
     <>
       <section aria-labelledby='landing-hero' className='relative isolate overflow-hidden border-b'>
@@ -211,7 +224,7 @@ export function LandingSections() {
             <div className='bg-primary text-primary-foreground flex flex-col gap-5 rounded-2xl px-6 py-10 sm:px-10'>
               <h2 id='landing-closing' className='text-2xl font-semibold tracking-tight text-balance break-words sm:text-3xl'>{l.closing.title}</h2>
               {l.closing.body ? <p className='max-w-3xl text-base break-words sm:text-lg'>{l.closing.body}</p> : null}
-              <Ctas primary={l.closing.primary_cta ?? SIGN_UP} secondary={l.closing.secondary_cta} inverse />
+              <Ctas primary={forAccess(l.closing.primary_cta ?? SIGN_UP, access)} secondary={forAccess(l.closing.secondary_cta, access)} inverse />
             </div>
           </Wrap>
         </section>
@@ -221,8 +234,8 @@ export function LandingSections() {
 }
 
 /** The public pages' header: the build's mark and name, and the ways in. */
-export function SiteHeader() {
-  const l = resolvedLanding();
+export function SiteHeader({ access }: { access?: AccountsMode } = {}) {
+  const l = resolvedLanding(declared, access);
   return (
     <header className='border-b'>
       <Wrap className='flex min-h-16 items-center justify-between gap-3 py-3'>
@@ -235,7 +248,7 @@ export function SiteHeader() {
           {l.faq ? <a href='#faq' className={cn(buttonVariants({ variant: 'ghost' }), 'hidden h-10 md:inline-flex')}>FAQ</a> : null}
           <Link href={INSTALL.href} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden h-10 sm:inline-flex')}>Install</Link>
           <SmartLink link={SIGN_IN} className={cn(buttonVariants({ variant: 'ghost' }), 'h-10')} />
-          <SmartLink link={SIGN_UP} className={cn(buttonVariants(), 'h-10 px-4')} />
+          <SmartLink link={forAccess(SIGN_UP, access)} className={cn(buttonVariants(), 'h-10 px-4')} />
         </nav>
       </Wrap>
     </header>
@@ -243,9 +256,9 @@ export function SiteHeader() {
 }
 
 /** The public pages' footer: the name and tagline, the block's note and links, the shell's own links, the legal pages' (mold_v0-109) and the source offer. */
-export function SiteFooter() {
-  const l = resolvedLanding();
-  const links: LandingLink[] = [INSTALL, SIGN_IN, { label: 'Create an account', href: SIGN_UP.href }, ...(l.footer?.links ?? [])];
+export function SiteFooter({ access }: { access?: AccountsMode } = {}) {
+  const l = resolvedLanding(declared, access);
+  const links: LandingLink[] = [INSTALL, SIGN_IN, access === 'invite_only' ? REQUEST : { label: 'Create an account', href: SIGN_UP.href }, ...(l.footer?.links ?? []).map((k) => forAccess(k, access))];
   // The app's Terms and Privacy (mold_v0-109), when its profile.json has `legal`.
   links.push(...legalLinks(buildLegal()).map(({ label, href }) => ({ label, href })));
   const linkClass = 'text-muted-foreground hover:text-foreground inline-flex min-h-6 items-center underline-offset-4 hover:underline';

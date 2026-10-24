@@ -4,7 +4,7 @@
  */
 
 /** The shell's public pages, in sitemap order (paths of this site); the legal pages are added when the build has them. */
-export const PUBLIC_PAGES = ['/', '/install'] as const;
+export const PUBLIC_PAGES = ['/', '/install', '/request-access'] as const;
 
 /** What robots.txt keeps crawlers out of: the console, the API and sign-in. */
 export const DISALLOWED = ['/app', '/admin', '/api', '/auth'] as const;
