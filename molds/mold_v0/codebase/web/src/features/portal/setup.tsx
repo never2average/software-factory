@@ -21,6 +21,7 @@ import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
 import { hostFeature } from '@/features/packs/host-nav';
+import { onboardingAnchor } from '@/features/tabs/empty';
 
 interface Step { id: string; label: string; done: boolean; at: string | null; help: string; optional?: boolean; prompt?: string | null }
 interface Setup {
@@ -326,7 +327,7 @@ function StepHelp({ help, done, prompt }: { help: string; done: boolean; prompt:
   );
 }
 
-interface TimelineItem { id: string; label: string; done: boolean; body: React.ReactNode }
+interface TimelineItem { id: string; label: string; done: boolean; body: React.ReactNode; /** The item's address on the page (#anchor): a pack's onboarding step, which a tab's empty state links to (mold_v0-107). */ anchor?: string }
 
 /**
  * Get set up and every journey: progress, then a vertical timeline. The earliest open item is highlighted (ring on its
@@ -346,7 +347,7 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
           const cur = current === x.id;
           const last = i === items.length - 1;
           return (
-            <li key={x.id} className='relative flex gap-4 pb-7 last:pb-0'>
+            <li key={x.id} id={x.anchor} className='relative flex scroll-mt-24 gap-4 pb-7 last:pb-0'>
               {!last && <span aria-hidden='true' className={cn('absolute top-8 bottom-0 left-[15px] w-px', x.done ? 'bg-primary/60' : 'bg-border')} />}
               <span className={cn('relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums',
                 x.done ? 'border-primary bg-primary text-primary-foreground' : cur ? 'border-primary text-primary bg-background ring-primary/20 ring-4' : 'border-border text-muted-foreground bg-background')}>
@@ -387,10 +388,16 @@ function PackChecklist() {
     if (!res.ok) throw new Error(`Request failed (${res.status})`);
     return (await res.json()) as PackChecklistData;
   });
+  // A link to one step (/app#onboarding-<pack>-<step>, from a tab's empty state): the page loads the steps after the
+  // browser looked for the anchor, so scroll to it once they are drawn.
+  useEffect(() => {
+    if (!data?.total || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
+    document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: 'start' });
+  }, [data]);
   if (!data || !data.total) return null;
   return (
     <TimelineSection title='Set up your workspace' done={data.done} total={data.total} noun='steps'
-      items={data.steps.map((x) => ({ id: `${x.pack}/${x.id}`, label: x.label, done: x.done,
+      items={data.steps.map((x) => ({ id: `${x.pack}/${x.id}`, anchor: onboardingAnchor(x.pack, x.id), label: x.label, done: x.done,
         body: x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null }))}
       footer={<>These steps tick themselves as you go.</>} />
   );

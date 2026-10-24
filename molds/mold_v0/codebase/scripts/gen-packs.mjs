@@ -968,11 +968,12 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
-const { checkViews, viewsOf, tabRoles, tabLabel, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const out = {};
 const loaded = [];
@@ -1001,8 +1002,9 @@ for (const [id, json, file] of entries) {
 }
 // Metrics, charts and tabs across the build (mold_v0-063, 058): checked together once every pack loaded.
 let views = { problems: [], metrics: [], charts: [], tabs: [] };
+let b = null;
 if (loaded.length === entries.length) {
-  const b = viewsOf(loaded, pages);
+  b = viewsOf(loaded, pages);
   const problems = checkViews(b);
   const over = (m) => b.areas.find((a) => a.name === m.over) ?? m.over;
   views = { problems,
@@ -1029,6 +1031,9 @@ if (loaded.length === entries.length) {
   const catalog = generateCatalog(loaded, { customer: shell, admin: ADMIN_SHELL_TOOL_NAMES });
   mcp.problems.push(...catalog.problems);
   mcp.withheld = catalog.withheld;
+  // Each tab's empty state (mold_v0-107), in the build's words: an area is addable when its create tool is on the customer MCP.
+  const addable = new Set(catalog.tools.filter((t) => t.op === "create" && t.door === "workspace" && !t.admin_only).map((t) => t.area));
+  if (b) views.tabs = views.tabs.map((t) => ({ ...t, empty: tabEmpty(t, b, { addable: (a) => addable.has(a), fill: (x) => fillWith(words, product, x) }) }));
 }
 process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mcp }) + "\\n");
 `);
@@ -1038,7 +1043,8 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
-      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts")]));
+      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
+      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -1339,6 +1345,7 @@ function viewsModule() {
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
     charts: t.charts ?? [],
+    ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
   for (const t of tabs) {
@@ -1357,7 +1364,9 @@ function viewsModule() {
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
     "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
-    "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n}\n" +
+    "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
+    "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
+    "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;

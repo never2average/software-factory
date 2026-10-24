@@ -37,7 +37,7 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
         <p className='text-muted-foreground text-sm'>No records yet.</p>
       ) : (
         <div className='flex flex-col gap-4'>
-          <Table>
+          <Table label={area.label}>
             <TableHeader>
               <TableRow>
                 <TableHead>Record</TableHead>

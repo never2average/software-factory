@@ -141,6 +141,9 @@ export interface BuildViews {
   pages?: Record<string, string[]>;
   /** The packs with a workspace store (a kind with workspace: true, or an agent-workspace kind): the files tab (mold_v0-056). */
   stores?: readonly string[];
+  /** The packs' onboarding steps and job kinds, for the tabs' empty states (mold_v0-107). */
+  steps?: readonly { pack: string; id: string; label: string; help?: string; done_when: string }[];
+  kinds?: readonly { pack: string; name: string; label?: string }[];
 }
 
 /** Every problem with the build's metrics, charts and tabs, each naming its pack. Empty when they are sound. */
@@ -267,6 +270,9 @@ export function checkViews(b: BuildViews): string[] {
     if (t.kind === "notices" && !b.dueAreas) at(p, `${w}: the build has no due dates, so it has no Notices page`);
     if (t.kind === "files" && !(b.stores ?? []).includes(p)) at(p, `${w}: the pack has no workspace store (no kind with workspace: true), so it has no files to show`);
     if (t.kind === "page" && b.pages && !(b.pages[p] ?? []).includes(t.page!)) at(p, `${w}: the pack has no app page ${t.page}`);
+    const act = t.empty?.cta?.action;
+    if (act?.startsWith("onboarding:") && b.steps && !b.steps.some((s) => s.pack === p && s.id === act.slice(11))) at(p, `${w}: empty.cta.action names onboarding step ${act.slice(11)}, which this pack does not declare`);
+    if (act?.startsWith("run:") && b.kinds && !b.kinds.some((k) => k.pack === p && k.name === act.slice(4))) at(p, `${w}: empty.cta.action names job kind ${act.slice(4)}, which this pack does not declare`);
     if (tabRoles(t, b).length === 0) at(p, `${w}: no role may read what it shows (its roles, its area's read permission or its metrics' roles leave none)`);
     for (const n of t.charts ?? []) if (!chart(p, n)) at(p, `${w} shows chart ${n}, which the pack does not declare`);
   }
@@ -308,8 +314,67 @@ export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" 
   return roles;
 }
 
+/** What a tab shows while it has nothing to show (mold_v0-107): a title, a line of text and an optional link. */
+export interface ResolvedEmpty { title: string; text: string; cta: { label: string; href: string } | null }
+/** The Setup page's anchor of a pack's onboarding step (web/src/features/portal/setup.tsx PackChecklist). */
+export const onboardingAnchor = (pack: string, step: string) => `onboarding-${pack}-${step}`.replace(/[^A-Za-z0-9_-]/g, "-");
+/** "Findings" -> "findings", "Control library" -> "control library"; "API keys" stays (an initialism). */
+const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s);
+
+/**
+ * A tab's empty state (mold_v0-107): its pack.json `empty` where it says one, the shell's default for the rest. The
+ * shell's text is a template in the build's words (`fill`: src/words.ts fillWith with the build's words and name); a
+ * pack's own text and labels are put in as they are, never filled. `addable(area)`: the area's create tool is on the
+ * customer MCP server (src/mcp-catalog.ts: a workspace area, writable, not withheld), so an AI client can add a record.
+ * The default for an area tab, in order:
+ *   1. an onboarding step that is done when the area has a record (done_when record:<area>): its help, and a link to it
+ *   2. a shared (platform) area: the platform adds its records
+ *   3. an addable area: ask the AI client to add one, and a link to the Setup page (where a client is connected)
+ *   4. an area of a pack with job kinds: its runs add them, and a link to the Setup page
+ *   5. else: they appear here as they are added
+ * A runs or reports tab ("No <its label> yet.", the label the page is titled with): start one from the AI client, and a
+ * link to the Setup page. Other kinds have none (null).
+ */
+export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "kinds">, o: { addable: (area: string) => boolean; fill: (text: string) => string }): ResolvedEmpty | null {
+  if (t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") return null;
+  const { fill } = o;
+  const SETUP = { label: "Open setup", href: "/app" };
+  const stepOf = (id: string) => (b.steps ?? []).find((s) => s.pack === t.pack && s.id === id) ?? null;
+  const stepCta = (s: { pack: string; id: string }) => ({ label: SETUP.label, href: `/app#${onboardingAnchor(s.pack, s.id)}` });
+  const stepText = (s: { label: string; help?: string }) => s.help?.trim() || `Next step on the Setup page: ${s.label}.`;
+  let d: ResolvedEmpty;
+  if (t.kind === "area") {
+    const a = b.areas.find((x) => x.name === t.area);
+    const label = a?.label ?? t.area ?? "";
+    const title = `No ${lowerFirst(label)} yet.`;
+    const step = (b.steps ?? []).filter((s) => s.done_when === `record:${t.area}`).sort((x, y) => Number(y.pack === t.pack) - Number(x.pack === t.pack))[0];
+    if (step) d = { title, text: stepText(step), cta: stepCta(step) };
+    else if (a?.scope === "platform") d = { title, text: fill("Every {workspace} shares these. They appear here once they are added for everyone."), cta: null };
+    else if (o.addable(t.area!)) d = { title, text: fill("Ask your AI client to add one. Not connected yet? The Setup page shows how."), cta: SETUP };
+    else if ((b.kinds ?? []).some((k) => k.pack === a?.pack)) d = { title, text: fill("They appear here as {runs} add them. The Setup page shows how to start one."), cta: SETUP };
+    else d = { title, text: fill("They appear here as they are added."), cta: null };
+  } else if (t.kind === "runs") d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your AI client to start one: it shows here while it runs, and after."), cta: SETUP };
+  else d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your AI client to start one: it shows here with its results once it finishes."), cta: SETUP };
+  const e = t.empty;
+  if (!e) return d;
+  let cta = d.cta, text = e.text ?? d.text;
+  const c = e.cta;
+  if (c?.href) cta = { label: c.label!, href: c.href };
+  else if (c?.action === "setup") cta = { label: c.label ?? SETUP.label, href: SETUP.href };
+  else if (c?.action?.startsWith("onboarding:")) {
+    const s = stepOf(c.action.slice(11));
+    cta = s ? { ...stepCta(s), label: c.label ?? SETUP.label } : { label: c.label ?? SETUP.label, href: SETUP.href };
+    if (s && e.text === undefined) text = stepText(s);
+  } else if (c?.action?.startsWith("run:")) {
+    const k = (b.kinds ?? []).find((x) => x.pack === t.pack && x.name === c.action!.slice(4));
+    cta = { label: c.label ?? SETUP.label, href: SETUP.href };
+    if (e.text === undefined) text = `Ask your AI client to start “${k?.label ?? c.action.slice(4)}”. Not connected yet? The Setup page shows how.`;
+  }
+  return { title: d.title, text, cta };
+}
+
 /** A build's views from its installed packs' definitions (validated), for checkViews and the engine. */
-export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
+export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[]; onboarding?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
   const flat = <T>(k: "recordAreas" | "metrics" | "charts" | "tabs", schema: z.ZodType<T>) =>
     packs.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ ...(schema.parse(x) as object), pack: p.id }) as T & { pack: string }));
   const areas = flat("recordAreas", RecordAreaSchema) as SpecArea[];
@@ -318,6 +383,8 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     jobKinds: packs.reduce((n, p) => n + (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0), 0),
     credentials: packs.reduce((n, p) => n + (p.definition.credentials?.length ?? 0), 0),
     dueAreas: areas.filter((a) => a.due).length,
+    steps: packs.flatMap((p) => (p.definition.onboarding ?? []).map((x) => ({ ...(x as { id: string; label: string; help?: string; done_when: string }), pack: p.id }))),
+    kinds: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].map((k) => ({ pack: p.id, name: (k as { name: string }).name, label: (k as { label?: string }).label }))),
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
     ...(pages ? { pages } : {}),
   };

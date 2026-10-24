@@ -670,7 +670,14 @@
       "group": "Audit",
       "charts": [
         "environments"
-      ]
+      ],
+      "empty": {
+        "text": "Add the applications you want audited; each one is a folder of repositories.",
+        "cta": {
+          "label": "How to describe an application",
+          "href": "https://example.org/guides/applications"
+        }
+      }
     },
     {
       "id": "controls",
@@ -687,7 +694,12 @@
       "kind": "runs",
       "label": "Audits",
       "icon": "play",
-      "group": "Audit"
+      "group": "Audit",
+      "empty": {
+        "cta": {
+          "action": "run:audit_scan"
+        }
+      }
     },
     {
       "id": "reports",
