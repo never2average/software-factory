@@ -9,8 +9,9 @@
  *                     the workspace's own rows by indexWorkspaceFiles(orgId, pack, files?) (called after a commit:
  *                     the hook is mold_v0-064's)
  *   upstream_catalog  an upstream project at a pinned commit: fetched at the pin only (git, any other commit and any
- *                     redirect refused; or GitHub's raw files and tree at the commit), indexed into shared rows by
- *                     platform staff (syncUpstreamCatalog)
+ *                     redirect refused; or GitHub's raw files and tree at the commit), indexed into shared rows
+ *                     (syncUpstreamCatalog) by the server itself whenever its pin changes, and by platform staff
+ *                     (src/repository-index.ts, mold_v0-128)
  *   http_api          an external API, read live and read only: its declared base URL (an egress host), the workspace's
  *                     credential field (mold_v0-034) in a header, no redirects, no private addresses
  *
@@ -51,7 +52,7 @@ export interface RepositoryAdapter {
   reads: "table" | "live";
   /** May a door (ctx.records, the data API) write the area's rows? */
   writable: boolean;
-  /** Who indexes it into the tables: nobody, a workspace's commit, platform staff. */
+  /** Who indexes it into the tables: nobody, a workspace's commit, platform staff (an upstream catalog: the server too, src/repository-index.ts). */
   indexedBy: "none" | "workspace_commit" | "staff";
 }
 export const ADAPTERS: Record<Repository["kind"], RepositoryAdapter> = {

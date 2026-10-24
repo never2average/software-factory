@@ -149,9 +149,9 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     const rows: DataMapRow[] = [];
     for (const k of kinds) rows.push({ item: `Job kind ${code(k.name)} (${k.pack.manifest.name})`, detail: `HTTPS (port 443) to ${list(k.egress)} and their subdomains, and this service's own gateway host; nothing else (an egress proxy and the sandbox's firewall)` });
     for (const p of list_) for (const [n, r] of Object.entries(p.definition.repositories ?? {})) {
-      const rr = r as { kind: string; base_url?: string; egress?: string[]; upstream?: { repo: string; commit: string } | string };
+      const rr = r as { kind: string; base_url?: string; egress?: string[]; upstream?: { repo: string; commit: string } | string; index?: string };
       if (rr.kind === "http_api") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server reads ${hostOf(rr.base_url ?? "")} live (allowed hosts: ${list(rr.egress ?? [])})` });
-      if (rr.kind === "upstream_catalog" && typeof rr.upstream === "object") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server fetches ${rr.upstream.repo} at commit ${code(rr.upstream.commit)} when platform staff index it` });
+      if (rr.kind === "upstream_catalog" && typeof rr.upstream === "object") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server fetches ${rr.upstream.repo} at commit ${code(rr.upstream.commit)} ${rr.index === "manual" ? "when platform staff index it" : "when it indexes it: by itself at a new pin (mold_v0-128), and when platform staff index it"}` });
     }
     if (!rows.length) rows.push({ item: "Runs", detail: "this build declares no job kind and no outside repository" });
     sections.push({ id: "egress", title: "Egress: the hosts runs and repositories may reach", rows });
