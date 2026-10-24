@@ -161,6 +161,13 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
   });
   c.get("/v1/organizations/:id/memberships", (req, res) =>
     void res.json(list([...s.memberships.values()].filter((m) => m.organization_id === req.params.id).map(membershipJson))));
+  c.post("/v1/organizations/:id/memberships", (req, res) => {
+    const orgId = req.params.id, userId = String(req.body?.user_id ?? "");
+    if (!s.orgs.has(orgId)) return clerkErr(res, 404, "Organization not found", "resource_not_found");
+    if (!s.users.has(userId)) return clerkErr(res, 404, "User not found", "resource_not_found");
+    if (s.memberships.has(`${orgId}:${userId}`)) return clerkErr(res, 422, "User is already a member of the organization.", "already_a_member_in_organization");
+    res.json(membershipJson(addMembership(orgId, userId, req.body?.role ?? "org:member")));
+  });
   const mem = (req: express.Request) => s.memberships.get(`${req.params.id}:${req.params.user}`);
   c.patch("/v1/organizations/:id/memberships/:user", (req, res) => {
     const m = mem(req); if (!m) return clerkErr(res, 404, "Membership not found", "resource_not_found");
@@ -197,6 +204,17 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     u.public_metadata = md; res.json(userJson(u));
   });
   c.get("/v1/users/:id", (req, res) => { const u = s.users.get(req.params.id); u ? res.json(userJson(u)) : clerkErr(res, 404, "User not found", "resource_not_found"); });
+  // Like Clerk: the invitations addressed to the user's email addresses, each with its organization's public data. The
+  // mock matches unverified addresses too, so the server's own verified-address check is what the tests exercise.
+  c.get("/v1/users/:id/organization_invitations", (req, res) => {
+    const u = s.users.get(req.params.id); if (!u) return clerkErr(res, 404, "User not found", "resource_not_found");
+    const emails = u.email_addresses.map((e: any) => e.email_address);
+    const status = req.query.status ? String(req.query.status) : null;
+    res.json(list([...s.invitations.values()].filter((x) => emails.includes(x.email_address) && (!status || x.status === status)).map((x) => {
+      const o = s.orgs.get(x.organization_id);
+      return { ...x, public_organization_data: o ? { id: o.id, name: o.name, slug: o.slug } : null };
+    })));
+  });
   c.get("/v1/users/:id/organization_memberships", (req, res) =>
     void res.json(list([...s.memberships.values()].filter((m) => m.user_id === req.params.id).map(membershipJson))));
   c.post("/v1/oauth_applications/access_tokens/verify", (req, res) => {

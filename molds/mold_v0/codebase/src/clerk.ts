@@ -111,6 +111,13 @@ export const invitations = {
   revoke: (orgId: string, invitationId: string) =>
     call<ClerkInvitation>("POST", `/organizations/${encodeURIComponent(orgId)}/invitations/${encodeURIComponent(invitationId)}/revoke`, {}),
 };
+/** A person's pending invitations, across organizations (Clerk matches them by the person's email addresses). Clerk
+ *  only (src/app.ts acceptPendingInvitation); the built-in sign-in accepts its own (src/builtin-auth.ts). */
+export const pendingInvitationsForUser = async (userId: string) =>
+  (await all<ClerkUserInvitation>(`/users/${encodeURIComponent(userId)}/organization_invitations`, { status: "pending" }))
+    .map((x) => ({ ...x, organization_id: x.organization_id ?? x.public_organization_data?.id ?? "" })).filter((x) => x.organization_id && x.status === "pending");
+/** An invitation as GET /users/{id}/organization_invitations returns it: the organization by id, or in its public data. */
+export interface ClerkUserInvitation extends ClerkInvitation { organization_id?: string; public_organization_data?: { id: string; name?: string } | null }
 
 /**
  * A person's memberships are read on every portal request and MCP connection, so they are cached for half a minute.
@@ -125,9 +132,9 @@ const changed = <T>(userId: string, r: T) => { userMemberships.delete(userId); f
 export const memberships = {
   list: (orgId: string) => all<ClerkMembership>(`/organizations/${encodeURIComponent(orgId)}/memberships`),
   /** A person's memberships across organizations (each with its organization), cached for 30 seconds. */
-  forUser: async (userId: string) => {
+  forUser: async (userId: string, fresh = false) => {
     const hit = userMemberships.get(userId);
-    if (hit && Date.now() - hit.at < 30_000) return hit.list;
+    if (!fresh && hit && Date.now() - hit.at < 30_000) return hit.list;
     const list = await all<ClerkMembership>(`/users/${encodeURIComponent(userId)}/organization_memberships`);
     userMemberships.set(userId, { at: Date.now(), list });
     return list;
@@ -146,6 +153,13 @@ export const memberships = {
 };
 
 const userCache = new Map<string, { at: number; user: ClerkUser }>();
+/** Adds the person to the organization with that role (and membership public_metadata, e.g. an invitation's). Clerk only. */
+export const createMembership = async (orgId: string, userId: string, role: string, metadata?: Record<string, unknown> | null) => {
+  const m = await call<ClerkMembership>("POST", `/organizations/${encodeURIComponent(orgId)}/memberships`, { user_id: userId, role });
+  return changed(userId, metadata && Object.keys(metadata).length ? await call<ClerkMembership>("PATCH",
+    `/organizations/${encodeURIComponent(orgId)}/memberships/${encodeURIComponent(userId)}/metadata`, { public_metadata: metadata }) : m);
+};
+
 export const users = {
   get: async (id: string, fresh = false) => {
     const hit = userCache.get(id);
