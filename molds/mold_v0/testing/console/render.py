@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """The lane console: an application's own console, built from its lane copy and served on this machine only.
 
-  render.py <app_id> --codebase <lane copy> -- <harness.mjs> [harness args]
+  render.py <app_id> --codebase <lane copy> [--deadline S] -- <harness.mjs> [harness args]
       build build/<app_id>.lane-console/ (when its inputs changed), then run the harness inside the lane world
       (world.mts): the lane copy's API on an embedded throwaway database behind the shell's own mock Clerk, one
       workspace whose owner is also platform staff, and the console (`next start`) pointed at that API. Everything
       listens on 127.0.0.1; nothing deployed is contacted, and the harness refuses any other address (world.mts).
+      --deadline: the world's own, in seconds (default 1500, inside the lanes' 3000s check); a longer harness (the parity
+      snapshot, testing/parity/) asks for more.
   render.py --self-test
 
 WHY A STAND-IN FOR @clerk/nextjs. The console signs people in with Clerk, whose browser client must reach Clerk's own
@@ -118,10 +120,12 @@ def main(a):
     if a[:1] == ["--self-test"]: return self_test()
     if len(a) < 4 or "--codebase" not in a or "--" not in a: sys.exit(__doc__)
     app_id = a[0]; codebase = a[a.index("--codebase") + 1]; rest = a[a.index("--") + 1:]
+    head = a[:a.index("--")]
+    deadline = int(head[head.index("--deadline") + 1]) if "--deadline" in head else WORLD_S
     web, port = prepare(app_id, codebase)
     tsx = os.path.join(os.path.abspath(codebase), "node_modules", ".bin", "tsx")
     cmd = [tsx, os.path.join(HERE, "world.mts"), "--codebase", os.path.abspath(codebase), "--console", web,
-           "--api-port", str(port), "--deadline", str(WORLD_S), "--harness", os.path.abspath(rest[0]), "--", *rest[1:]]
+           "--api-port", str(port), "--deadline", str(deadline), "--harness", os.path.abspath(rest[0]), "--", *rest[1:]]
     sys.stdout.flush()
     return subprocess.run(cmd, cwd=os.path.abspath(codebase)).returncode
 

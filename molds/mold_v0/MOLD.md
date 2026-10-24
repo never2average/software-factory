@@ -1607,6 +1607,18 @@ organisation of the app's own: `provision.py <app> --lane-key --dry-run`, then `
 says yes. It runs the product's `scripts/create-org.ts` and keeps the connector address in a private file outside
 the repository (mode 600, never shown).
 
+**Parity snapshots (mold_v0-136; [testing/parity/](testing/parity/README.md)).** Not a lane yet: a check that a build
+still shows people, AI clients and the console the same thing, for refactors meant to change nothing (moving the host
+pack `octillion` into config). `parity.py snapshot <app_id|zero> --out <dir>` records, in the lane world above (embedded
+database, offline Clerk, the console served on 127.0.0.1): the customer and admin MCP servers over an in-memory client
+(instructions, tools, prompts and each prompt's text over an argument matrix, resources and every widget, the skills),
+every `*.generated.*` file, the API's route list and every GET without a path parameter under `/api/*`, and every page of
+`console/surface.mts` (text, links, screenshots at 390 and 1440 wide in both colour schemes), plus each pack's own
+`scripts/smoke.ts` pass or fail. Times, ports and minted ids are masked, never dropped. `parity.py diff <before>
+<after> [--allow <phase>.json]` prints what differs, grouped, and fails on anything a phase's allow list does not name;
+`parity.py probe <app_id>` reads a deployed app (pages, `/app` and `/admin` status, `/mcp` without a key) and writes
+nothing. Two snapshots of one build compare equal; how to run it as a lane is in its README.
+
 **The CI gate (mold_v0-040).** `provision.py`'s release gate (`lib/deploy_gate.py`) reads, for an in-tree mold, **this
 repository's** checks for the commit being deployed: HEAD of the checkout the deploy runs from, and only when
 `molds/mold_v0/codebase` on disk is exactly that commit (no tracked change, no untracked file, and no ignored file the
