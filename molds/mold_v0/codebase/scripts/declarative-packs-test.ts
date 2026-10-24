@@ -6,7 +6,9 @@
 // 2. gen-packs builds the fixture pack (scripts/fixtures/packs/fixture_tracker: a pack.json, no code): its areas,
 //    credential and steps reach the console's registry, and packs.generated.ts carries the compiled declarations and no
 //    import; and refuses malformed pack.json files with the path and the reason. A tab's empty state (mold_v0-107):
-//    malformed `empty` blocks refused, the defaults and the pack's own resolved into the console's registry. A home tab
+//    malformed `empty` blocks refused, the defaults and the pack's own resolved into the console's registry. A merged
+//    tab (mold_v0-135, scripts/fixtures/packs/fixture_status: `areas` in place of `area`): built and resolved (its own
+//    area, its areas' rows and source words, its columns, the roles that may read every area), malformed ones refused. A home tab
 //    (mold_v0-134): an overview's `include` (setup, notices) refused where malformed or contradicted by the build, and
 //    accepted into the registry in its order, with /app and /app/notices redirected to it.
 // 3. A code entry extends a declarative pack (its tool and area join the declared ones); one that redeclares a declared
@@ -59,7 +61,14 @@ try {
       ["an enum value with markup", variant((j) => { j.record_areas[0].fields[1].options = ["<img src=x onerror=alert(1)>"]; })],
       ["a role that does not exist", variant((j) => { j.record_areas[2].permissions.create = ["admin"]; })],
     ] as const) assert.ok(!validate(bad), `the JSON Schema refuses ${what}`);
-    console.log("✓ packs/pack.schema.json is current; a JSON Schema validator takes the fixture and refuses 7 malformed ones");
+    // A merged tab (mold_v0-135) is in the schema too.
+    const status = JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_status", "pack.json"), "utf8"));
+    assert.ok(validate(status), `the merged-tab fixture passes the JSON Schema: ${JSON.stringify(validate.errors)}`);
+    for (const edit of [(t: any) => { t.areas = t.areas.slice(0, 1); }, (t: any) => { t.areas[1].rows = "some"; }, (t: any) => { t.areas[1].extra = 1; }]) {
+      const bad = structuredClone(status); edit(bad.tabs[0]);
+      assert.ok(!validate(bad), "the JSON Schema refuses a merged tab of one area, an unknown rows value, an unknown key");
+    }
+    console.log("✓ packs/pack.schema.json is current; a JSON Schema validator takes the fixtures and refuses 10 malformed ones");
   }
 
   // ---------- 2. gen-packs builds a pack.json alone, and refuses malformed ones ----------
@@ -173,7 +182,49 @@ try {
     console.log(`✓ a tab's empty state: ${m} malformed ones refused (kind, keys, unsafe links, href and action, markup-free one-line text, braces, lengths, unknown steps and kinds); defaults from the onboarding, the area's scope and tools, the pack's own text and links`);
   }
 
-  // ---------- 2c. a home tab: an overview that includes the shell's sections (mold_v0-134) ----------
+  // ---------- 2c. a merged tab (mold_v0-135) ----------
+  {
+    const STATUS = path.join(ROOT, "scripts", "fixtures", "packs", "fixture_status");
+    const status = (edit: (j: any, t: any) => void = () => {}) => { const j = JSON.parse(readFileSync(path.join(STATUS, "pack.json"), "utf8")); edit(j, j.tabs[0]); return j; };
+    let m = 0;
+    const no = (what: string, edit: (j: any, t: any) => void, re: RegExp) => { refused(`merged tab: ${what}`, tryPack(status(edit)), re); m++; };
+    no("an area and areas", (_j, t) => { t.area = "req_status"; }, /tabs\[0\]\.areas: an area tab shows one area \(area\) or merges several \(areas\), not both/);
+    no("one area", (_j, t) => { t.areas = t.areas.slice(0, 1); }, /tabs\[0\]\.areas: Too small|tabs\[0\]\.areas: .*at least 2|>=2/);
+    no("five areas", (_j, t) => { t.areas = [...t.areas, { area: "a_x" }, { area: "a_y" }]; }, /tabs\[0\]\.areas: Too big|<=4/);
+    no("an area twice", (_j, t) => { t.areas[2] = { area: "req_own" }; }, /tabs\[0\]\.areas: an area is listed twice/);
+    no("a first area that brings no rows", (_j, t) => { t.areas[0].rows = "matched"; }, /tabs\[0\]\.areas\.0\.rows: the first area brings the rows/);
+    no("a source word with a brace", (_j, t) => { t.areas[1].source = "Our {own}"; }, /tabs\[0\]\.areas\[1\]\.source: no braces/);
+    no("a source word over 40 characters", (_j, t) => { t.areas[1].source = "x".repeat(41); }, /tabs\[0\]\.areas\[1\]\.source: at most 40 characters/);
+    no("areas on a runs tab", (_j, t) => { t.kind = "runs"; delete t.views; delete t.board_by; delete t.timeline_by; delete t.columns; }, /tabs\[0\]\.areas: areas is for an area tab/);
+    no("an area no pack declares", (_j, t) => { t.areas[2].area = "nowhere"; }, /tab ours merges area nowhere, which no pack declares/);
+    no("a column no area has", (_j, t) => { t.columns.push("nope"); }, /tab ours: column nope is not a field of req_status, req_own, req_library/);
+    no("a column of two types", (j) => { j.record_areas[0].fields[1] = { name: "topic", label: "Topic", type: "text" }; }, /tab ours: column topic is enum in area req_own and text in area req_library: a merged column is one type/);
+    no("a board with no board_by", (_j, t) => { delete t.board_by; }, /tab ours: a merged tab's board names its board_by/);
+    no("a board by a text field", (_j, t) => { t.board_by = "code"; }, /tab ours: board_by code must be a single-choice enum field/);
+    no("a timeline by a text field", (_j, t) => { t.timeline_by = "code"; }, /tab ours: timeline_by: a timeline orders records by one of their date fields or by updated/);
+    no("a field named source beside source words", (j) => { j.record_areas[1].fields.push({ name: "source", label: "Source", type: "text" }); }, /tab ours: area req_own has a field named source/);
+    no("a column the one area lacks", (j) => { j.tabs[1].columns = ["state"]; }, /tab library: column state is not a field of area req_library/);
+    no("a column listed twice", (_j, t) => { t.columns.push("code"); }, /tabs\[0\]\.columns: a column is listed twice/);
+
+    const ok = tryPack(status());
+    assert.equal(ok.r.status, 0, `a merged tab builds: ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const tabs = JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as any[];
+    const [ours, library] = tabs;
+    assert.deepEqual([ours.area, ours.areas], ["req_status", [{ area: "req_status", rows: "all", source: null }, { area: "req_own", rows: "all", source: "Our own" }, { area: "req_library", rows: "matched", source: "Shared" }]],
+      "its own area (the first), and each area with its rows and source word");
+    assert.deepEqual([ours.columns, ours.board_by, ours.timeline_by], [["source", "code", "topic", "state", "due"], "state", "due"], "its columns, board and timeline");
+    assert.deepEqual(ours.roles, ["member", "billing", "owner"], "the roles that may read every one of its areas (a viewer may not read req_own)");
+    assert.deepEqual(ours.empty, { title: "No requirement status yet.", text: "Ask your AI client to add one. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "emptied by its own area");
+    assert.deepEqual([library.columns, library.areas, library.roles.length], [["code", "weight"], undefined, 4], "a one-area tab's own columns");
+    const dflt = tryPack(status((_j, t) => { delete t.columns; }));
+    assert.equal(dflt.r.status, 0, dflt.r.stderr);
+    const cols = (JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(dflt.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as any[])[0].columns;
+    assert.deepEqual(cols, ["source", "state", "due", "code", "topic", "origin", "weight"], "default columns: the source words, then each area's list columns in order, without repeats");
+    console.log(`✓ a merged tab: ${m} malformed ones refused (area and areas, counts, repeats, a first matched area, source words, kinds, undeclared areas, columns, types across areas, board and timeline fields, a source field); built with its own area, rows, source words, columns and the roles that may read every area`);
+  }
+
+  // ---------- 2d. a home tab: an overview that includes the shell's sections (mold_v0-134) ----------
   {
     let m = 0;
     const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }]; };

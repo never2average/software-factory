@@ -1091,6 +1091,31 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   then a labelled region with `tabindex="0"`, so a keyboard can scroll it (axe `scrollable-region-focusable`,
   mold_v0-114; `web/src/hooks/use-scrolls-sideways.ts`); one that fits is not a tab stop. `npm run test:declarative-packs` refuses malformed `empty` blocks and checks the defaults;
   `npm run test:console-tabs` draws empty states, a scrolling table and a scrolling board.
+  **Columns and merged tabs** (mold_v0-135): an area tab's `columns` names its table's columns (and a board card's
+  fields), the area's list columns by default. An area tab may show several record areas as one list: `areas` in place
+  of `area`, 2 to 4 entries `{area, rows, source}`, config only. Rows are merged by record key: the first area's rows,
+  then each later area's rows that no earlier area holds (`rows: all`, the default); an area with `rows: matched` only
+  adds its fields to rows another area brings (a lookup by key), so a shared catalog joins the workspace's own rows
+  without listing the whole catalog. A row's fields are the union of its areas' fields (the first area in the list with
+  a value gives each; the title likewise; its time the latest), and `source` is the area's word in the tab's `source`
+  column (an enum of those words: a column, a board field). The first area is the tab's own: its label names the empty
+  state ("No <its label> yet.") and its onboarding step; a row opens the record of the first of its areas. Why a union
+  by key and not stacked sections or a join on a field: an app's "everything that applies, with its status" is one list
+  (one sort, one board, one count), its areas already share their keys (a status row is keyed by what it is the status
+  of, as Maxwell's ledger keys its control lines by the control's key), and a row only some areas hold (a control with no
+  status yet) still shows. gen-packs refuses an undeclared area, an area twice, a first area that brings no rows, a
+  column, `board_by` or `timeline_by` no area declares or that two areas declare with different types (an enum's options
+  are every declaring area's), a merged board with no `board_by`, and a `source` word beside an area field named
+  `source`. The tab is shown to the roles that may read every one of its areas, and hidden when one of them is withheld
+  (`mcp`); the views are the same (table, board, timeline, detail; a merged board offers no moves). The rows come from
+  `GET /api/records/tabs/<pack>/<tab>` (`src/record-merge.ts`): only a declared merged tab, each area read as on
+  `/api/records/<area>` (its read permission for the person, a shared area's rows, the workspace's own rows), `limit`
+  1-200 and a cursor that names the area being listed and its own cursor, so the order never depends on how the
+  database sorts one area's keys against another's; a page may hold fewer rows than `limit` (later areas' rows mostly
+  listed already) and still have a `next`. `npm run test:declarative-packs` refuses malformed merged tabs and checks the
+  resolved spec (`scripts/fixtures/packs/fixture_status`); `npm run test:merged-tabs` checks the rows, paging at every
+  size, two workspaces and the route's refusals in an embedded database; `npm run test:console-tabs` draws a merged
+  table, board, timeline, empty state and a narrow table in a headless browser.
   **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
   given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the packs' onboarding
   steps and the setup steps, only the next open one explained, beside the connection panel; folded to one line, "You're

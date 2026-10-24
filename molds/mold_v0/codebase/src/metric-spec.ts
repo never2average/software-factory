@@ -5,12 +5,57 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
 export type SpecChart = Chart & { pack: string };
 export type SpecTab = Tab & { pack: string };
+
+/**
+ * The areas an area tab shows (mold_v0-135): its `area`, or each of its `areas` (a merged tab), first the tab's own.
+ * Every other kind shows none.
+ */
+export interface MergedArea { area: string; rows: "all" | "matched"; source?: string }
+export const tabAreas = (t: Pick<Tab, "kind" | "area" | "areas">): MergedArea[] =>
+  t.kind !== "area" ? [] : t.areas ? t.areas.map((a) => ({ area: a.area, rows: a.rows ?? "all", ...(a.source !== undefined ? { source: a.source } : {}) })) : t.area ? [{ area: t.area, rows: "all" as const }] : [];
+/** The area a tab is named and emptied by: its own (the first of a merged tab's areas). */
+export const tabArea = (t: Pick<Tab, "kind" | "area" | "areas">): string | undefined => tabAreas(t)[0]?.area;
+
+/**
+ * A field as a merged tab shows it (mold_v0-135): the first of its areas that declares it gives its label and type; an
+ * enum's options are every declaring area's, in order (a value is shown with the label of the first that has it). The
+ * `source` column is an enum of the areas' source words. Null when no area of the tab declares it.
+ */
+export function tabField(t: Pick<Tab, "kind" | "area" | "areas">, areas: readonly SpecArea[], name: string): SpecArea["fields"][number] | null {
+  const list = tabAreas(t);
+  if (list.length > 1 && name === TAB_SOURCE_COLUMN) {
+    const words = [...new Set(list.flatMap((a) => (a.source ? [a.source] : [])))];
+    return words.length ? { name, label: "Source", type: "enum", options: words.map((w) => ({ value: w, label: w })) } as SpecArea["fields"][number] : null;
+  }
+  const declaring = list.map((a) => areas.find((x) => x.name === a.area)?.fields.find((f) => f.name === name)).filter((f): f is SpecArea["fields"][number] => !!f);
+  const first = declaring[0];
+  if (!first) return null;
+  if (first.type !== "enum" || declaring.length === 1) return first;
+  const options: { value: string; label?: string }[] = [];
+  for (const f of declaring) for (const o of f.options ?? []) {
+    const x = typeof o === "string" ? { value: o, label: o } : o;
+    if (!options.some((y) => y.value === x.value)) options.push(x);
+  }
+  return { ...first, options } as SpecArea["fields"][number];
+}
+
+/**
+ * A tab's table columns: its `columns`, else the area's list columns (a merged tab: the source column when an area has a
+ * source word, then each area's list columns in order, without repeats, at most 8).
+ */
+export function tabColumns(t: Pick<Tab, "kind" | "area" | "areas" | "columns">, areas: readonly SpecArea[]): string[] {
+  if (t.columns) return [...t.columns];
+  const list = tabAreas(t);
+  const cols: string[] = list.length > 1 && list.some((a) => a.source) ? [TAB_SOURCE_COLUMN] : [];
+  for (const a of list) for (const c of areas.find((x) => x.name === a.area)?.list_columns ?? []) if (!cols.includes(c)) cols.push(c);
+  return cols.slice(0, 8);
+}
 
 /** What a metric may be over besides a record area: the workspace's run results and its runs. */
 export const RUN_SOURCES = ["run_results", "runs"] as const;
@@ -248,7 +293,7 @@ export function checkViews(b: BuildViews): string[] {
     const p = t.pack, w = `tab ${t.id}`;
     if (b.tabs.some((x) => x !== t && x.pack === p && x.id === t.id)) at(p, `${w} is declared twice`);
     if ((b.pages?.[p] ?? []).includes(t.id)) at(p, `${w}: its id is also a page of the pack (both would be /app/packs/${p}/${t.id})`);
-    if (t.kind === "area") {
+    if (t.kind === "area" && !t.areas) {
       const a = area(t.area!);
       if (!a) { at(p, `${w} shows area ${t.area}, which no pack declares`); continue; }
       const views = t.views ?? ["table", "detail"];
@@ -263,6 +308,38 @@ export function checkViews(b: BuildViews): string[] {
         if (typeof c === "string") at(p, `${w}: timeline_by: ${c}`);
         else if (!("data" in c.at) && (t.timeline_by ?? "updated") !== "updated") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
       }
+      for (const c of t.columns ?? []) if (!a.fields.some((f) => f.name === c)) at(p, `${w}: column ${c} is not a field of area ${a.name}`);
+    }
+    if (t.kind === "area" && t.areas) {
+      // A merged tab (mold_v0-135): every area declared; a field it shows means one thing in every area that has it.
+      const list = tabAreas(t);
+      const found = list.map((x) => area(x.area));
+      const missing = list.filter((_, i) => !found[i]).map((x) => x.area);
+      if (missing.length) { at(p, `${w} merges area${missing.length > 1 ? "s" : ""} ${missing.join(", ")}, which no pack declares`); continue; }
+      const as = found as SpecArea[];
+      const sourced = list.some((x) => x.source);
+      const clash = as.filter((a) => a.fields.some((f) => f.name === TAB_SOURCE_COLUMN)).map((a) => a.name);
+      if (sourced && clash.length) at(p, `${w}: area ${clash.join(", ")} has a field named ${TAB_SOURCE_COLUMN}, the merged tab's column of its areas' source words: drop the source words, or show another tab`);
+      const kind = (f: SpecArea["fields"][number]) => `${f.type}${f.multiple ? "[]" : ""}`;
+      /** A field the tab shows: declared by one of its areas, of one type wherever it is declared. */
+      const shown = (name: string, why: string): SpecArea["fields"][number] | null => {
+        if (name === TAB_SOURCE_COLUMN && sourced) return tabField(t, as, name);
+        const decl = as.flatMap((a) => a.fields.filter((f) => f.name === name).map((f) => ({ a: a.name, f })));
+        if (!decl.length) { at(p, `${w}: ${why} ${name} is not a field of ${as.map((a) => a.name).join(", ")}`); return null; }
+        const kinds = [...new Set(decl.map((d) => kind(d.f)))];
+        if (kinds.length > 1) { at(p, `${w}: ${why} ${name} is ${decl.map((d) => `${kind(d.f)} in area ${d.a}`).join(" and ")}: a merged column is one type in every area that has it`); return null; }
+        return tabField(t, as, name);
+      };
+      const views = t.views ?? ["table", "detail"];
+      if (views.includes("board")) {
+        if (!t.board_by) at(p, `${w}: a merged tab's board names its board_by (an enum field of its areas, or ${TAB_SOURCE_COLUMN})`);
+        else { const f = shown(t.board_by, "board_by"); if (f && (f.type !== "enum" || f.multiple)) at(p, `${w}: board_by ${t.board_by} must be a single-choice enum field`); }
+      }
+      if (views.includes("timeline") && (t.timeline_by ?? "updated") !== "updated") {
+        const f = shown(t.timeline_by!, "timeline_by");
+        if (f && f.type !== "date") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
+      }
+      for (const c of t.columns ?? []) shown(c, "column");
     }
     if (t.kind === "runs" || t.kind === "reports") { if (!b.jobKinds) at(p, `${w}: the build has no job kind, so there are no runs to show`); }
     if (t.kind === "schedules" && !b.jobKinds) at(p, `${w}: the build has no job kind to schedule, so it has no Schedules page`);
@@ -300,7 +377,7 @@ export const TAB_KIND_LABELS: Record<Tab["kind"], string> = {
   overview: "Overview", area: "Records", runs: "Runs", reports: "Reports", credentials: "Credentials", usage: "Activity", schedules: "Schedules",
   notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", page: "Page", files: "Files",
 };
-export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === t.area)?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
+export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === tabArea(t))?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
 
 /**
  * Who sees a tab: its `roles` (every role when absent), narrowed by what it shows. An area tab: the area's read
@@ -310,8 +387,11 @@ export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.
 export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" | "metrics" | "charts">): AccountRole[] {
   let roles: AccountRole[] = ACCOUNT_ROLES.filter((r) => !t.roles || t.roles.includes(r));
   if (t.kind === "area") {
-    const a = b.areas.find((x) => x.name === t.area);
-    roles = a ? roles.filter((r) => areaReadRoles(a).includes(r)) : [];
+    // A merged tab (mold_v0-135): the roles that may read every one of its areas.
+    for (const { area } of tabAreas(t)) {
+      const a = b.areas.find((x) => x.name === area);
+      roles = a ? roles.filter((r) => areaReadRoles(a).includes(r)) : [];
+    }
   }
   // A files tab (mold_v0-056): the roles that may read every area of the pack (src/workspace-files.ts storeReadable).
   if (t.kind === "files") roles = roles.filter((r) => b.areas.filter((a) => a.pack === t.pack).every((a) => areaReadRoles(a).includes(r)));
@@ -355,13 +435,15 @@ export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "ki
   const stepText = (s: { label: string; help?: string }) => s.help?.trim() || `Next step on the Setup page: ${s.label}.`;
   let d: ResolvedEmpty;
   if (t.kind === "area") {
-    const a = b.areas.find((x) => x.name === t.area);
-    const label = a?.label ?? t.area ?? "";
+    // A merged tab (mold_v0-135) is emptied by its own area, the first: the one that brings its rows first.
+    const own = tabArea(t) ?? "";
+    const a = b.areas.find((x) => x.name === own);
+    const label = a?.label ?? own;
     const title = `No ${lowerFirst(label)} yet.`;
-    const step = (b.steps ?? []).filter((s) => s.done_when === `record:${t.area}`).sort((x, y) => Number(y.pack === t.pack) - Number(x.pack === t.pack))[0];
+    const step = (b.steps ?? []).filter((s) => s.done_when === `record:${own}`).sort((x, y) => Number(y.pack === t.pack) - Number(x.pack === t.pack))[0];
     if (step) d = { title, text: stepText(step), cta: stepCta(step) };
     else if (a?.scope === "platform") d = { title, text: fill("Every {workspace} shares these. They appear here once they are added for everyone."), cta: null };
-    else if (o.addable(t.area!)) d = { title, text: fill("Ask your AI client to add one. Not connected yet? The Setup page shows how."), cta: SETUP };
+    else if (o.addable(own)) d = { title, text: fill("Ask your AI client to add one. Not connected yet? The Setup page shows how."), cta: SETUP };
     else if ((b.kinds ?? []).some((k) => k.pack === a?.pack)) d = { title, text: fill("They appear here as {runs} add them. The Setup page shows how to start one."), cta: SETUP };
     else d = { title, text: fill("They appear here as they are added."), cta: null };
   } else if (t.kind === "runs") d = { title: `No ${lowerFirst(tabLabel(t, b))} yet.`, text: fill("Ask your AI client to start one: it shows here while it runs, and after."), cta: SETUP };

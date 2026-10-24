@@ -1014,7 +1014,7 @@ const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, off
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
-const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAreas, tabColumns, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
 const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
@@ -1064,7 +1064,10 @@ if (loaded.length === entries.length) {
   views = { problems,
     metrics: b.metrics.map((m) => ({ pack: m.pack, name: m.name, label: m.label, unit: metricUnit(m, over(m)), roles: metricRoles(m, b.areas) })),
     charts: b.charts.map((c) => ({ pack: c.pack, name: c.name, title: c.title, description: c.description ?? null, type: c.type, metrics: c.metrics, palette: c.palette })),
-    tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b) })) };
+    // An area tab's columns, resolved; a merged tab (mold_v0-135) also by its own area (the first) and its areas, each
+    // with its rows and source word.
+    tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b),
+      ...(t.kind === "area" ? { columns: tabColumns(t, b.areas) } : {}), ...(t.areas ? { area: tabAreas(t)[0].area, areas: tabAreas(t) } : {}) })) };
 }
 // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
 // pack's mcp settings name real tools, names fit, no two take one name, and none takes a name of the shell's own tools
@@ -1508,7 +1511,7 @@ function packGuideData() {
 
 /** The declared tabs a workspace is shown: not one over an area or runs whose list tool the pack withholds (mold_v0-067). */
 function shownTabs() {
-  return packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack))
+  return packViews.tabs.filter((t) => !(t.kind === "area" && (t.areas ?? [{ area: t.area }]).some((a) => listWithheld(a.area))) && !(t.kind === "runs" && runsWithheld(t.pack))
     // nor one that opens a shell page the build hides (mold_v0-130)
     && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
 }
@@ -1525,7 +1528,8 @@ function viewsModule() {
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
-    ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
+    ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
+      columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
     charts: t.charts ?? [],
     ...(t.include?.length ? { include: t.include } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
@@ -1547,6 +1551,9 @@ function viewsModule() {
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
     "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
+    "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
+    "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
+    "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
     "  /** The shell's sections an overview shows above its charts, in order (mold_v0-134): the Setup page's checklist, the notices. */\n" +
     "  include?: ('setup' | 'notices')[];\n" +
