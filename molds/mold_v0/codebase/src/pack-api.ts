@@ -927,7 +927,11 @@ export type Chart = z.output<typeof ChartSchema>;
 /**
  * A console tab (mold_v0-058): an entry of the /app sidebar and the page it opens. When any pack declares tabs, the
  * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
- *   overview      the tab's `charts` (mold_v0-063)
+ *   overview      the tab's `charts` (mold_v0-063); `include` puts the shell's own sections above them, in its order
+ *                 (mold_v0-134, a home page): `setup` the Setup page's checklist (the connection, the setup steps and
+ *                 the packs' onboarding steps), compact, folded to one line once every step is done; `notices` the
+ *                 records due soon. /app or /app/notices then redirects to the tab, and a build refuses a setup or a
+ *                 notices tab beside it (its page would only redirect here)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
  *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
@@ -948,6 +952,8 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
   "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
+/** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
+export const TAB_INCLUDES = ["setup", "notices"] as const;
 /**
  * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
  * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
@@ -1012,6 +1018,7 @@ export const TabSchema = z.object({
   board_by: name.optional(),
   timeline_by: point.optional(),
   charts: z.array(name).max(12).optional(),
+  include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
@@ -1027,7 +1034,10 @@ export const TabSchema = z.object({
     if (t.areas[0]!.rows === "matched") bad("the first area brings the rows (rows: all): a matched area only adds fields to them", "areas", "0", "rows");
   }
   if (t.columns && new Set(t.columns).size !== t.columns.length) bad("a column is listed twice", "columns");
-  if (t.kind === "overview" && !t.charts?.length) bad("an overview tab lists its charts", "charts");
+  if (t.kind === "overview" && !t.charts?.length && !t.include?.length) bad("an overview tab lists its charts (or includes a section of the shell's)", "charts");
+  if (t.include && t.kind !== "overview") bad("include is for an overview tab", "include");
+  if (t.include && new Set(t.include).size !== t.include.length) bad("a section is included twice", "include");
+  if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
