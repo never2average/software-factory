@@ -13,7 +13,8 @@
   --muted-foreground: oklch(0.2435 0 0);
   --accent: oklch(0.9461 0 0);
   --accent-foreground: oklch(0.2435 0 0);
-  --destructive: oklch(0.5523 0.1927 32.7272);
+  /* Text on a tinted destructive surface (a destructive button: 10% of this, 20% hovered) keeps 4.5:1 (mold_v0-120). */
+  --destructive: oklch(0.5 0.1927 32.7272);
   --destructive-foreground: oklch(0.9934 0.0032 17.2118);
   --border: oklch(0.9037 0 0);
   --input: oklch(0.9731 0 0);
@@ -68,7 +69,9 @@
   --muted-foreground: oklch(0.7155 0 0);
   --accent: oklch(0.3132 0 0);
   --accent-foreground: oklch(0.9851 0 0);
-  --destructive: oklch(0.6368 0.2078 25.33);
+  /* Lighter and less saturated than the light theme's: destructive text on the dark surfaces, and on its own 10-20%
+     tint over them, keeps 4.5:1 (mold_v0-120). */
+  --destructive: oklch(0.76 0.15 25.33);
   --destructive-foreground: oklch(0.9851 0 0);
   --border: oklch(0.2809 0 0);
   --input: oklch(0.2603 0 0);

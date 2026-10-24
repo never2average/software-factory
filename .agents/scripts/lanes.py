@@ -760,6 +760,13 @@ def self_test():
                        ("render.py", [sys.executable, os.path.join(t, "console", "render.py"), "--self-test"])):
         r = subprocess.run(argv, capture_output=True, text=True, timeout=300)
         ok(r.returncode == 0, f"  ...{what} --self-test: {(r.stdout or r.stderr).strip().splitlines()[-1:] or ['no output']}")
+    # mold_v0-088: the tap-target rules (a control clipped out of view by a scrolling box is not a target) on fixed pages;
+    # it drives the browser the console lanes use, so it runs where that browser is installed (the lanes need it anyway).
+    if subprocess.run(["node", os.path.join(t, "console", "deps-check.mjs")], capture_output=True, text=True, timeout=60).returncode == 0:
+        r = subprocess.run(["node", os.path.join(t, "responsiveness", "responsive.mjs"), "--self-test"], capture_output=True, text=True, timeout=300)
+        ok(r.returncode == 0, f"  ...responsive.mjs --self-test: {(r.stdout or r.stderr).strip().splitlines()[-1:] or ['no output']}")
+    else:
+        print("note: responsive.mjs --self-test not run: no Playwright Chromium on this machine (npm i -g playwright && npx playwright install chromium)")
     r = subprocess.run(["node", "--input-type=module", "-e", f"import {{ isLoopback }} from {json.dumps(os.path.join(t, 'console', 'browser.mjs'))};"
                         "process.exit(isLoopback('http://127.0.0.1:3400/app') && isLoopback('http://localhost:1/') && !isLoopback('https://octillion.vercel.app/') && !isLoopback('http://127.0.0.1.example.org/') ? 0 : 1)"],
                        capture_output=True, text=True, timeout=60)

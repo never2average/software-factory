@@ -82,7 +82,7 @@ export function AdminKeyVault() {
       <span className='flex flex-col gap-0.5'>{p.last_used_at ? <When d={p.last_used_at} /> : <span className='text-muted-foreground'>never</span>}
         <span className='text-muted-foreground text-xs tabular-nums'>{COMPACT.format(keysOf(p).reduce((t, c) => t + c.uses, 0))} uses</span></span>
     ) },
-    { key: 'on', label: 'On', className: 'w-12 text-right', keep: true,
+    { key: 'on', label: 'On', className: 'w-16 text-right', keep: true,
       render: (p) => <span onClick={(e) => e.stopPropagation()}><Gate need='keys'><Switch aria-label={`${p.slug} on`} checked={p.enabled} disabled={provOn.isPending} onCheckedChange={(c) => provOn.mutate({ slug: p.slug, enabled: c })} /></Gate></span> }
   ];
   return (
