@@ -1,10 +1,9 @@
 'use client';
-// Health › the packs' runs (GET /compute/runs, src/compute-jobs.ts runKinds; mold_v0-104): in a build without the
-// session engine (whose Jobs and Sessions tables are its own), every job kind the packs declare, by its label and in
-// the build's word for a run, with how its runs in the range ended across every account, what they cost, how long
-// they took and the latest failure. The range is kept in the URL (?section=runs&rsince=24h). Read only.
-import { useRouter, useSearchParams } from 'next/navigation';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+// FinOps › the packs' runs (GET /spend/runs, src/compute-jobs.ts runKinds; mold_v0-104, on FinOps since mold_v0-126 in
+// the pricing Experiments tab's place): in a build without the session engine, every job kind the packs declare, by its
+// label and in the build's word for a run, with how its runs in FinOps' period ended across every account, what they
+// cost, how long they took and the latest failure. Read only.
+import type { ReactNode } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usd } from '@/lib/display-format';
 import { W } from '@/lib/vocabulary';
@@ -16,38 +15,27 @@ interface RunKind {
   total: number; queued: number; running: number; succeeded: number; failed: number; cancelled: number; accounts: number;
   usd: number; avg_seconds: number | null; last_at: string | null; last_error: string | null; last_failed_at: string | null;
 }
-interface RunKinds { since: string; hours: number; words: { one: string; many: string }; kinds: RunKind[] }
+interface RunKinds { since: string | null; hours: number; range: { from: string; to: string } | null; words: { one: string; many: string }; kinds: RunKind[] }
 
-const RANGES = [['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days']] as const;
 const n = (x: number) => <span className='tabular-nums'>{x.toLocaleString()}</span>;
 const secs = (s: number | null) => (s == null ? '—' : s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
 
-/** The runs tab: one row per job kind, its range in the URL. */
-export function PackRunKinds() {
-  const url = useSearchParams();
-  const router = useRouter();
-  const since = url.get('rsince') ?? '7d';
-  const { data, error, isLoading } = useAdmin<RunKinds>(`/compute/runs?since=${encodeURIComponent(since)}`, { keep: true });
+/** The runs tab: one row per job kind over `query` (FinOps' period, from=…&to=…), FinOps' date bar above it. */
+export function PackRunKinds({ query, bar }: { query: string; bar?: ReactNode }) {
+  const { data, error, isLoading } = useAdmin<RunKinds>(`/spend/runs?${query}`, { keep: true });
   const many = data?.words.many ?? W.Runs;
-  const setSince = (v: string) => {
-    const p = new URLSearchParams(url.toString());
-    p.set('section', 'runs');
-    if (v === '7d') p.delete('rsince'); else p.set('rsince', v);
-    router.replace(`/admin/health?${p.toString()}`, { scroll: false });
-  };
+  const spent = (data?.kinds ?? []).reduce((a, k) => a + k.usd, 0);
   return (
     <div className='flex min-w-0 flex-col gap-3'>
       <div className='flex flex-wrap items-center justify-between gap-3'>
-        <p className='text-muted-foreground text-sm'>{many} by kind, across every account. A kind with none in the range shows zero.</p>
-        <NativeSelect aria-label='Range' value={since} onChange={(e) => setSince(e.target.value)}>
-          {RANGES.map(([v, l]) => <NativeSelectOption key={v} value={v}>{l}</NativeSelectOption>)}
-        </NativeSelect>
+        {bar}
+        <p className='text-muted-foreground text-sm'>{many} by kind, across every account: {usd(spent)} in this period. A kind with none shows zero.</p>
       </div>
       <ErrorBox error={error} />
       {isLoading && !data ? <Skeleton className='h-64' /> : (
         <DataList
           rows={data?.kinds}
-          empty={`No ${many.toLowerCase()} in this range.`}
+          empty={`No ${many.toLowerCase()} in this period.`}
           minWidth={880}
           cols={[
             { label: 'Kind', render: (k) => <span className='flex flex-col gap-0.5'><span>{k.label}</span><Mono>{k.pack}/{k.kind}</Mono></span> },
