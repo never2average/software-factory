@@ -2959,6 +2959,13 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "index": {
+                "type": "string",
+                "enum": [
+                  "automatic",
+                  "manual"
+                ]
               }
             },
             "required": [
@@ -3569,6 +3576,33 @@
         },
         "generated": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "console": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "hide": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "activity",
+              "usage",
+              "billing",
+              "profile",
+              "credentials",
+              "schedules",
+              "notices",
+              "files"
+            ]
+          }
         }
       },
       "additionalProperties": false

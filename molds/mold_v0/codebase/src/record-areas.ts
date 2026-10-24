@@ -330,7 +330,11 @@ async function scanWorkspace(orgId: number, area: RecordArea, keyConds: Parsed["
 export async function listPlatform(area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {
   const p = queryOf(area, opts);
   if (isLive(area)) return (await live()).listLive(area, null, p);
-  return listTable(area, null, p);
+  const page = await listTable(area, null, p);
+  // An upstream catalog's area read empty, unfiltered (mold_v0-128): start its automatic index and wait a moment for it.
+  if (!page.records.length && !p.after && !p.conds.length && area.repo?.kind === "upstream_catalog"
+    && await (await import("./repository-index.js")).onEmptyCatalogArea(area).catch(() => false)) return listTable(area, null, p);
+  return page;
 }
 
 async function listWorkspace(orgId: number, area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {

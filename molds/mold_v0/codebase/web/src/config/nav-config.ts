@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
@@ -30,6 +30,8 @@ export const adminNav: NavGroup[] = [
         { title: 'Compute', url: '/admin/compute', icon: 'adjustments', shortcut: ['g', 'c'], items: [] },
         { title: 'FinOps', url: '/admin/finops', icon: 'trendingUp', items: [] },
         { title: 'Agent configuration', url: '/admin/configuration', icon: 'settings', items: [] },
+        // The packs' data repositories (mold_v0-129): their pins, index state and Index now, in a build that has one.
+        ...(repositoryCount ? [{ title: 'Data repositories', url: '/admin/repositories', icon: 'book' as const, items: [] }] : []),
         { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] },
         { title: 'Admins', url: '/admin/admins', icon: 'teams', items: [] }
       ]
@@ -42,8 +44,13 @@ export const adminNav: NavGroup[] = [
   ...usageAdminNav
 ];
 
+/** A shell page the build hides (mold_v0-130, src/console-pages.ts), or one under it: left out of the sidebar. */
+const hidden = (url: string) => hiddenConsoleUrls.some((h) => url === h || url.startsWith(`${h}/`) || url.startsWith(`${h}?`));
+const withoutHidden = (groups: NavGroup[]): NavGroup[] =>
+  hiddenConsoleUrls.length ? groups.map((g) => ({ ...g, items: g.items.filter((i) => !hidden(i.url)) })).filter((g) => g.items.length > 0) : groups;
+
 /** The shell's own /app sidebar (with a host pack's entries among its own), and what the declarative packs add after it. */
-const shellPortalNav: NavGroup[] = [
+const shellPortalNav: NavGroup[] = withoutHidden([
   ...withHostPortalNav([
     {
       label: 'Get started',
@@ -69,7 +76,7 @@ const shellPortalNav: NavGroup[] = [
   ...recordPortalNav,
   ...workspacePortalNav,
   ...usagePortalNav
-];
+]);
 
 /**
  * The /app sidebar: when packs declare tabs (mold_v0-058), exactly those, in their order and groups (each tab limited to
