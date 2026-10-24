@@ -196,11 +196,35 @@ email.pitch = {product} audits your applications against your regulators' contro
   (answer an address, or `later` to leave it unset: the app then sends from the shell's placeholder, which the provider
   refuses). The answer is kept in `application.json` `profile` and in `answers.json`, which `factory.py validate` reads
   beside the brief.
+**The legal pages** (mold_v0-109): the company behind the app, which turns on its Terms of use (`/terms`) and Privacy
+notice (`/privacy`) and the links to them on the landing page's footer, the sign-in pages and the install pages:
+
+```
+## Profile
+legal.company_name = Acme Ltd
+legal.contact_email = legal@acme.com
+legal.jurisdiction = England and Wales
+legal.effective_date = 2026-10-23
+legal.terms_url = https://acme.com/terms
+legal.privacy_url = https://acme.com/privacy
+```
+
+- `company_name` (the legal name) and `contact_email` (where people write about the terms and their data) are needed;
+  `jurisdiction` (whose law governs the terms; absent, the pages do not say), `effective_date` (YYYY-MM-DD; absent,
+  intake records the date it first saw this company and address, and keeps it) and the company's own pages
+  (`terms_url`, `privacy_url`, https:// only: then that link wins and the shell's page redirects there) are optional.
+  Plain text on one line, no brackets.
+- A new app whose brief has no `legal.` lines gets one question, `legal`: answer the legal name and the address
+  (`Acme Ltd, legal@acme.com`), or `later` to leave the app without legal pages. The answer is kept in
+  `application.json` `profile.legal` and in `answers.json`, which `factory.py validate` reads beside the brief. An app
+  already deployed is not stopped for it: add the lines to its brief and re-run intake to turn its pages on.
+- The pages are the shell's neutral template in the app's own words (`molds/mold_v0/codebase/web/src/features/site/legal-text.ts`):
+  a reasonable start, not legal advice. A company with its own reviewed terms sets `terms_url` and `privacy_url`.
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
   `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer.app`
   (the factory's `defaults.source_offer`), `billing`, `entitlements`, or anything else. A profile setting is never a
-  secret: every value is a number, true or false, or the word `licensor_owned`.
+  secret: every value is a number, true or false, the word `licensor_owned`, an address or a line of the legal pages.
 - A host pack that brings its own value for the same field (`host.profile.limits`) is refused at the build: the shell
   merges a host pack's profile at the top level, so the app's would replace it whole.
 - Where it takes effect: `branding.py prepare` and `packs.py apply` write it into `build/<app_id>/profile.json` over the

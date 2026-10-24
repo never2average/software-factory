@@ -189,6 +189,10 @@ def run(n=0, fails=None):
         schema = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "codebase", "packs", "pack.schema.json")))
         def go(app, brief, answers=None):
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
+            # The legal question (mold_v0-109) is answered "later" until the app's answers.json records an answer (intake
+            # reads it like any earlier answer), so these cases are about the pack.
+            ap = os.path.join(A, app, "answers.json")
+            if not (os.path.isfile(ap) and "legal" in json.load(open(ap))): answers = {**(answers or {}), "legal": "later"}
             if answers is not None: json.dump(answers, open(os.path.join(T, "ans.json"), "w"))
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
                                   cwd=T, capture_output=True, text=True)

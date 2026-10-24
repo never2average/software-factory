@@ -859,6 +859,13 @@ def _app_profile(app_id, docs, brief_root=None, answers=None):
         said = str((answers or {}).get("email_from_address") or "").strip()
         if not perrs and said and not (want or {}).get("email_from_address") and (a.get("profile") or {}).get("email_from_address") == said:
             want = dict(want or {}, email_from_address=said)
+        # The legal pages (mold_v0-109): the company may be an intake answer (answers.json, as the sender), and intake dates
+        # a brief's legal lines that name no effective_date (the date first recorded for that company and address).
+        have = (a.get("profile") or {}).get("legal")
+        if not perrs and isinstance(have, dict):
+            bl = (want or {}).get("legal")
+            if bl is None and (answers or {}).get("legal") == have: want = dict(want or {}, legal=have)
+            elif isinstance(bl, dict) and "effective_date" not in bl and dict(bl, effective_date=have.get("effective_date")) == have: want = dict(want, legal=have)
         if not perrs and want != (a.get("profile") or None):
             errs.append(f"{app_id}/application.json: profile ({app_profile.describe(a.get('profile'))}) is not what its brief {a['brief']} says "
                         f"({app_profile.describe(want)}); the brief is where profile settings are set: re-run intake on it")

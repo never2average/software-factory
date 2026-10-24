@@ -1312,6 +1312,26 @@ get started, install) and a footer that carries the source offer whenever the in
 neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
 (code, mold_v0-039) stays its own.
 
+**Legal and crawl pages (mold_v0-109).** The app's own `profile.json` `legal` (`company_name`, `contact_email`,
+`effective_date` YYYY-MM-DD; optionally `jurisdiction`, and `terms_url` and `privacy_url`, the company's own https://
+pages, which then win) turns on the console's `/terms` and `/privacy`: the shell's neutral template
+(`web/src/features/site/legal-text.ts`) in the build's words (`{product}`, `{account}`, `{runs}`... through
+`web/src/lib/vocabulary.ts`) with the company's facts placed as text after the words are filled, so nothing a profile
+writes is read as a placeholder; a paragraph needing a fact the profile leaves out (the jurisdiction) is not shown. The
+landing page's footer, the sign-in, sign-up and consent pages (`AuthShell`) and the install pages (`src/install-pages.ts`)
+link Terms and Privacy. Without `legal` there are no such pages (404) and no links: the shell never publishes terms
+nobody agreed to. The rules are `src/legal.ts` (plain text on one line with no markup or brackets, one address, a date
+that exists, own pages https:// only), checked by `gen-packs.mjs`, which writes the block to `src/legal.generated.ts` and
+`web/src/config/legal.generated.ts`, never into the profile modules (the MCP surface is unchanged); a host pack's
+profile may not set it. `web/src/app/robots.ts` lets crawlers read the public pages and keeps them out of `/app`,
+`/admin`, `/api` and `/auth`; `web/src/app/sitemap.ts` lists the landing page, `/install` and the legal pages the console
+serves itself (`web/src/features/site/public-pages.ts`; `npm run test:legal` fails when a public page under
+`web/src/app/(site)` is not listed). Both are on the console's own address, read when asked (`web/src/lib/site-url.ts`:
+`APP_CONSOLE_URL`, else `NEXT_PUBLIC_APP_URL`, else Vercel's production address, which is the custom domain once one is
+attached), as are the icons' and share image's absolute URLs. The factory's intake asks a new app for the company (the
+brief's `## Profile` `legal.*` lines, or one question; `later` leaves the pages off; docs/INTAKE.md). The lanes grade
+`/terms` and `/privacy` only when the build serves them (`testing/console/surface.mts`).
+
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes

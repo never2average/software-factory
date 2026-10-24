@@ -5,7 +5,8 @@
 //   packs  every pack in the build, host packs first (src/hosts.generated.ts, then src/packs.generated.ts)
 //   tools  the customer MCP server's tools by owner: a host pack's toolNames, a pack's own and generated tools, and the
 //          record-area tools (list_records, get_record) as the shell's
-//   pages  the console's pages: the shell's own (every page.tsx without a dynamic segment, /auth left out: Clerk's widget),
+//   pages  the console's pages: the shell's own (every page.tsx without a dynamic segment, /auth left out: Clerk's widget;
+//          /terms and /privacy only when the build serves them, mold_v0-109),
 //          a host pack's routes.json (app, admin, site), and a pack's tabs, pages and record areas from the generated
 //          registry (web/src/config/pack-nav.generated.ts)
 // Reads only: no database is opened and nothing is written.
@@ -18,6 +19,20 @@ export interface Surface { packs: { id: string; name: string; kind: "host" | "pa
 
 const imp = (lane: string, rel: string) => import(pathToFileURL(path.join(lane, rel)).href);
 
+/**
+ * The legal pages (mold_v0-109, web/src/config/legal.generated.ts): /terms and /privacy are the console's own only when the
+ * build's profile.json has `legal` (without it they are not found) and the company did not name its own page for it
+ * (then the console's page redirects off this machine). Any other route: shown.
+ */
+function legalShown(lane: string, route: string): boolean {
+  const own = ({ "/terms": "terms_url", "/privacy": "privacy_url" } as Record<string, string>)[route];
+  if (!own) return true;
+  const f = path.join(lane, "web", "src", "config", "legal.generated.ts");
+  const m = existsSync(f) ? /export const legal: Legal \| null = ([\s\S]*?);\n/.exec(readFileSync(f, "utf8")) : null;
+  const legal = m ? JSON.parse(m[1]!) as Record<string, string> | null : null;
+  return Boolean(legal && !legal[own]);
+}
+
 function shellPages(lane: string): Page[] {
   const root = path.join(lane, "web", "src", "app");
   const out: Page[] = [];
@@ -29,6 +44,7 @@ function shellPages(lane: string): Page[] {
         if (segs.some((s) => s.startsWith("["))) continue;            // dynamic: graded through the packs that fill it
         const route = "/" + segs.filter((s) => !/^\(.*\)$/.test(s)).join("/");
         if (route === "/auth" || route.startsWith("/auth/")) continue;  // Clerk's own widget: not rendered in the lane console
+        if (!legalShown(lane, route)) continue;                          // a legal page the build does not serve itself (mold_v0-109)
         const signedIn = route === "/app" || route.startsWith("/app/") || route === "/admin" || route.startsWith("/admin/");
         out.push({ pack: "shell", path: route, label: route, signed_in: signedIn });
       }
