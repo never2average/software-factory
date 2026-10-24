@@ -33,13 +33,22 @@ for the Clerk Backend API and Stripe (session and OAuth tokens are minted by the
 | Joined | a membership exists (the invitation was accepted) | Clerk |
 | Connected | first connector request (`initialize`) | `mcp_events` |
 | First tool call | first successful `tools/call` | `mcp_events` |
-| Product onboarded | onboarding research completed, or a product saved by hand | Postgres |
-| Simulation run | first simulation | Postgres |
-| Report read | first `get_visibility_report` | `mcp_events` |
+| *each onboarding step of the packs* | its `done_when`: a run of that kind succeeded (`run:`), a record in that area (`record:`), the credential set (`credential:`), that tool called (`tool:`) | Postgres |
+
+Those five stages are every build's (`src/admin.ts` `accountStages`). After them come the packs' onboarding steps
+(`definePack({ onboarding })`, `src/onboarding.ts`), in pack order, labelled as the pack labels them; steps whose
+`done_when` is `workspace`, `connected` or `first_call` are the shell's own stages already. With zero packs the funnel
+ends at the first tool call. A build whose host pack has the session engine's tables (`src/host-tables.ts`) has that
+engine's three stages instead of the packs' steps: its product saved or researched, its first run, its report read.
 
 `/admin` lists accounts that need a person, for example: invited 2+ days ago and not accepted, an expired invitation,
-joined but never connected, connected but no tool call (tools switched off in the client), failed onboarding, a past-due
-subscription, or 80% of the monthly model budget used.
+joined but never connected, connected but no tool call (tools switched off in the client), two days at a stage with the
+next onboarding step not done (and nothing of theirs running), a past-due subscription, or 80% of the monthly model
+budget used.
+
+The account pages, Analytics and Health show the session engine's products, research and runs only in a build that has
+it. A build without it shows the packs' runs there instead (mold_v0-104): per job kind, by the kind's label and in the
+build's word for a run (an account's page, the weekly chart, Health's runs tab), and its month's spend is its runs'.
 
 ## Sign-in: built-in or Clerk
 
