@@ -3,7 +3,9 @@
  * pages. With no area declared nothing is mounted.
  *
  *   /api/records                  a signed-in person of a workspace (the portal's session check, src/app.ts): the
- *                                 areas, a page of an area, one record with its links. Read only: no route writes.
+ *                                 areas, a page of an area, one record with its links, a page of a merged tab
+ *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts). Read only: no
+ *                                 route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
  *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete"
  */
@@ -12,7 +14,10 @@ import { assertGuarded, need } from "./admin-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { GeneratedOp } from "./mcp-catalog.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
-import { PackError } from "./pack-api.js";
+import { tabAreas } from "./metric-spec.js";
+import { PackError, type Tab } from "./pack-api.js";
+import { packRegistry } from "./packs.js";
+import { mergedPage } from "./record-merge.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -40,6 +45,13 @@ export function recordAppRouter(): Router {
   // The person asking: an area's read permission is theirs to pass (mold_v0-057).
   const actor = (res: Response) => { const s = res.locals.session as Session; return { role: s.accountRole ?? null, userId: s.user ?? null }; };
   r.get("/areas", answer(async () => ({ areas: recordAreas().map(areaSummary) })));
+  // A merged tab's page (mold_v0-135): only a declared tab's areas, each read as on /:area (its read permission, its
+  // list withheld: 404 as there).
+  r.get("/tabs/:pack/:tab", answer(async (req, res) => {
+    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && !!t.areas);
+    if (!tab || tabAreas(tab).some((a) => areaOpWithheld(a.area, "list"))) throw new PackError("Not found", 404);
+    return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
+  }));
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
