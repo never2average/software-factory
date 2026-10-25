@@ -1,0 +1,11 @@
+{
+  "phase": "P4 (mold_v0-140, with mold_v0-121): the host pack's console nav, components and redirects (console), its Setup page (setup, mcp.error_hints), global settings (settings), admin MCP words (admin_mcp) and the session engine's account-stage words (account_stages) as config; the sidebars, Setup, settings, admin MCP, redirects and every answer unchanged",
+  "allow": [
+    { "key": "generated::src/hosts.generated.ts", "reason": "the packs' server config is written here as PACK_CONFIG (settings, admin_mcp, setup, mcp.error_hints, account_stages), which the host entry handed over in code before; a build that declares none writes the file as before" },
+    { "key": "generated::src/packs.generated.ts", "reason": "the host pack's declared mcp block now carries its error_hints (the Setup page's plain-language fixes, HINTS in its code before)" },
+    { "key": "generated::web/src/config/pack-host-nav.generated.ts", "reason": "the host pack's sidebar entries and components are its pack.json console.nav and console.components, written here as data instead of an import of its nav.ts; a build with no host nav writes the file as before" },
+    { "key": "generated::web/src/config/build-facts.generated.ts", "reason": "the session engine's account-stage words (pack.json account_stages, mold_v0-121) are written here as ENGINE_WORDS for the Accounts pages; a build without the engine writes the file as before" },
+    { "key": "generated::src/profile.generated.ts", "reason": "the sign-up form's subtitle is the profile's sign_up_subtitle (the host pack's host.profile), its nav.ts signUpSubtitle before" },
+    { "key": "generated::web/src/config/profile.generated.ts", "reason": "the same subtitle in the console's profile, which the sign-up form reads" }
+  ]
+}

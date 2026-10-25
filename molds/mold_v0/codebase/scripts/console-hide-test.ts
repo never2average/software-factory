@@ -110,7 +110,9 @@ try {
       ["a page twice", (_i, j) => { j.console = { hide: ["activity", "activity"] }; }, undefined, /each page once/],
       ["an unknown key", (_i, j) => { j.console = { show: ["activity"] }; }, undefined, /console/],
       ["the profile's unknown page", () => {}, { console: { hide: ["admin"] } }, /profile\.json console\.hide: "admin" is not a page/],
-      ["the profile's unknown key", () => {}, { console: { nav: [] } }, /profile\.json console: unknown field nav/],
+      ["the profile's unknown key", () => {}, { console: { show: [] } }, /profile\.json console: unknown field show/],
+      // A pack's own console keys (mold_v0-140): never the app's profile.
+      ["a pack's nav in the profile", () => {}, { console: { nav: [] } }, /profile\.json console: nav is a pack's \(its pack\.json console\.nav\), never the app's profile/],
     ];
     let i = 0;
     for (const [what, edit, profile, re] of bad) {
