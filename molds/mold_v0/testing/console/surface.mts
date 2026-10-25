@@ -44,6 +44,7 @@ function shellPages(lane: string): Page[] {
         if (segs.some((s) => s.startsWith("["))) continue;            // dynamic: graded through the packs that fill it
         const route = "/" + segs.filter((s) => !/^\(.*\)$/.test(s)).join("/");
         if (route === "/auth" || route.startsWith("/auth/")) continue;  // Clerk's own widget: not rendered in the lane console
+        if (route.startsWith("/console-status/")) continue;             // always a 404: graded as a status page below (mold_v0-131)
         if (!legalShown(lane, route)) continue;                          // a legal page the build does not serve itself (mold_v0-109)
         const signedIn = route === "/app" || route.startsWith("/app/") || route === "/admin" || route.startsWith("/admin/");
         out.push({ pack: "shell", path: route, label: route, signed_in: signedIn });
@@ -105,6 +106,10 @@ export async function surface(laneArg: string): Promise<Surface> {
     add({ pack: a.pack, path: `/app/records/${a.name}`, label: `${a.label} (/app/records/${a.name})`, signed_in: true });
     if (a.scope === "platform") add({ pack: a.pack, path: `/admin/records/${a.name}`, label: `${a.label} (/admin/records/${a.name})`, signed_in: true });
   }
+  // The standard status page (mold_v0-131), where a person meets it: an unknown address in the portal, in the admin console
+  // and anywhere else (the API server sends the console's page). Graded like any page; `status` is the code it must answer.
+  for (const [p, signedIn] of [["/app/lane-status-check", true], ["/admin/lane-status-check", true], ["/lane-status-check", false]] as const)
+    out.pages.push({ pack: "shell", path: p, label: `${p} (not found: the status page)`, signed_in: signedIn, status: 404 } as Page);
   return out;
 }
 

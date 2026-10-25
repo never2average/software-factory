@@ -10,6 +10,10 @@
 //   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
 //   src/legal.generated.ts               profile.json `legal` (mold_v0-109, src/legal.ts), checked; null without one
 //   web/src/config/legal.generated.ts    the same, for the console's /terms, /privacy, footers and sitemap
+//   src/access-request.generated.ts      the access-request form's own fields (mold_v0-102, src/access-request.ts): the
+//                                        packs' pack.json access_request, or the app's profile.json one; [] without
+//   web/src/config/access-request.generated.ts  the same, for the request form and the staff console's Requests page
+//   web/src/lib/access-request.generated.ts     a copy of src/access-request.ts, so the console runs the server's rules
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -78,6 +82,9 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
 const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+// The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
+const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
+const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -113,8 +120,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
-  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts)
-  "landing", "guide", "console"]);
+  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
+  // (mold_v0-102, src/access-request.ts)
+  "landing", "guide", "console", "access_request"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -910,6 +918,8 @@ let profileLanding;
 let profileLegal = null;
 /** profile.json `console` (mold_v0-130, src/console-pages.ts): the shell pages the app hides, joined with its packs'. */
 let profileConsole;
+/** profile.json `access_request` (mold_v0-102, src/access-request.ts): the app's own request fields, which replace the packs'. */
+let profileAccess;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -920,6 +930,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   if (hostProfiles[0]?.host.profile?.legal !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set legal: only the app's own profile.json names the company behind it (mold_v0-109)");
+  if (hostProfiles[0]?.host.profile?.access_request !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set access_request: a pack declares its request fields in pack.json `access_request` (mold_v0-102)");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
   if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
@@ -963,6 +974,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "landing") { profileLanding = v; continue; }
       // The shell pages the customer console hides (mold_v0-130, src/console-pages.ts): joined with the packs' below.
       if (k === "console") { const bad = consoleProblems(v, "profile.json"); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileConsole = v; continue; }
+      // The access-request form's own fields (mold_v0-102, src/access-request.ts): checked with the packs' below.
+      if (k === "access_request") { profileAccess = v; continue; }
       // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
       if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
@@ -974,7 +987,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1166,6 +1179,15 @@ const dueAreaCount = recordAreas.filter((a) => a.due).length;
  */
 for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
 const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
+/**
+ * The access-request form's own fields (mold_v0-102, src/access-request.ts): the packs' pack.json `access_request` in pack
+ * order (a key once in a build), or the app's profile.json `access_request` in their place. [] asks the shell's own only.
+ */
+const ACCESS_FIELDS = (() => {
+  const r = joinAccessFields(packs.map((p) => ({ id: p.id, spec: p.json?.access_request })), profileAccess);
+  for (const pr of r.problems) { const i = pr.indexOf(": "); fail(pr.slice(0, i), pr.slice(i + 2)); }
+  return r.fields;
+})();
 const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
@@ -1490,6 +1512,17 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   `export const landingClients: readonly LandingClient[] = ${json(landingClients)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
+// The access-request form's own fields (mold_v0-102, src/access-request.ts), checked above; []: the shell's own fields only.
+files.set(path.join(OUT, "src", "access-request.generated.ts"), HEADER +
+  "import type { AccessField } from \"./access-request.js\";\n\n" +
+  "/** The access-request form's own fields (mold_v0-102): the packs' pack.json access_request, or profile.json's; [] without. */\n" +
+  `export const GENERATED_ACCESS_FIELDS: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+files.set(path.join(OUT, "web", "src", "config", "access-request.generated.ts"), HEADER +
+  "import type { AccessField } from '@/lib/access-request.generated';\n\n" +
+  "/** The access-request form's own fields (mold_v0-102, src/access-request.ts): the request form asks them, /admin/requests labels them. */\n" +
+  `export const accessFields: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+files.set(path.join(OUT, "web", "src", "lib", "access-request.generated.ts"),
+  HEADER.replace("from packs/*/pack.json and profile.json", "from src/access-request.ts (a copy, so the console runs the server's rules)") + readFileSync(ACCESS_REQUEST, "utf8"));
 // The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
 files.set(path.join(OUT, "src", "legal.generated.ts"), HEADER +
   "import type { Legal } from \"./legal.js\";\n\n" +

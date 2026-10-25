@@ -9,12 +9,22 @@ import { BUILTIN_SESSION_COOKIES, CLERK } from '@/lib/auth/provider';
 const isProtected = createRouteMatcher(['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)']);
 
 /**
+ * The page's own path for its server components (mold_v0-131, features/status/server.ts): a status page names the
+ * address to come back to after signing in, and the right refusal for the area it is in.
+ */
+function withPath(req: NextRequest) {
+  const h = new Headers(req.headers);
+  h.set('x-console-path', req.nextUrl.pathname + req.nextUrl.search);
+  return NextResponse.next({ request: { headers: h } });
+}
+
+/**
  * Clerk's invitation link lands on /app/?__clerk_ticket=…&__clerk_status=sign_in|sign_up. Signed out, the ticket goes to
  * Clerk's own sign-in (or sign-up) page, which accepts the invitation with it; a plain auth.protect() redirect would
  * bury it in redirect_url, where nothing reads it. Signed in, the page lands it (src/features/portal/invitation-landing.tsx).
  */
 const clerk = clerkMiddleware(async (auth, req) => {
-  if (!isProtected(req)) return;
+  if (!isProtected(req)) return withPath(req);
   const ticket = req.nextUrl.searchParams.get('__clerk_ticket'), status = req.nextUrl.searchParams.get('__clerk_status');
   // "complete": the invitation was already accepted; signing in plainly is all that is left.
   if (ticket && status !== 'complete' && !(await auth()).userId) {
@@ -25,6 +35,7 @@ const clerk = clerkMiddleware(async (auth, req) => {
     return NextResponse.redirect(url);
   }
   await auth.protect();
+  return withPath(req);
 });
 
 /**
@@ -33,7 +44,7 @@ const clerk = clerkMiddleware(async (auth, req) => {
  * and /admin/session with it (src/lib/auth/server.ts), and every API call checks it.
  */
 function builtin(req: NextRequest) {
-  if (!isProtected(req) || BUILTIN_SESSION_COOKIES.some((c) => req.cookies.has(c))) return NextResponse.next();
+  if (!isProtected(req) || BUILTIN_SESSION_COOKIES.some((c) => req.cookies.has(c))) return withPath(req);
   const url = new URL('/auth/sign-in', req.url);
   url.searchParams.set('redirect_url', req.nextUrl.pathname + req.nextUrl.search);
   return NextResponse.redirect(url);

@@ -26,29 +26,35 @@ import { EmptyState, type EmptySpec } from './empty';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { fill } from '@/lib/vocabulary';
+import { httpError } from '@/features/status/from-error';
+import { StatusPage } from '@/features/status/status-page';
 
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, body);
   return body;
 }
 
 
 /** The charts of a tab, from one request for all their metrics. */
-function ChartGrid({ charts }: { charts: PackChartSpec[] }) {
+function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?: boolean }) {
   const names = useMemo(() => [...new Set(charts.flatMap((c) => c.metrics))], [charts]);
   const url = `/api/metrics?names=${encodeURIComponent(names.join(','))}`;
   const { data, error } = useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as { metrics?: MetricResult[]; error?: string };
-    if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+    if (!res.ok) throw httpError(res.status, body);
     return new Map((body.metrics ?? []).map((m) => [m.name, m]));
   }, [url]);
   if (!charts.length) return null;
   if (error) return <ErrorState error={error} />;
   const results = data ?? new Map<string, MetricResult>();
+  // A tab that is only charts, every one hidden from this role (each metric refused, 403): the status page that says
+  // so (mold_v0-131), never an empty page.
+  const refused = (c: PackChartSpec) => c.metrics.some((n) => { const r = results.get(n); return !!r && 'error' in r && r.status === 403; });
+  if (whole && data && charts.every(refused)) return <StatusPage kind='denied' area='app' />;
   return (
     <div className='grid border-t border-l lg:grid-cols-2'>
       {charts.map((c) => <ChartCell key={`${c.pack}/${c.name}`} chart={c} results={results} />)}
@@ -59,7 +65,8 @@ function ChartGrid({ charts }: { charts: PackChartSpec[] }) {
 /** An overview tab: the shell's sections it includes (mold_v0-134), then its charts. */
 function OverviewTab({ tab }: { tab: PackTabSpec }) {
   const charts = tabCharts(tab);
-  if (!tab.include?.length) return <ChartGrid charts={charts} />;
+  // Charts alone: every one refused is the denied status page (mold_v0-131), never an empty grid.
+  if (!tab.include?.length) return <ChartGrid charts={charts} whole />;
   return (
     <div className='flex flex-col gap-8'>
       {tab.include.map((x) => (x === 'setup' ? <SetupChecklist key={x} /> : <DueSoonSection key={x} />))}
@@ -246,12 +253,13 @@ function RunsTab({ reports, label, empty }: { reports: boolean; label: string; e
 }
 
 export function TabPage({ tab }: { tab: PackTabSpec }) {
-  const { role, loaded } = useAccountRole();
+  const { role, loaded, error } = useAccountRole();
   // Nothing is asked of the server until the role is known (the server refuses what the role may not read anyway).
   const allowed = role === null || tab.roles.includes(role);
   return (
     <PageContainer pageTitle={tab.label} pageDescription={tab.description ?? undefined}>
-      {!loaded ? <LoadingCards count={1} /> : !allowed ? <p className='text-muted-foreground text-sm'>Your role can't see this tab. Ask an account owner.</p>
+      {/* /me refused (no account, suspended, signed out) or a role the tab is not for: the status page (mold_v0-131). */}
+      {error && !loaded ? <ErrorState error={error} /> : !loaded ? <LoadingCards count={1} /> : !allowed ? <StatusPage kind='denied' area='app' />
         : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
         : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} label={tab.label} empty={tab.empty} />

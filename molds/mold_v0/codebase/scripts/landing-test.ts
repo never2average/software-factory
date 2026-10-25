@@ -353,7 +353,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.match(p.html, /<ol[^>]*>[\s\S]*Step 1: <\/span>Sign up/, "steps are an ordered list, numbered for a screen reader");
     assert.match(p.html, /Again<!-- -->: back to step 1|Again: back to step 1/, "its loop label");
     assert.match(p.html, /data-slot="accordion"[\s\S]*Is it good\?/, "the FAQ: an accordion of its questions");
-    assert.match(p.html, /SEBI CSCRF 2024/, "the hero's strip of badges");
+    assert.match(p.html, /<ul aria-labelledby="intro-strip" class="[^"]*font-mono[^"]*"><li>SEBI CSCRF 2024<\/li><li>DPDP Rules 2025<\/li><\/ul>/, "the hero's strip of names, set in the logo row's type: a row of names, not pills");
     assert.match(p.html, /<ul aria-label="More links"[^>]*><li><a href="https:\/\/github\.com\/example-org\/app"[^>]* rel="noopener noreferrer">Open source on GitHub<\/a>/, "the hero's own links: an outside link, no opener");
     assert.match(p.html, /<dd[^>]*>826<\/dd>/, "a metric");
     assert.ok(/aria-label="AI clients"[\s\S]*?Claude<\/span>[\s\S]*?Cursor<\/span>/.test(p.html) && !/aria-label="AI clients"[^]*?ChatGPT<\/span>/.test(p.html.split('id="faq"')[0]!), "where you work: the clients it named, in its order");
