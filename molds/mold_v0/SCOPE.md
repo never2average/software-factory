@@ -256,8 +256,8 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   `web/src/packs/octillion/` (pages, features, sidebar entries, `routes.json`), at their old URLs.
 - **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
   and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
-- **Docs.** The customer guide (`web/src/packs/octillion/guide.ts`), the product's internal docs and case studies
-  (`packs/octillion/docs/`), the README.
+- **Docs.** The customer guide and the product's internal docs and case studies, as config since mold_v0-139 (its
+  pack.json `guide` and `staff_docs`), the README.
 - **Other.** The client skill (`packs/octillion/integrations/claude-skill/octillion/`, the download in
   `packs/octillion/public/downloads/`), the operator scripts and the product's own smoke test and connector check
   (`packs/octillion/scripts/`: `npm run pack:run -- <script>`).

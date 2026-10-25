@@ -19,11 +19,18 @@
 //    them (generated: false keeps only connecting, the tools and the account); the corpus cites them at
 //    /app/docs/<slug>. gen-packs refuses a bad guide (an unsafe link, raw HTML, a generated page's title, guide.dir)
 //    with the pack and the page, and any file beside a declarative pack's pack.json (mold_v0-124: a page file, code).
-// 5. A host pack is untouched: with its guide code the build writes PACK_GUIDE null (its guide replaces the shell's as
-//    before, beside a declarative pack too), and a host pack may not declare pack.json guide.
+// 5. A host pack's guide is its pack.json guide (mold_v0-139): the whole guide (HOST_GUIDE; PACK_GUIDE null): its pages in
+//    its groups, no generated page and no reserved title, its MCP tools page followed by the tools in its tool_groups
+//    (each in the order listed, a missing one left out), "More tools" and the slash commands. Refused: guide.generated on a
+//    host pack, its old web/src/packs/<id>/guide.ts and packs/<id>/docs/*.md, and a declarative pack's guide beside it.
+//    tool_groups in a declarative pack groups those tools first on its generated MCP tools page.
+// 6. Staff docs (mold_v0-139, src/staff-docs.ts): pack.json staff_docs join the shell's docs/ on /admin/docs
+//    (web/scripts/sync-docs.mjs) and in the docs corpus, in one folder's order, each its `# title` then its markdown; a
+//    relative link between docs and HTML (shown as text) pass, an unsafe link, an image or a # heading do not; a path the
+//    shell's docs/ or another pack has, or a bad path, is refused.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -74,6 +81,7 @@ const tracker = (extra: Record<string, unknown> = {}) => ({ ...structuredClone(F
 
 try {
   const { compileGuide, pageProblems } = await import("../src/pack-guide.js");
+  const { StaffDocSchema, staffDocProblems } = await import("../src/staff-docs.js");
 
   // ---------- 1. the guide's checks ----------
   {
@@ -127,7 +135,31 @@ try {
     refusedGuide("a page with raw HTML", { markdown: "## One\n\n<iframe src=x>" }, /guide page "One": line 1: raw HTML/);
     const crlf = compileGuide({ markdown: "\r\n## Ay\r\n\r\nFirst.\r\n\r\n### Part\r\n\r\nx" }, []);
     assert.deepEqual(crlf.pages.map((p: { title: string; body: string }) => [p.title, p.body]), [["Ay", "First.\n\n## Part\n\nx"]], "line endings normalised");
-    console.log("✓ pack.json guide: markdown only (no raw HTML, scripts, images or # titles), safe links only, pages and groups checked; guide.dir refused (inline only)");
+    // tool_groups (mold_v0-139): kept in order; a tool in two groups, a group twice, "More tools" or a bad name refused.
+    const tg = compileGuide({ markdown: "## One\n\nx", tool_groups: [{ title: "Start", tools: ["get_started", "b_tool"] }, { title: "Rest", tools: ["a_tool"] }] }, []);
+    assert.deepEqual(tg.problems, []);
+    assert.deepEqual(tg.tool_groups, [["Start", ["get_started", "b_tool"]], ["Rest", ["a_tool"]]], "tool groups as declared");
+    refusedGuide("a tool in two groups", { markdown: "## One\n\nx", tool_groups: [{ title: "A", tools: ["t"] }, { title: "B", tools: ["t"] }] }, /tool t is in two groups \(A and B\)/);
+    refusedGuide("a tool group twice", { markdown: "## One\n\nx", tool_groups: [{ title: "A", tools: ["t"] }, { title: "A", tools: ["u"] }] }, /a group is listed twice/);
+    refusedGuide("a tool group named More tools", { markdown: "## One\n\nx", tool_groups: [{ title: "More tools", tools: ["t"] }] }, /"More tools" is where the tools no group names go/);
+    refusedGuide("a prompts_intro on two lines", { markdown: "## One\n\nx", prompts_intro: "One\ntwo" }, /prompts_intro: one line/);
+    refusedGuide("an unsafe link in prompts_intro", { markdown: "## One\n\nx", prompts_intro: "See [x](javascript:alert(1))." }, /guide\.prompts_intro: line 1: the link/);
+    assert.equal(compileGuide({ markdown: "## One\n\nx", prompts_intro: "Ready-made chains:" }, []).prompts_intro, "Ready-made chains:");
+    refusedGuide("a tool name that is not one", { markdown: "## One\n\nx", tool_groups: [{ title: "A", tools: ["Not A Tool"] }] }, /a tool's name/);
+    console.log("✓ pack.json guide: markdown only (no raw HTML, scripts, images or # titles), safe links only, pages, groups and tool groups checked; guide.dir refused (inline only)");
+
+    // Staff docs (mold_v0-139): the page rules, with HTML shown as text and relative links between docs allowed.
+    const doc = (path: string, markdown: string, title = "A doc") => ({ path, title, markdown });
+    assert.deepEqual(staffDocProblems([doc("guide.md", "Type **\"Onboard <name>, <website>\"**. See [journeys](journeys.md), [the study](../case-studies/resend.md#results), [home](/app) and [x](https://example.org).\n")]), [],
+      "HTML-looking placeholders and links between docs pass");
+    for (const [what, md, re] of [["an unsafe link", "A [x](javascript:alert(1)).", /the link "javascript:alert\(1\)"/], ["an image", "![x](https://example.org/x.png)", /an image/],
+      ["a # heading", "Intro\n\n# Another", /a # heading inside a page/], ["an http link", "[x](http://example.org)", /the link "http:\/\/example\.org"/]] as const)
+      assert.ok(staffDocProblems([doc("a.md", md)]).some((x: string) => re.test(x) && x.startsWith("staff_docs[a.md]")), `a staff doc with ${what}: refused`);
+    assert.ok(staffDocProblems([doc("a.md", "x"), doc("a.md", "y")]).some((x: string) => /two docs at one path/.test(x)), "two docs at one path");
+    for (const bad of ["../x.md", "/abs.md", "x.txt", "A/B.md", "a/.hidden.md", "a/b/c/d/e.md"]) assert.equal(StaffDocSchema.safeParse(doc(bad, "x")).success, false, `the path ${bad}: refused`);
+    assert.equal(StaffDocSchema.safeParse(doc("case-studies/resend.md", "x")).success, true);
+    assert.equal(StaffDocSchema.safeParse({ ...doc("a.md", "x"), dir: "docs" }).success, false, "inline only: no other key");
+    console.log("✓ staff docs: markdown with HTML as text and links between docs; unsafe links, images, # headings, bad or repeated paths refused");
   }
 
   // ---------- 2. zero packs: the shell's guide, unchanged ----------
@@ -230,22 +262,83 @@ try {
       /notes\.txt: a declarative pack .* everything a declarative pack says is in its pack\.json/);
     console.log("✓ a pack's own guide comes first in its groups, the generated pages after; a bad guide (guide.dir included) is refused with its pack and page, and so is any file beside a declarative pack's pack.json");
 
-    // ---------- 5. a host pack, untouched ----------
-    const hostPack = (guide?: unknown) => ({ "pack.json": JSON.stringify({ id: "hosty", name: "Hosty", version: "1", host: { entry: "host.ts" }, ...(guide === undefined ? {} : { guide }) }),
-      "host.ts": `import { defineHost } from "../../src/pack-host.js";\nexport default defineHost({ id: "hosty" });\n` });
-    const hostWeb = { "web/src/packs/hosty/index.ts": "export default {};\n", "web/src/packs/hosty/guide.ts": "export const PAGE_GROUPS: [string, string[]][] = [['Host', ['Host page']]];\nexport const guidePages = () => [{ slug: 'host-page', title: 'Host page', group: 'Host', body: 'The host guide.' }];\n" };
-    const h = world({ hosty: hostPack() }, { host_packs: ["hosty"] }, hostWeb);
+    // ---------- 5. a host pack's guide is its pack.json guide (mold_v0-139): the whole guide ----------
+    const hostPack = (extra: Record<string, unknown> = {}, files: Record<string, string> = {}) => ({ "pack.json": JSON.stringify({ id: "hosty", name: "Hosty", version: "1", host: { entry: "host.ts" }, ...extra }),
+      "host.ts": `import { defineHost } from "../../src/pack-host.js";\nexport default defineHost({ id: "hosty" });\n`, ...files });
+    const hostWeb = { "web/src/packs/hosty/index.ts": "export default {};\n" };
+    // The tools a host guide groups: the declarative tracker's, beside it (a host pack's own tools are its code's).
+    const first = world({ hosty: hostPack(), fixture_tracker: { "pack.json": JSON.stringify(tracker()) } }, { host_packs: ["hosty"] }, hostWeb);
+    assert.equal(first.gen.status, 0, first.out);
+    guideOf(first.dir);
+    const catalog = JSON.parse(readFileSync(path.join(first.dir, "web/src/content/mcp-tools.generated.json"), "utf8")) as { tools: { name: string }[]; prompts: { name: string }[] };
+    const names = catalog.tools.map((t) => t.name);
+    assert.ok(names.length >= 3, `the tracker brings tools (${names.join(", ")})`);
+    const hostGuide = { markdown: "## What Hosty does\n\nIt hosts.\n\n## MCP tools\n\nYour client calls these.\n\n## Billing\n\nPay.\n\n### Plans\n\nSome.",
+      groups: [{ title: "Getting started", pages: ["What Hosty does"] }, { title: "Reference", pages: ["MCP tools"] }, { title: "Account", pages: ["Billing"] }],
+      tool_groups: [{ title: "First of all", tools: [names[1]!, "not_in_this_build", names[0]!] }], prompts_intro: "Hosty's own chains:" };
+    const h = world({ hosty: hostPack({ guide: hostGuide }), fixture_tracker: { "pack.json": JSON.stringify(tracker()) } }, { host_packs: ["hosty"] }, hostWeb);
     assert.equal(h.gen.status, 0, h.out);
     const hg = guideOf(h.dir);
     assert.equal(hg.data, null, "a host pack's guide: PACK_GUIDE null");
-    assert.deepEqual(hg.pages.map((p) => p.title), ["Host page"], "the host pack's guide replaces the shell's, as before");
-    const hd = world({ hosty: hostPack(), fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { markdown: "## Tracker\n\nx" } })) } }, { host_packs: ["hosty"] }, hostWeb);
-    assert.equal(hd.gen.status, 0, hd.out);
-    const hdg = guideOf(hd.dir);
-    assert.equal(hdg.data, null, "a host pack's guide beside a declarative pack: the host's");
-    assert.deepEqual(hdg.pages.map((p) => p.title), ["Host page"]);
-    refusedBuild("pack.json guide in a host pack", { hosty: hostPack({ markdown: "## X\n\ny" }) }, /guide: a host pack's customer guide is its console code/, { host_packs: ["hosty"] }, hostWeb);
-    console.log("✓ a host pack is untouched: its guide code replaces the shell's (PACK_GUIDE null, beside a declarative pack too), and it may not declare pack.json guide");
+    assert.deepEqual(hg.groups, [["Getting started", ["What Hosty does"]], ["Reference", ["MCP tools"]], ["Account", ["Billing"]]], "the host's pages in its groups, nothing generated (no reserved title either)");
+    assert.equal(page(hg, "Billing").body, "Pay.\n\n## Plans\n\nSome.");
+    const tools = page(hg, "MCP tools").body;
+    const rest = names.slice(2);
+    assert.ok(tools.startsWith(`Your client calls these.\n\n## First of all\n\n| Tool | What it does |\n|---|---|\n| \`${names[1]}\` | `), `its own text, then its first tool group in the order listed (${tools.slice(0, 300)})`);
+    assert.ok(tools.indexOf(`\`${names[0]}\``) > tools.indexOf(`\`${names[1]}\``) && !tools.includes("not_in_this_build"), "listed order; a tool the build lacks is left out");
+    assert.ok(tools.includes("## More tools") && rest.every((n) => tools.indexOf(`\`${n}\``) > tools.indexOf("## More tools")), "the rest under More tools");
+    assert.equal(/## Slash commands\n\nHosty's own chains:\n\n- /.test(tools), catalog.prompts.length > 0, "the slash commands when there are any, after the guide's own line");
+    assert.ok(hg.corpus.some((c) => c.href === "/app/docs/billing#plans" && /Some\./.test(c.text)), "the corpus cites the host guide's pages");
+    assert.match(readFileSync(path.join(h.dir, "web/src/config/pack-guides.generated.ts"), "utf8"), /export const HOST_GUIDE: unknown = \{\n {2}"pack": "hosty"/, "HOST_GUIDE carries the host's guide");
+    // No MCP tools page of its own: the console adds one in Reference.
+    const hn = world({ hosty: hostPack({ guide: { markdown: "## Only page\n\nx" } }) }, { host_packs: ["hosty"] }, hostWeb);
+    assert.equal(hn.gen.status, 0, hn.out);
+    assert.deepEqual(guideOf(hn.dir).groups, [["Guide", ["Only page"]], ["Reference", ["MCP tools"]]], "an MCP tools page in Reference when the host wrote none");
+    // A host pack with no guide: the packs' guide beside it, as before.
+    const hp = world({ hosty: hostPack(), fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { markdown: "## Tracker\n\nx" } })) } }, { host_packs: ["hosty"] }, hostWeb);
+    assert.equal(hp.gen.status, 0, hp.out);
+    assert.ok(guideOf(hp.dir).pages.some((p) => p.title === "Tracker"), "no host guide: the packs' guide");
+    refusedBuild("guide.generated in a host pack", { hosty: hostPack({ guide: { markdown: "## X\n\ny", generated: true } }) }, /guide\.generated: a host pack's guide is the whole guide/, { host_packs: ["hosty"] }, hostWeb);
+    refusedBuild("a host pack's guide.ts", { hosty: hostPack() }, /web\/src\/packs\/hosty\/guide\.ts: the customer guide is pack\.json guide \(mold_v0-139\)/, { host_packs: ["hosty"] },
+      { ...hostWeb, "web/src/packs/hosty/guide.ts": "export const PAGE_GROUPS = [];\n" });
+    refusedBuild("a host pack's docs/*.md", { hosty: hostPack({}, { "docs/notes.md": "# Notes\n\nx" }) }, /packs\/hosty\/pack\.json: docs\/notes\.md: staff docs are pack\.json staff_docs/, { host_packs: ["hosty"] }, hostWeb);
+    refusedBuild("a declarative pack's guide beside a host guide", { hosty: hostPack({ guide: { markdown: "## X\n\ny" } }), fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { markdown: "## Tracker\n\nx" } })) } },
+      /packs\/fixture_tracker\/pack\.json: guide: host pack hosty's guide is the whole customer guide/, { host_packs: ["hosty"] }, hostWeb);
+    console.log("✓ a host pack's guide is pack.json guide: the whole guide (its pages in its groups, its MCP tools page grouped by tool_groups, More tools, slash commands), in the corpus; guide.generated, guide.ts, docs/*.md and a second guide refused");
+
+    // tool_groups in a declarative pack: its groups first on the generated MCP tools page (after Start here).
+    const dt = world({ fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { tool_groups: [{ title: "Mine", tools: [names.at(-1)!] }] } })) } });
+    assert.equal(dt.gen.status, 0, dt.out);
+    const dtg = guideOf(dt.dir);
+    const heads = [...page(dtg, "MCP tools").body.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+    assert.equal(heads.filter((x) => x !== "Start here")[0], "Mine", `the pack's own tool group first (${heads.join(", ")})`);
+    assert.match(page(dtg, "MCP tools").body, new RegExp(`## Mine\\n\\n\\| Tool \\| What it does \\|\\n\\|---\\|---\\|\\n\\| \`${names.at(-1)}\` \\|`));
+    console.log("✓ a declarative pack's tool_groups lead its generated MCP tools page");
+
+    // ---------- 6. staff docs (mold_v0-139) ----------
+    const staffHost = [{ path: "onboarding.md", title: "Onboarding", markdown: "How to <name> it. See [the study](case-studies/one.md#why).\n\n## Steps\n\nOne.\n" },
+      { path: "case-studies/one.md", title: "Case study: one", markdown: "Why.\n\n## Why\n\nBecause; back to [onboarding](../onboarding.md).\n" }];
+    const sd = world({ hosty: hostPack({ staff_docs: staffHost }), fixture_tracker: { "pack.json": JSON.stringify(tracker({ staff_docs: [{ path: "tracker.md", title: "Tracker notes", markdown: "Notes.\n" }] })) } }, { host_packs: ["hosty"] }, hostWeb);
+    assert.equal(sd.gen.status, 0, sd.out);
+    const sync = spawnSync(process.execPath, [path.join(sd.dir, "web", "scripts", "sync-docs.mjs")], { cwd: path.join(sd.dir, "web"), encoding: "utf8" });
+    assert.equal(sync.status, 0, sync.stderr);
+    const admin = JSON.parse(/export const ADMIN_DOCS: AdminDoc\[\] = ([\s\S]*);\n$/.exec(readFileSync(path.join(sd.dir, "web/src/content/admin-docs.generated.ts"), "utf8"))![1]!) as { slug: string; path: string; group: string; title: string; body: string }[];
+    const shell = readdirSync(path.join(sd.dir, "docs")).filter((f) => f.endsWith(".md"));
+    assert.deepEqual(admin.map((d) => d.path), [...shell, "onboarding.md", "tracker.md", "case-studies/one.md"].sort((a, b) => { const x = a.split("/"), y = b.split("/"); for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1; return x.length - y.length; }),
+      "the shell's docs and every pack's staff docs, as one folder");
+    const one = admin.find((d) => d.path === "case-studies/one.md")!;
+    assert.deepEqual([one.slug, one.group, one.title, one.body], ["case-studies-one", "case-studies", "Case study: one", `# Case study: one\n\n${staffHost[1]!.markdown}`], "a doc as a file at its path would be");
+    const sdc = guideOf(sd.dir).corpus;
+    assert.ok(sdc.some((c) => c.area === "admin" && c.href === "/admin/docs/onboarding#steps" && c.title === "Onboarding"), "the corpus cites a staff doc's section");
+    assert.ok(sdc.some((c) => c.area === "admin" && c.href === "/admin/docs/tracker"), "a declarative pack's staff docs too");
+    refusedBuild("a staff doc at a shell doc's path", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ staff_docs: [{ path: shell[0]!, title: "X", markdown: "x" }] })) } },
+      new RegExp(`staff_docs\\[${shell[0]!.replace(".", "\\.")}\\]: the shell's docs/ has a doc at that path`));
+    refusedBuild("two packs' staff docs at one path", { hosty: hostPack({ staff_docs: [{ path: "x.md", title: "X", markdown: "x" }] }), fixture_tracker: { "pack.json": JSON.stringify(tracker({ staff_docs: [{ path: "x.md", title: "Y", markdown: "y" }] })) } },
+      /staff_docs\[x\.md\]: pack (hosty|fixture_tracker) has a doc at that path/, { host_packs: ["hosty"] }, hostWeb);
+    refusedBuild("an unsafe link in a staff doc", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ staff_docs: [{ path: "x.md", title: "X", markdown: "[a](javascript:alert(1))" }] })) } },
+      /packs\/fixture_tracker\/pack\.json: staff_docs\[x\.md\]: line 1: the link "javascript:alert\(1\)"/);
+    refusedBuild("a bad staff doc path", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ staff_docs: [{ path: "../x.md", title: "X", markdown: "x" }] })) } }, /staff_docs/);
+    console.log("✓ staff docs: every pack's pack.json staff_docs on /admin/docs and in the corpus, beside the shell's docs as one folder; a taken path, an unsafe link or a bad path refused");
   }
 } finally {
   rmSync(TMP, { recursive: true, force: true });
