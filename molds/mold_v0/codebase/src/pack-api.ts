@@ -1133,6 +1133,13 @@ export const CredentialSchema = z.object({
   area: name.optional(),
   environments: z.array(envLabel).min(1).max(20).optional(),
   deliver_as: deliverAs,
+  /**
+   * mold_v0-014: a GitHub repository token. When the platform holds a GitHub App (key vault provider github_app) and the
+   * workspace has connected an installation of it, a run receiving this field gets a short-lived installation token
+   * (read-only contents, the installation's repositories, narrowed per asset by the workspace's owners) instead of a
+   * pasted value; with no app or no installation the pasted value is delivered as before.
+   */
+  github_app: z.boolean().optional(),
 }).strict()
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
