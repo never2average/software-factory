@@ -269,7 +269,7 @@ try {
       assert.equal((await rpc(r1.body.access_token)).status, 200);
       const wider = await form("/oauth/token", { grant_type: "refresh_token", refresh_token: r1.body.refresh_token, client_id: clientId, scope: "mcp admin" });
       assert.equal(wider.status, 400); assert.equal(wider.body.error, "invalid_scope");
-      // wider used r1's refresh token: it was consumed. A replay of the first one ends the grant.
+      // A refused scope leaves r1's refresh token as it was (mold_v0-087; it is used further down). A replay of the first one ends the grant.
       const replay = await form("/oauth/token", { grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: clientId });
       assert.equal(replay.status, 400); assert.equal(replay.body.error, "invalid_grant");
       const after = await rpc(r1.body.access_token);
@@ -317,12 +317,21 @@ try {
       secrets.push(n4.body.access_token, n4.body.refresh_token);
       // The grant itself is unchanged: the person's connected apps still show what they allowed.
       assert.equal((await db.query<{ scope: string }>("SELECT g.scope FROM oauth_grants g JOIN oauth_tokens t ON t.grant_id = g.id WHERE t.token_hash = $1", [sha256(n4.body.access_token)]))[0]?.scope, "mcp offline_access");
-      // Never wider than the refresh token: a grant of mcp only cannot gain offline_access on refresh, and the refused
-      // refresh used its token up (rotation), so the grant is not left with a live refresh token by mistake.
+      // Never wider than the refresh token: a grant of mcp only cannot gain offline_access on refresh. The refusal changes
+      // nothing: the refresh token still works for what it holds (it is not used up by a request it refused).
       const m = await flow();
       const wide = await refreshWith(m.refresh_token, "mcp offline_access");
       assert.equal(wide.status, 400); assert.equal(wide.body.error, "invalid_scope");
-      assert.equal((await rpc(m.access_token)).status, 200, "a refused narrowing leaves the grant's access token alone");
+      assert.equal(await scopeOf(m.refresh_token), "mcp");
+      assert.equal((await db.query<{ used_at: Date | null }>("SELECT used_at FROM oauth_tokens WHERE token_hash = $1", [sha256(m.refresh_token)]))[0]?.used_at, null, "not used up");
+      assert.equal((await rpc(m.access_token)).status, 200, "a refused scope leaves the grant's access token alone");
+      const m1 = await refreshWith(m.refresh_token, "mcp");
+      assert.equal(m1.status, 200, JSON.stringify(m1.body)); assert.equal(m1.body.scope, "mcp");
+      secrets.push(m1.body.access_token, m1.body.refresh_token);
+      const notString = await fetch(`${base}/oauth/token`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip() },
+        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: m1.body.refresh_token, client_id: clientId, scope: 7 }) });
+      assert.equal(notString.status, 400); assert.equal((await notString.json()).error, "invalid_scope");
+      assert.equal((await refreshWith(m1.body.refresh_token)).status, 200, "a malformed scope does not use the refresh token up either");
       // A token issued before this release (no scope of its own) is read as the grant's.
       const legacy = await flow(P, dirA, { scope: "mcp offline_access" });
       await db.query("UPDATE oauth_tokens SET scope = NULL WHERE grant_id = (SELECT grant_id FROM oauth_tokens WHERE token_hash = $1)", [sha256(legacy.access_token)]);

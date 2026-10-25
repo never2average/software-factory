@@ -576,7 +576,9 @@ async function tokenEndpoint(req: Request) {
     // The refresh token's own scope (the grant's for one issued before mold_v0-087); a refresh may narrow it.
     const held = t.scope ?? g.scope;
     const asked = narrowedScope(held, b.scope);
-    if ("error" in asked) return { error: new OAuthError("invalid_scope", asked.error) };
+    // Thrown, not returned: the transaction rolls back, so a refused scope leaves the refresh token as it was (nothing
+    // here revokes anything that would need to commit).
+    if ("error" in asked) throw new OAuthError("invalid_scope", asked.error);
     return { grant: g, scopes: { access: asked.scope, refresh: held } };
   }));
   if ("error" in out) throw out.error;
