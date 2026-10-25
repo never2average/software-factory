@@ -19,10 +19,7 @@
  * url (http or https; one without a scheme gets https://), email, select (one of `options`) or multi_select (any of them).
  * `max_length` (text kinds; default 200, long_text 2000, url and email 500), `help` and `placeholder` are optional, as is
  * `required` (default false). Labels and help are plain text on one line. Without a declaration the form asks the shell's
- * own fields only: a work email, a name, the company and a message. Where the form asks it (mold_v0-138): `more: true`
- * folds it under the request page's "more" fold (the landing block's request_page.form.more, with the name and the
- * message); `ask: false` leaves it off every form (an answer another way in sends, such as an older form's or the
- * product's own, still stored and labelled; never required).
+ * own fields only: a work email, a name, the company and a message.
  *
  * The server stores what the form sends under `answers` (an object of key -> answer); a declared key at the top level of
  * the request is read too, so a host pack's own form that posts its fields flat keeps working. A key nobody declared is
@@ -43,10 +40,6 @@ export interface AccessField {
   max_length?: number;
   help?: string;
   placeholder?: string;
-  /** Folded under the request page's "more" fold (mold_v0-138). */
-  more?: boolean;
-  /** false: no form asks it; an answer sent another way is still stored and labelled (mold_v0-138). */
-  ask?: boolean;
 }
 export interface AccessRequestSpec { fields: AccessField[] }
 /** One stored answer: text, or the chosen options of a multi_select. */
@@ -59,7 +52,7 @@ const MAX_OPTIONS = 30;
 const KEY = /^[a-z][a-z0-9_]{0,39}$/;
 const DEFAULT_MAX: Record<AccessFieldType, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80 };
 const MAX_LENGTH: Record<AccessFieldType, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80 };
-const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder", "more", "ask"];
+const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder"];
 
 /** Characters a plain-text line may not hold (src/landing.ts NOT_PLAIN, src/legal.ts). */
 const NOT_PLAIN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u;
@@ -96,8 +89,7 @@ export function accessRequestProblems(spec: unknown): string[] {
     if (lp) out.push(`${at}.label: ${lp}`);
     const type = f.type as AccessFieldType;
     if (!ACCESS_FIELD_TYPES.includes(type)) { out.push(`${at}.type: one of ${ACCESS_FIELD_TYPES.join(", ")}`); return; }
-    for (const k of ["required", "more", "ask"] as const) if (f[k] !== undefined && typeof f[k] !== "boolean") out.push(`${at}.${k}: true or false`);
-    if (f.ask === false && f.required === true) out.push(`${at}.required: a field no form asks (ask: false) cannot be required`);
+    if (f.required !== undefined && typeof f.required !== "boolean") out.push(`${at}.required: true or false`);
     for (const [k, max] of [["help", 200], ["placeholder", 120]] as const) {
       if (f[k] === undefined) continue;
       const p = plainProblem(f[k], max);

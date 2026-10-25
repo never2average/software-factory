@@ -1425,9 +1425,11 @@ button's two states wherever the page shows it), `footer` (a tagline, a note, li
 title, description and link preview; the share image is the build's, mold_v0-093) and
 `request_page` (mold_v0-138, after the first product's early-access page: a public page asking for access at its own
 one-segment `path`, such as `/early-access`, never one of the console's own: an eyebrow, a title and its highlighted
-end, a lead, up to 6 `benefits` {icon, title, body}, its own `seo`, and the form's words in `form`: `submit`, `more`
-(the fold holding the name, the message and the fields marked `more`), `message_label` and `done` {title, steps}, where
-`{company}` and `{email}` are the sender's). `gen-packs.mjs` rewrites the request page's path to the shell's
+end, a lead, up to 6 `benefits` {icon, title, body}, its own `seo`, and its form in `form`: `submit`, `message_label`,
+`fields` (the build's `access_request` fields it asks above its fold, by key; default every declared one not in the
+fold), `more` {label, fields} (a fold holding the name, the message and those fields) and `done` {title, steps}, where
+`{company}` and `{email}` are the sender's; gen-packs refuses a key the build does not declare and a required field the
+page does not ask). `gen-packs.mjs` rewrites the request page's path to the shell's
 `app/(site)/declared/[page]` (`src/config/pack-routes.generated.json`, which lists it under `declared` for the lanes'
 `testing/console/surface.mts`), refusing a path a host pack's `routes.json` claims; the sitemap lists it. Its form
 (`web/src/features/site/request-page-form.tsx`) asks the work email and the company first, then the build's fields,
@@ -1544,8 +1546,7 @@ a pack's pack.json (the packs' joined in pack order, a key once in a build) or i
 replaces the packs' (a host pack's `host.profile` may not set it). Each field is a `key` (lowercase letters, digits and
 `_`, never `email`, `name`, `company`, `message` or `source`), a `label`, a `type` (`text`, `long_text`, `url`, `email`,
 `select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help`,
-`placeholder`, `more` (folded under the request page's fold, mold_v0-138) and `ask: false` (on no form: an answer sent
-another way, an older form's or the product's own, is still stored and labelled; never `required`); at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
+`placeholder`; at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
 with it and writes the build's fields to `src/access-request.generated.ts` and `web/src/config/access-request.generated.ts`
 (and copies the rules to `web/src/lib/access-request.generated.ts`), never into the profile modules, so the MCP surface
 is unchanged. The public `/request-access` form and the portal's page for no account (mold_v0-098) ask the fields after

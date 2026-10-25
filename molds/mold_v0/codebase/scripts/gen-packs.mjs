@@ -1276,6 +1276,18 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+// The request page's form (mold_v0-138, src/landing.ts request_page.form) asks the build's access_request fields by key:
+// each a declared one, and every required one asked (else no request it sends could be stored).
+{
+  const form = landingPage.landing?.request_page?.form ?? {};
+  const keys = ACCESS_FIELDS.map((f) => f.key);
+  for (const [where, list] of [["request_page.form.fields", form.fields ?? []], ["request_page.form.more.fields", form.more?.fields ?? []]])
+    for (const k of list) if (!keys.includes(k)) fail("landing", `${where}: ${k} is not one of the build's access_request fields (${keys.join(", ") || "none declared"})`);
+  if (landingPage.landing?.request_page && form.fields) {
+    const asked = new Set([...form.fields, ...(form.more?.fields ?? [])]);
+    for (const f of ACCESS_FIELDS) if (f.required && !asked.has(f.key)) fail("landing", `request_page.form: ${f.key} is a required access_request field: ask it (fields or more.fields)`);
+  }
+}
 
 /**
  * The AI clients the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's

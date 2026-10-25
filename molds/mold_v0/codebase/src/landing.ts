@@ -41,9 +41,10 @@
  *                   page's default title, description and link preview too (mold_v0-138)
  *   request_page    a public page asking for access (mold_v0-138) at its own `path` (such as /early-access): an eyebrow, a
  *                   title with a highlighted end, a lead and up to 6 benefits {icon, title, body} beside the request form
- *                   (the build's access_request fields, src/access-request.ts), its own seo, and the form's words (`form`:
- *                   the submit label, the label of the fold holding the fields marked `more`, the message's label, and what
- *                   it says once sent, where {company} and {email} are the sender's)
+ *                   (the build's access_request fields, src/access-request.ts), its own seo, and its form (`form`: the
+ *                   submit label, the message's label, the fields it asks above the fold by key, a fold {label, fields}
+ *                   that also holds the name and the message, and what it says once sent, where {company} and {email}
+ *                   are the sender's)
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
  * still read, and converted to sections (toSections) when gen-packs writes the build: hero (coverage becomes its strip),
@@ -238,18 +239,23 @@ const DoneLine = text(200).refine((s) => !/[{}]/.test(s.replace(/\{(company|emai
 
 /**
  * The request page (mold_v0-138): a public page asking for access, after the first product's early-access page. The
- * form is the shell's (web/src/features/site/request-page.tsx), asking the build's access_request fields (src/access-request.ts:
- * those marked `more` folded under `form.more`, those marked `ask: false` not at all).
+ * form is the shell's (web/src/features/site/request-page-form.tsx): a work email and the company, then the build's
+ * access_request fields (src/access-request.ts) the page picks by key: `form.fields` above the fold (default: every
+ * declared field not in the fold), `form.more.fields` in the fold `form.more.label` opens, with the name and the message.
+ * gen-packs checks each key is a declared field, and that every required field is asked.
  */
+const FieldKey = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, "an access_request field's key");
 const RequestPage = z.object({
   path: PagePath,
   eyebrow: text(60).optional(), title: text(120), title_highlight: text(80).optional(), lead: text(300).optional(),
   benefits: z.array(z.object({ icon: Icon.optional(), title: text(60), body: text(200) }).strict()).min(1).max(6).optional(),
   seo: Seo.optional(),
   form: z.object({
-    submit: text(40).optional(), more: text(40).optional(), message_label: text(80).optional(),
+    submit: text(40).optional(), message_label: text(80).optional(),
+    fields: z.array(FieldKey).max(20).optional(),
+    more: z.object({ label: text(40), fields: z.array(FieldKey).max(20).optional() }).strict().optional(),
     done: z.object({ title: text(80), steps: z.array(DoneLine).min(1).max(5).optional() }).strict().optional(),
-  }).strict().optional(),
+  }).strict().refine((f) => { const k = [...(f.fields ?? []), ...(f.more?.fields ?? [])]; return new Set(k).size === k.length; }, "each field once, above the fold or in it").optional(),
 }).strict();
 
 const SECTION_SCHEMAS = {

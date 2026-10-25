@@ -21,9 +21,6 @@ import { accessFields } from '@/config/access-request.generated';
 import { UTM, visitSource } from './visit-source';
 import { maxLengthOf, type AccessAnswer, type AccessField } from '@/lib/access-request.generated';
 
-/** The fields a form asks: every declared one but those marked `ask: false` (mold_v0-138). */
-const asked = accessFields.filter((f) => f.ask !== false);
-
 export interface RequestAccessDefaults { email?: string; name?: string; company?: string }
 
 /**
@@ -55,7 +52,7 @@ export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     // A required choice of several has no check of the browser's own: say so here (the server checks every field again).
-    const missing = asked.find((f) => f.required && f.type === 'multi_select' && !((answers[f.key] as string[] | undefined)?.length));
+    const missing = accessFields.find((f) => f.required && f.type === 'multi_select' && !((answers[f.key] as string[] | undefined)?.length));
     if (missing) { setError(`${missing.label}: choose at least one.`); return; }
     setBusy(true); setError(null);
     try {
@@ -102,7 +99,7 @@ export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: 
         <Label htmlFor={`${id}-company`}>Company</Label>
         <Input id={`${id}-company`} name='company' autoComplete='organization' required maxLength={200} value={company} onChange={(e) => setCompany(e.target.value)} disabled={busy} className='h-10' />
       </div>
-      {asked.map((f) => <AccessFieldInput key={f.key} id={`${id}-f-${f.key}`} field={f} value={answers[f.key]} onChange={(v) => answer(f.key, v)} disabled={busy} />)}
+      {accessFields.map((f) => <AccessFieldInput key={f.key} id={`${id}-f-${f.key}`} field={f} value={answers[f.key]} onChange={(v) => answer(f.key, v)} disabled={busy} />)}
       <div className='grid gap-1.5'>
         <Label htmlFor={`${id}-message`}>{fill('What would you like to use {product} for?')} <span className='text-muted-foreground font-normal'>(optional)</span></Label>
         <Textarea id={`${id}-message`} name='message' maxLength={4000} rows={3} value={message} onChange={(e) => setMessage(e.target.value)} disabled={busy} />

@@ -1,11 +1,11 @@
 'use client';
 /**
  * The request page's form (mold_v0-138, after the first product's early-access form): what is needed first (a work email
- * and the company) and the build's own questions (src/access-request.ts, the packs' pack.json `access_request`) above a
- * fold; the fields marked `more`, the name and the message folded under it (the landing block's request_page.form.more);
- * fields marked `ask: false` are not asked. It checks the addresses before sending and says what is missing beside each
- * field, then posts to POST /api/access-requests, as the shell's /request-access form does, and says what happens next in
- * place of the form. Where the visitor came from goes with it: the visit's first page as `landing` (VisitSource, in the
+ * and the company), then the build's own questions (src/access-request.ts, the packs' pack.json `access_request`) the page
+ * picks by key (the landing block's request_page.form: `fields` above a fold, default every declared one not in it; the
+ * fold `more` {label, fields}, which also holds the name and the message). It checks the addresses before sending and says
+ * what is missing beside each field, then posts to POST /api/access-requests, as the shell's /request-access form does,
+ * and says what happens next in place of the form. Where the visitor came from goes with it: the visit's first page as `landing` (VisitSource, in the
  * root layout, notes it in sessionStorage), the site before it and the utm_* tags (this page's own winning).
  */
 import { useId, useState } from 'react';
@@ -22,7 +22,7 @@ import type { RequestPage } from './landing-types';
 import { UTM, visitSource } from './visit-source';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const asked = accessFields.filter((f) => f.ask !== false);
+const byKey = (keys: readonly string[]) => keys.flatMap((k) => accessFields.filter((f) => f.key === k));
 
 /** Where the request came from: the visit's first page (else this one), the site before it, the utm tags (this page's first). */
 function sourceOf(): Record<string, string> {
@@ -57,8 +57,9 @@ export function RequestPageForm({ form = {} }: { form?: RequestPage['form'] }) {
   const setShell = (k: Shell) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => { setV({ ...v, [k]: e.target.value }); clear(k); };
   const answer = (k: string, a: AccessAnswer) => { setAnswers({ ...answers, [k]: a }); clear(k); };
   const text = (k: string) => (typeof answers[k] === 'string' ? (answers[k] as string) : '');
-  const folded = form.more ? asked.filter((f) => f.more) : [];
-  const shown = asked.filter((f) => !folded.includes(f));
+  const folded = byKey(form.more?.fields ?? []);
+  const shown = form.fields ? byKey(form.fields) : accessFields.filter((f) => !folded.includes(f));
+  const asked = [...shown, ...folded];
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -190,17 +191,17 @@ export function RequestPageForm({ form = {} }: { form?: RequestPage['form'] }) {
 
   return (
     <form onSubmit={submit} noValidate className='space-y-2'>
-      {/* What is needed first; everything else is optional, and what the build marks `more` is folded away. */}
+      {/* What is needed first; the rest is optional, and what the page puts in its fold is folded away. */}
       <div className='grid'>
         {line('email', 'Work email', v.email, setShell('email'), { type: 'email', autoComplete: 'email', placeholder: 'you@company.com', maxLength: 254, required: true, autoFocus: true })}
         {line('company', 'Company', v.company, setShell('company'), { autoComplete: 'organization', placeholder: 'Acme', maxLength: 200, required: true })}
       </div>
-      {folded.length ? (
+      {form.more ? (
         <>
           {shown.map(ask)}
           <details className='group border-y py-3 [&_summary::-webkit-details-marker]:hidden' open={more} onToggle={(e) => setMore((e.target as HTMLDetailsElement).open)}>
             <summary className='text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center justify-between text-sm'>
-              <span>{form.more}</span>
+              <span>{form.more.label}</span>
               <IconChevronDown className='size-4 transition-transform group-open:rotate-180' aria-hidden='true' />
             </summary>
             <div className='grid pt-4'>

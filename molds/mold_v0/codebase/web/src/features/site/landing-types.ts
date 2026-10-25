@@ -80,7 +80,7 @@ export interface RequestPage {
   path: string; eyebrow?: string; title: string; title_highlight?: string; lead?: string;
   benefits?: { icon?: IconName; title: string; body: string }[];
   seo?: { title?: string; description?: string };
-  form?: { submit?: string; more?: string; message_label?: string; done?: { title: string; steps?: string[] } };
+  form?: { submit?: string; message_label?: string; fields?: string[]; more?: { label: string; fields?: string[] }; done?: { title: string; steps?: string[] } };
 }
 
 /** An AI client the build's install pages offer (src/connect-catalog.ts id, its short name, its group). */
