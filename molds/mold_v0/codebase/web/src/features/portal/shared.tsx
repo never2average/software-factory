@@ -79,7 +79,8 @@ export function LoadingCards({ count = 3 }: { count?: number }) {
 
 export function ErrorState({ error }: { error: Error }) {
   return (
-    // The console's status page for what the API answered (mold_v0-131): signed out, refused, not found, failed.
+    // The console's status page for what the API answered (mold_v0-131): signed out, refused, not found, failed; no
+    // account goes to the portal's own notice for it (mold_v0-098) through noAccountHandoff().
     <ApiErrorStatus error={error} />
   );
 }

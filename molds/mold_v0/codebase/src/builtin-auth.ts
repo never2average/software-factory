@@ -628,8 +628,10 @@ export function builtinAuthRouter(): Router {
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   // What the sign-in page shows: open to anyone, under either provider.
   r.get("/config", async (_req, res) => {
-    if (!builtinAuth()) return void res.json({ provider: "clerk" });
-    res.json({ provider: "builtin", email_code: await emailCodesReady(), google: googleConfigured() });
+    // `accounts` (mold_v0-098): invite_only or self_serve (src/auth.ts accountsMode), what the landing's call to action offers.
+    const { accountsMode } = await import("./auth.js");
+    if (!builtinAuth()) return void res.json({ provider: "clerk", accounts: accountsMode() });
+    res.json({ provider: "builtin", email_code: await emailCodesReady(), google: googleConfigured(), accounts: accountsMode() });
   });
   r.use((_req, res, next) => (builtinAuth() ? next() : void res.status(404).json({ error: "This server signs people in with Clerk" })));
   const json = express.json({ limit: "4kb" });

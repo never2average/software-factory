@@ -60,8 +60,21 @@ workspace owner who is also platform staff; pages come from the build (the shell
 pack's tabs, pages and record areas). *load* is the only lane that sends anything to the deployed app: read-only MCP
 calls (with the lane-check organisation's key, `provision.py <app> --lane-key`) and public console pages, bounded (30 s,
 4 clients, 8 requests/s, 240 requests), only after `load/load.py <app> --check-addresses` proves both addresses the
-app's own. *functional* and *context* add `packs.tools` and `packs.tables` (embedded database). Heavy: the console build
-takes several minutes the first time (it is reused while the lane copy's console is unchanged).
+app's own. *functional* and *context* add `packs.tools` and `packs.tables` (embedded database).
+
+**Build once, test many (mold_v0-147).** The console build is cached by content (`console/cache.py`): a hash of the
+console's files, the packs and profile they were generated from, the installed packages, node and the build environment.
+Same inputs, on any clone of this machine: no `next build`, just the servers. Any different input: a rebuild; never a
+reuse across different packs. The cache is `$LANE_CACHE_DIR` (default `~/.cache/software-factory/lane-console`), at most
+`$LANE_CACHE_MAX` (6) builds, least recently used out first; `--no-cache` builds afresh beside the app. For a builder's
+own browser check, one world serves several harnesses in one queue turn, and `--pages auto` grades only the pages the
+change can reach (git diff against `--base`, the mapping in `console/pages.py`, plus `/` and `/admin` as a smoke; each
+chosen page is printed with why):
+
+    python3 molds/mold_v0/testing/console/render.py <app> --codebase <lane copy> --suite a11y,layout,shots[,<probe.mjs>] --pages auto
+    python3 molds/mold_v0/testing/console/render.py <app> --codebase <lane copy> --pages auto --plan     # what it would grade; no browser
+
+The lanes themselves (`lanes.py`) always grade every page (`--pages all`, the default): that is the end-of-train sweep.
 
 Anything richer than an exit code belongs in a harness script in the lane folder that prints a
 markdown table and exits 0/1 — like `functional/tenant-isolation.py` — with `"emits":

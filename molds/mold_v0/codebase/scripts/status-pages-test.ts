@@ -321,7 +321,7 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
   await expect(w.owner, "/app/usage", 200, "not_found", undefined, fake(404, { error: "Not found" }));
   await expect(w.owner, "/app/usage", 200, "error", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), fake(500, { error: "Internal error" }));
   await expect(w.owner, "/app/usage", 200, "offline", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), async (p) => p.route("**/api/app/usage**", (route: any) => route.abort("failed")));
-  await expect(w.owner, "/app/usage", 200, "no_account", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
+  await expect(w.owner, "/app/usage", 200, "no_account", async (r) => assert.equal(await r.p.locator('[data-status-page] [data-testid="no-account-notice"] a[href="/app"]').count(), 1, "the portal's no-account notice, leading to its page"), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
   {
     // 401 from a page's own fetch: on to sign-in, back after.
     const r = await open(w.owner, "/app/files", async (p) => p.route("**/api/workspace-files**", (route: any) => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"Sign in"}' })));
@@ -332,7 +332,15 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     } finally { await r.c.close(); }
   }
   await expect(w.suspended, "/app/usage", 200, "suspended", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1));
-  if (w.outsider) await expect(w.outsider, "/app/usage", 200, "no_account");
+  if (w.outsider) {
+    // In no account for real: the portal's layout shows its own page for that (mold_v0-098) on every route.
+    const r = await open(w.outsider, "/app/usage");
+    try {
+      await r.p.locator('[data-testid="no-account"]').waitFor({ timeout: 20000 });
+      assert.ok(r.status < 400, `/app/usage in no account: HTTP ${r.status}`);
+      assert.doesNotMatch(await r.p.locator("body").innerText(), /Could not load this page/);
+    } finally { await r.c.close(); }
+  }
   await expect(w.staff, `/admin/accounts/no-such-account-${STAMP}`, 200, "not_found", inShell);
   ok(`the data hooks: a role refusal (with the role it needs), not found, a server error and no answer (Try again), no account and 401 (on to sign-in, back after) are each the status page; a suspended member${w.outsider ? ", someone in an organization that is not an account" : ""} and an admin account that is not there meet theirs for real`);
 
