@@ -127,10 +127,24 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     5 to 60); refresh tokens 30 days (`APP_OAUTH_REFRESH_DAYS`, 1 to 90) and rotate on every use (a replayed one
     revokes the grant). A token acts as its person with their current role in the one workspace they chose, read live on
     every call: removing or suspending them, or a role change, holds on the next request. Scope `mcp` (the default); a
-    token without it gets a 403 `insufficient_scope`. Revocation: `/oauth/revoke` (RFC 7009) for the client;
-    `GET /api/oauth/grants` and `POST /api/oauth/grants/<id>/revoke` for the person; signing out everywhere signs every
-    connected app out too.
-  - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below.
+    token without it gets a 403 `insufficient_scope`. A refresh may **narrow** the scope (RFC 6749 section 6; mold_v0-087,
+    migration 0022): the new access token carries only the scopes asked for (`/mcp` checks the token's own scope), the
+    new refresh token keeps the scope of the one it replaces (so a later refresh may ask for the whole grant again), and
+    a scope the refresh token does not hold is refused (`invalid_scope`, and the refresh token stays usable); no `scope`,
+    or a blank one, is all of it.
+    Revocation: `/oauth/revoke` (RFC 7009) for the client; `GET /api/oauth/grants` and
+    `POST /api/oauth/grants/<id>/revoke` for the person; signing out everywhere signs every connected app out too.
+  - **Connected apps** (`/app/connected-apps`, mold_v0-087): each person's own connected apps, across their workspaces:
+    the app (a metadata-document client by its verified address, a registered one by the name it gave, marked not
+    verified), the workspace it acts in, when it was allowed and when it was last used (set when it gets tokens and, at
+    most once a minute, when it calls `/mcp`), with **Revoke** (every token of it ends on its next request). It is in the
+    shell's own sidebar; an app whose profile declares the sidebar (`console.sidebar`) lists it as `connected-apps`, and
+    `console.hide: ["connected-apps"]` hides it (its address then leads to `/app`).
+  - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below. The Connected apps page
+    says so: Clerk's Backend API has no list of a person's OAuth consents or grants (its OAuth applications endpoints
+    are the instance's apps, and a token is revoked only by presenting it), so the page names the sign-in provider,
+    links to the person's account there (Clerk's Account Portal, from the publishable key) and says how to disconnect an
+    app from the app itself.
 - **Platform admins:** the same roles as under Clerk, kept on the person (`auth_users.public_metadata`); an
   `APP_PLATFORM_ADMINS` address is an owner once its person signs in with it.
 

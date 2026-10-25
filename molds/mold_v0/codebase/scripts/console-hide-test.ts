@@ -101,6 +101,14 @@ try {
     assert.ok(!p.portalNav.some((g) => g.label === "Activity" || !g.items.length), "no empty group is left");
     assert.deepEqual(redirects(copy).map((r: any) => r.source), ["/app/activity", "/app/activity/:path*", "/app/usage", "/app/usage/:path*", "/app/billing", "/app/billing/:path*"]);
     console.log("✓ the shell's sidebar: a pack hides activity, the profile usage and billing; exactly those leave it and redirect to /app");
+    // Connected apps (mold_v0-087): in the shell's sidebar by default; the profile hides it.
+    assert.ok(before.includes("/app/connected-apps"), "the shell's sidebar lists Connected apps");
+    const ca = built("shell-hide-connected", ["fixture_tracker"], () => {}, { console: { hide: ["connected-apps"] } });
+    const pc = probe(ca);
+    assert.deepEqual(pc.hiddenConsoleUrls, ["/app/connected-apps"]);
+    assert.deepEqual(urls(pc.portalNav), before.filter((u) => u !== "/app/connected-apps"), "only it left the sidebar");
+    assert.deepEqual(redirects(ca), [{ source: "/app/connected-apps", destination: "/app", permanent: false }, { source: "/app/connected-apps/:path*", destination: "/app", permanent: false }]);
+    console.log("✓ the profile hides connected-apps: it leaves the shell's sidebar and its address redirects to /app");
   }
 
   // ---------- 4. refused ----------

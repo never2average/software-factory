@@ -8697,7 +8697,8 @@
               "credentials",
               "schedules",
               "notices",
-              "files"
+              "files",
+              "connected-apps"
             ]
           }
         }
