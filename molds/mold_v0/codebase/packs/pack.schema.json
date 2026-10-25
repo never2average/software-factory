@@ -2517,6 +2517,8 @@
               "setup",
               "billing",
               "profile",
+              "team",
+              "keys",
               "page",
               "files"
             ]

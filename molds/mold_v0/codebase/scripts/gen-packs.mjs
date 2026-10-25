@@ -82,7 +82,7 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
-const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
@@ -1453,6 +1453,62 @@ const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports"]);
   }
   refuse();
 }
+/**
+ * The whole /app sidebar from the app's profile (mold_v0-133): profile.json `console.sidebar` (its shape checked with the
+ * profile, src/console-pages.ts), resolved here. Each item is a shown tab of a pack (by id, or `<pack>/<id>` when two
+ * packs have that id) or a shell page by its kind. Refused: an item that is neither, one listed twice, a tab left out
+ * (the sidebar is the whole of it), a shell page the build lacks or hides, a shell page a pack's tab already opens.
+ * null: no declared sidebar (the tabs' groups, else the shell's own sidebar).
+ */
+const SHELL_SIDEBAR = { setup: { label: "Setup", icon: "rocket" }, usage: { label: "Activity", icon: "chartLine" }, billing: { label: "Billing", icon: "billing" },
+  profile: { label: "Profile", icon: "account" }, team: { label: "Team", icon: "teams" }, keys: { label: "API keys", icon: "lock" },
+  credentials: { label: "Credentials", icon: "lock" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" } };
+{
+  // API keys need member keys (mold_v0-133). (Two packs' tabs that open one shell page are one sidebar entry: below.)
+  for (const t of shownTabs())
+    if (t.kind === "keys" && profile.member_keys === false) fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: member API keys are off (profile.json member_keys), so there is no API keys page`);
+  refuse();
+}
+const profileSidebar = (() => {
+  const declared = profileConsole?.sidebar;
+  if (!declared) return null;
+  const at = `${rel(PROFILE_FILE)} console.sidebar`;
+  const tabs = shownTabs(), listed = new Set(), out = [];
+  const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
+  const lacks = { credentials: !credentialFields.length && "the build declares no credential field", schedules: !jobKindCount && "the build has no job kind to schedule",
+    notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
+    keys: profile.member_keys === false && "member API keys are off (profile.json member_keys)" };
+  declared.forEach((g, i) => {
+    const items = [];
+    for (const [j, x] of g.items.entries()) {
+      const w = `${at}[${i}].items[${j}] ${JSON.stringify(x)}`;
+      const [pk, id] = x.includes("/") ? x.split("/") : [null, x];
+      const found = tabs.filter((t) => t.id === id && (pk === null || t.pack === pk));
+      if (found.length > 1) { fail(w, `packs ${found.map((t) => t.pack).join(" and ")} both have a tab ${id}: name it as <pack>/${id}`); continue; }
+      let item;
+      if (found.length === 1) item = { tab: found[0] };
+      else if (pk === null && SIDEBAR_SHELL_PAGES.includes(id)) {
+        const opener = tabs.find((t) => t.kind === id);
+        if (opener) { fail(w, `tab ${opener.id} of pack ${opener.pack} opens that page: list the tab (${opener.pack}/${opener.id})`); continue; }
+        if (lacks[id]) { fail(w, `${lacks[id]}, so there is no ${SHELL_SIDEBAR[id].label} page to list`); continue; }
+        if (TAB_KIND_PAGE[id] && HIDDEN.includes(TAB_KIND_PAGE[id])) { fail(w, `the build hides that page (console.hide)`); continue; }
+        item = { shell: id };
+      } else {
+        const hiddenTab = packViews.tabs.find((t) => t.id === id && (pk === null || t.pack === pk));
+        fail(w, hiddenTab ? `tab ${id} of pack ${hiddenTab.pack} is not shown in this build (its list tool is withheld, or the page it opens is hidden)` : `no pack has a tab ${id}, and it is not a shell page (${SIDEBAR_SHELL_PAGES.join(", ")})`);
+        continue;
+      }
+      const key = item.tab ? `${item.tab.pack}/${item.tab.id}` : `shell:${item.shell}`;
+      if (listed.has(key)) { fail(w, "listed twice: each entry is in the sidebar once"); continue; }
+      listed.add(key);
+      items.push(item);
+    }
+    out.push({ label: g.label, items });
+  });
+  for (const t of tabs) if (!listed.has(`${t.pack}/${t.id}`)) fail(at, `tab ${t.id} of pack ${t.pack} is not in it: the declared sidebar is the whole sidebar, so list it in a group`);
+  refuse();
+  return out;
+})();
 // Their console URLs (web/src/packs/<id>/routes.json): each rewritten to the shell's host page route, and their redirects.
 {
   const rewrites = [], redirects = [], seenUrl = new Set();
@@ -1702,8 +1758,8 @@ function shownTabs() {
  * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
  */
 function viewsModule() {
-  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile" };
-  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page", files: "page" };
+  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys" };
+  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = shownTabs();
   const tabs = shown.map((t) => ({
@@ -1716,7 +1772,15 @@ function viewsModule() {
     ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
-  for (const t of tabs) {
+  // A declared sidebar (mold_v0-133): exactly its groups and entries, in order.
+  if (profileSidebar) for (const g of profileSidebar) groups.push({ label: g.label, items: g.items.map((x) => {
+    if (x.shell) return { title: SHELL_SIDEBAR[x.shell].label, url: SHELL_PAGES[x.shell], icon: SHELL_SIDEBAR[x.shell].icon, items: [], roles: ["viewer", "member", "billing", "owner"] };
+    const t = tabs.find((y) => y.pack === x.tab.pack && y.id === x.tab.id);
+    return { title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles };
+  }) });
+  // A page is in the sidebar once (mold_v0-133): packs written apart may each open the same shell page (Activity,
+  // Billing); the first tab that opens it keeps its entry, a later one is left out of the sidebar.
+  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i)) {
     const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
     // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
     let g = groups.find((x) => x.label === label);
@@ -1730,7 +1794,7 @@ function viewsModule() {
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
     `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
-    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
@@ -1741,7 +1805,7 @@ function viewsModule() {
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
-    "/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */\n" +
+    "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;
 }
 

@@ -94,6 +94,12 @@ export function commitUrl(repo: string, commit: string): string {
   if (/^https:\/\/gitlab\.com\/.+\/.+$/i.test(base)) return `${base}/-/tree/${commit}`;
   return base;
 }
+/**
+ * Who uses the upstream, in a sentence (mold_v0-095): the pack's name, unless the pack is named as the project itself
+ * (an app minted from its own upstream, "Maxwell uses Maxwell"): then "This service".
+ */
+const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+export const offerSubject = (u: { pack_name: string; project: string }) => (norm(u.pack_name) && norm(u.pack_name) === norm(u.project) ? "This service" : u.pack_name);
 const projectOf = (repo: string) => repo.trim().replace(/\/+$/, "").replace(/\.git$/i, "").split("/").pop() || repo;
 
 /**
@@ -144,7 +150,7 @@ export const LICENSOR_EXCEPTION_TEXT =
 export function offerSentences(o: SourceOffer): string[] {
   if (!o.offered) return [];
   const out = o.upstreams.filter((u) => u.copyleft).map((u) =>
-    `${u.pack_name} uses ${u.project} (${u.repo}), licensed ${u.license}, at commit ${u.commit}; its complete source at that commit is at ${u.url}.`);
+    `${offerSubject(u)} uses ${u.project} (${u.repo}), licensed ${u.license}, at commit ${u.commit}; its complete source at that commit is at ${u.url}.`);
   if (o.app.kind === "offered") out.push(`The source of this service itself, licensed ${o.app.license}, is at ${o.app.url}.`);
   else if (o.app.kind === "licensor_exception") out.push(LICENSOR_EXCEPTION_TEXT);
   return out;
@@ -167,7 +173,7 @@ export interface OfferFooterItem { text: string; commit?: string; link?: { href:
 export function offerFooterItems(o: SourceOffer): OfferFooterItem[] {
   if (!o.offered) return [];
   const items: OfferFooterItem[] = o.upstreams.filter((u) => u.copyleft).map((u) =>
-    ({ text: `${u.pack_name} uses ${u.project}, licensed ${u.license ?? ""}, at commit`, commit: u.commit, link: { href: u.url, label: "its source at that commit" } }));
+    ({ text: `${offerSubject(u)} uses ${u.project}, licensed ${u.license ?? ""}, at commit`, commit: u.commit, link: { href: u.url, label: "its source at that commit" } }));
   if (o.app.kind === "offered") items.push({ text: `This service, licensed ${o.app.license}`, link: { href: o.app.url, label: "its source" } });
   else if (o.app.kind === "licensor_exception") items.push({ text: LICENSOR_EXCEPTION_TEXT });
   return items;

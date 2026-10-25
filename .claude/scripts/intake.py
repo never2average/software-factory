@@ -624,6 +624,41 @@ def self_test_single(n, fails):
             if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != [] or not {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"} <= set(d3["infrastructure"]["secrets_optional"]) or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
                or d3["datastores"]["postgres"]["provider"] != "neon":
                 fails.append(f"switching a mold_v0 app to Vercel: {(r.stdout + r.stderr).strip()[-200:]} {d3['infrastructure'].get('target')}")
+        # mold_v0-152: a re-run on a DEPLOYED app keeps the secret names and projects its state holds (a pre-045 app's
+        # old spellings, its Clerk keys as values it holds, its projects' order) and the brand's recorded share image;
+        # an app never deployed gets the codebase's names, as before.
+        held_brief = "Mold: mold_v0\nIt runs on Vercel.\n"
+        r = go("zz_held", held_brief); n += 1
+        if r.returncode: fails.append(f"mold_v0-152: a Vercel brief did not stamp: {(r.stdout + r.stderr).strip()[-300:]}")
+        else:
+            def old_names(d, deployed):
+                i = d["infrastructure"]; ren = lambda xs: [("OCTILLION_" + x[4:]) if x.startswith("APP_") else x for x in xs]
+                i["secrets"] = sorted(set(ren(i["secrets"])) | {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"})
+                i["secrets_user"] = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
+                i["secrets_derived"] = ren(i["secrets_derived"])
+                i["secrets_optional"] = [x for x in ren(i["secrets_optional"]) if x not in i["secrets_user"]]
+                pr = i["vercel"]["projects"]; i["vercel"]["projects"] = {"web": pr["web"], "api": pr["api"]}
+                d["application"].setdefault("surface", {})["branding"] = {"share_image": {"file": "brands/zz/share-image.png", "sha256": "a" * 64}}
+                if deployed: i["deployed_at"] = "2026-10-21T19:52:49+00:00"; i["vercel"]["release"] = {"at": "2026-10-21T19:52:49+00:00", "before": {"api": "dpl_a", "web": "dpl_w"}}
+                for k, v in d.items(): save(os.path.join(A, "zz_held", k + ".json"), v)
+                return d
+            d = old_names(docs("zz_held"), True)
+            r = go("zz_held", held_brief); d2 = docs("zz_held"); n += 1
+            i, i2 = d["infrastructure"], d2["infrastructure"]
+            same = all(i2[k][:len(i[k])] == i[k] for k in ("secrets", "secrets_user", "secrets_derived", "secrets_optional"))
+            fresh = [x for k in ("secrets", "secrets_derived", "secrets_optional") for x in i2[k][len(i[k]):]]
+            if r.returncode or not same or any(x.startswith("APP_") and ("OCTILLION_" + x[4:]) in set(i["secrets"]) | set(i["secrets_optional"]) for x in fresh) \
+               or list(i2["vercel"]["projects"].items()) != list(i["vercel"]["projects"].items()) \
+               or d2["application"].get("surface", {}).get("branding", {}).get("share_image") != {"file": "brands/zz/share-image.png", "sha256": "a" * 64}:
+                fails.append(f"mold_v0-152: a re-run of a deployed app must keep its held secret names, Clerk keys, projects' order and share image: "
+                             f"{(r.stdout + r.stderr).strip()[-200:]} {i2['secrets']} {i2['secrets_user']} {list(i2['vercel']['projects'])}")
+            n += 1
+            if "has a release: its secret names and projects are kept" not in r.stdout: fails.append("mold_v0-152: the re-run says it kept the held names")
+            d = old_names(docs("zz_held"), False); d["infrastructure"].pop("deployed_at", None); d["infrastructure"]["vercel"].pop("release", None)
+            for k, v in d.items(): save(os.path.join(A, "zz_held", k + ".json"), v)
+            r = go("zz_held", held_brief); d3 = docs("zz_held"); n += 1
+            if r.returncode or "APP_VAULT_KEY" not in d3["infrastructure"]["secrets"] or "OCTILLION_VAULT_KEY" in d3["infrastructure"]["secrets"]:
+                fails.append(f"mold_v0-152: an app never deployed gets the codebase's names, as before: {d3['infrastructure']['secrets']}")
         # review fixes (PR #17): the mold only from its own line and only a registered one; a Vercel project that is taken
         n += 1
         if parse_brief("Unlike mold_v1, this product is small.\n").get("mold_id") or parse_brief("Mold: mold_v0\n").get("mold_id") != "mold_v0":
@@ -1050,7 +1085,49 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     if isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
     if ex_ds.get("postgres", {}).get("provider") == ds["postgres"]["provider"]: carry_forward(ds, ex_ds, set())
     carry_forward(di, ex_di, set())
+    keep_held_names(mold_id, infra, ex_inf, ex_app)
+    # The brand's own share image (branding.py <app> share-image, mold_v0-093/150) is not the brief's to say: kept.
+    si = ((ex_app.get("surface") or {}).get("branding") or {}).get("share_image")
+    if si and not ((app.get("surface") or {}).get("branding") or {}).get("share_image"):
+        app.setdefault("surface", {}).setdefault("branding", {})["share_image"] = si
     return app, infra, ds, di
+
+SECRET_LISTS = ("secrets", "secrets_user", "secrets_derived", "secrets_optional")
+def released(ex_app, ex_inf):
+    """Whether an app has been deployed: its state records a release (deployed_at, a target's release or rollback) or
+    a deployed status. Its secrets then live on the target under the names its state holds."""
+    t = ex_inf.get("target")
+    tb = ex_inf.get(t) if isinstance(ex_inf.get(t), dict) else {}
+    return bool(ex_inf.get("deployed_at") or tb.get("release") or tb.get("rollback") or tb.get("deployed_at")
+                or ex_app.get("status") in ("stamping", "stamped", "testing", "serviceable", "reverted"))
+
+def keep_held_names(mold_id, infra, ex_inf, ex_app):
+    """mold_v0-152: for an app with a release, the secret names and projects its state holds are kept exactly. Its
+    values live on the target under those names: renaming OCTILLION_VAULT_KEY to APP_VAULT_KEY would have the next
+    deploy mint a new vault key under the new name (which wins), and nothing already sealed would decrypt; a Clerk app
+    whose sign-in keys move from secrets_user to optional loses the deploy's check for them. So each list stays as it
+    was, in its order, and only a name the mold added since is appended, unless the app already holds it under its old
+    spelling (molds/<mold>/mold.json env_names). The target's project names (vercel.projects) stay as they were, in their
+    order. An app never deployed gets the codebase's names, as before."""
+    if not released(ex_app, ex_inf) or ex_inf.get("target") != infra.get("target"): return
+    try: en = (load(os.path.join(ROOT, "molds", mold_id, "mold.json")).get("env_names") or {})
+    except (OSError, ValueError): en = {}
+    new_p, old_p = en.get("prefix"), en.get("legacy_prefix")
+    held = {n for k in SECRET_LISTS for n in (ex_inf.get(k) or [])}
+    def is_held(n):
+        return n in held or bool(new_p and old_p and n.startswith(new_p) and old_p + n[len(new_p):] in held)
+    kept = []
+    for k in SECRET_LISTS:
+        if k not in ex_inf: continue
+        was = list(ex_inf.get(k) or [])
+        added = [n for n in (infra.get(k) or []) if not is_held(n) and n not in was]
+        infra[k] = was + added
+        if added: kept.append(f"{k} +{', '.join(added)}")
+    t = infra["target"]
+    if isinstance(ex_inf.get(t), dict) and isinstance(ex_inf[t].get("projects"), dict) and isinstance(infra.get(t), dict):
+        infra[t]["projects"] = dict(ex_inf[t]["projects"])
+    print(f"note: {ex_app.get('app_id') or 'this app'} has a release: its secret names and projects are kept as its state holds them"
+          + (f" (new in the mold: {'; '.join(kept)})" if kept else ""))
 
 def taken_projects(app_id):
     """{project name: why it is not this app's to take}: the live projects, and every project another app deploys to
