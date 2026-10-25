@@ -13,6 +13,9 @@
 //    plain PKCE, a wrong verifier, redirect URI mismatch (no redirect is made), a reused code (its tokens are revoked),
 //    a replayed refresh token (the grant ends), an expired token or code, another client's code, cross-workspace,
 //    removal and suspension, insufficient scope (403), unsafe redirect URIs, the registration limit, client secrets.
+//    A refresh may narrow the scope (mold_v0-087): the new access token has only what was asked for, the new refresh
+//    token keeps the old one's scope, and asking for more than it holds is refused.
+//    Connected apps (the console's page): the list's fields, last used on /mcp (at most once a minute), revoking one.
 // 4. Client ID metadata documents: a verified client; a document that is not its own URL is refused; SSRF guards.
 // 5. No token, code, secret or request id appears in a log line.
 // clerk: none of the built-in routes answers, and Clerk's discovery is as before.
@@ -266,13 +269,78 @@ try {
       assert.equal((await rpc(r1.body.access_token)).status, 200);
       const wider = await form("/oauth/token", { grant_type: "refresh_token", refresh_token: r1.body.refresh_token, client_id: clientId, scope: "mcp admin" });
       assert.equal(wider.status, 400); assert.equal(wider.body.error, "invalid_scope");
-      // wider used r1's refresh token: it was consumed. A replay of the first one ends the grant.
+      // A refused scope leaves r1's refresh token as it was (mold_v0-087; it is used further down). A replay of the first one ends the grant.
       const replay = await form("/oauth/token", { grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: clientId });
       assert.equal(replay.status, 400); assert.equal(replay.body.error, "invalid_grant");
       const after = await rpc(r1.body.access_token);
       assert.equal(after.status, 401, "every token of the grant is revoked after a replay");
       assert.match(after.www ?? "", /error="invalid_token"/);
       ok("refresh tokens rotate; a refresh cannot widen the scope; a replayed refresh token revokes the grant");
+    }
+
+    // ---------- refresh: a narrowing scope (mold_v0-087) ----------
+    {
+      const { narrowedScope } = await import("../src/mcp-oauth.js");
+      assert.deepEqual(narrowedScope("mcp offline_access", undefined), { scope: "mcp offline_access" }, "omitted: all the refresh token holds");
+      assert.deepEqual(narrowedScope("mcp offline_access", "  "), { scope: "mcp offline_access" }, "blank: all of it");
+      assert.deepEqual(narrowedScope("mcp offline_access", "offline_access mcp mcp"), { scope: "mcp offline_access" }, "the held order, once each");
+      assert.deepEqual(narrowedScope("mcp offline_access", "offline_access"), { scope: "offline_access" });
+      assert.ok("error" in narrowedScope("mcp", "mcp offline_access"), "a scope the token lacks is refused, even a known one");
+      assert.ok("error" in narrowedScope("mcp", "admin"));
+      assert.ok("error" in narrowedScope("mcp", ["mcp"]), "not a string");
+      const refreshWith = (rt: string, scope?: string) =>
+        form("/oauth/token", { grant_type: "refresh_token", refresh_token: rt, client_id: clientId, resource: RESOURCE, ...(scope === undefined ? {} : { scope }) });
+      const scopeOf = async (tok: string) => (await db.query<{ scope: string | null }>("SELECT scope FROM oauth_tokens WHERE token_hash = $1", [sha256(tok)]))[0]?.scope;
+      const t = await flow(P, dirA, { scope: "mcp offline_access" });
+      assert.equal(t.scope, "mcp offline_access");
+      assert.equal((await rpc(t.access_token)).status, 200);
+      // Narrowed to offline_access: the new access token lacks mcp (a 403 the client can step up from); the refresh token keeps both.
+      const n1 = await refreshWith(t.refresh_token, "offline_access");
+      assert.equal(n1.status, 200, JSON.stringify(n1.body));
+      secrets.push(n1.body.access_token, n1.body.refresh_token);
+      assert.equal(n1.body.scope, "offline_access", "the response names the narrowed scope");
+      const r1 = await rpc(n1.body.access_token);
+      assert.equal(r1.status, 403, "the narrowed token is not allowed on /mcp"); assert.match(r1.www ?? "", /error="insufficient_scope"/);
+      assert.equal(await scopeOf(n1.body.access_token), "offline_access");
+      assert.equal(await scopeOf(n1.body.refresh_token), "mcp offline_access", "the new refresh token keeps the old one's scope");
+      // The next refresh may ask for the whole grant again, or narrow differently.
+      const n2 = await refreshWith(n1.body.refresh_token, "mcp");
+      assert.equal(n2.status, 200, JSON.stringify(n2.body));
+      secrets.push(n2.body.access_token, n2.body.refresh_token);
+      assert.equal(n2.body.scope, "mcp");
+      assert.equal((await rpc(n2.body.access_token)).status, 200);
+      const n3 = await refreshWith(n2.body.refresh_token, "offline_access mcp mcp");
+      assert.equal(n3.body.scope, "mcp offline_access", "duplicates and order are the server's");
+      secrets.push(n3.body.access_token, n3.body.refresh_token);
+      const n4 = await refreshWith(n3.body.refresh_token);
+      assert.equal(n4.body.scope, "mcp offline_access", "no scope: the refresh token's whole scope");
+      secrets.push(n4.body.access_token, n4.body.refresh_token);
+      // The grant itself is unchanged: the person's connected apps still show what they allowed.
+      assert.equal((await db.query<{ scope: string }>("SELECT g.scope FROM oauth_grants g JOIN oauth_tokens t ON t.grant_id = g.id WHERE t.token_hash = $1", [sha256(n4.body.access_token)]))[0]?.scope, "mcp offline_access");
+      // Never wider than the refresh token: a grant of mcp only cannot gain offline_access on refresh. The refusal changes
+      // nothing: the refresh token still works for what it holds (it is not used up by a request it refused).
+      const m = await flow();
+      const wide = await refreshWith(m.refresh_token, "mcp offline_access");
+      assert.equal(wide.status, 400); assert.equal(wide.body.error, "invalid_scope");
+      assert.equal(await scopeOf(m.refresh_token), "mcp");
+      assert.equal((await db.query<{ used_at: Date | null }>("SELECT used_at FROM oauth_tokens WHERE token_hash = $1", [sha256(m.refresh_token)]))[0]?.used_at, null, "not used up");
+      assert.equal((await rpc(m.access_token)).status, 200, "a refused scope leaves the grant's access token alone");
+      const m1 = await refreshWith(m.refresh_token, "mcp");
+      assert.equal(m1.status, 200, JSON.stringify(m1.body)); assert.equal(m1.body.scope, "mcp");
+      secrets.push(m1.body.access_token, m1.body.refresh_token);
+      const notString = await fetch(`${base}/oauth/token`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip() },
+        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: m1.body.refresh_token, client_id: clientId, scope: 7 }) });
+      assert.equal(notString.status, 400); assert.equal((await notString.json()).error, "invalid_scope");
+      assert.equal((await refreshWith(m1.body.refresh_token)).status, 200, "a malformed scope does not use the refresh token up either");
+      // A token issued before this release (no scope of its own) is read as the grant's.
+      const legacy = await flow(P, dirA, { scope: "mcp offline_access" });
+      await db.query("UPDATE oauth_tokens SET scope = NULL WHERE grant_id = (SELECT grant_id FROM oauth_tokens WHERE token_hash = $1)", [sha256(legacy.access_token)]);
+      assert.equal((await rpc(legacy.access_token)).status, 200, "an older access token: the grant's scope");
+      const l1 = await refreshWith(legacy.refresh_token, "mcp");
+      assert.equal(l1.status, 200, JSON.stringify(l1.body)); assert.equal(l1.body.scope, "mcp");
+      secrets.push(l1.body.access_token, l1.body.refresh_token);
+      assert.equal(await scopeOf(l1.body.refresh_token), "mcp offline_access", "an older refresh token: the grant's scope, carried on");
+      ok("a refresh may narrow the scope: the access token has only what was asked for (offline_access alone: 403 on /mcp), the refresh token keeps its own, never wider; older tokens read as the grant's");
     }
 
     // ---------- revoke ----------
@@ -295,7 +363,38 @@ try {
       assert.equal((await post(`/api/oauth/grants/${mine}/revoke`, {}, consentHeaders(Q.cookie))).status, 404, "not someone else's");
       for (const g of list.grants) assert.equal((await post(`/api/oauth/grants/${g.id}/revoke`, {}, consentHeaders(P.cookie))).status, 200);
       assert.equal((await rpc(t2.access_token)).status, 401);
-      ok("revocation: by the client (RFC 7009, its own tokens only) and by the person from the console");
+      assert.equal((await post(`/api/oauth/grants/${mine}/revoke`, {}, consentHeaders(P.cookie))).status, 404, "a revoked app is gone from the list and cannot be revoked twice");
+      assert.equal((await json(await get("/api/oauth/grants", { cookie: P.cookie }))).grants.length, 0, "the list is empty after revoking every app");
+      // CSRF: the revoke needs the console's header and this site's origin.
+      const t3 = await flow();
+      const id3 = (await json(await get("/api/oauth/grants", { cookie: P.cookie }))).grants[0].id;
+      assert.equal((await post(`/api/oauth/grants/${id3}/revoke`, {}, { cookie: P.cookie, origin: base })).status, 403, "no X-Pack-Request header");
+      assert.equal((await post(`/api/oauth/grants/${id3}/revoke`, {}, { cookie: P.cookie, "x-pack-request": "1", origin: "https://evil.example" })).status, 403, "another site");
+      assert.equal((await post(`/api/oauth/grants/${id3}/revoke`, {})).status, 403, "signed out (and no header)");
+      assert.equal((await post(`/api/oauth/grants/${id3}/revoke`, {}, { "x-pack-request": "1", origin: base })).status, 401, "signed out");
+      assert.equal((await get("/api/oauth/grants")).status, 401, "the list needs a session");
+      assert.equal((await rpc(t3.access_token)).status, 200, "a refused revoke changes nothing");
+      // Last used: on /mcp too, at most once a minute per grant.
+      const oauth = await import("../src/mcp-oauth.js");
+      const lastUsed = async () => (await json(await get("/api/oauth/grants", { cookie: P.cookie }))).grants.find((g: any) => g.id === id3).last_used_at as string | null;
+      await db.query("UPDATE oauth_grants SET last_used_at = now() - interval '1 day' WHERE id = $1", [id3]);
+      const dayAgo = await lastUsed();
+      oauth.forgetGrantTouchesForTest();
+      assert.equal((await rpc(t3.access_token)).status, 200);
+      let moved = false;
+      for (let i = 0; i < 100 && !moved; i++) { moved = +new Date((await lastUsed()) ?? 0) > Date.now() - 60_000; if (!moved) await new Promise((r) => setTimeout(r, 20)); }
+      assert.ok(moved, `a call on /mcp sets last used (was ${dayAgo})`);
+      await db.query("UPDATE oauth_grants SET last_used_at = now() - interval '1 day' WHERE id = $1", [id3]);
+      assert.equal((await rpc(t3.access_token)).status, 200);
+      await new Promise((r) => setTimeout(r, 200));
+      assert.ok(+new Date((await lastUsed()) ?? 0) < Date.now() - 3_600_000, "a second call within the minute writes nothing");
+      const listed = (await json(await get("/api/oauth/grants", { cookie: P.cookie }))).grants.find((g: any) => g.id === id3);
+      assert.deepEqual(Object.keys(listed).sort(), ["client", "created_at", "id", "last_used_at", "scope", "workspace"]);
+      assert.deepEqual(listed.client, { name: "Test Connector", verified: false, id_host: null, url: null }, "a registered client: its own name, not verified, no address");
+      assert.deepEqual(listed.workspace, { id: dirA, name: A.name });
+      assert.deepEqual(listed.scope, ["mcp"]);
+      assert.equal((await post(`/api/oauth/grants/${id3}/revoke`, {}, consentHeaders(P.cookie))).status, 200);
+      ok("revocation: by the client (RFC 7009, its own tokens only) and by the person from the console (CSRF-checked, once); the list's fields; last used on /mcp, once a minute");
     }
 
     // ---------- 3. refusals ----------
@@ -481,6 +580,9 @@ try {
       secrets.push(t.body.access_token, t.body.refresh_token);
       assert.equal((await rpc(t.body.access_token)).status, 200);
       assert.equal(fetched.filter((u) => u === DOC).length, 1, "the document is cached");
+      // The connected apps list names a verified client by its document's address (mold_v0-087).
+      const app = (await json(await get("/api/oauth/grants", { cookie: P.cookie }))).grants.find((g: any) => g.client.url === DOC);
+      assert.deepEqual(app?.client, { name: "Example App", verified: true, id_host: "app.example.com", url: DOC }, "a verified client: its address");
       for (const bad of ["https://liar.example.com/c.json", "https://secret.example.com/c.json", "https://missing.example.com/c.json"])
         assert.equal((await startAuth({}, bad)).res.status, 400, bad);
       const before = fetched.length;
