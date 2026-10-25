@@ -31,6 +31,9 @@ export const CONSOLE_PAGES = {
   schedules: "/app/schedules",
   notices: "/app/notices",
   files: "/app/files",
+  // Each person's connected apps (mold_v0-087): the AI apps signed in to /mcp, with Revoke (built-in sign-in), or where
+  // the sign-in provider keeps them (Clerk).
+  "connected-apps": "/app/connected-apps",
 } as const;
 export type ConsolePage = keyof typeof CONSOLE_PAGES;
 
@@ -40,7 +43,11 @@ export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
 };
 
 /** The shell pages a sidebar may name by kind (mold_v0-133; a tab of that kind opens the same page). */
-export const SIDEBAR_SHELL_PAGES = ["setup", "usage", "billing", "profile", "team", "keys", "credentials", "schedules", "notices"] as const;
+export const SIDEBAR_SHELL_PAGES = ["setup", "usage", "billing", "profile", "team", "keys", "credentials", "schedules", "notices", "connected-apps"] as const;
+
+/** The page a sidebar's shell entry opens, as console.hide names it (null: one no build may hide, such as setup). */
+export const sidebarShellPage = (id: string): ConsolePage | null =>
+  Object.hasOwn(TAB_KIND_PAGE, id) ? TAB_KIND_PAGE[id]! : Object.hasOwn(CONSOLE_PAGES, id) ? (id as ConsolePage) : null;
 
 /** The problems of one `console` block (where: "pack.json" or "profile.json"); [] when it is good. */
 export function consoleProblems(v: unknown, where: string): string[] {

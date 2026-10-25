@@ -4,7 +4,8 @@
 //
 // 1. The profile declares the sidebar (profile.json console.sidebar): exactly its groups and entries, in its order, the
 //    packs' tabs and the shell's pages (Team, API keys, Profile...) among them.
-// 2. Zero packs: a profile sidebar of shell pages only.
+// 2. Zero packs: a profile sidebar of shell pages only; Connected apps (mold_v0-087) is an optional shell entry, in the
+//    shell's own sidebar and wherever a declared sidebar lists it, never otherwise.
 // 3. A pack's tabs reach the shell's Team and API keys pages (tab kinds team, keys); two tabs opening one shell page are
 //    one entry (the first's).
 // 4. Refused, each with its reason: a tab left out, an unknown entry, an entry twice, a shell page a tab already opens, a
@@ -91,6 +92,16 @@ try {
     assert.deepEqual(lines(p.portalNav), [": Setup /app", ": Activity /app/activity", "Account: Billing /app/billing", "Account: Team /app/team", "Account: Profile /app/profile"],
       "a shell with no pack: the shell's pages in the declared order");
     console.log("✓ zero packs: a declared sidebar of the shell's pages");
+    // Connected apps (mold_v0-087): where the declared sidebar puts it; left out when it is not listed; refused when hidden.
+    const c = probe(built("zero-connected", [], () => {}, { console: { sidebar: [{ label: "", items: ["setup"] }, { label: "You", items: ["profile", "connected-apps"] }] } }));
+    assert.deepEqual(lines(c.portalNav), [": Setup /app", "You: Profile /app/profile", "You: Connected apps /app/connected-apps"], "listed: where the profile puts it");
+    assert.ok(!lines(p.portalNav).some((x) => x.endsWith(" /app/connected-apps")), "a declared sidebar that does not list it has no entry for it");
+    const shell = probe(built("zero-shell", []));
+    assert.ok(lines(shell.portalNav).includes("Operational: Connected apps /app/connected-apps"), `the shell's own sidebar has it: ${lines(shell.portalNav).join(", ")}`);
+    const hid = buildCopy("zero-connected-hidden", [], () => {}, { console: { hide: ["connected-apps"], sidebar: [{ label: "", items: ["setup", "connected-apps"] }] } });
+    assert.notEqual(hid.status, 0, "a hidden page cannot be listed");
+    assert.match(hid.out, /items\[1\] "connected-apps": the build hides that page \(console\.hide\)/);
+    console.log("✓ connected apps: an optional shell entry, in the shell's own sidebar and where a declared sidebar lists it; a hidden one is refused");
   }
 
   // ---------- 3. team and keys tabs ----------

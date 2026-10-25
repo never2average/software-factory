@@ -1483,7 +1483,7 @@ says when a catalog could not be indexed at its pin. `npm run test:catalog-index
 
 **Shell pages a build hides (mold_v0-130).** `console.hide` in a pack's pack.json or the app's profile.json (joined) names
 shell pages of the customer console to leave out: `activity`, `usage`, `billing`, `profile`, `credentials`, `schedules`,
-`notices`, `files` (`src/console-pages.ts`). A hidden page leaves the /app sidebar (the shell's entries, the Workspace
+`notices`, `files`, `connected-apps` (`src/console-pages.ts`). A hidden page leaves the /app sidebar (the shell's entries, the Workspace
 and Activity groups, any declared tab that opens it), the tab pages and the customer guide's tab list, and its address
 and everything under it redirect to /app (`pack-routes.generated.json`). The staff console and the API are unchanged.
 `npm run test:console-hide`.
@@ -1493,11 +1493,26 @@ groups and order (mold_v0-058), and the tab kinds now reach every shell page (`t
 `billing`, `profile`...). The app's profile.json may declare the sidebar across its packs: `console.sidebar`, a list of
 groups `{"label": "Company", "items": ["overview", "billing", "team"]}`, each item a pack's tab by id (`<pack>/<id>` when
 two packs have it) or a shell page by kind (`setup`, `usage`, `billing`, `profile`, `team`, `keys`, `credentials`,
-`schedules`, `notices`). Then the sidebar is exactly that; `gen-packs` refuses a tab left out, an entry that is neither
+`schedules`, `notices`, `connected-apps`). Then the sidebar is exactly that; `gen-packs` refuses a tab left out, an entry that is neither
 or is listed twice, a shell page a tab already opens, one the build lacks or hides, and `sidebar` in a pack.json (a pack
 orders its own tabs). Without tabs or a declared sidebar the shell's own sidebar joins a pack's group to the shell group
 of the same heading and lists each page once (`mergeNav`, `web/src/config/nav-config.ts`); a declared API keys entry
 takes the footer's place. `npm run test:console-sidebar`.
+
+**Connected apps (mold_v0-087).** `/app/connected-apps`: each person's own AI apps signed in to `/mcp`. Under the built-in
+sign-in (the server is the authorization server, mold_v0-013) it lists every connected app across the person's
+workspaces (`GET /api/oauth/grants`: the app, a metadata-document client by its verified address and a registered one
+marked not verified, the workspace it acts in, when it was allowed, when it was last used: at token issue and, at most
+once a minute, on `/mcp`) with Revoke (a confirmation, then `POST /api/oauth/grants/<id>/revoke`: every token of it ends
+on its next request). Under Clerk, Clerk is the authorization server and its Backend API has no list of a person's OAuth
+consents or grants (checked against Clerk's OpenAPI specs, 2026-08-20: `/oauth_applications` lists the instance's apps,
+`revoke_token` needs the token itself; the Frontend API's `/v1/me/oauth/consent/{client_id}` reads one app's scopes for a
+consent screen), so the page says the connections are managed by the sign-in provider, links to the person's Account
+Portal page (derived from the publishable key; else the profile) and says how to disconnect an app from the app. It is an
+optional shell entry: in the shell's own sidebar (Operational), in a declared sidebar as `connected-apps`, hidden with
+`console.hide`. Built-in OAuth also lets a refresh **narrow** its scope (RFC 6749 section 6, migration 0021): the access
+token carries only the scopes asked for, the refresh token keeps its own, never wider. `npm run test:mcp-oauth`,
+`npm run test:connected-apps` (both sign-ins; `--browser` renders the page).
 
 **Customer guide (mold_v0-106).** `/app/docs` and the docs answers' corpus (Ask AI, `src/docs-answers.ts`;
 `scripts/sync-docs-corpus.ts` writes `src/docs-corpus.generated.json` from the same pages) come from the packs when no

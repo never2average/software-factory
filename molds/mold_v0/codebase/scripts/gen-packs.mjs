@@ -82,7 +82,7 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
-const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
@@ -1462,7 +1462,8 @@ const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports"]);
  */
 const SHELL_SIDEBAR = { setup: { label: "Setup", icon: "rocket" }, usage: { label: "Activity", icon: "chartLine" }, billing: { label: "Billing", icon: "billing" },
   profile: { label: "Profile", icon: "account" }, team: { label: "Team", icon: "teams" }, keys: { label: "API keys", icon: "lock" },
-  credentials: { label: "Credentials", icon: "lock" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" } };
+  credentials: { label: "Credentials", icon: "lock" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" },
+  "connected-apps": { label: "Connected apps", icon: "plug" } };
 {
   // API keys need member keys (mold_v0-133). (Two packs' tabs that open one shell page are one sidebar entry: below.)
   for (const t of shownTabs())
@@ -1491,7 +1492,7 @@ const profileSidebar = (() => {
         const opener = tabs.find((t) => t.kind === id);
         if (opener) { fail(w, `tab ${opener.id} of pack ${opener.pack} opens that page: list the tab (${opener.pack}/${opener.id})`); continue; }
         if (lacks[id]) { fail(w, `${lacks[id]}, so there is no ${SHELL_SIDEBAR[id].label} page to list`); continue; }
-        if (TAB_KIND_PAGE[id] && HIDDEN.includes(TAB_KIND_PAGE[id])) { fail(w, `the build hides that page (console.hide)`); continue; }
+        if (sidebarShellPage(id) && HIDDEN.includes(sidebarShellPage(id))) { fail(w, `the build hides that page (console.hide)`); continue; }
         item = { shell: id };
       } else {
         const hiddenTab = packViews.tabs.find((t) => t.id === id && (pk === null || t.pack === pk));
@@ -1758,7 +1759,8 @@ function shownTabs() {
  * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
  */
 function viewsModule() {
-  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys" };
+  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
+    "connected-apps": "/app/connected-apps" };
   const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = shownTabs();
