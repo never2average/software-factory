@@ -987,6 +987,34 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   journeys ignore it. *Staff runs under the account's launch rules*: a run staff start for a workspace (`org.staff`)
   passes `checkAccountRun` (`src/limits.ts`: the account's allowance, its month's cap and the buffer Budget rules hold
   back, fail closed), and its `requested_by` is the staff pseudonym. `npm run test:mcp-followups`.
+- **MCP words as config** (mold_v0-137, built; `src/text-template.ts`, `src/mcp-prompts.ts`, `src/host.ts` `engineConfig`):
+  what an MCP client reads of an app is declared, not coded. pack.json **`mcp.prompts[]`**: slash commands, each a `name`,
+  `title`, `description`, `arguments` (each a `name`, `description`, `required` or not, `type` `string` or `integer`: an
+  integer counts as given only when it is a positive number, and is filled in rounded) and `text` (one string or a list
+  of lines joined with line breaks), a **text template**: `{arg}` the value as given (an empty one included), `{arg|json}`
+  its JSON, `{a,b|json}` a JSON object of those of a and b that are given (in that order), `{?arg}…{/arg}` only when it is
+  given, `{!arg}…{/arg}` only when it is not (blocks nest; given: not absent and not empty), `{{` a brace; anything else
+  in braces is text as written (`{}`, `{ key: ... }`). The build refuses a template that names no argument of its prompt,
+  a block never closed or closed by another name, a prompt name two packs declare, and control or direction characters.
+  The customer MCP server lists them after every tool and the host packs' own prompts, in pack order; each answers one
+  user message, its text filled with the arguments given (a required one missing is refused by the server, as for a
+  coded prompt). Zero packs, or none declared: no prompt and no prompts capability (the zero-pack surface is unchanged).
+  A **host pack's** pack.json `mcp.instructions` stand where its host entry's `instructions` did in `leadInstructions`:
+  the profile's `mcp_instructions` win, then the host entry's own, then the host packs' pack.json ones, then the other
+  packs' (joined), then the shell's. A host pack's **`engine.config`** (pack.json `engine: { config }`, only a host pack's,
+  plain JSON up to 256 kB, written into `src/hosts.generated.ts` when one declares it) holds the words its own code reads:
+  its host entry gives the schema (`defineHost({ engine: { config: <zod schema> } })`), checked when the hosts register
+  (`registerHosts`: every problem with its path; a config with no schema, a schema with no config and a config of no
+  registered host are refused, so a server does not start on words it cannot check), and its code reads the checked value
+  with `engineConfig(id)` (`src/pack-host.ts`, with `fillTemplate` and `templateProblems` for its own templates) where it
+  is used, never at a module's top level (that runs before registration and is refused). The first product moved its
+  server instructions, its five slash commands, its tools' titles, descriptions, argument descriptions and status lines,
+  its widget's description, its get_started stage texts and its no-plan message there (the pack's `server/texts.ts`);
+  a parity snapshot of its build before and after shows the same MCP surface. `npm run test:mcp-prompts` (the template
+  engine; the declarative fixture `fixture_digest`; zero packs; order and the host slot; the build's refusals; a host
+  pack's engine.config). **Not covered:** a prompt name a host pack registers in code is not known at build (the server
+  refuses the second registration when it is made); prompts carry no role (they read nothing; the tools they name check
+  their own).
 - **Install guides and tool docs** (mold_v0-010, built; absorbs 015; `src/install-pages.ts`): the per-client install
   pages of 060 (one per client, the exact command or config, Cursor's one-click link, sign-in first and, for clients
   that send a header, the key in an `Authorization` header) now follow the profile's optional `install_clients` (ids
