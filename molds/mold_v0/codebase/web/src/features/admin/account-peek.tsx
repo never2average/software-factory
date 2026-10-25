@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { Sparkline } from '@/components/layout/section';
 import { Dock } from '@/components/layout/dock';
 import { ACCOUNT_ROLES, accountRoleLabel, accountRoleOf, post, STAGE_LABELS, useAdmin, type InviteResult, type OrgList, type OrgRow } from './lib';
-import { sessionEngine } from './engine';
+import { engineWords, sessionEngine } from './engine';
 import { fill, W } from '@/lib/vocabulary';
 import { copyText, ErrorBox, Mono, When, type Tone } from './ui';
 import { Gate, useAdminRole, type AdminPermission } from './role';
@@ -371,9 +371,11 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
     return { label: 'Resend', onSelect: () => void ctl.run(() => Promise.all(expired.map((i) => post(`${p}/invitations/${encodeURIComponent(i.id)}/resend`))), 'Invitation resent'), need: 'invite' };
   }
   if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Copy welcome email', onSelect: x.welcome };
-  if (hostFeature('tips') && ['Using tools but has not onboarded', fill('Product onboarded, no {run}'), fill('{Run} ran, report never opened')].some((m) => a.startsWith(m))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
+  // The session engine's messages (mold_v0-121: its pack's pack.json account_stages attention): a tip for a stuck account, its usage for a failed onboarding.
+  const ew = engineWords()?.attention;
+  if (hostFeature('tips') && ew && [ew.first_call, ew.onboarded, ew.simulated].some((m) => a.startsWith(fill(m)))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
   if (a.startsWith('Stripe subscription is') || a.startsWith('Subscription cancels')) return { label: 'Copy portal link', onSelect: x.portal, need: 'accounts' };
-  if (a.startsWith('Product onboarding failed') || a.includes('tool errors')) return { label: 'View', onSelect: () => view('usage') };
+  if ((ew && a.startsWith(fill(ew.failed))) || a.includes('tool errors')) return { label: 'View', onSelect: () => view('usage') };
   return null;
 }
 

@@ -155,6 +155,18 @@ export interface PackConfig {
   };
   setup?: SetupConfig;
   error_hints?: { match: string; text: string }[];
+  account_stages?: AccountStagesConfig;
+}
+/**
+ * The session engine's account stages in the product's words (mold_v0-121, mold_v0-140: pack.json account_stages, the
+ * host pack's that owns the engine's tables; gen-packs requires it with the engine): each stage's label, the next step
+ * after it and its Analytics funnel label, the next step after the first tool call, and the needs-attention messages.
+ * Words placeholders ({run}, {Run}) are filled where they are shown.
+ */
+export interface AccountStagesConfig {
+  first_next: string;
+  stages: { id: "onboarded" | "simulated" | "reported"; label: string; next: string; funnel: string }[];
+  attention: { failed: string; first_call: string; onboarded: string; simulated: string };
 }
 /** The Setup page's own steps, its shell steps' words, its note for those who may not launch and its workflow (src/app.ts setup). */
 export interface SetupConfig {

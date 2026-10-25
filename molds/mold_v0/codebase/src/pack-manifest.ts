@@ -108,6 +108,21 @@ const SetupSchema = z.object({
   }).strict()).max(20).optional(),
 }).strict();
 
+/**
+ * The session engine's account stages in the product's words (mold_v0-121; src/admin.ts, src/insights.ts, the console's
+ * Accounts pages): the host pack that owns the engine's tables declares them (scripts/gen-packs.mjs requires it). Each of
+ * the engine's stages, in order (onboarded, simulated, reported): its label, the next step after it and its Analytics
+ * funnel label; the next step after an account's first tool call; and the needs-attention messages (an onboarding that
+ * failed, and an account two days at the first call, at onboarded or at simulated). The build's words ({run}) are filled in.
+ */
+const AccountStagesSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  first_next: plain(120),
+  stages: z.array(z.object({ id: z.enum(["onboarded", "simulated", "reported"]), label: plain(60), next: plain(120), funnel: plain(60) }).strict()).length(3)
+    .refine((l) => l.map((s) => s.id).join() === "onboarded,simulated,reported", "the engine's three stages in order: onboarded, simulated, reported"),
+  attention: z.object({ failed: plain(120), first_call: plain(120), onboarded: plain(120), simulated: plain(120) }).strict(),
+}).strict();
+
 /** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
 const NavItemSchema = (area: "/app" | "/admin") => z.object({
   title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
@@ -258,6 +273,8 @@ export const PackJsonSchema = z.object({
   access_request: AccessRequestSchema.optional(),
   /** Global settings on /admin (mold_v0-140; src/settings.ts): groups and pure-data settings (SettingsSchema above). */
   settings: SettingsSchema.optional(),
+  /** The session engine's account stages in the words of the host pack that owns its tables (mold_v0-121; AccountStagesSchema above). */
+  account_stages: AccountStagesSchema.optional(),
   /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
   setup: SetupSchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */

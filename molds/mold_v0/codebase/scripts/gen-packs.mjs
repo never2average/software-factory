@@ -134,7 +134,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "landing", "guide", "staff_docs", "console", "access_request",
   // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
-  "settings", "admin_mcp", "setup"]);
+  "settings", "admin_mcp", "setup",
+  // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
+  "account_stages"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -1410,6 +1412,8 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
 const SHELL_SETUP_STEPS = ["joined", "connected", "tools", "first_call"];
 const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
+/** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
+let engineWords = null;
 const packConfig = [];
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
@@ -1449,9 +1453,20 @@ const packConfig = [];
       c.admin_mcp = rest;
     }
     Object.assign(c, setupConfigOf(p));
+    // The session engine's account stages (mold_v0-121): the words of the host pack that owns its tables, required then.
+    const ownsEngine = ["products", "scenarios", "simulations", "agent_sessions"].every((t) => (p.schema?.tables ?? []).includes(t));
+    if (j.account_stages && !ownsEngine) fail(at, "account_stages: the session engine's stages are the words of the host pack that owns its tables (host.schema: products, scenarios, simulations, agent_sessions)");
+    else if (ownsEngine && !j.account_stages) fail(at, "account_stages: this pack owns the session engine's tables, so it names the engine's account stages (each stage's label, next step and funnel label, the next step after the first tool call, the attention messages)");
+    else if (j.account_stages) { const { $comment: _c, ...rest } = j.account_stages; c.account_stages = rest; engineWords = rest; }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
   refuse();
+}
+// The session engine's account-stage words for the console's Accounts pages (mold_v0-121), only in a build with the engine.
+if (engineWords) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The session engine's account-stage words (mold_v0-121: its host pack's pack.json account_stages), as templates of the build's words. */\n" +
+    `export const ENGINE_WORDS = ${json(engineWords)};\n`);
 }
 /**
  * A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. `setup` is a
