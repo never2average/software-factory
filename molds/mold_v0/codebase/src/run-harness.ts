@@ -41,7 +41,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { chmodSync, chownSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,6 +57,7 @@ import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mount
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 import { killUser, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
+import { now as clockNow, REFRESH_MARGIN_MS } from "./clock.js";
 
 /** Kept here for callers that imported it from the harness (it lives in src/run-users.ts, mold_v0-078). */
 export { sweepUserFiles };
@@ -206,6 +207,14 @@ export interface HarnessOptions {
    * the run's user nothing (a run sandbox, mold_v0-055).
    */
   noNewPrivs?: boolean;
+  /**
+   * mold_v0-014: how often, while the run goes, the harness checks its short-lived credentials (a GitHub App's or an
+   * OAuth connection's tokens, delivered with expires_at): once one has less than src/clock.ts REFRESH_MARGIN_MS left it
+   * asks for the run's credentials again and rewrites the credential files and git's token files in place, so a program
+   * that reads its file (or git, which asks its helper each time) keeps a working token past the token's life. Every
+   * minute by default. A variable is set when a program starts: a long program should take such a credential as a file.
+   */
+  credentialRefreshMs?: number;
   /** The run tools (mold_v0-072): where the image installed them (APP_RUN_TOOLS_DIR, /opt/octi-tools) and, for the offline tests only, another catalogue. */
   runTools?: { dir?: string; catalog?: ToolCatalog };
   /**
@@ -358,7 +367,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   // An agent may print its environment: the run's gateway token is redacted like a credential (it is revoked at the end).
   if (agent && claim.gateway.token) secrets.push({ name: "gateway token", value: claim.gateway.token });
   let secretDir: string | null = null;
-  const dropSecrets = () => { if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
+  /** mold_v0-014: the credential files the running program has (its field files and git's token files), by credential. */
+  let liveFiles: { name: string; path: string }[] = [];
+  const dropSecrets = () => { liveFiles = []; if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
   /** mold_v0-074: the checkout cache (entered for this run's workspace only) and the links it put into the checkout. */
   let cache: CheckoutCache | null = null;
   const mounts: { at: string; target: string }[] = [];
@@ -398,6 +409,44 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       if ((e as { status?: number }).status === 409) { leaseLost = true; stop("lease"); }
     }
   }, Math.max(1000, (claim.lease_seconds * 1000) / 3));
+  /**
+   * mold_v0-014: short-lived credentials outlive their tokens. Once one has less than REFRESH_MARGIN_MS left, the run's
+   * credentials are asked for again (the engine mints or refreshes: the same margin there) and every file the running
+   * program holds is rewritten in place (a new file renamed over the old: a reader sees one or the other); a credential no
+   * longer given (a connection removed, an installation uninstalled) has its files emptied. The next program gets the
+   * fresh values as it starts. Whatever the run writes is redacted of the old and the new.
+   */
+  let refreshTimer: NodeJS.Timeout | null = null;
+  let refreshing: Promise<void> | null = null;
+  const refreshCredentials = (): Promise<void> => {
+    const due = (delivered?.credentials ?? []).some((c) => c.expires_at && Date.parse(c.expires_at) - clockNow() < REFRESH_MARGIN_MS);
+    if (!due || leaseLost) return Promise.resolve();
+    refreshing ??= (async () => {
+      let fresh: RunCredentials;
+      try { fresh = await client.credentials(run.id, lease); }
+      catch (e) { pending.push({ type: "credentials_refresh_failed", data: { error: redactText(String((e as Error)?.message ?? e), secrets).slice(0, 300) } }); return; }
+      const old = delivered!;
+      secrets = [...secrets, ...fresh.credentials.filter((c) => !secrets.some((x) => x.value === c.value)).map((c) => ({ name: c.name, value: c.value }))];
+      delivered = fresh;
+      const changed: string[] = [], withdrawn: string[] = [];
+      for (const o of old.credentials) {
+        const n = fresh.credentials.find((c) => c.name === o.name);
+        if (n && n.value === o.value) continue;
+        (n ? changed : withdrawn).push(o.name);
+        for (const f of liveFiles.filter((x) => x.name === o.name)) {
+          try {
+            const tmpFile = `${f.path}.${process.pid}.new`;
+            writeFileSync(tmpFile, n && !(/[\r\n]/.test(n.value) && f.path.includes(".git-credential")) ? n.value : "", { mode: 0o400, flag: "wx" });
+            if (as) chownSync(tmpFile, as.uid, as.gid);
+            renameSync(tmpFile, f.path);
+          } catch { /* the program ended and its directory went: nothing to rewrite */ }
+        }
+      }
+      if (changed.length || withdrawn.length) pending.push({ type: "credentials_refreshed", data: { changed, withdrawn,
+        expires_at: Object.fromEntries(fresh.credentials.filter((c) => c.expires_at).map((c) => [c.name, c.expires_at])) } });
+    })().finally(() => { refreshing = null; });
+    return refreshing;
+  };
   const deadline = setTimeout(() => stop("deadline"), Math.max(0, new Date(claim.deadline_at).getTime() - Date.now()));
   const untilDeadline = () => Math.max(1000, new Date(claim.deadline_at).getTime() - Date.now());
   /**
@@ -569,6 +618,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       if (spec.credentials?.length || spec.operator_credentials?.length) {
         delivered = await client.credentials(run.id, lease);
         secrets = [...secrets, ...delivered.credentials.map((c) => ({ name: c.name, value: c.value }))];
+        if (delivered.credentials.some((c) => c.expires_at)) refreshTimer = setInterval(() => void refreshCredentials(), Math.max(50, opts.credentialRefreshMs ?? 60_000));
       }
     } catch (e) {
       return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` });
@@ -591,9 +641,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       const gits: GitCredential[] = [];
       const missing: string[] = [];
       const shadowedPaths: string[] = [];
+      const gitNames: string[] = [];
       for (const g of git) {
         const c = (delivered?.credentials ?? []).find((x) => x.name === g.credential);
-        if (c) gits.push({ protocol: "https", host: g.host, username: g.username, value: c.value }); else missing.push(g.credential);
+        if (c) { gits.push({ protocol: "https", host: g.host, username: g.username, value: c.value }); gitNames.push(c.name); } else missing.push(g.credential);
       }
       if (missing.length) pending.push({ type: "git_credentials_missing", data: { names: missing } });
       const extra: Record<string, string> = {};
@@ -607,11 +658,16 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
           const p = path.join(secretDir, path.basename(f.file!));
           writeFileSync(p, f.value, { mode: 0o400, flag: "wx" });
           if (as) chownSync(p, as.uid, as.gid);
+          liveFiles.push({ name: f.name, path: p });
           // mold_v0-075: the file's full path in the variable its field names (KUBECONFIG, a pack's own locator).
           if (f.path_env) { if (f.path_env in env || f.path_env in extra) shadowedPaths.push(f.name); else extra[f.path_env] = p; }
         }
         if (files.length) extra.RUN_CREDENTIALS_DIR = secretDir;
-        if (gits.length) Object.assign(extra, gitCredentialFiles(secretDir, gits, as).env);
+        if (gits.length) {
+          Object.assign(extra, gitCredentialFiles(secretDir, gits, as).env);
+          // gitCredentialFiles writes git-token-<i> in the order given: git's helper reads it at every request.
+          gitNames.forEach((n, i) => liveFiles.push({ name: n, path: path.join(secretDir!, ".git-credential", `git-token-${i}`) }));
+        }
         if (as) chownSync(secretDir, as.uid, as.gid);
       }
       // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
@@ -656,6 +712,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       // mold_v0-074: the steps before the command, in order.
       for (const step of agent.steps) {
         const s0 = Date.now();
+        await refreshCredentials(); // mold_v0-014: a step (a checkout's fetch too) starts with tokens that have time left
         if (step.checkout) {
           try {
             if (as) ensureUserGone(as);
@@ -692,6 +749,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         if (code !== 0) return await complete({ outcome: "failed", error_kind: "run", error: `step ${step.name} exited with ${code}` });
       }
     }
+    await refreshCredentials();
     let env: Record<string, string>;
     // The command: the credentials it names, else all the kind's but a checkout's (that one is the runner's own).
     const checkoutCreds = new Set((agent?.steps ?? []).flatMap((st) => st.checkout?.credential ? [st.checkout.credential] : []));
@@ -818,7 +876,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     }
     return await complete({ outcome: "succeeded", results });
   } finally {
-    clearInterval(beat); clearTimeout(deadline);
+    clearInterval(beat); clearTimeout(deadline); if (refreshTimer) clearInterval(refreshTimer);
     if (as) { killUser(as); sweepUserFiles(as.uid); }
     dropSecrets();
     (cache as CheckoutCache | null)?.close();
