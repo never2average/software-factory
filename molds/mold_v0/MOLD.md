@@ -1404,8 +1404,8 @@ facts the factory writes into the build copy (`deploy-facts.json`, names and pla
 value: names, providers, regions and hosts only.
 
 **Landing page (mold_v0-091; pick and place, mold_v0-122).** The console's `/` is the build's landing page, declared,
-not written: a declarative pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it (at most one
-pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
+not written: a pack's `pack.json` `landing` (a declarative pack's, or a host pack's since mold_v0-138) and the app's own
+`profile.json` `landing` over it (at most one pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
 order: `sections: [{"type": ...}]`. The library is the first product's landing page generalised: each section and each
 drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
 footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
@@ -1418,19 +1418,32 @@ one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a fl
 `install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
 carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
 shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
-links; the ways in: sign in and start, or one account button), `footer` (a tagline, a note, links, a copyright line,
-`shell_links: false`) and `seo` (title and description for search results and Open Graph). With no `sections` the page
+links; the ways in: sign in and start, or one account button; `sign_in` and `open` relabel or re-address the account
+button's two states wherever the page shows it), `footer` (a tagline, a note, links, a copyright line,
+`shell_links: false`), `seo` (title and description for search results and Open Graph: the landing page's, and, since
+mold_v0-138, every public page's default title, description and link preview, with the build's share image) and
+`request_page` (mold_v0-138, after the first product's early-access page: a public page asking for access at its own
+one-segment `path`, such as `/early-access`, never one of the console's own: an eyebrow, a title and its highlighted
+end, a lead, up to 6 `benefits` {icon, title, body}, its own `seo`, and the form's words in `form`: `submit`, `more`
+(the fold holding the name, the message and the fields marked `more`), `message_label` and `done` {title, steps}, where
+`{company}` and `{email}` are the sender's). `gen-packs.mjs` rewrites the request page's path to the shell's
+`app/(site)/declared/[page]` (`src/config/pack-routes.generated.json`, which lists it under `declared` for the lanes'
+`testing/console/surface.mts`), refusing a path a host pack's `routes.json` claims; the sitemap lists it. Its form
+(`web/src/features/site/request-page-form.tsx`) asks the work email and the company first, then the build's fields,
+checks the addresses before sending, posts to `POST /api/access-requests` like `/request-access`, and sends the visit's
+first page as `source.landing` (the root layout's `VisitSource`, mold_v0-110). With no `sections` the page
 is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
 `{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
-one by one. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+one by one, as is its `request_page`. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
 value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
 (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
 footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
 `how_it_works`, `features`, `faq`, `closing` at the top level) is still read and converted to sections at build time
 (coverage becomes the hero's strip, value points the concept's cards, features proof's items, closing a cta), so a build
 that declared one still builds; a block that mixes the two is refused. Every call to action comes from
-`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack's own landing page
-(code, mold_v0-039) stays its own.
+`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack that still names
+a landing page in its console code (`index.ts`, mold_v0-039) keeps that page; the first product's moved to its
+`pack.json` `landing` in mold_v0-138.
 
 **Share image (mold_v0-093).** What a shared link to the build shows (Open Graph and X: `web/src/app/opengraph-image.tsx`
 and `twitter-image.tsx`, one renderer in `web/src/features/site/share-image.tsx`) is the build's own, never another
@@ -1529,8 +1542,9 @@ name, the company, a message, and where the person came from) is declared, never
 a pack's pack.json (the packs' joined in pack order, a key once in a build) or in the app's `profile.json`, which then
 replaces the packs' (a host pack's `host.profile` may not set it). Each field is a `key` (lowercase letters, digits and
 `_`, never `email`, `name`, `company`, `message` or `source`), a `label`, a `type` (`text`, `long_text`, `url`, `email`,
-`select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help` and
-`placeholder`; at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
+`select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help`,
+`placeholder`, `more` (folded under the request page's fold, mold_v0-138) and `ask: false` (on no form: an answer sent
+another way, an older form's or the product's own, is still stored and labelled; never `required`); at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
 with it and writes the build's fields to `src/access-request.generated.ts` and `web/src/config/access-request.generated.ts`
 (and copies the rules to `web/src/lib/access-request.generated.ts`), never into the profile modules, so the MCP surface
 is unchanged. The public `/request-access` form and the portal's page for no account (mold_v0-098) ask the fields after
@@ -1559,8 +1573,8 @@ nobody agreed to. The rules are `src/legal.ts` (plain text on one line with no m
 that exists, own pages https:// only), checked by `gen-packs.mjs`, which writes the block to `src/legal.generated.ts` and
 `web/src/config/legal.generated.ts`, never into the profile modules (the MCP surface is unchanged); a host pack's
 profile may not set it. `web/src/app/robots.ts` lets crawlers read the public pages and keeps them out of `/app`,
-`/admin`, `/api` and `/auth`; `web/src/app/sitemap.ts` lists the landing page, `/install` and the legal pages the console
-serves itself (`web/src/features/site/public-pages.ts`; `npm run test:legal` fails when a public page under
+`/admin`, `/api` and `/auth`; `web/src/app/sitemap.ts` lists the landing page, `/install`, the landing block's request
+page when there is one (mold_v0-138) and the legal pages the console serves itself (`web/src/features/site/public-pages.ts`; `npm run test:legal` fails when a public page under
 `web/src/app/(site)` is not listed). Both are on the console's own address, read when asked (`web/src/lib/site-url.ts`:
 `APP_CONSOLE_URL`, else `NEXT_PUBLIC_APP_URL`, else Vercel's production address, which is the custom domain once one is
 attached), as are the icons' and share image's absolute URLs. The factory's intake asks a new app for the company (the

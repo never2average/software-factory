@@ -1,15 +1,27 @@
 import type { Metadata } from 'next';
+import { landing } from '@/config/landing.generated';
 import { profile } from '@/config/profile.generated';
 import { hostLanding, hostSiteLayout, hostSiteMetadata } from '@/features/packs/host-registry';
 import { SiteFooter, SiteHeader } from '@/features/site/landing';
 import { accountsMode } from '@/features/site/accounts-mode';
+import { ogImages, twitterCard } from '@/features/site/share-image-meta';
 
-// The public pages' layout and metadata: a host pack's (mold_v0-039), else the shell's in the profile's words.
+// The public pages' layout and metadata: a host pack's (mold_v0-039), else the shell's in the profile's words. When the
+// landing block has `seo` (mold_v0-138, after the first product's site layout), its title and description are every
+// public page's default and its link preview (Open Graph and the X card, with the build's share image, mold_v0-148); a
+// page with its own (the landing page, the legal pages) says its own.
 export async function generateMetadata(): Promise<Metadata> {
-  return hostSiteMetadata() ?? {
-    title: { default: profile.name, template: `%s · ${profile.name}` },
-    description: profile.short_description,
-    robots: { index: true, follow: true },
+  const host = hostSiteMetadata();
+  if (host) return host;
+  const template = `%s · ${profile.name}`;
+  const robots = { index: true, follow: true };
+  const seo = landing?.seo;
+  if (!seo) return { title: { default: profile.name, template }, description: profile.short_description, robots };
+  const title = seo.title ?? profile.name, description = seo.description ?? profile.short_description;
+  return {
+    title: { default: title, template }, description, robots,
+    openGraph: { title, description, siteName: profile.name, type: 'website', images: ogImages() },
+    twitter: twitterCard(title, description)
   };
 }
 
