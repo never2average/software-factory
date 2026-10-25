@@ -619,7 +619,7 @@ def mcp_tools(p):
     n = lambda verb, thing=None: f"{prefix}_{verb}" + (f"_{thing}" if thing else "")
     out = []
     for a in p.get("record_areas") or []:
-        out += [(n("list", a["name"]), "workspace"), (n("get", a["name"]), "workspace")]
+        out += [(n("list", a["name"]), "workspace"), (n("get", a["name"]), "workspace"), (n("export", a["name"]), "workspace")]   # export: mold_v0-108
         if a.get("scope") != "platform":
             out += [(n("create", a["name"]), "workspace"), (n("update", a["name"]), "workspace")]
             if a.get("lifecycle"): out.append((n("move", a["name"]), "workspace"))
