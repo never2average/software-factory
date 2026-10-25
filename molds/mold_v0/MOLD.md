@@ -921,7 +921,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack gets MCP tools generated from its declarations, so a pack with no hand-written tool still has a full MCP. Per pack,
   named `<prefix>_<verb>_<thing>` (the prefix its id unless `mcp.prefix` says otherwise) and in the pack's words (a pack's
   `words.run` "review" gives `review_status`, `list_reviews`, `get_review_results`, `cancel_review`; `words.workspace` is
-  the descriptions' word): `list_<area>` (filter, sort, limit, after) and `get_<area>` for every area; `create_<area>`
+  the descriptions' word): `list_<area>` (filter, sort, limit, after), `get_<area>` and `export_<area>` (mold_v0-108,
+  below) for every area; `create_<area>`
   and `update_<area>` for a workspace area whose rows are not read from files or an API, `move_<area>` with a
   lifecycle (its states and transitions in the description); `get_metrics` when the pack declares metrics (063's
   computation); `start_<kind>` per job kind with its `args` typed from the declaration (and `target_asset` when the
@@ -958,7 +959,22 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `prompt`, else "Help me with the next step: <label>."); the instructions then gain a line telling the client to call
   it FIRST on a greeting or a vague request and never to answer a new person with a list of tools. A zero-pack server
   has no get_started (it has no tool to guide toward; the console's Setup page covers connecting) and its surface and
-  instructions are unchanged; a host pack keeps its own tool and instructions. `npm run test:get-started`. **Install pages**: `GET /install`, `/install/:client`, `/install.json`, public, for
+  instructions are unchanged; a host pack keeps its own tool and instructions. `npm run test:get-started`. **Export**
+  (mold_v0-108, `src/record-export.ts`): `<prefix>_export_<area>` (read only, the area's `read` roles, like `list_`)
+  returns `{area, format: "csv", records, next, csv}`: a header (Key, Title, each field's label in the area's order,
+  Updated) and a row per record the caller may page through with `list_<area>` (its filter and sort; the caller's
+  workspace from the session or key, so never another workspace's rows; a shared area's rows as every workspace reads
+  them), a list's items joined with "; ", a file by its path, json as JSON text, RFC 4180 quoting, and text a
+  spreadsheet would run as a formula (=, +, -, @, a tab or carriage return first) written with a leading apostrophe. At
+  most 5000 records or 1 MB of CSV a call: `next` is the cursor after the last record it holds (a page that does not fit
+  whole is read again just up to what fits), passed as `after` for the rest; one record larger than that is refused
+  (413). The console offers **Export CSV** on every area tab (one area, or a merged tab's rows with its Source column)
+  and on an area's records page (`web/src/features/tabs/export.tsx`): the same file, read through the same routes the
+  page shows (`/api/records`, so the person's role and workspace as there), up to 10,000 records, with a byte-order mark
+  for spreadsheets. A pack that withholds an export tool (`mcp.exclude`, `admin_only`) has no Export CSV on that area's
+  pages (`exportWithheldAreas` in `pack-nav.generated.ts`); the rows stay readable where the list is. Zero packs: no
+  export tool, the surface unchanged. `npm run test:record-export` (`--browser`: the downloads in a built console) and
+  `npm run test:mcp-tools` (every export probed across two workspaces). **Install pages**: `GET /install`, `/install/:client`, `/install.json`, public, for
   every client `src/connect-catalog.ts` lists (now from the profile's name and server name), sign-in (OAuth) first and,
   for clients that send a header, an API key placeholder in an `Authorization` header, never in a URL.
   `npm run test:mcp-tools` (the fixtures `fixture_tracker` and `fixture_review`, two workspaces; the golden surface

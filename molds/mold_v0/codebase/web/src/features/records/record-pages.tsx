@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
+import { ExportCsvButton } from '@/features/tabs/export';
 
 type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version: string | null; updated_at: string };
 type Page = { records: RecordRow[]; next: string | null };
@@ -32,7 +33,8 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
   const url = `${recordsApi(base)}/${area.name}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
   const { data, error } = useOrgLoad(() => getJson<Page>(url), [url]);
   return (
-    <PageContainer pageTitle={area.label} pageDescription={area.description ?? where(area)}>
+    <PageContainer pageTitle={area.label} pageDescription={area.description ?? where(area)}
+      pageHeaderAction={data?.records.length ? <ExportCsvButton url={`${recordsApi(base)}/${area.name}`} area={area} name={area.name} areas={[area.name]} /> : undefined}>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={1} /> : !data.records.length ? (
         <p className='text-muted-foreground text-sm'>No records yet.</p>
       ) : (
