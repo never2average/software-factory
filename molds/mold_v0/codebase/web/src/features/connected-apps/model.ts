@@ -53,7 +53,7 @@ export const revokeQuestion = (a: ConnectedApp) => ({
 export const CLERK_NOTE = {
   title: 'Managed by your sign-in provider',
   text: fill('{product} signs people in with Clerk, and the AI apps you connect sign in through Clerk too. Clerk keeps those connections, and does not let {product} list them here.'),
-  disconnect: fill('To disconnect an app, remove {product} in that app\'s own settings (in Claude: Settings, then Connectors). To end every connection at once, sign out of your other devices on your profile.'),
+  disconnect: fill('To disconnect an app, remove {product} in that app\'s own settings (in Claude: Settings, then Connectors).'),
 };
 
 /**
