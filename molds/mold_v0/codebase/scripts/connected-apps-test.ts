@@ -293,6 +293,8 @@ async function browserChecks(w: World) {
     await p.locator(ready).first().waitFor({ timeout: 20000 });
     return { c, p, status: res?.status() ?? 0, asked };
   };
+  /** The trail at the top reads "Account / Connected apps" (web/src/hooks/use-breadcrumbs.tsx), not the address. */
+  const trail = async (p: any) => (await p.locator("[data-slot='breadcrumb-page']").first().innerText()).trim();
 
   // ---------- 5. axe, light and dark; two widths ----------
   const theme = async (p: any, t: "dark" | "light") => {
@@ -342,6 +344,7 @@ async function browserChecks(w: World) {
       assert.equal(await note.getByRole("link", { name: "Your profile" }).getAttribute("href"), "/app/profile");
       assert.equal(await r.p.locator("table").count(), 0, "no list");
       assert.deepEqual(r.asked, [], "the page never asks the built-in list");
+      assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
     } finally { await r.c.close(); }
     ok("the page (clerk): the managed-by-your-sign-in-provider note, the link to the person's account at Clerk and their profile; no list, and the built-in list never asked");
@@ -355,6 +358,7 @@ async function browserChecks(w: World) {
       assert.match(text, /Example App/); assert.match(text, /Verified:\s*app\.example\.com/); assert.match(text, /Test Connector/); assert.match(text, /Not verified/);
       assert.ok(text.includes(w.names.a) && text.includes(w.names.b), "each app's workspace");
       assert.equal(await r.p.getByRole("link", { name: "app.example.com" }).getAttribute("href"), "https://app.example.com/oauth/client.json");
+      assert.equal(await trail(r.p), "Connected apps", "the breadcrumb names the page");
       assert.equal(await r.p.locator(`a[href='${PAGE}']`).count() > 0, true, "the sidebar links to it");
       // Revoke asks first; Cancel changes nothing.
       const row = rows.filter({ hasText: "Test Connector" });
