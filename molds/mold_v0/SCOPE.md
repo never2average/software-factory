@@ -232,7 +232,7 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   harness registry itself, `harnesses/registry.json` with `src/agents.ts`, stays in the shell, and with no host pack the
   engine schedules by it: `src/agent-mix.ts`), context and memory (`server/context.ts`), library contributions
   (`server/contributions.ts`), playbooks and journeys (`server/playbooks.ts`, `server/journeys.ts`), the product's
-  settings (`server/settings.ts`), its portal, admin, worker and public routes (`server/portal.ts`,
+  settings (pack.json `settings` since mold_v0-140), its portal, admin, worker and public routes (`server/portal.ts`,
   `server/http-routes.ts`), all wired by `packs/octillion/host.ts`. The generic one-model call it used moved to the shell
   (`src/ask-model.ts`), as did the model keys and sandbox provider pages' API (`src/platform-keys.ts`).
 - **Orchestrator extension.** The Pi orchestrator that answers as a simulated developer:
@@ -251,7 +251,9 @@ at the same paths and with the same MCP surface. Paths below are where each now 
 - **Console pages.** Pick rate (with its report), context (company, users, products), journeys, developer personas and
   programming tasks on /app; personas, tasks, journeys and the harness mix on /admin (agent configuration, every
   global setting, stays the shell's page):
-  `web/src/packs/octillion/` (pages, features, sidebar entries, `routes.json`), at their old URLs.
+  `web/src/packs/octillion/` (pages, features, `routes.json`), at their old URLs; its sidebar entries, redirects, Setup
+  page (steps, workflow, error hints), admin MCP words and account-stage words are pack.json config since mold_v0-140
+  and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`).
 - **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
   and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
 - **Docs.** The customer guide and the product's internal docs and case studies, as config since mold_v0-139 (its

@@ -18,7 +18,11 @@
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
-//                                        and their pack.json engine.config (mold_v0-137) when one declares it
+//                                        their pack.json engine.config (mold_v0-137) when one declares it, and every pack's
+//                                        server config (PACK_CONFIG, mold_v0-140: settings, admin_mcp, setup,
+//                                        mcp.error_hints, account_stages) when one declares any
+//   web/src/config/pack-host-nav.generated.ts  the host packs' sidebar entries and the shell components they serve
+//                                        (pack.json console.nav, console.components; mold_v0-140)
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
 //   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's whole guide (pack.json guide, mold_v0-139),
 //                                        else the packs' own guide pages (pack.json guide) and the facts its generated

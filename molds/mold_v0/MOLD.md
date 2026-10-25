@@ -1248,21 +1248,23 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and prompts (after them), and the caller's context appended to the instructions (`src/server.ts`, `src/http.ts`);
   admin MCP tools placed after a named shell tool, the admin server's instructions listing the reads it ends up with
   (`src/admin-mcp.ts`); routes at the product's own paths: public ones (a webhook), the portal's `/api/app/*` mounted
-  **before** the shell's (so its own Setup and Usage replace the shell's neutral ones), its larger request bodies, its
+  **before** the shell's (so its own Usage replaces the shell's neutral one; its Setup page is the shell's, from its
+  pack.json `setup`, mold_v0-140), its larger request bodies, its
   error classes and its fields on `/api/app/billing`, `/api/admin/*`, `/api/admin/onboarding/*` (inside the shell's
   admin guard, access log and `assertGuarded`: every change names its permission) and `/api/worker/*` (behind the worker
   token, with the calling job's id); the session engine's hooks: scoring a completed session, extending a simulation's
   batch, the agent mix the autoscaler, fleet and Compute page schedule by (`src/agent-mix.ts`: else every registry agent
   at its registry weight); background work on the Vercel cron (its result in the cron's answer), the autoscaler's loop
-  and after each successful tool call (`src/analytics.ts`); a new access request; global settings in groups placed after
-  a shell group (`src/settings.ts` `settingGroups`, `allSettings`; a setting may go before a named one); its public
-  files served after the shell's (else the root page is the shell's own, in the profile's words); the widget preview.
+  and after each successful tool call (`src/analytics.ts`); a new access request; its public files served after the
+  shell's (else the root page is the shell's own, in the profile's words); the widget preview. Its global settings, the
+  admin MCP's words for shell tools and skills, its Setup page, its sidebar entries and redirects are pack.json config
+  since mold_v0-140 (below, "A host pack's console, Setup page, settings and admin words").
   *Its console* is `web/src/packs/<id>/`: `index.ts` (pages for `/app`, `/admin` and the site's root, by path; its
-  landing page, the public pages' layout and metadata), `nav.ts` (sidebar transforms that put its entries among the
-  shell's, and the shell features it enables: `tips`, `journeys`, `research`; kept apart from the pages so the sidebar's
-  bundle never carries them), `routes.json` (the URLs its pages keep: next.config
+  landing page, the public pages' layout and metadata) and `routes.json` (the URLs its pages keep: next.config
   rewrites each, from `src/config/pack-routes.generated.json`, to `app/{app,admin}/host/[pack]/[...path]` or
-  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects). Its customer guide
+  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`). Its sidebar entries, the shell
+  components its routes serve and its redirects are pack.json `console` since mold_v0-140 (a `nav.ts` here, or
+  `redirects` in `routes.json`, is refused, naming the declaration). Its customer guide
   and its staff docs are config since mold_v0-139 (pack.json `guide`, the whole guide at /app/docs, and `staff_docs`,
   which join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus; "Customer guide" below):
   a `guide.ts` here or a `packs/<id>/docs/*.md` file is refused, naming the declaration.
@@ -1326,8 +1328,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`src/host-tables.ts`, from the build's registry, never from the database); with none it is dormant: no demand, no
   claims, no spend, empty Compute, Accounts, Usage and Billing figures, and a workspace deletes without them. Its admin MCP
   job tools named for simulations (`list_simulations`, `get_simulation`, `cancel_simulation`) are the host pack's, at the
-  same places (`adminMcp.tools`, with `adminMcp.reword` for `get_account`'s words and `adminMcp.skills` for the two skills
-  that name them); the reads and the cancel behind them are the shell's (`src/pack-host.ts`).
+  same places (`adminMcp.tools`; `get_account`'s words and the steps of the two skills that name them are its pack.json
+  `admin_mcp` since mold_v0-140); the reads and the cancel behind them are the shell's (`src/pack-host.ts`). The engine's
+  account stages (their labels, next steps and funnel labels) and needs-attention messages are the host pack's pack.json
+  `account_stages` (mold_v0-121), required from the pack that owns the engine's tables.
   `npm run test:migrations` proves it: databases at the shell's older versions (schema-on-boot, and the pre-049
   migrations recorded up to 0001, 0003, 0008, 0013 and 0016, each with rows in every table) upgrade with every row identical;
   with no packs their shell schema equals a new one's and the product's tables stay with their rows; with the host pack
@@ -1341,8 +1345,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
   console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
   contribution credits on Billing), the default icons and Open Graph image are the
-  first product's; the shell features a host
-  pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its `nav.ts` names them; a dropped host pack's console and orchestrator folders are not
+  first product's; the shell components a host
+  pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its pack.json
+  `console.components` names them; a dropped host pack's console and orchestrator folders are not
   pruned from a reused build copy (gen-packs then refuses the build, which the deploy rebuilds from scratch anyway).
 - The profile (`profile.json` over a host pack's own profile over a neutral default, `src/profile.ts`) names the MCP
   server, the email sender and the console title. The codebase's `profile.json` names nothing since mold_v0-039: the
@@ -1532,6 +1537,43 @@ would: `# <title>`, a blank line, then the markdown. The markdown is checked wit
 is allowed (the renderer shows it as text) and so are relative links between docs (`journeys.md`, `../beta-guide.md`,
 which /admin/docs opens as that doc); a path the shell's `docs/` or another pack already has is refused.
 `npm run test:pack-guide`.
+
+**A host pack's console, Setup page, settings and admin words (mold_v0-140, mold_v0-121).** What a host pack's code
+used to hand the shell is its pack.json, checked by `gen-packs.mjs` (`src/pack-manifest.ts` for the shape) and carried to
+the server as `src/hosts.generated.ts` `PACK_CONFIG` (`src/host.ts` `packConfigs`, `PackConfig`), written only when a pack
+declares one, so a build without writes what it did:
+- `console.nav` (a host pack's; it was `web/src/packs/<id>/nav.ts`): `{app: [...], admin: [...]}`, placements applied in
+  order to the shell's sidebar groups (`web/src/features/packs/host-nav.ts` `placeNav`): a new group
+  `{"label", "before"|"after": <a group's label>, "items"}` or entries put into a group `{"into": <its label>,
+  "before"|"after": <an entry's url>, "items"}` (no anchor, or one the sidebar lacks: at the end); each item
+  `{title, url, icon, shortcut?}` is one of the pack's own pages (its `routes.json`), an icon of the tabs' set, a shortcut
+  (`g` then a key) once in its console. `console.components` names the shell's components its routes serve (`tips`,
+  `journeys`, `research`: `src/console-pages.ts` `CONSOLE_COMPONENTS`; `hostFeature`). `console.redirects`
+  (`[{source, destination, permanent}]`, any pack; they were `routes.json` `redirects`) are next.config redirects. The
+  sign-up form's subtitle is the profile's `sign_up_subtitle` (a host pack's `host.profile` may set it; else
+  short_description).
+- `setup` (a host pack's, one per build; it replaced the `/api/app/setup` route in code): `steps` placed among the shell's
+  (`after` a step, else last), each done when the person read a resource whose address starts with a prefix
+  (`resource:ui://<ns>/`, a widget) or the account reached a session-engine stage (`stage:onboarded|simulated|reported`,
+  only in a build with the engine); `optional` (not counted), `help_text_only` (its help when every client the person
+  connected shows results as text), `prompt`, `launch` (someone who may not launch reads `viewer_note` instead);
+  `shell_steps` (the shell's four steps in the product's words); `workflow` (`[{id, label, tools, prompt}]`: Setup's
+  coverage and next group, the shell's Usage workflow, and `setupWorkflow()` in `src/pack-host.ts` for the pack's own
+  pages). `mcp.error_hints` (`[{match, text}]`, any pack) gives each recent error on Setup the first fix whose pattern
+  (a regular expression, any case) its text matches.
+- `settings` (any pack; they were the host entry's `settings`): `groups` placed after a named group and `defs`, pure-data
+  settings (`SettingDef`) before a named setting or at their group's end (`src/settings.ts`); a group or key twice, a
+  shell group, a setting in no group are refused at build, a key the shell has when the settings are read.
+- `admin_mcp` (any pack; they were the host entry's `adminMcp.reword` and `skills`): `reword` gives a shell admin tool
+  its description and its summary line as a template filled with the result's fields (`src/text-template.ts`
+  `summaryValues`: `{account_name}`, `{members_count}`); `skills` replaces exact passages of a shell skill's text
+  (`[{from, to}]`, in pack order). The skills' texts are `src/admin-skills.ts` (no imports), so the build refuses a `from`
+  the skill no longer reads, and a tool or skill the shell lacks.
+- `account_stages` (mold_v0-121; the host pack that owns the session engine's tables must declare it): each engine stage's
+  label, next step and Analytics funnel label, the next step after the first tool call, and the needs-attention messages
+  ("Product onboarding failed" and the rest were the shell's words), filled with the build's words; the console reads them
+  from `build-facts.generated.ts` `ENGINE_WORDS`.
+`npm run test:host-config`; `npm run test:admin-sections` in a build with the engine.
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
 operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
