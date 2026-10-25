@@ -33,6 +33,7 @@ import { generateCatalog, plain, type CatalogPack, type GeneratedTool } from "./
 import { AgentJobKindSchema, JobKindSchema, PackError, type PackTool, type PackToolContext, type Workspace } from "./pack-api.js";
 import { declaredRuns, packs, runPackTool, workspaceDb, type InstalledPack } from "./packs.js";
 import { PROFILE } from "./profile.js";
+import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { findArea, may, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
@@ -338,10 +339,11 @@ export function generatedInstructions(org: Pick<Org, "role"> = {}): string {
 /**
  * The packs' own instructions for the customer MCP server (mold_v0-105; pack.json `mcp.instructions`), joined in pack
  * order, or null when no pack has any. src/server.ts uses them when the profile has no `mcp_instructions` and no host
- * pack has its own.
+ * pack has its own. `hostIds` are the build's host packs (src/host.ts): their pack.json instructions (mold_v0-137) are
+ * a host pack's own, so they are left out here and are the only ones read with `ofHosts`.
  */
-export function packInstructions(): string | null {
-  const list = packs().map((p) => p.definition.mcp?.instructions?.trim()).filter((x): x is string => !!x);
+export function packInstructions(hostIds: readonly string[] = hosts().map((h) => h.id), ofHosts = false): string | null {
+  const list = packs().filter((p) => hostIds.includes(p.id) === ofHosts).map((p) => p.definition.mcp?.instructions?.trim()).filter((x): x is string => !!x);
   return list.length ? list.join("\n\n") : null;
 }
 

@@ -9,7 +9,8 @@
  *
  * `workspace_store` (mold_v0-056, src/workspace-store-policy.ts): the store's retention and the file viewer's secret paths.
  * `mcp` (mold_v0-060, McpSettingsSchema in src/pack-api.ts) shapes the MCP tools generated from the declarations
- * (src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. No key is reserved now.
+ * (src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only, the server's instructions and the
+ * declared slash commands (`prompts`, mold_v0-137). No key is reserved now.
  * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
  * `repository`; "pack.json#upstream" is resolved here to the pack.json's own `upstream` pin). Declared and checked for
  * their shape today, read by the ticket that builds it: `run_results` (how a run's output becomes run_results rows:
@@ -88,6 +89,16 @@ export const PackJsonSchema = z.object({
       functions: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a function name")).max(50).optional(),
       adopts: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a shell migration (NNNN_name)")).optional(),
     }).strict().optional(),
+  }).strict().optional(),
+  /**
+   * A host pack's engine settings (mold_v0-137; MOLD.md "MCP words as config"): `config`, the words and settings its own
+   * code reads through src/pack-host.ts engineConfig() (its tools' titles and descriptions, its messages), checked when
+   * the server starts against the schema its host entry gives (defineHost({ engine: { config } }), src/host.ts). Only a
+   * host pack of this build may have one (scripts/gen-packs.mjs); plain JSON, at most 256 kB.
+   */
+  engine: z.object({
+    $comment: z.string().max(2000).optional(),
+    config: z.record(z.string(), z.unknown()).refine((c) => JSON.stringify(c).length <= 256 * 1024, "at most 256 kB of JSON"),
   }).strict().optional(),
   pages: z.array(PageSchema).optional(),
   words: z.record(z.string().regex(/^[a-z][a-z_]{1,30}$/, "a lowercase shell word"), z.string().trim().min(1).max(40)).optional(),
