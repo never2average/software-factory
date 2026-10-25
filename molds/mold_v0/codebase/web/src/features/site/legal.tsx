@@ -6,6 +6,7 @@ import { fill } from '@/lib/vocabulary';
 import { cn } from '@/lib/utils';
 import { LEGAL_TOKEN, PRIVACY, TERMS, type LegalDoc, type LegalParagraph } from './legal-text';
 import { LEGAL_PAGES, legalDate, legalLinks, ownUrl, type Legal, type LegalKind, type LegalLink } from './legal-types';
+import { ogImages, twitterCard } from './share-image-meta';
 
 /**
  * The legal pages and links (mold_v0-109; src/legal.ts): /terms and /privacy from the shell's neutral template
@@ -81,7 +82,10 @@ export function LegalPage({ kind, legal = configured }: { kind: LegalKind; legal
 export function legalMetadata(kind: LegalKind): Metadata {
   const page = LEGAL_PAGES.find((p) => p.kind === kind)!;
   const description = `${page.title} of ${profile.name}.`;
-  return { title: page.title, description, alternates: { canonical: page.path }, openGraph: { type: 'website', url: page.path, siteName: profile.name, title: page.title, description } };
+  // The share image named here too (mold_v0-148): a page's own openGraph replaces the one app/opengraph-image adds.
+  return { title: page.title, description, alternates: { canonical: page.path },
+    openGraph: { type: 'website', url: page.path, siteName: profile.name, title: page.title, description, images: ogImages() },
+    twitter: twitterCard(page.title, description) };
 }
 
 /** A legal link: a path of this site through next/link, the company's own https:// page with no opener. */
