@@ -44,6 +44,8 @@ const ENV = /^[a-z][a-z0-9_-]{0,39}$/;
 export const fieldSummary = (c: CredentialSpec) => ({
   pack: c.pack, name: c.name, label: c.label, help: c.help ?? null, bound_to: c.bound_to, area: c.area ?? null,
   environments: c.environments ?? null, deliver_as: deliveredAs(c.deliver_as),
+  // mold_v0-014: runs get a GitHub App installation token instead when the workspace has connected one.
+  ...(c.github_app ? { github_app: true } : {}),
 });
 /** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
 const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>

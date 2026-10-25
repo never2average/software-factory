@@ -543,8 +543,6 @@ export function createApp() {
     await kv.deleteCredential(Number(req.params.id));
     res.status(204).end();
   });
-  // The platform's GitHub App and every workspace's installation of it (mold_v0-014), when a pack asks for one.
-  githubAppAdminRoutes(admin, need, adminActor);
   admin.get("/usage/models", async (req, res) => {
     const q = req.query as Record<string, string | undefined>;
     res.json(await usageReport({ days: q.days ? Number(q.days) : undefined, model: q.model }));
@@ -713,6 +711,9 @@ export function createApp() {
   ob.post("/compute/keys/:id/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setModelKeyEnabled(adminActor(req, res), Number(req.params.id), req.body?.enabled)));
   ob.delete("/compute/keys/:id", need("keys"), async (req, res) => done(res, await platformKeys.deleteModelKey(adminActor(req, res), Number(req.params.id))));
   ob.post("/compute/providers/:slug/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setProviderEnabled(adminActor(req, res), slug(req), req.body?.enabled)));
+  // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
+  // declares a credential field that asks for one.
+  githubAppAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
   // The Connect page (/admin/connect): the admin MCP URL and which tools each role may call.

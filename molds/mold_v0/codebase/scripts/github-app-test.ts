@@ -35,7 +35,7 @@ const seen: string[] = [];
 const ROOT = path.resolve(import.meta.dirname, "..");
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
-const APP_ID = 424242;
+const GH_APP_ID = 424242;
 const { privateKey: PRIVATE_KEY, publicKey: PUBLIC_KEY } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
 const CLIENT_ID = `Iv1.${randomBytes(8).toString("hex")}`;
 const CLIENT_SECRET = `client-secret-canary-${randomBytes(16).toString("hex")}`;
@@ -47,10 +47,10 @@ const secretNeedles = [CLIENT_SECRET, WEBHOOK_SECRET, PRIVATE_KEY, JSON.stringif
   Buffer.from(CLIENT_SECRET).toString("base64"), Buffer.from(WEBHOOK_SECRET).toString("base64")];
 const secretHits = (text: string | Buffer) => secretNeedles.filter((n) => text.includes(n)).length;
 
-const gh = await startGithubStandin({ appId: APP_ID, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, publicKeyPem: PUBLIC_KEY });
+const gh = await startGithubStandin({ appId: GH_APP_ID, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, publicKeyPem: PUBLIC_KEY });
 const repos = (owner: string, base: number, names: string[]) => names.map((n, i) => ({ id: base + i, full_name: `${owner}/${n}` }));
-gh.installations.set(1001, { id: 1001, app_id: APP_ID, account: { login: "acme", type: "Organization" }, repository_selection: "selected", repositories: repos("acme", 10, ["api", "web", "infra"]) });
-gh.installations.set(2002, { id: 2002, app_id: APP_ID, account: { login: "globex", type: "Organization" }, repository_selection: "selected", repositories: repos("globex", 20, ["api", "ops"]) });
+gh.installations.set(1001, { id: 1001, app_id: GH_APP_ID, account: { login: "acme", type: "Organization" }, repository_selection: "selected", repositories: repos("acme", 10, ["api", "web", "infra"]) });
+gh.installations.set(2002, { id: 2002, app_id: GH_APP_ID, account: { login: "globex", type: "Organization" }, repository_selection: "selected", repositories: repos("globex", 20, ["api", "ops"]) });
 gh.installations.set(3003, { id: 3003, app_id: 999, account: { login: "other-app-org", type: "Organization" }, repository_selection: "all", repositories: repos("oa", 30, ["x"]) });
 
 try {
@@ -157,14 +157,14 @@ try {
     // ---------- 2. the app's settings (staff) ----------
     {
       const owner = await http.adminToken("owner"), operator = await http.adminToken("operator");
-      const g0 = await req("GET", "/api/admin/github-app", bearer(operator));
+      const g0 = await req("GET", "/api/admin/onboarding/github-app", bearer(operator));
       assert.equal(g0.status, 200);
       assert.equal(g0.body.app.configured, false);
       assert.match(g0.body.setup.callback_url, /\/api\/github-app\/callback$/);
       assert.match(g0.body.setup.webhook_url, /\/api\/github-app\/webhook$/);
       assert.deepEqual(g0.body.setup.permissions, { contents: "read", metadata: "read" });
-      const put = (tok: string, body: unknown) => req("PUT", "/api/admin/github-app", bearer(tok), body);
-      assert.equal((await put(operator, { app_id: String(APP_ID) })).status, 403, "only the key vault's owners set it");
+      const put = (tok: string, body: unknown) => req("PUT", "/api/admin/onboarding/github-app", bearer(tok), body);
+      assert.equal((await put(operator, { app_id: String(GH_APP_ID) })).status, 403, "only the key vault's owners set it");
       const badKey = `-----BEGIN RSA PRIVATE KEY-----\n${CLIENT_SECRET}\n-----END RSA PRIVATE KEY-----\n`;
       const bk = await put(owner, { private_key: badKey });
       assert.equal(bk.status, 400);
@@ -172,14 +172,14 @@ try {
       assert.equal((await put(owner, { app_id: "12ab" })).status, 400);
       assert.equal((await put(owner, { webhook_secret: "short" })).status, 400);
       assert.equal((await put(owner, { nope: "x" })).status, 400);
-      const ok = await put(owner, { app_id: String(APP_ID), slug: "workspace-test-app", client_id: CLIENT_ID, client_secret: CLIENT_SECRET, private_key: PRIVATE_KEY, webhook_secret: WEBHOOK_SECRET });
+      const ok = await put(owner, { app_id: String(GH_APP_ID), slug: "workspace-test-app", client_id: CLIENT_ID, client_secret: CLIENT_SECRET, private_key: PRIVATE_KEY, webhook_secret: WEBHOOK_SECRET });
       assert.equal(ok.status, 200, JSON.stringify(ok.body));
       assert.equal(ok.body.configured, true);
       assert.deepEqual(ok.body.set, { client_secret: true, private_key: true, webhook_secret: true });
       assert.match(ok.body.private_key_fingerprint, /^SHA256:/);
       const [row] = await db.query<{ ciphertext: string; hint: string }>("SELECT ciphertext, hint FROM vault_credentials WHERE provider = 'github_app'");
       assert.equal(secretHits(row!.ciphertext + row!.hint), 0, "sealed in the key vault");
-      assert.equal(secretHits(JSON.stringify((await req("GET", "/api/admin/github-app", bearer(operator))).body)), 0, "the staff view carries no secret");
+      assert.equal(secretHits(JSON.stringify((await req("GET", "/api/admin/onboarding/github-app", bearer(operator))).body)), 0, "the staff view carries no secret");
       assert.equal(secretHits(JSON.stringify((await req("GET", "/api/admin/keyvault/credentials", bearer(operator))).body)), 0, "nor the key vault's list");
       console.log("✓ settings: checked (a bad key not quoted), sealed in the key vault, answered without a secret, set by the vault's owners only");
     }
@@ -379,14 +379,14 @@ try {
       await runs.completeRun(bc.run.id, bc.lease_token, { outcome: "succeeded", results: [] });
       void rb;
       // A connects a new installation; staff revoke it.
-      gh.installations.set(4004, { id: 4004, app_id: APP_ID, account: { login: "acme", type: "Organization" }, repository_selection: "all", repositories: repos("acme", 40, ["api"]) });
+      gh.installations.set(4004, { id: 4004, app_id: GH_APP_ID, account: { login: "acme", type: "Organization" }, repository_selection: "all", repositories: repos("acme", 40, ["api"]) });
       assert.equal(await back(ownerA, { installation_id: "4004", setup_action: "install", state: await begin(ownerA), code: code([4004]) }), "connected");
       const viewer = await http.adminToken("viewer"), operator = await http.adminToken("operator");
-      const list = await req("GET", "/api/admin/github-app", bearer(viewer));
+      const list = await req("GET", "/api/admin/onboarding/github-app", bearer(viewer));
       assert.deepEqual(list.body.installations.map((i: any) => [i.workspace.id, i.installation_id, i.account, i.removed_reason]),
         [[A.orgId, 4004, "acme", null], [B.orgId, 2002, "globex", "disconnected"], [A.orgId, 1001, "acme", "uninstalled"]], "staff see every installation, live first");
-      assert.equal((await req("DELETE", `/api/admin/github-app/installations/${A.orgId}`, bearer(viewer))).status, 403);
-      assert.deepEqual((await req("DELETE", `/api/admin/github-app/installations/${A.orgId}`, bearer(operator))).body, { disconnected: true, uninstalled: true });
+      assert.equal((await req("DELETE", `/api/admin/onboarding/github-app/installations/${A.orgId}`, bearer(viewer))).status, 403);
+      assert.deepEqual((await req("DELETE", `/api/admin/onboarding/github-app/installations/${A.orgId}`, bearer(operator))).body, { disconnected: true, uninstalled: true });
       // And again, then the workspace goes.
       gh.installations.get(4004)!.uninstalled = false;
       assert.equal(await back(ownerA, { installation_id: "4004", setup_action: "install", state: await begin(ownerA), code: code([4004]) }), "connected");

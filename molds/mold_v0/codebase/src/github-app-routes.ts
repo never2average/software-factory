@@ -12,7 +12,7 @@
  *   PUT    /api/github-app/repositories  an owner: {area, asset, repositories} narrows that asset's runs' tokens
  *   DELETE /api/github-app               an owner: disconnect (tokens revoked, the installation uninstalled)
  *
- *   staff (/api/admin, githubAppAdminRoutes): GET /github-app (the app's settings, never a secret, the addresses to give
+ *   staff (/api/admin/onboarding, githubAppAdminRoutes): GET /github-app (the app's settings, never a secret, the addresses to give
  *   GitHub, every installation), PUT /github-app (the settings: "keys"), DELETE /github-app/installations/:org ("accounts").
  *
  * A change made with the session cookie carries X-Pack-Request: 1 (CSRF), as the credential routes. No answer or log line
