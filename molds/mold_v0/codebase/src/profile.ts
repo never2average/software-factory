@@ -84,7 +84,7 @@ export interface Profile {
  */
 export interface ProfileEmail {
   provider?: "resend" | "test" | "none";
-  notifications?: string[];
+  notifications?: readonly string[];
   /**
    * The welcome email's sentence about what the product does (mold_v0-101, src/email.ts), plain text on one line, up to
    * 400 characters, placeholders allowed ({product}, {runs}); absent, the landing block's hero subheadline, else the
@@ -106,7 +106,7 @@ export interface ProfileEmail {
  * Absent, nothing is gated: every workspace has every feature and runs are charged as billing says.
  */
 export interface ProfileEntitlements {
-  plans: Record<string, { features: string[]; run_charges?: "charged" | "included" }>;
+  plans: Record<string, { features: readonly string[]; run_charges?: "charged" | "included" }>;
   without_plan: string;
 }
 
