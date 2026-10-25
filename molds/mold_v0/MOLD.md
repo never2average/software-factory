@@ -1354,6 +1354,18 @@ get started, install) and a footer that carries the source offer whenever the in
 neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
 (code, mold_v0-039) stays its own.
 
+**Share image (mold_v0-093).** What a shared link to the build shows (Open Graph and X: `web/src/app/opengraph-image.tsx`
+and `twitter-image.tsx`, one renderer in `web/src/features/site/share-image.tsx`) is the build's own, never another
+product's picture: a 1200x630 PNG drawn when the console is built from the landing page's words (the hero's headline, else
+the profile's tagline; its sub-headline, else the console's description unless it repeats the headline) beside the
+profile's name, the build's mark (`web/src/app/icon.svg`, else the brand step's PNG icon) and its brand colour (the web
+manifest's `theme_color`, which the brand step sets), in the font `next/og` carries (nothing is fetched). Its
+alternative text is the same words. `gen-packs.mjs` writes the words and the text to
+`web/src/config/share-image.generated.ts`. A brand that has its own picture (the factory's `branding.py <app_id>
+share-image brands/<name>/<file>.png`, rules.json `share_image`: a 1200x630 PNG of at most 1 MB, recorded in the app's
+state with its sha256) has it copied to `brand/share-image.png` in the build copy and embedded byte for byte, with the
+console's description as its text; the routes then answer exactly those bytes. `npm run test:share-image` renders both.
+
 **Upstream catalogs index themselves (mold_v0-128, mold_v0-129).** An upstream catalog is pinned to a commit, so its rows
 are fixed by the build: the server indexes every one whose stored pin (`repository_index`, migration 0019) is not its
 declared pin, with nobody pressing anything (`src/repository-index.ts`). Triggers: an instance's first request (in the

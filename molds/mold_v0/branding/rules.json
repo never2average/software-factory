@@ -50,6 +50,13 @@
     },
     "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). email and email_from_address since mold_v0-101 (the brief's ## Profile: email_from_address = <address>, email.notifications = <groups>). Never a brand word (the brand writes those), host_packs, source_offer.app, billing or entitlements. A dotted entry is one part of a field: source_offer.upstreams (mold_v0-099, the app's packs whose upstream is the licensor's own) while source_offer.app stays the factory's defaults.source_offer. member_keys (mold_v0-099): false turns per-member API keys off. legal (mold_v0-109): the company behind the app (company_name, contact_email, effective_date; optionally jurisdiction, terms_url, privacy_url), which turns on its /terms and /privacy pages and their links; intake asks a new app for it."
   },
+  "share_image": {
+    "$comment": "mold_v0-093: the brand's own share image (what a shared link to the app shows), optional. Without one the console draws it from the profile's words, the landing page's headline, the mark and the brand colour (web/src/features/site/share-image.tsx). With one (branding.py <app_id> share-image <file>: the app's state records the file under brands/ and its sha256), `prepare` copies it to `file` in the build copy, byte for byte, and the generator (scripts/gen-packs.mjs) embeds it in web/src/config/share-image.generated.ts, which the console serves as it is at /opengraph-image and /twitter-image. A PNG of exactly width x height, at most max_bytes.",
+    "file": "brand/share-image.png",
+    "width": 1200,
+    "height": 630,
+    "max_bytes": 1048576
+  },
   "favicon": {
     "app": "web/src/app",
     "public": "web/public"
