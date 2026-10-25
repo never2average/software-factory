@@ -107,7 +107,7 @@
     }
   ],
   "concepts": {
-    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Each file that still carries one has a ceiling, the exact count today, in a group that says why it remains and how it goes; more fails, fewer fails with the number to lower it to.",
+    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources, and since mold_v0-113 every line of the staff docs, docs/*.md, outside a fenced block): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Each file that still carries one has a ceiling, the exact count today, in a group that says why it remains and how it goes; more fails, fewer fails with the number to lower it to.",
     "words": [
       "simulation",
       "scenario",
@@ -129,7 +129,8 @@
     "scan": [
       "src/**/*.ts",
       "web/src/**/*.ts",
-      "web/src/**/*.tsx"
+      "web/src/**/*.tsx",
+      "docs/*.md"
     ],
     "skip": {
       "**/*.generated.*": "generated from the packs and the profile (a host pack's own words land there in its build)",
