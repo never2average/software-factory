@@ -1,0 +1,6 @@
+{
+  "phase": "P3 (mold_v0-139): the host pack's customer guide and staff docs as config (pack.json guide with tool_groups and prompts_intro, staff_docs); /app/docs, /admin/docs and the docs corpus unchanged",
+  "allow": [
+    { "key": "generated::web/src/config/pack-guides.generated.ts", "reason": "the host pack's guide is its pack.json guide now, written here as HOST_GUIDE (its pages in its groups, its MCP tools page's tool groups and slash-commands line) instead of an import of its guide.ts; a build with no host guide writes HOST_GUIDE null where it wrote an empty HOST_GUIDES list, and PACK_GUIDE as before" }
+  ]
+}

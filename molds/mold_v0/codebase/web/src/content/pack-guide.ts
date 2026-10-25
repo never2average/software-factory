@@ -11,6 +11,10 @@ import { fill } from '../lib/vocabulary';
 export interface PackGuideData {
   titles: { start: string; console: string; records: string; runs: string; tools: string; account: string };
   generated: boolean;
+  /** The packs' own groups of the MCP tools page (mold_v0-139, pack.json guide.tool_groups): [title, tool names]. */
+  tool_groups?: [string, string[]][];
+  /** The line before the slash commands' list (mold_v0-139, pack.json guide.prompts_intro), or null: the shell's. */
+  prompts_intro?: string | null;
   groups: string[];
   pages: { title: string; slug: string; group: string; body: string }[];
   packs: { id: string; name: string; description: string | null }[];
@@ -30,6 +34,9 @@ export interface PackGuideData {
   tools: { name: string; op: string; area: string | null }[];
   record_tools: string[];
 }
+
+/** The line before the slash commands' list, unless a guide says its own (pack.json guide.prompts_intro, mold_v0-139). */
+export const PROMPTS_INTRO = 'Clients that support MCP prompts also offer these:';
 
 interface Catalog { tools: { name: string; summary: string }[]; prompts: { name: string; summary: string }[] }
 /** The shell's own texts the generated pages reuse (customer-guide.ts): connecting a client, the account. */
@@ -87,14 +94,22 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
   }
 }
 
-/** The tools' groups on the MCP tools page: what each reaches, in the order a client lists them. */
+/**
+ * The tools' groups on the MCP tools page: the packs' own groups first (guide.tool_groups, each tool in the order listed),
+ * then what each other tool reaches, in the order a client lists them.
+ */
 function toolGroups(d: PackGuideData, catalog: Catalog): [string, string[]][] {
   const by = new Map(d.tools.map((t) => [t.name, t]));
+  const has = new Set(catalog.tools.map((t) => t.name));
+  const owner = new Map<string, string>();
+  for (const [g, names] of d.tool_groups ?? []) for (const n of names) if (!owner.has(n)) owner.set(n, g);
   const groups: [string, string[]][] = [];
   const add = (g: string, name: string) => { let e = groups.find(([x]) => x === g); if (!e) { e = [g, []]; groups.push(e); } e[1].push(name); };
+  for (const [g, names] of d.tool_groups ?? []) for (const n of names) if (has.has(n) && owner.get(n) === g) add(g, n);
   const RUN_OPS = new Set(['start', 'run_status', 'list_runs', 'run_results', 'cancel_run', 'report']);
   for (const t of catalog.tools) {
     const g = by.get(t.name);
+    if (owner.has(t.name)) continue;
     if (g?.op === 'get_started') add('Start here', t.name);
     else if (g?.area) add(g.area, t.name);
     else if (g && RUN_OPS.has(g.op)) add(fill('{Runs}'), t.name);
@@ -102,8 +117,8 @@ function toolGroups(d: PackGuideData, catalog: Catalog): [string, string[]][] {
     else if (d.record_tools.includes(t.name)) add('Any record area', t.name);
     else add('More tools', t.name);
   }
-  // The groups in a reader's order: start here, the areas as declared, any area, runs, numbers, the rest.
-  const order = ['Start here', ...d.areas.map((a) => a.label), 'Any record area', fill('{Runs}'), 'Numbers', 'More tools'];
+  // The groups in a reader's order: start here, the packs' own, the areas as declared, any area, runs, numbers, the rest.
+  const order = ['Start here', ...(d.tool_groups ?? []).map(([g]) => g), ...d.areas.map((a) => a.label), 'Any record area', fill('{Runs}'), 'Numbers', 'More tools'];
   return groups.sort(([a], [b]) => order.indexOf(a) - order.indexOf(b));
 }
 
@@ -112,7 +127,7 @@ function toolsMarkdown(d: PackGuideData, catalog: Catalog): string {
   const tables = toolGroups(d, catalog).map(([g, names]) =>
     `## ${g}\n\n| Tool | What it does |\n|---|---|\n${names.map((n) => `| ${code(n)} | ${cell(summary.get(n) ?? '')} |`).join('\n')}`);
   const prompts = catalog.prompts.length
-    ? `## Slash commands\n\nClients that support MCP prompts also offer these:\n\n${catalog.prompts.map((p) => `- \`/${p.name}\`: ${p.summary}`).join('\n')}`
+    ? `## Slash commands\n\n${d.prompts_intro ?? PROMPTS_INTRO}\n\n${catalog.prompts.map((p) => `- \`/${p.name}\`: ${p.summary}`).join('\n')}`
     : '';
   return [`Your AI client calls these for you; you rarely name them. They are grouped by what they reach.`,
     ...(catalog.tools.length ? tables : [fill('This {workspace} offers no tools yet.')]), prompts].filter(Boolean).join('\n\n');

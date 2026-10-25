@@ -1262,9 +1262,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   shell's, and the shell features it enables: `tips`, `journeys`, `research`; kept apart from the pages so the sidebar's
   bundle never carries them), `routes.json` (the URLs its pages keep: next.config
   rewrites each, from `src/config/pack-routes.generated.json`, to `app/{app,admin}/host/[pack]/[...path]` or
-  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects) and `guide.ts` (its
-  customer guide, which replaces the shell's short one at /app/docs; pure TS, as the docs corpus reads it). Its docs
-  (`packs/<id>/docs/*.md`) join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus.
+  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects). Its customer guide
+  and its staff docs are config since mold_v0-139 (pack.json `guide`, the whole guide at /app/docs, and `staff_docs`,
+  which join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus; "Customer guide" below):
+  a `guide.ts` here or a `packs/<id>/docs/*.md` file is refused, naming the declaration.
   *Its orchestrator* is `orchestrator/packs/<id>/main.ts`, which `orchestrator/main.ts` runs (else the deterministic
   worker); it is uploaded to orchestrator sandboxes with the rest of `orchestrator/` (its `test/` is not).
   *Its scripts* run with `npm run pack:run -- <script>` (`scripts/pack-script.ts`); `npm run smoke` runs the shell's
@@ -1513,8 +1514,24 @@ onboarding steps with the prompt to type and the generated `get_started` tool), 
 (fields, lifecycle, due dates, tools), the job kinds with their credentials and schedules, the MCP tools grouped by what
 they reach, and the account; whatever a pack's `mcp` settings withhold is left out. So a pack with no guide of its own
 still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
-guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
-before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+guide is the shell's, byte for byte (`PACK_GUIDE` null). `guide.tool_groups` (mold_v0-139, `[{ title, tools }]`) puts a
+pack's own groups of tools first on the MCP tools page (each tool in the order listed; one the build lacks is left out),
+and `guide.prompts_intro` is the line before its slash commands' list, in the pack's words (default "Clients that support
+MCP prompts also offer these:").
+
+A **host pack's** `guide` (mold_v0-139; it was its console code, `web/src/packs/<id>/guide.ts`, now refused) is the
+whole guide: its pages in its groups, nothing generated and no title reserved (`generated` is refused), written by
+gen-packs into `pack-guides.generated.ts` `HOST_GUIDE` (`PACK_GUIDE` null; a declarative pack's guide beside it is
+refused, as it would never show). Its page titled as the MCP tools page ("MCP tools" in the build's words) is followed by
+the tools: its `tool_groups`, then "More tools", then the slash commands (one is added in Reference when it wrote none).
+
+**Staff docs (mold_v0-139).** A pack's `pack.json` `staff_docs` (`src/staff-docs.ts`: `[{ path, title, markdown }]`,
+inline; a host pack's `packs/<id>/docs/*.md` until then, now refused) join the shell's `docs/` on /admin/docs
+(`web/scripts/sync-docs.mjs`) and in the docs answers' corpus (`scripts/sync-docs-corpus.ts`) as files at those paths
+would: `# <title>`, a blank line, then the markdown. The markdown is checked with the guide's rules, except that HTML
+is allowed (the renderer shows it as text) and so are relative links between docs (`journeys.md`, `../beta-guide.md`,
+which /admin/docs opens as that doc); a path the shell's `docs/` or another pack already has is refused.
+`npm run test:pack-guide`.
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
 operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
