@@ -16,6 +16,10 @@ each one the factory can check. Today (mold_v0):
                              "jurisdiction", "terms_url", "privacy_url" (https://)} (mold_v0-109, the shell's src/legal.ts):
                              the app's Terms and Privacy pages (/terms, /privacy) and the links to them; absent, the app
                              has no legal pages. intake asks a new app for the company's legal name and contact address
+  mcp_instructions           plain text up to 4000 characters (mold_v0-119; the shell's mold_v0-105): what the MCP server
+                             tells an AI client about the app, over a host pack's and the packs' pack.json mcp.instructions.
+                             From the brief: a `## MCP instructions` section (its text, paragraphs kept) or a
+                             `mcp_instructions = <text>` line in `## Profile`
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -148,6 +152,18 @@ def _email_problems(v, groups, at="email"):
             bad = [g for g in n if g not in groups]
             if bad: errs.append(f"{at}.notifications: {', '.join(bad)[:120]} {'is not a group' if len(bad) == 1 else 'are not groups'} (known: {', '.join(groups)})")
     return errs
+
+# ---- the MCP server's instructions (mold_v0-119) -------------------------------------------------------------------
+# The shell's rule (scripts/gen-packs.mjs profile mcp_instructions): text, not blank, at most 4000 characters, no control
+# character but a tab or a line break, no zero-width, direction or invisible tag character.
+MAX_INSTRUCTIONS = 4000
+INSTRUCTIONS_BAD = re.compile("[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+
+def instructions_problem(v, at="mcp_instructions"):
+    if not isinstance(v, str) or not v.strip(): return f"{at} must be text: what the MCP server tells an AI client about the app"
+    if len(v) > MAX_INSTRUCTIONS: return f"{at}: at most {MAX_INSTRUCTIONS} characters (got {len(v)})"
+    if INSTRUCTIONS_BAD.search(v): return f"{at}: plain text only (line breaks are fine; no control, zero-width or direction characters)"
+    return None
 
 # ---- the legal pages (mold_v0-109) ---------------------------------------------------------------------------------
 # The shell's rules (molds/mold_v0/codebase/src/legal.ts legalProblems), checked here so a brief or an answer is refused
@@ -321,6 +337,9 @@ def problems(profile, mold_id, root, packs=None):
             e = address_problem(v)
             if e: errs.append("profile." + e)
         elif k == "legal": errs += legal_problems(v, "profile.legal")
+        elif k == "mcp_instructions":
+            e = instructions_problem(v, "profile.mcp_instructions")
+            if e: errs.append(e)
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
     return errs
 
@@ -346,6 +365,10 @@ EMAIL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?(email_from_address|email\.notificat
 # The legal pages (mold_v0-109): `legal.company_name = Acme Ltd`, `legal.contact_email = legal@acme.com`,
 # `legal.jurisdiction = England and Wales`, `legal.effective_date = 2026-10-23`, `legal.terms_url = https://...`.
 LEGAL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?legal\.([a-z_]+)`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
+# The MCP server's instructions (mold_v0-119): `mcp_instructions = <text>` in ## Profile, or a `## MCP instructions`
+# section whose whole text is them (paragraphs kept).
+INSTRUCTIONS_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?mcp_instructions`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
+INSTRUCTIONS_SECTION = re.compile(r"^##[ \t]+MCP[ \t]+instructions[ \t]*:?[ \t]*$", re.I | re.M)
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
@@ -370,7 +393,8 @@ def _sections(text):
 
 def from_brief(text):
     """-> (profile or None, problems, notes). Reads `limits.<section>.<name> = <number>` (or `:`) in a `## Profile` or
-    `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan; `email_from_address = <address>`,
+    `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan; `mcp_instructions = <text>`, or
+    a `## MCP instructions` section (mold_v0-119); `email_from_address = <address>`,
     `email.notifications = <group>, <group>` (or `none`) and `email.provider = resend|none` (mold_v0-101); `member_keys =
     false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `legal.<field> = <text>`
     (mold_v0-109: company_name, contact_email, jurisdiction, effective_date, terms_url, privacy_url). A setting written twice with two
@@ -421,12 +445,24 @@ def from_brief(text):
                 prof.setdefault("email", {})["notifications"] = [] if raw.lower() in ("none", "off", "") else [g.strip().strip("`") for g in raw.split(",") if g.strip()]
             elif key == "email.pitch": prof.setdefault("email", {})["pitch"] = raw
             else: prof.setdefault("email", {})["provider"] = raw.lower()
+        for m in INSTRUCTIONS_LINE.finditer(body):
+            raw = m.group(1).strip().strip("`").strip()
+            if "mcp_instructions" in seen and seen["mcp_instructions"] != raw: errs.append(f"{head}: mcp_instructions is set twice; keep one"); continue
+            seen["mcp_instructions"] = raw
+            prof["mcp_instructions"] = raw
         for m in LEGAL_LINE.finditer(body):
             key, raw = m.group(1).lower(), m.group(2).strip().strip("`").strip()
             name = f"legal.{key}"
             if name in seen and seen[name] != raw: errs.append(f"{head}: {name} is set twice ({seen[name]} and {raw}); keep one"); continue
             seen[name] = raw
             prof.setdefault("legal", {})[key] = raw
+    for m in INSTRUCTIONS_SECTION.finditer(text):
+        nxt = HEADING.search(text, m.end())
+        raw = "\n".join(l.rstrip() for l in text[m.end():nxt.start() if nxt else len(text)].strip("\n").splitlines()).strip()
+        raw = re.sub(r"\n{3,}", "\n\n", raw)
+        if not raw: errs.append(f"{m.group(0).strip()}: the section is empty; write what the MCP server should tell AI clients about the app, or remove it"); continue
+        if "mcp_instructions" in prof: errs.append(f"{m.group(0).strip()}: the MCP instructions are given twice (here and as mcp_instructions in ## Profile, or in two sections); keep one"); continue
+        prof["mcp_instructions"] = raw
     for m in MENTION.finditer(text):
         if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):
             notes.append(f"limits{m.group(1)} outside a ## Profile or ## Budgets section: ignored")

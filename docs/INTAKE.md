@@ -220,6 +220,28 @@ legal.privacy_url = https://acme.com/privacy
   already deployed is not stopped for it: add the lines to its brief and re-run intake to turn its pages on.
 - The pages are the shell's neutral template in the app's own words (`molds/mold_v0/codebase/web/src/features/site/legal-text.ts`):
   a reasonable start, not legal advice. A company with its own reviewed terms sets `terms_url` and `privacy_url`.
+**What the MCP server tells AI clients about the app** (mold_v0-119): the server's instructions, which an AI client
+reads when it connects (what the app is, how to use it, what to ask before doing). Write them under their own heading,
+paragraphs as you like:
+
+```
+## MCP instructions
+
+Acme Ops keeps a team's incidents and the runbooks that close them.
+
+Ask before closing an incident or paging someone.
+```
+
+or as one line in `## Profile`: `mcp_instructions = Acme Ops keeps a team's incidents.`
+
+- Plain text up to 4000 characters (line breaks are fine; no control, zero-width or direction characters). One place
+  only: both a section and a line, or two sections, is refused. An empty section is refused.
+- They are `application.json` `profile.mcp_instructions`, written into the build's `profile.json`, and they win over
+  what a pack says (`pack.json` `mcp.instructions`, which a generated pack takes from the brief's `## MCP` section:
+  below). Without either, the server says the shell's two lines plus a paragraph per pack. A host pack that brings its
+  own instructions in its profile is refused at the build (as for every profile field).
+- The first sentence is what the generated get-started tool says the app is, so start with what the app does.
+
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
   `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer.app`
@@ -266,9 +288,9 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 | `## Jobs` (or `## Audits`) | `### <kind>: <Label>`, then: `repository: https://…`, `commit: <full 40-character id>`, `command: node audit.mjs --app {app}` (an argument list, never a shell line), `arg <name>: <Label> \| <type> \| required \| from scope.app \| pattern … \| default …`, `validate: node validate.mjs`, `setup: npm ci`, `write back: findings`, `results: out/results.json`, `record: sessions/*.json`, `strip: .claude/settings.local.json`, `env NAME: {gateway.token}`, `credentials: a, b`, `egress: api.example.com`, `providers: anthropic`, `timeout: 20 minutes`, `token lifetime: 1 hour`, `budget: 2`, `month budget: 50`, `concurrency: 2`, `attempts: 3`, `on unresolved: reject\|drop\|downgrade`. Jobs run on the built-in agent-workspace runner; a program of the pack's own (workspace-harness) is code, written by hand. |
 | `## Credentials` | `- <name>: <Label> \| workspace` (or `asset <area>`, `environment <asset area> [prod, staging]`) `\| env NAME` (or `file <name>`) `\| help …` |
 | `## Schedules` | `- <name>: <Label> \| <job> \| 0 3 * * * \| over <asset area> [keys a, b] \| environment prod \| off` (cron in UTC, at most every 5 minutes) |
-| `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` |
+| `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` `\| prompt <the words a person types to their AI client for this step>` (mold_v0-119: one line, at most 200 characters, no `<` `>` `` ` `` or `\|`; the get-started tool and the console's checklist offer it, else "Help me with the next step: <label>.") |
 | `## Words` | `- run: audit` (the shell's word on the left) |
-| `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`. Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
+| `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`, `- instructions: <one paragraph>` (mold_v0-119: what the server tells AI clients about the pack, `mcp.instructions`; one bullet per paragraph, at most 4000 characters in all; the app's `## MCP instructions` wins over it). Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
 
 Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
 `enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),
