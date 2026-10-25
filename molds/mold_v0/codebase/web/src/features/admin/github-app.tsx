@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { adminApi, ApiError } from '@/lib/api-client';
 import { useAdminAction } from './lib';
 import { Gate } from './role';
-import { ConfirmButton, CopyField, DataList, FormRow, Mono, Notice, Section, StatusBadge, When } from './ui';
+import { ConfirmButton, copyText, DataList, FormRow, Mono, Notice, Section, StatusBadge, When } from './ui';
 
 interface Installation {
   id: number; workspace: { id: number; slug: string; name: string }; installation_id: number; account: string; account_type: string;
@@ -48,9 +48,9 @@ export function AdminGithubApp() {
         <div className='grid gap-6 lg:grid-cols-2'>
           <div className='flex min-w-0 flex-col gap-3'>
             <p className='text-sm font-medium'>Register the app on GitHub with these</p>
-            <FormRow id='gh-home' label='Homepage URL'><CopyField value={data.setup.homepage_url} /></FormRow>
-            <FormRow id='gh-cb' label='Callback URL' hint='Also tick "Request user authorization (OAuth) during installation".'><CopyField value={data.setup.callback_url} /></FormRow>
-            <FormRow id='gh-hook' label='Webhook URL' hint={<>Webhook active, with a secret you make up and paste below. Events: {data.setup.events.map((e) => <Mono key={e}>{e} </Mono>)}</>}><CopyField value={data.setup.webhook_url} /></FormRow>
+            <FormRow id='gh-home' label='Homepage URL'><Copyable id='gh-home' value={data.setup.homepage_url} /></FormRow>
+            <FormRow id='gh-cb' label='Callback URL' hint='Also tick "Request user authorization (OAuth) during installation".'><Copyable id='gh-cb' value={data.setup.callback_url} /></FormRow>
+            <FormRow id='gh-hook' label='Webhook URL' hint={<>Webhook active, with a secret you make up and paste below. Events: {data.setup.events.map((e) => <Mono key={e}>{e} </Mono>)}</>}><Copyable id='gh-hook' value={data.setup.webhook_url} /></FormRow>
             <p className='text-muted-foreground text-xs'>Repository permissions: {Object.entries(data.setup.permissions).map(([k, v]) => `${k}: ${v}`).join(', ')} and nothing else. Installable by any account.</p>
           </div>
           <form className='flex min-w-0 flex-col gap-3' autoComplete='off' onSubmit={(e) => { e.preventDefault(); save.mutate(undefined, { onSuccess: () => setF(EMPTY) }); }}>
@@ -82,6 +82,16 @@ export function AdminGithubApp() {
           ) }
         ]} />
       </Section>
+    </div>
+  );
+}
+
+/** A read-only address with a Copy button, labelled by its FormRow (the input carries the row's id). */
+function Copyable({ id, value }: { id: string; value: string }) {
+  return (
+    <div className='flex gap-2'>
+      <Input id={id} readOnly value={value} className='font-mono text-xs' onFocus={(e) => e.currentTarget.select()} />
+      <Button type='button' variant='outline' onClick={() => copyText(value)}>Copy</Button>
     </div>
   );
 }
