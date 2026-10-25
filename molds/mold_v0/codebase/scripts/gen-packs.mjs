@@ -1313,8 +1313,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
  * page's (a folder of web/src/app/app: activity, billing, records...), a host pack's own page (its routes.json), or
  * another pack's page or tab. The old nested address redirects to the flat one (below).
  */
-const APP_ROUTES = path.join(ROOT, "web", "src", "app", "app");
-const SHELL_APP_SEGMENTS = new Set(existsSync(APP_ROUTES) ? readdirSync(APP_ROUTES, { withFileTypes: true })
+const SHELL_APP_DIR = path.join(ROOT, "web", "src", "app", "app");
+const SHELL_APP_SEGMENTS = new Set(existsSync(SHELL_APP_DIR) ? readdirSync(SHELL_APP_DIR, { withFileTypes: true })
   .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name)).map((e) => e.name) : []);
 // The nested addresses of before (they redirect) and the host page route stay the shell's.
 for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
