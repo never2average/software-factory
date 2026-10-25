@@ -31,7 +31,7 @@
  * Every table here is closed to tenant work (sql/migrations/0021_github_app.sql); the workspace is always the caller's
  * session's, the signed state's or the run row's, never an input.
  */
-import { createHash, createHmac, createPrivateKey, createSign, randomBytes, timingSafeEqual, type KeyObject } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, createSign, randomBytes, timingSafeEqual, type KeyObject } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
 import { decrypt, encrypt } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
@@ -136,7 +136,7 @@ export async function configSummary() {
   const c = await readConfig().catch(() => ({} as Partial<GithubAppConfig>));
   let fingerprint: string | null = null;
   if (c.private_key) {
-    try { fingerprint = `SHA256:${createHash("sha256").update(createPrivateKey(c.private_key).export({ type: "spki", format: "der" })).digest("base64")}`; }
+    try { fingerprint = `SHA256:${createHash("sha256").update(createPublicKey(createPrivateKey(c.private_key)).export({ type: "spki", format: "der" })).digest("base64")}`; }
     catch { fingerprint = null; }
   }
   return {
