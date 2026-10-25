@@ -66,13 +66,13 @@ function inConsole<T>(web: string, code: string, args: string[] = []): T {
   } finally { rmSync(file, { force: true }); }
 }
 const NAV = `import { portalNav, adminNav } from '@/config/nav-config';
-import { packPageParams } from '@/features/packs/registry';
+import { appPageParams } from '@/features/packs/registry';
 import { tabPageParams, findTab } from '@/features/tabs/registry';
 import { tabPortalNav, packTabs } from '@/config/pack-nav.generated';
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...packPageParams('app'), ...tabPageParams()],
-  vulnerabilities: findTab('fixture_vulns', 'vulnerabilities'), billing: findTab('fixture_vulns', 'billing') }));
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...appPageParams(), ...tabPageParams()],
+  vulnerabilities: findTab('vulnerabilities'), billing: findTab('billing') }));
 `;
-type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { pack: string; page: string }[]; vulnerabilities: any; billing: any };
+type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
 const navOnly = (n: Nav) => JSON.stringify({ portalNav: n.portalNav, adminNav: n.adminNav }, null, 1);
 
 /** A headless Chrome on this machine: CHROME_BIN, else one a Playwright install left in its cache. */
@@ -276,9 +276,11 @@ try {
     assert.deepEqual(item("Billing").roles, ["billing", "owner"], "a tab's own roles");
     assert.deepEqual(item("Vulnerabilities").roles, ["viewer", "member", "billing", "owner"]);
     assert.deepEqual([item("Overview").icon, item("Reports").icon, item("Vulnerabilities").icon], ["dashboard", "page", "shield"], "icons from the fixed set (a kind's own by default)");
-    assert.ok(!nav.portalNav.flatMap((g) => g.items).some((i: any) => /pick-rate$|\/app\/personas|\/app\/tasks$|\/app\/context/.test(i.url) && !i.url.includes("/packs/")), "none of the shell's own product pages");
-    assert.deepEqual(nav.params.map((p) => `${p.pack}/${p.page}`), ["fixture_adoption/pick-rate", "fixture_adoption/tasks", "fixture_adoption/products", "fixture_adoption/simulations",
-      "fixture_vulns/overview", "fixture_vulns/vulnerabilities", "fixture_vulns/applications", "fixture_vulns/controls", "fixture_vulns/audits", "fixture_vulns/reports"], "each tab with a page is a page of the route");
+    // Flat addresses (mold_v0-132): /app/tasks is the pack's tab now, never a host product's page.
+    const tabUrls = new Set(nav.packTabs.map((t: any) => t.url));
+    assert.ok(!nav.portalNav.flatMap((g) => g.items).some((i: any) => /pick-rate$|\/app\/personas|\/app\/tasks$|\/app\/context/.test(i.url) && !tabUrls.has(i.url)), "none of the shell's own product pages");
+    assert.deepEqual(nav.params.map((p) => p.page), ["pick-rate", "tasks", "products", "simulations",
+      "overview", "vulnerabilities", "applications", "controls", "audits", "reports"], "each tab with a page is a page of the flat route (/app/<id>)");
     assert.deepEqual([nav.vulnerabilities.views, nav.vulnerabilities.board_by, nav.vulnerabilities.timeline_by, nav.vulnerabilities.charts], [["table", "board", "timeline", "detail"], "state", "due", ["severity", "due"]], "an area tab: its views, a board by the lifecycle's field");
     assert.equal(nav.billing, null, "a shell page's tab has no page of its own");
     // Empty states (mold_v0-107): the pack's own where it says one, the shell's default in the build's words for the rest.
