@@ -98,6 +98,18 @@ try {
     console.log("✓ zero packs: instructions, root page, install pages and /install.json unchanged; DATA-MAP.md current; no About API");
   }
 
+  // ---------- mold_v0-095: a pack named as its own upstream ----------
+  {
+    const so = await import("../src/source-offer.js");
+    const own = so.sourceOffer([{ id: "mx", manifest: { name: "Acme Audit", upstream: { repo: "https://github.com/acme/acme-audit", commit: SHA, license: "AGPL-3.0-only" } }, definition: {} }] as any, undefined);
+    const [line] = so.offerSentences(own), [item] = so.offerFooterItems(own);
+    assert.ok(line!.startsWith("This service uses acme-audit (https://github.com/acme/acme-audit), licensed AGPL-3.0-only"), `never "Acme Audit uses acme-audit": ${line}`);
+    assert.ok(item!.text.startsWith("This service uses acme-audit, licensed"), item!.text);
+    const other = so.sourceOffer([{ id: "mx", manifest: { name: "Acme Desk", upstream: { repo: "https://github.com/acme/acme-audit", commit: SHA, license: "AGPL-3.0-only" } }, definition: {} }] as any, undefined);
+    assert.ok(so.offerSentences(other)[0]!.startsWith("Acme Desk uses acme-audit"), "another name: the pack's, as before");
+    console.log("✓ a pack named as its own upstream is worded \"This service uses ...\", never \"X uses X\"; another name is the pack's, as before");
+  }
+
   // ---------- 2. an AGPL upstream, run at its pin ----------
   {
     setPacksForTest([entry("fixture_vulns", offerPack())]);
