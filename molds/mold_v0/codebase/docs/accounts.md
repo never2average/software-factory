@@ -128,7 +128,7 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     revokes the grant). A token acts as its person with their current role in the one workspace they chose, read live on
     every call: removing or suspending them, or a role change, holds on the next request. Scope `mcp` (the default); a
     token without it gets a 403 `insufficient_scope`. A refresh may **narrow** the scope (RFC 6749 section 6; mold_v0-087,
-    migration 0021): the new access token carries only the scopes asked for (`/mcp` checks the token's own scope), the
+    migration 0022): the new access token carries only the scopes asked for (`/mcp` checks the token's own scope), the
     new refresh token keeps the scope of the one it replaces (so a later refresh may ask for the whole grant again), and
     a scope the refresh token does not hold is refused (`invalid_scope`, and the refresh token stays usable); no `scope`,
     or a blank one, is all of it.

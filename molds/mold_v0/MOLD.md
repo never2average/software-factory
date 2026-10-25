@@ -1556,7 +1556,7 @@ consents or grants (checked against Clerk's OpenAPI specs, 2026-08-20: `/oauth_a
 consent screen), so the page says the connections are managed by the sign-in provider, links to the person's Account
 Portal page (derived from the publishable key; else the profile) and says how to disconnect an app from the app. It is an
 optional shell entry: in the shell's own sidebar (Operational), in a declared sidebar as `connected-apps`, hidden with
-`console.hide`. Built-in OAuth also lets a refresh **narrow** its scope (RFC 6749 section 6, migration 0021): the access
+`console.hide`. Built-in OAuth also lets a refresh **narrow** its scope (RFC 6749 section 6, migration 0022): the access
 token carries only the scopes asked for, the refresh token keeps its own, never wider (a refused scope leaves the
 refresh token usable). `npm run test:mcp-oauth`,
 `npm run test:connected-apps` (both sign-ins; `--browser` renders the page).
