@@ -100,8 +100,9 @@ export async function surface(laneArg: string): Promise<Surface> {
     if (own) out.pages.push({ pack: t.pack, path: t.url, label: `${t.label} (${t.url})`, signed_in: true });
     else add({ pack: t.pack, path: t.url, label: `${t.label} (${t.url})`, signed_in: true });
   }
-  for (const p of (nav.packPages ?? []) as { pack: string; id: string; area: string; title: string }[])
-    add({ pack: p.pack, path: `/${p.area}/packs/${p.pack}/${p.id}`, label: p.title, signed_in: true });
+  // A pack page's own address (mold_v0-132: /app/<id> flat; a build from before carries no url: the nested one).
+  for (const p of (nav.packPages ?? []) as { pack: string; id: string; area: string; title: string; url?: string }[])
+    add({ pack: p.pack, path: p.url ?? `/${p.area}/packs/${p.pack}/${p.id}`, label: p.title, signed_in: true });
   for (const a of (nav.recordAreas ?? []) as { pack: string; name: string; label: string; scope: string }[]) {
     add({ pack: a.pack, path: `/app/records/${a.name}`, label: `${a.label} (/app/records/${a.name})`, signed_in: true });
     if (a.scope === "platform") add({ pack: a.pack, path: `/admin/records/${a.name}`, label: `${a.label} (/admin/records/${a.name})`, signed_in: true });

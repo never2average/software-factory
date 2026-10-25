@@ -187,7 +187,7 @@ const A = (await createOrg(`Pack A ${stamp}`)).org, B = (await createOrg(`Pack B
   const nav = { packPages: generated("pack-nav.generated.ts", "packPages"), packPortalNav: generated("pack-nav.generated.ts", "packPortalNav"), packAdminNav: generated("pack-nav.generated.ts", "packAdminNav") };
   const page = nav.packPages.find((p: { pack: string; id: string }) => p.pack === PACK && p.id === "notes");
   assert.ok(page && page.area === "app" && page.data === "/notes", "the pack's page is in the console registry");
-  assert.deepEqual(nav.packPortalNav, [{ label: "Notes", items: [{ title: "Notes", url: `/app/packs/${PACK}/notes`, items: [] }] }], "and in the /app sidebar");
+  assert.deepEqual(nav.packPortalNav, [{ label: "Notes", items: [{ title: "Notes", url: "/app/notes", items: [] }] }], "and in the /app sidebar");
   assert.equal(nav.packAdminNav[0]?.items[0]?.url, `/admin/packs/${PACK}/all-notes`, "its admin page is in the /admin sidebar");
   const navConfig = readFileSync(new URL("../web/src/config/nav-config.ts", import.meta.url), "utf8");
   assert.ok(navConfig.includes("...packPortalNav") && navConfig.includes("...packAdminNav"), "the sidebar appends the packs' groups");

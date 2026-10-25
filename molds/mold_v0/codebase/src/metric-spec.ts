@@ -292,7 +292,7 @@ export function checkViews(b: BuildViews): string[] {
   for (const t of b.tabs) {
     const p = t.pack, w = `tab ${t.id}`;
     if (b.tabs.some((x) => x !== t && x.pack === p && x.id === t.id)) at(p, `${w} is declared twice`);
-    if ((b.pages?.[p] ?? []).includes(t.id)) at(p, `${w}: its id is also a page of the pack (both would be /app/packs/${p}/${t.id})`);
+    if ((b.pages?.[p] ?? []).includes(t.id)) at(p, `${w}: its id is also a page of the pack (both would be /app/${t.id})`);
     if (t.kind === "area" && !t.areas) {
       const a = area(t.area!);
       if (!a) { at(p, `${w} shows area ${t.area}, which no pack declares`); continue; }

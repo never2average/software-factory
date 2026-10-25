@@ -1404,6 +1404,42 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     " * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.\n */\n" +
     `export const PACK_GUIDE: unknown = ${json(packGuide)};\n`);
 }
+/**
+ * Flat console URLs (mold_v0-132): a pack's customer page and each tab with a page of its own (overview, area, runs,
+ * reports) is at /app/<id> (web/src/app/app/[page]), not /app/packs/<pack>/<id>. So an id is refused when it is a shell
+ * page's (a folder of web/src/app/app: activity, billing, records...), a host pack's own page (its routes.json), or
+ * another pack's page or tab. The old nested address redirects to the flat one (below).
+ */
+const SHELL_APP_DIR = path.join(ROOT, "web", "src", "app", "app");
+const SHELL_APP_SEGMENTS = new Set(existsSync(SHELL_APP_DIR) ? readdirSync(SHELL_APP_DIR, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name)).map((e) => e.name) : []);
+// The nested addresses of before (they redirect) and the host page route stay the shell's.
+for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
+/** The flat address of a pack's customer page or tab page: /app/<id>. */
+const appPageUrl = (id) => `/app/${id}`;
+/** Every flat customer page of the build: the packs' app pages, then the shown tabs with a page of their own. */
+function flatAppPages() {
+  return [...packs.flatMap((p) => p.pages.filter((pg) => pg.area === "app").map((pg) => ({ pack: pg.pack, id: pg.id, what: `app page ${pg.id}` }))),
+    ...shownTabs().filter((t) => TAB_OWN_PAGE.has(t.kind)).map((t) => ({ pack: t.pack, id: t.id, what: `tab ${t.id}` }))];
+}
+const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports"]);
+{
+  const hostSegments = new Map();
+  for (const id of webPacks) {
+    const file = path.join(WEB_PACKS, id, "routes.json");
+    const r = existsSync(file) ? readJson(file, `web/src/packs/${id}/routes.json`) : {};
+    for (const x of Array.isArray(r?.app) ? r.app : []) if (typeof x === "string") hostSegments.set(x.split("/")[0], id);
+  }
+  const owner = new Map();
+  for (const f of flatAppPages()) {
+    const at = `packs/${f.pack}/pack.json`, url = appPageUrl(f.id);
+    if (SHELL_APP_SEGMENTS.has(f.id)) fail(at, `${f.what} would be at ${url}, which is the shell's own page: give it another id`);
+    else if (hostSegments.has(f.id)) fail(at, `${f.what} would be at ${url}, which host pack ${hostSegments.get(f.id)}'s page is at: give it another id`);
+    else if (owner.has(f.id) && owner.get(f.id).pack !== f.pack) fail(at, `${f.what} would be at ${url}, which pack ${owner.get(f.id).pack}'s ${owner.get(f.id).what} is at: give it another id`);
+    else if (!owner.has(f.id)) owner.set(f.id, f);
+  }
+  refuse();
+}
 // Their console URLs (web/src/packs/<id>/routes.json): each rewritten to the shell's host page route, and their redirects.
 {
   const rewrites = [], redirects = [], seenUrl = new Set();
@@ -1430,8 +1466,10 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
   // /app/notices (and every address under it) now leads; a hidden page (mold_v0-130) leads to the console's home.
   const home = Object.fromEntries(["setup", "notices"].map((x) => {
     const t = shownTabs().find((y) => y.kind === "overview" && (y.include ?? []).includes(x));
-    return [x, t ? `/app/packs/${t.pack}/${t.id}` : null];
+    return [x, t ? appPageUrl(t.id) : null];
   }));
+  // The nested addresses pack pages and tabs had before mold_v0-132 lead to their flat ones (bookmarks, old links).
+  for (const f of flatAppPages()) redirects.push({ source: `/app/packs/${f.pack}/${f.id}`, destination: appPageUrl(f.id), permanent: false });
   if (home.setup) redirects.push({ source: "/app", destination: home.setup, permanent: false });
   if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
   redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
@@ -1471,16 +1509,19 @@ const nav = (area) => {
   const groups = new Map();
   for (const p of packs) for (const pg of p.pages.filter((x) => x.area === area)) {
     if (!groups.has(pg.nav_group)) groups.set(pg.nav_group, []);
-    groups.get(pg.nav_group).push({ title: pg.title, url: `/${area}/packs/${pg.pack}/${pg.id}`, ...(pg.icon ? { icon: pg.icon } : {}), items: [] });
+    groups.get(pg.nav_group).push({ title: pg.title, url: packPageUrl(pg), ...(pg.icon ? { icon: pg.icon } : {}), items: [] });
   }
   return [...groups].map(([label, items]) => ({ label, items }));
 };
 const allPages = packs.flatMap((p) => p.pages);
+/** A pack page's address: flat in the customer console (mold_v0-132), /admin/packs/<pack>/<id> in the admin console. */
+function packPageUrl(pg) { return pg.area === "app" ? appPageUrl(pg.id) : `/admin/packs/${pg.pack}/${pg.id}`; }
 files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADER +
   "import type { NavGroup } from '@/types';\n\n" +
-  "/** A pack's console page: the shell's generic page (app/{app,admin}/packs/[pack]/[page]) shows the rows its data route returns. */\n" +
-  "export interface PackPage {\n  pack: string;\n  id: string;\n  area: 'app' | 'admin';\n  title: string;\n  description: string | null;\n  data: string;\n  columns: { key: string; label: string }[];\n}\n\n" +
-  `export const packPages: PackPage[] = ${json(allPages.map(({ nav_group: _g, icon: _i, ...pg }) => pg))};\n\n` +
+  "/**\n * A pack's console page: the shell's generic page (app/app/[page], flat since mold_v0-132; app/admin/packs/[pack]/[page])\n" +
+  " * shows the rows its data route returns.\n */\n" +
+  "export interface PackPage {\n  pack: string;\n  id: string;\n  area: 'app' | 'admin';\n  /** Its address: /app/<id>, or /admin/packs/<pack>/<id>. */\n  url: string;\n  title: string;\n  description: string | null;\n  data: string;\n  columns: { key: string; label: string }[];\n}\n\n" +
+  `export const packPages: PackPage[] = ${json(allPages.map(({ nav_group: _g, icon: _i, ...pg }) => ({ ...pg, url: packPageUrl(pg) })))};\n\n` +
   "/** Sidebar groups the packs add to /app (after the shell's own). */\n" +
   `export const packPortalNav: NavGroup[] = ${json(nav("app"))};\n\n` +
   "/** Sidebar groups the packs add to /admin (after the shell's own). */\n" +
@@ -1643,7 +1684,7 @@ function viewsModule() {
   const shown = shownTabs();
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
-    url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
+    url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? appPageUrl(t.kind === "page" ? t.page : t.id), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
     charts: t.charts ?? [],
