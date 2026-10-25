@@ -1357,19 +1357,46 @@ facts the factory writes into the build copy (`deploy-facts.json`, names and pla
 `/api/admin/about` were removed with what only they showed, the running server's own measurements). Never a secret
 value: names, providers, regions and hosts only.
 
-**Landing page (mold_v0-091).** The console's `/` is the build's landing page, declared, not written: a declarative
-pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it, section by section (a section the
-profile names replaces the pack's; at most one pack of a build declares one). The sections, all optional, in page order:
-`hero` (eyebrow, headline, subheadline, primary and secondary call to action, note), `coverage` (a row of text badges,
-such as the regulators covered), `value_points`, `how_it_works` (numbered steps), `features` (a grid), `faq` (disclosures
-that open without script), `closing` (a last call to action), `footer` (a note and links) and `seo` (title and description
-for search results and Open Graph). Every value is plain text on one line, shown as text; a link is a path of this site,
-an https:// address or a mailto: address (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result and the
-source offer's footer items into `web/src/config/landing.generated.ts`). The page (`web/src/features/site/landing.tsx`)
-is in the build's brand (its name, tagline, `icon.svg` and the theme's tokens, light and dark) with a header (sign in,
-get started, install) and a footer that carries the source offer whenever the install pages do. With no block it is the
-neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
+**Landing page (mold_v0-091; pick and place, mold_v0-122).** The console's `/` is the build's landing page, declared,
+not written: a declarative pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it (at most one
+pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
+order: `sections: [{"type": ...}]`. The library is the first product's landing page generalised: each section and each
+drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
+footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
+and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
+The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
+second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text badges, named logos or
+the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
+`proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
+`install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
+carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
+shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
+links; the ways in: sign in and start, or one account button), `footer` (a tagline, a note, links, a copyright line,
+`shell_links: false`) and `seo` (title and description for search results and Open Graph). With no `sections` the page
+is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
+`{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
+one by one. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
+(`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
+footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
+`how_it_works`, `features`, `faq`, `closing` at the top level) is still read and converted to sections at build time
+(coverage becomes the hero's strip, value points the concept's cards, features proof's items, closing a cta), so a build
+that declared one still builds; a block that mixes the two is refused. Every call to action comes from
+`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack's own landing page
 (code, mold_v0-039) stays its own.
+
+**Share image (mold_v0-093).** What a shared link to the build shows (Open Graph and X: `web/src/app/opengraph-image.tsx`
+and `twitter-image.tsx`, one renderer in `web/src/features/site/share-image.tsx`) is the build's own, never another
+product's picture: a 1200x630 PNG drawn when the console is built from the landing page's words (the hero's headline, else
+the profile's tagline; its sub-headline, else the console's description unless it repeats the headline) beside the
+profile's name, the build's mark (`web/src/app/icon.svg`, else the brand step's PNG icon) and its brand colour (the web
+manifest's `theme_color`, which the brand step sets), in the font `next/og` carries (nothing is fetched). Its
+alternative text is the same words. `gen-packs.mjs` writes the words and the text to
+`web/src/config/share-image.generated.ts`. A brand that has its own picture (the factory's `branding.py <app_id>
+share-image brands/<name>/<file>.png`, rules.json `share_image`: a 1200x630 PNG of at most 1 MB, recorded in the app's
+state with its sha256) has it copied to `brand/share-image.png` in the build copy and embedded byte for byte, with the
+console's description as its text; the routes then answer exactly those bytes. `npm run test:share-image` renders both.
 
 **Upstream catalogs index themselves (mold_v0-128, mold_v0-129).** An upstream catalog is pinned to a commit, so its rows
 are fixed by the build: the server indexes every one whose stored pin (`repository_index`, migration 0019) is not its
@@ -1704,6 +1731,18 @@ console's bytes are not graded (each lane's `not_covered` says what is not). The
 organisation of the app's own: `provision.py <app> --lane-key --dry-run`, then `--lane-key --yes` once the operator
 says yes. It runs the product's `scripts/create-org.ts` and keeps the connector address in a private file outside
 the repository (mode 600, never shown).
+
+**Parity snapshots (mold_v0-136; [testing/parity/](testing/parity/README.md)).** Not a lane yet: a check that a build
+still shows people, AI clients and the console the same thing, for refactors meant to change nothing (moving the host
+pack `octillion` into config). `parity.py snapshot <app_id|zero> --out <dir>` records, in the lane world above (embedded
+database, offline Clerk, the console served on 127.0.0.1): the customer and admin MCP servers over an in-memory client
+(instructions, tools, prompts and each prompt's text over an argument matrix, resources and every widget, the skills),
+every `*.generated.*` file, the API's route list and every GET without a path parameter under `/api/*`, and every page of
+`console/surface.mts` (text, links, screenshots at 390 and 1440 wide in both colour schemes), plus each pack's own
+`scripts/smoke.ts` pass or fail. Times, ports and minted ids are masked, never dropped. `parity.py diff <before>
+<after> [--allow <phase>.json]` prints what differs, grouped, and fails on anything a phase's allow list does not name;
+`parity.py probe <app_id>` reads a deployed app (pages, `/app` and `/admin` status, `/mcp` without a key) and writes
+nothing. Two snapshots of one build compare equal; how to run it as a lane is in its README.
 
 **The CI gate (mold_v0-040).** `provision.py`'s release gate (`lib/deploy_gate.py`) reads, for an in-tree mold, **this
 repository's** checks for the commit being deployed: HEAD of the checkout the deploy runs from, and only when

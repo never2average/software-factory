@@ -40,6 +40,7 @@
     "test:source-offer": "tsx scripts/source-offer-test.ts",
     "test:landing": "tsx scripts/landing-test.ts",
     "test:record-export": "tsx scripts/record-export-test.ts",
+    "test:share-image": "tsx scripts/share-image-test.ts",
     "test:no-account": "tsx scripts/no-account-test.ts builtin && tsx scripts/no-account-test.ts clerk",
     "test:legal": "tsx scripts/legal-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
