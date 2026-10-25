@@ -89,12 +89,13 @@ export function RequestPageForm({ form = {} }: { form?: RequestPage['form'] }) {
     if (!validate()) return;
     setStatus('sending');
     try {
-      const sent = Object.fromEntries(asked.flatMap((f) => {
+      const sent: Record<string, AccessAnswer> = {};
+      for (const f of asked) {
         const a = answers[f.key];
-        if (Array.isArray(a)) return a.length ? [[f.key, a]] : [];
+        if (Array.isArray(a)) { if (a.length) sent[f.key] = a; continue; }
         const t = (a ?? '').trim();
-        return t ? [[f.key, f.type === 'url' ? (normalizeUrl(t) ?? t) : t]] : [];
-      }));
+        if (t) sent[f.key] = f.type === 'url' ? (normalizeUrl(t) ?? t) : t;
+      }
       const res = await fetch('/api/access-requests', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ email: v.email.trim(), company: v.company.trim(), name: v.name.trim(), message: v.message.trim(), answers: sent, source: sourceOf() })
