@@ -1027,11 +1027,18 @@
             "logo": {
               "type": "string",
               "description": "Where the mark came from: a PNG, JPG, WebP or SVG file path relative to the repo root (e.g. brands/acme/logo.png). Provenance only; icon_svg carries the inlined result."
+            },
+            "share_image": {
+              "type": "object",
+              "description": "The brand's own link-preview picture (mold_v0-093; `branding.py <app_id> share-image <file.png>|none`): a PNG of the mold's share-image size, its path relative to the repo root and its sha256, checked again when the build copy is prepared. A block that holds ONLY this (mold_v0-150) changes nothing else: the app keeps the names its host pack or mold gives it. Any other branding field needs product_name (factory.py validate).",
+              "properties": {
+                "file": {"type": "string", "pattern": "^[^/].*\\.png$"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              },
+              "required": ["file", "sha256"],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "product_name"
-          ]
+          }
         }
       },
       "description": "Configuration for each service-surface item; keys match state/factory.json service_surface names"
