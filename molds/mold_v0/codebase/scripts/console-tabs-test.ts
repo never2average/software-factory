@@ -273,8 +273,8 @@ try {
       ["Account", ["Usage /app/activity", "Profile /app/profile"]],
       ["Audit", ["Overview /app/overview", "Vulnerabilities /app/vulnerabilities", "Applications /app/applications",
         "Controls /app/controls", "Audits /app/audits", "Reports /app/reports"]],
-      ["Workspace", ["Application tokens /app/credentials", "Due soon /app/notices", "Activity /app/activity", "Billing /app/billing"]],
-    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses");
+      ["Workspace", ["Application tokens /app/credentials", "Due soon /app/notices", "Billing /app/billing"]],
+    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses; a page two packs' tabs open is listed once, by the first (mold_v0-133)");
     const item = (t: string) => nav.portalNav.flatMap((g) => g.items).find((i: any) => i.title === t);
     assert.deepEqual(item("Applications").roles, ["member", "billing", "owner"], "an area a viewer may not read: its tab is not a viewer's");
     assert.deepEqual(item("Billing").roles, ["billing", "owner"], "a tab's own roles");
@@ -297,7 +297,7 @@ try {
     assert.deepEqual([empty.overview, empty.billing], [null, null], "an overview and a shell page have none");
     const zeroAdmin = JSON.parse(readFileSync(path.join(SNAP, "zero-packs.json"), "utf8")).adminNav;
     assert.deepEqual(nav.adminNav.slice(0, zeroAdmin.length), zeroAdmin, "/admin keeps the shell's groups (tabs are the /app sidebar's)");
-    console.log("✓ packs with tabs: the /app sidebar is exactly the 16 declared tabs in 4 groups, each limited to the roles that may read it; 10 tab pages; /admin unchanged");
+    console.log("✓ packs with tabs: the /app sidebar is exactly the 16 declared tabs (15 entries: one page two packs open is listed once) in 4 groups, each limited to the roles that may read it; 10 tab pages; /admin unchanged");
   }
 
   // ---------- 3. a rendered snapshot of the overview and the board ----------

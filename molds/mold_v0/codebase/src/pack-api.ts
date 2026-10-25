@@ -990,7 +990,8 @@ export type Chart = z.output<typeof ChartSchema>;
  * TAB_ICONS, `roles` who sees it (narrowing what its data allows: an area tab is never shown to a role that may not read
  * the area, an overview never to one that may read none of its metrics).
  */
-export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "page", "files"] as const;
+// team and keys (mold_v0-133): the shell's Team page (part of Billing) and the person's own API keys, so a declared sidebar reaches every shell page.
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files"] as const;
 /** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
 export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
