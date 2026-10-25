@@ -23,6 +23,7 @@ import { Icons } from '@/components/icons';
 import { relative } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import type { Subscription } from './lib';
+import { ApiErrorStatus, isStatusError } from '@/features/status/from-error';
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'info' | 'neutral';
 const TONES: Record<Tone, string> = {
@@ -208,6 +209,8 @@ export function LoadingCards({ count = 4, tall }: { count?: number; tall?: boole
 
 export function ErrorBox({ error }: { error: Error | null | undefined }) {
   if (!error) return null;
+  // Signed out, refused or not found: the console's status page (mold_v0-131), not a line of the API's words.
+  if (isStatusError(error)) return <ApiErrorStatus error={error} area='admin' />;
   return (
     <div role='alert' className='border-destructive/30 bg-destructive/5 text-destructive mb-4 rounded-lg border px-4 py-3 text-sm'>
       {error.message}

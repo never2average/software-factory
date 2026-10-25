@@ -33,6 +33,8 @@ const packRoutes = JSON.parse(readFileSync(path.join(process.cwd(), 'src', 'conf
 const config: NextConfig = {
   output: process.env.BUILD_STANDALONE === 'true' ? 'standalone' : undefined,
   env: { NEXT_PUBLIC_AUTH_PROVIDER: AUTH_PROVIDER },
+  // forbidden() and forbidden.tsx (mold_v0-131): a page the person may not open answers 403 with the status page.
+  experimental: { authInterrupts: true },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'img.clerk.com' }] },
   compiler: { removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false },
   // The consent screen of the built-in MCP authorization server (mold_v0-013) is never framed (clickjacking).
@@ -43,7 +45,10 @@ const config: NextConfig = {
     return packRoutes.redirects;
   },
   async rewrites() {
-    return { beforeFiles: [], afterFiles: packRoutes.rewrites, fallback: [{ source: '/:path*', destination: `${API}/:path*` }] };
+    // The API's own addresses under /admin go to it before the console's pages are matched: /admin/[...missing] answers
+    // every other address there with the not-found page (mold_v0-131), so the fallback below never sees them.
+    const apiUnderAdmin = ['/admin/session', '/admin/mcp'].map((p) => ({ source: p, destination: `${API}${p}` }));
+    return { beforeFiles: [], afterFiles: [...apiUnderAdmin, ...packRoutes.rewrites], fallback: [{ source: '/:path*', destination: `${API}/:path*` }] };
   }
 };
 

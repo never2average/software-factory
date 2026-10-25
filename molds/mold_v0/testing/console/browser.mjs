@@ -52,7 +52,8 @@ export async function load(p, ctx, page) {
     const text = document.body?.innerText ?? '';
     return { controls, error: /Application error|This page could not be found|Internal Server Error|Unhandled Runtime Error/.test(text) };
   });
-  if (status >= 400) return { ok: false, why: `HTTP ${status}` };
+  // A status page answers its own code (surface.mts `status`, mold_v0-131); any other page, under 400.
+  if (status >= 400 && status !== page.status) return { ok: false, why: `HTTP ${status}` };
   if (page.signed_in && at.pathname.startsWith('/auth')) return { ok: false, why: `a signed-in page sent the lane's person to ${at.pathname}` };
   if (facts.error) return { ok: false, why: 'the page rendered an error page' };
   if (!facts.controls) return { ok: false, why: 'the page rendered no control to use: nothing was measured' };

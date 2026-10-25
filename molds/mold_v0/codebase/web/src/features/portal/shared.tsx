@@ -3,9 +3,8 @@
 // copy buttons, relative times, loading and error states.
 import { useAuth } from '@/lib/auth';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { NoAccountNotice } from './no-account';
 import { toast } from 'sonner';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ApiErrorStatus } from '@/features/status/from-error';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
@@ -79,14 +78,10 @@ export function LoadingCards({ count = 3 }: { count?: number }) {
 }
 
 export function ErrorState({ error }: { error: Error }) {
-  // No account open here (the API's 403 no_account, src/app.ts): the way forward, never an error card (mold_v0-098).
-  if ((error as { body?: { code?: unknown } }).body?.code === 'no_account') return <NoAccountNotice />;
   return (
-    <Alert variant='destructive'>
-      <Icons.alertCircle />
-      <AlertTitle>Could not load this page</AlertTitle>
-      <AlertDescription>{error.message}</AlertDescription>
-    </Alert>
+    // The console's status page for what the API answered (mold_v0-131): signed out, refused, not found, failed; no
+    // account goes to the portal's own notice for it (mold_v0-098) through noAccountHandoff().
+    <ApiErrorStatus error={error} />
   );
 }
 

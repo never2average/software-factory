@@ -7,13 +7,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { PackPage as PackPageSpec } from '@/config/pack-nav.generated';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { packDataUrl } from './registry';
+import { httpError } from '@/features/status/from-error';
 
 type Row = Record<string, unknown>;
 
 async function loadRows(url: string): Promise<Row[]> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   const body = (await res.json().catch(() => ({}))) as { rows?: Row[]; error?: string } | Row[];
-  if (!res.ok) throw new Error((!Array.isArray(body) && body.error) || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, body);
   return Array.isArray(body) ? body : (body.rows ?? []);
 }
 

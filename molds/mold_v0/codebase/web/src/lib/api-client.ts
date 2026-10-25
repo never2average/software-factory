@@ -18,7 +18,7 @@ async function request<T>(url: string, method: string, body?: unknown, headers: 
   });
   if (res.status === 204) return null as T;
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (res.status === 401 && typeof window !== 'undefined') window.location.href = `/auth/sign-in?redirect_url=${encodeURIComponent(window.location.pathname)}`;
+  if (res.status === 401 && typeof window !== 'undefined') window.location.href = `/auth/sign-in?redirect_url=${encodeURIComponent(window.location.pathname + window.location.search)}`;
   if (!res.ok) throw new ApiError(String(json.error ?? `Request failed (${res.status})`), res.status, json);
   return json as T;
 }

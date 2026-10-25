@@ -52,7 +52,8 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
       }
     >
       <ErrorBox error={error} />
-      {isLoading || !d ? (
+      {/* An account that is not there (404) or a refusal: the status page above alone (mold_v0-131), no endless skeleton. */}
+      {error && !d ? null : isLoading || !d ? (
         <div className='flex flex-col gap-8'>
           <Skeleton className='h-24' />
           <Skeleton className='h-64' />
