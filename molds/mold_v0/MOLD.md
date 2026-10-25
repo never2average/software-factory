@@ -792,8 +792,13 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   calling workspace only (its id from the session; every query names it and runs under row-level security for it; the
   credential vault, which tenant work cannot reach, is read with that id), with the time it first held, and serves the
   list at `/api/onboarding` (signed-in people of the workspace, read only; mounted only when a step exists). The
-  console's Setup page shows it above the shell's own timeline when the build has a step (`packOnboardingSteps` in
-  `pack-nav.generated.ts`); with zero packs it asks nothing and the page is unchanged. `npm run test:onboarding` proves
+  console shows **one checklist** (mold_v0-146, `web/src/features/portal/setup-steps.ts`): the shell's setup steps
+  (joining, connecting an AI client, its tools, a first question) first, then the packs' steps in declared order, as one
+  list with one count. A pack step whose condition the shell measures too (`workspace`, `connected`, `first_call`;
+  `/api/onboarding` says which as `covers`: `joined`, `connected`, `first_call`) takes that shell step's place, and the
+  shell's later steps follow it: a pack puts the connection where it wants it by declaring a `done_when: connected`
+  step. With zero packs (`packOnboardingSteps` 0 in `pack-nav.generated.ts`) it asks nothing and the list is the
+  shell's. `npm run test:onboarding` proves
   it with two workspaces (everything B does ticks none of A's steps). The same steps reach AI clients (mold_v0-105): a
   pack with steps gets a generated `<prefix>_get_started` MCP tool (below) and a step may carry `prompt`, the words a
   person types to do it (plain text, one line). **Not covered:** the end-to-end browser walk of
@@ -1122,9 +1127,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   size, two workspaces and the route's refusals in an embedded database; `npm run test:console-tabs` draws a merged
   table, board, timeline, empty state and a narrow table in a headless browser.
   **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
-  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the packs' onboarding
-  steps and the setup steps, only the next open one explained, beside the connection panel; folded to one line, "You're
-  all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
+  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the one list of the
+  setup steps and the packs' steps, mold_v0-146, only the next open one explained and any other opened from its label;
+  the connection panel is the body of the step that connects an AI client, not a panel beside it; folded to one line,
+  "You're all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
   `notices` the records due soon (the first five, then "Show all"; `DueSoonSection` in
   `web/src/features/schedules/notices-page.tsx`). Its charts may then be left out. `/app` (setup) and `/app/notices`
   (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
