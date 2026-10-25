@@ -33,7 +33,10 @@ codebase root; `{pack}` is the pack's own id, so a pack can only add files under
 every pack must add), `manifest_required` (pack.json fields), `supports` (a file and the text it must contain),
 `generators` (run in the build copy after the files are copied), `verify` (the copy's own checks) and `prune` (the
 directory whose per-pack folders an earlier apply may have left behind for a pack the app no longer names). A pack's
-pack.json may name its mold (`"mold_id"`), and is then refused for an app on another one.
+pack.json may name its mold (`"mold_id"`), and is then refused for an app on another one. `declarative` (mold_v0-124):
+an app pack that is not one of the mold's `host_packs` is config only: it may add only `files` (mold_v0: its pack.json)
+and its `manifest` may name none of `refused_keys` (entry, migrations, runner: code); each refusal names the
+declaration to write instead. A host pack keeps its code.
   check <pack> [--mold <mold_id>]   the rules of that mold (default: the pack's own mold_id, else mold_v1's)
 
 DEPLOY FACTS (mold_v0-050). A mold whose rules name `deploy_facts` (a file at the codebase root: mold_v0's
@@ -67,7 +70,7 @@ SKIP = ("__pycache__", ".pyc", ".DS_Store")
 
 def load(p): return json.load(open(p))
 
-RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune", "host_packs", "deploy_facts"}
+RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune", "host_packs", "deploy_facts", "declarative"}
 def rules_for(mold_id):
     """The `packs` block of molds/<mold_id>/mold.json, checked, or None: the mold_v1 rules above (every mold without one)."""
     p = os.path.join(ROOT, "molds", str(mold_id or ""), "mold.json")
@@ -87,6 +90,13 @@ def rules_for(mold_id):
         if not (isinstance(sup, dict) and sup.get("file") and sup.get("contains")): bad.append("supports needs file and contains")
         for k in ("generators", "verify"):
             if any(not (isinstance(c, list) and c and all(isinstance(x, str) for x in c)) for c in block.get(k) or []): bad.append(f"{k} must be a list of commands (lists of words)")
+        dec = block.get("declarative")
+        if dec is not None:
+            if not (isinstance(dec, dict) and set(dec) <= {"$comment", "files", "manifest", "refused_keys"} and dec.get("files")
+                    and all(isinstance(p, str) and p.startswith("^") and p.endswith("$") and "{pack}" in p for p in dec["files"])
+                    and isinstance(dec.get("manifest"), str) and "{pack}" in dec["manifest"]
+                    and all(isinstance(k, str) for k in dec.get("refused_keys") or [])):
+                bad.append("declarative must be {files: [anchored patterns naming {pack}], manifest: the pack's own pack.json path with {pack}, refused_keys: [pack.json keys]}")
         if "deploy_facts" in block and not (isinstance(block["deploy_facts"], str) and re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\.json", block["deploy_facts"])):
             bad.append("deploy_facts must be a .json file name at the codebase root")
     if bad: sys.exit(f"molds/{mold_id}/mold.json packs: " + "; ".join(bad))
@@ -159,6 +169,33 @@ def _deploy_facts(build, app_id, rules):
 def _allowed(rules, pack_id):
     return [re.compile(p.replace("{pack}", re.escape(pack_id))) for p in rules["allowed"]]
 
+def _declaration_for(f):
+    """What a non-host app pack says in its pack.json instead of file f (mold_v0-124; the mold's gen-packs says the same)."""
+    if re.search(r"\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|sh)$", f, re.I):
+        return ("code: rows from the workspace's files or an upstream are repositories.<name>.map in pack.json (fields with value paths, "
+                "list items a[0] and a[], only, matches, max_length, any; where; retires; only_latest), runs are job_kinds, the MCP tools are generated (mcp)")
+    if re.search(r"\.md$", f, re.I): return "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
+    if re.search(r"\.sql$", f, re.I): return "rows live in the shell's tables: declare record_areas in pack.json"
+    return "everything an app pack says is in its pack.json"
+
+def _declarative_problems(pack_id, files, rules):
+    """mold_v0-124: an app pack that is not one of the mold's host packs is config only: its pack.json and nothing else,
+    and no pack.json key that names code (rules['declarative']). A host pack keeps its code."""
+    dec = rules.get("declarative")
+    if not dec or pack_id in (rules.get("host_packs") or []): return []
+    keep = [re.compile(p.replace("{pack}", re.escape(pack_id))) for p in dec["files"]]
+    hosts = ", ".join(rules.get("host_packs") or []) or "none"
+    head = f"an app pack on {rules['mold_id']} is config only: its pack.json alone (only a host pack, {hosts}, carries code or other files)"
+    errs = [f"{pack_id}: {f}: {head}. Say it in pack.json instead: {_declaration_for(f)} (molds/{rules['mold_id']}/MOLD.md \"Declared row maps\")"
+            for f in files if any(a.fullmatch(f) for a in _allowed(rules, pack_id)) and not any(k.fullmatch(f) for k in keep)]
+    mp = os.path.join(PACKS, pack_id, "files", dec["manifest"].replace("{pack}", pack_id))
+    try: inner = load(mp) if os.path.isfile(mp) else {}
+    except ValueError: return errs + [f"{pack_id}: {dec['manifest'].replace('{pack}', pack_id)} is not valid JSON"]
+    for k in dec.get("refused_keys") or []:
+        if isinstance(inner, dict) and k in inner:
+            errs.append(f"{pack_id}: {dec['manifest'].replace('{pack}', pack_id)} names `{k}`, which points at code: {head}. Take `{k}` out and declare what it did (MOLD.md \"Declared row maps\")")
+    return errs
+
 def _check_by_rules(pack_id, files, manifest, rules):
     """check_pack for a mold that declares its own rules (mold.json packs)."""
     errs = []
@@ -188,7 +225,7 @@ def _check_by_rules(pack_id, files, manifest, rules):
     for r in rules.get("required") or []:
         want = r.replace("{pack}", pack_id)
         if want not in files: errs.append(f"{pack_id}: files/{want} is missing (every {rules['mold_id']} pack adds it)")
-    return errs
+    return errs + _declarative_problems(pack_id, files, rules)
 
 def pack_files(pack_id):
     base = os.path.join(PACKS, pack_id, "files"); out = []
@@ -550,8 +587,17 @@ def rules_self_test():
     ok(R and R["mold_id"] == "mold_v0" and R["generators"][0] == ["node", "scripts/gen-packs.mjs"] and supports_packs(os.path.join(ROOT, "molds", "mold_v0", "codebase"), R),
        "mold_v0's rules load from its mold.json, and its codebase passes their support test (scripts/gen-packs.mjs)")
     m = {"pack_id": "notes", "name": "Notes", "description": "d", "mold_id": "mold_v0"}
-    good = ["packs/notes/pack.json", "packs/notes/index.ts", "packs/notes/migrations/0001_notes.sql"]
+    good = ["packs/notes/pack.json"]
     ok(check_pack("notes", good, m, R) == [], check_pack("notes", good, m, R))
+    # mold_v0-124: an app pack that is not a host pack is its pack.json alone; each refusal names the declaration instead.
+    for f, hint in (("packs/notes/index.ts", "repositories.<name>.map"), ("packs/notes/lib/rows.mjs", "repositories.<name>.map"), ("packs/notes/migrations/0001_notes.sql", "declare record_areas"),
+                    ("packs/notes/guide/intro.md", "guide.markdown"), ("packs/notes/data.csv", "everything an app pack says is in its pack.json")):
+        e = check_pack("notes", good + [f], m, R)
+        ok(len(e) == 1 and "config only" in e[0] and hint in e[0] and f in e[0], f"refused in a non-host pack, naming {hint}: {f} ({e})")
+    code = good + ["packs/notes/index.ts", "packs/notes/migrations/0001_notes.sql"]
+    ok(check_pack("notes", code, m, {k: v for k, v in R.items() if k != "declarative"}) == [], "a mold with no declarative rule keeps code packs")
+    host = ["packs/octillion/pack.json", "packs/octillion/host.ts", "web/src/packs/octillion/index.ts", "orchestrator/packs/octillion/main.ts"]
+    ok(check_pack("octillion", host, dict(m, pack_id="octillion"), R) == [], "a host pack (mold.json host_packs) keeps its code")
     for bad, why in ((["packs/other/index.ts"], "another pack's directory"), (["src/server.ts"], "a shell file"), (["packs/notes_x/a.ts"], "a pack whose id starts with its own"),
                      (["packs/notes/../server.ts"], "a path that climbs out"), (["web/src/app/app/page.tsx"], "a console page of the shell"), (["packs/notes"], "the directory itself, no file")):
         ok(any("outside what a pack may add" in e for e in check_pack("notes", good + bad, m, R)), f"refused: {why}")
@@ -582,7 +628,7 @@ def rules_self_test():
             for pid in ("notes", "tasks"):
                 f = os.path.join(t, "packs", pid, "files", "packs", pid); os.makedirs(f)
                 json.dump({"pack_id": pid, "name": pid, "description": "d", "mold_id": "mold_t"}, open(os.path.join(t, "packs", pid, "pack.json"), "w"))
-                open(os.path.join(f, "pack.json"), "w").write("{}\n"); open(os.path.join(f, "index.ts"), "w").write("export default {};\n")
+                open(os.path.join(f, "pack.json"), "w").write("{}\n")
             def app(packs):
                 d = os.path.join(t, "state", "application", "zz"); os.makedirs(d, exist_ok=True)
                 json.dump({"app_id": "zz", "mold_id": "mold_t", "status": "planned", "packs": packs}, open(os.path.join(d, "application.json"), "w"))
@@ -592,7 +638,7 @@ def rules_self_test():
                     try: return fn(*a, **k)
                     except SystemExit as e: return e.code
             b = os.path.join(t, "build", "zz"); reg = lambda d=b: open(os.path.join(d, "src", "packs.generated.ts")).read().strip()
-            app(["notes", "tasks"]); ok(quiet(apply, "zz") == 0 and reg() == '["notes","tasks"]' and os.path.isfile(os.path.join(b, "packs", "notes", "index.ts")),
+            app(["notes", "tasks"]); ok(quiet(apply, "zz") == 0 and reg() == '["notes","tasks"]' and os.path.isfile(os.path.join(b, "packs", "notes", "pack.json")),
                                          "apply: the packs' files under packs/<id>/, then the mold's generator")
             ok(not os.path.exists(os.path.join(b, ".env")) and os.path.samefile(os.path.join(b, "node_modules", "x", "i.js"), os.path.join(cb, "node_modules", "x", "i.js")),
                "the build copy leaves out what mold.json build_copy excludes (.env) and links the mold's node_modules")
@@ -660,12 +706,20 @@ def rules_self_test():
                "a host pack's console and orchestrator folders: rewritten whole while named, pruned once not")
             for hid in (".impl/x.ts", "node_modules/pg/index.js"):
                 ok(any("hidden or node_modules" in e for e in check_pack("notes", good + ["packs/notes/" + hid], m, R)), f"refused: {hid} (the shell's own checks skip it)")
+            inner = os.path.join(t, "packs", "notes", "files", "packs", "notes")
+            app(["notes"]); before = sorted(os.listdir(os.path.join(b, "packs", "notes")))
+            open(os.path.join(inner, "pack.json"), "w").write('{"entry": "index.ts"}\n')
+            ok(quiet(apply, "zz") and any("names `entry`, which points at code" in e for e in check_pack("notes", rules=rules_for("mold_t"))) and sorted(os.listdir(os.path.join(b, "packs", "notes"))) == before,
+               "a non-host pack whose pack.json names entry: refused, nothing copied")
+            open(os.path.join(inner, "pack.json"), "w").write("{}\n"); open(os.path.join(inner, "index.ts"), "w").write("export default {};\n")
+            ok(quiet(apply, "zz") and any("config only" in e for e in check_pack("notes", rules=rules_for("mold_t"))), "a non-host pack carrying code: refused")
+            os.remove(os.path.join(inner, "index.ts"))
             open(os.path.join(t, "packs", "notes", "files", "packs", "README.md"), "w").write("mine\n")
             app(["notes"]); before = sorted(os.listdir(os.path.join(b, "packs")))
             ok(quiet(apply, "zz") and sorted(os.listdir(os.path.join(b, "packs"))) == before, "a pack file outside its own id: refused, nothing copied")
             os.remove(os.path.join(t, "packs", "notes", "files", "packs", "README.md"))
-            os.makedirs(os.path.join(cb, "packs", "notes")); open(os.path.join(cb, "packs", "notes", "index.ts"), "w").write("// the mold's\n")
-            ok(quiet(apply, "zz") and open(os.path.join(cb, "packs", "notes", "index.ts")).read() == "// the mold's\n", "a pack file that would replace a mold file: refused")
+            os.makedirs(os.path.join(cb, "packs", "notes")); open(os.path.join(cb, "packs", "notes", "pack.json"), "w").write("// the mold's\n")
+            ok(quiet(apply, "zz") and open(os.path.join(cb, "packs", "notes", "pack.json")).read() == "// the mold's\n", "a pack file that would replace a mold file: refused")
             shutil.rmtree(os.path.join(cb, "packs", "notes"))
             shutil.rmtree(os.path.join(b, "packs")); os.symlink(os.path.join(t, "elsewhere"), os.path.join(b, "packs")); os.makedirs(os.path.join(t, "elsewhere", "keep"))
             ok(quiet(apply, "zz") and os.listdir(os.path.join(t, "elsewhere")) == ["keep"], "a link in the build copy cannot carry a pack's files out of it, nor prune outside it")

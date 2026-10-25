@@ -10,6 +10,10 @@
 //   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
 //   src/legal.generated.ts               profile.json `legal` (mold_v0-109, src/legal.ts), checked; null without one
 //   web/src/config/legal.generated.ts    the same, for the console's /terms, /privacy, footers and sitemap
+//   src/access-request.generated.ts      the access-request form's own fields (mold_v0-102, src/access-request.ts): the
+//                                        packs' pack.json access_request, or the app's profile.json one; [] without
+//   web/src/config/access-request.generated.ts  the same, for the request form and the staff console's Requests page
+//   web/src/lib/access-request.generated.ts     a copy of src/access-request.ts, so the console runs the server's rules
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -61,8 +65,9 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
 //                                                facts file (tests)
+//   --share-image <file>                         another brand share image than brand/share-image.png (tests)
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -77,6 +82,9 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
 const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+// The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
+const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
+const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -112,8 +120,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
-  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts)
-  "landing", "guide", "console"]);
+  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
+  // (mold_v0-102, src/access-request.ts)
+  "landing", "guide", "console", "access_request"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -166,6 +175,18 @@ function walk(dir) {
 
 /** The files a pack may carry: code (.ts, .mts, .js, .mjs, checked) and data a loader never runs. */
 const CODE_FILE = /\.(ts|mts|js|mjs)$/;
+/**
+ * Why a file other than pack.json is refused in a declarative pack (mold_v0-124), and the declaration to use instead.
+ * Shared with the factory's packs.py check, which says the same for an app's pack.
+ */
+function declarativeOnly(rel) {
+  const say = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(rel)
+    ? "code: rows from the workspace's files or an upstream are repositories.<name>.map in pack.json (fields with value paths, list items a[0] and a[], only, matches, max_length, any; where; retires; only_latest), runs are job_kinds, the MCP tools are generated from the declarations (mcp)"
+    : /\.md$/i.test(rel) ? "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
+    : /\.sql$/i.test(rel) ? "rows live in the shell's tables: declare record_areas in pack.json"
+    : "everything a declarative pack says is in its pack.json";
+  return `a declarative pack (no entry, migrations or runner) is its pack.json alone, so this file is never read; ${say} (MOLD.md "Declared row maps")`;
+}
 const DATA_FILE = /\.(json|sql|md|txt|csv|ya?ml|html|css|svg|png|jpe?g|gif|webp|pdf)$/i;
 
 // ---------- code: the import boundary ----------
@@ -608,29 +629,24 @@ function loadPack(dirName) {
   }
   if (id && ID.test(id)) checkCode(dir, id, runnerDir, host ? { scriptsDir: host.scriptsDir } : null);
   // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so (a
-  // host pack's server code loads from its host entry).
-  if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
-    fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  // host pack's server code loads from its host entry). A declarative pack (mold_v0-124: no entry, migrations or runner)
+  // holds nothing but its pack.json: nothing else of it is ever read, so any other file is refused, naming the
+  // declaration that says it instead.
+  const declarative = entry === null && !host && m.migrations === undefined && m.runner === undefined;
+  if (entry === null && !host) for (const e of walk(dir)) {
+    if (e.dir) continue;
+    const rel = posix(path.relative(dir, e.p));
+    if (declarative) { if (rel !== "pack.json") fail(where, `${rel}: ${declarativeOnly(rel)}`); }
+    else if (!e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
+      fail(where, `${rel} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  }
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
   // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
-  // a guide directory's .md files are read here (flat, plain files), checked with the rest of the guide below.
-  let guideFiles = null;
+  // a declarative pack's is inline in pack.json (guide.markdown; guide.dir is gone, mold_v0-124), checked below.
   if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
-  const gdir = m.guide && typeof m.guide === "object" && !Array.isArray(m.guide) ? m.guide.dir : undefined;
-  if (typeof gdir === "string" && /^[a-z0-9_\-/]+$/i.test(gdir) && !gdir.split("/").includes("..") && !gdir.startsWith("/")) {
-    const d = path.join(dir, gdir);
-    if (!existsSync(d) || !statSync(d).isDirectory()) fail(where, `guide.dir ${gdir} is not a directory of the pack`);
-    else {
-      guideFiles = [];
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        if (e.isSymbolicLink() || !e.isFile() || !e.name.endsWith(".md")) fail(`packs/${dirName}/${gdir}/${e.name}`, "a guide directory holds .md pages only (one per page, no subdirectories)");
-        else guideFiles.push({ name: e.name, text: readFileSync(path.join(d, e.name), "utf8") });
-      }
-    }
-  }
-  return { id, dir, json: m, host, schema, guideFiles, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -902,6 +918,8 @@ let profileLanding;
 let profileLegal = null;
 /** profile.json `console` (mold_v0-130, src/console-pages.ts): the shell pages the app hides, joined with its packs'. */
 let profileConsole;
+/** profile.json `access_request` (mold_v0-102, src/access-request.ts): the app's own request fields, which replace the packs'. */
+let profileAccess;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -912,6 +930,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   if (hostProfiles[0]?.host.profile?.legal !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set legal: only the app's own profile.json names the company behind it (mold_v0-109)");
+  if (hostProfiles[0]?.host.profile?.access_request !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set access_request: a pack declares its request fields in pack.json `access_request` (mold_v0-102)");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
   if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
@@ -955,6 +974,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "landing") { profileLanding = v; continue; }
       // The shell pages the customer console hides (mold_v0-130, src/console-pages.ts): joined with the packs' below.
       if (k === "console") { const bad = consoleProblems(v, "profile.json"); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileConsole = v; continue; }
+      // The access-request form's own fields (mold_v0-102, src/access-request.ts): checked with the packs' below.
+      if (k === "access_request") { profileAccess = v; continue; }
       // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
       if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
@@ -966,7 +987,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1020,7 +1041,7 @@ const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
 const out = {};
 const loaded = [];
-for (const [id, json, file, guideFiles] of entries) {
+for (const [id, json, file] of entries) {
   let declared;
   try { declared = compileDeclarations(json); }
   catch (e) { out[id] = { json: e instanceof PackJsonError ? e.problems : [String(e?.message ?? e)] }; continue; }
@@ -1043,7 +1064,7 @@ for (const [id, json, file, guideFiles] of entries) {
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
       // console's generated pages say of it, in its declared words.
-      guide: json.guide === undefined ? null : compileGuide(json.guide, guideFiles, guideTitles),
+      guide: json.guide === undefined ? null : compileGuide(json.guide, guideTitles),
       facts: {
         name: json.name, description: json.description ?? null,
         onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id, label: st.label, help: st.help ?? null, prompt: st.prompt ?? null })),
@@ -1101,7 +1122,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
-      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry), p.guideFiles]),
+      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
       path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
       WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES)]));
@@ -1158,6 +1179,15 @@ const dueAreaCount = recordAreas.filter((a) => a.due).length;
  */
 for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
 const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
+/**
+ * The access-request form's own fields (mold_v0-102, src/access-request.ts): the packs' pack.json `access_request` in pack
+ * order (a key once in a build), or the app's profile.json `access_request` in their place. [] asks the shell's own only.
+ */
+const ACCESS_FIELDS = (() => {
+  const r = joinAccessFields(packs.map((p) => ({ id: p.id, spec: p.json?.access_request })), profileAccess);
+  for (const pr of r.problems) { const i = pr.indexOf(": "); fail(pr.slice(0, i), pr.slice(i + 2)); }
+  return r.fields;
+})();
 const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
@@ -1232,6 +1262,56 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+
+/**
+ * The AI clients the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's
+ * install pages offer (src/connect-catalog.ts, narrowed by profile.json install_clients), in the catalog's order, each
+ * with its short name ("Claude (web & desktop)" -> "Claude"). A where_you_work section that names a client the install
+ * pages do not offer is refused: the page would send people to steps that are not there.
+ */
+const landingClients = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)", client: "([^"]+)", group: "(chat|agent|editor)"/g)]
+  .filter((m) => m[1] !== "header" && (!profile.install_clients || profile.install_clients.includes(m[1])))
+  .map((m) => ({ id: m[1], name: m[2].replace(/\s*\([^)]*\)\s*$/, ""), group: m[3] }));
+for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
+  const off = (s.type === "where_you_work" ? s.clients ?? [] : []).filter((c) => !landingClients.some((k) => k.id === c));
+  if (off.length) fail("landing", `sections[${i}] (where_you_work).clients: ${off.join(", ")} ${off.length > 1 ? "are" : "is"} not offered by this build's install pages (${landingClients.map((k) => k.id).join(", ")}; profile.json install_clients narrows them)`);
+}
+/** The hero section of the build's block, if it picks one (the welcome email's pitch is its subheadline). */
+const landingHero = (landingPage.landing?.sections ?? []).find((s) => s.type === "hero") ?? null;
+refuse();
+
+// ---------- the share image (mold_v0-093) ----------
+
+/**
+ * What a shared link to this build shows (web/src/features/site/share-image.tsx draws it): the landing page's own words
+ * (the hero's headline, else the profile's tagline; its sub-headline, else the console's description unless it only
+ * repeats the headline: as web/src/features/site/landing.tsx resolves them) beside the profile's name, and an alternative
+ * text in the same words. A brand that has its own picture (the factory's branding step copies it to brand/share-image.png:
+ * a 1200x630 PNG of at most 1 MB) is served as it is instead, with the console's description as its alternative text.
+ */
+function readShareImage() {
+  // The hero: the block's own (a block of ordered sections names it by its type).
+  const block = landingPage.landing ?? {};
+  const hero = block.hero ?? (Array.isArray(block.sections) ? block.sections.find((x) => x?.type === "hero") : null) ?? {};
+  const headline = (hero.headline ?? profile.short_description).trim();
+  const sub = hero.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? null : profile.console_description);
+  const sentence = (t) => /[.!?…]$/.test(t) ? t : `${t}.`;
+  const drawnAlt = [headline.toLowerCase().startsWith(profile.name.toLowerCase()) ? headline : `${profile.name}: ${headline}`, sub].filter(Boolean).map(sentence).join(" ");
+  const spec = { alt: drawnAlt, name: profile.name, headline, subheadline: sub ?? null, brand: null };
+  const file = path.resolve(opt("--share-image") ?? path.join(ROOT, "brand", "share-image.png"));
+  const st = lstatOr(file), where = rel(file);
+  if (!st) return spec;
+  if (!st.isFile()) { fail(where, "the brand's share image must be a file (not a link or a directory)"); return spec; }
+  if (st.size > 1024 * 1024) { fail(where, `the brand's share image is ${Math.ceil(st.size / 1024)} KB: at most 1024 KB`); return spec; }
+  const png = readFileSync(file);
+  const isPng = png.length > 24 && png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) && png.subarray(12, 16).toString("latin1") === "IHDR";
+  if (!isPng) { fail(where, "the brand's share image must be a PNG"); return spec; }
+  const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+  if (w !== 1200 || h !== 630) { fail(where, `the brand's share image is ${w}x${h}: it must be 1200x630`); return spec; }
+  return { ...spec, alt: profile.console_description, brand: { png: png.toString("base64"), sha256: createHash("sha256").update(png).digest("hex") } };
+}
+function lstatOr(file) { try { return lstatSync(file); } catch { return null; } }
+const shareImage = readShareImage();
 refuse();
 
 // ---------- output ----------
@@ -1406,7 +1486,7 @@ files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
 // never reaches the profile modules (the MCP surface and the console's names).
 files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
   "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
-  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingHero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();
@@ -1460,14 +1540,30 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
-// The share image's alternative text (Next.js's opengraph-image.alt.txt beside the image): the console's description.
-files.set(path.join(OUT, "web", "src", "app", "opengraph-image.alt.txt"), `${profile.console_description}\n`);
+// The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
+files.set(path.join(OUT, "web", "src", "config", "share-image.generated.ts"), HEADER +
+  "import type { ShareImageSpec } from '@/features/site/share-image-types';\n\n" +
+  "/** The share image (mold_v0-093): drawn from these words and the build's brand, or the brand's own picture (brand/share-image.png). */\n" +
+  `export const shareImage: ShareImageSpec = ${json(shareImage)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER +
-  "import type { LandingBlock, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
-  "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
+  "import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
+  "/** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
+  "/** The AI clients the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */\n" +
+  `export const landingClients: readonly LandingClient[] = ${json(landingClients)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
+// The access-request form's own fields (mold_v0-102, src/access-request.ts), checked above; []: the shell's own fields only.
+files.set(path.join(OUT, "src", "access-request.generated.ts"), HEADER +
+  "import type { AccessField } from \"./access-request.js\";\n\n" +
+  "/** The access-request form's own fields (mold_v0-102): the packs' pack.json access_request, or profile.json's; [] without. */\n" +
+  `export const GENERATED_ACCESS_FIELDS: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+files.set(path.join(OUT, "web", "src", "config", "access-request.generated.ts"), HEADER +
+  "import type { AccessField } from '@/lib/access-request.generated';\n\n" +
+  "/** The access-request form's own fields (mold_v0-102, src/access-request.ts): the request form asks them, /admin/requests labels them. */\n" +
+  `export const accessFields: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
+files.set(path.join(OUT, "web", "src", "lib", "access-request.generated.ts"),
+  HEADER.replace("from packs/*/pack.json and profile.json", "from src/access-request.ts (a copy, so the console runs the server's rules)") + readFileSync(ACCESS_REQUEST, "utf8"));
 // The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
 files.set(path.join(OUT, "src", "legal.generated.ts"), HEADER +
   "import type { Legal } from \"./legal.js\";\n\n" +

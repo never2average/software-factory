@@ -65,7 +65,7 @@ function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?:
 /** An overview tab: the shell's sections it includes (mold_v0-134), then its charts. */
 function OverviewTab({ tab }: { tab: PackTabSpec }) {
   const charts = tabCharts(tab);
-  // Only charts: every one hidden from this role is the status page (mold_v0-131).
+  // Charts alone: every one refused is the denied status page (mold_v0-131), never an empty grid.
   if (!tab.include?.length) return <ChartGrid charts={charts} whole />;
   return (
     <div className='flex flex-col gap-8'>

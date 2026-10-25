@@ -35,7 +35,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { orgMac } from "./orgcrypto.js";
-import { PackError, RECORD_KEY, RepositorySchema, VALUE_PATH, type RecordOperation, type RecordRow, type Repository, type RepositoryInput, type RepositoryRows } from "./pack-api.js";
+import { LIST_PATH, PackError, RECORD_KEY, RepositorySchema, VALUE_PATH, type FieldValue, type RecordOperation, type RecordRow, type Repository, type RepositoryInput, type RepositoryRows, type RowMap } from "./pack-api.js";
+import { patternMatches } from "./safe-pattern.js";
 import { packs } from "./packs.js";
 import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTOR, writeFromRepository, type RecordArea } from "./record-areas.js";
 import { pageInMemory, type Parsed } from "./record-query.js";
@@ -253,10 +254,67 @@ function itemsAt(doc: Doc, each: string | undefined): Doc[] {
   }
   return cur;
 }
+/**
+ * Every value along a path that may take every item of a list (mold_v0-123): "a[]" each item of a, "a[].b" b of each,
+ * "a[0]" as in valueAt. A step that does not fit gives nothing (never an error), as in valueAt.
+ */
+function valuesAt(expr: string, ctx: Parameters<typeof valueAt>[1]): unknown[] {
+  if (!LIST_PATH.test(expr)) throw new PackError(`not a value path: ${expr}`, 400);
+  if (!expr.includes("[]")) { const v = valueAt(expr, ctx); return v === undefined ? [] : [v]; }
+  const [from, p] = expr.startsWith("$.") ? [ctx.root, expr.slice(2)] : [ctx.item, expr];
+  let cur: unknown[] = [from];
+  for (const part of p.split(".")) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)((?:\[\d{0,3}\])*)$/.exec(part);
+    if (!m) return []; // unreachable past LIST_PATH
+    const next: unknown[] = [];
+    for (const v of cur) {
+      if (!v || typeof v !== "object" || Array.isArray(v) || !Object.hasOwn(v, m[1]!)) continue;
+      let vs: unknown[] = [(v as Record<string, unknown>)[m[1]!]];
+      for (const [, i] of m[2]!.matchAll(/\[(\d{0,3})\]/g))
+        vs = vs.flatMap((x) => (!Array.isArray(x) ? [] : i === "" ? x : Number(i) < x.length ? [x[Number(i)]] : []));
+      next.push(...vs);
+    }
+    cur = next;
+  }
+  return cur.filter((v) => v !== undefined);
+}
+/** The kinds a value test may ask for (pack-api VALUE_KINDS). */
+const KIND_OK: Record<string, (v: unknown) => boolean> = {
+  text: (v) => typeof v === "string" && v !== "",
+  number: (v) => typeof v === "number" && Number.isFinite(v),
+  key: (v) => typeof v === "string" && RECORD_KEY.test(v),
+  list: (v) => Array.isArray(v),
+  boolean: (v) => typeof v === "boolean",
+};
+const passes = (t: { only?: string; matches?: string }, v: unknown) => (t.only === undefined || !!KIND_OK[t.only]?.(v)) && (t.matches === undefined || patternMatches(t.matches, v));
+/** A declared field value (pack-api FieldValueSchema): a value path, a tested and cut value, or whether any test finds one. */
+function computedValue(f: FieldValue, ctx: Parameters<typeof valueAt>[1]): unknown {
+  if (typeof f === "string") return valueAt(f, ctx);
+  if ("any" in f) return f.any.some((t) => valuesAt(t.value, ctx).some((v) => passes(t, v)));
+  let vs = valuesAt(f.value, ctx).filter((v) => passes(f, v));
+  if (f.max_length !== undefined) vs = vs.map((v) => (typeof v === "string" ? v.slice(0, f.max_length) : v));
+  if ((f.as ?? (f.value.includes("[]") ? "list" : "first")) === "list") return vs.length ? vs : undefined;
+  return vs[0];
+}
+/** Whether an item passes a `where`: each value equal, or (a test) of its kind and matching its pattern. */
+const whereOk = (where: RowMap["where"], ctx: Parameters<typeof valueAt>[1]) =>
+  !where || Object.entries(where).every(([k, v]) => (v !== null && typeof v === "object" ? passes(v, valueAt(k, ctx)) : valueAt(k, ctx) === v));
+/** only_latest (mold_v0-123): the items whose `by` value is the greatest among the items that match `among`. */
+function onlyLatest<T extends { ctx: Parameters<typeof valueAt>[1] }>(spec: NonNullable<RowMap["only_latest"]>, items: T[]): T[] {
+  let top: string | number | undefined;
+  for (const { ctx } of items) {
+    if (!whereOk(spec.among, ctx)) continue;
+    const v = valueAt(spec.by, ctx);
+    if (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) continue;
+    if (top === undefined) top = v;
+    else if (typeof v === typeof top && v >= top) top = v; // text compared as text, numbers as numbers; the other kind is not one
+  }
+  return top === undefined ? [] : items.filter(({ ctx }) => valueAt(spec.by, ctx) === top);
+}
 const camel = (s: string) => s.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
-/** An item's value for a field: the declared path, else the property of the field's name or its camelCase form, else a placeholder. */
-const fieldValue = (field: string, map: Record<string, string> | undefined, ctx: Parameters<typeof valueAt>[1]) => {
-  if (map?.[field]) return valueAt(map[field]!, ctx);
+/** An item's value for a field: the declared value, else the property of the field's name or its camelCase form, else a placeholder. */
+const fieldValue = (field: string, map: Record<string, FieldValue> | undefined, ctx: Parameters<typeof valueAt>[1]) => {
+  if (map && Object.hasOwn(map, field)) return computedValue(map[field]!, ctx);
   const item = ctx.item && typeof ctx.item === "object" && !Array.isArray(ctx.item) ? (ctx.item as Record<string, unknown>) : {};
   if (Object.hasOwn(item, field)) return item[field];
   if (Object.hasOwn(item, camel(field))) return item[camel(field)];
@@ -347,8 +405,8 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
     }
     return out;
   }
-  const maps = (s as { map?: Record<string, { from?: string; each?: string; key: string; title?: string; fields?: Record<string, string>; where?: Record<string, string | number | boolean> }> }).map ?? {};
-  const kept = (m: { where?: Record<string, unknown> } | undefined, ctx: Parameters<typeof valueAt>[1]) => !m?.where || Object.entries(m.where).every(([k, v]) => valueAt(k, ctx) === v);
+  const maps = (s as { map?: Record<string, RowMap> }).map ?? {};
+  const kept = (m: RowMap | undefined, ctx: Parameters<typeof valueAt>[1]) => whereOk(m?.where, ctx);
   if (s.kind === "upstream_catalog") {
     for (const a of r.areas) {
       const m = maps[a.name];
@@ -372,6 +430,19 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
     for (const a of r.areas) {
       const m = maps[a.name];
       const rows = new Map<string, { d: { key: string; title: unknown; data: Record<string, unknown> }; at: string }>();
+      type Line = { ctx: Parameters<typeof valueAt>[1]; p: string };
+      const row = ({ ctx, p }: Line) => {
+        const key = m ? fillTemplate(m.key, ctx) : valueAt(identity, ctx);
+        if (typeof key !== "string") return; // a line with no identity (another kind of entry) is not a row
+        const t = m?.title ? fillTemplate(m.title, ctx) : valueAt("title", ctx);
+        // Append-only: the last line of an identity is its state. Otherwise an identity twice is a mistake.
+        if (rows.has(key) && !s.append_only) throw new PackError(`${p}: ${quiet ? "a key" : key} appears twice (declare append_only when the last one wins)`, 422);
+        rows.set(key, { d: { key, title: typeof t === "string" && t ? t : key, data: Object.fromEntries(a.fields.map((f) => [f.name, fieldValue(f.name, m?.fields, ctx)])) }, at: p });
+        // retires (mold_v0-123): a line that names ANOTHER key ends that row (one naming its own key is its new version).
+        if (m?.retires !== undefined) { const gone = valueAt(m.retires, ctx); if (typeof gone === "string" && gone !== key) rows.delete(gone); }
+      };
+      // only_latest needs every line first (which measurement is the latest); otherwise each line is a row as it is read.
+      const held: Line[] | null = m?.only_latest ? [] : null;
       for (const p of files) {
         const vars = match(p);
         if (!vars) continue;
@@ -382,15 +453,11 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
           for (const item of itemsAt(doc, m?.each)) {
             const ctx = { item, root: doc, vars: { ...vars, file: p } };
             if (!kept(m, ctx)) continue;
-            const key = m ? fillTemplate(m.key, ctx) : valueAt(identity, ctx);
-            if (typeof key !== "string") continue; // a line with no identity (another kind of entry) is not a row
-            const t = m?.title ? fillTemplate(m.title, ctx) : valueAt("title", ctx);
-            // Append-only: the last line of an identity is its state. Otherwise an identity twice is a mistake.
-            if (rows.has(key) && !s.append_only) throw new PackError(`${p}: ${quiet ? "a key" : key} appears twice (declare append_only when the last one wins)`, 422);
-            rows.set(key, { d: { key, title: typeof t === "string" && t ? t : key, data: Object.fromEntries(a.fields.map((f) => [f.name, fieldValue(f.name, m?.fields, ctx)])) }, at: p });
+            if (held) held.push({ ctx, p }); else row({ ctx, p });
           }
         }
       }
+      if (held) for (const l of onlyLatest(m!.only_latest!, held)) row(l);
       for (const { d, at } of rows.values()) push(a.name, d, at);
     }
     return out;
