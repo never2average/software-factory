@@ -29,11 +29,13 @@ const matches = (globs: string[], rel: string) => globs.some((g) => globRe(g).te
 export const hasPacks = (root: string) =>
   existsSync(path.join(root, "packs")) && readdirSync(path.join(root, "packs"), { withFileTypes: true }).some((e) => e.isDirectory() && existsSync(path.join(root, "packs", e.name, "pack.json")));
 
-/** Files a pack owns, and in a build with packs the files generated from them and from the app's own state. */
+/** Files a pack or the brand owns, and in a build with packs the files generated from them and from the app's own state. */
 function packOwned(rel: string, packed: boolean): boolean {
   if (/^packs\/[^/]+\//.test(rel) || /^web\/src\/packs\/[^/]+\//.test(rel) || /^orchestrator\/packs\/[^/]+\//.test(rel)) return true;
+  // The brand's own files (mold_v0-093: brand/share-image.png): the factory's branding step writes them from the app's state.
+  if (/^brand\//.test(rel)) return true;
   if (!packed) return false;
-  return /\.generated\.[a-z]+$/.test(rel) || ["profile.json", "deploy-facts.json", "DATA-MAP.md", "web/src/app/opengraph-image.alt.txt"].includes(rel);
+  return /\.generated\.[a-z]+$/.test(rel) || ["profile.json", "deploy-facts.json", "DATA-MAP.md"].includes(rel);
 }
 
 export function listFiles(root: string): string[] {

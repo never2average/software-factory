@@ -19,7 +19,8 @@
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
 import { CONSOLE_PAGES } from "./console-pages.js";
-import { LandingSchema } from "./landing.js";
+import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
+import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
@@ -37,6 +38,25 @@ const PageSchema = z.object({
   columns: z.array(z.object({ key: z.string(), label: z.string() }).strict()).optional(),
   nav_group: z.string().optional(),
   icon: z.string().optional(),
+}).strict();
+
+/**
+ * The access-request form's own fields (mold_v0-102; src/access-request.ts, which gen-packs runs for the rules this shape
+ * cannot say: options only on a select, a key once across the build, never one of the shell's own fields).
+ */
+const AccessFieldSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, "1-40 lowercase letters, digits or _, starting with a letter"),
+  label: z.string().trim().min(1).max(80),
+  type: z.enum(ACCESS_FIELD_TYPES),
+  required: z.boolean().optional(),
+  options: z.array(z.object({ value: z.string().trim().min(1).max(80), label: z.string().trim().min(1).max(80) }).strict()).min(1).max(30).optional(),
+  max_length: z.number().int().min(1).max(4000).optional(),
+  help: z.string().trim().min(1).max(200).optional(),
+  placeholder: z.string().trim().min(1).max(120).optional(),
+}).strict();
+const AccessRequestSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  fields: z.array(AccessFieldSchema).min(1).max(MAX_ACCESS_FIELDS),
 }).strict();
 
 /** A job kind in pack.json: a program of the pack's (runner "workspace-harness", entry) or the agent-workspace runner's. */
@@ -107,14 +127,15 @@ export const PackJsonSchema = z.object({
   /** The workspace store's retention and the viewer's secret paths (mold_v0-056; src/workspace-store-policy.ts). */
   workspace_store: WorkspaceStoreSchema.optional(),
   /**
-   * The app's public landing page at / (mold_v0-091; src/landing.ts): hero, coverage, value points, how it works, features,
-   * FAQ, closing call to action, footer and SEO, all plain text. The app's own profile.json `landing` comes over it section
-   * by section; at most one pack of a build declares one (scripts/gen-packs.mjs).
+   * The app's public landing page at / (mold_v0-091, mold_v0-122; src/landing.ts): the sections it picks from the shell's
+   * library, in its order (`sections: [{type, ...}]`: hero, problem, concept, how_it_works, proof, where_you_work, faq,
+   * cta), a footer and SEO, all plain text; an old-style block (hero, coverage, value_points ...) is converted. The app's
+   * own profile.json `landing` comes over it; at most one pack of a build declares one (scripts/gen-packs.mjs).
    */
   landing: LandingSchema.optional(),
   /**
-   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown or a directory of the pack's .md
-   * files, and their navigation groups, before the pages the console writes from these declarations. Markdown only,
+   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown (the only form since mold_v0-124:
+   * a pack is its pack.json alone) and their navigation groups, before the pages the console writes from these declarations. Markdown only,
    * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). Not for a host pack (its guide is its code).
    */
   guide: GuideSchema.optional(),
@@ -122,6 +143,14 @@ export const PackJsonSchema = z.object({
    * The shell pages the customer console hides (mold_v0-130; src/console-pages.ts): `hide`, a list of page ids. Each leaves
    * the /app sidebar and redirects to /app; the app's profile.json `console` adds to it. The staff console is unchanged.
    */
+  /**
+   * The access-request form's own questions (mold_v0-102; src/access-request.ts): `fields`, each a key, a label and a type
+   * (text, long_text, url, email, select, multi_select), optionally required, with options for a select. The public
+   * /request-access form asks them after the shell's own (email, name, company, message), the answers are stored as
+   * access_requests.answers, and the staff console's Requests page shows them under these labels. The packs' fields are
+   * joined in pack order; the app's profile.json `access_request` replaces them.
+   */
+  access_request: AccessRequestSchema.optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
@@ -214,6 +243,9 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
 /** The JSON Schema of pack.json (packs/pack.schema.json): the same rules, minus the cross-checks only the build makes. */
 export function packJsonSchema(): Record<string, unknown> {
   const s = z.toJSONSchema(PackJsonSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown> & { properties: Record<string, Record<string, unknown>> };
+  // The landing block is checked by src/landing.ts landingProblems (either shape, counts and anchors); its documented shape is LandingDocSchema.
+  const { $schema: _s, ...landing } = z.toJSONSchema(LandingDocSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown>;
+  s.properties.landing = landing;
   return {
     $id: "pack.schema.json",
     title: "mold_v0 pack.json",

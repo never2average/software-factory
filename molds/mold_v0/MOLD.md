@@ -541,8 +541,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
   values are contracts and are not counted; each file that still carries one has a ceiling in a group that says why
-  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, access-request fields,
-  /app/usage, email copy for mold_v0-101). `npm run test:words`.
+  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, /app/usage, email copy for
+  mold_v0-101). `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
   non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.
@@ -792,8 +792,13 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   calling workspace only (its id from the session; every query names it and runs under row-level security for it; the
   credential vault, which tenant work cannot reach, is read with that id), with the time it first held, and serves the
   list at `/api/onboarding` (signed-in people of the workspace, read only; mounted only when a step exists). The
-  console's Setup page shows it above the shell's own timeline when the build has a step (`packOnboardingSteps` in
-  `pack-nav.generated.ts`); with zero packs it asks nothing and the page is unchanged. `npm run test:onboarding` proves
+  console shows **one checklist** (mold_v0-146, `web/src/features/portal/setup-steps.ts`): the shell's setup steps
+  (joining, connecting an AI client, its tools, a first question) first, then the packs' steps in declared order, as one
+  list with one count. A pack step whose condition the shell measures too (`workspace`, `connected`, `first_call`;
+  `/api/onboarding` says which as `covers`: `joined`, `connected`, `first_call`) takes that shell step's place, and the
+  shell's later steps follow it: a pack puts the connection where it wants it by declaring a `done_when: connected`
+  step. With zero packs (`packOnboardingSteps` 0 in `pack-nav.generated.ts`) it asks nothing and the list is the
+  shell's. `npm run test:onboarding` proves
   it with two workspaces (everything B does ticks none of A's steps). The same steps reach AI clients (mold_v0-105): a
   pack with steps gets a generated `<prefix>_get_started` MCP tool (below) and a step may carry `prompt`, the words a
   person types to do it (plain text, one line). **Not covered:** the end-to-end browser walk of
@@ -901,7 +906,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   files and tree at the commit; indexed by the server itself whenever its pin changes, and by staff: below) and `http_api` (read live with the workspace's credential field in a
   header, https to its `egress` hosts only, the address resolved once, checked against private ranges and used for the
   connection, no redirects, 5 MB, 15 s). Rows come from a pack's `loaders` (code), else a declared `map` (`from`,
-  `each`, `key`/`title` templates, `fields` value paths, `where`) or the kind's default (fields by name or camelCase).
+  `each`, `key`/`title` templates, `fields` value paths or computed values, `where`, and for a file of lines `retires`
+  and `only_latest`: "Declared row maps" below) or the kind's default (fields by name or camelCase).
   A value path (`VALUE_PATH`, `src/pack-api.ts`; read by `valueAt`) is a dotted path of properties, each optionally
   followed by list indexes (mold_v0-076: `controls[0]`, `refs[0].id`, `$.a[2].b`; 0 to 999, no negative, computed or
   quoted index, never `__proto__`, `constructor` or `prototype`), in `fields`, `key`/`title` templates, `where` and
@@ -1126,9 +1132,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   size, two workspaces and the route's refusals in an embedded database; `npm run test:console-tabs` draws a merged
   table, board, timeline, empty state and a narrow table in a headless browser.
   **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
-  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the packs' onboarding
-  steps and the setup steps, only the next open one explained, beside the connection panel; folded to one line, "You're
-  all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
+  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the one list of the
+  setup steps and the packs' steps, mold_v0-146, only the next open one explained and any other opened from its label;
+  the connection panel is the body of the step that connects an AI client, not a panel beside it; folded to one line,
+  "You're all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
   `notices` the records due soon (the first five, then "Show all"; `DueSoonSection` in
   `web/src/features/schedules/notices-page.tsx`). Its charts may then be left out. `/app` (setup) and `/app/notices`
   (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
@@ -1280,7 +1287,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   add to the product's developer population, so they are the host pack's);
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
   console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
-  contribution credits on Billing; an access request's product fields), the default icons and Open Graph image are the
+  contribution credits on Billing), the default icons and Open Graph image are the
   first product's; the shell features a host
   pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its `nav.ts` names them; a dropped host pack's console and orchestrator folders are not
   pruned from a reused build copy (gen-packs then refuses the build, which the deploy rebuilds from scratch anyway).
@@ -1345,19 +1352,46 @@ facts the factory writes into the build copy (`deploy-facts.json`, names and pla
 `/api/admin/about` were removed with what only they showed, the running server's own measurements). Never a secret
 value: names, providers, regions and hosts only.
 
-**Landing page (mold_v0-091).** The console's `/` is the build's landing page, declared, not written: a declarative
-pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it, section by section (a section the
-profile names replaces the pack's; at most one pack of a build declares one). The sections, all optional, in page order:
-`hero` (eyebrow, headline, subheadline, primary and secondary call to action, note), `coverage` (a row of text badges,
-such as the regulators covered), `value_points`, `how_it_works` (numbered steps), `features` (a grid), `faq` (disclosures
-that open without script), `closing` (a last call to action), `footer` (a note and links) and `seo` (title and description
-for search results and Open Graph). Every value is plain text on one line, shown as text; a link is a path of this site,
-an https:// address or a mailto: address (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result and the
-source offer's footer items into `web/src/config/landing.generated.ts`). The page (`web/src/features/site/landing.tsx`)
-is in the build's brand (its name, tagline, `icon.svg` and the theme's tokens, light and dark) with a header (sign in,
-get started, install) and a footer that carries the source offer whenever the install pages do. With no block it is the
-neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
+**Landing page (mold_v0-091; pick and place, mold_v0-122).** The console's `/` is the build's landing page, declared,
+not written: a declarative pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it (at most one
+pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
+order: `sections: [{"type": ...}]`. The library is the first product's landing page generalised: each section and each
+drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
+footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
+and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
+The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
+second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text names (set in the logo row's type),
+named logos or the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
+`proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
+`install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
+carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
+shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
+links; the ways in: sign in and start, or one account button), `footer` (a tagline, a note, links, a copyright line,
+`shell_links: false`) and `seo` (title and description for search results and Open Graph). With no `sections` the page
+is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
+`{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
+one by one. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
+(`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
+footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
+`how_it_works`, `features`, `faq`, `closing` at the top level) is still read and converted to sections at build time
+(coverage becomes the hero's strip, value points the concept's cards, features proof's items, closing a cta), so a build
+that declared one still builds; a block that mixes the two is refused. Every call to action comes from
+`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack's own landing page
 (code, mold_v0-039) stays its own.
+
+**Share image (mold_v0-093).** What a shared link to the build shows (Open Graph and X: `web/src/app/opengraph-image.tsx`
+and `twitter-image.tsx`, one renderer in `web/src/features/site/share-image.tsx`) is the build's own, never another
+product's picture: a 1200x630 PNG drawn when the console is built from the landing page's words (the hero's headline, else
+the profile's tagline; its sub-headline, else the console's description unless it repeats the headline) beside the
+profile's name, the build's mark (`web/src/app/icon.svg`, else the brand step's PNG icon) and its brand colour (the web
+manifest's `theme_color`, which the brand step sets), in the font `next/og` carries (nothing is fetched). Its
+alternative text is the same words. `gen-packs.mjs` writes the words and the text to
+`web/src/config/share-image.generated.ts`. A brand that has its own picture (the factory's `branding.py <app_id>
+share-image brands/<name>/<file>.png`, rules.json `share_image`: a 1200x630 PNG of at most 1 MB, recorded in the app's
+state with its sha256) has it copied to `brand/share-image.png` in the build copy and embedded byte for byte, with the
+console's description as its text; the routes then answer exactly those bytes. `npm run test:share-image` renders both.
 
 **Upstream catalogs index themselves (mold_v0-128, mold_v0-129).** An upstream catalog is pinned to a commit, so its rows
 are fixed by the build: the server indexes every one whose stored pin (`repository_index`, migration 0019) is not its
@@ -1400,8 +1434,8 @@ takes the footer's place. `npm run test:console-sidebar`.
 **Customer guide (mold_v0-106).** `/app/docs` and the docs answers' corpus (Ask AI, `src/docs-answers.ts`;
 `scripts/sync-docs-corpus.ts` writes `src/docs-corpus.generated.json` from the same pages) come from the packs when no
 host pack brings guide code. A declarative pack's `pack.json` `guide` holds its own pages: `markdown` (inline, one page
-per `## ` heading) or `dir` (a directory of the pack with one `.md` file per page, `# Title` first, in file-name order),
-`groups` (the navigation's groups, in order) and `generated` (false leaves out the pages written from the declarations).
+per `## ` heading; the only form since mold_v0-124, which took `dir` away: a pack is its pack.json alone, and `guide.dir`
+is refused, saying to write the pages inline), `groups` (the navigation's groups, in order) and `generated` (false leaves out the pages written from the declarations).
 Every page is markdown only, checked by `gen-packs.mjs` with `src/pack-guide.ts`: no raw HTML, scripts or images, no
 control or invisible characters, and every link a path of this site, an #anchor, an https:// or a mailto: address
 (never javascript:, data:, http: or //host); a page may not take a generated page's title. After a pack's own pages the
@@ -1413,6 +1447,65 @@ they reach, and the account; whatever a pack's `mcp` settings withhold is left o
 still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
 guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
 before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+
+**Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
+operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
+`src/data-repositories.ts`) says, with no code, what a pack's loader used to:
+- a field's value is a value path (`a.b`, `a[0]`: a list's first item) or a **computed value**
+  `{value, only?, matches?, max_length?, as?}`: the values at `value` (a value path that may also take every item of a
+  list: `a[]`, `a[].b`), kept when they are of kind `only` (`text`, not empty; `number`; `key`, a record key; `list`;
+  `boolean`) and match the bounded pattern `matches` (text only), text cut to `max_length` characters (1 to 20,000), then
+  `as` `first` (the default for a path with no `[]`) or `list` (all of them, none when there are none: the default for
+  a path with `[]`). `{any: [{value, only?, matches?}, ...]}` (1 to 10 tests) is true when any test finds a value, else
+  false. A value that does not fit is no value, never an error;
+- `where` takes, beside an equal text, number or true/false, a test `{only?, matches?}`; `$.x` reads the document's
+  root (for a file of lines, the line itself, whatever `each` walks);
+- for a `workspace_files` `path` (a file of lines; the validator refuses them anywhere else, an API's map included):
+  `retires`, a value path naming the key of an EARLIER row a line ends (only with `append_only`: one naming its own key
+  is its new version; a key retired comes back with a later line; a value that is not text is ignored), and
+  `only_latest` `{by, among?}`: only the lines whose `by` value (text compared as text, numbers as numbers) is the
+  greatest among the lines that match `among` (a `where`), e.g. the points of the latest measurement; no line matches
+  `among`: no rows. The last line of a key still wins among them.
+
+A **bounded pattern** (`src/safe-pattern.ts`, checked when the build reads pack.json and again when it is compiled)
+can never take long on any text: at most 200 characters, Unicode rules; literals, `.`, `^`, `$`, classes (`[a-z0-9_-]`,
+`[^/]`), `\d \D \w \W \s \S` and escaped punctuation, alternation, groups `( )` and `(?: )` (nested at most 4 deep), and
+`? * + {n} {n,} {n,m}` (at most 1,000); never a lookaround, backreference, named group, lazy or stacked repetition, word
+boundary, property or code-point escape, or control character; a group is never repeated (only `?`, on a group with no
+repetition inside: a repeated group is what takes exponential time); the product of the repetitions' ranges (an
+unbounded one counted as 1,000) is at most 2,000, so one test is at most a few tens of milliseconds on the worst text;
+and the text tested is at most 1,000 characters (longer text never matches). `npm run test:row-maps` proves each
+operator (taken, refused, the limits and the worst case's time).
+
+The factory holds an app's pack to it (`packs.py check`, from `mold.json` `packs.declarative`): a pack that is not one of
+`host_packs` adds `packs/<id>/pack.json` and nothing else, and its pack.json may not name `entry`, `migrations` or
+`runner`; each refusal names the declaration to write instead (a row map, `record_areas`, `guide.markdown`). gen-packs
+says the same of a pack with no entry, migrations or runner (a declarative pack): any file beside its pack.json is
+refused. The shell keeps its code seam (`entry`, `loaders`, `migrations`, `runner`) for its own fixtures and other molds'
+packs; a host pack (`octillion`) keeps its code. `npm run test:pack-guide` and `packs.py --self-test` prove the refusals.
+
+**Access-request fields (mold_v0-102).** What the request form asks besides the shell's own fields (a work email, a
+name, the company, a message, and where the person came from) is declared, never the shell's: `access_request.fields` in
+a pack's pack.json (the packs' joined in pack order, a key once in a build) or in the app's `profile.json`, which then
+replaces the packs' (a host pack's `host.profile` may not set it). Each field is a `key` (lowercase letters, digits and
+`_`, never `email`, `name`, `company`, `message` or `source`), a `label`, a `type` (`text`, `long_text`, `url`, `email`,
+`select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help` and
+`placeholder`; at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
+with it and writes the build's fields to `src/access-request.generated.ts` and `web/src/config/access-request.generated.ts`
+(and copies the rules to `web/src/lib/access-request.generated.ts`), never into the profile modules, so the MCP surface
+is unchanged. The public `/request-access` form and the portal's page for no account (mold_v0-098) ask the fields after
+the company; `POST /api/access-requests` checks the answers (a required one empty, an option not offered, an address
+that is not one, an answer over its length: 400 naming the label; an address without a scheme gets https://), reads a
+declared key at the top level of the request too (a host pack's own flat form), drops a key nobody declared, and stores
+them as `access_requests.answers` (jsonb, `sql/migrations/0020_access_request_answers.sql`). The staff console's Requests
+page shows each answer under its label (an option by its label; the first `url` field as the site under the company and
+"Open <label>" in the menu), `list_access_requests` names them by label, and the operator's alert email lists them.
+The first product's own questions were columns of the table (product URL, role, team size, agents, docs, competitors,
+goal, timeline, heard from, sub-industry): the migration copies a row's values into its answers under the same keys and
+leaves the columns, which nothing in the shell writes any more (the host pack's research still reads them until it reads
+`answers`). With zero packs the form asks the shell's fields only and a request stores no answer.
+`npm run test:access-request` (`--browser` adds the console: the form's fields in order, sent and stored, and the
+Requests page's labels, axe-graded). **Not covered:** the request's own acknowledgement text is still the shell's.
 
 **Legal and crawl pages (mold_v0-109).** The app's own `profile.json` `legal` (`company_name`, `contact_email`,
 `effective_date` YYYY-MM-DD; optionally `jurisdiction`, and `terms_url` and `privacy_url`, the company's own https://
@@ -1667,6 +1760,18 @@ console's bytes are not graded (each lane's `not_covered` says what is not). The
 organisation of the app's own: `provision.py <app> --lane-key --dry-run`, then `--lane-key --yes` once the operator
 says yes. It runs the product's `scripts/create-org.ts` and keeps the connector address in a private file outside
 the repository (mode 600, never shown).
+
+**Parity snapshots (mold_v0-136; [testing/parity/](testing/parity/README.md)).** Not a lane yet: a check that a build
+still shows people, AI clients and the console the same thing, for refactors meant to change nothing (moving the host
+pack `octillion` into config). `parity.py snapshot <app_id|zero> --out <dir>` records, in the lane world above (embedded
+database, offline Clerk, the console served on 127.0.0.1): the customer and admin MCP servers over an in-memory client
+(instructions, tools, prompts and each prompt's text over an argument matrix, resources and every widget, the skills),
+every `*.generated.*` file, the API's route list and every GET without a path parameter under `/api/*`, and every page of
+`console/surface.mts` (text, links, screenshots at 390 and 1440 wide in both colour schemes), plus each pack's own
+`scripts/smoke.ts` pass or fail. Times, ports and minted ids are masked, never dropped. `parity.py diff <before>
+<after> [--allow <phase>.json]` prints what differs, grouped, and fails on anything a phase's allow list does not name;
+`parity.py probe <app_id>` reads a deployed app (pages, `/app` and `/admin` status, `/mcp` without a key) and writes
+nothing. Two snapshots of one build compare equal; how to run it as a lane is in its README.
 
 **The CI gate (mold_v0-040).** `provision.py`'s release gate (`lib/deploy_gate.py`) reads, for an in-tree mold, **this
 repository's** checks for the commit being deployed: HEAD of the checkout the deploy runs from, and only when
