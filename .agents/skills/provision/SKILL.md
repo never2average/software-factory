@@ -149,6 +149,9 @@ When the app carries `surface.branding`, `--deploy` first builds a branded copy 
 (`branding.py <app> prepare`) and deploys that: the mold snapshot is never edited. `branding.py <app> show` prints
 the resolved brand and palette; `check` verifies a prepared copy. `molds/<mold_id>/branding/rules.json` says which
 files carry the product name, tagline, icon and palette, and every rule must match or the deploy is refused.
+On mold_v0 a brand may also bring its own share image (the picture a shared link shows; without one the console draws
+it from the app's words and brand): `branding.py <app> share-image brands/<name>/share-image.png` (a 1200x630 PNG)
+records it with its hash, touching nothing else of the brand, and `prepare` copies it into the build byte for byte.
 
 ## The application's own agent package
 

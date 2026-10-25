@@ -61,8 +61,9 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
 //                                                facts file (tests)
+//   --share-image <file>                         another brand share image than brand/share-image.png (tests)
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -166,6 +167,18 @@ function walk(dir) {
 
 /** The files a pack may carry: code (.ts, .mts, .js, .mjs, checked) and data a loader never runs. */
 const CODE_FILE = /\.(ts|mts|js|mjs)$/;
+/**
+ * Why a file other than pack.json is refused in a declarative pack (mold_v0-124), and the declaration to use instead.
+ * Shared with the factory's packs.py check, which says the same for an app's pack.
+ */
+function declarativeOnly(rel) {
+  const say = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(rel)
+    ? "code: rows from the workspace's files or an upstream are repositories.<name>.map in pack.json (fields with value paths, list items a[0] and a[], only, matches, max_length, any; where; retires; only_latest), runs are job_kinds, the MCP tools are generated from the declarations (mcp)"
+    : /\.md$/i.test(rel) ? "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
+    : /\.sql$/i.test(rel) ? "rows live in the shell's tables: declare record_areas in pack.json"
+    : "everything a declarative pack says is in its pack.json";
+  return `a declarative pack (no entry, migrations or runner) is its pack.json alone, so this file is never read; ${say} (MOLD.md "Declared row maps")`;
+}
 const DATA_FILE = /\.(json|sql|md|txt|csv|ya?ml|html|css|svg|png|jpe?g|gif|webp|pdf)$/i;
 
 // ---------- code: the import boundary ----------
@@ -608,29 +621,24 @@ function loadPack(dirName) {
   }
   if (id && ID.test(id)) checkCode(dir, id, runnerDir, host ? { scriptsDir: host.scriptsDir } : null);
   // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so (a
-  // host pack's server code loads from its host entry).
-  if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
-    fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  // host pack's server code loads from its host entry). A declarative pack (mold_v0-124: no entry, migrations or runner)
+  // holds nothing but its pack.json: nothing else of it is ever read, so any other file is refused, naming the
+  // declaration that says it instead.
+  const declarative = entry === null && !host && m.migrations === undefined && m.runner === undefined;
+  if (entry === null && !host) for (const e of walk(dir)) {
+    if (e.dir) continue;
+    const rel = posix(path.relative(dir, e.p));
+    if (declarative) { if (rel !== "pack.json") fail(where, `${rel}: ${declarativeOnly(rel)}`); }
+    else if (!e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
+      fail(where, `${rel} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  }
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
   // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
-  // a guide directory's .md files are read here (flat, plain files), checked with the rest of the guide below.
-  let guideFiles = null;
+  // a declarative pack's is inline in pack.json (guide.markdown; guide.dir is gone, mold_v0-124), checked below.
   if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
-  const gdir = m.guide && typeof m.guide === "object" && !Array.isArray(m.guide) ? m.guide.dir : undefined;
-  if (typeof gdir === "string" && /^[a-z0-9_\-/]+$/i.test(gdir) && !gdir.split("/").includes("..") && !gdir.startsWith("/")) {
-    const d = path.join(dir, gdir);
-    if (!existsSync(d) || !statSync(d).isDirectory()) fail(where, `guide.dir ${gdir} is not a directory of the pack`);
-    else {
-      guideFiles = [];
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        if (e.isSymbolicLink() || !e.isFile() || !e.name.endsWith(".md")) fail(`packs/${dirName}/${gdir}/${e.name}`, "a guide directory holds .md pages only (one per page, no subdirectories)");
-        else guideFiles.push({ name: e.name, text: readFileSync(path.join(d, e.name), "utf8") });
-      }
-    }
-  }
-  return { id, dir, json: m, host, schema, guideFiles, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -1014,13 +1022,13 @@ const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, off
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
-const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAreas, tabColumns, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
 const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
 const out = {};
 const loaded = [];
-for (const [id, json, file, guideFiles] of entries) {
+for (const [id, json, file] of entries) {
   let declared;
   try { declared = compileDeclarations(json); }
   catch (e) { out[id] = { json: e instanceof PackJsonError ? e.problems : [String(e?.message ?? e)] }; continue; }
@@ -1043,7 +1051,7 @@ for (const [id, json, file, guideFiles] of entries) {
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
       // console's generated pages say of it, in its declared words.
-      guide: json.guide === undefined ? null : compileGuide(json.guide, guideFiles, guideTitles),
+      guide: json.guide === undefined ? null : compileGuide(json.guide, guideTitles),
       facts: {
         name: json.name, description: json.description ?? null,
         onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id, label: st.label, help: st.help ?? null, prompt: st.prompt ?? null })),
@@ -1064,7 +1072,10 @@ if (loaded.length === entries.length) {
   views = { problems,
     metrics: b.metrics.map((m) => ({ pack: m.pack, name: m.name, label: m.label, unit: metricUnit(m, over(m)), roles: metricRoles(m, b.areas) })),
     charts: b.charts.map((c) => ({ pack: c.pack, name: c.name, title: c.title, description: c.description ?? null, type: c.type, metrics: c.metrics, palette: c.palette })),
-    tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b) })) };
+    // An area tab's columns, resolved; a merged tab (mold_v0-135) also by its own area (the first) and its areas, each
+    // with its rows and source word.
+    tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b),
+      ...(t.kind === "area" ? { columns: tabColumns(t, b.areas) } : {}), ...(t.areas ? { area: tabAreas(t)[0].area, areas: tabAreas(t) } : {}) })) };
 }
 // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
 // pack's mcp settings name real tools, names fit, no two take one name, and none takes a name of the shell's own tools
@@ -1098,7 +1109,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
-      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry), p.guideFiles]),
+      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
       path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
       WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES)]));
@@ -1247,6 +1258,40 @@ for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
 const landingHero = (landingPage.landing?.sections ?? []).find((s) => s.type === "hero") ?? null;
 refuse();
 
+// ---------- the share image (mold_v0-093) ----------
+
+/**
+ * What a shared link to this build shows (web/src/features/site/share-image.tsx draws it): the landing page's own words
+ * (the hero's headline, else the profile's tagline; its sub-headline, else the console's description unless it only
+ * repeats the headline: as web/src/features/site/landing.tsx resolves them) beside the profile's name, and an alternative
+ * text in the same words. A brand that has its own picture (the factory's branding step copies it to brand/share-image.png:
+ * a 1200x630 PNG of at most 1 MB) is served as it is instead, with the console's description as its alternative text.
+ */
+function readShareImage() {
+  // The hero: the block's own (a block of ordered sections names it by its type).
+  const block = landingPage.landing ?? {};
+  const hero = block.hero ?? (Array.isArray(block.sections) ? block.sections.find((x) => x?.type === "hero") : null) ?? {};
+  const headline = (hero.headline ?? profile.short_description).trim();
+  const sub = hero.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? null : profile.console_description);
+  const sentence = (t) => /[.!?…]$/.test(t) ? t : `${t}.`;
+  const drawnAlt = [headline.toLowerCase().startsWith(profile.name.toLowerCase()) ? headline : `${profile.name}: ${headline}`, sub].filter(Boolean).map(sentence).join(" ");
+  const spec = { alt: drawnAlt, name: profile.name, headline, subheadline: sub ?? null, brand: null };
+  const file = path.resolve(opt("--share-image") ?? path.join(ROOT, "brand", "share-image.png"));
+  const st = lstatOr(file), where = rel(file);
+  if (!st) return spec;
+  if (!st.isFile()) { fail(where, "the brand's share image must be a file (not a link or a directory)"); return spec; }
+  if (st.size > 1024 * 1024) { fail(where, `the brand's share image is ${Math.ceil(st.size / 1024)} KB: at most 1024 KB`); return spec; }
+  const png = readFileSync(file);
+  const isPng = png.length > 24 && png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) && png.subarray(12, 16).toString("latin1") === "IHDR";
+  if (!isPng) { fail(where, "the brand's share image must be a PNG"); return spec; }
+  const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+  if (w !== 1200 || h !== 630) { fail(where, `the brand's share image is ${w}x${h}: it must be 1200x630`); return spec; }
+  return { ...spec, alt: profile.console_description, brand: { png: png.toString("base64"), sha256: createHash("sha256").update(png).digest("hex") } };
+}
+function lstatOr(file) { try { return lstatSync(file); } catch { return null; } }
+const shareImage = readShareImage();
+refuse();
+
 // ---------- output ----------
 
 const HEADER = "// Generated by scripts/gen-packs.mjs from packs/*/pack.json and profile.json. Do not edit: run `npm run gen:packs`.\n";
@@ -1342,8 +1387,15 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
       redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
     }
   }
-  // A shell page the build hides (mold_v0-130): its address, and every one under it, to the console's home.
-  redirects.push(...hiddenRedirects(HIDDEN));
+  // A home tab (mold_v0-134): an overview that includes the Setup page's checklist or the notices is where /app or
+  // /app/notices (and every address under it) now leads; a hidden page (mold_v0-130) leads to the console's home.
+  const home = Object.fromEntries(["setup", "notices"].map((x) => {
+    const t = shownTabs().find((y) => y.kind === "overview" && (y.include ?? []).includes(x));
+    return [x, t ? `/app/packs/${t.pack}/${t.id}` : null];
+  }));
+  if (home.setup) redirects.push({ source: "/app", destination: home.setup, permanent: false });
+  if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
+  redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-routes.generated.json"), JSON.stringify({ $comment: "Generated by scripts/gen-packs.mjs from web/src/packs/*/routes.json (mold_v0-039). Do not edit: run npm run gen:packs.", rewrites, redirects }, null, 2) + "\n");
 }
@@ -1425,8 +1477,11 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
-// The share image's alternative text (Next.js's opengraph-image.alt.txt beside the image): the console's description.
-files.set(path.join(OUT, "web", "src", "app", "opengraph-image.alt.txt"), `${profile.console_description}\n`);
+// The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
+files.set(path.join(OUT, "web", "src", "config", "share-image.generated.ts"), HEADER +
+  "import type { ShareImageSpec } from '@/features/site/share-image-types';\n\n" +
+  "/** The share image (mold_v0-093): drawn from these words and the build's brand, or the brand's own picture (brand/share-image.png). */\n" +
+  `export const shareImage: ShareImageSpec = ${json(shareImage)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER +
   "import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
   "/** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */\n" +
@@ -1487,7 +1542,7 @@ function packGuideData() {
     onboarding: facts.flatMap(({ f }) => (f?.onboarding ?? []).map((st) => ({ label: st.label, help: st.help, prompt: st.prompt }))),
     get_started: tools.filter((t) => t.op === "get_started").map((t) => t.name),
     tabs: shownTabs().map((t) => ({ group: t.group ?? "", label: t.label, kind: t.kind, description: t.description ?? null,
-      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle) })),
+      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle), ...(t.include?.length ? { include: t.include } : {}) })),
     areas: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => {
       const opts = (fl) => (fl?.options ?? []).map(optionOf);
       const lc = a.lifecycle, lcField = lc ? a.fields.find((fl) => fl.name === lc.field) : null;
@@ -1519,7 +1574,7 @@ function packGuideData() {
 
 /** The declared tabs a workspace is shown: not one over an area or runs whose list tool the pack withholds (mold_v0-067). */
 function shownTabs() {
-  return packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack))
+  return packViews.tabs.filter((t) => !(t.kind === "area" && (t.areas ?? [{ area: t.area }]).some((a) => listWithheld(a.area))) && !(t.kind === "runs" && runsWithheld(t.pack))
     // nor one that opens a shell page the build hides (mold_v0-130)
     && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
 }
@@ -1536,8 +1591,10 @@ function viewsModule() {
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
-    ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
+    ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
+      columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
     charts: t.charts ?? [],
+    ...(t.include?.length ? { include: t.include } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
@@ -1557,7 +1614,12 @@ function viewsModule() {
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
     "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
+    "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
+    "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
+    "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
+    "  /** The shell's sections an overview shows above its charts, in order (mold_v0-134): the Setup page's checklist, the notices. */\n" +
+    "  include?: ('setup' | 'notices')[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
