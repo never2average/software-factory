@@ -64,6 +64,7 @@
     "test:onboarding": "tsx scripts/onboarding-test.ts",
     "test:admin-sections": "tsx scripts/admin-sections-test.ts",
     "test:get-started": "tsx scripts/get-started-test.ts",
+    "test:mcp-prompts": "tsx scripts/mcp-prompts-test.ts",
     "test:pack-guide": "tsx scripts/pack-guide-test.ts",
     "test:run-spend": "tsx scripts/run-spend-test.ts",
     "test:run-charges": "tsx scripts/run-charges-test.ts",
