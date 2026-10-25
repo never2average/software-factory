@@ -290,8 +290,9 @@ function Hero({ id, hero, ctas }: { id: string; hero: ReturnType<typeof heroOf>;
           <div className='mt-16'>
             {strip.title ? <p id={stripId} className='text-muted-foreground mb-4 font-mono text-xs tracking-wider uppercase'>{strip.title}</p> : null}
             {strip.items ? (
-              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : strip.label} className='flex flex-wrap gap-2'>
-                {strip.items.map((c, i) => <li key={i} className='bg-card rounded-full border px-3 py-1 text-sm font-medium'>{c}</li>)}
+              // Text names in the logo row's type (the first product's strip), not pills: a row of names, not a row of badges.
+              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : strip.label} className='text-foreground/60 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>
+                {strip.items.map((c, i) => <li key={i}>{c}</li>)}
               </ul>
             ) : (
               <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : (strip.label ?? 'AI clients')} className='text-foreground/60 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>

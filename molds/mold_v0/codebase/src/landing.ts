@@ -18,7 +18,7 @@
  *                   subheadline, primary_cta (a link, or "account": sign in or open the console, with an arrow; default:
  *                   start, which is sign-up or a request for access), secondary_cta (default: connect an AI client), up
  *                   to 3 more `links` {label, href} (the app's own: its repository, its docs), note, a `visual` beside it,
- *                   and a strip under it: text badges (`items`), named `logos`, or the logos of the AI clients offered
+ *                   and a strip under it: text names in the logos' type (`items`), named `logos`, or the logos of the AI clients offered
  *   problem         points {title, body, icon} under a visual
  *   concept         cards {title, subtitle, body, chips (a path drawn as chips), highlight} under a visual, a note
  *   how_it_works    steps {title, body} drawn as numbered cards (`layout: steps`), a flow (`flow`, the default) or a
