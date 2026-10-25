@@ -69,7 +69,12 @@ async function outer() {
     ["a bad key", { fields: [{ key: "A-b", label: "A", type: "text" }] }, /key: 1-40 lowercase letters/],
     ["max_length past the kind's ceiling", { fields: [{ key: "a", label: "A", type: "text", max_length: 9000 }] }, /max_length: a whole number from 1 to 500/],
     ["no fields", { fields: [] }, /a list of 1 to 20 fields/],
+    ["more that is not true or false", { fields: [{ key: "a", label: "A", type: "text", more: "yes" }] }, /fields\[0\]\.more: true or false/],
+    ["a field no form asks, required", { fields: [{ key: "a", label: "A", type: "text", ask: false, required: true }] }, /no form asks \(ask: false\) cannot be required/],
   ];
+  // Where the form asks a field (mold_v0-138): folded (`more`), or not at all (`ask: false`), still stored when sent.
+  assert.deepEqual(accessRequestProblems({ fields: [{ key: "a", label: "A", type: "text", more: true }, { key: "b", label: "B", type: "text", ask: false }] }), [], "more and ask: false are valid");
+  assert.deepEqual(answersOf({ b: "sent another way" }, [{ key: "b", label: "B", type: "text", ask: false }] as F[]).answers, { b: "sent another way" }, "a field no form asks is still stored when sent");
   for (const [what, spec, re] of refused) assert.match(accessRequestProblems(spec).join("\n"), re, what);
   ok(`the rules: ${refused.length} malformed blocks refused (a shell field's key, a key twice, options on text, a select without options, unknown keys, text that is not plain)`);
 

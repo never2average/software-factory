@@ -54,6 +54,10 @@ const AccessFieldSchema = z.object({
   max_length: z.number().int().min(1).max(4000).optional(),
   help: z.string().trim().min(1).max(200).optional(),
   placeholder: z.string().trim().min(1).max(120).optional(),
+  /** Folded under the request page's "more" fold (mold_v0-138; src/landing.ts request_page.form.more). */
+  more: z.boolean().optional(),
+  /** false: no form asks it; an answer sent another way is still stored and labelled (never required). */
+  ask: z.boolean().optional(),
 }).strict();
 const AccessRequestSchema = z.object({
   $comment: z.string().max(2000).optional(),

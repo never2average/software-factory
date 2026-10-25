@@ -4,9 +4,10 @@
  * `landing` comes over it. At most one pack of a build declares one. scripts/gen-packs.mjs checks both with this module and
  * writes the result, with the build's source offer (src/source-offer.ts) and the AI clients its install pages offer, into
  * web/src/config/landing.generated.ts, which the console's `/` renders (web/src/features/site/landing.tsx) in the build's
- * brand (its name, tagline, mark and theme colours). A host pack's own landing page (code, mold_v0-039) stays its own: the
- * block is for packs that bring no code. A pack never brings a page, a component or a picture for it: every section is
- * the shell's, drawn from the block's words (the operator's rule: app packs are JSON, not pages).
+ * brand (its name, tagline, mark and theme colours). A host pack declares it the same way (mold_v0-138: the first
+ * product's own site moved here); one that still names a landing page in its console code (web/src/packs/<id>/index.ts,
+ * mold_v0-039) keeps that page. A pack never brings a page, a component or a picture for it: every section is the shell's,
+ * drawn from the block's words (the operator's rule: app packs are JSON, not pages).
  *
  * PICK AND PLACE. The page is a list of sections, `sections: [{type, ...fields}]`, in the order the app wants them. The
  * section library is the shell's: faithful, data-driven generalisations of the first product's landing page (its section
@@ -31,10 +32,16 @@
  * header's navigation, which lists the picked sections in order), `eyebrow`, `title`, `lead` and a `visual`, one of the
  * templates below (VISUALS: decision_graph, transcript, loop, paths, scorecard, chat). Beside `sections`:
  *   header          up to 2 links beside the ways in (default: the install pages) and which ways in ("sign_in_and_start",
- *                   the default, or "account": one account button)
+ *                   the default, or "account": one account button); `sign_in` and `open` relabel or re-address the account
+ *                   button's two states (signed out: sign in; signed in: into the console) wherever the page shows it
  *   footer          a tagline, a note, up to 8 links, a copyright line, and `shell_links: false` to leave out the shell's
  *                   own ways in (the sections, the legal pages and the source offer are always there)
  *   seo             title and description for search results and link previews (Open Graph); default from the hero
+ *   request_page    a public page asking for access (mold_v0-138) at its own `path` (such as /early-access): an eyebrow, a
+ *                   title with a highlighted end, a lead and up to 6 benefits {icon, title, body} beside the request form
+ *                   (the build's access_request fields, src/access-request.ts), its own seo, and the form's words (`form`:
+ *                   the submit label, the label of the fold holding the fields marked `more`, the message's label, and what
+ *                   it says once sent, where {company} and {email} are the sender's)
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
  * still read, and converted to sections (toSections) when gen-packs writes the build: hero (coverage becomes its strip),
@@ -88,8 +95,11 @@ const Footer = z.object({
  * "sign_in_and_start" (default: sign in, and the start call) or "account" (one account button: sign in, or open the
  * console when signed in, with an arrow).
  */
-const Header = z.object({ links: z.array(Cta).max(2).optional(), account: z.enum(["sign_in_and_start", "account"]).optional() }).strict();
-const Seo = z.object({ title: text(70).optional(), description: text(200).optional() }).strict();
+const Header = z.object({
+  links: z.array(Cta).max(2).optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
+  sign_in: Cta.optional(), open: Cta.optional(),
+}).strict();
+const Seo = z.object({ title: text(70).optional(), description: text(320).optional() }).strict();
 
 // ---------- the old block (mold_v0-091), still read and converted ----------
 
@@ -144,7 +154,7 @@ const head = {
 const LogoId = z.string().regex(/^[a-z0-9-]{1,40}$/, "a logo id, such as claude-code or cursor");
 /** An icon the shell draws, by name (web/src/features/site/landing-icons.tsx). */
 export const ICONS = ["eye-off", "git-compare", "code", "search", "message-chatbot", "terminal", "bolt", "shield-check", "chart-bar", "plug",
-  "users", "lock", "file-text", "clock", "check", "alert-triangle", "list-check", "building", "robot", "refresh"] as const;
+  "users", "lock", "file-text", "clock", "check", "alert-triangle", "list-check", "building", "robot", "refresh", "file-search"] as const;
 const Icon = z.enum(ICONS);
 const Percent = z.number().min(0).max(100);
 
@@ -212,6 +222,33 @@ export type VisualOf<K extends keyof typeof VISUALS> = z.infer<(typeof VISUALS)[
 /** A hero's first call to action: a link, or "account" (sign in, or open the console when signed in, with an arrow). */
 const HeroCta = z.union([z.literal("account"), Cta]);
 
+/**
+ * Where a declared public page may live (mold_v0-138): one segment of lower-case letters, digits and dashes, never one
+ * of the console's own (gen-packs also refuses a path a host pack's routes.json claims).
+ */
+export const RESERVED_PAGE_SEGMENTS = ["app", "admin", "auth", "api", "install", "request-access", "privacy", "terms", "host", "declared",
+  "mcp", "healthz", "console-status", "oauth", "consent", "sitemap", "robots", "manifest", "icon", "opengraph-image", "twitter-image"] as const;
+const PagePath = z.string().regex(/^\/[a-z0-9][a-z0-9-]{0,39}$/, "a path of one segment: / then lower-case letters, digits and dashes, at most 40")
+  .refine((p) => !(RESERVED_PAGE_SEGMENTS as readonly string[]).includes(p.slice(1)), `not one of the console's own (${RESERVED_PAGE_SEGMENTS.join(", ")})`);
+/** A line said once a request is sent: {company} and {email} are the sender's, no other braces. */
+const DoneLine = text(200).refine((s) => !/[{}]/.test(s.replace(/\{(company|email)\}/g, "")), "plain text; {company} and {email} are the only placeholders");
+
+/**
+ * The request page (mold_v0-138): a public page asking for access, after the first product's early-access page. The
+ * form is the shell's (web/src/features/site/request-page.tsx), asking the build's access_request fields (src/access-request.ts:
+ * those marked `more` folded under `form.more`, those marked `ask: false` not at all).
+ */
+const RequestPage = z.object({
+  path: PagePath,
+  eyebrow: text(60).optional(), title: text(120), title_highlight: text(80).optional(), lead: text(300).optional(),
+  benefits: z.array(z.object({ icon: Icon.optional(), title: text(60), body: text(200) }).strict()).min(1).max(6).optional(),
+  seo: Seo.optional(),
+  form: z.object({
+    submit: text(40).optional(), more: text(40).optional(), message_label: text(80).optional(),
+    done: z.object({ title: text(80), steps: z.array(DoneLine).min(1).max(5).optional() }).strict().optional(),
+  }).strict().optional(),
+}).strict();
+
 const SECTION_SCHEMAS = {
   hero: z.object({
     type: z.literal("hero"), id: Id.optional(),
@@ -268,7 +305,10 @@ export type Section = { [K in SectionType]: z.infer<(typeof SECTION_SCHEMAS)[K]>
 export type SectionOf<K extends SectionType> = z.infer<(typeof SECTION_SCHEMAS)[K]>;
 
 /** The block a build shows (what gen-packs writes): sections (absent: the whole wireframe, neutral), footer, seo. */
-export interface Landing { sections?: Section[]; header?: z.infer<typeof Header>; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo> }
+export interface Landing {
+  sections?: Section[]; header?: z.infer<typeof Header>; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo>;
+  request_page?: z.infer<typeof RequestPage>;
+}
 
 /** Each section's anchor when it names none (a second call to action gets -2, a third -3). */
 export const DEFAULT_IDS: Record<SectionType, string> = {
@@ -293,6 +333,7 @@ const NewSchema = z.object({
   header: Header.optional(),
   footer: Footer.optional(),
   seo: Seo.optional(),
+  request_page: RequestPage.optional(),
 }).strict();
 
 interface Issue { path: (string | number)[]; message: string }
@@ -373,7 +414,7 @@ const asNew = (b: object | null | undefined): Landing | null => (!b ? null : isL
 
 /**
  * The block a build shows: the pack's, with the app profile's over it, always as sections. A profile's `sections`
- * replace the pack's (the app picks); its footer and seo replace the pack's one by one. An old-style profile block
+ * replace the pack's (the app picks); its header, footer, seo and request_page replace the pack's one by one. An old-style profile block
  * replaces the pack's sections of the same kind one by one, as it did before (over an old pack block: merged as before,
  * then converted). null when neither declares one. Both must have been checked (landingProblems) first. `$comment` is dropped.
  */
@@ -406,5 +447,6 @@ export function mergeLanding(fromPack: object | null | undefined, fromProfile: o
     sections = next;
   } else if (prof?.sections) sections = prof.sections;
   const header = prof?.header ?? pack?.header, footer = prof?.footer ?? pack?.footer, seo = prof?.seo ?? pack?.seo;
-  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}) };
+  const request_page = prof?.request_page ?? pack?.request_page;
+  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}), ...(request_page ? { request_page } : {}) };
 }

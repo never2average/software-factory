@@ -7,7 +7,8 @@
 //          record-area tools (list_records, get_record) as the shell's
 //   pages  the console's pages: the shell's own (every page.tsx without a dynamic segment, /auth left out: Clerk's widget;
 //          /terms and /privacy only when the build serves them, mold_v0-109),
-//          a host pack's routes.json (app, admin, site), and a pack's tabs, pages and record areas from the generated
+//          a host pack's routes.json (app, admin, site), a page the build declares (pack-routes.generated.json
+//          `declared`: the landing block's request_page), and a pack's tabs, pages and record areas from the generated
 //          registry (web/src/config/pack-nav.generated.ts)
 // Reads only: no database is opened and nothing is written.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -81,6 +82,11 @@ export async function surface(laneArg: string): Promise<Surface> {
       for (const p of r.site ?? []) out.pages.push({ pack: h.id, path: `/${p}`, label: `/${p}`, signed_in: false });
     }
   }
+  // A public page the build declares (mold_v0-138: the landing block's request_page), at its own path, under the pack
+  // that declared it ("app" when the app's profile.json did).
+  const routesFile = path.join(lane, "web", "src", "config", "pack-routes.generated.json");
+  const declared = existsSync(routesFile) ? (JSON.parse(readFileSync(routesFile, "utf8")) as { declared?: { path: string; pack: string }[] }).declared ?? [] : [];
+  for (const d of declared) out.pages.push({ pack: d.pack, path: d.path, label: d.path, signed_in: false });
   const hostIds = new Set(out.packs.map((p) => p.id));
   for (const p of packs() as { id: string; manifest: { name: string } }[]) if (!hostIds.has(p.id)) out.packs.push({ id: p.id, name: p.manifest.name, kind: "pack" });
 

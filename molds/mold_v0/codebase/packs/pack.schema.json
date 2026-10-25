@@ -4176,7 +4176,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -4829,7 +4830,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -5169,7 +5171,8 @@
                                 "list-check",
                                 "building",
                                 "robot",
-                                "refresh"
+                                "refresh",
+                                "file-search"
                               ]
                             }
                           },
@@ -5483,7 +5486,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -6128,7 +6132,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -6768,7 +6773,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -7424,7 +7430,8 @@
                                         "list-check",
                                         "building",
                                         "robot",
-                                        "refresh"
+                                        "refresh",
+                                        "file-search"
                                       ]
                                     },
                                     "title": {
@@ -7888,6 +7895,38 @@
                     "sign_in_and_start",
                     "account"
                   ]
+                },
+                "sign_in": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "href": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "href"
+                  ],
+                  "additionalProperties": false
+                },
+                "open": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "href": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "href"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -7940,6 +7979,126 @@
                   "type": "string"
                 }
               },
+              "additionalProperties": false
+            },
+            "request_page": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^\\/[a-z0-9][a-z0-9-]{0,39}$"
+                },
+                "eyebrow": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "title_highlight": {
+                  "type": "string"
+                },
+                "lead": {
+                  "type": "string"
+                },
+                "benefits": {
+                  "minItems": 1,
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "icon": {
+                        "type": "string",
+                        "enum": [
+                          "eye-off",
+                          "git-compare",
+                          "code",
+                          "search",
+                          "message-chatbot",
+                          "terminal",
+                          "bolt",
+                          "shield-check",
+                          "chart-bar",
+                          "plug",
+                          "users",
+                          "lock",
+                          "file-text",
+                          "clock",
+                          "check",
+                          "alert-triangle",
+                          "list-check",
+                          "building",
+                          "robot",
+                          "refresh",
+                          "file-search"
+                        ]
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "body": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "body"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "seo": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "form": {
+                  "type": "object",
+                  "properties": {
+                    "submit": {
+                      "type": "string"
+                    },
+                    "more": {
+                      "type": "string"
+                    },
+                    "message_label": {
+                      "type": "string"
+                    },
+                    "done": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "minItems": 1,
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "title"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "path",
+                "title"
+              ],
               "additionalProperties": false
             }
           },
@@ -8388,6 +8547,12 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 120
+              },
+              "more": {
+                "type": "boolean"
+              },
+              "ask": {
+                "type": "boolean"
               }
             },
             "required": [
