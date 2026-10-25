@@ -182,7 +182,7 @@ export function createApp() {
     const email = s(req.body?.email, 200), company = s(req.body?.company, 200);
     const message = s(req.body?.message, 4000), name = s(req.body?.name, 120);
     const src = req.body?.source && typeof req.body.source === "object" ? req.body.source : {};
-    const source = Object.fromEntries([...["referrer", "landing", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].map((k) => [k, s(src[k], 300)]),
+    const source = Object.fromEntries([...["referrer", "landing", "first_page", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].map((k) => [k, s(src[k], 300)]),
       ["country", s(req.headers["x-vercel-ip-country"], 8)], ["city", s(decodeURIComponent(String(req.headers["x-vercel-ip-city"] ?? "")), 80)]].filter(([, v]) => v));
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return void res.status(400).json({ error: "Please enter a valid email." });
     if (!company) return void res.status(400).json({ error: "Please tell us your company." });

@@ -344,7 +344,8 @@ const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\.
 function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; onResearch: () => void }) {
   const src = q.source ?? {};
   const came = [src.utm_source && `${src.utm_source}${src.utm_medium ? ` / ${src.utm_medium}` : ''}${src.utm_campaign ? ` · ${src.utm_campaign}` : ''}`,
-    src.referrer && `via ${hostOf(src.referrer)}`, src.landing && `landed on ${src.landing}`, [src.city, src.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    src.referrer && `via ${hostOf(src.referrer)}`, src.landing && `landed on ${src.landing}`,
+    src.first_page && src.first_page !== src.landing && `first saw ${src.first_page}`, [src.city, src.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
   return (
     <div className='flex flex-col gap-8 text-sm'>
       <section>

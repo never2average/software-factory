@@ -18,15 +18,23 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Icons } from '@/components/icons';
 import { fill } from '@/lib/vocabulary';
 import { accessFields } from '@/config/access-request.generated';
+import { UTM, visitSource } from './visit-source';
 import { maxLengthOf, type AccessAnswer, type AccessField } from '@/lib/access-request.generated';
 
 export interface RequestAccessDefaults { email?: string; name?: string; company?: string }
 
-/** Where the request came from, as the admin's Requests list shows it (source.landing). */
+/**
+ * Where the request came from, as the admin's Requests list shows it (source.landing): the form's page, then what the
+ * visit noted when it began (mold_v0-110, VisitSource: its first page, the site it came from, its utm tags), the tags on
+ * this page's own address winning.
+ */
 const sourceOf = (from: string) => {
   const q = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
-  const utm = Object.fromEntries(['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].flatMap((k) => (q.get(k) ? [[k, q.get(k)!]] : [])));
-  return { landing: from, ...(typeof document !== 'undefined' && document.referrer ? { referrer: document.referrer } : {}), ...utm };
+  const utm = Object.fromEntries(UTM.flatMap((k) => (q.get(k) ? [[k, q.get(k)!.slice(0, 200)]] : [])));
+  const visit = typeof window === 'undefined' ? {} : visitSource();
+  // The page before this one, only when it is another site's (a click inside this one is not where they came from).
+  const external = typeof document !== 'undefined' && document.referrer && (() => { try { return new URL(document.referrer).origin !== window.location.origin; } catch { return false; } })();
+  return { landing: from, ...(external ? { referrer: document.referrer } : {}), ...visit, ...utm };
 };
 
 export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: RequestAccessDefaults; from: string; onSent?: (email: string) => void }) {
