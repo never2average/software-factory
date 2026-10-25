@@ -167,6 +167,18 @@ function walk(dir) {
 
 /** The files a pack may carry: code (.ts, .mts, .js, .mjs, checked) and data a loader never runs. */
 const CODE_FILE = /\.(ts|mts|js|mjs)$/;
+/**
+ * Why a file other than pack.json is refused in a declarative pack (mold_v0-124), and the declaration to use instead.
+ * Shared with the factory's packs.py check, which says the same for an app's pack.
+ */
+function declarativeOnly(rel) {
+  const say = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i.test(rel)
+    ? "code: rows from the workspace's files or an upstream are repositories.<name>.map in pack.json (fields with value paths, list items a[0] and a[], only, matches, max_length, any; where; retires; only_latest), runs are job_kinds, the MCP tools are generated from the declarations (mcp)"
+    : /\.md$/i.test(rel) ? "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
+    : /\.sql$/i.test(rel) ? "rows live in the shell's tables: declare record_areas in pack.json"
+    : "everything a declarative pack says is in its pack.json";
+  return `a declarative pack (no entry, migrations or runner) is its pack.json alone, so this file is never read; ${say} (MOLD.md "Declared row maps")`;
+}
 const DATA_FILE = /\.(json|sql|md|txt|csv|ya?ml|html|css|svg|png|jpe?g|gif|webp|pdf)$/i;
 
 // ---------- code: the import boundary ----------
@@ -609,29 +621,24 @@ function loadPack(dirName) {
   }
   if (id && ID.test(id)) checkCode(dir, id, runnerDir, host ? { scriptsDir: host.scriptsDir } : null);
   // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so (a
-  // host pack's server code loads from its host entry).
-  if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
-    fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  // host pack's server code loads from its host entry). A declarative pack (mold_v0-124: no entry, migrations or runner)
+  // holds nothing but its pack.json: nothing else of it is ever read, so any other file is refused, naming the
+  // declaration that says it instead.
+  const declarative = entry === null && !host && m.migrations === undefined && m.runner === undefined;
+  if (entry === null && !host) for (const e of walk(dir)) {
+    if (e.dir) continue;
+    const rel = posix(path.relative(dir, e.p));
+    if (declarative) { if (rel !== "pack.json") fail(where, `${rel}: ${declarativeOnly(rel)}`); }
+    else if (!e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
+      fail(where, `${rel} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  }
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
   // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
-  // a guide directory's .md files are read here (flat, plain files), checked with the rest of the guide below.
-  let guideFiles = null;
+  // a declarative pack's is inline in pack.json (guide.markdown; guide.dir is gone, mold_v0-124), checked below.
   if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
-  const gdir = m.guide && typeof m.guide === "object" && !Array.isArray(m.guide) ? m.guide.dir : undefined;
-  if (typeof gdir === "string" && /^[a-z0-9_\-/]+$/i.test(gdir) && !gdir.split("/").includes("..") && !gdir.startsWith("/")) {
-    const d = path.join(dir, gdir);
-    if (!existsSync(d) || !statSync(d).isDirectory()) fail(where, `guide.dir ${gdir} is not a directory of the pack`);
-    else {
-      guideFiles = [];
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        if (e.isSymbolicLink() || !e.isFile() || !e.name.endsWith(".md")) fail(`packs/${dirName}/${gdir}/${e.name}`, "a guide directory holds .md pages only (one per page, no subdirectories)");
-        else guideFiles.push({ name: e.name, text: readFileSync(path.join(d, e.name), "utf8") });
-      }
-    }
-  }
-  return { id, dir, json: m, host, schema, guideFiles, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -1021,7 +1028,7 @@ const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
 const out = {};
 const loaded = [];
-for (const [id, json, file, guideFiles] of entries) {
+for (const [id, json, file] of entries) {
   let declared;
   try { declared = compileDeclarations(json); }
   catch (e) { out[id] = { json: e instanceof PackJsonError ? e.problems : [String(e?.message ?? e)] }; continue; }
@@ -1044,7 +1051,7 @@ for (const [id, json, file, guideFiles] of entries) {
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
       // console's generated pages say of it, in its declared words.
-      guide: json.guide === undefined ? null : compileGuide(json.guide, guideFiles, guideTitles),
+      guide: json.guide === undefined ? null : compileGuide(json.guide, guideTitles),
       facts: {
         name: json.name, description: json.description ?? null,
         onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id, label: st.label, help: st.help ?? null, prompt: st.prompt ?? null })),
@@ -1102,7 +1109,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
-      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry), p.guideFiles]),
+      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
       path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
       WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES)]));

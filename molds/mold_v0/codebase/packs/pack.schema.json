@@ -2834,9 +2834,95 @@
                         "pattern": "^[a-z][a-z0-9_]{1,62}$"
                       },
                       "additionalProperties": {
-                        "type": "string",
-                        "maxLength": 300,
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 300,
+                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string",
+                                "maxLength": 300,
+                                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                              },
+                              "only": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "number",
+                                  "key",
+                                  "list",
+                                  "boolean"
+                                ]
+                              },
+                              "matches": {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              "max_length": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20000
+                              },
+                              "as": {
+                                "type": "string",
+                                "enum": [
+                                  "first",
+                                  "list"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "any": {
+                                "minItems": 1,
+                                "maxItems": 10,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "string",
+                                      "maxLength": 300,
+                                      "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                                    },
+                                    "only": {
+                                      "type": "string",
+                                      "enum": [
+                                        "text",
+                                        "number",
+                                        "key",
+                                        "list",
+                                        "boolean"
+                                      ]
+                                    },
+                                    "matches": {
+                                      "type": "string",
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "required": [
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "any"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
                     },
                     "where": {
@@ -2857,9 +2943,90 @@
                           },
                           {
                             "type": "boolean"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "only": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "number",
+                                  "key",
+                                  "list",
+                                  "boolean"
+                                ]
+                              },
+                              "matches": {
+                                "type": "string",
+                                "maxLength": 200
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         ]
                       }
+                    },
+                    "retires": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                    },
+                    "only_latest": {
+                      "type": "object",
+                      "properties": {
+                        "by": {
+                          "type": "string",
+                          "maxLength": 300,
+                          "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                        },
+                        "among": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "maxLength": 300,
+                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "only": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text",
+                                      "number",
+                                      "key",
+                                      "list",
+                                      "boolean"
+                                    ]
+                                  },
+                                  "matches": {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "by"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -2967,9 +3134,95 @@
                         "pattern": "^[a-z][a-z0-9_]{1,62}$"
                       },
                       "additionalProperties": {
-                        "type": "string",
-                        "maxLength": 300,
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 300,
+                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string",
+                                "maxLength": 300,
+                                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                              },
+                              "only": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "number",
+                                  "key",
+                                  "list",
+                                  "boolean"
+                                ]
+                              },
+                              "matches": {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              "max_length": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20000
+                              },
+                              "as": {
+                                "type": "string",
+                                "enum": [
+                                  "first",
+                                  "list"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "any": {
+                                "minItems": 1,
+                                "maxItems": 10,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "string",
+                                      "maxLength": 300,
+                                      "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                                    },
+                                    "only": {
+                                      "type": "string",
+                                      "enum": [
+                                        "text",
+                                        "number",
+                                        "key",
+                                        "list",
+                                        "boolean"
+                                      ]
+                                    },
+                                    "matches": {
+                                      "type": "string",
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "required": [
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "any"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
                     },
                     "where": {
@@ -2990,9 +3243,90 @@
                           },
                           {
                             "type": "boolean"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "only": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "number",
+                                  "key",
+                                  "list",
+                                  "boolean"
+                                ]
+                              },
+                              "matches": {
+                                "type": "string",
+                                "maxLength": 200
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         ]
                       }
+                    },
+                    "retires": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                    },
+                    "only_latest": {
+                      "type": "object",
+                      "properties": {
+                        "by": {
+                          "type": "string",
+                          "maxLength": 300,
+                          "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                        },
+                        "among": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "maxLength": 300,
+                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "only": {
+                                    "type": "string",
+                                    "enum": [
+                                      "text",
+                                      "number",
+                                      "key",
+                                      "list",
+                                      "boolean"
+                                    ]
+                                  },
+                                  "matches": {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "by"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -3127,9 +3461,95 @@
                         "pattern": "^[a-z][a-z0-9_]{1,62}$"
                       },
                       "additionalProperties": {
-                        "type": "string",
-                        "maxLength": 300,
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 300,
+                            "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string",
+                                "maxLength": 300,
+                                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                              },
+                              "only": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "number",
+                                  "key",
+                                  "list",
+                                  "boolean"
+                                ]
+                              },
+                              "matches": {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              "max_length": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20000
+                              },
+                              "as": {
+                                "type": "string",
+                                "enum": [
+                                  "first",
+                                  "list"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "any": {
+                                "minItems": 1,
+                                "maxItems": 10,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "string",
+                                      "maxLength": 300,
+                                      "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})?\\])*)*)$"
+                                    },
+                                    "only": {
+                                      "type": "string",
+                                      "enum": [
+                                        "text",
+                                        "number",
+                                        "key",
+                                        "list",
+                                        "boolean"
+                                      ]
+                                    },
+                                    "matches": {
+                                      "type": "string",
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "required": [
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "any"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
                       }
                     }
                   },
@@ -3596,10 +4016,6 @@
           "minLength": 1,
           "maxLength": 200000
         },
-        "dir": {
-          "type": "string",
-          "pattern": "^[a-z0-9_\\-/]+$"
-        },
         "groups": {
           "maxItems": 12,
           "type": "array",
@@ -3631,6 +4047,9 @@
         },
         "generated": {
           "type": "boolean"
+        },
+        "dir": {
+          "not": {}
         }
       },
       "additionalProperties": false
