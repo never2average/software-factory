@@ -1,0 +1,12 @@
+{
+  "phase": "P2 (mold_v0-138): the host pack's public site as config (pack.json landing, its request_page; the shell draws /, /early-access, their header and footer)",
+  "allow": [
+    { "key": "generated::web/src/config/landing.generated.ts", "reason": "the host pack's site is its pack.json landing block now (sections, header, footer, seo, request_page), written here as every pack's is" },
+    { "key": "generated::web/src/config/pack-routes.generated.json::rewrites::*::destination", "reason": "/early-access is rewritten to the shell's declared request page (app/(site)/declared/[page]) instead of the host pack's page module" },
+    { "key": "generated::web/src/config/pack-routes.generated.json::declared", "reason": "the declared request page is listed for the lanes (testing/console/surface.mts), under the pack that declared it" },
+    { "key": "generated::src/email-pitch.generated.ts", "reason": "the landing block's hero subheadline becomes the welcome email's fallback pitch; the host profile's own email.pitch still comes first, so no email changes" },
+    { "key": "generated::web/src/config/share-image.generated.ts", "reason": "the drawn share image takes the landing hero's words (as every landing block's build does); a brand with its own picture, as the deployed product has, keeps its picture and its alternative text" },
+    { "key": "pages::/::title", "reason": "the landing page's title is the block's seo.title as it is (the shell's landing page sets an absolute title); the host pack's page inherited its layout's default through the console's root template, which added a second ' | <name>'" },
+    { "key": "pages::/::text", "reason": "the shell's chat visual names who speaks for screen readers (sr-only 'You:', 'Tool call:'); nothing on screen changes" }
+  ]
+}
