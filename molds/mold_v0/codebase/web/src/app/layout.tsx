@@ -11,6 +11,7 @@ import { cookies } from 'next/headers';
 import NextTopLoader from 'nextjs-toploader';
 import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import '../styles/globals.css';
+import { VisitSource } from '@/features/site/visit-source';
 
 // One look everywhere: Supabase dark. No light mode, no toggle.
 const THEME_COLOR = '#171717';
@@ -47,6 +48,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
       >
         <NextTopLoader color='var(--primary)' showSpinner={false} />
+        {/* Where a visit began, for a request for access made later in it (mold_v0-110). */}
+        <VisitSource />
         <NuqsAdapter>
           <ThemeProvider
             attribute='class'
