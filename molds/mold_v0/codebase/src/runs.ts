@@ -261,8 +261,13 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
     return { requeued: rows.filter((r) => r.status === "queued").length, failed: rows.filter((r) => r.status === "failed").length, cancelled: rows.filter((r) => r.status === "cancelled").length };
   }));
   await removeObjects(gone);
+  // mold_v0-014: GitHub App tokens of ended runs that GitHub was not yet told to revoke (a process that ended before its
+  // own revocation ran, a serverless function frozen after its answer): told now, in the background.
+  // At most once a minute per process.
+  if (Date.now() - lastFlush > 60_000) { lastFlush = Date.now(); void import("./github-app.js").then((g) => g.flushRevocations()).catch(() => 0); }
   return out;
 }
+let lastFlush = 0;
 
 /**
  * Claim the oldest queued run of the given kinds ("pack/kind"; all when empty). Returns null when there is none.
