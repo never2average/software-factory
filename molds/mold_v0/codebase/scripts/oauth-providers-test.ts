@@ -97,7 +97,7 @@ try {
       authorize_params: { access_type: "offline" } }],
     credentials: [
       { name: "api_token", label: "Acme API", bound_to: "workspace", oauth: "acme", deliver_as: { file: "api_token" } },
-      { name: "app_token", label: "Acme app token", bound_to: "asset", area: "oa_apps", oauth: "acme", deliver_as: { env: "APP_TOKEN" } },
+      { name: "app_token", label: "Acme app token", bound_to: "asset", area: "oa_apps", oauth: "acme", deliver_as: { env: "ACME_TOKEN" } },
       { name: "repo_token", label: "Repository token", bound_to: "workspace", github_app: true, deliver_as: { file: "gh_token" } },
     ],
     jobKinds: [kind("use", ["api_token", "app_token"]), kind("leak", ["api_token", "app_token"]), kind("long", ["api_token", "repo_token"], "long.mjs")] as never,
