@@ -84,6 +84,11 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
 const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+// The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
+// the words engine, so a pack's admin_mcp words are checked against them here.
+const { ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-tools.ts")).href);
+const { ADMIN_SKILL_TEXTS } = await import(pathToFileURL(path.join(HERE, "..", "src", "admin-skills.ts")).href);
+const { templateNames, templateProblems } = await import(pathToFileURL(path.join(HERE, "..", "src", "text-template.ts")).href);
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
@@ -126,7 +131,10 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
-  "landing", "guide", "staff_docs", "console", "access_request"]);
+  "landing", "guide", "staff_docs", "console", "access_request",
+  // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
+  // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
+  "settings", "admin_mcp", "setup"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -1390,6 +1398,62 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
   `export const HOST_TABLES: readonly string[] = ${json(packs.flatMap((p) => p.schema?.tables ?? []))};\n` +
   "/** The packs' job kinds (jobKinds and agentJobKinds): the pack, the kind's name and its label (null: the name). */\n" +
   `export const JOB_KINDS: readonly { pack: string; name: string; label: string | null }[] = ${json(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).map((k) => ({ pack: p.id, name: k.name, label: k.label ?? null }))))};\n`);
+/**
+ * Every pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig), checked here for what its shape
+ * cannot say, in pack order: `settings` (a group or a key once across the packs, never one of the shell's groups; a
+ * setting in a group the shell or a pack has), `admin_mcp` (a shell tool or skill it names, a summary template that
+ * parses, each skill passage it replaces still in the skill's text as the earlier packs leave it), `setup` and
+ * `mcp.error_hints` (a host pack's: setupConfigOf). Written only when a pack declares one, so a build without writes what
+ * it did.
+ */
+const packConfig = [];
+{
+  const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
+  const groups = new Map(SHELL_GROUPS.map((g) => [g, "the shell"])), keys = new Map(), reworded = new Map();
+  const skillText = Object.fromEntries(Object.entries(ADMIN_SKILL_TEXTS).map(([n, f]) => [n, f(profile.name, {})]));
+  for (const p of packs) {
+    const at = `packs/${p.id}/pack.json`, j = p.json ?? {};
+    const c = { pack: p.id };
+    if (j.settings) {
+      for (const g of j.settings.groups ?? []) {
+        if (groups.has(g.id)) fail(at, `settings.groups ${g.id}: ${groups.get(g.id)} has a group ${g.id}`);
+        else groups.set(g.id, `pack ${p.id}`);
+      }
+      for (const d of j.settings.defs ?? []) {
+        if (keys.has(d.key)) fail(at, `settings.defs ${d.key}: pack ${keys.get(d.key)} has that setting`);
+        else keys.set(d.key, p.id);
+        if (!groups.has(d.group)) fail(at, `settings.defs ${d.key}: group ${d.group} is not one of the build's (${[...groups.keys()].join(", ")})`);
+      }
+      const { $comment: _c, ...rest } = j.settings;
+      c.settings = rest;
+    }
+    if (j.admin_mcp) {
+      for (const [tool, w] of Object.entries(j.admin_mcp.reword ?? {})) {
+        if (!ADMIN_SHELL_TOOL_NAMES.includes(tool)) { fail(at, `admin_mcp.reword ${tool}: not one of the shell's admin tools (${ADMIN_SHELL_TOOL_NAMES.join(", ")})`); continue; }
+        if (reworded.has(tool)) fail(at, `admin_mcp.reword ${tool}: pack ${reworded.get(tool)} rewords it too: one pack's words`);
+        reworded.set(tool, p.id);
+        if (w.summary_template !== undefined) for (const b of templateProblems(w.summary_template, templateNames(w.summary_template))) fail(at, `admin_mcp.reword ${tool}.summary_template: ${b}`);
+      }
+      for (const [skill, steps] of Object.entries(j.admin_mcp.skills ?? {})) {
+        if (!(skill in skillText)) { fail(at, `admin_mcp.skills ${skill}: not one of the shell's admin skills (${Object.keys(skillText).join(", ")})`); continue; }
+        for (const [i, st] of steps.entries()) {
+          if (!skillText[skill].includes(st.from)) { fail(at, `admin_mcp.skills ${skill}[${i}].from: the shell's skill no longer reads "${st.from.slice(0, 80)}${st.from.length > 80 ? "…" : ""}" (src/admin-skills.ts): write the step as it reads now`); continue; }
+          skillText[skill] = skillText[skill].replace(st.from, () => st.to);
+        }
+      }
+      const { $comment: _c, ...rest } = j.admin_mcp;
+      c.admin_mcp = rest;
+    }
+    Object.assign(c, setupConfigOf(p));
+    if (Object.keys(c).length > 1) packConfig.push(c);
+  }
+  refuse();
+}
+/** A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. */
+function setupConfigOf(p) {
+  return {};
+}
+
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
@@ -1402,7 +1466,10 @@ files.set(srcHosts, HEADER +
   `export const HOSTS: readonly unknown[] = [${hostPacks.map((_p, i) => `host${i}`).join(", ")}];\n` +
   // Their pack.json engine.config (mold_v0-137), only when one declares it (a build without one writes what it did).
   (hostPacks.some((p) => p.engineConfig) ? "\n/** Each host pack's pack.json `engine.config` (mold_v0-137), by pack id: checked against its host entry's schema when it registers (src/host.ts). */\n" +
-    `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : ""));
+    `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : "") +
+  // Every pack's server config (mold_v0-140), only when one declares it.
+  (packConfig.length ? "\n/** Each pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig): settings, admin_mcp, setup, mcp.error_hints, in pack order. */\n" +
+    `export const PACK_CONFIG: readonly unknown[] = ${json(packConfig)};\n` : ""));
 // Their console code (web/src/packs/<id>/index.ts) and orchestrator entries (orchestrator/packs/<id>/main.ts).
 files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADER +
   "import type { HostWeb } from '@/features/packs/host-web';\n" +

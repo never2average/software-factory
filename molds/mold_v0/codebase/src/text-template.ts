@@ -127,3 +127,27 @@ export function fillTemplate(text: string, values: TemplateValues = {}): string 
   }
   return render(nodes, values);
 }
+
+/**
+ * A result object as a template's values (mold_v0-140: a pack's admin tool summary, pack.json admin_mcp.reword
+ * summary_template): each value that is text, a number or a boolean by its path with the keys joined by _ ({account_name}
+ * for d.account.name), and each list's length as {<path>_count} ({members_count}), three levels deep. A key that is no
+ * template name (capitals, dashes) is left out; the first of two paths that join to one name wins.
+ */
+export function summaryValues(d: unknown): Record<string, TemplateValue> {
+  const out: Record<string, TemplateValue> = {};
+  const NAME = /^[a-z][a-z0-9_]*$/;
+  const walk = (v: unknown, prefix: string, depth: number) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return;
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (!NAME.test(k)) continue;
+      const name = prefix ? `${prefix}_${k}` : k;
+      if (Array.isArray(x)) { if (!(`${name}_count` in out)) out[`${name}_count`] = x.length; }
+      else if (x === null || ["string", "number", "boolean"].includes(typeof x)) { if (!(name in out)) out[name] = x as TemplateValue; }
+      else if (x instanceof Date) { if (!(name in out)) out[name] = x.toISOString(); }
+      else if (depth < 3) walk(x, name, depth + 1);
+    }
+  };
+  walk(d, "", 1);
+  return out;
+}

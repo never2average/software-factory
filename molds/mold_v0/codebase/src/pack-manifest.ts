@@ -42,6 +42,46 @@ const PageSchema = z.object({
   icon: z.string().optional(),
 }).strict();
 
+const plain = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line: no control or direction characters");
+const settingKey = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment variable's name: capitals, digits and _");
+/**
+ * Global settings a pack adds to /admin (mold_v0-140; src/settings.ts, which reads them from src/hosts.generated.ts
+ * PACK_CONFIG): pure data. `groups` go after the group each names (a shell group: models, runs, capacity, docs, email,
+ * or one a pack adds before); each of `defs` is a setting keyed by the environment variable it overrides, in a group,
+ * before the setting `before` names or at the end of its group. Its value in force: set on /admin, else the environment,
+ * else `default`.
+ */
+const SettingsSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  groups: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _"), label: plain(60), after: z.string().max(31).optional() }).strict()).max(20).optional(),
+  defs: z.array(z.object({
+    key: settingKey, group: z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "a group's id"), label: plain(120),
+    kind: z.enum(["text", "int", "number", "choice"]), default: z.union([z.string().max(200), z.number()]),
+    min: z.number().optional(), max: z.number().optional(), options: z.array(z.string().min(1).max(60)).min(1).max(30).optional(),
+    format: z.enum(["model", "sender", "emails"]).optional(), help: plain(600), before: settingKey.optional(),
+  }).strict()
+    .refine((d) => (d.kind === "choice") === (d.options !== undefined), "options with kind choice (and only then)")
+    .refine((d) => d.kind !== "choice" || d.options!.includes(String(d.default)), "a choice's default is one of its options")
+    .refine((d) => (d.kind === "int" || d.kind === "number") === (typeof d.default === "number"), "a number's default is a number, text's is text")
+    .refine((d) => d.min === undefined || d.max === undefined || d.min <= d.max, "min at most max")
+    .refine((d) => d.format === undefined || d.kind === "text", "format is a text setting's")).max(100).optional(),
+}).strict();
+/**
+ * A pack's words for the admin MCP's shell tools and skills (mold_v0-140; src/admin-mcp.ts): `reword`, a shell tool's
+ * description and its summary line (`summary_template`, filled with the result's fields: src/text-template.ts
+ * summaryValues, {account_name}, {members_count}); `skills`, steps of a shell skill replaced, each one exact passage
+ * `from` (the build is refused when the skill no longer reads it: src/admin-skills.ts) by `to`, in order.
+ */
+const AdminMcpSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  reword: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a shell admin tool's name"), z.object({
+    description: plain(2000).optional(), summary_template: plain(400).optional(),
+  }).strict()).optional(),
+  skills: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a shell admin skill's name"), z.array(z.object({
+    from: z.string().min(10).max(2000), to: z.string().min(1).max(4000),
+  }).strict()).min(1).max(20)).optional(),
+}).strict();
+
 /** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
 const NavItemSchema = (area: "/app" | "/admin") => z.object({
   title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
@@ -190,6 +230,10 @@ export const PackJsonSchema = z.object({
    * joined in pack order; the app's profile.json `access_request` replaces them.
    */
   access_request: AccessRequestSchema.optional(),
+  /** Global settings on /admin (mold_v0-140; src/settings.ts): groups and pure-data settings (SettingsSchema above). */
+  settings: SettingsSchema.optional(),
+  /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
+  admin_mcp: AdminMcpSchema.optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)

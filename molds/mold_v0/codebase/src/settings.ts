@@ -1,6 +1,6 @@
 import { getDb } from "./db.js";
 import { defaultSender } from "./profile.js";
-import { hosts } from "./host.js";
+import { packConfigs } from "./host.js";
 import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
 
 /**
@@ -23,7 +23,7 @@ export const ENGINE_SETTINGS = {
   jobPodCapacity: persistedKey("JOB_POD_CAPACITY"),
 } as const;
 
-/** The shell's groups (models, runs, capacity, docs, email) and any a host pack adds (src/host.ts settings, mold_v0-039). */
+/** The shell's groups (models, runs, capacity, docs, email) and any a pack adds (pack.json settings, mold_v0-140; a host pack's since mold_v0-039). */
 export type SettingGroup = string;
 export interface SettingDef {
   key: string; group: SettingGroup; label: string; help: string;
@@ -34,7 +34,7 @@ export interface SettingDef {
   format?: "model" | "sender" | "emails";
 }
 
-/** The shell's own groups, in order; a host pack's groups go after the group each names (settingGroups). */
+/** The shell's own groups, in order; a pack's groups go after the group each names (settingGroups). */
 export const SETTING_GROUPS: { id: SettingGroup; label: string }[] = [
   { id: "models", label: "Models" },
   { id: "runs", label: "Runs" },
@@ -74,32 +74,35 @@ export const SETTINGS: SettingDef[] = [
     help: "Who gets new access requests and library submissions, comma-separated. Empty: the platform owners (Admins)." },
 ];
 /**
- * Every group of this build, in order: the shell's, each host pack's after the group it names (mold_v0-039).
+ * Every group of this build, in order: the shell's, then each pack's (its pack.json `settings.groups`, mold_v0-140) after
+ * the group it names (at the end when it names none, or one the build lacks).
  */
 export function settingGroups(): { id: SettingGroup; label: string }[] {
   const out = [...SETTING_GROUPS];
-  for (const h of hosts()) for (const g of h.settings?.groups ?? []) {
+  for (const c of packConfigs()) for (const g of c.settings?.groups ?? []) {
     const at = g.after ? out.findIndex((x) => x.id === g.after) : out.length - 1;
     out.splice(at < 0 ? out.length : at + 1, 0, { id: g.id, label: g.label });
   }
   return out;
 }
 /**
- * Every setting of this build: the shell's and its host packs', grouped in group order. A host pack's setting goes before
- * the one it names (`before`), else at the end of its group.
+ * Every setting of this build: the shell's and the packs' (pack.json `settings.defs`, mold_v0-140: pure data), grouped in
+ * group order. A pack's setting goes before the one it names (`before`), else at the end of its group. A key the shell or
+ * another pack already has is refused (the build refuses two packs' own; this catches one the shell has).
  */
 export function allSettings(): SettingDef[] {
   const order = new Map(settingGroups().map((g, i) => [g.id, i]));
   const all: SettingDef[] = [...SETTINGS];
-  for (const h of hosts()) for (const { before, ...d } of (h.settings?.defs ?? []) as (SettingDef & { before?: string })[]) {
+  for (const c of packConfigs()) for (const { before, ...d } of c.settings?.defs ?? []) {
+    if (all.some((x) => x.key === d.key)) throw new Error(`pack ${c.pack}: pack.json settings.defs ${d.key} is a setting the build already has`);
     const at = before ? all.findIndex((x) => x.key === before) : -1;
     if (at >= 0) all.splice(at, 0, d); else all.push(d);
   }
   return all.map((d, i) => [d, i] as const).sort(([a, i], [b, j]) => (order.get(a.group) ?? 999) - (order.get(b.group) ?? 999) || i - j).map(([d]) => d);
 }
-let defsFor: { hosts: unknown; defs: Map<string, SettingDef> } | null = null;
+let defsFor: { packs: unknown; defs: Map<string, SettingDef> } | null = null;
 const defOf = (key: string) => {
-  if (defsFor?.hosts !== hosts()) defsFor = { hosts: hosts(), defs: new Map(allSettings().map((d) => [d.key, d])) };
+  if (defsFor?.packs !== packConfigs()) defsFor = { packs: packConfigs(), defs: new Map(allSettings().map((d) => [d.key, d])) };
   return defsFor.defs.get(key);
 };
 

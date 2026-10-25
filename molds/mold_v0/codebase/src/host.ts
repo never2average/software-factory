@@ -20,6 +20,7 @@ import type { z } from "zod";
 import type { Org } from "./auth.js";
 import type { Population } from "./agents.js";
 import type { SettingDef } from "./settings.js";
+import type { TemplateValue } from "./text-template.js";
 import type { Permission, PlatformRole } from "./admin-roles.js";
 
 /** What the customer portal's routes know about the signed-in person (src/app.ts Session). */
@@ -63,16 +64,12 @@ export interface HostDefinition {
     /** The widget's HTML, for the local preview: its first <script> gets window.__<NAMESPACE>_PREVIEW__ (src/namespace.ts, upper case) with the call's result. */
     widgetHtml?: string;
   };
-  /** The admin MCP server (src/admin-mcp.ts): tools and prompts the host adds, in the shell's order. */
+  /**
+   * The admin MCP server (src/admin-mcp.ts): tools the host adds, in the shell's order. A shell tool's words and a shell
+   * skill's steps in the product's words are its pack.json `admin_mcp` since mold_v0-140 (packConfigs below).
+   */
   adminMcp?: {
     tools?: Record<string, HostAdminTool>;
-    /**
-     * A shell tool's description and summary in the product's words (mold_v0-049: an account's products, research and
-     * simulations are the host pack's). Never its input, its permission or what it runs.
-     */
-    reword?: Record<string, { description?: string; summary?: (d: any, a: Record<string, any>) => string }>;
-    /** A shell skill's text (an admin MCP prompt) with the host's own tools in it (mold_v0-049). */
-    skills?: Record<string, (text: string) => string>;
   };
   /** HTTP routes at the product's own paths (the shell's are unchanged). Each is mounted where the shell's sit. */
   routes?: {
@@ -115,8 +112,6 @@ export interface HostDefinition {
   };
   /** A new access request (POST /api/access-requests), after it is stored and acknowledged. */
   onAccessRequest?(id: number): Promise<void>;
-  /** Global settings the host adds to /admin (src/settings.ts), with their groups. */
-  settings?: { groups: { id: string; label: string; after?: string }[]; defs: (SettingDef & { before?: string })[] };
   /** The admin console's static files the server serves at the root (the client skill download), relative to the pack. */
   publicDir?: string;
 }
@@ -140,10 +135,42 @@ export interface WorkerHelpers {
   forbidden(res: Response): void;
 }
 
+/**
+ * What a pack's pack.json says to the server beyond its declarations (mold_v0-140; src/pack-manifest.ts checks the shape,
+ * scripts/gen-packs.mjs what it names, src/hosts.generated.ts PACK_CONFIG carries it), in pack order:
+ *   settings    global settings on /admin (src/settings.ts): groups placed after a shell group, and each setting (pure
+ *               data, SettingDef) in a group, before a named one or at the group's end
+ *   admin_mcp   a shell admin tool's words (`reword`: its description, and its summary line as a template filled with the
+ *               result's fields, src/text-template.ts summaryValues) and a shell skill's steps (`skills`: each {from, to}
+ *               replaces one exact passage; the build is refused when a skill no longer reads `from`)
+ *   setup       the Setup page's own steps and workflow (src/app.ts setup): `steps`, `shell_steps`, `viewer_note`, `workflow`
+ *   error_hints pack.json mcp.error_hints: a plain-language fix for a tool error people hit, by a pattern of its text
+ */
+export interface PackConfig {
+  pack: string;
+  settings?: { groups?: { id: string; label: string; after?: string }[]; defs?: (SettingDef & { before?: string })[] };
+  admin_mcp?: {
+    reword?: Record<string, { description?: string; summary_template?: string }>;
+    skills?: Record<string, { from: string; to: string }[]>;
+  };
+  setup?: SetupConfig;
+  error_hints?: { match: string; text: string }[];
+}
+/** The Setup page's own steps, its shell steps' words, its note for those who may not launch and its workflow (src/app.ts setup). */
+export interface SetupConfig {
+  steps?: { id: string; label: string; help: string; help_text_only?: string; prompt?: string; optional?: boolean; launch?: boolean; after?: string; done_when: string }[];
+  shell_steps?: Record<string, { label?: string; help?: string; prompt?: string }>;
+  viewer_note?: string;
+  workflow?: { id: string; label: string; tools: string[]; prompt: string }[];
+}
+/** The values a summary template is filled with (src/text-template.ts summaryValues). */
+export type SummaryValues = Readonly<Record<string, TemplateValue>>;
+
 /** A host pack's definition: checked when it registers. */
 export function defineHost(def: HostDefinition): HostDefinition { return def; }
 
 let registered: HostDefinition[] = [];
+let packConfigList: readonly PackConfig[] = [];
 let engineConfigs = new Map<string, unknown>();
 /** A zod issue path as a reader writes it: tools.run_simulation.title. */
 const at = (p: readonly PropertyKey[]) => p.reduce<string>((s, k) => (typeof k === "number" ? `${s}[${k}]` : s ? `${s}.${String(k)}` : String(k)), "");
@@ -154,7 +181,7 @@ const at = (p: readonly PropertyKey[]) => p.reduce<string>((s, k) => (typeof k =
  * config with no schema to meet and a schema with no config are refused here, every problem listed: the server does not
  * start on words it cannot check.
  */
-export function registerHosts(list: readonly HostDefinition[], configs: Readonly<Record<string, unknown>> = {}) {
+export function registerHosts(list: readonly HostDefinition[], configs: Readonly<Record<string, unknown>> = {}, packConfig: readonly unknown[] = []) {
   const ids = new Set<string>();
   for (const h of list) {
     if (!h || typeof h.id !== "string") throw new Error("a host pack's entry must default-export defineHost({ id, ... })");
@@ -180,6 +207,7 @@ export function registerHosts(list: readonly HostDefinition[], configs: Readonly
   if (problems.length) throw new Error(`host packs refused:\n  ${problems.join("\n  ")}`);
   registered = [...list];
   engineConfigs = checked;
+  packConfigList = packConfig as readonly PackConfig[];
 }
 
 /**
@@ -190,6 +218,10 @@ export function engineConfig<T = unknown>(id: string): T {
   if (!engineConfigs.has(id)) throw new Error(`host pack ${id} has no engine.config registered (read it after src/hosts.ts registers the build's host packs, never at a module's top level)`);
   return engineConfigs.get(id) as T;
 }
+/** Every pack's server config from its pack.json (mold_v0-140), in pack order; none with zero packs. */
+export const packConfigs = (): readonly PackConfig[] => packConfigList;
+/** Tests only: the packs' server config as a build would carry it. */
+export function setPackConfigsForTest(list: readonly PackConfig[]) { packConfigList = list; }
 /** The registered host packs, in pack order (none with zero packs). */
 export const hosts = (): readonly HostDefinition[] => registered;
 /** Every host tool name on the customer MCP server. */
