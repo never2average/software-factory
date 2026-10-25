@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { httpError } from '@/features/status/from-error';
 
 interface Field {
   pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
@@ -29,7 +30,7 @@ async function call<T>(method: string, body?: unknown): Promise<T> {
   });
   if (res.status === 204) return null as T;
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, json);
   return json;
 }
 

@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, useOrgLoad } from '@/features/portal/shared';
 import { cn } from '@/lib/utils';
+import { httpError } from '@/features/status/from-error';
 
 interface Retention { keep_last: number | null; keep_days: number | null; source: 'pack' | 'platform' }
 interface Store { store: string; label: string; retention: Retention }
@@ -30,7 +31,7 @@ async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (res.status === 401 && typeof window !== 'undefined') window.location.href = `/auth/sign-in?redirect_url=${encodeURIComponent(window.location.pathname)}`;
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, json);
   return json;
 }
 const seg = (s: string) => encodeURIComponent(s);
