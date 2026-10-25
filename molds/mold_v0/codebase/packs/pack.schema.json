@@ -4054,6 +4054,98 @@
       },
       "additionalProperties": false
     },
+    "access_request": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "fields": {
+          "minItems": 1,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,39}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "long_text",
+                  "url",
+                  "email",
+                  "select",
+                  "multi_select"
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "options": {
+                "minItems": 1,
+                "maxItems": 30,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "max_length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4000
+              },
+              "help": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "placeholder": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "additionalProperties": false
+    },
     "console": {
       "type": "object",
       "properties": {

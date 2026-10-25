@@ -19,6 +19,7 @@
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
 import { CONSOLE_PAGES } from "./console-pages.js";
+import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
@@ -37,6 +38,25 @@ const PageSchema = z.object({
   columns: z.array(z.object({ key: z.string(), label: z.string() }).strict()).optional(),
   nav_group: z.string().optional(),
   icon: z.string().optional(),
+}).strict();
+
+/**
+ * The access-request form's own fields (mold_v0-102; src/access-request.ts, which gen-packs runs for the rules this shape
+ * cannot say: options only on a select, a key once across the build, never one of the shell's own fields).
+ */
+const AccessFieldSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, "1-40 lowercase letters, digits or _, starting with a letter"),
+  label: z.string().trim().min(1).max(80),
+  type: z.enum(ACCESS_FIELD_TYPES),
+  required: z.boolean().optional(),
+  options: z.array(z.object({ value: z.string().trim().min(1).max(80), label: z.string().trim().min(1).max(80) }).strict()).min(1).max(30).optional(),
+  max_length: z.number().int().min(1).max(4000).optional(),
+  help: z.string().trim().min(1).max(200).optional(),
+  placeholder: z.string().trim().min(1).max(120).optional(),
+}).strict();
+const AccessRequestSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  fields: z.array(AccessFieldSchema).min(1).max(MAX_ACCESS_FIELDS),
 }).strict();
 
 /** A job kind in pack.json: a program of the pack's (runner "workspace-harness", entry) or the agent-workspace runner's. */
@@ -122,6 +142,14 @@ export const PackJsonSchema = z.object({
    * The shell pages the customer console hides (mold_v0-130; src/console-pages.ts): `hide`, a list of page ids. Each leaves
    * the /app sidebar and redirects to /app; the app's profile.json `console` adds to it. The staff console is unchanged.
    */
+  /**
+   * The access-request form's own questions (mold_v0-102; src/access-request.ts): `fields`, each a key, a label and a type
+   * (text, long_text, url, email, select, multi_select), optionally required, with options for a select. The public
+   * /request-access form asks them after the shell's own (email, name, company, message), the answers are stored as
+   * access_requests.answers, and the staff console's Requests page shows them under these labels. The packs' fields are
+   * joined in pack order; the app's profile.json `access_request` replaces them.
+   */
+  access_request: AccessRequestSchema.optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)

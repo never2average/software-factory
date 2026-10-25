@@ -541,8 +541,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
   values are contracts and are not counted; each file that still carries one has a ceiling in a group that says why
-  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, access-request fields,
-  /app/usage, email copy for mold_v0-101). `npm run test:words`.
+  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, /app/usage, email copy for
+  mold_v0-101). `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
   non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.
@@ -1276,7 +1276,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   add to the product's developer population, so they are the host pack's);
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
   console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
-  contribution credits on Billing; an access request's product fields), the default icons and Open Graph image are the
+  contribution credits on Billing), the default icons and Open Graph image are the
   first product's; the shell features a host
   pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its `nav.ts` names them; a dropped host pack's console and orchestrator folders are not
   pruned from a reused build copy (gen-packs then refuses the build, which the deploy rebuilds from scratch anyway).
@@ -1434,6 +1434,29 @@ The factory holds an app's pack to it (`packs.py check`, from `mold.json` `packs
 says the same of a pack with no entry, migrations or runner (a declarative pack): any file beside its pack.json is
 refused. The shell keeps its code seam (`entry`, `loaders`, `migrations`, `runner`) for its own fixtures and other molds'
 packs; a host pack (`octillion`) keeps its code. `npm run test:pack-guide` and `packs.py --self-test` prove the refusals.
+
+**Access-request fields (mold_v0-102).** What the request form asks besides the shell's own fields (a work email, a
+name, the company, a message, and where the person came from) is declared, never the shell's: `access_request.fields` in
+a pack's pack.json (the packs' joined in pack order, a key once in a build) or in the app's `profile.json`, which then
+replaces the packs' (a host pack's `host.profile` may not set it). Each field is a `key` (lowercase letters, digits and
+`_`, never `email`, `name`, `company`, `message` or `source`), a `label`, a `type` (`text`, `long_text`, `url`, `email`,
+`select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help` and
+`placeholder`; at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
+with it and writes the build's fields to `src/access-request.generated.ts` and `web/src/config/access-request.generated.ts`
+(and copies the rules to `web/src/lib/access-request.generated.ts`), never into the profile modules, so the MCP surface
+is unchanged. The public `/request-access` form and the portal's page for no account (mold_v0-098) ask the fields after
+the company; `POST /api/access-requests` checks the answers (a required one empty, an option not offered, an address
+that is not one, an answer over its length: 400 naming the label; an address without a scheme gets https://), reads a
+declared key at the top level of the request too (a host pack's own flat form), drops a key nobody declared, and stores
+them as `access_requests.answers` (jsonb, `sql/migrations/0020_access_request_answers.sql`). The staff console's Requests
+page shows each answer under its label (an option by its label; the first `url` field as the site under the company and
+"Open <label>" in the menu), `list_access_requests` names them by label, and the operator's alert email lists them.
+The first product's own questions were columns of the table (product URL, role, team size, agents, docs, competitors,
+goal, timeline, heard from, sub-industry): the migration copies a row's values into its answers under the same keys and
+leaves the columns, which nothing in the shell writes any more (the host pack's research still reads them until it reads
+`answers`). With zero packs the form asks the shell's fields only and a request stores no answer.
+`npm run test:access-request` (`--browser` adds the console: the form's fields in order, sent and stored, and the
+Requests page's labels, axe-graded). **Not covered:** the request's own acknowledgement text is still the shell's.
 
 **Legal and crawl pages (mold_v0-109).** The app's own `profile.json` `legal` (`company_name`, `contact_email`,
 `effective_date` YYYY-MM-DD; optionally `jurisdiction`, and `terms_url` and `privacy_url`, the company's own https://

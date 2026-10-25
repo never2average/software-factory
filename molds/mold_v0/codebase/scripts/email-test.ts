@@ -236,7 +236,7 @@ try {
     const render = async (words: Parameters<typeof mail.setEmailWordsForTest>[0]) => {
       mail.setEmailWordsForTest(words);
       const id = base + ++seq * 10;
-      const r = { id, email: "ana@customer.example", company: "Acme Corp", name: "Ana Diaz", product_url: null, message: null };
+      const r = { id, email: "ana@customer.example", company: "Acme Corp", name: "Ana Diaz", message: null, answers: null };
       await mail.requestReceived(r);
       await mail.requestDeclined({ ...r, id: id + 1 }, "Not this quarter");
       await mail.requestApproved({ ...r, id: id + 2 }, { account: "Acme Corp", invited: true });
@@ -292,7 +292,7 @@ try {
     {
       const id = base + 999_000;
       mail.setEmailWordsForTest(decl);
-      await mail.requestReceived({ id, email: "ana@customer.example", company: "{Product} {runs} Ltd", name: "Ana", product_url: null, message: null });
+      await mail.requestReceived({ id, email: "ana@customer.example", company: "{Product} {runs} Ltd", name: "Ana", message: null, answers: null });
       await wait(20);
       mail.setEmailWordsForTest(undefined);
       const m = outbox().find((x) => x.idempotencyKey === `request:${id}:received`)!;
