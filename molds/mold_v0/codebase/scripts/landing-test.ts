@@ -27,6 +27,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+type Meta = { title: { absolute: string }; description: string;
+  openGraph: { title: string; description: string; siteName: string; images?: { url: string; width: number; height: number; alt: string }[] };
+  twitter?: { card: string; images?: { url: string }[] } };
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TMP = mkdtempSync(path.join(tmpdir(), "landing-test-"));
 const gen = (args: string[], cwd = ROOT) => spawnSync(process.execPath, [path.join(cwd, "scripts", "gen-packs.mjs"), ...args], { cwd, encoding: "utf8" });
@@ -311,9 +314,10 @@ try {
       assert.equal(g.status, 0, `gen-packs (${label}): ${g.stderr}`);
       return await bundle(`import { renderToStaticMarkup } from 'react-dom/server';
 import { LandingSections, SiteHeader, SiteFooter, landingMetadata } from '@/features/site/landing';
+import { legalMetadata } from '@/features/site/legal';
 const page = (access?: 'invite_only' | 'self_serve') => renderToStaticMarkup(<><SiteHeader access={access} /><main><LandingSections access={access} /></main><SiteFooter access={access} /></>);
-process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('invite_only'), meta: landingMetadata() }));
-`, path.join(TMP, `render-${label}.cjs`)) as { html: string; invite: string; meta: { title: { absolute: string }; description: string; openGraph: { title: string; description: string; siteName: string } } };
+process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('invite_only'), meta: landingMetadata(), privacy: legalMetadata('privacy') }));
+`, path.join(TMP, `render-${label}.cjs`)) as { html: string; invite: string; meta: Meta; privacy: Meta };
     };
     const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
     const order = (html: string, ids: string[]) => ids.map((id) => html.indexOf(`<section id="${id}"`));
@@ -341,6 +345,12 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.ok(!/\bworkspaces?\b/i.test(words.replace(/Open your company/g, "")), "never the neutral word where the build has its own");
     assert.ok(!n.html.includes("Source code"), "nothing offered: no source-code section");
     assert.equal(n.meta.openGraph.siteName, "Acme");
+    // mold_v0-148: a page with its own openGraph names the share image itself (it replaces the one the image route adds).
+    for (const [what, m] of [["the landing page", n.meta], ["a legal page", n.privacy]] as const) {
+      assert.deepEqual(m.openGraph.images?.map((i) => [i.url, i.width, i.height, typeof i.alt]), [["/opengraph-image", 1200, 630, "string"]], `${what}: its preview carries the share image`);
+      assert.equal(m.twitter?.card, "summary_large_image", `${what}: the large image card on X`);
+      assert.deepEqual(m.twitter?.images?.map((i) => i.url), ["/twitter-image"], `${what}: with the share image`);
+    }
     assert.match(n.invite, /href="\/request-access"[^>]*>Request access</, "invite-only (mold_v0-098): the start call is a request for access");
     assert.ok(!n.invite.includes('href="/auth/sign-up"'), "invite-only: no call leads to sign-up");
 
