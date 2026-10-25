@@ -559,7 +559,14 @@ def parse_onboarding(lines, c):
         st = {"id": sid, "label": label or _label(sid), "done_when": done}
         for p in parts[1:]:
             if p.lower().startswith("help "): st["help"] = p[5:].strip()
-            elif p: c.err(n, f"step {sid}: unknown part {p!r} (help <text>)")
+            # mold_v0-119: the words a person types to their AI client for this step (pack.json onboarding[].prompt,
+            # mold_v0-105: the generated get_started tool and the console's checklist offer them).
+            elif p.lower().startswith("prompt "):
+                v = p[7:].strip().strip('"').strip()
+                if not v or len(v) > 200 or PROMPT_BAD.search(v): c.err(n, f"step {sid}: prompt is one line of plain text, at most 200 characters, no < > or ` and no control, zero-width or direction characters")
+                elif "prompt" in st: c.err(n, f"step {sid}: prompt is given twice")
+                else: st["prompt"] = v
+            elif p: c.err(n, f"step {sid}: unknown part {p!r} (help <text>, prompt <words to type>)")
         c.lines[("step", sid)] = n
         out.append(st)
     return out
@@ -577,10 +584,16 @@ def parse_words(lines, c):
 
 TOOL = re.compile(r"[a-z][a-z0-9_]{0,63}")
 DESCRIBE_BAD = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]")
+# The shell's rules (src/pack-api.ts OnboardingStepSchema prompt, McpSettingsSchema instructions).
+PROMPT_BAD = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>`]")
+INSTRUCTIONS_BAD = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+MAX_INSTRUCTIONS = 4000
 
 def parse_mcp(lines, c):
     """pack.json `mcp` (mold_v0-060, McpSettingsSchema): prefix, include, exclude, admin only, rename <tool>: <name>,
-    describe <tool>: <text>. Tool names are the generated ones (src/mcp-catalog.ts), with or without the prefix."""
+    describe <tool>: <text>, instructions: <text> (mold_v0-119: what the MCP server tells an AI client about the app,
+    mold_v0-105; each `- instructions:` bullet is one paragraph, in order). Tool names are the generated ones
+    (src/mcp-catalog.ts), with or without the prefix."""
     out = {}
     for n, body in _bullets(lines, c, "MCP"):
         k, _, v = body.partition(":"); k = re.sub(r"\s+", " ", k.strip().lower()); v = v.strip()
@@ -603,7 +616,12 @@ def parse_mcp(lines, c):
             d = out.setdefault(what, {})
             if tool in d: c.err(n, f"{what} {tool} is given twice")
             d[tool] = v
-        else: c.err(n, f"unknown MCP setting {k!r} (prefix, include, exclude, admin only, rename <tool>: <new name>, describe <tool>: <text>)")
+        elif k == "instructions":
+            if not v or INSTRUCTIONS_BAD.search(v): c.err(n, "instructions: plain text (no control, zero-width or direction characters); one `- instructions:` bullet per paragraph"); continue
+            joined = f"{out['instructions']}\n\n{v}" if "instructions" in out else v
+            if len(joined) > MAX_INSTRUCTIONS: c.err(n, f"instructions: at most {MAX_INSTRUCTIONS} characters in all (the paragraphs so far and this one make {len(joined)})"); continue
+            out["instructions"] = joined
+        else: c.err(n, f"unknown MCP setting {k!r} (prefix, include, exclude, admin only, rename <tool>: <new name>, describe <tool>: <text>, instructions: <text>)")
     return out
 
 

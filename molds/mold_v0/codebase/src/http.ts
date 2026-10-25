@@ -5,6 +5,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { platformAnalytics, platformErrors } from "./insights.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
+import { answersOf } from "./access-request.js";
+import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 import { proxyHops } from "./proxy-trust.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
@@ -24,6 +26,7 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
+import { browserNotFound } from "./status-pages.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
@@ -172,34 +175,33 @@ export function createApp() {
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
-  app.post("/api/access-requests", express.json({ limit: "16kb" }), endpointLimit("signup", (req) => req.ip ?? "?") as express.RequestHandler, async (req, res) => {
+  // The shell's own fields (email, company, name, message, where they came from) and the answers to the build's own
+  // questions (mold_v0-102, src/access-request.ts: the packs' pack.json access_request), checked and stored as `answers`.
+  app.post("/api/access-requests", express.json({ limit: "128kb" }), endpointLimit("signup", (req) => req.ip ?? "?") as express.RequestHandler, async (req, res) => {
     const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
     const email = s(req.body?.email, 200), company = s(req.body?.company, 200);
-    const productUrl = s(req.body?.product_url, 500), message = s(req.body?.message, 4000);
-    const name = s(req.body?.name, 120), role = s(req.body?.role, 120), teamSize = s(req.body?.team_size, 20);
-    const docsUrl = s(req.body?.docs_url, 500), competitors = s(req.body?.competitors, 500), goal = s(req.body?.goal, 40), timeline = s(req.body?.timeline, 40), heardFrom = s(req.body?.heard_from, 120), subindustry = s(req.body?.subindustry, 80);
-    const agents = (Array.isArray(req.body?.agents) ? req.body.agents : []).map((x: unknown) => s(x, 40)).filter(Boolean).slice(0, 12);
+    const message = s(req.body?.message, 4000), name = s(req.body?.name, 120);
     const src = req.body?.source && typeof req.body.source === "object" ? req.body.source : {};
     const source = Object.fromEntries([...["referrer", "landing", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].map((k) => [k, s(src[k], 300)]),
       ["country", s(req.headers["x-vercel-ip-country"], 8)], ["city", s(decodeURIComponent(String(req.headers["x-vercel-ip-city"] ?? "")), 80)]].filter(([, v]) => v));
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return void res.status(400).json({ error: "Please enter a valid email." });
     if (!company) return void res.status(400).json({ error: "Please tell us your company." });
+    const { answers, problem } = answersOf(req.body, GENERATED_ACCESS_FIELDS);
+    if (problem) return void res.status(400).json({ error: problem });
     const [row] = await (await getDb()).query<{ id: number }>(
-      `INSERT INTO access_requests (email, company, product_url, message, name, role, team_size, agents, source, docs_url, competitors, goal, timeline, heard_from, subindustry)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
-      [email, company, productUrl || null, message || null, name || null, role || null, teamSize || null, agents, Object.keys(source).length ? JSON.stringify(source) : null,
-       docsUrl || null, competitors || null, goal || null, timeline || null, heardFrom || null, subindustry || null],
+      `INSERT INTO access_requests (email, company, message, name, source, answers) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [email, company, message || null, name || null, Object.keys(source).length ? JSON.stringify(source) : null, JSON.stringify(answers)],
     );
     // A host pack's own follow-up (src/host.ts onAccessRequest; the product researches the company); kept alive on Vercel.
     for (const h of hosts()) if (h.onAccessRequest) telemetry.keepAlive(h.onAccessRequest(row.id));
     // Email after the write, never in its way (src/email.ts): "we got it" to them, an alert to the operator.
-    mail.fire(mail.requestReceived({ id: row.id, email, company, name: name || null, product_url: productUrl || null, message: message || null }));
-    telemetry.capture({ distinctId: email.toLowerCase() }, "access_requested", { has_product_url: Boolean(productUrl), has_message: Boolean(message) });
+    mail.fire(mail.requestReceived({ id: row.id, email, company, name: name || null, message: message || null, answers }));
+    telemetry.capture({ distinctId: email.toLowerCase() }, "access_requested", { answers: Object.keys(answers).length, has_message: Boolean(message) });
     const hook = process.env.ACCESS_REQUEST_WEBHOOK_URL; // e.g. a Slack incoming webhook
     if (hook)
       fetch(hook, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: `New ${PROFILE.name} access request: ${company} <${email}> ${productUrl}\n${message}` }),
+        body: JSON.stringify({ text: `New ${PROFILE.name} access request: ${company} <${email}>${message ? `\n${message}` : ""}` }),
         signal: AbortSignal.timeout(5000),
       }).catch((err) => console.error("access-request webhook failed:", err.message));
     res.status(201).json({ ok: true });
@@ -781,6 +783,9 @@ export function createApp() {
       res.type("html").send(WIDGET_HTML.replace("<script>", `<script>window.__${NS.toUpperCase()}_PREVIEW__ = ${boot};</script>\n<script>`));
     });
   }
+
+  // A browser's address that is neither the console's nor this server's: the console's not-found page, a 404 (mold_v0-131).
+  app.use(browserNotFound());
 
   app.use((err: Error & { status?: number; code?: unknown; env?: unknown }, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status ?? 500;

@@ -12,6 +12,7 @@ import type { RecordAreaSpec } from '@/config/pack-nav.generated';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
+import { httpError } from '@/features/status/from-error';
 
 type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version: string | null; updated_at: string };
 type Page = { records: RecordRow[]; next: string | null };
@@ -20,7 +21,7 @@ type Detail = { record: RecordRow; links: { field: string; area: string; records
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, body);
   return body;
 }
 

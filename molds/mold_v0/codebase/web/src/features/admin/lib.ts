@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey 
 import { toast } from 'sonner';
 import { adminApi } from '@/lib/api-client';
 import { W } from '@/lib/vocabulary';
+import { isStatusError } from '@/features/status/from-error';
 
 /** GET /api/admin/onboarding<path>, cached under ['admin', path]. `keep`: show the last result while a new path loads
  * (server-paged tables), so the table does not flash empty between pages. */
@@ -14,7 +15,9 @@ export function useAdmin<T>(path: string | null, opts: { refetchInterval?: numbe
     enabled: path != null,
     staleTime: 15_000,
     refetchInterval: opts.refetchInterval,
-    placeholderData: opts.keep ? keepPreviousData : undefined
+    placeholderData: opts.keep ? keepPreviousData : undefined,
+    // Signed out, refused or not found does not change on a retry: the status page shows at once (mold_v0-131).
+    retry: (n, e) => !isStatusError(e) && n < 3
   });
 }
 

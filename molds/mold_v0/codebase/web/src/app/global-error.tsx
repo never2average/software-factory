@@ -1,6 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
+import { profile } from '@/config/profile.generated';
+import { STATUS_ACTIONS, statusText } from '@/features/status/words';
+
+// The standard status words (mold_v0-131), here without the stylesheet.
+const T = statusText('error');
 
 // global-error replaces the root layout when it errors, so globals.css is not
 // loaded here — styles must be inline and self-contained.
@@ -17,6 +22,7 @@ export default function GlobalError({
 
   return (
     <html lang='en'>
+      <head><title>{T.title}</title></head>
       <body
         style={{
           margin: 0,
@@ -27,11 +33,10 @@ export default function GlobalError({
           fontFamily: 'system-ui, sans-serif'
         }}
       >
-        <div style={{ textAlign: 'center', padding: '1rem' }}>
-          <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Something went wrong</h1>
-          <p style={{ color: '#6b7280', marginBottom: '1.25rem' }}>
-            An unexpected error occurred. Please try again.
-          </p>
+        <main style={{ textAlign: 'center', padding: '1rem' }} data-status-page='error' data-status-code={T.code}>
+          <p style={{ fontWeight: 600, marginBottom: '1rem' }}>{profile.name}</p>
+          <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>{T.title}</h1>
+          <p style={{ color: '#6b7280', marginBottom: '1.25rem' }}>{T.body}</p>
           <button
             onClick={() => reset()}
             style={{
@@ -43,9 +48,9 @@ export default function GlobalError({
               cursor: 'pointer'
             }}
           >
-            Try again
+            {STATUS_ACTIONS.retry}
           </button>
-        </div>
+        </main>
       </body>
     </html>
   );

@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { httpError } from '@/features/status/from-error';
 
 interface Key {
   id: number; name: string; key_prefix: string; kind: 'member' | 'person' | 'account'; user_id: string | null;
@@ -30,7 +31,7 @@ async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, json);
   return json;
 }
 
