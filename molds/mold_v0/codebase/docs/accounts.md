@@ -11,7 +11,7 @@ record for none of it, except the product data it already had:
 | Ops observability: traces, latency, errors, alerts | **New Relic** over OpenTelemetry (any OTLP backend works) | `src/otel.ts`, a span per tool call in `src/server.ts` | nothing |
 | Admin console (`/admin`) | none: reads the rows above | `src/admin.ts`, `web/` | a landing-page request's `status`, `org_id`, `decided_at` |
 | Customer page (`/app`): setup check, training, usage, team, billing | none | `src/app.ts`, `web/` | nothing (Clerk holds the session) |
-| Journeys: onboarding and re-engagement flows, email, Slack | **PostHog Workflows** | `src/journeys.ts` (in-chat and /app delivery) | a queue of pending tips |
+| Onboarding and re-engagement flows (a host pack's), email, Slack | **PostHog Workflows** | `src/journeys.ts` (in-chat and /app delivery) | a queue of pending tips |
 | Platform admins (who may use `/admin`) | `APP_PLATFORM_ADMINS` (Clerk-verified addresses or domains) or Clerk `public_metadata.platform_admin` | `src/admin-auth.ts` | nothing |
 | Usage limits inside an account: budget split across teams and people, rollout, throughput | the plan's budget from Stripe; the policy in Postgres (the app enforces it) | `src/limits.ts`, `/app` Limits | policy, teams, per-person settings |
 | Context: company, person, product | Postgres (it is the product's own data) | `src/context.ts`, `/app` Context | company and personal context; product profiles as before |
@@ -204,7 +204,7 @@ How the app uses it:
    not Clerk Billing (which has no usage-based pricing and is not synced with Stripe Billing).
 
 During the beta, leave `APP_REQUIRE_SUBSCRIPTION` unset: accounts without a plan get
-`APP_ORG_MONTHLY_BUDGET_USD`. With it set to `1`, new simulations need an active or trialing subscription.
+`APP_ORG_MONTHLY_BUDGET_USD`. With it set to `1`, new runs need an active or trialing subscription.
 
 ### PostHog (product analytics)
 
@@ -242,7 +242,7 @@ Useful alerts: `/mcp` p95 latency, the error rate on `mcp.tool *` spans, 5xx on 
 | | Admin panel `/admin` | Customer portal `/app` |
 |---|---|---|
 | For | platform staff (platform admins), across every account | each account's people; account admins get management controls |
-| Sections | Overview, Requests, Accounts, Journeys, Analytics | Setup, Usage, Context, Team, Limits, Billing |
+| Sections | Overview, Requests, Accounts, Analytics (and a host pack's own sections) | Setup, Usage, Context, Team, Limits, Billing |
 | Sign-in | Clerk (platform admins only); admin token for scripts | Clerk; the account is the active Clerk organization |
 | Analytics | every account: adoption, retention, accounts at risk, health (replicated from the event log; PostHog and New Relic hold the full record) | their own team's usage only |
 
@@ -270,7 +270,7 @@ URL), or, signed in as an owner, `POST /api/admin/tokens {label, role, days}`.
 
 PostHog is the system of record for product analytics and New Relic for traces. `/admin` → Analytics replicates what
 staff check daily (active accounts and people with change vs the previous period, daily activity, weekly retention
-by account cohort, tool adoption, client mix, accounts at risk, and health: error rate, tool latency, simulation and
+by account cohort, tool adoption, client mix, accounts at risk, and health: error rate, tool latency, run and
 session outcomes, onboarding failures, gateway errors, model cost) from the event log the app already keeps, so it
 matches the account pages and works before PostHog is connected. `POSTHOG_PROJECT_URL` and `NEW_RELIC_DASHBOARD_URL`
 add links to the full record. Customers see only their own team's usage (`/app` → Usage).
@@ -282,28 +282,28 @@ An account's admins decide how the plan's monthly model budget is used:
   people, each adjustable up or down; people in a team with a budget split that budget), or *custom caps* per person
   with a default.
 - **Teams:** a team's budget is split among its people and caps their combined spend in every mode.
-- **Rollout:** whether new members may launch simulations, and a per-person switch. Reports and transcripts stay open.
-- **Throughput:** simulations running at once (per person, team default or account default) and agent sessions per
+- **Rollout:** whether new members may launch runs, and a per-person switch. Reports and transcripts stay open.
+- **Throughput:** runs in progress at once (per person, team default or account default) and agent sessions per
   launch.
 
-Enforced when a simulation starts (a clear message names the limit and where to change it) and while an adaptive run
+Enforced when a run starts (a clear message names the limit and where to change it) and while an adaptive run
 samples more (it stops early when its launcher's allowance or team budget runs out). Spend per person is the model cost
-of the simulations they launched this month; tokens are shown alongside. Limits apply to people signed in with
+of the runs they launched this month; tokens are shown alongside. Limits apply to people signed in with
 Clerk; connector keys draw from the account's pool.
 
 ## Context (/app → Context)
 
-- **Company** (admins): what the company does, its developers, competitors to always track, internal names, notes.
+- **Company** (admins): what the company does, its developers, the other products it is compared with, internal names, notes.
 - **You** (each person): role, the product they work on most, what they care about, preferred answer style.
-- **Products** (admins): the product profile (names, packages, domains, competitors) and its coding tasks, which can
+- **Products** (admins): the product profile (names, packages, domains, the products it is compared with) and its coding tasks, which can
   be retired or brought back.
 
 Company and personal context are added to the MCP server's instructions on every connection, as background, so the AI
 client tailors answers without being told again. Company context also goes to onboarding research.
 
-## Journeys
+## Onboarding flows
 
-See **docs/journeys.md** (the host pack's docs): build journeys in PostHog Workflows; the app delivers their in-chat and
+See **docs/journeys.md** (the host pack's docs): build these flows in PostHog Workflows; the app delivers their in-chat and
 `/app` tips.
 
 ## Day to day

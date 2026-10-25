@@ -3,7 +3,7 @@
 // PROSE in the shell's base text. Base text writes a placeholder the build's words fill ({run}, {Runs}: src/words.ts,
 // src/vocabulary.ts, web/src/lib/vocabulary.ts) or leaves the concept to the host pack that has it.
 //
-// Text is what code hands to a reader: a string literal, a template literal's text or JSX text of a source file
+// Text is what code hands to a reader (and, since mold_v0-113, every line of the staff docs, docs/*.md, outside a fenced block): a string literal, a template literal's text or JSX text of a source file
 // (comments, identifiers, imports and regular expressions are not). Inside that text a word counts only as prose:
 //   - not part of an identifier or a path (`simulation_id`, `run_simulation`, `simulationId`, `/simulations/`,
 //     `simulations.created_by`, `simulations(`);
@@ -71,6 +71,17 @@ export function checkConcepts(root: string, c: Concepts, only?: (rel: string) =>
     if (!scan.some((r) => r.test(rel)) || skip.some((r) => r.test(rel)) || (only && !only(rel))) continue;
     scanned++;
     const src = readFileSync(path.join(root, rel), "utf8");
+    // Markdown (mold_v0-113: the staff docs, which the docs answers and /admin/docs serve): every line outside a fenced
+    // block is prose; `code spans` and placeholders are blanked by proseHits as in source text.
+    if (rel.endsWith(".md")) {
+      let fence = false;
+      src.split("\n").forEach((line, i) => {
+        if (/^\s*(```|~~~)/.test(line)) { fence = !fence; return; }
+        if (fence) return;
+        for (const word of proseHits(line, c.words)) hits.push({ file: rel, line: i + 1, word, text: line.trim().replace(/\s+/g, " ").slice(0, 140) });
+      });
+      continue;
+    }
     const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
     const add = (node: TsNode, text: string) => {
       for (const word of proseHits(text, c.words))

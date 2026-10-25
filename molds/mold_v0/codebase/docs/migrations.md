@@ -24,7 +24,7 @@ transaction-level advisory lock and re-read what is applied after taking it, so 
 statements and guarded backfills) on start. `0001_baseline.sql` is that file, byte for byte. A database created the
 old way has no `schema_migrations` table; the first `db:migrate` (or boot) runs the baseline once more, which changes
 nothing that is already there and adds whatever an older release had not created yet, then records it.
-Repairs and seed rows in the baseline (zero limits, persona copies, sandbox error splits, model prices) used to re-run
+Repairs and seed rows in the baseline (zero limits, agent profile copies, sandbox error splits, model prices) used to re-run
 on every boot; now they run once. A repair or seed that must happen again goes in a new migration (or in code).
 `npm run test:migrations` proves it: databases built by the old schema-on-boot path and by the migrations as they were
 before mold_v0-049 (recorded up to 0001, 0003, 0008, 0013 and 0016), each with rows in every table, are migrated, and every
@@ -34,7 +34,7 @@ applies nothing; an edited migration is refused. `MIGRATIONS_PG_URL` runs the sa
 racing to migrate).
 
 **The product's tables left the base schema (mold_v0-049).** `0001_baseline.sql` was the product's whole schema; its
-own tables (products, scenarios, simulations and their sessions, personas, tasks and the rest) moved to its host pack's
+own tables (its products, run definitions, runs and their sessions, agent profiles, tasks and the rest) moved to its host pack's
 migrations, under the names they had (MOLD.md "Host packs": `host.schema`), so a database built with no packs has none
 of them. Three merged files were rewritten once for it, the only time: `0001_baseline` (the shell's tables only),
 `0003_row_level_security` and `0009_usage_and_limits` (the gateway's session rule through `octillion_session_org()`, so

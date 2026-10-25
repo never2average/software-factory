@@ -45,13 +45,13 @@ YOUR POLICY
   Inside each budget, people  [ get an equal share                ▾ ]
      Each budget is split between the people in it who can launch. It goes down when someone joins.
      Today: Platform $25.00 each (4) · Mobile $26.67 each (3) · Everyone else $24.00 each (5)
-  [ Everyone on the account ▾ ]  can launch simulations.
+  [ Everyone on the account ▾ ]  can launch runs.
 ──────────────────────────────────────────────────────────────────────────────────────────────
 RUN LIMITS  (these limit size and speed, not who gets which dollars)
-  Each person can have        [    ]  simulations running at once.   placeholder "no limit"
-  Each simulation can use up to [ 20 ] agent sessions.   The app's maximum is 100. Applies to
+  Each person can have        [    ]  runs in progress at once.   placeholder "no limit"
+  Each run can use up to [ 20 ] agent sessions.   The app's maximum is 100. Applies to
                                                          every batch, including adaptive runs.
-  Each simulation can spend up to [$     ]   placeholder "no limit"
+  Each run can spend up to [$     ]   placeholder "no limit"
                                   Adaptive runs stop adding sessions once a run reaches this.
                                   ≈ 16 sessions at this month's average of $1.24 per session.
 ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -123,14 +123,14 @@ WHO GETS WHAT                                                     Showing your u
 | P4 | "Everyone else shares the remaining **$R**." With no team rows: "Everyone shares **$R**." With one person: "You can spend **$R**." | computed | R < 0 shows in red: "Team budgets and the buffer are ${-R} more than your allowance." | R = cap − reserve − Σ team budgets |
 | P5 | "Inside each budget, people [▾]". Options and the hint under each: **"share it freely"**: "Anyone can use the whole budget until it runs out. One person can use all of it." **"get an equal share"**: "Each budget is split between the people in it who can launch. It goes down when someone joins." **"can each spend up to a set amount"**: "Everyone gets the same personal limit. A budget still stops at its total." A live line follows: "Today: Platform $25.00 each (4) · …" (from the preview) | select. Existing accounts keep their mode; new accounts get "get an equal share" | — | `policy.mode`: pool / even / custom |
 | P5a | (only with "set amount") "Each person can spend up to [$ ] a month." Live note when it exceeds a budget: "7 × $60 = $420 is more than Everyone else's $270, so the budget runs out first." (informational) | money, **required**, prefilled with nothing | $0.01 ≤ v ≤ cap. When empty: "Enter an amount, or choose 'share it freely'." | `policy.default_cap_usd` |
-| P6 | "[▾] can launch simulations." Options: **"Everyone on the account"** / **"Only people I've allowed"**. With the second option, the hint reads "{n} people are allowed individually. Allow people on People →" | select, default Everyone | Switching to the second option adds this to the save bar and Review: "This stops {n} people who haven't been allowed individually, including people already here." | `policy.new_members_can_run`. Only the copy changes; there is no backfill |
+| P6 | "[▾] can launch runs." Options: **"Everyone on the account"** / **"Only people I've allowed"**. With the second option, the hint reads "{n} people are allowed individually. Allow people on People →" | select, default Everyone | Switching to the second option adds this to the save bar and Review: "This stops {n} people who haven't been allowed individually, including people already here." | `policy.new_members_can_run`. Only the copy changes; there is no backfill |
 
 ### 3.4 Run limits
 | # | Exact copy | Control / default | Validation | Maps to |
 |---|---|---|---|---|
-| R1 | "Each person can have [ ] simulations running at once." Hint: "Counts whole simulations, not agent sessions. Teams and people can set their own; the most specific one wins. ({n} do)" | integer, empty = "no limit" (as today; no silent default) | 1–10000. 0 is rejected with "Use 'can launch' to stop launches." | `policy.max_concurrent_runs` |
-| R2 | "Each simulation can use up to [ ] agent sessions." Side note: "The app's maximum is {N}." Hint: "Applies to every batch, including adaptive runs." | integer, empty = the app's maximum (the placeholder shows N) | 1 ≤ v ≤ `server_max_sessions`. 0 is rejected | `policy.max_sessions_per_run` + new `server_max_sessions` |
-| R3 | "Each simulation can spend up to [$ ]." Hint: "Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish." Live: "≈ {n} sessions at this month's average of ${avg} per session." With fewer than 20 sessions this month: "Not enough runs yet to estimate." | money, empty = "no limit" | $0.01–cap. A warning (not an error) when it is below one average session | **new** `usage_policies.max_run_usd` |
+| R1 | "Each person can have [ ] runs in progress at once." Hint: "Counts whole runs, not agent sessions. Teams and people can set their own; the most specific one wins. ({n} do)" | integer, empty = "no limit" (as today; no silent default) | 1–10000. 0 is rejected with "Use 'can launch' to stop launches." | `policy.max_concurrent_runs` |
+| R2 | "Each run can use up to [ ] agent sessions." Side note: "The app's maximum is {N}." Hint: "Applies to every batch, including adaptive runs." | integer, empty = the app's maximum (the placeholder shows N) | 1 ≤ v ≤ `server_max_sessions`. 0 is rejected | `policy.max_sessions_per_run` + new `server_max_sessions` |
+| R3 | "Each run can spend up to [$ ]." Hint: "Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish." Live: "≈ {n} sessions at this month's average of ${avg} per session." With fewer than 20 sessions this month: "Not enough runs yet to estimate." | money, empty = "no limit" | $0.01–cap. A warning (not an error) when it is below one average session | **new** `usage_policies.max_run_usd` |
 
 ### 3.5 Exceptions
 - **Heading:** "{n} people and {m} teams have their own settings". With none: "Nobody has their own settings."
@@ -231,15 +231,15 @@ Every message ends with: "Ask {admin names} to change Budget rules on the Billin
 
 | Code | Message |
 |---|---|
-| no_allowance | "Your account has no prepaid allowance this month, so simulations can't run. Contact the app." (no admin suffix) |
+| no_allowance | "Your account has no prepaid allowance this month, so runs can't run. Contact the app." (no admin suffix) |
 | account_cap | "Your account has used its ${cap} for {Month}." |
-| launch_access | "You haven't been allowed to launch simulations yet. Reports and transcripts stay available." |
+| launch_access | "You haven't been allowed to launch runs yet. Reports and transcripts stay available." |
 | person_limit | "You've used your ${a} for {Month} (${s} spent)." |
 | team_budget | "The {Team} team has used its ${b} for {Month}." |
 | rest_pot | "The shared ${R} for people outside a team budget is used up for {Month}." |
 | buffer | "Your account has reached the part of its allowance available for launches (${cap−reserve} of ${cap}). The rest is held back for runs that go over." |
-| runs_at_once | "You have {n} simulations running; you can have {limit} at once (set for {you / your team / the account}). Wait for one to finish." |
-| run_sessions | "This simulation needs {p} agent sessions; the limit is {limit}." |
+| runs_at_once | "You have {n} runs in progress; you can have {limit} at once (set for {you / your team / the account}). Wait for one to finish." |
+| run_sessions | "This run needs {p} agent sessions; the limit is {limit}." |
 | (mid-run) | On the run page: "Stopped adding sessions at {n}: {reason sentence}. Results so far are kept." |
 
 **Member surfaces.** Members never see this tab.

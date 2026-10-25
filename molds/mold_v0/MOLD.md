@@ -540,7 +540,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   help are written this way; contact lines name `{product}`. `npm run check:vocabulary` also runs the concept-word
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
-  values are contracts and are not counted; each file that still carries one has a ceiling in a group that says why
+  values are contracts and are not counted; since mold_v0-113 the staff docs (`docs/*.md`, which `/admin/docs` and the
+  docs answers serve) are read too, every line outside a fenced block, and say the engine's units in neutral words; each file that still carries one has a ceiling in a group that says why
   and how it goes (host-gated text, the host's tables, the account funnel, admin sections, /app/usage, email copy for
   mold_v0-101). `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
