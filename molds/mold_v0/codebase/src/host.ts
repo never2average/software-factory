@@ -220,6 +220,12 @@ export function engineConfig<T = unknown>(id: string): T {
 }
 /** Every pack's server config from its pack.json (mold_v0-140), in pack order; none with zero packs. */
 export const packConfigs = (): readonly PackConfig[] => packConfigList;
+/** The build's Setup page config (mold_v0-140): the pack.json `setup` of the one pack that declares it (gen-packs allows one), else none. */
+export const setupConfig = (): SetupConfig => packConfigs().find((c) => c.setup)?.setup ?? {};
+/** The Setup page's workflow groups (pack.json setup.workflow, mold_v0-140), in order: what using the product fully means. */
+export const setupWorkflow = (): readonly { id: string; label: string; tools: readonly string[]; prompt: string }[] => setupConfig().workflow ?? [];
+/** Every pack's pack.json mcp.error_hints (mold_v0-140), in pack order: the first whose pattern (any case) a tool error matches gives its fix. */
+export const errorHints = (): readonly { match: string; text: string }[] => packConfigs().flatMap((c) => c.error_hints ?? []);
 /** Tests only: the packs' server config as a build would carry it. */
 export function setPackConfigsForTest(list: readonly PackConfig[]) { packConfigList = list; }
 /** The registered host packs, in pack order (none with zero packs). */

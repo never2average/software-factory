@@ -245,7 +245,7 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     invited: minDate(invites.map((i) => i.created_at)),
     joined: minDate(members.map((m) => m.created_at)),
     connected: f.first_seen, first_call: f.first_call_at,
-    ...(eng ? { onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at }
+    ...(eng ? engineStagesAt(f)
       : Object.fromEntries(STAGES.slice(SHELL_STAGE_COUNT).map((s) => [s.id, steps[s.id] ?? null]))),
   };
   let i = STAGES.length - 1;
@@ -298,6 +298,15 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     prepaid_allowed: Boolean(f.prepaid_allowed), allowance_usd: override, attention,
   };
 }
+/**
+ * When an account reached each of the session engine's stages (ENGINE_STAGES: its products, simulations and report), from
+ * its facts; the Setup page's steps that wait on a stage (pack.json setup.steps done_when "stage:<id>", src/app.ts) read
+ * the same.
+ */
+export const engineStagesAt = (f: Pick<OrgFacts, "onboarded_at" | "first_sim_at" | "first_report_at">): Record<string, Date | string | null> =>
+  ({ onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at });
+/** The session engine's stage ids, in order (a Setup step may wait on one: pack.json setup.steps done_when "stage:<id>"). */
+export const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"] as const;
 /** The session engine's attention messages (a host pack's onboarding and simulations), as they always were. */
 const ENGINE_ATTENTION = {
   get failed() { return "Product onboarding failed"; },

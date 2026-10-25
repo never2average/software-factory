@@ -82,6 +82,32 @@ const AdminMcpSchema = z.object({
   }).strict()).min(1).max(20)).optional(),
 }).strict();
 
+const stepId = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _");
+/**
+ * A host pack's Setup page (mold_v0-140; src/app.ts setup, src/host.ts SetupConfig): its own `steps` among the shell's
+ * (each after a step, done when the person read a resource whose address starts with a prefix, `resource:<prefix>`, or
+ * the account reached a session-engine stage, `stage:onboarded|simulated|reported`), the shell's steps in its words
+ * (`shell_steps`: joined, connected, tools, first_call), the note shown for a step that starts work to someone who may
+ * not (`viewer_note`, with `launch` on the step), and the `workflow`: the tool groups that make up using it fully.
+ */
+const ShellStepWords = z.object({ label: plain(120).optional(), help: plain(600).optional(), prompt: plain(400).optional() }).strict();
+const SetupSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  steps: z.array(z.object({
+    $comment: z.string().max(2000).optional(),
+    id: stepId, label: plain(120), help: plain(600), help_text_only: plain(600).optional(), prompt: plain(400).optional(),
+    optional: z.boolean().optional(), launch: z.boolean().optional(), after: stepId.optional(),
+    done_when: z.string().regex(/^(resource:[a-z][a-z0-9+.-]*:\/\/[^\s]{0,200}|stage:[a-z][a-z0-9_]{1,30})$/, "resource:<address prefix> (ui://...) or stage:<id>"),
+  }).strict()).max(12).optional(),
+  shell_steps: z.object(Object.fromEntries(["joined", "connected", "tools", "first_call"].map((id) => [id, ShellStepWords.optional()]))).strict().optional(),
+  viewer_note: plain(300).optional(),
+  workflow: z.array(z.object({
+    id: stepId, label: plain(80),
+    tools: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's name")).min(1).max(40),
+    prompt: plain(400),
+  }).strict()).max(20).optional(),
+}).strict();
+
 /** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
 const NavItemSchema = (area: "/app" | "/admin") => z.object({
   title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
@@ -232,6 +258,8 @@ export const PackJsonSchema = z.object({
   access_request: AccessRequestSchema.optional(),
   /** Global settings on /admin (mold_v0-140; src/settings.ts): groups and pure-data settings (SettingsSchema above). */
   settings: SettingsSchema.optional(),
+  /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
+  setup: SetupSchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
   admin_mcp: AdminMcpSchema.optional(),
   console: z.object({

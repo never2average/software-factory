@@ -1269,6 +1269,15 @@ export const McpSettingsSchema = z.object({
   instructions: z.string().trim().min(1).max(4000)
     .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text: no control or direction characters (line breaks are fine)").optional(),
   prompts: z.array(McpPromptSchema).max(50).refine((l) => new Set(l.map((p) => p.name)).size === l.length, "each prompt name once").optional(),
+  /**
+   * Plain-language fixes for the tool errors people hit (mold_v0-140; the Setup page's recent problems, src/app.ts):
+   * `match`, a pattern of the error's text (a regular expression, any case), and `text`, what to do. The first that
+   * matches, in pack order, is shown under the error.
+   */
+  error_hints: z.array(z.object({
+    match: z.string().min(1).max(200).refine((m) => { try { new RegExp(m, "i"); return true; } catch { return false; } }, "a regular expression that compiles"),
+    text: z.string().trim().min(1).max(400).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line"),
+  }).strict()).max(30).optional(),
 }).strict();
 export type McpSettings = z.output<typeof McpSettingsSchema>;
 

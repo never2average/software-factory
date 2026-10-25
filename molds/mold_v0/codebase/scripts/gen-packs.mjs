@@ -1406,6 +1406,10 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
  * `mcp.error_hints` (a host pack's: setupConfigOf). Written only when a pack declares one, so a build without writes what
  * it did.
  */
+// The shell's Setup steps and the session engine's stages a host pack's setup.steps may name (src/app.ts, src/admin.ts).
+const SHELL_SETUP_STEPS = ["joined", "connected", "tools", "first_call"];
+const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
+let setupOwner = null;
 const packConfig = [];
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
@@ -1449,9 +1453,44 @@ const packConfig = [];
   }
   refuse();
 }
-/** A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. */
+/**
+ * A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. `setup` is a
+ * host pack's, one per build (a pack's own checklist steps are pack.json onboarding): its steps' ids are new, each placed
+ * after a step there is, a `stage:` step only in a build with the session engine (its host tables), a `launch` step only
+ * with a viewer_note; its workflow's group ids and tools are each once.
+ */
 function setupConfigOf(p) {
-  return {};
+  const at = `packs/${p.id}/pack.json`, out = {};
+  const hints = p.json?.mcp?.error_hints;
+  if (hints?.length) out.error_hints = hints;
+  const st = p.json?.setup;
+  if (!st) return out;
+  if (!p.host) { fail(at, "setup is a host pack's (its Setup page): a pack's own checklist steps are pack.json onboarding"); return out; }
+  if (setupOwner) { fail(at, `setup: host pack ${setupOwner} declares the Setup page too: one pack's`); return out; }
+  setupOwner = p.id;
+  const engine = ["products", "scenarios", "simulations", "agent_sessions"].every((t) => packs.some((x) => (x.schema?.tables ?? []).includes(t)));
+  const ids = new Set(SHELL_SETUP_STEPS);
+  for (const [i, s] of (st.steps ?? []).entries()) {
+    const w = `${at} setup.steps[${i}] ${s.id}`;
+    if (ids.has(s.id)) fail(w, SHELL_SETUP_STEPS.includes(s.id) ? "is one of the shell's steps: give its words in setup.shell_steps" : "is there twice");
+    if (s.after !== undefined && !ids.has(s.after)) fail(w, `after: ${s.after} is not a step before it (${[...ids].join(", ")})`);
+    ids.add(s.id);
+    if (s.done_when.startsWith("stage:")) {
+      const stage = s.done_when.slice("stage:".length);
+      if (!engine) fail(w, "done_when stage: the build has no session engine (its tables in a host pack's host.schema): a pack's own steps are pack.json onboarding");
+      else if (!ENGINE_STAGE_IDS.includes(stage)) fail(w, `done_when ${s.done_when}: not one of the session engine's stages (${ENGINE_STAGE_IDS.join(", ")})`);
+    }
+    if (s.launch && st.viewer_note === undefined) fail(w, "launch: give setup.viewer_note, what someone who may not launch reads in its place");
+  }
+  const groups = new Set(), tools = new Map();
+  for (const g of st.workflow ?? []) {
+    if (groups.has(g.id)) fail(at, `setup.workflow ${g.id}: there twice`);
+    groups.add(g.id);
+    for (const t of g.tools) { if (tools.has(t)) fail(at, `setup.workflow ${g.id}: tool ${t} is in group ${tools.get(t)} too`); else tools.set(t, g.id); }
+  }
+  const strip = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== "$comment"));
+  out.setup = { ...strip(st), ...(st.steps ? { steps: st.steps.map(strip) } : {}) };
+  return out;
 }
 
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
