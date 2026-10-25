@@ -1784,7 +1784,8 @@ a release from before the console builds only the services that release has.
 with its packs; mold_v0-021): every lane has a harness, and every lane prints **a row per pack** (the shell's, each host
 pack's, each pack's), so one pack's failure is visible on its own. *functional* runs the product's
 `npm run typecheck`, `npm run test:migrations` (embedded throwaway databases only; `MIGRATIONS_PG_URL` unset), `npm run
-smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep) and `npm run mcp:check` against
+smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep; each host pack's own smoke
+runs with `APP_PROXY_HOPS=1`, as every deploy sets it, unless the environment sets it: mold_v0-149) and `npm run mcp:check` against
 the deployed address, then `packs.tools` (each pack's MCP tools listed for a fresh workspace's owner and its read-only,
 argument-free tools called, on an embedded database); *context* runs `npm run check:tenant-sql` and `npm run check:rls`
 on a throwaway embedded database (the deployed database is proven by the deploy itself, above), then `packs.tables`

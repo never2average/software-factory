@@ -106,12 +106,15 @@ try {
     assert.deepEqual(tools.slice(0, own.length).sort(), [...own].sort(), "the host packs' own tools come first");
     if (!hostIds.length) assert.deepEqual(own, [], "with no host pack the shell has no tool of its own");
     const instructions = A.getInstructions() ?? "";
-    const { packInstructions } = await import("../src/mcp-tools.js");
-    if (!PROFILE.mcp_instructions && !hosts().some((h) => h.mcp?.instructions)) {
-      const { SHELL_INSTRUCTIONS } = await import("../src/server.js");
-      // mold_v0-105: a pack's pack.json mcp.instructions come before the shell's.
-      const lead = packInstructions() ?? SHELL_INSTRUCTIONS;
-      assert.ok(instructions.startsWith(lead), "with no instructions of the profile's or a host pack's, the packs' own, else the shell's");
+    // The lead (src/server.ts leadInstructions): the profile's, else a host pack's (its entry's, else its pack.json
+    // mcp.instructions since mold_v0-137), else the other packs' (mold_v0-105), else the shell's. mold_v0-149: this read
+    // only the non-host packs' and so failed every build whose host pack declares its instructions in pack.json.
+    const { leadInstructions, SHELL_INSTRUCTIONS } = await import("../src/server.js");
+    const lead = leadInstructions();
+    assert.ok(instructions.startsWith(lead), "the instructions start with the profile's, a host pack's, the packs' own, else the shell's");
+    if (!PROFILE.mcp_instructions && !hostIds.length) {
+      const { packInstructions } = await import("../src/mcp-tools.js");
+      assert.equal(lead, packInstructions() ?? SHELL_INSTRUCTIONS, "with no profile instructions and no host pack: the packs' own, else the shell's");
     }
     await A.close();
     ok(`MCP over HTTP with a workspace key: ${tools.length} tool(s), server ${info?.name}`);
@@ -210,8 +213,12 @@ for (const p of hostPackDirs()) {
   const own = hostScript(`${p.id}/smoke`);
   if (!own) continue;
   console.log(`\n---------- ${p.id}: its own smoke test (${path.relative(ROOT, own.file)}) ----------`);
-  // With the embedded database, each host pack's smoke test gets a fresh one, as the shell's did.
-  const env = ENV0.DATABASE_URL ? ENV0 : { ...ENV0, PGLITE_DIR: mkdtempSync(path.join(tmpdir(), `smoke-${p.id}-`)) };
+  // With the embedded database, each host pack's smoke test gets a fresh one, as the shell's did. It runs as every deploy
+  // configures the API (mold_v0-149; molds/mold_v0/mold.json APP_PROXY_HOPS 1 on Vercel and behind a server's Caddy):
+  // one proxy trusted, so a smoke that plays distinct callers through X-Forwarded-For is limited per caller, as live,
+  // not as one address. A value the environment already sets wins.
+  const hops = ENV0.APP_PROXY_HOPS ? {} : { APP_PROXY_HOPS: "1" };
+  const env = ENV0.DATABASE_URL ? { ...ENV0, ...hops } : { ...ENV0, ...hops, PGLITE_DIR: mkdtempSync(path.join(tmpdir(), `smoke-${p.id}-`)) };
   const r = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), ["--env-file-if-exists=.env", own.file], { cwd: ROOT, stdio: "inherit", env });
   if (r.status !== 0) { failed++; console.error(`${p.id}: its smoke test failed (${r.status})`); }
 }
