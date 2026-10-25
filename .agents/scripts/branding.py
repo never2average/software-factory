@@ -4,6 +4,9 @@
   branding.py <app_id> set --name "Acme Ops" [--color #1F6F5C] [--logo path.png|.svg] [--tagline "..."]
                                             the whole brand from three inputs; everything else is derived
   branding.py --product <product_id> set …  the same, onto a product in state/products.json (future stamps)
+  branding.py <app_id> share-image <file.png>|none
+                                            the brand's own share image (what a shared link shows; mold_v0-093), for a
+                                            mold whose rules take one: recorded with its sha256, copied by `prepare`
   branding.py <app_id> show                 this app's brand and the palette it derives
   branding.py <app_id> preview              build/<app_id>/brand-preview.html: sign-in tile and palette, light and dark
   branding.py <app_id> prepare [--force]    build/<app_id>/ = mold copy + brand overlay; prints the path
@@ -35,6 +38,13 @@ app its own build directory instead of sharing one.
 The brand lives in the application's own state (`surface.branding`), complete, with the icon inline.
 Products carry a `brand` that intake copies in at stamp time; nothing points at a shared file, so an
 app is readable on its own and cannot change under it.
+
+THE SHARE IMAGE (mold_v0-093). A mold whose rules.json has `share_image` draws the picture a shared link shows from
+the app's words and brand. A brand may bring its own instead: `share-image brands/<name>/share-image.png` checks it is a
+PNG of the rules' size and records the file and its sha256 in the app's brand (`share_image`), touching nothing else, so
+an app with no brand of its own (a host pack's product, which keeps its pack's names) can have just that. `prepare`
+copies it, byte for byte, to the rules' `file` in the build copy (refusing a file that changed since it was recorded)
+before the mold's generator runs; `check` finds a copy without it or with another picture.
 
 What a brand can change: the product name (browser tab, sign-in wordmark and footer, onboarding
 copy, every outgoing email), the tagline and description, the app icon and sign-in mark, and the
@@ -233,6 +243,67 @@ def logo_to_icon_svg(path):
     else:
         sys.exit(f"logo must be .png, .jpg, .webp or .svg, not {ext or 'a file with no extension'}")
     return f'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">{inner_el}</svg>'
+
+def share_image_problem(path, spec):
+    """A sentence when the file cannot be this mold's share image (rules.json share_image: a PNG of exactly width x height,
+    at most max_bytes), else ''."""
+    p = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    if not os.path.isfile(p) or os.path.islink(p): return f"share image not found (or a link): {path}"
+    raw = open(p, "rb").read()
+    if len(raw) > spec["max_bytes"]: return f"the share image is {len(raw) // 1024} KB; keep it under {spec['max_bytes'] // 1024} KB"
+    if len(raw) < 24 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR": return f"the share image must be a PNG: {path}"
+    w, h = int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+    if (w, h) != (spec["width"], spec["height"]): return f"the share image is {w}x{h}; it must be {spec['width']}x{spec['height']}"
+    return ""
+
+def sha256_of(path):
+    import hashlib
+    return hashlib.sha256(open(path if os.path.isabs(path) else os.path.join(ROOT, path), "rb").read()).hexdigest()
+
+def set_share_image(app_id, arg):
+    """`share-image <file>|none`: the brand's own share image, recorded in the app's brand and nothing else changed."""
+    p = os.path.join(ST, "application", app_id, "application.json"); doc = load(p)
+    spec = load(os.path.join(ROOT, "molds", str(doc.get("mold_id")), "branding", "rules.json")).get("share_image")
+    if not spec: sys.exit(f"{app_id}: mold {doc.get('mold_id')} takes no share image of a brand's own (its rules.json has no share_image)")
+    surface = doc.setdefault("surface", {}); b = dict(surface.get("branding") or {})
+    if arg == "none":
+        b.pop("share_image", None)
+        msg = f"app {app_id}: no share image of its own; the console draws one from the app's words and brand"
+    else:
+        why = share_image_problem(arg, spec)
+        if why: sys.exit(why + ". Nothing was written.")
+        rel = os.path.relpath(arg if os.path.isabs(arg) else os.path.join(ROOT, arg), ROOT)
+        b["share_image"] = {"file": rel, "sha256": sha256_of(rel)}
+        msg = f"app {app_id}: share image {rel} ({b['share_image']['sha256'][:12]}); the next prepare copies it into the build"
+    if b: surface["branding"] = b
+    else: surface.pop("branding", None)
+    json.dump(doc, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
+    print(msg)
+
+def apply_share_image(build_dir, b, rules):
+    """Copy the brand's share image into the build copy (rules share_image.file), after checking it is the file recorded."""
+    si = b.get("share_image")
+    if not si: return []
+    spec = rules.get("share_image")
+    if not spec: sys.exit("this mold takes no share image of a brand's own (its branding/rules.json has no share_image); remove it: branding.py <app_id> share-image none")
+    if not isinstance(si, dict) or not isinstance(si.get("file"), str) or not isinstance(si.get("sha256"), str): sys.exit("branding.share_image must be {file, sha256}: set it with branding.py <app_id> share-image <file>")
+    why = share_image_problem(si["file"], spec)
+    if why: sys.exit(why)
+    if sha256_of(si["file"]) != si["sha256"]: sys.exit(f"the share image {si['file']} changed since it was recorded; record it again: branding.py <app_id> share-image {si['file']}")
+    dst = os.path.join(build_dir, spec["file"]); os.makedirs(os.path.dirname(dst), exist_ok=True)
+    if os.path.lexists(dst): os.remove(dst)
+    shutil.copyfile(os.path.join(ROOT, si["file"]) if not os.path.isabs(si["file"]) else si["file"], dst)
+    return ["share_image"]
+
+def share_image_problems(build_dir, b, rules):
+    """What is wrong with a prepared copy's share image ([] when the brand has none, or the copy carries it)."""
+    si = b.get("share_image"); spec = rules.get("share_image")
+    if not si or not spec: return []
+    dst = os.path.join(build_dir, spec["file"])
+    if not os.path.isfile(dst) or sha256_of(dst) != si.get("sha256"): return [f"{spec['file']} is not the brand's share image {si.get('file')} (run prepare)"]
+    gen = os.path.join(build_dir, "web", "src", "config", "share-image.generated.ts")
+    if not os.path.isfile(gen) or si["sha256"] not in open(gen).read(): return ["web/src/config/share-image.generated.ts does not carry the brand's share image (the generator was not re-run)"]
+    return []
 
 def is_logo_mark(inner):
     """A mark that came from a logo file (raster or nested SVG) is shown as itself; a drawn mark is recoloured."""
@@ -529,19 +600,27 @@ def prepare(app_id, app, mold_dir, force=False):
     library.apply(build_dir, app, mold_dir)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     app_profile.write(build_dir, app, ROOT, packs_applied=False)     # checked above; packs.py apply writes them again, with the pack-naming ones
-    applied = apply_overlay(build_dir, b, rules)
+    # The brand's own share image (mold_v0-093) goes in before the mold's generator runs (the overlay's, or here for a
+    # brand that is only a share image: the app keeps the mold's and its host pack's names, icons and colours).
+    applied = apply_share_image(build_dir, b, rules)
+    if b.get("product_name"): applied += apply_overlay(build_dir, b, rules)
+    elif applied and rules.get("profile"):
+        r = subprocess.run(rules["profile"]["generator"], cwd=build_dir, capture_output=True, text=True)
+        if r.returncode: sys.exit("the build copy could not be generated with the share image: " + (r.stdout + r.stderr).strip()[-400:])
     info = getattr(apply_overlay, "icon_info", None)
     if info:
         print(f"favicon set drawn from {info['source']}: favicon.ico (16, 32, 48), icon.png, apple-icon.png, manifest icons 192 and 512 + maskable"
               + (", icon.svg" if info["svg"] else "; no icon.svg (the mark is not a vector)"))
         for n in info["notes"]: print("  note: " + n)
     # last, on its own line: provision.py and vm_remote.py show the operator the final line of this step
-    print(f"branded build copy: {os.path.relpath(build_dir, ROOT)}  ({b['product_name']}, {len(applied)} rule(s))")
+    print(f"branded build copy: {os.path.relpath(build_dir, ROOT)}  ({b.get('product_name') or 'share image only'}, {len(applied)} rule(s))")
     return build_dir
 
 def check_build(build_dir, b, rules):
     """What is wrong with a prepared copy's brand, as plain sentences ([] when it is right)."""
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
+    if not name: return share_image_problems(build_dir, b, rules)     # a brand that is only a share image (mold_v0-093)
+    bad += share_image_problems(build_dir, b, rules)
     gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
     if name and rules.get("profile"):
         # a profile-file mold (mold_v0): the profile file and every module generated from it carry the brand's values
@@ -703,7 +782,7 @@ def self_test_v0(ok):
         allowed = {"profile.json", *rules["profile"]["generated"], rules["files"]["manifest"], rules["files"]["globals"]} | {fav for fav in (
             "web/src/app/favicon.ico", "web/src/app/icon.png", "web/src/app/apple-icon.png", "web/src/app/icon.svg",
             "web/public/icon-192.png", "web/public/icon-512.png", "web/public/icon-maskable-512.png",
-            "web/src/app/opengraph-image.alt.txt")}   # mold_v0-045: gen-packs writes the share image's alt text from the profile
+            "web/src/config/share-image.generated.ts")}   # mold_v0-093: gen-packs writes the share image's words from the profile
         ok_(changed <= allowed and {"profile.json", "web/public/icon-192.png", "web/src/app/favicon.ico", rules["files"]["globals"]} <= changed,
             f"mold_v0: the overlay changes the profile, its generated modules, the manifest, the theme and the icons, and nothing else: {sorted(changed - allowed)}")
         css = open(os.path.join(b, rules["files"]["globals"])).read(); css0 = open(os.path.join(code, rules["files"]["globals"])).read()
@@ -711,6 +790,32 @@ def self_test_v0(ok):
         ok_(f"--primary: {pal['light']['primary']};" in css and f"--primary: {pal['dark']['primary']};" in css and "--background: oklch(0.9911 0 0);" in css
             and len(css.splitlines()) == len(css0.splitlines()), "mold_v0: the theme takes the brand's primary and ring; its neutrals are the mold's")
         ok_(check_build(b, brand, rules) == [], f"mold_v0: check passes on the branded copy: {check_build(b, brand, rules)}")
+        # mold_v0-093: a brand's own share image: checked (a PNG of the rules' size), copied byte for byte, embedded by the generator
+        import zlib
+        def png(w, h):
+            chunk = lambda t, d: len(d).to_bytes(4, "big") + t + d + zlib.crc32(t + d).to_bytes(4, "big")
+            raw = b"".join(b"\x00" + bytes([18, 52, 86]) * w for _ in range(h))
+            return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", w.to_bytes(4, "big") + h.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+        sp = rules.get("share_image") or {}
+        good, small = os.path.join(t, "share.png"), os.path.join(t, "small.png")
+        open(good, "wb").write(png(sp.get("width", 1200), sp.get("height", 630))); open(small, "wb").write(png(600, 315)); open(os.path.join(t, "fake.png"), "wb").write(b"GIF89a" + b"\0" * 40)
+        ok_(sp.get("file") and share_image_problem(good, sp) == "" and "must be 1200x630" in share_image_problem(small, sp) and "must be a PNG" in share_image_problem(os.path.join(t, "fake.png"), sp)
+            and "not found" in share_image_problem(os.path.join(t, "none.png"), sp), "mold_v0-093: a share image is a PNG of the rules' size; another size, another format or no file is refused")
+        s2 = os.path.join(t, "sharecopy"); subprocess.run(["rsync", "-a", "--exclude", "node_modules", code + "/", s2 + "/"], check=True)
+        os.symlink(os.path.join(code, "node_modules"), os.path.join(s2, "node_modules"))
+        only = {"share_image": {"file": good, "sha256": sha256_of(good)}}
+        ok_(apply_share_image(s2, only, rules) == ["share_image"] and open(os.path.join(s2, sp["file"]), "rb").read() == open(good, "rb").read(), "mold_v0-093: prepare copies the brand's share image byte for byte")
+        ok_(share_image_problems(s2, only, rules) and "generator was not re-run" in share_image_problems(s2, only, rules)[0], "mold_v0-093: check finds a copy whose generator did not embed it")
+        r_ = subprocess.run(rules["profile"]["generator"], cwd=s2, capture_output=True, text=True)
+        gtxt = open(os.path.join(s2, "web", "src", "config", "share-image.generated.ts")).read()
+        ok_(r_.returncode == 0 and check_build(s2, only, rules) == [] and only["share_image"]["sha256"] in gtxt and base64.b64encode(open(good, "rb").read()).decode() in gtxt,
+            f"mold_v0-093: the generator embeds the picture as it is, and check passes on a copy whose brand is only a share image: {(r_.stdout + r_.stderr)[-300:]}")
+        try: apply_share_image(s2, {"share_image": {"file": good, "sha256": "0" * 64}}, rules); ok_(False, "a changed share image")
+        except SystemExit as e: ok_("changed since it was recorded" in str(e), "mold_v0-093: a share image that changed since it was recorded is refused")
+        try: apply_share_image(s2, only, dict(rules, share_image=None)); ok_(False, "a mold with no share image rule")
+        except SystemExit as e: ok_("takes no share image" in str(e), "mold_v0-093: a mold whose rules take no share image refuses one")
+        open(os.path.join(s2, sp["file"]), "wb").write(png(2, 2))
+        ok_(any("is not the brand's share image" in x for x in check_build(s2, only, rules)), "mold_v0-093: check finds a copy with another picture")
         shutil.copy(os.path.join(code, "profile.json"), os.path.join(b, "profile.json"))
         ok_(any("profile.json says name" in x for x in check_build(b, brand, rules)), "mold_v0: check finds a profile without the brand")
         shutil.copy(os.path.join(code, rules["profile"]["generated"][0]), os.path.join(b, rules["profile"]["generated"][0]))
@@ -735,6 +840,19 @@ def self_test_v0(ok):
         r2 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
         ok_(r1.returncode == 0 and "branded build copy: build/zz_brand" in r1.stdout and r2.returncode == 0 and "branding ok" in r2.stdout,
             f"mold_v0: branding.py <app> prepare, then check, for an app under a temp factory root: {(r1.stdout + r1.stderr)[-300:]} {(r2.stdout + r2.stderr)[-300:]}")
+        os.makedirs(os.path.join(f, "brands", "zz")); shutil.copyfile(good, os.path.join(f, "brands", "zz", "share-image.png"))
+        appf = os.path.join(f, "state", "application", "zz_brand", "application.json")
+        r4 = subprocess.run([sys.executable, me, "zz_brand", "share-image", "brands/zz/share-image.png"], capture_output=True, text=True)
+        b4 = load(appf)["surface"]["branding"]
+        r5 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
+        r6 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
+        ok_(r4.returncode == 0 and b4.get("share_image") == {"file": "brands/zz/share-image.png", "sha256": sha256_of(good)} and {k: v for k, v in b4.items() if k != "share_image"} == brand
+            and r5.returncode == 0 and r6.returncode == 0 and open(os.path.join(f, "build", "zz_brand", sp["file"]), "rb").read() == open(good, "rb").read(),
+            f"mold_v0-093: branding.py <app> share-image records the file and its hash (the rest of the brand kept); prepare copies it; check passes: {(r4.stdout + r4.stderr + r5.stdout + r5.stderr + r6.stdout + r6.stderr)[-400:]}")
+        r7 = subprocess.run([sys.executable, me, "zz_brand", "share-image", small], capture_output=True, text=True)
+        r8 = subprocess.run([sys.executable, me, "zz_brand", "share-image", "none"], capture_output=True, text=True)
+        ok_(r7.returncode != 0 and "Nothing was written" in r7.stdout + r7.stderr and r8.returncode == 0 and load(appf)["surface"]["branding"] == brand,
+            "mold_v0-093: a share image of another size is refused with nothing written; `none` takes it out")
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import app_profile
         zb = os.path.join(f, "build", "zz_brand"); zp = load(os.path.join(zb, "profile.json")) if os.path.isfile(os.path.join(zb, "profile.json")) else {}
         ok_(zp.get("limits") == lim["limits"] and zp.get("name") == "Acme Ops" and app_profile.check(zb, {"mold_id": "mold_v0", "profile": lim}, f) == []
@@ -855,6 +973,9 @@ def main(a):
         return set_brand(("product", a[1]), a[3:])
     app_id, step = a[0], a[1]
     if step == "set": return set_brand(("app", app_id), a[2:])
+    if step == "share-image":
+        if len(a) != 3: sys.exit(__doc__)
+        return set_share_image(app_id, a[2])
     app = load(os.path.join(ST, "application", app_id, "application.json"))
     if step == "preview":
         b = resolve(app)

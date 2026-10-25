@@ -17,7 +17,9 @@
 //      the portal's page for no account (a page's `as` in surface.mts picks them). The session is a token the mock signs and the API
 //      verifies; a fresh one is minted for every page (they live five minutes).
 //   5. The console: `next start` on 127.0.0.1 (a free port), killed with this process (PR_SET_PDEATHSIG).
-//   6. Each harness's run({origin, pages, packs, session, argv}): pages from surface.mts (filtered by --pages), a row per pack.
+//   6. Each harness's run({origin, api, lane, pages, packs, session, sessionAs, argv}): pages from surface.mts (filtered by
+//      --pages), a row per pack; api and lane for a harness that reads the API itself or imports the lane copy's modules
+//      (testing/parity/snapshot.mts).
 // Everything is torn down at the end, at --deadline, or on a signal; the temporary folder is removed.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer as netServer } from "node:net";
@@ -155,7 +157,7 @@ try {
     if (suite.length > 1) console.log(`\n== suite: ${item.name} (${path.basename(item.harness)}${item.argv.length ? " " + item.argv.join(" ") : ""})\n`);
     const h = await import(pathToFileURL(path.resolve(item.harness)).href);
     let c: number;
-    try { c = Number(await h.run({ origin, pages, packs: s.packs, session, sessionAs, argv: item.argv })) || 0; }
+    try { c = Number(await h.run({ origin, api: `http://127.0.0.1:${apiPort}`, lane, pages, packs: s.packs, session, sessionAs, argv: item.argv })) || 0; }
     catch (e) { console.error(`lane world: ${item.name}: ${(e as Error).stack ?? e}`); c = 1; }
     results.push(`${item.name} exit ${c} (${Math.round((Date.now() - t0) / 1000)}s)`);
     code = Math.max(code, c);

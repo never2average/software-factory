@@ -61,8 +61,9 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
 //                                                facts file (tests)
+//   --share-image <file>                         another brand share image than brand/share-image.png (tests)
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -1239,6 +1240,56 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+
+/**
+ * The AI clients the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's
+ * install pages offer (src/connect-catalog.ts, narrowed by profile.json install_clients), in the catalog's order, each
+ * with its short name ("Claude (web & desktop)" -> "Claude"). A where_you_work section that names a client the install
+ * pages do not offer is refused: the page would send people to steps that are not there.
+ */
+const landingClients = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)", client: "([^"]+)", group: "(chat|agent|editor)"/g)]
+  .filter((m) => m[1] !== "header" && (!profile.install_clients || profile.install_clients.includes(m[1])))
+  .map((m) => ({ id: m[1], name: m[2].replace(/\s*\([^)]*\)\s*$/, ""), group: m[3] }));
+for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
+  const off = (s.type === "where_you_work" ? s.clients ?? [] : []).filter((c) => !landingClients.some((k) => k.id === c));
+  if (off.length) fail("landing", `sections[${i}] (where_you_work).clients: ${off.join(", ")} ${off.length > 1 ? "are" : "is"} not offered by this build's install pages (${landingClients.map((k) => k.id).join(", ")}; profile.json install_clients narrows them)`);
+}
+/** The hero section of the build's block, if it picks one (the welcome email's pitch is its subheadline). */
+const landingHero = (landingPage.landing?.sections ?? []).find((s) => s.type === "hero") ?? null;
+refuse();
+
+// ---------- the share image (mold_v0-093) ----------
+
+/**
+ * What a shared link to this build shows (web/src/features/site/share-image.tsx draws it): the landing page's own words
+ * (the hero's headline, else the profile's tagline; its sub-headline, else the console's description unless it only
+ * repeats the headline: as web/src/features/site/landing.tsx resolves them) beside the profile's name, and an alternative
+ * text in the same words. A brand that has its own picture (the factory's branding step copies it to brand/share-image.png:
+ * a 1200x630 PNG of at most 1 MB) is served as it is instead, with the console's description as its alternative text.
+ */
+function readShareImage() {
+  // The hero: the block's own (a block of ordered sections names it by its type).
+  const block = landingPage.landing ?? {};
+  const hero = block.hero ?? (Array.isArray(block.sections) ? block.sections.find((x) => x?.type === "hero") : null) ?? {};
+  const headline = (hero.headline ?? profile.short_description).trim();
+  const sub = hero.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? null : profile.console_description);
+  const sentence = (t) => /[.!?…]$/.test(t) ? t : `${t}.`;
+  const drawnAlt = [headline.toLowerCase().startsWith(profile.name.toLowerCase()) ? headline : `${profile.name}: ${headline}`, sub].filter(Boolean).map(sentence).join(" ");
+  const spec = { alt: drawnAlt, name: profile.name, headline, subheadline: sub ?? null, brand: null };
+  const file = path.resolve(opt("--share-image") ?? path.join(ROOT, "brand", "share-image.png"));
+  const st = lstatOr(file), where = rel(file);
+  if (!st) return spec;
+  if (!st.isFile()) { fail(where, "the brand's share image must be a file (not a link or a directory)"); return spec; }
+  if (st.size > 1024 * 1024) { fail(where, `the brand's share image is ${Math.ceil(st.size / 1024)} KB: at most 1024 KB`); return spec; }
+  const png = readFileSync(file);
+  const isPng = png.length > 24 && png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) && png.subarray(12, 16).toString("latin1") === "IHDR";
+  if (!isPng) { fail(where, "the brand's share image must be a PNG"); return spec; }
+  const [w, h] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+  if (w !== 1200 || h !== 630) { fail(where, `the brand's share image is ${w}x${h}: it must be 1200x630`); return spec; }
+  return { ...spec, alt: profile.console_description, brand: { png: png.toString("base64"), sha256: createHash("sha256").update(png).digest("hex") } };
+}
+function lstatOr(file) { try { return lstatSync(file); } catch { return null; } }
+const shareImage = readShareImage();
 refuse();
 
 // ---------- output ----------
@@ -1375,7 +1426,7 @@ files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
 // never reaches the profile modules (the MCP surface and the console's names).
 files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
   "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
-  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingHero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();
@@ -1426,12 +1477,17 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
-// The share image's alternative text (Next.js's opengraph-image.alt.txt beside the image): the console's description.
-files.set(path.join(OUT, "web", "src", "app", "opengraph-image.alt.txt"), `${profile.console_description}\n`);
+// The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
+files.set(path.join(OUT, "web", "src", "config", "share-image.generated.ts"), HEADER +
+  "import type { ShareImageSpec } from '@/features/site/share-image-types';\n\n" +
+  "/** The share image (mold_v0-093): drawn from these words and the build's brand, or the brand's own picture (brand/share-image.png). */\n" +
+  `export const shareImage: ShareImageSpec = ${json(shareImage)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER +
-  "import type { LandingBlock, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
-  "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
+  "import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
+  "/** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
+  "/** The AI clients the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */\n" +
+  `export const landingClients: readonly LandingClient[] = ${json(landingClients)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
 // The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
