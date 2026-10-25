@@ -31,7 +31,7 @@
       "short_description": "Connect an MCP client, run agents and read their results."
     },
     "refuse": "[<>\"\\r\\n]",
-    "app_settable": ["limits", "email", "email_from_address", "member_keys", "source_offer.upstreams", "legal"],
+    "app_settable": ["limits", "email", "email_from_address", "member_keys", "source_offer.upstreams", "legal", "mcp_instructions"],
     "member_keys_off": {
       "$comment": "mold_v0-116 (.claude/scripts/lib/app_profile.py): member_keys: false leaves signing in as the only way an AI client reaches /mcp, so it is refused at validation unless the codebase has one of these sign-ins for /mcp (the built-in OAuth server, or Clerk's). Whether the deployed app's sign-in actually works (Clerk's key on the API, Clerk letting clients register) is provision.py's check (mold.json mcp_sign_in).",
       "mcp_sign_in_any": ["src/mcp-oauth.ts", "src/clerk.ts"]
@@ -48,7 +48,7 @@
       "runs.concurrency_per_workspace": 32,
       "runs.live_per_workspace": 200
     },
-    "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). email and email_from_address since mold_v0-101 (the brief's ## Profile: email_from_address = <address>, email.notifications = <groups>). Never a brand word (the brand writes those), host_packs, source_offer.app, billing or entitlements. A dotted entry is one part of a field: source_offer.upstreams (mold_v0-099, the app's packs whose upstream is the licensor's own) while source_offer.app stays the factory's defaults.source_offer. member_keys (mold_v0-099): false turns per-member API keys off. legal (mold_v0-109): the company behind the app (company_name, contact_email, effective_date; optionally jurisdiction, terms_url, privacy_url), which turns on its /terms and /privacy pages and their links; intake asks a new app for it."
+    "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). email and email_from_address since mold_v0-101 (the brief's ## Profile: email_from_address = <address>, email.notifications = <groups>). Never a brand word (the brand writes those), host_packs, source_offer.app, billing or entitlements. A dotted entry is one part of a field: source_offer.upstreams (mold_v0-099, the app's packs whose upstream is the licensor's own) while source_offer.app stays the factory's defaults.source_offer. member_keys (mold_v0-099): false turns per-member API keys off. legal (mold_v0-109): the company behind the app (company_name, contact_email, effective_date; optionally jurisdiction, terms_url, privacy_url), which turns on its /terms and /privacy pages and their links; intake asks a new app for it. mcp_instructions (mold_v0-119): what the MCP server tells AI clients about the app (plain text, up to 4000 characters), over its packs' pack.json mcp.instructions; the brief's ## MCP instructions section or a mcp_instructions line in ## Profile."
   },
   "favicon": {
     "app": "web/src/app",
