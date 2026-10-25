@@ -1073,7 +1073,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   Kinds: `overview` (charts), `area` (a record area's `views`: table, board by a single-choice enum, the lifecycle's
   field by default, timeline by a date field or updated, detail; its charts above), `runs`, `reports` (finished runs and
   their results), and the shell's own pages `credentials`, `usage`, `schedules`, `notices`, `setup`, `billing`,
-  `profile`, or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
+  `profile`, `team` and `keys` (the Team part of Billing and the person's own API keys, mold_v0-133; a build refuses
+  `keys` when member keys are off, and two tabs that open one shell page), or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
   from a fixed set (`TAB_ICONS`). Each tab is shown to `roles` narrowed by what it shows (an area's read permission;
   for an overview, the roles that may read one of its metrics; a build refuses a tab no role could see); the server
   refuses the data whatever the sidebar shows. Tab pages render at `/app/<tab>`, as a pack's own customer pages do at
@@ -1384,6 +1385,17 @@ shell pages of the customer console to leave out: `activity`, `usage`, `billing`
 and Activity groups, any declared tab that opens it), the tab pages and the customer guide's tab list, and its address
 and everything under it redirect to /app (`pack-routes.generated.json`). The staff console and the API are unchanged.
 `npm run test:console-hide`.
+
+**The whole sidebar from config (mold_v0-133).** With declared tabs the /app sidebar is exactly the tabs, in their
+groups and order (mold_v0-058), and the tab kinds now reach every shell page (`team`, `keys` beside `setup`, `usage`,
+`billing`, `profile`...). The app's profile.json may declare the sidebar across its packs: `console.sidebar`, a list of
+groups `{"label": "Company", "items": ["overview", "billing", "team"]}`, each item a pack's tab by id (`<pack>/<id>` when
+two packs have it) or a shell page by kind (`setup`, `usage`, `billing`, `profile`, `team`, `keys`, `credentials`,
+`schedules`, `notices`). Then the sidebar is exactly that; `gen-packs` refuses a tab left out, an entry that is neither
+or is listed twice, a shell page a tab already opens, one the build lacks or hides, and `sidebar` in a pack.json (a pack
+orders its own tabs). Without tabs or a declared sidebar the shell's own sidebar joins a pack's group to the shell group
+of the same heading and lists each page once (`mergeNav`, `web/src/config/nav-config.ts`); a declared API keys entry
+takes the footer's place. `npm run test:console-sidebar`.
 
 **Customer guide (mold_v0-106).** `/app/docs` and the docs answers' corpus (Ask AI, `src/docs-answers.ts`;
 `scripts/sync-docs-corpus.ts` writes `src/docs-corpus.generated.json` from the same pages) come from the packs when no

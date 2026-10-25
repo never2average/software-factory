@@ -49,8 +49,24 @@ const hidden = (url: string) => hiddenConsoleUrls.some((h) => url === h || url.s
 const withoutHidden = (groups: NavGroup[]): NavGroup[] =>
   hiddenConsoleUrls.length ? groups.map((g) => ({ ...g, items: g.items.filter((i) => !hidden(i.url)) })).filter((g) => g.items.length > 0) : groups;
 
+/**
+ * One group per heading and one entry per page (mold_v0-133): a pack's group named like one of the shell's joins it, and
+ * an entry whose page the sidebar already has is left out, so the shell's groups never repeat the packs'.
+ */
+export function mergeNav(groups: NavGroup[]): NavGroup[] {
+  const out: NavGroup[] = [];
+  const seen = new Set<string>();
+  for (const g of groups) {
+    const items = g.items.filter((i) => { if (seen.has(i.url)) return false; seen.add(i.url); return true; });
+    const same = out.find((x) => x.label === g.label);
+    if (same) same.items.push(...items);
+    else if (items.length) out.push({ ...g, items });
+  }
+  return out;
+}
+
 /** The shell's own /app sidebar (with a host pack's entries among its own), and what the declarative packs add after it. */
-const shellPortalNav: NavGroup[] = withoutHidden([
+const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
   ...withHostPortalNav([
     {
       label: 'Get started',
@@ -76,10 +92,11 @@ const shellPortalNav: NavGroup[] = withoutHidden([
   ...recordPortalNav,
   ...workspacePortalNav,
   ...usagePortalNav
-]);
+]));
 
 /**
  * The /app sidebar: when packs declare tabs (mold_v0-058), exactly those, in their order and groups (each tab limited to
- * the roles that may read what it shows); otherwise the shell's own, unchanged.
+ * the roles that may read what it shows), or the whole sidebar the app's profile declares (mold_v0-133: profile.json
+ * console.sidebar, its groups, the packs' tabs and the shell's pages in its order); otherwise the shell's own.
  */
 export const portalNav: NavGroup[] = tabPortalNav.length ? tabPortalNav : shellPortalNav;

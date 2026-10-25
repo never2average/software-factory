@@ -375,7 +375,7 @@ export function checkViews(b: BuildViews): string[] {
 /** The shell's word for each tab kind (a tab's label when it gives none and shows no area). */
 export const TAB_KIND_LABELS: Record<Tab["kind"], string> = {
   overview: "Overview", area: "Records", runs: "Runs", reports: "Reports", credentials: "Credentials", usage: "Activity", schedules: "Schedules",
-  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", page: "Page", files: "Files",
+  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", team: "Team", keys: "API keys", page: "Page", files: "Files",
 };
 export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === tabArea(t))?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
 
