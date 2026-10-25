@@ -109,9 +109,15 @@ export interface PackTabSpec {
   roles: string[];
   area?: string;
   views?: ('table' | 'board' | 'timeline' | 'detail')[];
+  /** An area tab's table columns: fields of its areas (a merged tab: also source). */
+  columns?: string[];
+  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */
+  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];
   board_by?: string | null;
   timeline_by?: string;
   charts: string[];
+  /** The shell's sections an overview shows above its charts, in order (mold_v0-134): the Setup page's checklist, the notices. */
+  include?: ('setup' | 'notices')[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
   empty?: { title: string; text: string; cta: { label: string; href: string } | null };
 }

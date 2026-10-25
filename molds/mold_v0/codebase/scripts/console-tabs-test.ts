@@ -19,7 +19,16 @@
 //    per chart, a table view; the board's columns are the lifecycle's states in order. The tabs' empty states (mold_v0-107:
 //    a section named by its title, its text, its link) and a table that scrolls sideways, a labelled region the keyboard
 //    can reach (mold_v0-114), beside one that fits, which is not a tab stop.
-// 4. The build copy's console typechecks with the tabs.
+// 3b. A merged tab (mold_v0-135, scripts/fixtures/packs/fixture_status): its sidebar entry and roles, and in the headless
+//    browser its table (the source column, every area's fields, each row opening the record of its first area), its
+//    board (no moves), its timeline, its empty state and a narrow table the keyboard can scroll; a one-area tab's own
+//    columns.
+// 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
+// 5. A home tab (mold_v0-134): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
+//    notices (its Due soon tab dropped): the sidebar loses that tab, /app and /app/notices redirect to the home tab, and
+//    the tab page itself (the console's TabPage, bundled, its API answered in the page) draws the checklist (the next
+//    step's prompt, the connection panel), the first five notices and the charts, in that order; with every step done the
+//    checklist is one line that opens again. Screenshots with CONSOLE_TABS_SNAPSHOT_DIR (home-*.png).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -32,7 +41,7 @@ const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
 const SNAP = path.join(ROOT, "scripts", "fixtures", "console-nav");
 
 /** A build copy of the codebase with these fixture packs, its registry generated (node_modules linked, never written). */
-function buildCopy(name: string, packs: string[]) {
+function buildCopy(name: string, packs: string[], edit?: (packsDir: string) => void) {
   const copy = path.join(TMP, name);
   const skip = new Set(["node_modules", ".pglite", ".git", ".next"]);
   cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) && src !== path.join(ROOT, "packs") });
@@ -40,6 +49,7 @@ function buildCopy(name: string, packs: string[]) {
   mkdirSync(path.join(copy, "packs"), { recursive: true });
   cpSync(path.join(ROOT, "packs", "pack.schema.json"), path.join(copy, "packs", "pack.schema.json"));
   for (const p of packs) cpSync(path.join(ROOT, "scripts", "fixtures", "packs", p), path.join(copy, "packs", p), { recursive: true });
+  edit?.(path.join(copy, "packs"));
   const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
   assert.equal(g.status, 0, `gen-packs in the ${name} copy: ${g.stderr}`);
   return copy;
@@ -78,16 +88,24 @@ function findChrome(): string | null {
   return null;
 }
 
+/** The theme's tokens (web/src/styles: the theme's surfaces and text, the chart colours), and the console's compiled CSS when given. */
+function consoleCss(web: string): string {
+  const theme = readFileSync(path.join(web, "src", "styles", "themes", "supabase.css"), "utf8").replace(/\[data-theme='supabase'\] \{\s*@theme[\s\S]*$/, "");
+  const viz = readFileSync(path.join(web, "src", "styles", "theme.css"), "utf8");
+  return `${theme}\n${viz.slice(viz.indexOf("/*\n * Chart colours"))}\n${process.env.CONSOLE_TABS_CSS ? readFileSync(process.env.CONSOLE_TABS_CSS, "utf8") : ""}
+    body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; margin: 16px; }
+    /* The utility classes the table's and the board's sideways scroll rely on, for a run without the compiled CSS. */
+    .overflow-x-auto { overflow-x: auto; } .whitespace-nowrap { white-space: nowrap; } .w-max { width: max-content; }
+    [data-slot="board-scroller"] > [role="list"] { display: flex; gap: 0.75rem; } .w-64 { width: 16rem; } .shrink-0 { flex-shrink: 0; }`;
+}
+
 /**
  * Draw the vulnerability overview's charts, one chart's table view and the board in a real browser: the console's own
  * components (charts.tsx, board.tsx), bundled with esbuild, fixed width, the theme's tokens; then read the DOM back.
  * With CONSOLE_TABS_SNAPSHOT_DIR, also a screenshot in the light and the dark theme.
  */
 async function renderInBrowser(chrome: string, web: string, input: unknown) {
-  const { build } = await import("esbuild");
-  const dir = path.join(TMP, "render");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(web, "render-entry.tsx"), `import { createRoot } from 'react-dom/client';
+  const dom = await drawInBrowser(chrome, web, "overview", input, `import { createRoot } from 'react-dom/client';
 import { packCharts, packTabs, recordAreas } from '@/config/pack-nav.generated';
 import { ChartCell } from '@/features/tabs/charts';
 import { BoardColumns } from '@/features/tabs/board';
@@ -117,19 +135,29 @@ createRoot(document.getElementById('root')!).render(
   </div>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 `);
+  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board|empty|scroll)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
+  const charts: Record<string, string> = {};
+  for (const m of dom.matchAll(/<div data-chart="([a-z_]+)">/g)) charts[m[1]!] = between(new RegExp(`<div data-chart="${m[1]}">`));
+  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/), empty: [between(/<div data-empty="1"/), between(/<div data-empty="2"/)],
+    wide: between(/<div data-scroll="wide"/), narrow: between(/<div data-scroll="narrow"/), boardNarrow: between(/<div data-board="narrow"/) };
+}
+
+/**
+ * Bundle `entry` (a module of the console, its "@/..." imports resolved) with esbuild, draw it in the headless browser at
+ * a fixed width with the theme's tokens, and return the DOM. With CONSOLE_TABS_SNAPSHOT_DIR, also `<name>-light.png`,
+ * `<name>-dark.png` and `<name>-dom.html` (the overview's keep their names: overview-*.png, dom.html).
+ */
+async function drawInBrowser(chrome: string, web: string, name: string, input: unknown, entry: string) {
+  const { build } = await import("esbuild");
+  const dir = path.join(TMP, `render-${name}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(web, "render-entry.tsx"), entry);
   writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
   try {
     await build({ entryPoints: [path.join(web, "render-entry.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: web,
       tsconfig: path.join(web, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, alias: { "next/link": path.join(web, "render-link.tsx") }, logLevel: "error" });
   } finally { for (const f of ["render-entry.tsx", "render-link.tsx"]) rmSync(path.join(web, f), { force: true }); }
-  // The theme's tokens (web/src/styles: the theme's surfaces and text, the chart colours), and the console's compiled CSS when given.
-  const theme = readFileSync(path.join(web, "src", "styles", "themes", "supabase.css"), "utf8").replace(/\[data-theme='supabase'\] \{\s*@theme[\s\S]*$/, "");
-  const viz = readFileSync(path.join(web, "src", "styles", "theme.css"), "utf8");
-  const css = `${theme}\n${viz.slice(viz.indexOf("/*\n * Chart colours"))}\n${process.env.CONSOLE_TABS_CSS ? readFileSync(process.env.CONSOLE_TABS_CSS, "utf8") : ""}
-    body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; margin: 16px; }
-    /* The utility classes the table's and the board's sideways scroll rely on, for a run without the compiled CSS. */
-    .overflow-x-auto { overflow-x: auto; } .whitespace-nowrap { white-space: nowrap; } .w-max { width: max-content; }
-    [data-slot="board-scroller"] > [role="list"] { display: flex; gap: 0.75rem; } .w-64 { width: 16rem; } .shrink-0 { flex-shrink: 0; }`;
+  const css = consoleCss(web);
   const page = (dark: boolean) => {
     const f = path.join(dir, dark ? "dark.html" : "light.html");
     writeFileSync(f, `<!doctype html><html data-theme="supabase" class="${dark ? "dark" : ""}"><head><meta charset="utf-8"><style>${css}</style></head>
@@ -141,17 +169,77 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 1000)}`);
   const dom = r.stdout;
   assert.match(dom, /data-ready="1"/, `the page rendered (${dom.slice(0, 300)})`);
-  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board|empty|scroll)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
-  const charts: Record<string, string> = {};
-  for (const m of dom.matchAll(/<div data-chart="([a-z_]+)">/g)) charts[m[1]!] = between(new RegExp(`<div data-chart="${m[1]}">`));
   if (process.env.CONSOLE_TABS_SNAPSHOT_DIR) {
     mkdirSync(process.env.CONSOLE_TABS_SNAPSHOT_DIR, { recursive: true });
     for (const dark of [false, true])
-      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, dark ? "overview-dark.png" : "overview-light.png")}`, `file://${page(dark)}`], { timeout: 120_000 });
-    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, "dom.html"), dom);
+      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `${name}-${dark ? "dark" : "light"}.png`)}`, `file://${page(dark)}`], { timeout: 120_000 });
+    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, name === "overview" ? "dom.html" : `${name}-dom.html`), dom);
   }
-  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/), empty: [between(/<div data-empty="1"/), between(/<div data-empty="2"/)],
-    wide: between(/<div data-scroll="wide"/), narrow: between(/<div data-scroll="narrow"/), boardNarrow: between(/<div data-board="narrow"/) };
+  return dom;
+}
+
+/**
+ * Draw a build's home tab (mold_v0-134) in a real browser: the console's TabPage for fixture_vulns' overview, bundled,
+ * its API answered in the page (the account, the setup steps, the pack's onboarding, seven notices, the metrics);
+ * `complete`: every step done. Returns the DOM; with CONSOLE_TABS_SNAPSHOT_DIR also screenshots (light, dark).
+ */
+async function renderHome(chrome: string, web: string, complete: boolean): Promise<string> {
+  const { build } = await import("esbuild");
+  const dir = path.join(TMP, `render-home-${complete ? "done" : "open"}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(web, "render-home.tsx"), `import { createRoot } from 'react-dom/client';
+import { packTabs } from '@/config/pack-nav.generated';
+import { TabPage } from '@/features/tabs/tab-page';
+const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'overview')!;
+createRoot(document.getElementById('root')!).render(<div style={{ width: 1180 }}><TabPage tab={tab} /></div>);
+setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
+`);
+  writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
+  // The console's sign-in hooks without Clerk's package (the built-in one's, which read nothing until asked).
+  writeFileSync(path.join(web, "render-auth.ts"), "export * from './src/lib/auth/builtin-client';\nexport const CLERK = false;\nexport const AUTH_PROVIDER = 'builtin';\n");
+  try {
+    await build({ entryPoints: [path.join(web, "render-home.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: web,
+      tsconfig: path.join(web, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_AUTH_PROVIDER": '"builtin"' },
+      alias: { "next/link": path.join(web, "render-link.tsx") }, logLevel: "error",
+      plugins: [{ name: "auth", setup(b) { b.onResolve({ filter: /^@\/lib\/auth$/ }, () => ({ path: path.join(web, "render-auth.ts") })); } }] });
+  } finally { for (const f of ["render-home.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(web, f), { force: true }); }
+  const step = (id: string, label: string, done: boolean, help: string, prompt: string | null = null) => ({ id, label, done, at: done ? "2026-10-20T00:00:00.000Z" : null, help, prompt });
+  const steps = [step("joined", "Join your team's account", true, "You accepted the invitation and signed in."),
+    step("connected", "Add the connector to your AI client", true, "Copy the URL into your client."),
+    step("tools", "Switch the tools on", complete, "Turn the tools on in your client."),
+    step("first_call", "Ask Fixture something", complete, "Your first question checks everything works end to end.", "What can Fixture do?")];
+  const notices = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), kind: "due", area: "audit_findings", area_label: "Vulnerabilities", key: `f${i + 1}`, title: `Finding ${i + 1}`,
+    due_on: `2026-10-2${i}`, created_at: "2026-10-20T00:00:00.000Z", emailed: i === 0, dismissed: false }));
+  const answers = [{ name: "open_by_severity", label: "Open by severity", unit: "count", kind: "groups", description: null, measure: "count", rows: 4, as_of: "2026-10-21T12:00:00.000Z",
+    groups: [["low", "Low", 0], ["medium", "Medium", 1], ["high", "High", 1], ["critical", "Critical", 2]].map(([key, label, value]) => ({ key, label, value })) }];
+  const api: Record<string, unknown> = {
+    "/api/app/me": { account_role: "owner", role_label: "Owner", permissions: ["read", "edit", "launch", "manage", "billing"], needs: {}, roles: [] },
+    "/api/app/setup": { steps, done: steps.filter((x) => x.done).length, total: steps.length, clients: [], calls: 0, groups: [], errors: [], live: null,
+      connect: { connector_url: "https://console.example.org/mcp", secret: false, clients: [{ id: "claude", client: "Claude", group: "chat", method: "ui", steps: "Settings, then Connectors.", verified: true, share: null }] } },
+    "/api/onboarding": { steps: [{ pack: "fixture_vulns", id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", done: complete, at: null }], done: complete ? 1 : 0, total: 1 },
+    "/api/notices": { notices },
+    "/api/metrics": { metrics: answers },
+  };
+  const css = consoleCss(web);
+  const page = (dark: boolean) => {
+    const f = path.join(dir, dark ? "dark.html" : "light.html");
+    writeFileSync(f, `<!doctype html><html data-theme="supabase" class="${dark ? "dark" : ""}"><head><meta charset="utf-8"><style>${css}</style></head>
+<body><div id="root"></div><script>const API = ${JSON.stringify(api).replace(/</g, "\\u003c")};
+window.fetch = async (url) => { const p = new URL(String(url), 'http://console.test').pathname; const body = API[p];
+  return new Response(JSON.stringify(body ?? { error: 'no ' + p }), { status: body ? 200 : 404, headers: { 'content-type': 'application/json' } }); };</script><script src="bundle.js"></script></body></html>`);
+    return f;
+  };
+  const args = ["--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--virtual-time-budget=10000", "--window-size=1220,2400"];
+  const r = spawnSync(chrome, [...args, "--dump-dom", `file://${page(false)}`], { encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 1000)}`);
+  assert.match(r.stdout, /data-ready="1"/, `the home tab rendered (${r.stdout.slice(0, 300)})`);
+  if (process.env.CONSOLE_TABS_SNAPSHOT_DIR) {
+    mkdirSync(process.env.CONSOLE_TABS_SNAPSHOT_DIR, { recursive: true });
+    for (const dark of [false, true])
+      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `home-${complete ? "done" : "open"}-${dark ? "dark" : "light"}.png`)}`, `file://${page(dark)}`], { timeout: 120_000 });
+    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `home-${complete ? "done" : "open"}.html`), r.stdout);
+  }
+  return r.stdout;
 }
 
 try {
@@ -282,11 +370,126 @@ try {
     }
   }
 
+  // ---------- 3b. a merged tab (mold_v0-135) ----------
+  const mergedWeb = path.join(buildCopy("merged", ["fixture_status"]), "web");
+  {
+    const nav = inConsole<Nav>(mergedWeb, NAV);
+    assert.deepEqual(nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url} ${i.roles.join(",")}`)]), [
+      ["Requirements", ["Our requirements /app/packs/fixture_status/ours member,billing,owner", "Requirement library /app/packs/fixture_status/library viewer,member,billing,owner"]],
+    ], "a merged tab is one sidebar entry, for the roles that may read every one of its areas");
+    const chrome = findChrome();
+    if (!chrome) console.log("✓ (no headless browser on this machine: the merged tab's rendered check is skipped; set CHROME_BIN)");
+    else {
+      const row = (key: string, areas: string[], title: string | null, data: Record<string, unknown>) => ({ key, areas, title, data, updated_at: "2026-10-20T00:00:00.000Z" });
+      const page = { next: null, records: [
+        row("lib:001", ["req_status", "req_library"], "Library 001", { state: "done", due: "2026-11-02", code: "L-001", topic: "access", weight: "high" }),
+        row("lib:003", ["req_status", "req_library"], "Library 003", { state: "planned", due: "2026-12-04", code: "L-003", topic: "data", weight: "high" }),
+        row("own:a1", ["req_status", "req_own"], "Status of A-1", { state: "partial", code: "A-1", topic: "vendor", origin: "contract" }),
+        row("own:a2", ["req_own"], "Own A-2", { code: "A-2", topic: "access", origin: "contract" }),
+      ] };
+      const library = { next: null, records: [{ key: "lib:001", title: "Library 001", data: { code: "L-001", topic: "access", weight: "high" }, updated_at: "2026-10-20T00:00:00.000Z" }] };
+      const dom = await drawInBrowser(chrome, mergedWeb, "merged", { page, library }, `import { createRoot } from 'react-dom/client';
+import { packTabs } from '@/config/pack-nav.generated';
+import { BoardColumns, RecordTable, TimelineList } from '@/features/tabs/board';
+import { EmptyState } from '@/features/tabs/empty';
+import { viewArea, withSource } from '@/features/tabs/merged';
+const { page, library } = (window as unknown as { __INPUT__: { page: any; library: any } }).__INPUT__;
+const tab = packTabs.find((t) => t.id === 'ours')!;
+const area = viewArea(tab)!;
+const data = withSource(tab, page);
+createRoot(document.getElementById('root')!).render(
+  <div className='flex flex-col gap-6' style={{ width: 1180 }}>
+    <div data-merged='table'><RecordTable area={area} detail data={data} /></div>
+    <div data-merged='board'><BoardColumns area={area} by='state' detail data={data} role='member' /></div>
+    <div data-merged='timeline'><TimelineList area={area} by='due' badge='state' detail data={data} /></div>
+    <div data-merged='empty'><EmptyState empty={tab.empty} id='empty-req_status' /></div>
+    <div data-merged='narrow' style={{ width: 360 }}><RecordTable area={area} detail={false} data={data} /></div>
+    <div data-merged='library'><RecordTable area={viewArea(packTabs.find((t) => t.id === 'library')!)!} detail data={library} /></div>
+  </div>);
+setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
+`);
+      const part = (k: string) => { const i = dom.indexOf(`<div data-merged="${k}"`); assert.ok(i >= 0, `${k} rendered`); const rest = dom.slice(i + 1); const j = rest.search(/<div data-merged=/); return j < 0 ? rest : rest.slice(0, j); };
+      const text = (html: string) => html.replace(/<[^>]+>/g, "|").replace(/\|+/g, "|");
+      const table = part("table");
+      assert.match(text(table), /\|Record\|Source\|Code\|Topic\|State\|Next due\|/, "the merged table's columns: the source, then fields of several areas");
+      assert.match(text(table), /\|Library 001\|Shared\|L-001\|Access\|Done\|2026-11-02\|/, "a shared entry the workspace tracks: its state beside the library's fields");
+      assert.match(text(table), /\|Library 003\|Shared\|L-003\|Data\|Planned\|/, "an option only the library declares keeps its label");
+      assert.match(text(table), /\|Status of A-1\|Our own\|A-1\|Vendor\|Partial\|/, "its own requirement with a state");
+      assert.match(text(table), /\|Own A-2\|Our own\|A-2\|Access\|/, "its own requirement with no state yet");
+      assert.match(table, /href="\/app\/records\/req_status\/lib%3A001"/, "a row opens the record of its first area (the status)");
+      assert.match(table, /href="\/app\/records\/req_own\/own%3Aa2"/, "a row only one area holds opens that area's record");
+      const board = part("board");
+      assert.match(text(board), /Unknown\|0\|None\|Planned\|1\|.*Partial\|1\|.*Done\|1\|.*Not applicable\|0\|None\|No value\|1\|Own A-2/s, "the board: a column per state, the rows with none under No value");
+      assert.doesNotMatch(board, /<select/, "a merged tab's board offers no moves");
+      const timeline = part("timeline");
+      assert.match(text(timeline), /December 2026\|.*Library 003\|Planned\|November 2026\|.*Library 001\|Done\|No next due\|Status of A-1\|Own A-2\|/s, "the timeline by the status's date, newest first, each with its state; the undated after");
+      assert.match(part("empty"), /<h3 id="empty-req_status-title"[^>]*>No requirement status yet\.<\/h3>/, "the merged tab's empty state, by its own area");
+      const narrow = /<div data-slot="table-container"[^>]*>/.exec(part("narrow"))?.[0] ?? "";
+      for (const attr of ['tabindex="0"', 'role="region"', 'aria-label="Our requirements"']) assert.ok(narrow.includes(attr), `a narrow merged table is a labelled region the keyboard can scroll (${attr}): ${narrow}`);
+      assert.match(text(part("library")), /\|Record\|Code\|Weight\|Library 001\|L-001\|High\|/, "a one-area tab's own columns (not the area's list columns)");
+      console.log("✓ rendered: a merged tab's table (source column, several areas' fields and options, each row opening its first area's record), board (by state, no moves), timeline, empty state and a narrow table the keyboard can scroll; a one-area tab's own columns");
+    }
+  }
+
+  // ---------- 5. a home tab: the overview includes the Setup page's checklist and the notices (mold_v0-134) ----------
+  {
+    const home = buildCopy("home", ["fixture_vulns", "fixture_adoption"], (packs) => {
+      const f = path.join(packs, "fixture_vulns", "pack.json");
+      const j = JSON.parse(readFileSync(f, "utf8"));
+      j.tabs = j.tabs.filter((t: { kind: string }) => t.kind !== "notices")
+        .map((t: { id: string }) => (t.id === "overview" ? { ...t, label: "Home", include: ["setup", "notices"] } : t));
+      j.onboarding = [{ id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", done_when: "record:audit_apps" }];
+      writeFileSync(f, JSON.stringify(j, null, 2));
+    });
+    const hweb = path.join(home, "web");
+    const nav = inConsole<Nav>(hweb, NAV);
+    const items = nav.portalNav.flatMap((g) => g.items.map((i: any) => `${g.label}: ${i.title} ${i.url}`));
+    assert.equal(items.find((x) => x.startsWith("Audit: ")), "Audit: Home /app/packs/fixture_vulns/overview", "the home tab first, in its group, by its label");
+    assert.ok(!items.some((x) => x.includes("/app/notices")), `the notices tab is gone from the sidebar: ${items.join(", ")}`);
+    const spec = nav.packTabs.find((t: any) => t.pack === "fixture_vulns" && t.id === "overview");
+    assert.deepEqual([spec.include, spec.roles], [["setup", "notices"], ["viewer", "member", "billing", "owner"]], "its sections in order, and every role's");
+    const routes = JSON.parse(readFileSync(path.join(hweb, "src", "config", "pack-routes.generated.json"), "utf8")).redirects.map((r: any) => `${r.source} -> ${r.destination}`);
+    assert.deepEqual(routes, ["/app -> /app/packs/fixture_vulns/overview", "/app/notices -> /app/packs/fixture_vulns/overview", "/app/notices/:path* -> /app/packs/fixture_vulns/overview"],
+      "/app and /app/notices lead to the home tab (the pages stay, for a build without one)");
+    console.log("✓ a home tab: the sidebar's Home, no Due soon tab; /app and /app/notices (and below) redirect to it");
+    const chrome = findChrome();
+    if (!chrome) console.log("✓ (no headless browser on this machine: the rendered home tab is skipped; set CHROME_BIN)");
+    else {
+      const open = await renderHome(chrome, hweb, false), done = await renderHome(chrome, hweb, true);
+      const at = (html: string, re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
+      const order = [at(open, /data-home-section="setup"/), at(open, /data-home-section="notices"/), at(open, /data-chart-cell|class="grid border-t border-l/)];
+      assert.ok(order.every((x) => x >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, `setup, then notices, then the charts: ${order}`);
+      const setup = open.slice(order[0]!, order[1]!);
+      assert.match(setup, /<h2 id="home-setup-title"[^>]*>Setup<\/h2>/, "the checklist is a section named Setup");
+      assert.match(setup, /2 of 5 steps done\./, "its progress across the packs' steps and the setup steps");
+      assert.match(setup, /Set up your workspace.*Add a first application.*Describe one application you want audited\./s, "the pack's open step, with its help");
+      assert.match(setup, /Get set up.*Join your team&#x27;s account|Get set up.*Join your team's account/s, "the setup steps");
+      assert.doesNotMatch(setup, /You accepted the invitation/, "compact: a done step says nothing more");
+      assert.match(setup, /Turn the tools on in your client\./, "the next open setup step says what to do");
+      assert.match(setup, /Ask Fixture something/, "a later step is listed");
+      assert.doesNotMatch(setup, /Your first question checks/, "compact: only the next open step's text");
+      assert.match(setup, /Connect your AI client/, "the connection panel beside it");
+      const notices = open.slice(order[1]!, order[2]!);
+      assert.equal([...notices.matchAll(/href="\/app\/records\/audit_findings\//g)].length, 5, "the first five notices");
+      assert.match(notices, /Show all 7/, "and a button for the rest");
+      assert.match(notices, /<h2[^>]*>Due soon<\/h2>/, "a section named Due soon");
+      assert.match(open, /aria-label="Open vulnerabilities by severity\./, "the charts draw below");
+      const folded = /<section aria-labelledby="home-setup-title" data-home-section="setup" data-complete=""[\s\S]*?<\/section>/.exec(done)?.[0] ?? "";
+      assert.match(folded, /You&#x27;re all set|You're all set/, "every step done: one line");
+      assert.match(folded, /5 of 5 setup steps done\./, "saying how many");
+      assert.match(folded, /aria-expanded="false"[^>]*>Show setup<\/button>/, "that opens again");
+      assert.doesNotMatch(done, /Connect your AI client|Set up your workspace/, "folded: no checklist, no connection panel");
+      console.log("✓ rendered home tab: the checklist (the open steps, only the next one explained, the connection panel), five of seven notices with Show all, then the charts; all done, one line that opens again");
+    }
+  }
+
   // ---------- 4. the console typechecks with the tabs ----------
   if (process.env.CONSOLE_TABS_TYPECHECK !== "off" && existsSync(path.join(ROOT, "web", "node_modules"))) {
-    const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: web, encoding: "utf8" });
-    assert.equal(r.status, 0, `the console typechecks with the declared tabs: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
-    console.log("✓ the build copy's console typechecks with the declared tabs, charts and metrics");
+    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"]] as const) {
+      const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: w, encoding: "utf8" });
+      assert.equal(r.status, 0, `the console typechecks with ${what}: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
+      console.log(`✓ the build copy's console typechecks with ${what}`);
+    }
   } else console.log("✓ (typecheck of the build copy skipped)");
 } finally {
   rmSync(TMP, { recursive: true, force: true });

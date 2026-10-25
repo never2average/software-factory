@@ -1,8 +1,10 @@
 'use client';
 // A tab a pack declares (mold_v0-058), at /app/packs/<pack>/<tab>: the shell draws it from pack.json alone.
-//   overview   the tab's charts (mold_v0-063; ./charts.tsx)
+//   overview   the tab's charts (mold_v0-063; ./charts.tsx), below the shell's sections it includes, in its order
+//              (mold_v0-134, a home page): the Setup page's checklist (folded to a line once done), the notices
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date), each row opening
-//              the record's page when the tab has the detail view; the tab's charts above
+//              the record's page when the tab has the detail view; the tab's charts above. A merged tab (mold_v0-135:
+//              pack.json `areas`) draws several areas as one list, rows merged by key on the server (./merged.ts)
 //   runs       the workspace's runs; reports: finished runs and their results
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
@@ -15,11 +17,13 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { PackChartSpec, PackTabSpec, RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
+import { SetupChecklist } from '@/features/portal/setup';
+import { DueSoonSection } from '@/features/schedules/notices-page';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
-import { findRecordArea } from '@/features/records/registry';
-import { BoardColumns, fieldLabel, RecordLink, show, type Page, type RecordRow } from './board';
+import { BoardColumns, RecordTable, TimelineList, type Page } from './board';
 import { ChartCell, formatValue, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
+import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { fill } from '@/lib/vocabulary';
 import { httpError } from '@/features/status/from-error';
@@ -58,34 +62,37 @@ function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?:
   );
 }
 
+/** An overview tab: the shell's sections it includes (mold_v0-134), then its charts. */
+function OverviewTab({ tab }: { tab: PackTabSpec }) {
+  const charts = tabCharts(tab);
+  // Only charts: every one hidden from this role is the status page (mold_v0-131).
+  if (!tab.include?.length) return <ChartGrid charts={charts} whole />;
+  return (
+    <div className='flex flex-col gap-8'>
+      {tab.include.map((x) => (x === 'setup' ? <SetupChecklist key={x} /> : <DueSoonSection key={x} />))}
+      {charts.length > 0 && <ChartGrid charts={charts} />}
+    </div>
+  );
+}
+
 // ---------- the area views ----------
 
-function TableView({ area, detail, empty }: { area: RecordAreaSpec; detail: boolean; empty?: EmptySpec }) {
+/** What an area view reads: the area as the tab shows it, where its rows come from, and how they are completed. */
+type Source = { area: RecordAreaSpec; url: string; rows: (p: Page) => Page };
+
+function TableView({ src: { area, url: base, rows }, detail, empty }: { src: Source; detail: boolean; empty?: EmptySpec }) {
   const [after, setAfter] = useState<string[]>([]);
   const cursor = after.at(-1) ?? '';
-  const url = `/api/records/${area.name}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
-  const { data, error } = useOrgLoad(() => getJson<Page>(url), [url]);
+  const url = `${base}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
+  const { data: raw, error } = useOrgLoad(() => getJson<Page>(url), [url]);
+  const data = raw && rows(raw);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
-  if (!data.records.length && !after.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
+  // (A merged tab's page may hold no row and still have more: then its Next button shows.)
+  if (!data.records.length && !after.length && !data.next) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
   return (
     <div className='flex flex-col gap-4'>
-      <Table label={area.label}>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Record</TableHead>
-            {area.list_columns.map((c) => <TableHead key={c}>{fieldLabel(area, c)}</TableHead>)}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.records.map((r) => (
-            <TableRow key={r.key}>
-              <TableCell><RecordLink area={area} r={r} detail={detail} /></TableCell>
-              {area.list_columns.map((c) => <TableCell key={c}>{show(area, c, r.data[c])}</TableCell>)}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <RecordTable area={area} detail={detail} data={data} />
       <div className='flex gap-2'>
         {after.length > 0 && <Button variant='outline' size='sm' onClick={() => setAfter(after.slice(0, -1))}>Previous</Button>}
         {data.next && <Button variant='outline' size='sm' onClick={() => setAfter([...after, data.next!])}>Next</Button>}
@@ -95,20 +102,23 @@ function TableView({ area, detail, empty }: { area: RecordAreaSpec; detail: bool
 }
 
 /** Up to 200 records of an area at once (a board or a timeline), and whether there are more. */
-function useMany(area: RecordAreaSpec) {
-  const url = `/api/records/${area.name}?limit=200`;
-  return useOrgLoad(() => getJson<Page>(url), [url]);
+function useMany({ url: base, rows }: Source) {
+  const url = `${base}?limit=200`;
+  const loaded = useOrgLoad(() => getJson<Page>(url), [url]);
+  return { ...loaded, data: loaded.data && rows(loaded.data) };
 }
 
-function BoardView({ area, by, detail, empty }: { area: RecordAreaSpec; by: string; detail: boolean; empty?: EmptySpec }) {
-  const { data, error, reload } = useMany(area);
+function BoardView({ src, by, detail, empty, merged }: { src: Source; by: string; detail: boolean; empty?: EmptySpec; merged: boolean }) {
+  const { area } = src;
+  const { data, error, reload } = useMany(src);
   const { role } = useAccountRole();
   const [moveError, setMoveError] = useState<string | null>(null);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
   if (!data.records.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
   // Moves go through the generic data API (mold_v0-059: the record store's move, with its roles and transitions).
-  const movable = area.scope === 'workspace' && area.lifecycle?.field === by;
+  // A merged tab's board only shows (its rows are several areas' records).
+  const movable = !merged && area.scope === 'workspace' && area.lifecycle?.field === by;
   const onMove = async (key: string, to: string) => {
     setMoveError(null);
     const res = await fetch(`/api/data/${area.name}/${encodeURIComponent(key)}/move`, {
@@ -126,59 +136,24 @@ function BoardView({ area, by, detail, empty }: { area: RecordAreaSpec; by: stri
 }
 
 
-function TimelineView({ area, by, detail, empty }: { area: RecordAreaSpec; by: string; detail: boolean; empty?: EmptySpec }) {
-  const { data, error } = useMany(area);
+function TimelineView({ src, by, badge, detail, empty }: { src: Source; by: string; badge: string | null; detail: boolean; empty?: EmptySpec }) {
+  const { area } = src;
+  const { data, error } = useMany(src);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
   if (!data.records.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
-  const when = (r: RecordRow) => {
-    const v = by === 'updated' ? r.updated_at : r.data[by];
-    return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
-  };
-  const dated = data.records.filter((r) => when(r)).sort((a, b) => when(b)!.localeCompare(when(a)!));
-  const undated = data.records.filter((r) => !when(r));
-  const months = [...new Set(dated.map((r) => when(r)!.slice(0, 7)))];
-  const month = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  const label = by === 'updated' ? 'Last changed' : fieldLabel(area, by);
-  return (
-    <div className='flex flex-col gap-6'>
-      {data.next && <p className='text-muted-foreground text-xs'>The first 200 records; the table has them all.</p>}
-      {months.map((m) => (
-        <section key={m} className='flex flex-col gap-2'>
-          <h3 className='text-sm font-medium'>{month(m)}</h3>
-          <ol className='border-l pl-4'>
-            {dated.filter((r) => when(r)!.startsWith(m)).map((r) => (
-              <li key={r.key} className='relative py-1.5 text-sm'>
-                <span aria-hidden className='bg-foreground/40 absolute top-3 -left-[1.3rem] size-2 rounded-full' />
-                <span className='text-muted-foreground mr-3 inline-block w-14 tabular-nums'><span className='sr-only'>{label}: </span>{day(when(r)!)}</span>
-                <RecordLink area={area} r={r} detail={detail} />
-                {area.lifecycle && r.data[area.lifecycle.field] !== undefined && (
-                  <Badge variant='outline' className='ml-2'>{show(area, area.lifecycle.field, r.data[area.lifecycle.field])}</Badge>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ))}
-      {undated.length > 0 && (
-        <section className='flex flex-col gap-2'>
-          <h3 className='text-sm font-medium'>No {label.toLowerCase()}</h3>
-          <ul className='flex flex-col gap-1 text-sm'>{undated.map((r) => <li key={r.key}><RecordLink area={area} r={r} detail={detail} /></li>)}</ul>
-        </section>
-      )}
-    </div>
-  );
+  return <TimelineList area={area} by={by} badge={badge} detail={detail} data={data} />;
 }
 
 const VIEW_LABELS = { table: 'Table', board: 'Board', timeline: 'Timeline' } as const;
 
 function AreaTab({ tab }: { tab: PackTabSpec }) {
-  const area = findRecordArea('app', tab.area ?? '');
+  const area = useMemo(() => viewArea(tab), [tab]);
+  const src = useMemo(() => area && { area, url: tabRecordsUrl(tab, area), rows: (p: Page) => withSource(tab, p) }, [tab, area]);
   const views = (tab.views ?? ['table', 'detail']).filter((v): v is 'table' | 'board' | 'timeline' => v !== 'detail');
   const detail = (tab.views ?? ['table', 'detail']).includes('detail');
   const [view, setView] = useState<'table' | 'board' | 'timeline'>(views[0] ?? 'table');
-  if (!area) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
+  if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
   return (
     <div className='flex flex-col gap-6'>
       <ChartGrid charts={tabCharts(tab)} />
@@ -200,9 +175,9 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         </div>
       )}
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
-      {view === 'board' && tab.board_by ? <BoardView area={area} by={tab.board_by} detail={detail} empty={tab.empty} />
-        : view === 'timeline' ? <TimelineView area={area} by={tab.timeline_by ?? 'updated'} detail={detail} empty={tab.empty} />
-        : views.length ? <TableView area={area} detail={detail} empty={tab.empty} /> : null}
+      {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
+        : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
+        : views.length ? <TableView src={src} detail={detail} empty={tab.empty} /> : null}
       </div>
     </div>
   );
@@ -285,7 +260,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
     <PageContainer pageTitle={tab.label} pageDescription={tab.description ?? undefined}>
       {/* /me refused (no account, suspended, signed out) or a role the tab is not for: the status page (mold_v0-131). */}
       {error && !loaded ? <ErrorState error={error} /> : !loaded ? <LoadingCards count={1} /> : !allowed ? <StatusPage kind='denied' area='app' />
-        : tab.kind === 'overview' ? <ChartGrid charts={tabCharts(tab)} whole />
+        : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
         : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} label={tab.label} empty={tab.empty} />
         : null}

@@ -811,8 +811,12 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`web/src/features/admin/engine.ts`, the console's copy of `src/host-tables.ts`, from `build-facts.generated.ts`:
   the host pack's tables and the packs' job kinds with their labels). Without it they show the packs' runs per job kind,
   by the kind's label and in the build's word for a run: an account's runs and latest runs (`orgDetail` `runs`), the
-  weekly chart (Analytics), Health's runs tab (`GET /compute/runs`, `src/compute-jobs.ts` `runKinds`); an account's
-  month spend is its runs'. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
+  weekly chart (Analytics), and FinOps' runs tab, named with the build's run noun ("Audits"), runs per kind with
+  their cost over FinOps' period (`GET /spend/runs`, `src/compute-jobs.ts` `runKinds`; mold_v0-126 moved it there
+  from Health, whose old `?section=runs` link redirects to it); an account's month spend is its runs'. The runs tab
+  takes the place of FinOps' pricing Experiments tab, which shows only when the app has a pricing experiment (a live
+  plan in one, or an account ever shown a variant: `src/experiments.ts` `anyPricingExperiment`,
+  `GET /spend/experiments/any`), after the runs tab, or when a link opens it. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
   build, and, run in a host pack's build, that the engine's stages, messages, account page and funnel are unchanged.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
@@ -1091,6 +1095,43 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   then a labelled region with `tabindex="0"`, so a keyboard can scroll it (axe `scrollable-region-focusable`,
   mold_v0-114; `web/src/hooks/use-scrolls-sideways.ts`); one that fits is not a tab stop. `npm run test:declarative-packs` refuses malformed `empty` blocks and checks the defaults;
   `npm run test:console-tabs` draws empty states, a scrolling table and a scrolling board.
+  **Columns and merged tabs** (mold_v0-135): an area tab's `columns` names its table's columns (and a board card's
+  fields), the area's list columns by default. An area tab may show several record areas as one list: `areas` in place
+  of `area`, 2 to 4 entries `{area, rows, source}`, config only. Rows are merged by record key: the first area's rows,
+  then each later area's rows that no earlier area holds (`rows: all`, the default); an area with `rows: matched` only
+  adds its fields to rows another area brings (a lookup by key), so a shared catalog joins the workspace's own rows
+  without listing the whole catalog. A row's fields are the union of its areas' fields (the first area in the list with
+  a value gives each; the title likewise; its time the latest), and `source` is the area's word in the tab's `source`
+  column (an enum of those words: a column, a board field). The first area is the tab's own: its label names the empty
+  state ("No <its label> yet.") and its onboarding step; a row opens the record of the first of its areas. Why a union
+  by key and not stacked sections or a join on a field: an app's "everything that applies, with its status" is one list
+  (one sort, one board, one count), its areas already share their keys (a status row is keyed by what it is the status
+  of, as Maxwell's ledger keys its control lines by the control's key), and a row only some areas hold (a control with no
+  status yet) still shows. gen-packs refuses an undeclared area, an area twice, a first area that brings no rows, a
+  column, `board_by` or `timeline_by` no area declares or that two areas declare with different types (an enum's options
+  are every declaring area's), a merged board with no `board_by`, and a `source` word beside an area field named
+  `source`. The tab is shown to the roles that may read every one of its areas, and hidden when one of them is withheld
+  (`mcp`); the views are the same (table, board, timeline, detail; a merged board offers no moves). The rows come from
+  `GET /api/records/tabs/<pack>/<tab>` (`src/record-merge.ts`): only a declared merged tab, each area read as on
+  `/api/records/<area>` (its read permission for the person, a shared area's rows, the workspace's own rows), `limit`
+  1-200 and a cursor that names the area being listed and its own cursor, so the order never depends on how the
+  database sorts one area's keys against another's; a page may hold fewer rows than `limit` (later areas' rows mostly
+  listed already) and still have a `next`. `npm run test:declarative-packs` refuses malformed merged tabs and checks the
+  resolved spec (`scripts/fixtures/packs/fixture_status`); `npm run test:merged-tabs` checks the rows, paging at every
+  size, two workspaces and the route's refusals in an embedded database; `npm run test:console-tabs` draws a merged
+  table, board, timeline, empty state and a narrow table in a headless browser.
+  **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
+  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the packs' onboarding
+  steps and the setup steps, only the next open one explained, beside the connection panel; folded to one line, "You're
+  all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
+  `notices` the records due soon (the first five, then "Show all"; `DueSoonSection` in
+  `web/src/features/schedules/notices-page.tsx`). Its charts may then be left out. `/app` (setup) and `/app/notices`
+  (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
+  too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
+  section twice or unknown, `roles` on such a tab (it is every member's home: it is every role's, not narrowed by its
+  charts' metrics), `notices` with no due-date area, a second tab including the same section, and a `setup` or `notices`
+  tab beside it (its page would only redirect). `npm run test:declarative-packs` refuses those and checks the registry and
+  the redirects; `npm run test:console-tabs` draws the tab (open checklist, notices, charts; then folded).
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -1595,9 +1636,13 @@ at most 1%, p50 at most 1500 ms, p95 at most 5000 ms, and a tripped threshold is
 fails. It sends nothing until both addresses are proven the app's own (Vercel: one of the app's projects serves it;
 its own server: the address its deploy recorded). *accessibility* (axe-core 4.13.0, WCAG 2.2 A/AA, serious and critical
 fail) and *responsiveness* (phone 390, tablet 820, desktop 1440: sideways scroll and 24px tap targets) grade the
-console's pages **from the lane copy, served on the factory machine** (`testing/console/`): `render.py` builds
-`build/<app_id>.lane-console/` (the lane copy's `web/`, `next build --webpack`, with a lane stand-in for
-`@clerk/nextjs` in that build only, since a local copy cannot reach Clerk with the app's keys), and `world.mts` serves it
+console's pages **from the lane copy, served on the factory machine** (`testing/console/`): `render.py` builds the
+lane copy's `web/` (`next build --webpack`, with a lane stand-in for `@clerk/nextjs` in that build only, since a local
+copy cannot reach Clerk with the app's keys) and keeps the build under a hash of every input that can change it
+(`console/cache.py`, mold_v0-147: the console's files, the packs and profile, the installed packages, node, the build
+environment), so the next run with the same inputs serves a copy of it with no build; `--suite a11y,layout,shots,...`
+runs several harnesses in one world and `--pages auto` grades only the pages a change can reach (`console/pages.py`,
+plus a smoke), while the lanes grade every page. `world.mts` serves it
 on 127.0.0.1 against the lane copy's API on an embedded throwaway database behind the shell's offline Clerk
 (`scripts/lib/test-world.ts`, `mock-providers.ts`), signed in as one workspace's owner who is also platform staff; every
 request a page makes off the machine is aborted. The pages are read from the build (`console/surface.mts`): the shell's

@@ -1,7 +1,7 @@
 // What each pack of a lane copy adds, read from the build itself (never from a list kept here), so every lane can report a
 // row per pack and a pack's failure is visible on its own.
 //   <lane copy>/node_modules/.bin/tsx molds/mold_v0/testing/console/surface.mts <lane copy>          JSON on stdout
-// {packs: [{id, name, kind: "host"|"pack"}], tools: {<tool>: <pack id or "shell">}, pages: [{pack, path, label, signed_in}]}
+// {packs: [{id, name, kind: "host"|"pack"}], tools: {<tool>: <pack id or "shell">}, pages: [{pack, path, label, signed_in, as?}]}
 //   packs  every pack in the build, host packs first (src/hosts.generated.ts, then src/packs.generated.ts)
 //   tools  the customer MCP server's tools by owner: a host pack's toolNames, a pack's own and generated tools, and the
 //          record-area tools (list_records, get_record) as the shell's
@@ -14,7 +14,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export interface Page { pack: string; path: string; label: string; signed_in: boolean }
+export interface Page { pack: string; path: string; label: string; signed_in: boolean; as?: "no_account" | "staff_no_account" }
 export interface Surface { packs: { id: string; name: string; kind: "host" | "pack" }[]; tools: Record<string, string>; pages: Page[] }
 
 const imp = (lane: string, rel: string) => import(pathToFileURL(path.join(lane, rel)).href);
@@ -52,6 +52,12 @@ function shellPages(lane: string): Page[] {
     }
   };
   if (existsSync(root)) walk(root, []);
+  // The portal as someone in no workspace sees it (mold_v0-098: every portal route shows the page for no account), and as
+  // platform staff with none; the query only tells the rows apart.
+  if (out.some((p) => p.path === "/app")) {
+    out.push({ pack: "shell", path: "/app?lane=no-account", label: "/app (signed in, in no workspace)", signed_in: true, as: "no_account" });
+    out.push({ pack: "shell", path: "/app?lane=staff-no-account", label: "/app (platform staff, in no workspace)", signed_in: true, as: "staff_no_account" });
+  }
   return out;
 }
 

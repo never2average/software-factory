@@ -2562,6 +2562,49 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
           },
+          "areas": {
+            "minItems": 2,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "area": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "rows": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "matched"
+                  ]
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 40
+                },
+                "$comment": {
+                  "type": "string",
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "area"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "columns": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
           "views": {
             "minItems": 1,
             "maxItems": 4,
@@ -2590,6 +2633,18 @@
             "items": {
               "type": "string",
               "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
+          "include": {
+            "minItems": 1,
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "setup",
+                "notices"
+              ]
             }
           },
           "page": {

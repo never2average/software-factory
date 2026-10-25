@@ -927,10 +927,16 @@ export type Chart = z.output<typeof ChartSchema>;
 /**
  * A console tab (mold_v0-058): an entry of the /app sidebar and the page it opens. When any pack declares tabs, the
  * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
- *   overview      the tab's `charts` (mold_v0-063)
+ *   overview      the tab's `charts` (mold_v0-063); `include` puts the shell's own sections above them, in its order
+ *                 (mold_v0-134, a home page): `setup` the Setup page's checklist (the connection, the setup steps and
+ *                 the packs' onboarding steps), compact, folded to one line once every step is done; `notices` the
+ *                 records due soon. /app or /app/notices then redirects to the tab, and a build refuses a setup or a
+ *                 notices tab beside it (its page would only redirect here)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
- *                 updated, the default), detail (rows open the record's page); `charts` above them
+ *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
+ *                 tab) names the table's columns, the area's list columns by default. `areas` in place of `area`
+ *                 (mold_v0-135): several areas as one list, rows merged by record key (TabAreaSchema below)
  *   runs          the workspace's runs; reports: finished runs and their results
  *   credentials, usage, schedules, notices, setup, billing, profile   the shell's own page
  *   page          one of the pack's own pages (pack.json pages, `page`)
@@ -946,6 +952,8 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
   "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
+/** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
+export const TAB_INCLUDES = ["setup", "notices"] as const;
 /**
  * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
  * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
@@ -975,6 +983,27 @@ export const TabEmptySchema = z.object({
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type TabEmpty = z.output<typeof TabEmptySchema>;
+/**
+ * One area of a merged tab (mold_v0-135): an area tab with `areas` in place of `area` shows several record areas as one
+ * list, one row per record key. A row's fields are the union of its areas' fields; where two areas hold a field of the
+ * same name, the first area of the list that has a value gives it (so does the title). Rows come area by area, in the
+ * list's order, each by key: the first area's rows, then the next area's rows that no earlier area holds, and so on.
+ *   rows: all       (the default) the area's rows join the list
+ *   rows: matched   the area only adds its fields to rows another area brings (a lookup by key): a shared catalog's
+ *                   entries beside the workspace's own status of the ones it tracks, never the whole catalog
+ *   source          the area's word in the tab's `source` column (a row shows the first of its areas, in the list's
+ *                   order, that has one): plain text on one line, at most 40 characters
+ * The first area is the tab's own (its label, its empty state, its onboarding); it brings rows. A row opens the record
+ * of the first of its areas (the detail view). Who sees the tab: the roles that may read every one of its areas.
+ */
+export const TAB_SOURCE_COLUMN = "source";
+export const TabAreaSchema = z.object({
+  area: name,
+  rows: z.enum(["all", "matched"]).optional(),
+  source: emptyText(40).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type TabArea = z.output<typeof TabAreaSchema>;
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -983,19 +1012,32 @@ export const TabSchema = z.object({
   icon: z.enum(TAB_ICONS).optional(),
   group: z.string().trim().min(1).max(40).optional(),
   area: name.optional(),
+  areas: z.array(TabAreaSchema).min(2).max(4).optional(),
+  columns: z.array(name).min(1).max(8).optional(),
   views: z.array(z.enum(TAB_VIEWS)).min(1).max(4).optional(),
   board_by: name.optional(),
   timeline_by: point.optional(),
   charts: z.array(name).max(12).optional(),
+  include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
-  if (t.kind === "area" && !t.area) bad("an area tab names its record area", "area");
-  if (t.kind !== "area") for (const k of ["area", "views", "board_by", "timeline_by"] as const) if (t[k] !== undefined) bad(`${k} is for an area tab`, k);
-  if (t.kind === "overview" && !t.charts?.length) bad("an overview tab lists its charts", "charts");
+  if (t.kind === "area" && !t.area && !t.areas) bad("an area tab names its record area (area), or the areas it merges (areas)", "area");
+  if (t.area && t.areas) bad("an area tab shows one area (area) or merges several (areas), not both", "areas");
+  if (t.kind !== "area") for (const k of ["area", "areas", "columns", "views", "board_by", "timeline_by"] as const) if (t[k] !== undefined) bad(`${k} is for an area tab`, k);
+  if (t.areas) {
+    const names = t.areas.map((a) => a.area);
+    if (new Set(names).size !== names.length) bad("an area is listed twice", "areas");
+    if (t.areas[0]!.rows === "matched") bad("the first area brings the rows (rows: all): a matched area only adds fields to them", "areas", "0", "rows");
+  }
+  if (t.columns && new Set(t.columns).size !== t.columns.length) bad("a column is listed twice", "columns");
+  if (t.kind === "overview" && !t.charts?.length && !t.include?.length) bad("an overview tab lists its charts (or includes a section of the shell's)", "charts");
+  if (t.include && t.kind !== "overview") bad("include is for an overview tab", "include");
+  if (t.include && new Set(t.include).size !== t.include.length) bad("a section is included twice", "include");
+  if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
