@@ -1307,7 +1307,8 @@ function readShareImage() {
   // The hero: the block's own (a block of ordered sections names it by its type).
   const block = landingPage.landing ?? {};
   const hero = block.hero ?? (Array.isArray(block.sections) ? block.sections.find((x) => x?.type === "hero") : null) ?? {};
-  const headline = (hero.headline ?? profile.short_description).trim();
+  // The whole headline as the page shows it: its highlighted end too (mold_v0-138).
+  const headline = [hero.headline ?? profile.short_description, hero.headline_highlight].filter(Boolean).join(" ").trim();
   const sub = hero.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? null : profile.console_description);
   const sentence = (t) => /[.!?…]$/.test(t) ? t : `${t}.`;
   const drawnAlt = [headline.toLowerCase().startsWith(profile.name.toLowerCase()) ? headline : `${profile.name}: ${headline}`, sub].filter(Boolean).map(sentence).join(" ");
