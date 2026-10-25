@@ -485,11 +485,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(folded, /You&#x27;re all set|You're all set/, "every step done: one line");
       assert.match(folded, /5 of 5 setup steps done\./, "saying how many");
       assert.match(folded, /aria-expanded="false"[^>]*>Show setup<\/button>/, "that opens again");
-      assert.doesNotMatch(done, /Connect your AI client|Pick your client|Add a first application/, "folded: no checklist, no connection panel");
+      assert.doesNotMatch(done, /Connect your AI client|Pick your client|<ol class="mt-3"/, "folded: no checklist, no connection panel");
       console.log("✓ rendered home tab: one checklist (shell steps then the pack's, one count, only the next one explained: the connection panel inside the connect step), five of seven notices with Show all, then the charts; all done, one line that opens again");
     }
     // 5b. the merge itself (mold_v0-146)
-    const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.ts");
+    const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.js");
     const sh = (id: string, done = false) => ({ id, label: `shell ${id}`, done, at: null, help: `${id} help` });
     const pk = (id: string, covers: string | null = null) => ({ pack: "p", id, label: `pack ${id}`, help: null, done: false, at: null, covers });
     const shell = [sh("joined", true), sh("connected"), sh("tools"), sh("first_call")];

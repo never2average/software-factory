@@ -475,7 +475,7 @@ function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored 
   const connectKey = connect ? steps.find((x) => x.shell === 'connected')?.key : undefined;
   const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
     body: x.key === connectKey ? (
-      <div className='mt-1 flex flex-col gap-3'>
+      <div className='mt-1 flex max-w-xl flex-col gap-3'>
         <p className='text-muted-foreground text-sm'>{x.pack && x.help ? x.help : `${profile.name} runs inside the AI client you already use.`}{s.connect.secret ? ' Your connection URL contains your key: keep it private.' : ''}</p>
         <ConnectSteps s={s} onConnected={connect!} />
       </div>
