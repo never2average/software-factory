@@ -1,7 +1,7 @@
 /**
- * A declarative pack's customer guide (mold_v0-106): pack.json `guide`, the pages /app/docs shows and the docs answers
- * (Ask AI, src/docs-answers.ts) cite, written by the pack instead of as console code. A host pack's guide stays its own
- * code (web/src/packs/<id>/guide.ts, mold_v0-039); a host pack may not declare `guide`.
+ * A pack's customer guide (mold_v0-106): pack.json `guide`, the pages /app/docs shows and the docs answers (Ask AI,
+ * src/docs-answers.ts) cite, written by the pack instead of as console code. A host pack's too since mold_v0-139 (it was
+ * its code, web/src/packs/<id>/guide.ts): its guide is the whole guide (below).
  *
  *   markdown   the guide inline: one page per `## ` heading (its `### ` subsections become the page's sections), as the
  *              shell's own guide is cut; nothing may stand before the first `## `. A pack is its pack.json alone
@@ -10,6 +10,15 @@
  *              "Guide". A group may be one the generated pages use ("Getting started", "Reference"): the pages join it
  *   generated  false leaves out the pages generated from the pack's declarations (the console, its records, its runs);
  *              connecting a client, the MCP tools and the account pages stay. Default true
+ *   tool_groups  how the MCP tools page groups the tools (mold_v0-139): [{ title, tools: [tool names] }], in order, each
+ *              tool in the order listed; a tool the build does not have is left out, and the tools no group names are
+ *              grouped as without it. A name is a tool's name, never checked against the server's: tools come and go
+ *   prompts_intro  the line before the slash commands' list on the MCP tools page (mold_v0-139), in the pack's words;
+ *              default "Clients that support MCP prompts also offer these:"
+ *
+ * A host pack's guide (mold_v0-139; it was its console code, web/src/packs/<id>/guide.ts) is the WHOLE guide: its pages
+ * in its groups and nothing generated (`generated` is not taken), its page titled as the MCP tools page ("MCP tools" in
+ * the build's words) followed by the tools section (its `tool_groups`, then "More tools", then the slash commands).
  *
  * Every page is MARKDOWN ONLY, checked by the build (scripts/gen-packs.mjs runs pageProblems on each): no raw HTML
  * (the console would show it as text, the docs answers would quote it), no images, no control or invisible characters,
@@ -26,7 +35,9 @@ import { z } from "zod";
 import { hrefProblem } from "./landing.js";
 
 /** The ceilings: a guide stays a guide (the host pack's whole guide is about 25,000 characters). */
-export const GUIDE_LIMITS = { pages: 40, pageChars: 30_000, totalChars: 200_000, titleChars: 80, groups: 12, groupChars: 40 } as const;
+export const GUIDE_LIMITS = { pages: 40, pageChars: 30_000, totalChars: 200_000, titleChars: 80, groups: 12, groupChars: 40, toolsPerGroup: 100 } as const;
+/** The MCP tools page's group for the tools no `tool_groups` entry names (web/src/content/customer-guide.ts, pack-guide.ts). */
+export const MORE_TOOLS = "More tools";
 /** The group a page no `groups` entry names lands in. */
 export const DEFAULT_GUIDE_GROUP = "Guide";
 
@@ -43,6 +54,11 @@ export const GuideSchema = z.object({
   markdown: z.string().min(1).max(GUIDE_LIMITS.totalChars).optional(),
   groups: z.array(z.object({ title: title.refine((s) => s.length <= GUIDE_LIMITS.groupChars, `at most ${GUIDE_LIMITS.groupChars} characters`), pages: z.array(title).min(1).max(GUIDE_LIMITS.pages) }).strict()).max(GUIDE_LIMITS.groups).optional(),
   generated: z.boolean().optional(),
+  tool_groups: z.array(z.object({
+    title: title.refine((s) => s.length <= GUIDE_LIMITS.groupChars, `at most ${GUIDE_LIMITS.groupChars} characters`),
+    tools: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a tool's name: lowercase letters, digits and _")).min(1).max(GUIDE_LIMITS.toolsPerGroup),
+  }).strict()).max(GUIDE_LIMITS.groups).optional(),
+  prompts_intro: z.string().trim().min(1).max(300).refine((s) => !/\n/.test(s), "one line").optional(),
   /** Taken until mold_v0-124 (a directory of .md pages): refused now, saying where the pages go. */
   dir: z.never({ error: GUIDE_DIR_GONE }).optional(),
 }).strict()
@@ -74,15 +90,26 @@ export function guideHrefProblem(href: string): string | null {
   return hrefProblem(href);
 }
 
+/**
+ * How a page is checked beyond the guide's rules: a staff doc (src/staff-docs.ts) is shown by /admin/docs, whose renderer
+ * shows any HTML as text and opens a relative link to another doc (`journeys.md`, `../beta-guide.md`) as that doc, else
+ * as text; so `<name>` placeholders and links between docs are fine there, and a doc may be longer than a guide page.
+ */
+export interface PageRules { html?: boolean; relative?: boolean; maxChars?: number }
+
+/** A relative link between docs: a path with no scheme, no leading / and no //host, ending .md (with an #anchor). */
+const DOC_LINK = /^(?:\.{1,2}\/)*(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*\/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.md(?:#[A-Za-z0-9_-]{1,100})?$/;
+
 /** Everything wrong with one page's markdown, each "<where>: <problem>". Empty: the page is markdown only, its links safe. */
-export function pageProblems(md: string, where: string): string[] {
+export function pageProblems(md: string, where: string, rules: PageRules = {}): string[] {
   const out: string[] = [];
   const bad = (what: string) => out.push(`${where}: ${what}`);
+  const max = rules.maxChars ?? GUIDE_LIMITS.pageChars;
   if (NOT_TEXT.test(md)) bad("control or invisible characters (zero-width, bidirectional, tag characters): markdown text only");
-  if (md.length > GUIDE_LIMITS.pageChars) bad(`at most ${GUIDE_LIMITS.pageChars} characters a page`);
+  if (md.length > max) bad(`at most ${max} characters a page`);
   const text = prose(md);
   const lineOf = (i: number) => text.slice(0, i).split("\n").length;
-  const html = /<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<!--|<![A-Za-z[]|<\?/m.exec(text);
+  const html = rules.html ? null : /<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<!--|<![A-Za-z[]|<\?/m.exec(text);
   if (html) bad(`line ${lineOf(html.index)}: raw HTML (${html[0]}…): write markdown (the console shows HTML as text)`);
   const img = /!\[/.exec(text);
   if (img) bad(`line ${lineOf(img.index)}: an image: a guide is text (describe it, or link to it)`);
@@ -98,6 +125,7 @@ export function pageProblems(md: string, where: string): string[] {
   for (const m of unlinked.matchAll(/\bhttp:\/\/|(^|[^\w./@-])www\./gim)) bad(`line ${lineOf(m.index!)}: a bare http:// or www. address: write it as an https:// link`);
   for (const [i, href] of hrefs) {
     if (!href) { bad(`line ${lineOf(i)}: a link with no address`); continue; }
+    if (rules.relative && DOC_LINK.test(href)) continue;
     const p = guideHrefProblem(href);
     if (p) bad(`line ${lineOf(i)}: the link ${JSON.stringify(href.slice(0, 80))}: ${p}`);
   }
@@ -128,9 +156,9 @@ function inlinePages(md: string, problems: string[]): { title: string; body: str
  * A pack's `guide` as pages, checked: the pages (its inline markdown), each in its group, and every problem. `reserved`
  * holds the titles of the pages the console generates (words filled), which a hand-written page may not take.
  */
-export function compileGuide(json: unknown, reserved: readonly string[] = []): { pages: GuidePageSource[]; groups: string[]; generated: boolean; problems: string[] } {
+export function compileGuide(json: unknown, reserved: readonly string[] = []): { pages: GuidePageSource[]; groups: string[]; generated: boolean; tool_groups: [string, string[]][]; prompts_intro: string | null; problems: string[] } {
   const r = GuideSchema.safeParse(json);
-  if (!r.success) return { pages: [], groups: [], generated: true, problems: r.error.issues.map((i) => `guide${i.path.length ? `.${i.path.join(".")}` : ""}: ${i.message}`) };
+  if (!r.success) return { pages: [], groups: [], generated: true, tool_groups: [], prompts_intro: null, problems: r.error.issues.map((i) => `guide${i.path.length ? `.${i.path.join(".")}` : ""}: ${i.message}`) };
   const g = r.data;
   const problems: string[] = [];
   const raw = g.markdown !== undefined ? inlinePages(g.markdown.replace(/\r\n?/g, "\n"), problems) : [];
@@ -160,7 +188,16 @@ export function compileGuide(json: unknown, reserved: readonly string[] = []): {
     pages.push({ title: p.title, slug, group: grouped.get(p.title) ?? DEFAULT_GUIDE_GROUP, body: p.body });
   }
   for (const t of grouped.keys()) if (!pages.some((p) => p.title === t) && !raw.some((p) => p.title === t)) problems.push(`guide.groups: page ${JSON.stringify(t)} is not a page of the guide`);
+  const toolGroups: [string, string[]][] = (g.tool_groups ?? []).map((x) => [x.title, x.tools]);
+  const toolOwner = new Map<string, string>();
+  for (const [gt, names] of toolGroups) for (const n of names) {
+    if (toolOwner.has(n)) problems.push(`guide.tool_groups: tool ${n} is in two groups (${toolOwner.get(n)} and ${gt})`);
+    else toolOwner.set(n, gt);
+  }
+  if (new Set(toolGroups.map(([t]) => t)).size !== toolGroups.length) problems.push("guide.tool_groups: a group is listed twice");
+  if (g.prompts_intro !== undefined) problems.push(...pageProblems(g.prompts_intro, "guide.prompts_intro"));
+  if (toolGroups.some(([t]) => t === MORE_TOOLS)) problems.push(`guide.tool_groups: "${MORE_TOOLS}" is where the tools no group names go: choose another title`);
   const groups = [...(g.groups ?? []).map((x) => x.title)];
   if (pages.some((p) => p.group === DEFAULT_GUIDE_GROUP) && !groups.includes(DEFAULT_GUIDE_GROUP)) groups.unshift(DEFAULT_GUIDE_GROUP);
-  return { pages, groups, generated: g.generated !== false, problems };
+  return { pages, groups, generated: g.generated !== false, tool_groups: toolGroups, prompts_intro: g.prompts_intro ?? null, problems };
 }
