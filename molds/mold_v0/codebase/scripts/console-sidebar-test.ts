@@ -5,7 +5,8 @@
 // 1. The profile declares the sidebar (profile.json console.sidebar): exactly its groups and entries, in its order, the
 //    packs' tabs and the shell's pages (Team, API keys, Profile...) among them.
 // 2. Zero packs: a profile sidebar of shell pages only.
-// 3. A pack's tabs reach the shell's Team and API keys pages (tab kinds team, keys).
+// 3. A pack's tabs reach the shell's Team and API keys pages (tab kinds team, keys); two tabs opening one shell page are
+//    one entry (the first's).
 // 4. Refused, each with its reason: a tab left out, an unknown entry, an entry twice, a shell page a tab already opens, a
 //    page the build lacks (API keys with member keys off), two tabs opening one shell page, a sidebar in a pack.json, a
 //    malformed sidebar.
@@ -98,6 +99,10 @@ try {
     const ws = lines(p.portalNav).filter((x) => x.startsWith("Workspace: "));
     assert.deepEqual(ws.slice(-2), ["Workspace: Team /app/team", "Workspace: API keys /app/keys"], `a pack's tabs open the Team and API keys pages: ${ws.join(", ")}`);
     console.log("✓ tab kinds team and keys: a pack's sidebar reaches the shell's Team and API keys pages");
+    const twice = probe(built("twice", ["fixture_vulns"], (_id, j) => { j.tabs.push({ id: "plan", kind: "billing", label: "Plan", group: "More" }); }));
+    assert.deepEqual(lines(twice.portalNav).filter((x) => x.endsWith(" /app/billing")), ["Workspace: Billing /app/billing"], "two tabs opening one page: one entry, the first's");
+    assert.ok(!twice.portalNav.some((g) => g.label === "More"), "a group left with no entry is not drawn");
+    console.log("✓ two tabs opening one shell page: one sidebar entry, the first tab's");
   }
 
   // ---------- 4. refused ----------
@@ -110,7 +115,6 @@ try {
       ["a shell page a tab opens", () => {}, { console: { sidebar: [...SIDEBAR, { label: "More", items: ["usage"] }] } }, /"usage": tab activity of pack fixture_vulns opens that page: list the tab \(fixture_vulns\/activity\)/],
       ["API keys with member keys off", () => {}, { member_keys: false, console: { sidebar: SIDEBAR } }, /"keys": member API keys are off \(profile\.json member_keys\), so there is no API keys page to list/],
       ["a keys tab with member keys off", (_id, j) => { j.tabs.push({ id: "my-keys", kind: "keys" }); }, { member_keys: false }, /tab my-keys: member API keys are off/],
-      ["two tabs opening one page", (_id, j) => { j.tabs.push({ id: "plan", kind: "billing", label: "Plan" }); }, undefined, /tab plan opens the Billing page, which tab billing of pack fixture_vulns already opens/],
       ["a sidebar in a pack.json", (_id, j) => { j.console = { sidebar: SIDEBAR }; }, undefined, /pack\.json console: sidebar is the app's \(profile\.json\)/],
       ["a malformed sidebar", () => {}, { console: { sidebar: [] } }, /console\.sidebar: a list of 1 to 12 groups/],
       ["a malformed entry", () => {}, { console: { sidebar: [{ label: "A", items: ["Bad Entry"] }] } }, /console\.sidebar\[0\]\.items\[0\]: a tab id/],

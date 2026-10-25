@@ -1074,7 +1074,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   field by default, timeline by a date field or updated, detail; its charts above), `runs`, `reports` (finished runs and
   their results), and the shell's own pages `credentials`, `usage`, `schedules`, `notices`, `setup`, `billing`,
   `profile`, `team` and `keys` (the Team part of Billing and the person's own API keys, mold_v0-133; a build refuses
-  `keys` when member keys are off, and two tabs that open one shell page), or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
+  `keys` when member keys are off; two packs' tabs that open one shell page are one sidebar entry, the first's), or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
   from a fixed set (`TAB_ICONS`). Each tab is shown to `roles` narrowed by what it shows (an area's read permission;
   for an overview, the roles that may read one of its metrics; a build refuses a tab no role could see); the server
   refuses the data whatever the sidebar shows. Tab pages render at `/app/<tab>`, as a pack's own customer pages do at

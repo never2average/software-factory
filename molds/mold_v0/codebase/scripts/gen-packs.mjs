@@ -1354,14 +1354,9 @@ const SHELL_SIDEBAR = { setup: { label: "Setup", icon: "rocket" }, usage: { labe
   profile: { label: "Profile", icon: "account" }, team: { label: "Team", icon: "teams" }, keys: { label: "API keys", icon: "lock" },
   credentials: { label: "Credentials", icon: "lock" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" } };
 {
-  // A shell page is in the sidebar once (mold_v0-133): two tabs that open the same one are refused; API keys need member keys.
-  const opened = new Map();
-  for (const t of shownTabs()) {
+  // API keys need member keys (mold_v0-133). (Two packs' tabs that open one shell page are one sidebar entry: below.)
+  for (const t of shownTabs())
     if (t.kind === "keys" && profile.member_keys === false) fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: member API keys are off (profile.json member_keys), so there is no API keys page`);
-    if (!SHELL_SIDEBAR[t.kind]) continue;
-    if (opened.has(t.kind)) fail(`packs/${t.pack}/pack.json`, `tab ${t.id} opens the ${SHELL_SIDEBAR[t.kind].label} page, which tab ${opened.get(t.kind)} already opens: one entry per page`);
-    else opened.set(t.kind, `${t.id} of pack ${t.pack}`);
-  }
   refuse();
 }
 const profileSidebar = (() => {
@@ -1643,7 +1638,9 @@ function viewsModule() {
     const t = tabs.find((y) => y.pack === x.tab.pack && y.id === x.tab.id);
     return { title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles };
   }) });
-  else for (const t of tabs) {
+  // A page is in the sidebar once (mold_v0-133): packs written apart may each open the same shell page (Activity,
+  // Billing); the first tab that opens it keeps its entry, a later one is left out of the sidebar.
+  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i)) {
     const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
     // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
     let g = groups.find((x) => x.label === label);
