@@ -96,6 +96,14 @@
         "orchestrator/README.md"
       ],
       "why": "the orchestrator sandboxes' service unit, home and host marker, and the harness manifests in the boat templates: running sandboxes hold them, and the next release stops, restarts and checks those (boat-lib stopService, host-guard)"
+    },
+    {
+      "id": "landing-reference-fixture",
+      "pattern": "\\b[Oo]ctillion\\b",
+      "paths": [
+        "scripts/fixtures/landing-reference.json"
+      ],
+      "why": "test data, never shipped: the first product's landing page written word for word as a landing block (mold_v0-122), so its own screenshots can check that the shell's section library reproduces it"
     }
   ],
   "concepts": {

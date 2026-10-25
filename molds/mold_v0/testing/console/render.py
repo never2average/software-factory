@@ -29,6 +29,8 @@ OPTIONS
   --shots-dir <dir>    where `shots` writes (default reports/lane-shots/<app_id>/ under the factory root)
   --no-cache           build afresh in build/<app_id>.lane-console/ and leave the shared cache alone
   --plan               print the build key (hit or miss) and the chosen pages, then stop: no build, no browser
+  --deadline <s>       the world's own deadline in seconds (default 1500 per suite item, inside the lanes' 3000s check);
+                       a longer harness (the parity snapshot, testing/parity/) asks for more
 
 THE CACHE (cache.py): a build is kept under a hash of every input that can change it (the console's files, the packs
 and the profile it was generated from, the installed packages, node, the build environment, the stand-in) in
@@ -266,7 +268,7 @@ def main(a):
         json.dump(items, open(suite_f, "w"))
         tsx = os.path.join(os.path.abspath(codebase), "node_modules", ".bin", "tsx")
         cmd = [tsx, os.path.join(HERE, "world.mts"), "--codebase", os.path.abspath(codebase), "--console", web,
-               "--api-port", str(port), "--deadline", str(WORLD_S * len(items)), "--suite", suite_f]
+               "--api-port", str(port), "--deadline", str(int(opt(head, "--deadline", WORLD_S * len(items)))), "--suite", suite_f]
         if chosen is not None:
             pages_f = os.path.join(tmp, "pages.json")
             json.dump(chosen, open(pages_f, "w"))
