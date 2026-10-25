@@ -656,6 +656,9 @@ export function createApp() {
   ob.get("/compute/failures", async (req, res) => void res.json(await jobs.computeFailures(req.query as Record<string, unknown>)));
   // The packs' runs per job kind, in their words (a build without the session engine: Health's runs tab). Read only.
   ob.get("/compute/runs", async (req, res) => void res.json(await jobs.runKinds(req.query as Record<string, unknown>)));
+  ob.get("/spend/runs", async (req, res) => void res.json(await jobs.runKinds(req.query as Record<string, unknown>)));
+  // Whether any pricing experiment exists (FinOps shows its Experiments tab only then, mold_v0-126). Read only.
+  ob.get("/spend/experiments/any", async (_req, res) => void res.json({ any: await (await import("./experiments.js")).anyPricingExperiment() }));
   // The autoscaler's history (src/autoscaler-ticks.ts): its decisions log and the Activity chart. Read only.
   ob.get("/compute/ticks", async (req, res) => void res.json(await ticks.listTicks(req.query as Record<string, unknown>)));
   ob.get("/compute/activity", async (req, res) => void res.json(await ticks.computeActivity(req.query as Record<string, unknown>)));
