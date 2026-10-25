@@ -7977,6 +7977,13 @@
                 },
                 "description": {
                   "type": "string"
+                },
+                "card": {
+                  "type": "string",
+                  "enum": [
+                    "summary",
+                    "summary_large_image"
+                  ]
                 }
               },
               "additionalProperties": false
@@ -8055,6 +8062,13 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "card": {
+                      "type": "string",
+                      "enum": [
+                        "summary",
+                        "summary_large_image"
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -8412,6 +8426,13 @@
                 },
                 "description": {
                   "type": "string"
+                },
+                "card": {
+                  "type": "string",
+                  "enum": [
+                    "summary",
+                    "summary_large_image"
+                  ]
                 }
               },
               "additionalProperties": false

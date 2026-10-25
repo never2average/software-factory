@@ -9,6 +9,6 @@ import { SHARE_IMAGE_SIZE, SHARE_IMAGE_TYPE } from './share-image-types';
 /** The images entry of a page's openGraph: the build's share image at its route (app/opengraph-image). */
 export const ogImages = () => [{ url: '/opengraph-image', ...SHARE_IMAGE_SIZE, type: SHARE_IMAGE_TYPE, alt: shareImage.alt }];
 
-/** A page's X card: the large image card with the build's share image (app/twitter-image). */
-export const twitterCard = (title: string, description: string): NonNullable<Metadata['twitter']> =>
-  ({ card: 'summary_large_image', title, description, images: [{ url: '/twitter-image', alt: shareImage.alt, ...SHARE_IMAGE_SIZE }] });
+/** A page's X card with the build's share image (app/twitter-image): the large image card unless the landing block's seo.card says summary. */
+export const twitterCard = (title: string, description: string, card: 'summary' | 'summary_large_image' = 'summary_large_image'): NonNullable<Metadata['twitter']> =>
+  ({ card, title, description, images: [{ url: '/twitter-image', alt: shareImage.alt, ...SHARE_IMAGE_SIZE }] });

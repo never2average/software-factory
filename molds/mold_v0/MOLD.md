@@ -1420,8 +1420,9 @@ carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, 
 shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
 links; the ways in: sign in and start, or one account button; `sign_in` and `open` relabel or re-address the account
 button's two states wherever the page shows it), `footer` (a tagline, a note, links, a copyright line,
-`shell_links: false`), `seo` (title and description for search results and Open Graph: the landing page's, and, since
-mold_v0-138, every public page's default title, description and link preview, with the build's share image) and
+`shell_links: false`), `seo` (title and description for search results and Open Graph, and `card`, the X card's size,
+`summary` or `summary_large_image` by default: the landing page's, and, since mold_v0-138, every public page's default
+title, description and link preview; the share image is the build's, mold_v0-093) and
 `request_page` (mold_v0-138, after the first product's early-access page: a public page asking for access at its own
 one-segment `path`, such as `/early-access`, never one of the console's own: an eyebrow, a title and its highlighted
 end, a lead, up to 6 `benefits` {icon, title, body}, its own `seo`, and the form's words in `form`: `submit`, `more`

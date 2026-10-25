@@ -36,7 +36,9 @@
  *                   button's two states (signed out: sign in; signed in: into the console) wherever the page shows it
  *   footer          a tagline, a note, up to 8 links, a copyright line, and `shell_links: false` to leave out the shell's
  *                   own ways in (the sections, the legal pages and the source offer are always there)
- *   seo             title and description for search results and link previews (Open Graph); default from the hero
+ *   seo             title and description for search results and link previews (Open Graph; `card`: the X card's size,
+ *                   summary or summary_large_image, the default); default from the hero. With seo, they are every public
+ *                   page's default title, description and link preview too (mold_v0-138)
  *   request_page    a public page asking for access (mold_v0-138) at its own `path` (such as /early-access): an eyebrow, a
  *                   title with a highlighted end, a lead and up to 6 benefits {icon, title, body} beside the request form
  *                   (the build's access_request fields, src/access-request.ts), its own seo, and the form's words (`form`:
@@ -99,7 +101,8 @@ const Header = z.object({
   links: z.array(Cta).max(2).optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
   sign_in: Cta.optional(), open: Cta.optional(),
 }).strict();
-const Seo = z.object({ title: text(70).optional(), description: text(320).optional() }).strict();
+/** Search results and link previews: a title, a description, and the X card's size (default the large image card). */
+const Seo = z.object({ title: text(70).optional(), description: text(320).optional(), card: z.enum(["summary", "summary_large_image"]).optional() }).strict();
 
 // ---------- the old block (mold_v0-091), still read and converted ----------
 

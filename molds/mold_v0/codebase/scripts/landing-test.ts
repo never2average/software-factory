@@ -444,7 +444,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
       { key: "legacy", label: "Old question", type: "text", ask: false },
     ] };
     rmSync(path.join(copy, "packs"), { recursive: true, force: true });
-    cpSync(packsDir("render-rp", { rp: { landing: { header: { account: "account", sign_in: { label: "Log in", href: "/auth/sign-in" }, open: { label: "Go to the console", href: "/app" } }, request_page: RP }, access_request: FIELDS } }), path.join(copy, "packs"), { recursive: true });
+    cpSync(packsDir("render-rp", { rp: { landing: { header: { account: "account", sign_in: { label: "Log in", href: "/auth/sign-in" }, open: { label: "Go to the console", href: "/app" } }, seo: { title: "Acme asks", card: "summary" }, request_page: RP }, access_request: FIELDS } }), path.join(copy, "packs"), { recursive: true });
     writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ name: "Acme" }));
     const g = gen([], copy);
     assert.equal(g.status, 0, `gen-packs (request page): ${g.stderr}`);
@@ -453,13 +453,13 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
     assert.deepEqual(routes.declared, [{ path: "/ask", page: "request", pack: "rp" }], "and recorded for the lanes, under the pack that declared it");
     const rp = await bundle(`import { renderToStaticMarkup } from 'react-dom/server';
 import { landing } from '@/config/landing.generated';
-import { SiteHeader } from '@/features/site/landing';
+import { SiteHeader, landingMetadata } from '@/features/site/landing';
 import { RequestAccessForm } from '@/features/site/request-access-form';
 import { RequestPageView, requestPageMetadata } from '@/features/site/request-page';
 const page = landing!.request_page!;
 process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<RequestPageView page={page} />), meta: requestPageMetadata(page),
-  header: renderToStaticMarkup(<SiteHeader />), shell: renderToStaticMarkup(<RequestAccessForm from='/request-access' />) }));
-`, path.join(TMP, "render-rp.cjs")) as { html: string; meta: { title: string; description: string }; header: string; shell: string };
+  header: renderToStaticMarkup(<SiteHeader />), shell: renderToStaticMarkup(<RequestAccessForm from='/request-access' />), landingMeta: landingMetadata() }));
+`, path.join(TMP, "render-rp.cjs")) as { html: string; meta: { title: string; description: string }; header: string; shell: string; landingMeta: Meta };
     const at = (needle: string) => rp.html.indexOf(needle);
     assert.match(rp.html, /<p[^>]*>Early<\/p><h1[^>]*>Get your <span class="text-primary">first audit\.<\/span><\/h1>/, "the eyebrow, and the title with its highlighted end");
     assert.ok(at(">One<") > 0 && at(">Two<") > at(">One<") && /<svg[^>]*tabler-icon-file-search/.test(rp.html), "the benefits, in order, with the icon named");
@@ -472,6 +472,9 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<Re
     assert.match(rp.html, /type="submit"[^>]*>Ask now/, "the submit button's words");
     assert.deepEqual(rp.meta, { title: "Ask", description: "Ask for access." }, "its title and description: the block's seo");
     assert.match(rp.header, /href="\/auth\/sign-in"[^>]*>Log in/, "the account button signed out: the block's sign_in");
+    assert.equal(rp.landingMeta.twitter?.card, "summary", "seo.card: the X card's size");
+    assert.deepEqual(rp.landingMeta.twitter?.images?.map((i) => i.url), ["/twitter-image"], "still with the share image");
+    assert.equal(rp.landingMeta.title.absolute, "Acme asks", "the landing page's title: the block's seo");
     console.log("✓ the request page: checked (its path, its words, its placeholders), merged, rewritten to the shell's route and listed; its words, the fields in the form's order (fold, chips, ask: false left out); the account button's words");
   }
   console.log("landing: all checks passed");

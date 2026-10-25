@@ -68,7 +68,7 @@ export interface LandingBlock {
   /** `sign_in` and `open`: the account button's two states, relabelled or re-addressed (mold_v0-138). */
   header?: { links?: LandingLink[]; account?: 'sign_in_and_start' | 'account'; sign_in?: LandingLink; open?: LandingLink };
   footer?: { note?: string; links?: LandingLink[]; tagline?: string; copyright?: string; shell_links?: boolean };
-  seo?: { title?: string; description?: string };
+  seo?: { title?: string; description?: string; card?: 'summary' | 'summary_large_image' };
   request_page?: RequestPage;
 }
 

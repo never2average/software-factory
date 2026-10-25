@@ -178,7 +178,7 @@ export function landingMetadata(): Metadata {
     alternates: { canonical: '/' },
     // The share image named here too (mold_v0-148): a page's own openGraph replaces the one app/opengraph-image adds.
     openGraph: { type: 'website', url: '/', siteName: profile.name, title, description, images: ogImages() },
-    twitter: twitterCard(title, description)
+    twitter: twitterCard(title, description, l.seo?.card)
   };
 }
 
