@@ -860,6 +860,19 @@ def self_test_v0(ok):
             f"mold_v0-090: prepare writes the app's profile settings into the copy's profile.json with the brand, and the generator compiles them (the mold untouched): {zp.get('limits')}")
         ok_(app_profile.check(zb, {"mold_id": "mold_v0"}, f) and app_profile.check(zb, {"mold_id": "mold_v0", "profile": {"limits": {"runs": {"budget_usd_max": 30}}}}, f),
             "mold_v0-090: verify's check finds a copy carrying limits the app does not set, or other values than the app's")
+        # mold_v0-094: the app's landing page (and its legal pages, which the shell also compiles into a module of its own)
+        # reach the build: prepare writes them, the generator accepts them, verify's check finds them in their modules.
+        land = {"landing": {"hero": {"headline": "Audits that never sleep", "subheadline": "Every control, every day, in your words."}},
+                "legal": {"company_name": "Acme Ops Ltd", "contact_email": "legal@acme.example", "effective_date": "2026-10-23"}}
+        os.makedirs(os.path.join(f, "state", "application", "zz_land"))
+        json.dump({"app_id": "zz_land", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}, "profile": land}, open(os.path.join(f, "state", "application", "zz_land", "application.json"), "w"))
+        r4 = subprocess.run([sys.executable, me, "zz_land", "prepare"], capture_output=True, text=True)
+        lb = os.path.join(f, "build", "zz_land")
+        ok_(r4.returncode == 0 and load(os.path.join(lb, "profile.json")).get("landing") == land["landing"] and app_profile.check(lb, {"mold_id": "mold_v0", "profile": land}, f) == []
+            and "Audits that never sleep" in open(os.path.join(lb, "web", "src", "config", "landing.generated.ts")).read(),
+            f"mold_v0-094: an app's landing page and legal pages reach the build copy and its generated modules: {(r4.stdout + r4.stderr)[-300:]} {app_profile.check(lb, {'mold_id': 'mold_v0', 'profile': land}, f) if os.path.isdir(lb) else ''}")
+        ok_(any("landing.generated.ts does not carry" in x for x in app_profile.check(lb, {"mold_id": "mold_v0", "profile": {**land, "landing": {"hero": {"headline": "Other words"}}}}, f)),
+            "mold_v0-094: verify's check finds a build whose landing page is not the app's")
         hb = os.path.join(t, "hostcopy"); os.makedirs(os.path.join(hb, "packs", "hp"))
         json.dump({"host_packs": ["hp"]}, open(os.path.join(hb, "profile.json"), "w")); json.dump({"host": {"profile": {"limits": {"mcp": {"per_key_per_minute": 5}}}}}, open(os.path.join(hb, "packs", "hp", "pack.json"), "w"))
         try: app_profile.write(hb, {"mold_id": "mold_v0", "profile": lim}, f); ok_(False, "a host pack's own limits")
@@ -936,6 +949,24 @@ def self_test_v0(ok):
         ok_(app_profile.problems({"mcp_instructions": "Line one.\nLine two."}, "mold_v0", ROOT) == [], "mold_v0-119: mcp_instructions is settable, line breaks fine")
         for bad, why in (("x" * 4001, "at most 4000"), ("Zero\u200bwidth", "plain text only"), ("  ", "must be text"), (7, "must be text")):
             ok_(any(why in e for e in app_profile.problems({"mcp_instructions": bad}, "mold_v0", ROOT)), f"mold_v0-119: mcp_instructions refused ({why})")
+        # mold_v0-094: the landing page from the brief, checked as text (its sections are the shell's to check).
+        lp, lerrs, _ = app_profile.from_brief("## Profile\nlanding.hero.headline = Audits that never sleep\nlanding.footer.shell_links = false\n- `landing.seo.title`: Acme Ops\n")
+        ok_(lp == {"landing": {"hero": {"headline": "Audits that never sleep"}, "footer": {"shell_links": False}, "seo": {"title": "Acme Ops"}}} and lerrs == [],
+            f"mold_v0-094: landing.<field> lines in ## Profile: {lp} {lerrs}")
+        ok_(any("both a field and a group" in e for e in app_profile.from_brief("## Profile\nlanding.hero = x\nlanding.hero.headline = y\n")[1]), "mold_v0-094: a field and a group of the same name are refused")
+        blk = '## Landing\n\nThe page:\n\n```json\n{"sections": [{"type": "hero", "headline": "Audits"}, {"type": "faq", "items": [{"question": "Q?", "answer": "A."}]}]}\n```\n\n## Records\n'
+        lp, lerrs, _ = app_profile.from_brief(blk)
+        ok_(lp == {"landing": {"sections": [{"type": "hero", "headline": "Audits"}, {"type": "faq", "items": [{"question": "Q?", "answer": "A."}]}]}} and lerrs == [],
+            f"mold_v0-094: a ## Landing section's JSON block is the whole landing block: {lp} {lerrs}")
+        ok_(any("does not read" in e for e in app_profile.from_brief("## Landing\n```json\n{nope}\n```\n")[1]), "mold_v0-094: a JSON block that does not read is refused")
+        ok_(any("given twice" in e for e in app_profile.from_brief(blk + "## Profile\nlanding.hero.headline = x\n")[1]), "mold_v0-094: the landing page in two places is refused")
+        hid = app_profile.from_brief("## Landing\n<!--\n```json\n{\"hero\": {\"headline\": \"x\"}}\n```\n-->\n")
+        ok_(hid[0] is None and any("write the landing block as JSON" in e for e in hid[1]), f"mold_v0-094: a block in an HTML comment is never read: {hid}")
+        ok_(app_profile.problems(lp, "mold_v0", ROOT) == [], "mold_v0-094: landing is settable")
+        for bad, why in (({"hero": {"headline": "Two\nlines"}}, "plain text on one line"), ({"hero": {"primary_cta": {"label": "Go", "href": "javascript:alert(1)"}}}, "a path of this site"),
+                         ({"Hero": {"headline": "x"}}, "is not a field name"), ({"hero": {"headline": "x" * 1201}}, "at most 1200"), ([], "must be an object"),
+                         ({"hero": {"headline": "Zero\u200bwidth"}}, "plain text on one line"), ({"faq": {"items": [{"question": "q"}] * 51}}, "at most 50 items")):
+            ok_(any(why in e for e in app_profile.problems({"landing": bad}, "mold_v0", ROOT)), f"mold_v0-094: landing refused ({why}): {app_profile.problems({'landing': bad}, 'mold_v0', ROOT)}")
         os.remove(os.path.join(f, "state", "factory.local.json"))
         for bad, why in (({"host_packs": ["x"]}, "host_packs"), ({"limits": {"runs": {"budget_usd_max": -1}}}, "positive"), ({"name": "Other"}, "the brand writes it"),
                          ({"limits": {"runs": {"budget_usd": 40}}}, "is not a limit"), ({"billing": {"enabled": True}}, "money")):
