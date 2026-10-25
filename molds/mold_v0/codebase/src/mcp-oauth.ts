@@ -32,7 +32,13 @@
  *   consent                                 the console's /auth/consent page, under the built-in session: it names the
  *                                           client (and whether its name is verified), where it sends the person back,
  *                                           and the workspace the token will act in; same-site JSON with the CSRF header
- *   scope                                   "mcp" (the default); a token without it gets 403 insufficient_scope on /mcp
+ *   scope                                   "mcp" (the default); a token without it gets 403 insufficient_scope on /mcp.
+ *                                           A refresh may narrow it (RFC 6749 6, OAuth 2.1 4.3; mold_v0-087): the new
+ *                                           access token carries only the scopes asked for, never one the refresh
+ *                                           token lacks; the new refresh token keeps the old one's scope, so a later
+ *                                           refresh may ask for the whole grant again, never more
+ *   connected apps                          the person's grants (/api/oauth/grants: the client, the workspace, when
+ *                                           allowed and last used) and revoking one; the console's Connected apps page
  *
  * A token acts as its person, with their current role, in the one workspace they chose: the membership is read live on
  * every call (src/auth.ts memberRole), so removal, suspension and role changes hold on the next request. No token,
@@ -456,14 +462,33 @@ async function revokeGrant(db: Queryable, grantId: string, why: string) {
   await db.query("UPDATE oauth_tokens SET revoked_at = now() WHERE grant_id = $1 AND revoked_at IS NULL", [grantId]);
 }
 
-/** A fresh access token and refresh token for a grant. */
-async function issueTokens(db: Queryable, grant: { id: string; scope: string }) {
+/**
+ * A fresh access token and refresh token for a grant: each with its own scope (mold_v0-087), the grant's unless a
+ * refresh narrowed the access token's (`scopes.access`) or the refresh token being replaced carried less (`scopes.refresh`).
+ */
+async function issueTokens(db: Queryable, grant: { id: string; scope: string }, scopes: { access?: string; refresh?: string } = {}) {
   const access = `${ACCESS_PREFIX}${token(32)}`, refresh = `${REFRESH_PREFIX}${token(32)}`, mins = accessMinutes();
-  await db.query("INSERT INTO oauth_tokens (token_hash, grant_id, kind, expires_at) VALUES ($1, $3, 'access', now() + make_interval(mins => $4)), ($2, $3, 'refresh', now() + make_interval(days => $5))",
-    [sha256(access), sha256(refresh), grant.id, mins, refreshDays()]);
+  const accessScope = scopes.access ?? grant.scope, refreshScope = scopes.refresh ?? grant.scope;
+  await db.query(
+    "INSERT INTO oauth_tokens (token_hash, grant_id, kind, expires_at, scope) VALUES ($1, $3, 'access', now() + make_interval(mins => $4), $6), ($2, $3, 'refresh', now() + make_interval(days => $5), $7)",
+    [sha256(access), sha256(refresh), grant.id, mins, refreshDays(), accessScope, refreshScope]);
   await db.query("/* tenant: platform: one grant by its id */ UPDATE oauth_grants SET last_used_at = now() WHERE id = $1", [grant.id]);
   await db.query("/* tenant: platform: the grant's client */ UPDATE oauth_clients SET last_used_at = now() WHERE id = (SELECT client_id FROM oauth_grants WHERE id = $1)", [grant.id]);
-  return { access_token: access, token_type: "Bearer", expires_in: mins * 60, refresh_token: refresh, scope: grant.scope };
+  return { access_token: access, token_type: "Bearer", expires_in: mins * 60, refresh_token: refresh, scope: accessScope };
+}
+
+/**
+ * The scope a refresh asks for, against what its refresh token holds (RFC 6749 6): omitted or blank is all of it; a
+ * scope it does not hold is refused (never widened); otherwise the scopes asked for, in the held order, once each.
+ */
+export function narrowedScope(held: string, asked: unknown): { scope: string } | { error: string } {
+  const have = held.split(" ").filter(Boolean);
+  if (asked === undefined || asked === null) return { scope: have.join(" ") };
+  if (typeof asked !== "string" || asked.length > 500) return { error: "scope must be a space-separated list" };
+  const want = new Set(asked.split(/\s+/).filter(Boolean));
+  if (!want.size) return { scope: have.join(" ") };
+  if ([...want].some((s) => !have.includes(s))) return { error: "A refresh cannot widen the scope" };
+  return { scope: have.filter((s) => want.has(s)).join(" ") };
 }
 
 /** The client a token request authenticates as: client_secret_basic, client_secret_post, or a public client by id. */
@@ -535,8 +560,8 @@ async function tokenEndpoint(req: Request) {
   const refresh = str("refresh_token") ?? "";
   if (!refresh.startsWith(REFRESH_PREFIX)) throw new OAuthError("invalid_grant", "The refresh token is invalid, expired or revoked");
   const out = await P((db) => db.transaction(async (tx) => {
-    const [t] = await tx.query<{ grant_id: string; expires_at: Date; revoked_at: Date | null }>(
-      "UPDATE oauth_tokens SET used_at = now() WHERE token_hash = $1 AND kind = 'refresh' AND used_at IS NULL RETURNING grant_id, expires_at, revoked_at", [sha256(refresh)]);
+    const [t] = await tx.query<{ grant_id: string; expires_at: Date; revoked_at: Date | null; scope: string | null }>(
+      "UPDATE oauth_tokens SET used_at = now() WHERE token_hash = $1 AND kind = 'refresh' AND used_at IS NULL RETURNING grant_id, expires_at, revoked_at, scope", [sha256(refresh)]);
     if (!t) {
       // A refresh token used twice: someone else holds a copy. The whole grant ends (OAuth 2.1 4.3.1, rotation).
       const [used] = await tx.query<{ grant_id: string; client_id: string }>(
@@ -548,9 +573,11 @@ async function tokenEndpoint(req: Request) {
     if (!g || g.revoked_at || t.revoked_at || +new Date(t.expires_at) <= Date.now()) return { error: new OAuthError("invalid_grant", "The refresh token is invalid, expired or revoked") };
     if (g.client_id !== client.id) return { error: new OAuthError("invalid_grant", "The refresh token was issued to another client") };
     if (resource !== undefined && canonicalResource(resource) !== g.resource) return { error: new OAuthError("invalid_target", "resource does not match the grant") };
-    const scope = str("scope");
-    if (scope !== undefined && !scope.split(/\s+/).filter(Boolean).every((s) => g.scope.split(" ").includes(s))) return { error: new OAuthError("invalid_scope", "A refresh cannot widen the scope") };
-    return { grant: g };
+    // The refresh token's own scope (the grant's for one issued before mold_v0-087); a refresh may narrow it.
+    const held = t.scope ?? g.scope;
+    const asked = narrowedScope(held, b.scope);
+    if ("error" in asked) return { error: new OAuthError("invalid_scope", asked.error) };
+    return { grant: g, scopes: { access: asked.scope, refresh: held } };
   }));
   if ("error" in out) throw out.error;
   // The person must still be an active member of the grant's workspace; if not, the grant ends.
@@ -558,7 +585,7 @@ async function tokenEndpoint(req: Request) {
     await P((db) => revokeGrant(db, out.grant.id, "membership_ended"));
     throw new OAuthError("invalid_grant", "The person is no longer an active member of the workspace");
   }
-  return P((db) => issueTokens(db, out.grant));
+  return P((db) => issueTokens(db, out.grant, out.scopes));
 }
 
 /** POST /oauth/revoke (RFC 7009): the token's grant ends (an access or a refresh token). 200 whatever the token was. */
@@ -580,18 +607,48 @@ async function revokeEndpoint(req: Request) {
  */
 export async function resolveOAuthAccessToken(t: string): Promise<{ org: Org } | { scope: true } | null> {
   if (!oauthOn() || !isOAuthAccessToken(t) || !/^oma_[A-Za-z0-9_-]{43}$/.test(t)) return null;
-  const [g] = await P((db) => db.query<GrantRow & { slug: string; name: string }>(
+  const [g] = await P((db) => db.query<GrantRow & { slug: string; name: string; token_scope: string | null }>(
     `/* tenant: platform: an access token's grant by the token's hash, before any workspace is known */
-     SELECT g.id, g.client_id, g.user_id, g.org_id, g.scope, g.resource, g.revoked_at, o.clerk_org_id AS dir_id, o.slug, o.name
+     SELECT g.id, g.client_id, g.user_id, g.org_id, g.scope, g.resource, g.revoked_at, o.clerk_org_id AS dir_id, o.slug, o.name, t.scope AS token_scope
        FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id JOIN organizations o ON o.id = g.org_id
       WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > now() AND g.revoked_at IS NULL`, [sha256(t)]));
   if (!g) return null;
   // The audience: a token issued for another resource (another address this server no longer answers for) is refused.
   if (!resourceOk(g.resource)) return null;
-  if (!g.scope.split(" ").includes(SCOPE)) return { scope: true };
+  // The token's own scope (a refresh may have narrowed it, mold_v0-087), else the grant's.
+  if (!(g.token_scope ?? g.scope).split(" ").includes(SCOPE)) return { scope: true };
   const role = await memberRole(g.user_id, g.dir_id);
   if (!role) return null;
+  touchGrant(g.id);
   return { org: { orgId: g.org_id, slug: g.slug, name: g.name, userId: g.user_id, role } };
+}
+
+/**
+ * When a connected app last used its grant (the console's "Last used"): set when tokens are issued and, at most once a
+ * minute per grant, when an access token is used on /mcp. Never awaited: a failed write costs the date, not the call.
+ */
+const touched = new Map<string, number>();
+const TOUCH_MS = 60_000;
+function touchGrant(grantId: string) {
+  const now = Date.now();
+  if ((touched.get(grantId) ?? 0) > now - TOUCH_MS) return;
+  if (touched.size >= 10_000) touched.clear();
+  touched.set(grantId, now);
+  void P((db) => db.query("/* tenant: platform: one grant by its id */ UPDATE oauth_grants SET last_used_at = now() WHERE id = $1 AND revoked_at IS NULL", [grantId]))
+    .catch((e) => console.error(`oauth: the last use of grant ${grantId} was not recorded (${(e as Error).name})`));
+}
+/** Tests: forget when grants were last touched, so the next use is recorded at once. */
+export const forgetGrantTouchesForTest = () => touched.clear();
+
+/** One connected app, as the console's Connected apps page shows it (GET /api/oauth/grants). */
+export interface ConnectedApp {
+  id: string;
+  /** The client: its name (as it gave it), whether it is verified, and for a verified one the address that identifies it. */
+  client: { name: string | null; verified: boolean; id_host: string | null; url: string | null };
+  workspace: { id: string; name: string };
+  scope: string[];
+  created_at: string;
+  last_used_at: string | null;
 }
 
 // ---------- routes ----------
@@ -669,8 +726,13 @@ export function mcpOAuthRouter(): Router {
        SELECT g.id, g.client_id, c.name, c.kind, o.name AS org_name, o.clerk_org_id AS dir_id, g.scope, g.created_at, g.last_used_at
          FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id JOIN organizations o ON o.id = g.org_id
         WHERE g.user_id = $1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC LIMIT 200`, [s.userId]));
-    res.json({ grants: rows.map((g) => ({ id: g.id, client: { name: g.name, verified: g.kind === "cimd", id_host: g.kind === "cimd" ? new URL(g.client_id).host : null },
-      workspace: { id: g.dir_id, name: g.org_name }, scope: g.scope.split(" "), created_at: new Date(g.created_at).toISOString(), last_used_at: g.last_used_at ? new Date(g.last_used_at).toISOString() : null })) });
+    const grants: ConnectedApp[] = rows.map((g) => {
+      const verified = g.kind === "cimd";
+      return { id: g.id, client: { name: g.name, verified, id_host: verified ? new URL(g.client_id).host : null, url: verified ? g.client_id : null },
+        workspace: { id: g.dir_id, name: g.org_name }, scope: g.scope.split(" "), created_at: new Date(g.created_at).toISOString(),
+        last_used_at: g.last_used_at ? new Date(g.last_used_at).toISOString() : null };
+    });
+    res.json({ grants });
   }));
   r.post("/api/oauth/grants/:id/revoke", change, wrap(async (req, res) => {
     const s = await signedIn(req, res);
