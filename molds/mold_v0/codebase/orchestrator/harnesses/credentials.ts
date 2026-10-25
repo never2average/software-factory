@@ -287,5 +287,5 @@ export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider
 /** Apply the credential argv rewrite, then wrap so `setup` (config writes, no secret values) runs first in the same exec. */
 export function withCredentialSetup(argv: string[], setup: string, rewrite?: (a: string[]) => string[]): string[] {
   const a = rewrite ? rewrite(argv) : argv;
-  return setup ? ["bash", "-c", `${setup}exec "$@"`, "octi", ...a] : a;
+  return setup ? ["bash", "-c", `${setup}exec "$@"`, "run", ...a] : a;
 }

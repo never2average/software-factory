@@ -35,7 +35,7 @@ for (const [h, c] of Object.entries(CASES)) {
     const keys = Object.keys(env);
     // Same shape as core/runners.ts dockerExecHarness: env -i with only the harness env, as user agent, in the workdir.
     const script = `exec env -i HOME=/home/agent PATH=/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin ${keys.map((k) => `${k}="$${k}"`).join(" ")} "$@"`;
-    const r = spawnSync("docker", ["exec", "-i", "-u", "agent", "-w", "/home/agent/work", ...keys.flatMap((k) => ["-e", k]), pod, "bash", "-c", script, "octi", ...argv],
+    const r = spawnSync("docker", ["exec", "-i", "-u", "agent", "-w", "/home/agent/work", ...keys.flatMap((k) => ["-e", k]), pod, "bash", "-c", script, "run", ...argv],
       { input, env: { ...process.env, ...env }, encoding: "utf8", timeout: 180_000 });
     const d = a.newDigest();
     for (const l of (r.stdout ?? "").split("\n")) { try { const ev = JSON.parse(l); if (ev && typeof ev === "object") d.observe(ev); } catch {} }

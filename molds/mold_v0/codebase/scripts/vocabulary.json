@@ -1,7 +1,9 @@
 {
   "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, and names that outlive a release (a database's functions and roles, built images and boat templates, files on running orchestrator sandboxes), which only a migration of what holds them can rename. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
   "words": [
-    "octillion"
+    "octillion",
+    "octi",
+    "octv"
   ],
   "files": {
     "sql/migrations/*.sql": "applied migrations are checksummed (src/migrate.ts) and replayed on every new database: their text, comments included, stays as it was applied",
@@ -104,6 +106,58 @@
         "scripts/fixtures/landing-reference.json"
       ],
       "why": "test data, never shipped: the first product's landing page written word for word as a landing block (mold_v0-122), so its own screenshots can check that the shell's section library reproduces it"
+    },
+    {
+      "id": "boat-namespace",
+      "pattern": "\"oct[iv]\"|`octi`|\\bocti(?=-(?:orch-img|orch|w|pool|busy|bake|run)-)|\\boct[iv](?=-run-)|\\bocti(?=\\.sf-test_runs\\b)",
+      "paths": [
+        "docs/security.md",
+        "orchestrator/README.md",
+        "orchestrator/core/fleet-client.ts",
+        "orchestrator/core/pool.ts",
+        "orchestrator/core/runners.ts",
+        "orchestrator/deploy/boat-lib.ts",
+        "orchestrator/deploy/in-sandbox.ts",
+        "orchestrator/fleet/status.ts",
+        "orchestrator/images/boat-snapshot.sh",
+        "scripts/run-sandboxes-test.ts",
+        "src/autoscaler.ts",
+        "src/compute.ts",
+        "src/docs-corpus.generated.json",
+        "src/run-sandboxes.ts",
+        "web/src/content/admin-docs.generated.ts"
+      ],
+      "why": "names on the sandbox provider (boat) and its VMs that running fleets hold: the default namespace (\"octi\" on a server, \"octv\" on Vercel) every autoscaler reaps orphans by, the names of orchestrator, worker, pool and run sandboxes and snapshot images under it, and the unprivileged `octi` user baked into the snapshots. Renaming them is a rebuild of the snapshots and a namespace migration (mold_v0-097), not a rename"
+    },
+    {
+      "id": "run-sandbox-runtime",
+      "pattern": "\\bocti(?=run\\b|run-|proxy\\b|_egress\\b)|\\bocti(?=-(?:tools|checkouts|run-uids|run-users|run|runner|egress|setup|gocache|gopath)\\b)|\\.octi(?=-env\\b|-inputs/|-snap\\.git)|/tmp/octi(?![\\w-])|\\\\/tmp\\\\/octi\\\\/",
+      "paths": [
+        "Dockerfile",
+        "orchestrator/README.md",
+        "orchestrator/core/egress.ts",
+        "orchestrator/core/environment.ts",
+        "orchestrator/core/pool.ts",
+        "orchestrator/core/runners.ts",
+        "orchestrator/images/README.md",
+        "orchestrator/images/boat-snapshot.sh",
+        "orchestrator/test/boat-fleet.ts",
+        "orchestrator/test/egress.ts",
+        "scripts/agent-steps-test.ts",
+        "scripts/fixtures/run-users/long.mjs",
+        "scripts/fixtures/run-users/short.mjs",
+        "scripts/install-run-tools.ts",
+        "scripts/run-firewall-test.ts",
+        "scripts/run-sandboxes-test.ts",
+        "scripts/run-tools-test.ts",
+        "scripts/run-users-test.ts",
+        "src/run-harness.ts",
+        "src/run-sandbox-runner.ts",
+        "src/run-sandboxes.ts",
+        "src/run-tools.ts",
+        "src/run-users.ts"
+      ],
+      "why": "users, groups, paths and units on run sandboxes, orchestrator pods and runner hosts that a built image or a host already holds: the run users (octirun-*) and the egress proxy's user (octiproxy) the runner image creates, its tools directory, the uid leases and checkout cache that outlive a release on a runner's host, the proxy's logs and set-up paths, and the tests that check those exact names. Renamed with the image rebuild (mold_v0-097)"
     }
   ],
   "concepts": {

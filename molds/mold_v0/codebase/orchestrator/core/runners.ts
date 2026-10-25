@@ -176,7 +176,7 @@ export async function imageEnv(image: string): Promise<string[]> {
  */
 export function dockerExecHarness(container: string, baseEnv: string[], keys: string[], argv: string[], user = "agent"): string[] {
   const script = `exec env -i ${baseEnv.map(shq).join(" ")} ${keys.map((k) => `${k}="$${k}"`).join(" ")} "$@"`;
-  return ["exec", "-i", "-u", user, "-w", AGENT_WORKDIR, ...keys.flatMap((k) => ["-e", k]), container, "bash", "-c", script, "octi", ...argv];
+  return ["exec", "-i", "-u", user, "-w", AGENT_WORKDIR, ...keys.flatMap((k) => ["-e", k]), container, "bash", "-c", script, "run", ...argv];
 }
 
 function childTurn(child: ChildProcess): Turn {
@@ -193,7 +193,7 @@ function childTurn(child: ChildProcess): Turn {
 export const dockerRunner: Runner = {
   name: "docker",
   async open(spec) {
-    const name = `octi-${randomUUID().slice(0, 12)}`;
+    const name = `sandbox-${randomUUID().slice(0, 12)}`;
     const args = [
       "run", "-d", "--init",
       "--name", name,
@@ -416,7 +416,7 @@ U=${BOAT.agentUser === "agent" ? "agent" : "$(id -un)"}
 # This run's credentials: handed to the agent user (0600), sourced and deleted before the harness execs.
 sudo -n install -o "$(cat "$O/owner")" -m 600 "$O/env-${n}" "$AH/.octi-env-${n}" && rm -f "$O/env-${n}"
 ${boatRunAs()} env -i HOME="$AH" USER="$U" LOGNAME="$U" SHELL=/bin/bash LANG=C.UTF-8 TERM=dumb PATH="$(cat "$O/path")" \\
-  bash -c 'set -a; . "$HOME/.octi-env-${n}"; set +a; rm -f "$HOME/.octi-env-${n}"; cd "$HOME/work" && exec timeout -k 30 ${hardLimit} "$@"' octi ${argv.map(shq).join(" ")} \\
+  bash -c 'set -a; . "$HOME/.octi-env-${n}"; set +a; rm -f "$HOME/.octi-env-${n}"; cd "$HOME/work" && exec timeout -k 30 ${hardLimit} "$@"' run ${argv.map(shq).join(" ")} \\
   < "$O/in-${n}.txt" > "$O/out-${n}.jsonl" 2> "$O/err-${n}.log"
 c=$?
 echo "$c" > "$O/exit-${n}"

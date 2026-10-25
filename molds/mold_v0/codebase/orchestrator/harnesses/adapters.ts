@@ -214,12 +214,12 @@ const codex: HarnessAdapter = {
 
 /** Wrap argv so the prompt read from stdin becomes the last argument. `pre` runs first (same shell). */
 function promptAsLastArg(argv: string[], pre = ""): string[] {
-  return ["bash", "-c", `${pre}exec "$@" "$(cat)"`, "octi", ...argv];
+  return ["bash", "-c", `${pre}exec "$@" "$(cat)"`, "run", ...argv];
 }
 
 /** Run a small setup snippet, then exec argv with stdin untouched. */
 function withSetup(argv: string[], pre: string): string[] {
-  return ["bash", "-c", `${pre}exec "$@"`, "octi", ...argv];
+  return ["bash", "-c", `${pre}exec "$@"`, "run", ...argv];
 }
 
 /** Write a harness config file under $HOME once (never overwrites). Shell snippet; `json` must not contain `'`. */
@@ -535,7 +535,7 @@ const cline: HarnessAdapter = {
   // Prompt must be a positional argument. The key goes in via -k from the env (not argv), with provider anthropic.
   // Note: a one-word prompt is rejected by cline ("Unknown command"); scenario prompts are sentences.
   // CLINE_API_KEY comes from the credential mapping (gateway: Anthropic, OpenAI or Cloudflare token); direct runs use ANTHROPIC_API_KEY.
-  launchArgv: (o) => ["bash", "-c", 'exec "$@" -k "${CLINE_API_KEY:-$ANTHROPIC_API_KEY}" -- "$(cat)"', "octi", o.bin ?? "cline", "--json", "--auto-approve", "true", "-P", "anthropic", "-m", o.model],
+  launchArgv: (o) => ["bash", "-c", 'exec "$@" -k "${CLINE_API_KEY:-$ANTHROPIC_API_KEY}" -- "$(cat)"', "run", o.bin ?? "cline", "--json", "--auto-approve", "true", "-P", "anthropic", "-m", o.model],
   resumeArgv: () => { throw new UnsupportedHarnessError("cline cannot resume a session headlessly"); },
   newDigest() {
     const d = newDigestState();

@@ -23,7 +23,7 @@ import { isShellEnvName } from "../core/env-names.js";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
 const BOAT_PORT = Number(process.env.BTEST_BOAT_PORT ?? 3401);
-const OCTI_PORT = Number(process.env.BTEST_OCTI_PORT ?? 3402);
+const API_PORT = Number(process.env.BTEST_API_PORT ?? 3402);
 const WORKER_TOKEN = `wt_SECRET_${randomBytes(12).toString("hex")}`;
 const BOAT_KEY = `boat_mock_${randomBytes(8).toString("hex")}`;
 const results: { name: string; ok: boolean; detail: string }[] = [];
@@ -174,7 +174,7 @@ const queue = [
 const claims: { agent_ids?: string[]; limit: number; got: number }[] = [];
 const completed = new Map<string, any>();
 let fleetLeft = false;
-const octi = http.createServer((req, res) => {
+const api = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
@@ -193,7 +193,7 @@ const octi = http.createServer((req, res) => {
       return json(res, 200, { jobs });
     }
     const m = /^\/api\/worker\/sessions\/([^/]+)\/(credentials|complete|events|heartbeat)$/.exec(u);
-    if (m?.[2] === "credentials") return json(res, 200, { expires_at: new Date(Date.now() + 3600e3).toISOString(), providers: { anthropic: { mode: "gateway", base_url: "https://octi.example/gw/anthropic", api_key: "ogw_session_token_x" } } });
+    if (m?.[2] === "credentials") return json(res, 200, { expires_at: new Date(Date.now() + 3600e3).toISOString(), providers: { anthropic: { mode: "gateway", base_url: "https://api.example/gw/anthropic", api_key: "ogw_session_token_x" } } });
     if (m?.[2] === "complete") { completed.set(m[1]!, b); return json(res, 200, { verdict: null }); }
     if (u.startsWith("/api/worker/research")) return json(res, 200, { jobs: [] });
     json(res, 200, {});
@@ -201,10 +201,10 @@ const octi = http.createServer((req, res) => {
 });
 
 await new Promise<void>((r) => boat.listen(BOAT_PORT, "127.0.0.1", () => r()));
-await new Promise<void>((r) => octi.listen(OCTI_PORT, "127.0.0.1", () => r()));
+await new Promise<void>((r) => api.listen(API_PORT, "127.0.0.1", () => r()));
 const worker = spawn(TSX, ["orchestrator/worker.ts"], {
   cwd: ROOT, stdio: ["ignore", "pipe", "pipe"],
-  env: { PATH: process.env.PATH, HOME: process.env.HOME, APP_URL: `http://127.0.0.1:${OCTI_PORT}`, APP_WORKER_TOKEN: WORKER_TOKEN,
+  env: { PATH: process.env.PATH, HOME: process.env.HOME, APP_URL: `http://127.0.0.1:${API_PORT}`, APP_WORKER_TOKEN: WORKER_TOKEN,
     RUNNER: "boat", POD_CAPACITY: "3", ORCHESTRATOR_ID: "btest", APP_DEV_ALLOW_LOCAL: "1", BOAT_API_URL: `http://127.0.0.1:${BOAT_PORT}/api/v1`,
     POLL_INTERVAL_SECONDS: "1", BOAT_STARTS_PER_MINUTE: "100", HEARTBEAT_SECONDS: "30" },
 });
@@ -234,7 +234,7 @@ check("worker token (and boat key) never reach a worker sandbox; env files hold 
   `leaks ${leaks.length}; env keys: ${envKeys.join(",")}`);
 check("SIGTERM: left the fleet", fleetLeft, "");
 
-boat.close(); octi.close();
+boat.close(); api.close();
 if (results.some((r) => !r.ok)) console.log("--- worker log tail\n" + wlog.split("\n").slice(-25).join("\n"));
 const pass = results.every((r) => r.ok);
 console.log(`\n${pass ? "BOAT FLEET TEST PASS" : "BOAT FLEET TEST FAIL"} (${results.filter((r) => r.ok).length}/${results.length} assertions)`);

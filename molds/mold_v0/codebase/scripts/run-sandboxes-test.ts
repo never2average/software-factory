@@ -37,7 +37,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const RUNS_DIR = path.join(ROOT, "scripts", "fixtures", "runs");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const asRoot = process.getuid?.() === 0;
-const PUBLIC = "https://octi.example";
+const PUBLIC = "https://api.example";
 const BOAT_KEY = `boat_mock_${randomBytes(6).toString("hex")}`;
 Object.assign(process.env, {
   PUBLIC_URL: PUBLIC, APP_AUTOSCALE: "on", APP_ORCH_PER_JOB: "off", APP_RUN_SANDBOX: "auto",

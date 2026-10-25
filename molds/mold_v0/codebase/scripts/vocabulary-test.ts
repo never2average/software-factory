@@ -72,6 +72,27 @@ try {
     ok("a pack's own files are never read; generated files are read unless the tree has packs");
   }
 
+  // ---------- the abbreviations (mold_v0-096) ----------
+  {
+    // The product word's short forms in runtime identifiers (a namespace, a run user, a tools directory), read from the
+    // real vocabulary as the word is: each is found where no allow entry covers it, and the real entries cover only theirs.
+    const ABBR = REAL.words.slice(1);
+    assert.ok(ABBR.length >= 2, "the vocabulary lists the abbreviations too");
+    for (const a of ABBR) {
+      const files = { "src/rls.ts": `SELECT ${W}_tenant_role();\n`, "src/x.ts": `const ns = env.NS || "${a}"; const user = "${a}run-7"; const dir = "/opt/${a}-tools";\n` };
+      const r = checkVocabulary(tree(files), { ...vocab(), words: [W, ...ABBR] });
+      assert.equal(r.findings.filter((f) => f.file === "src/x.ts").length, 3, `${a}: found in each runtime identifier (namespace, run user, tools directory)`);
+    }
+    const real = REAL.allow.filter((e) => ["boat-namespace", "run-sandbox-runtime"].includes(e.id));
+    assert.equal(real.length, 2, "the abbreviations' allow entries");
+    const held = `const ns = env.NS || "${ABBR[0]}"; const run = "${ABBR[0]}run-"; const tools = "/opt/${ABBR[0]}-tools";\n`;
+    const covered = checkVocabulary(tree({ "src/run-sandboxes.ts": held }), { words: REAL.words, files: {}, allow: real.map((e) => ({ ...e, paths: ["src/run-sandboxes.ts"] })) });
+    assert.deepEqual(covered.findings, [], "the held names, in an allowed file, pass");
+    const fresh = checkVocabulary(tree({ "src/run-sandboxes.ts": `${held}const label = "${ABBR[0]}-dashboard";\n` }), { words: REAL.words, files: {}, allow: real.map((e) => ({ ...e, paths: ["src/run-sandboxes.ts"] })) });
+    assert.deepEqual(fresh.findings.map((f) => f.line), [2], "a new identifier with the abbreviation is found beside them");
+    ok("the abbreviations are product words: found in runtime identifiers, the held ones (namespace, run users, tools) allowed, a new one refused");
+  }
+
   // ---------- the env-name table ----------
   {
     const d = tree({ "src/a.ts": "const a = ENV.APP_VAULT_KEY ?? ENV.APP_PROXY_HOPS; const n = NEXT_PUBLIC_APP_URL; const c = CLICKHOUSE_APP_PASSWORD;\n",
