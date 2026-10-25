@@ -1307,8 +1307,8 @@ drawing is a data-driven port of that page's own (its section wrapper, hero with
 footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
 and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
 The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
-second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text badges, named logos or
-the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text names (set in the logo row's type),
+named logos or the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
 one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
 `proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
 `install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
