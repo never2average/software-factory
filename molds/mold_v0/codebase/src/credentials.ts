@@ -44,6 +44,8 @@ const ENV = /^[a-z][a-z0-9_-]{0,39}$/;
 export const fieldSummary = (c: CredentialSpec) => ({
   pack: c.pack, name: c.name, label: c.label, help: c.help ?? null, bound_to: c.bound_to, area: c.area ?? null,
   environments: c.environments ?? null, deliver_as: deliveredAs(c.deliver_as),
+  // mold_v0-014: runs get a GitHub App installation token instead when the workspace has connected one.
+  ...(c.github_app ? { github_app: true } : {}),
 });
 /** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
 const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>
@@ -138,10 +140,18 @@ export async function hasCredential(orgId: number, pack: string, name: string): 
  * the file's full path. `operator`: a value the platform's operators hold (never the workspace's to see).
  */
 export interface Delivered { name: string; env?: string; file?: string; path_env?: string; operator?: boolean; value: string }
-export interface RunCredentials { credentials: Delivered[]; missing: string[] }
+export interface RunCredentials {
+  credentials: Delivered[]; missing: string[];
+  /**
+   * mold_v0-014: the fields delivered as a GitHub App installation token (never the token: the field's name, the
+   * repositories it reaches and when it expires), and why a field due one got none.
+   */
+  github_app?: { name: string; repositories: string[]; expires_at: string }[];
+  github_app_missing?: { name: string; reason: string }[];
+}
 
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
-export interface RunForCredentials { org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[] } | null; targets: Record<string, unknown> | null }
+export interface RunForCredentials { id?: string; org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[] } | null; targets: Record<string, unknown> | null }
 
 /** The asset (its key, and the area when the run names one) and environment a run targets. */
 const targetOf = (targets: Record<string, unknown> | null) => {
@@ -159,7 +169,7 @@ const targetOf = (targets: Record<string, unknown> | null) => {
  * run's own workspace and the asset and environment it targets. A field with no such value is listed as missing (the
  * program decides what to do without it). The workspace comes from the run row only.
  */
-export async function runCredentials(run: RunForCredentials, opts: { strict?: boolean } = {}): Promise<RunCredentials> {
+export async function runCredentials(run: RunForCredentials, opts: { strict?: boolean; mint?: boolean } = {}): Promise<RunCredentials> {
   const names = Array.isArray(run.spec?.credentials) ? run.spec!.credentials.filter((n): n is string => typeof n === "string") : [];
   const out: RunCredentials = { credentials: [], missing: [] };
   await operatorCredentials(run, out, opts);
@@ -172,6 +182,18 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
     if ((spec.bound_to !== "workspace" && !s.asset) || (spec.bound_to === "environment" && !s.environment)) { out.missing.push(name); continue; }
     // A run that names the asset's area gets a value only for that area's asset (not a same-named key of another area).
     if (spec.bound_to !== "workspace" && area !== null && area !== spec.area) { out.missing.push(name); continue; }
+    // mold_v0-014: a GitHub App installation token, minted for this run, when the platform has the app and the workspace
+    // an installation of it (else the pasted value below). Never minted while only redacting (runSecrets reads them all).
+    if (spec.github_app && run.id && opts.mint !== false) {
+      const { installationTokenForRun } = await import("./github-app.js");
+      const t = await installationTokenForRun({ runId: run.id, orgId: run.org_id, name, bound_to: spec.bound_to, area: spec.area ?? null, asset: s.asset });
+      if (t && "missing" in t) { out.missing.push(name); (out.github_app_missing ??= []).push({ name, reason: t.missing }); continue; }
+      if (t) {
+        out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value: t.value });
+        (out.github_app ??= []).push({ name, repositories: t.repositories, expires_at: t.expires_at });
+        continue;
+      }
+    }
     const [r] = await asPlatform(async () => (await getDb()).query<{ sealed: string }>(
       `SELECT sealed FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = $4
           AND coalesce(asset_key, '') = $5 AND coalesce(environment, '') = $6`,
@@ -197,6 +219,12 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
 export async function workspaceCredentialValue(orgId: number, pack: string, name: string): Promise<string | null> {
   const spec = findCredential(pack, name);
   if (!spec || spec.bound_to !== "workspace") return null;
+  // mold_v0-014: the workspace's GitHub App installation, when it has one, instead of a pasted token.
+  if (spec.github_app) {
+    const { installationTokenForServer } = await import("./github-app.js");
+    const t = await installationTokenForServer(orgId);
+    if (t) return t;
+  }
   const s: Slot = { spec, asset: null, environment: null };
   const [r] = await asPlatform(async () => (await getDb()).query<{ sealed: string }>(
     `SELECT sealed FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = 'workspace' AND asset_key IS NULL AND environment IS NULL`,
@@ -246,7 +274,11 @@ async function operatorCredentials(run: RunForCredentials, out: RunCredentials, 
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
   if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length) return [];
-  return (await runCredentials(run, { strict: true })).credentials.map((c) => ({ name: c.name, value: c.value }));
+  const pasted = (await runCredentials(run, { strict: true, mint: false })).credentials.map((c) => ({ name: c.name, value: c.value }));
+  // mold_v0-014: and every GitHub App token minted for the run (expired or revoked ones too: the run may have printed them).
+  if (!run.id || !run.spec?.credentials?.some((n) => findCredential(run.pack, n)?.github_app)) return pasted;
+  const { runTokenSecrets } = await import("./github-app.js");
+  return [...pasted, ...(await runTokenSecrets(run.id, run.org_id))];
 }
 
 /**

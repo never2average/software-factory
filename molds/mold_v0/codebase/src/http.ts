@@ -13,6 +13,7 @@ import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
+import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
@@ -225,6 +226,8 @@ export function createApp() {
   app.use("/api/data", dataAppRouter());
   // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
   app.use("/api/credentials", credentialAppRouter());
+  // A workspace's GitHub App installation (mold_v0-014): only when a pack's credential field asks for one.
+  app.use("/api/github-app", githubAppRouter());
   // Per-company egress hosts (mold_v0-075): only when a kind takes them.
   app.use("/api/egress-hosts", egressHostAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
@@ -708,6 +711,9 @@ export function createApp() {
   ob.post("/compute/keys/:id/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setModelKeyEnabled(adminActor(req, res), Number(req.params.id), req.body?.enabled)));
   ob.delete("/compute/keys/:id", need("keys"), async (req, res) => done(res, await platformKeys.deleteModelKey(adminActor(req, res), Number(req.params.id))));
   ob.post("/compute/providers/:slug/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setProviderEnabled(adminActor(req, res), slug(req), req.body?.enabled)));
+  // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
+  // declares a credential field that asks for one.
+  githubAppAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
   // The Connect page (/admin/connect): the admin MCP URL and which tools each role may call.

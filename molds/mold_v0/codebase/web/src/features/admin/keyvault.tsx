@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, When } from './ui';
+import { AdminGithubApp } from './github-app';
 
 // ---------- key vault ----------
 
@@ -53,6 +54,8 @@ export function AdminKeyVault() {
   const remove = useAdminAction((id: number) => adminApi('DELETE', `/compute/keys/${id}`), { success: 'Key deleted' });
   const provOn = useAdminAction((v: { slug: string; enabled: boolean }) => post(`/compute/providers/${encodeURIComponent(v.slug)}/enabled`, { enabled: v.enabled }), { success: 'Provider updated' });
   const creds = data?.credentials ?? [];
+  // The GitHub App's settings (mold_v0-014) are one sealed entry managed in their own section below, not a key to add here.
+  const providers = (data?.providers ?? []).filter((p) => p.slug !== 'github_app');
   const keysOf = (p: Provider) => creds.filter((c) => c.provider === p.slug);
   const cols: RecordCol<Provider>[] = [
     { key: 'provider', label: 'Provider', keep: true, type: 'text', value: (p) => nameOf(p.slug), render: (p) => (
@@ -89,12 +92,12 @@ export function AdminKeyVault() {
     <PageContainer>
       <ErrorBox error={error} />
       {data && !data.unlocked && <Notice>The key vault is locked: set <Mono>APP_VAULT_KEY</Mono> on the server to add keys.</Notice>}
-      <RecordView id='key-vault' rows={data?.providers ?? []} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
+      <RecordView id='key-vault' rows={providers} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
         searchText={(p) => `${p.slug} ${nameOf(p.slug)} ${typeOf(p.slug)} ${keysOf(p).map((c) => `${c.label} ${c.hint} ${c.project_id ?? ''}`).join(' ')}`}
         searchPlaceholder='Search providers and keys · encrypted at rest; agents get scoped gateway tokens, never these keys'
         views={[{ id: 'all', label: 'All' }, ...TYPES.slice(0, 4).map((t) => ({ id: t, label: t, match: (p: Provider) => typeOf(p.slug) === t }))]}
         defaultSort={[{ key: 'type', dir: 'asc' }]}
-        primary={<Gate need='keys'><Button onClick={() => setAdding(data?.providers[0]?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
+        primary={<Gate need='keys'><Button onClick={() => setAdding(providers[0]?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
         primaryMenu={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
         actions={(p) => [
           { label: 'Add a key…', icon: <Icons.add />, disabled: data?.unlocked === false, onSelect: () => setAdding(p.slug) },
@@ -104,8 +107,8 @@ export function AdminKeyVault() {
           ])
         ].map((a) => lock(a, 'keys'))}
         exportName='key-vault-providers' empty='No providers.' />
-      {importing && <ImportKeys providers={data?.providers ?? []} onClose={() => setImporting(false)} />}
-      {adding && <AddKey providers={data?.providers ?? []} initial={adding} onClose={() => setAdding(null)} />}
+      {importing && <ImportKeys providers={providers} onClose={() => setImporting(false)} />}
+      {adding && <AddKey providers={providers} initial={adding} onClose={() => setAdding(null)} />}
       <AlertDialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -118,6 +121,7 @@ export function AdminKeyVault() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AdminGithubApp />
     </PageContainer>
   );
 }

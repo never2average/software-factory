@@ -1929,6 +1929,9 @@
                 "additionalProperties": false
               }
             ]
+          },
+          "github_app": {
+            "type": "boolean"
           }
         },
         "required": [

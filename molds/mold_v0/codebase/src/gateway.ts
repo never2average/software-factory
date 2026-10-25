@@ -89,7 +89,11 @@ export async function brokerRunCredentials(runId: string, providers: string[], e
 
 /** Revoke a run's gateway tokens; `q` is the transaction that ends the attempt (so a later attempt's token is never touched). */
 export async function revokeRunTokens(runId: string, q?: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }) {
-  await (q ?? (await getDb())).query("UPDATE gateway_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL", [runId]);
+  const db = q ?? (await getDb());
+  await db.query("UPDATE gateway_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL", [runId]);
+  // mold_v0-014: its GitHub App installation tokens too (in the same transaction); GitHub is told once that has committed.
+  const marked = await db.query("/* tenant: the ending run's own tokens, by run id */ UPDATE run_github_app_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL RETURNING id", [runId]);
+  if (marked.length) setTimeout(() => void import("./github-app.js").then((g) => g.flushRevocations()).catch(() => 0), 50).unref?.();
 }
 
 /** Gateway-metered usage of a run, every attempt summed: its cost is the run's cost. */

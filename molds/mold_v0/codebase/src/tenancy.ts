@@ -50,6 +50,13 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   const out: OrgDeletion = { org_id: orgId, dry_run: !!opts.dryRun, found: !!org, counts };
   if (opts.dryRun) return out;
 
+  // 0. Its GitHub App installation (mold_v0-014): ended, its runs' tokens revoked, the installation uninstalled on GitHub.
+  const gh = await (await import("./github-app.js")).disconnect(orgId, "workspace_removed").catch((e) => {
+    log(`org ${orgId}: the GitHub App installation could not be ended now (${String((e as Error)?.message ?? e).slice(0, 120)}); its row goes with the workspace`);
+    return null;
+  });
+  if (gh?.disconnected) log(`org ${orgId}: GitHub App installation ended (${gh.uninstalled ? "uninstalled on GitHub" : "GitHub did not confirm the uninstall"})`);
+
   // 1-2. Revoke access and stop work first, so nothing writes new data while it is being purged.
   await db.transaction(async (tx) => {
     await tx.query("DELETE FROM api_keys WHERE org_id = $1", [orgId]);
