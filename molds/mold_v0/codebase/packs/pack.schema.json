@@ -2572,7 +2572,8 @@
               "play",
               "refresh",
               "media",
-              "adjustments"
+              "adjustments",
+              "userPen"
             ]
           },
           "group": {
@@ -8696,6 +8697,303 @@
               "notices",
               "files"
             ]
+          }
+        },
+        "nav": {
+          "type": "object",
+          "properties": {
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "app": {
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[^{}<>]*$"
+                  },
+                  "into": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "before": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "after": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "pattern": "^[^{}<>]*$"
+                        },
+                        "url": {
+                          "type": "string",
+                          "pattern": "^\\/app(\\/[a-z0-9][a-z0-9-]*)+$"
+                        },
+                        "icon": {
+                          "type": "string",
+                          "enum": [
+                            "dashboard",
+                            "chartBar",
+                            "chartLine",
+                            "trendingUp",
+                            "gauge",
+                            "health",
+                            "kanban",
+                            "inbox",
+                            "building",
+                            "route",
+                            "rocket",
+                            "book",
+                            "plug",
+                            "user",
+                            "teams",
+                            "page",
+                            "post",
+                            "settings",
+                            "clock",
+                            "calendar",
+                            "search",
+                            "check",
+                            "circleCheck",
+                            "warning",
+                            "alertCircle",
+                            "shield",
+                            "lock",
+                            "notification",
+                            "billing",
+                            "account",
+                            "code",
+                            "product",
+                            "workspace",
+                            "forms",
+                            "play",
+                            "refresh",
+                            "media",
+                            "adjustments",
+                            "userPen"
+                          ]
+                        },
+                        "shortcut": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "pattern": "^[a-z]$"
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^[a-z0-9]$"
+                            }
+                          ],
+                          "items": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "url",
+                        "icon"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "admin": {
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[^{}<>]*$"
+                  },
+                  "into": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "before": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "after": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "items": {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "pattern": "^[^{}<>]*$"
+                        },
+                        "url": {
+                          "type": "string",
+                          "pattern": "^\\/admin(\\/[a-z0-9][a-z0-9-]*)+$"
+                        },
+                        "icon": {
+                          "type": "string",
+                          "enum": [
+                            "dashboard",
+                            "chartBar",
+                            "chartLine",
+                            "trendingUp",
+                            "gauge",
+                            "health",
+                            "kanban",
+                            "inbox",
+                            "building",
+                            "route",
+                            "rocket",
+                            "book",
+                            "plug",
+                            "user",
+                            "teams",
+                            "page",
+                            "post",
+                            "settings",
+                            "clock",
+                            "calendar",
+                            "search",
+                            "check",
+                            "circleCheck",
+                            "warning",
+                            "alertCircle",
+                            "shield",
+                            "lock",
+                            "notification",
+                            "billing",
+                            "account",
+                            "code",
+                            "product",
+                            "workspace",
+                            "forms",
+                            "play",
+                            "refresh",
+                            "media",
+                            "adjustments",
+                            "userPen"
+                          ]
+                        },
+                        "shortcut": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "pattern": "^[a-z]$"
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^[a-z0-9]$"
+                            }
+                          ],
+                          "items": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "url",
+                        "icon"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "components": {
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tips",
+              "journeys",
+              "research"
+            ]
+          }
+        },
+        "redirects": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^\\/[A-Za-z0-9_\\-/:*.]*$"
+              },
+              "destination": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^\\/[A-Za-z0-9_\\-/:*.?=&]*$"
+              },
+              "permanent": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source",
+              "destination"
+            ],
+            "additionalProperties": false
           }
         }
       },

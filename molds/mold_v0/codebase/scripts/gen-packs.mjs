@@ -729,6 +729,8 @@ const orchPacks = !opt("--packs") ? checkSideCode(ORCH_PACKS, "orchestrator", ho
 for (const id of webPacks) if (!existsSync(path.join(WEB_PACKS, id, "index.ts"))) fail(`web/src/packs/${id}`, "a console pack's entry is index.ts (its pages, nav and landing)");
 // A host pack's customer guide is its pack.json guide (mold_v0-139): guide.ts is no longer read.
 for (const id of webPacks) if (existsSync(path.join(WEB_PACKS, id, "guide.ts"))) fail(`web/src/packs/${id}/guide.ts`, "the customer guide is pack.json guide (mold_v0-139): markdown (one page per ## heading), groups, and tool_groups for the MCP tools page; this file is never read");
+// Its sidebar entries, the shell components it serves and its sign-up subtitle are config (mold_v0-140): nav.ts is no longer read.
+for (const id of webPacks) if (existsSync(path.join(WEB_PACKS, id, "nav.ts"))) fail(`web/src/packs/${id}/nav.ts`, "the sidebar entries are pack.json console.nav ({app, admin}: groups and entries placed among the shell's), the shell components its routes serve console.components, and the sign-up subtitle host.profile.sign_up_subtitle (mold_v0-140); this file is never read");
 for (const id of orchPacks) if (!existsSync(path.join(ORCH_PACKS, id, "main.ts"))) fail(`orchestrator/packs/${id}`, "an orchestrator pack's entry is main.ts");
 
 // Nor may it name a shell table: pack "api" would own api_keys, and its migrations could then alter or re-secure it.
@@ -976,6 +978,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "entitlements") { const bad = entitlementsProblem(v, pf.limits); if (bad) fail(rel(PROFILE_FILE), `entitlements: ${bad}`); else profile.entitlements = v; continue; }
       // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
       if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
+      // The sign-up form's subtitle (mold_v0-140; it was a host pack's nav.ts signUpSubtitle), optional: absent, short_description.
+      if (k === "sign_up_subtitle") { if (typeof v !== "string" || !v.trim() || v.length > 160 || /[<>{}\r\n]/.test(v)) fail(rel(PROFILE_FILE), "sign_up_subtitle: one line of plain text, up to 160 characters"); else profile[k] = v; continue; }
       if (k === "mcp_instructions") {
         if (typeof v !== "string" || !v.trim() || v.length > 4000 || /[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u.test(v)) fail(rel(PROFILE_FILE), "mcp_instructions: plain text of up to 4000 characters");
         else profile[k] = v;
@@ -1003,7 +1007,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1405,14 +1409,41 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
   webPacks.map((id, i) => `import * as web${i} from '@/packs/${id}';\n`).join("") +
   "\n/** The host packs' console code (mold_v0-039): pages at their own URLs, sidebar entries, the landing page; none with zero packs. */\n" +
   `export const HOST_WEB: readonly HostWeb[] = [${webPacks.map((_id, i) => `web${i}.default`).join(", ")}];\n`);
-// Their sidebar entries and the shell features they enable (web/src/packs/<id>/nav.ts), apart from their pages so the
-// sidebar's bundle never carries the pages.
+// Their sidebar entries and the shell components their routes serve (mold_v0-140: pack.json console.nav and
+// console.components; they were web/src/packs/<id>/nav.ts), as data apart from their pages so the sidebar's bundle never
+// carries the pages. Each entry names one of the pack's own console pages (its routes.json), in the console it is in.
 {
-  const navs = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "nav.ts")));
+  const navs = [];
+  for (const p of packs) {
+    const c = p.json?.console ?? {};
+    if (c.nav === undefined && c.components === undefined) continue;
+    const at = `packs/${p.id}/pack.json`;
+    if (!p.host || !webPacks.includes(p.id)) { fail(at, "console.nav and console.components are a host pack's (its own console pages, web/src/packs/<id>/, and routes)"); continue; }
+    const file = path.join(WEB_PACKS, p.id, "routes.json");
+    const r = existsSync(file) ? readJson(file, `web/src/packs/${p.id}/routes.json`) : {};
+    const entry = { pack: p.id };
+    for (const area of ["app", "admin"]) {
+      const placements = c.nav?.[area];
+      if (placements === undefined) continue;
+      const own = new Set((Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`));
+      const keys = new Map();
+      for (const [i, pl] of placements.entries()) for (const [j, it] of pl.items.entries()) {
+        const w = `${at} console.nav.${area}[${i}].items[${j}]`;
+        if (!own.has(it.url)) fail(w, `${it.url} is not one of the pack's own /${area} pages (web/src/packs/${p.id}/routes.json ${area}: ${[...own].join(", ") || "none"})`);
+        const k = it.shortcut?.join(" ");
+        if (k && keys.has(k)) fail(w, `shortcut ${k} is ${keys.get(k)}'s too: each entry its own`);
+        else if (k) keys.set(k, it.url);
+      }
+      // As the sidebar's own entries are written: {title, url, icon, shortcut?, items: []} (web/src/features/packs/host-nav.ts).
+      entry[area] = placements.map(({ $comment: _c, ...pl }) => pl);
+    }
+    if (c.components?.length) entry.components = c.components;
+    navs.push(entry);
+  }
+  refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
-    navs.map((id, i) => `import * as nav${i} from '@/packs/${id}/nav';\n`).join("") +
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
-    `export const HOST_NAV: readonly unknown[] = [${navs.map((_id, i) => `nav${i}`).join(", ")}];\n`);
+    `export const HOST_NAV: readonly unknown[] = ${navs.length ? json(navs) : "[]"};\n`);
 }
 // The customer guide (mold_v0-106, mold_v0-139): a host pack's pack.json guide is the whole guide (HOST_GUIDE: its pages
 // in its groups, its MCP tools page's tool groups); else the packs' own pages (pack.json guide) and the facts the console
@@ -1558,10 +1589,12 @@ const profileSidebar = (() => {
         rewrites.push({ source, destination: to + p });
       }
     }
-    for (const x of Array.isArray(r.redirects) ? r.redirects : []) {
-      if (!x || typeof x.source !== "string" || typeof x.destination !== "string" || !x.source.startsWith("/") || !x.destination.startsWith("/")) { fail(`web/src/packs/${id}/routes.json`, "a redirect is {source, destination, permanent} with paths on this site"); continue; }
-      redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
-    }
+    if (r.redirects !== undefined) fail(`web/src/packs/${id}/routes.json`, "redirects are pack.json console.redirects (mold_v0-140): [{source, destination, permanent}]; this list is never read");
+  }
+  // Each pack's old addresses kept working (mold_v0-140: pack.json console.redirects, checked by src/pack-manifest.ts), in pack order.
+  for (const p of packs) for (const x of p.json?.console?.redirects ?? []) {
+    if (seenUrl.has(x.source)) fail(`packs/${p.id}/pack.json`, `console.redirects: ${x.source} is a page of the build (a host pack's routes.json): it cannot redirect`);
+    redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
   }
   // A page the build declares (mold_v0-138): the landing block's request_page at its own path, rewritten to the shell's
   // route for it (web/src/app/(site)/declared/[page]); the lanes read `declared` to visit it (testing/console/surface.mts).

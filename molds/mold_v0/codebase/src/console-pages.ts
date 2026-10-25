@@ -39,6 +39,24 @@ export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
   usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files",
 };
 
+/**
+ * What a pack's pack.json `console` may say besides `hide` (mold_v0-140; src/pack-manifest.ts checks their shape,
+ * scripts/gen-packs.mjs what they name):
+ *   nav         a host pack's sidebar entries among the shell's, in /app and /admin: {"app": [...], "admin": [...]}, each
+ *               a new group {"label", "before"|"after": <a group's label>, "items"} or entries put into a group
+ *               {"into": <its label>, "before"|"after": <an entry's url>, "items"}; an item {title, url, icon, shortcut?}
+ *               names one of the pack's own console pages (its routes.json)
+ *   components  the shell's console components a host pack's routes serve, shown only then (CONSOLE_COMPONENTS)
+ *   redirects   old addresses kept working: [{source, destination, permanent}] (next.config redirects)
+ */
+export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects"] as const;
+/**
+ * The shell's console components that read a host pack's own routes (mold_v0-140; they were its nav.ts `features`):
+ *   tips      in-chat tips: the Setup page's tips section and "Send a tip" on /admin accounts (its /api/app/nudges and admin tips routes)
+ *   journeys  the Setup page's journeys: their picker and each journey's stages (its /api/app/journeys)
+ *   research  a requester's company research on /admin access requests (its research routes and verdict)
+ */
+export const CONSOLE_COMPONENTS = ["tips", "journeys", "research"] as const;
 /** The shell pages a sidebar may name by kind (mold_v0-133; a tab of that kind opens the same page). */
 export const SIDEBAR_SHELL_PAGES = ["setup", "usage", "billing", "profile", "team", "keys", "credentials", "schedules", "notices"] as const;
 
@@ -47,9 +65,10 @@ export function consoleProblems(v: unknown, where: string): string[] {
   if (v === undefined) return [];
   if (!v || typeof v !== "object" || Array.isArray(v)) return [`${where} console: an object, e.g. {"hide": ["activity"]}`];
   const out: string[] = [];
-  const known = where === "profile.json" ? ["hide", "sidebar"] : ["hide"];
+  const known = where === "profile.json" ? ["hide", "sidebar"] : ["hide", ...PACK_CONSOLE_KEYS];
   for (const k of Object.keys(v)) {
     if (k === "sidebar" && where !== "profile.json") out.push(`${where} console: sidebar is the app's (profile.json); a pack orders its own tabs (tabs, group)`);
+    else if ((PACK_CONSOLE_KEYS as readonly string[]).includes(k) && where === "profile.json") out.push(`${where} console: ${k} is a pack's (its pack.json console.${k}), never the app's profile`);
     else if (!known.includes(k) && k !== "$comment") out.push(`${where} console: unknown field ${k} (known: ${known.join(", ")})`);
   }
   const sidebar = (v as { sidebar?: unknown }).sidebar;

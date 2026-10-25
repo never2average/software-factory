@@ -995,7 +995,7 @@ export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", 
 /** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
 export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
-  "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
+  "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments", "userPen"] as const;
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
 export const TAB_INCLUDES = ["setup", "notices"] as const;

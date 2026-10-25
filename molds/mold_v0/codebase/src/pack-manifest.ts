@@ -19,13 +19,13 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { CONSOLE_PAGES } from "./console-pages.js";
+import { CONSOLE_COMPONENTS, CONSOLE_PAGES } from "./console-pages.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -41,6 +41,26 @@ const PageSchema = z.object({
   nav_group: z.string().optional(),
   icon: z.string().optional(),
 }).strict();
+
+/** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
+const NavItemSchema = (area: "/app" | "/admin") => z.object({
+  title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
+  url: z.string().regex(area === "/app" ? /^\/app(\/[a-z0-9][a-z0-9-]*)+$/ : /^\/admin(\/[a-z0-9][a-z0-9-]*)+$/, `one of the pack's ${area} pages: ${area}/<path>`),
+  icon: z.enum(TAB_ICONS),
+  shortcut: z.tuple([z.string().regex(/^[a-z]$/, "a lowercase letter"), z.string().regex(/^[a-z0-9]$/, "a lowercase letter or digit")]).optional(),
+}).strict();
+/** Where a host pack's sidebar entries go (mold_v0-140): a new group by a group's label, or into a group by an entry's url. */
+const NavPlacementSchema = (area: "/app" | "/admin") => z.object({
+  $comment: z.string().max(2000).optional(),
+  label: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets").optional(),
+  into: z.string().trim().min(1).max(40).optional(),
+  before: z.string().trim().min(1).max(200).optional(),
+  after: z.string().trim().min(1).max(200).optional(),
+  items: z.array(NavItemSchema(area)).min(1).max(20),
+}).strict()
+  .refine((p) => (p.label === undefined) !== (p.into === undefined), "either label (a new group) or into (entries put into a group), not both")
+  .refine((p) => p.before === undefined || p.after === undefined, "before or after, not both")
+  .refine((p) => p.into === undefined || [p.before, p.after].every((u) => u === undefined || u.startsWith(`${area}`)), `into a group, before and after name an entry by its url (${area}...)`);
 
 /**
  * The access-request form's own fields (mold_v0-102; src/access-request.ts, which gen-packs runs for the rules this shape
@@ -174,6 +194,21 @@ export const PackJsonSchema = z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
       .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+    /**
+     * A host pack's sidebar entries among the shell's (mold_v0-140; they were its web/src/packs/<id>/nav.ts): /app's and
+     * /admin's, each a list of placements applied in order. A new group: {"label", "before" or "after": a group's label,
+     * "items"}; entries put into a group: {"into": its label, "before" or "after": an entry's url, "items"}. Each item
+     * names one of the pack's own console pages (its routes.json), with its icon and an optional two-key shortcut.
+     */
+    nav: z.object({ $comment: z.string().max(2000).optional(), app: z.array(NavPlacementSchema("/app")).max(12).optional(), admin: z.array(NavPlacementSchema("/admin")).max(12).optional() }).strict().optional(),
+    /** The shell's console components a host pack's routes serve (mold_v0-140; src/console-pages.ts CONSOLE_COMPONENTS): shown only then. */
+    components: z.array(z.enum(CONSOLE_COMPONENTS)).max(CONSOLE_COMPONENTS.length).refine((c) => new Set(c).size === c.length, "each component once").optional(),
+    /** Old console addresses kept working (mold_v0-140; they were its routes.json `redirects`): next.config redirects, in order. */
+    redirects: z.array(z.object({
+      source: z.string().regex(/^\/[A-Za-z0-9_\-/:*.]*$/, "a path on this site, starting with / (:name and :path* allowed)").max(200),
+      destination: z.string().regex(/^\/[A-Za-z0-9_\-/:*.?=&]*$/, "a path on this site, starting with /").max(200),
+      permanent: z.boolean().optional(),
+    }).strict()).max(50).optional(),
   }).strict().optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
