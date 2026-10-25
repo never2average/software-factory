@@ -74,6 +74,11 @@ try {
   const landed = specOf(copy);
   assert.deepEqual([landed.headline, landed.subheadline, landed.alt], ["Audits that finish themselves", "Every control, its evidence and its owner in one place.",
     "Acme Ops: Audits that finish themselves. Every control, its evidence and its owner in one place."], `the landing block's hero: ${JSON.stringify(landed)}`);
+  // A headline with a highlighted end (sections, mold_v0-122): the picture says the whole of it, as the page does (mold_v0-138).
+  g = gen({ ...ACME, landing: { sections: [{ type: "hero", headline: "Audits that cite", headline_highlight: "the control.", subheadline: "Every finding, its control." }] } });
+  assert.equal(g.status, 0, g.stderr);
+  const highlighted = specOf(copy);
+  assert.deepEqual([highlighted.headline, highlighted.alt], ["Audits that cite the control.", "Acme Ops: Audits that cite the control. Every finding, its control."], `the whole headline: ${JSON.stringify(highlighted)}`);
 
   const brandPng = png(1200, 630, [200, 30, 90]);
   const brandFile = path.join(TMP, "share-image.png");

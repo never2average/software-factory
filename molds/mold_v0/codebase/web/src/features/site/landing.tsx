@@ -141,7 +141,9 @@ export interface Placed { section: LandingSection; id: string }
 
 /** The page this build shows: the block's sections (else the neutral wireframe), each with its anchor; the header's navigation. */
 export function resolvedLanding(block: LandingBlock | null = declared, access?: AccountsMode) {
-  const ctas = siteCtas(access);
+  // The account button's two states as the block's header names them (mold_v0-138), wherever the page shows it.
+  const shell = siteCtas(access);
+  const ctas: SiteCtas = { ...shell, signIn: block?.header?.sign_in ?? shell.signIn, open: block?.header?.open ?? shell.open };
   const sections = block?.sections?.length ? block.sections : neutralSections();
   const ids = sectionIds(sections);
   const placed: Placed[] = sections.map((section, i) => ({ section, id: ids[i]! }));
@@ -176,7 +178,7 @@ export function landingMetadata(): Metadata {
     alternates: { canonical: '/' },
     // The share image named here too (mold_v0-148): a page's own openGraph replaces the one app/opengraph-image adds.
     openGraph: { type: 'website', url: '/', siteName: profile.name, title, description, images: ogImages() },
-    twitter: twitterCard(title, description)
+    twitter: twitterCard(title, description, l.seo?.card)
   };
 }
 
@@ -248,8 +250,8 @@ const Stack = ({ parts }: { parts: React.ReactNode[] }) => {
 
 // ---------- the sections ----------
 
-/** The grid and glow behind the top of a public page, in the theme's border and primary. */
-function Backdrop() {
+/** The grid and glow behind the top of a public page, in the theme's border and primary (the landing hero's and the request page's). */
+export function Backdrop() {
   return (
     <>
       <div aria-hidden='true' className='pointer-events-none absolute inset-0 [mask-image:radial-gradient(70%_60%_at_50%_0%,black,transparent)] bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[size:56px_56px] opacity-60' />

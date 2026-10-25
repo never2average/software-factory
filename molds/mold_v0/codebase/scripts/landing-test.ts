@@ -410,6 +410,83 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
     assert.ok(js.html.includes("alert(3)") === false || !/href="javascript:/i.test(js.html), "a script address is never a link, even past gen-packs");
     assert.ok(!/javascript:/i.test(js.html), "and never in the markup");
     console.log("✓ the page: the neutral one is the whole wireframe in the build's words, with navigation from its sections; a pack's shows what it picked, in its order; an old block renders converted; text is text, a bad link never a link; invite-only leads to the request form; the footer's source offer");
+
+    // ---------- 5. the request page (mold_v0-138) and the account button's words ----------
+    const RP = {
+      path: "/ask", eyebrow: "Early", title: "Get your", title_highlight: "first audit.", lead: "Tell us who you are.",
+      benefits: [{ icon: "file-search", title: "One", body: "First." }, { title: "Two", body: "Second." }],
+      seo: { title: "Ask", description: "Ask for access." },
+      form: { submit: "Ask now", message_label: "Anything else?", fields: ["site"], more: { label: "More about you", fields: ["team", "tools"] }, done: { title: "Thanks", steps: ["We read {company}.", "We write to {email}."] } },
+    };
+    assert.deepEqual(landingProblems({ request_page: RP }), [], "a request page passes");
+    assert.deepEqual(landingProblems({ request_page: { path: "/ask", title: "Ask" } }), [], "a path and a title are enough");
+    for (const [what, page, re] of [
+      ["a console path", { ...RP, path: "/app" }, /request_page\.path: not one of the console's own/],
+      ["the shell's request form's path", { ...RP, path: "/request-access" }, /request_page\.path: not one of the console's own/],
+      ["two segments", { ...RP, path: "/a/b" }, /request_page\.path: a path of one segment/],
+      ["no slash", { ...RP, path: "ask" }, /request_page\.path: a path of one segment/],
+      ["an unknown placeholder", { ...RP, form: { done: { title: "T", steps: ["We read {product}."] } } }, /request_page\.form\.done\.steps\[0\]: plain text; \{company\} and \{email\}/],
+      ["an icon the shell does not draw", { ...RP, benefits: [{ icon: "rocket", title: "a", body: "b" }] }, /request_page\.benefits\[0\]\.icon/],
+      ["no title", { path: "/ask" }, /request_page\.title/],
+      ["an unknown key", { ...RP, colour: "red" }, /request_page: .*colour|Unrecognized key/],
+      ["a field twice", { ...RP, form: { fields: ["site"], more: { label: "More", fields: ["site"] } } }, /request_page\.form: each field once/],
+      ["a fold without a label", { ...RP, form: { more: { fields: ["site"] } } }, /request_page\.form\.more\.label/],
+    ] as const) {
+      const got = landingProblems({ request_page: page });
+      assert.ok(got.some((x: string) => re.test(x)), `${what}: refused with ${re} (got ${JSON.stringify(got)})`);
+    }
+    assert.ok(landingProblems({ header: { sign_in: { label: "Log in", href: "javascript:x" } } }).some((x: string) => /header\.sign_in\.href/.test(x)), "the account button's address is a safe link");
+    assert.deepEqual(mergeLanding({ request_page: RP }, { request_page: { path: "/join", title: "Join" } })?.request_page, { path: "/join", title: "Join" }, "the profile's request page replaces the pack's");
+    assert.deepEqual(mergeLanding({ request_page: RP }, { seo: { title: "S" } })?.request_page, RP, "and the pack's stays when the profile names none");
+
+    const FIELDS = { fields: [
+      { key: "site", label: "Website", type: "url", placeholder: "https://example.org" },
+      { key: "team", label: "Team size", type: "select", options: [{ value: "1-10", label: "1-10" }] },
+      { key: "tools", label: "Tools", type: "multi_select", options: [{ value: "a", label: "Tool A" }, { value: "b", label: "Tool B" }] },
+      { key: "legacy", label: "Old question", type: "text" },
+    ] };
+    rmSync(path.join(copy, "packs"), { recursive: true, force: true });
+    cpSync(packsDir("render-rp", { rp: { landing: { header: { account: "account", sign_in: { label: "Log in", href: "/auth/sign-in" }, open: { label: "Go to the console", href: "/app" } }, seo: { title: "Acme asks", card: "summary" }, request_page: RP }, access_request: FIELDS } }), path.join(copy, "packs"), { recursive: true });
+    writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ name: "Acme" }));
+    const g = gen([], copy);
+    assert.equal(g.status, 0, `gen-packs (request page): ${g.stderr}`);
+    const routes = JSON.parse(readFileSync(path.join(webDir, "src", "config", "pack-routes.generated.json"), "utf8"));
+    assert.ok(routes.rewrites.some((r: { source: string; destination: string }) => r.source === "/ask" && r.destination === "/declared/request"), "its path is rewritten to the shell's route for it");
+    assert.deepEqual(routes.declared, [{ path: "/ask", page: "request", pack: "rp" }], "and recorded for the lanes, under the pack that declared it");
+    const rp = await bundle(`import { renderToStaticMarkup } from 'react-dom/server';
+import { landing } from '@/config/landing.generated';
+import { SiteHeader, landingMetadata } from '@/features/site/landing';
+import { RequestAccessForm } from '@/features/site/request-access-form';
+import { RequestPageView, requestPageMetadata } from '@/features/site/request-page';
+const page = landing!.request_page!;
+process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<RequestPageView page={page} />), meta: requestPageMetadata(page),
+  header: renderToStaticMarkup(<SiteHeader />), shell: renderToStaticMarkup(<RequestAccessForm from='/request-access' />), landingMeta: landingMetadata() }));
+`, path.join(TMP, "render-rp.cjs")) as { html: string; meta: { title: string; description: string }; header: string; shell: string; landingMeta: Meta };
+    const at = (needle: string) => rp.html.indexOf(needle);
+    assert.match(rp.html, /<p[^>]*>Early<\/p><h1[^>]*>Get your <span class="text-primary">first audit\.<\/span><\/h1>/, "the eyebrow, and the title with its highlighted end");
+    assert.ok(at(">One<") > 0 && at(">Two<") > at(">One<") && /<svg[^>]*tabler-icon-file-search/.test(rp.html), "the benefits, in order, with the icon named");
+    assert.ok(at(">Work email<") > 0 && at(">Company<") > at(">Work email<") && at(">Website<") > at(">Company<") && at("<details") > at(">Website<"), "first the email, the company and the fields the page asks above its fold");
+    assert.match(rp.html, /<summary[^>]*><span>More about you<\/span>/, "then the fold, under the block's words");
+    for (const t of [">Your name<", ">Team size<", ">Tools<", ">Anything else?<"]) assert.ok(at(t) > at("<details"), `${t} is in the fold`);
+    assert.match(rp.html, /aria-pressed="false"[^>]*>Tool A<\/button>/, "several choices are chips");
+    assert.ok(!rp.html.includes("Old question"), "a declared field the page does not pick is not on its form");
+    assert.ok(rp.shell.includes("Old question") && rp.shell.includes("Website") && rp.shell.includes("Team size"), "the shell's own form still asks every declared field");
+    assert.match(rp.html, /type="submit"[^>]*>Ask now/, "the submit button's words");
+    assert.deepEqual(rp.meta, { title: "Ask", description: "Ask for access." }, "its title and description: the block's seo");
+    assert.match(rp.header, /href="\/auth\/sign-in"[^>]*>Log in/, "the account button signed out: the block's sign_in");
+    assert.equal(rp.landingMeta.twitter?.card, "summary", "seo.card: the X card's size");
+    assert.deepEqual(rp.landingMeta.twitter?.images?.map((i) => i.url), ["/twitter-image"], "still with the share image");
+    assert.equal(rp.landingMeta.title.absolute, "Acme asks", "the landing page's title: the block's seo");
+    // gen-packs: the page's fields are the build's; a required one is asked.
+    const refusedRp = (what: string, access: object, form: object, re: RegExp) => {
+      rmSync(path.join(copy, "packs"), { recursive: true, force: true });
+      cpSync(packsDir(`render-rp-${what.replace(/\W+/g, "-")}`, { rp: { landing: { request_page: { ...RP, form } }, access_request: access } }), path.join(copy, "packs"), { recursive: true });
+      const r = gen([], copy);
+      assert.ok(r.status !== 0 && re.test(r.stderr + r.stdout), `${what}: refused with ${re} (${(r.stderr + r.stdout).slice(-400)})`);
+    };
+    refusedRp("a key the build does not declare", FIELDS, { fields: ["site", "nope"] }, /request_page\.form\.fields: nope is not one of the build's access_request fields/);
+    refusedRp("a required field not asked", { fields: [...FIELDS.fields, { key: "must", label: "Must", type: "text", required: true }] }, { fields: ["site"] }, /request_page\.form: must is a required access_request field: ask it/);
+    console.log("✓ the request page: checked (its path, its words, its placeholders, its fields once), merged, rewritten to the shell's route and listed; its words, the fields it picks in its order (fold, chips; others left to the shell's form); its fields declared and every required one asked; the account button's words");
   }
   console.log("landing: all checks passed");
 } finally {

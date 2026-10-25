@@ -10,7 +10,7 @@ export interface LandingItem { title: string; body: string }
 interface Head { id?: string; nav_label?: string; nav?: boolean; eyebrow?: string; title?: string; lead?: string }
 
 export type IconName = 'eye-off' | 'git-compare' | 'code' | 'search' | 'message-chatbot' | 'terminal' | 'bolt' | 'shield-check' | 'chart-bar' | 'plug'
-  | 'users' | 'lock' | 'file-text' | 'clock' | 'check' | 'alert-triangle' | 'list-check' | 'building' | 'robot' | 'refresh';
+  | 'users' | 'lock' | 'file-text' | 'clock' | 'check' | 'alert-triangle' | 'list-check' | 'building' | 'robot' | 'refresh' | 'file-search';
 
 /** The visual templates (src/landing.ts VISUALS): pictures the shell draws from data. */
 export interface DecisionGraphVisual { type: 'decision_graph'; label: string; root: string; branches: { logo?: string; label: string; outcome: string; tone?: 'good' | 'bad' | 'neutral' }[] }
@@ -65,9 +65,22 @@ export type SectionType = LandingSection['type'];
 export interface LandingBlock {
   /** The sections in the app's order; absent: the whole wireframe in the shell's neutral words. */
   sections?: LandingSection[];
-  header?: { links?: LandingLink[]; account?: 'sign_in_and_start' | 'account' };
+  /** `sign_in` and `open`: the account button's two states, relabelled or re-addressed (mold_v0-138). */
+  header?: { links?: LandingLink[]; account?: 'sign_in_and_start' | 'account'; sign_in?: LandingLink; open?: LandingLink };
   footer?: { note?: string; links?: LandingLink[]; tagline?: string; copyright?: string; shell_links?: boolean };
+  seo?: { title?: string; description?: string; card?: 'summary' | 'summary_large_image' };
+  request_page?: RequestPage;
+}
+
+/**
+ * The request page (mold_v0-138; src/landing.ts request_page): a public page asking for access at its own path, with the
+ * build's request form (web/src/features/site/request-page.tsx).
+ */
+export interface RequestPage {
+  path: string; eyebrow?: string; title: string; title_highlight?: string; lead?: string;
+  benefits?: { icon?: IconName; title: string; body: string }[];
   seo?: { title?: string; description?: string };
+  form?: { submit?: string; message_label?: string; fields?: string[]; more?: { label: string; fields?: string[] }; done?: { title: string; steps?: string[] } };
 }
 
 /** An AI client the build's install pages offer (src/connect-catalog.ts id, its short name, its group). */
