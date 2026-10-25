@@ -292,6 +292,8 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 | `## Words` | `- run: audit` (the shell's word on the left) |
 | `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`, `- instructions: <one paragraph>` (mold_v0-119: what the server tells AI clients about the pack, `mcp.instructions`; one bullet per paragraph, at most 4000 characters in all; the app's `## MCP instructions` wins over it). Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
 
+Every record area also gets `<prefix>_export_<area>` (mold_v0-108: its records as CSV, read only, the area's read roles), which `## MCP` may name like the other generated tools.
+
 Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
 `enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),
 `reference <area>`.

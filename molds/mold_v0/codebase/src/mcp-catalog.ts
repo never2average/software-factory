@@ -10,6 +10,8 @@
  *   get_started                         a pack with onboarding steps (mold_v0-105): the caller's workspace's progress
  *                                       through them and its next step, listed first (clients list tools in order)
  *   list_<area>, get_<area>             every record area (reads; the area's `read` roles)
+ *   export_<area>                       every record area (mold_v0-108): its records as CSV, every field a column under
+ *                                       its label, as the console's Export CSV writes them (src/record-export.ts)
  *   create_<area>, update_<area>        a workspace area whose rows are not read from files or an API
  *   move_<area>                         such an area with a lifecycle
  *   get_metrics                         the pack's metrics (mold_v0-063), computed for the caller's workspace
@@ -27,7 +29,7 @@ import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
 import { AgentJobKindSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
-export type GeneratedOp = "get_started" | "list" | "get" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
+export type GeneratedOp = "get_started" | "list" | "get" | "export" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
 
 export interface GeneratedTool {
@@ -71,6 +73,8 @@ export interface WithheldTool { pack: string; generated: string; op: GeneratedOp
 export interface Reserved { customer?: readonly string[]; admin?: readonly string[] }
 
 const MAX_NAME = 64;
+/** What one export_<area> call holds at most (src/record-export.ts EXPORT_MAX_ROWS, EXPORT_MAX_BYTES). */
+const EXPORT_TEXT = "5000 records or 1 MB of CSV";
 const NAME = /^[a-z][a-z0-9_]{0,63}$/;
 
 /** Declared text as a description may carry it: one line of plain text, capped. */
@@ -202,6 +206,16 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
         title: `${label}: get one`,
         description: `One record of ${label} (${whose}) by its key, with every field and the records its links name.`,
         input: { key: recordKey(`The ${label} record's key`) }, annotations: READ });
+      add({ generated: n("export", a.name), op: "export", door: "workspace", area: a.name, action: "read", admin_needs: "read",
+        title: `${label}: export as CSV`,
+        description: `Export the records of ${label} (${whose}) as CSV text: a header row, then one row per record with its key, title, every field under its label and when it last changed; ` +
+          `filter and sort as ${n("list", a.name)} does. At most ${EXPORT_TEXT} at once: when more remain, next is set; pass it as after for the rest. Give the user the csv as a file.`,
+        input: {
+          filter: z.record(z.string(), z.unknown()).optional().describe(`As ${n("list", a.name)}: {field: value} or {field: {op: value}}, every condition ANDed`),
+          sort: z.enum(sortable.flatMap((s) => [s, `-${s}`]) as [string, ...string[]]).optional().describe("The order: a field, key, title or updated_at; - first for descending (default key)"),
+          after: z.string().min(1).max(2000).optional().describe("The next value of the previous export"),
+        },
+        annotations: READ });
       if (!shared && !readOnly) {
         const dataShape = Object.fromEntries(a.fields.filter((f) => f.name !== state).map((f) => [f.name, fieldInput(f, labelOf)]));
         const required = a.fields.filter((f) => f.required && f.name !== state).map((f) => f.name);

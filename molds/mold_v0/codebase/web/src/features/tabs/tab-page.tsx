@@ -6,6 +6,7 @@
 //              the record's page when the tab has the detail view; the tab's charts above. A merged tab (mold_v0-135:
 //              pack.json `areas`) draws several areas as one list, rows merged by key on the server (./merged.ts)
 //   runs       the workspace's runs; reports: finished runs and their results
+// An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
 // the server refuses the rest whatever the page asks.
@@ -23,6 +24,7 @@ import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { BoardColumns, RecordTable, TimelineList, type Page } from './board';
 import { ChartCell, formatValue, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
+import { ExportCsvButton } from './export';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { fill } from '@/lib/vocabulary';
@@ -157,7 +159,8 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   return (
     <div className='flex flex-col gap-6'>
       <ChartGrid charts={tabCharts(tab)} />
-      {views.length > 1 && (
+      <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
+      {views.length > 1 ? (
         <div role='tablist' aria-label='Views' className='bg-muted text-muted-foreground inline-flex w-fit items-center rounded-lg p-[3px]'
           onKeyDown={(e) => {
             // Arrow keys move between the views, as a tab list does.
@@ -173,7 +176,9 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
               className={`rounded-md px-3 py-1 text-sm ${view === v ? 'bg-background text-foreground shadow-sm' : ''}`}>{VIEW_LABELS[v]}</button>
           ))}
         </div>
-      )}
+      ) : <span />}
+        <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={tab.areas ? tab.areas.map((a) => a.area) : [area.name]} />
+      </div>
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
       {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
         : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />

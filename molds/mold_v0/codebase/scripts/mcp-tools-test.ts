@@ -90,9 +90,9 @@ try {
     assert.deepEqual(codeOnly.tools, [], "a pack with only its own tools gets no generated tool");
     const area = { name: "pk_things", label: "Things", role: "asset", scope: "workspace", fields: [{ name: "body", label: "Body", type: "text" }] };
     const areaOnly = generateCatalog([pk({ id: "pk_area", recordAreas: [area] })]);
-    assert.deepEqual(areaOnly.tools.map((t) => t.name), ["pk_area_list_pk_things", "pk_area_get_pk_things", "pk_area_create_pk_things", "pk_area_update_pk_things"], "an area: list, get, create, update (no move without a lifecycle, no run tool)");
+    assert.deepEqual(areaOnly.tools.map((t) => t.name), ["pk_area_list_pk_things", "pk_area_get_pk_things", "pk_area_export_pk_things", "pk_area_create_pk_things", "pk_area_update_pk_things"], "an area: list, get, export (mold_v0-108), create, update (no move without a lifecycle, no run tool)");
     const shared = generateCatalog([pk({ id: "pk_sh", recordAreas: [{ ...area, role: "source", scope: "platform" }] })]);
-    assert.deepEqual(shared.tools.filter((t) => t.door === "workspace").map((t) => t.op), ["list", "get"], "a shared area: reads only for customers");
+    assert.deepEqual(shared.tools.filter((t) => t.door === "workspace").map((t) => t.op), ["list", "get", "export"], "a shared area: reads (and its export) only for customers");
     assert.deepEqual(shared.tools.filter((t) => t.door === "admin").map((t) => t.op), ["admin_list", "admin_get", "admin_create", "admin_update", "admin_delete"], "and staff tools on the admin MCP");
     const kindOnly = generateCatalog([pk({ id: "pk_kind", jobKinds: [{ name: "go", runner: "workspace-harness", entry: "a.mjs" }] }, { run: "audit" })]);
     assert.deepEqual(kindOnly.tools.map((t) => t.name), ["pk_kind_start_go", "pk_kind_audit_status", "pk_kind_list_audits", "pk_kind_get_audit_results", "pk_kind_cancel_audit"], "a kind: start and the run tools, in the pack's word for a run; no report without a report file");
@@ -245,6 +245,17 @@ try {
       await probe(n, async () => err(cb, n, args, /no |not found|does not exist/i));
     for (const [n, args] of [["fixture_tracker_move_tracker_findings", { key: "find-a", to: "fixed" }], ["review_move_review_notes", { key: "note-a", to: "dropped" }]] as const)
       await probe(n, async () => err(cb, n, args, /no |not found/i));
+    // mold_v0-108: export_<area> holds what list_<area> pages through, for the caller's workspace only: A's own rows in
+    // A's file, none of them (keys or text) in B's; the shared rows in both.
+    for (const [n, shared] of [["fixture_tracker_export_tracker_policies", "p1"], ["review_export_review_guides", "g1"]] as const)
+      await probe(n, async () => { const x = await ok(cb, n); assert.equal(x.records, 1, n); assert.match(x.csv, new RegExp(`^Key,Title,.*,Updated\r\n${shared},`), `${n}: the shared row in B's file`); });
+    for (const n of ["fixture_tracker_export_tracker_apps", "fixture_tracker_export_tracker_findings", "review_export_review_items", "review_export_review_notes"])
+      await probe(n, async () => {
+        const a = await ok(ca, n), b = await ok(cb, n);
+        assert.ok(a.records >= 1 && /\r\n(app-a|find-a|item-a|note-a),/.test(a.csv), `${n}: A's file holds A's records`);
+        assert.ok(!/(app-a|find-a|item-a|note-a)/.test(b.csv) && !b.csv.includes(`secret ${STAMP}`), `${n}: B's file holds none of A's records: ${b.csv.slice(0, 300)}`);
+        assert.equal(b.next, null);
+      });
     // mold_v0-105: get_started reads the caller's own workspace's steps (A has an application, B none yet).
     await probe("fixture_tracker_get_started", async () => {
       const first = (x: any) => x.steps.find((s: any) => s.id === "first_app").done;

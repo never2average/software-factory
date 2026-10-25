@@ -1479,6 +1479,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name)) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
+  `export const exportWithheldAreas: string[] = ${json(recordAreas.filter((a) => listWithheld(a.name, "export")).map((a) => a.name))};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
   `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
