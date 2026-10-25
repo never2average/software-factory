@@ -113,6 +113,12 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       if (!d) throw new PackError(`no ${area} record ${String(a.key).slice(0, 200)} in this ${wordOf(t.pack, "workspace")}`, 404);
       return { record: d.record, links: d.links };
     }
+    case "export": {
+      // mold_v0-108: the area's records as CSV, through the same data API list (src/record-export.ts).
+      operation("workspace", "list");
+      const { exportArea } = await import("./record-export.js");
+      return exportArea(caller, area, { filter: a.filter, sort: a.sort, after: a.after });
+    }
     case "create": operation("workspace", "create"); return dataApi.create(caller, area, a.key, { title: a.title, data: a.data ?? {} });
     case "update": operation("workspace", "update"); return dataApi.update(caller, area, a.key, { title: a.title, data: a.data ?? {} });
     case "move": operation("workspace", "move"); return dataApi.move(caller, area, a.key, a.to);

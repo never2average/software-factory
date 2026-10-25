@@ -8,6 +8,7 @@
  *   tool op          workspace route(s) withheld
  *   list             GET /api/data/:area, GET /api/records/:area, the area's console tab and Records entry
  *   get              GET /api/data/:area/:key, GET /api/records/:area/:key
+ *   export           the console's Export CSV on the area's pages (mold_v0-108: they read the list routes above)
  *   create           POST /api/data/:area; _batch create and put
  *   update           PUT /api/data/:area/:key; _batch update and put
  *   move             POST /api/data/:area/:key/move; _batch move

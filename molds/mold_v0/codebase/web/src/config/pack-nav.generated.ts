@@ -54,6 +54,9 @@ export const recordAreas: RecordAreaSpec[] = [];
 /** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */
 export const recordPortalNav: NavGroup[] = [];
 
+/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */
+export const exportWithheldAreas: string[] = [];
+
 /** The /admin sidebar's Records group: the platform-scope areas staff maintain. */
 export const recordAdminNav: NavGroup[] = [];
 
