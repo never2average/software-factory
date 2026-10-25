@@ -870,6 +870,18 @@ def _app_profile(app_id, docs, brief_root=None, answers=None):
             errs.append(f"{app_id}/application.json: profile ({app_profile.describe(a.get('profile'))}) is not what its brief {a['brief']} says "
                         f"({app_profile.describe(want)}); the brief is where profile settings are set: re-run intake on it")
     return errs
+def _branding(app_id, docs):
+    """surface.branding (mold_v0-150): a brand names the product, unless the block holds only the brand's own share image
+    (`branding.py <app> share-image`, mold_v0-093), which changes nothing else: the app keeps the names its host pack or
+    mold gives it. The schema cannot say "product_name unless share_image alone", so it is said here."""
+    b = ((docs.get("application") or {}).get("surface") or {}).get("branding")
+    if not isinstance(b, dict) or b.get("product_name"): return []
+    if not b: return [f"{app_id}/application.json: surface.branding is empty: remove it, or set a brand with branding.py {app_id} set --name ..."]
+    other = sorted(k for k in b if k != "share_image")
+    if other: return [f"{app_id}/application.json: surface.branding: missing product_name ({', '.join(other)} need a brand name; "
+                      f"a block without one may hold only share_image): branding.py {app_id} set --name ..."]
+    return []
+
 def _single_service(app_id, docs):
     """A single-service mold (molds/<mold_id>/mold.json, today mold_v0) and the compose_remote target it alone may use
     (mold_v0-028): its targets, its fixed install path and compose project, its database on the compose network, and
@@ -889,7 +901,7 @@ def _app_errors(app, adir):
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
-             + _single_service(app, docs) + _app_profile(app, docs))
+             + _single_service(app, docs) + _app_profile(app, docs) + _branding(app, docs))
     return errs, docs
 def cmd_validate(a):
     if "--app-dir" in a:
@@ -1091,6 +1103,18 @@ def self_test():
         rows = [json.loads(l) for l in open(os.path.join(t, "state", "tasks", "m1.jsonl")) if l.strip()]
         ok(sorted(x["title"] for x in rows if x["title"].startswith("race ")) == sorted(f"race {i}" for i in range(16))
            and len({x["task_id"] for x in rows}) == len(rows) == 19, "concurrent add/set: no write is lost and no number is used twice")
+    # mold_v0-150: a branding block may hold only the brand's own share image (the names stay the host pack's or mold's);
+    # anything else in it needs a product name. The schema checks the image's shape.
+    si = {"file": "brands/x/share-image.png", "sha256": "a" * 64}
+    sch = load(os.path.join(ST, "application", "app_id", "application.schema.json"))["properties"]["surface"]["properties"]["branding"]
+    ok(_branding("x", {"application": {"surface": {"branding": {"share_image": si}}}}) == [] and _check({"share_image": si}, sch, "b") == [],
+       "validate: a branding block holding only share_image is valid (mold_v0-150)")
+    ok(any("missing product_name" in e for e in _branding("x", {"application": {"surface": {"branding": {"share_image": si, "brand_color": "#123456"}}}})),
+       "validate: any other branding field without a product name is refused")
+    ok(_branding("x", {"application": {"surface": {"branding": {"product_name": "Acme", "share_image": si}}}}) == [] and _branding("x", {"application": {}}) == []
+       and _branding("x", {"application": {"surface": {"branding": {}}}}), "validate: a named brand, or none, as before; an empty block is refused")
+    ok(_check({"share_image": {"file": "/etc/x.png", "sha256": "z"}}, sch, "b") and _check({"share_image": {"file": "a.png"}}, sch, "b"),
+       "validate: a share image's path, hash and both fields are checked by the schema")
     # mold_v0-028: compose_remote belongs to a single-service mold, and owns its object like every target
     cr = {"compose_remote": {"ssh_user": "root", "ssh_port": 22, "ssh_key_ref": "sf_x", "install_path": "/opt/software-factory/x", "compose": {"project": "sf-x", "file": "f"}}}
     ok(_single_service("x", {"application": {"mold_id": "mold_v1"}, "infrastructure": dict(cr, target="compose_remote")}),
