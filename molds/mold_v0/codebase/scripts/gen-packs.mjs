@@ -1526,7 +1526,7 @@ files.set(srcHosts, HEADER +
   (hostPacks.some((p) => p.engineConfig) ? "\n/** Each host pack's pack.json `engine.config` (mold_v0-137), by pack id: checked against its host entry's schema when it registers (src/host.ts). */\n" +
     `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : "") +
   // Every pack's server config (mold_v0-140), only when one declares it.
-  (packConfig.length ? "\n/** Each pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig): settings, admin_mcp, setup, mcp.error_hints, in pack order. */\n" +
+  (packConfig.length ? "\n/** Each pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig): settings, admin_mcp, setup, mcp.error_hints, account_stages, in pack order. */\n" +
     `export const PACK_CONFIG: readonly unknown[] = ${json(packConfig)};\n` : ""));
 // Their console code (web/src/packs/<id>/index.ts) and orchestrator entries (orchestrator/packs/<id>/main.ts).
 files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADER +
