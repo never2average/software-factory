@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
@@ -37,6 +37,14 @@ function masterKeys() {
 }
 
 export const vaultUnlocked = () => Boolean(ENV.APP_VAULT_KEY);
+
+/**
+ * A key for one purpose derived from the current master key (mold_v0-014: the signed state of a sign-in in flight). Never
+ * stored; rotating APP_VAULT_KEY changes it (states in flight then fail and are started again).
+ */
+export function derivedKey(purpose: string): Buffer {
+  return createHmac("sha256", masterKeys().current).update(`derived/v1/${purpose}`).digest();
+}
 
 export function encrypt(plaintext: string) {
   const { current, currentId } = masterKeys();

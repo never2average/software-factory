@@ -46,13 +46,15 @@ export const fieldSummary = (c: CredentialSpec) => ({
   environments: c.environments ?? null, deliver_as: deliveredAs(c.deliver_as),
   // mold_v0-014: runs get a GitHub App installation token instead when the workspace has connected one.
   ...(c.github_app ? { github_app: true } : {}),
+  ...(c.oauth ? { oauth: c.oauth } : {}),
 });
 /** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
 const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>
   "env" in d ? { env: d.env } : { file: d.file, ...(d.path_env ? { path_env: d.path_env } : {}) };
 
-interface Slot { spec: CredentialSpec; asset: string | null; environment: string | null }
-/** The slot a value goes in: the field, and the asset and environment its binding needs (and nothing it does not). */
+export interface Slot { spec: CredentialSpec; asset: string | null; environment: string | null }
+/** The slot a value (or an OAuth connection, mold_v0-014) goes in: the field, and the asset and environment its binding needs. */
+export const credentialSlot = (pack: unknown, name: unknown, asset: unknown, environment: unknown) => slot(pack, name, asset, environment);
 function slot(pack: unknown, name: unknown, asset: unknown, environment: unknown): Slot {
   const spec = typeof pack === "string" && typeof name === "string" ? findCredential(pack, name) : null;
   if (!spec) throw new PackError("no such credential field", 404);
@@ -139,7 +141,14 @@ export async function hasCredential(orgId: number, pack: string, name: string): 
  * What a run receives: each value with the way its field delivers it. `path_env` (mold_v0-075): the variable that holds
  * the file's full path. `operator`: a value the platform's operators hold (never the workspace's to see).
  */
-export interface Delivered { name: string; env?: string; file?: string; path_env?: string; operator?: boolean; value: string }
+export interface Delivered {
+  name: string; env?: string; file?: string; path_env?: string; operator?: boolean; value: string;
+  /**
+   * mold_v0-014: when a short-lived token (a GitHub App installation's, an OAuth connection's) stops working. The runner
+   * asks for the run's credentials again before then (src/run-harness.ts) and gets a fresh one.
+   */
+  expires_at?: string;
+}
 export interface RunCredentials {
   credentials: Delivered[]; missing: string[];
   /**
@@ -148,6 +157,9 @@ export interface RunCredentials {
    */
   github_app?: { name: string; repositories: string[]; expires_at: string }[];
   github_app_missing?: { name: string; reason: string }[];
+  /** mold_v0-014: the fields delivered from an OAuth connection (never the token), and why a connected one gave none. */
+  oauth?: { name: string; provider: string; expires_at: string | null }[];
+  oauth_missing?: { name: string; reason: string }[];
 }
 
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
@@ -189,8 +201,20 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
       const t = await installationTokenForRun({ runId: run.id, orgId: run.org_id, name, bound_to: spec.bound_to, area: spec.area ?? null, asset: s.asset });
       if (t && "missing" in t) { out.missing.push(name); (out.github_app_missing ??= []).push({ name, reason: t.missing }); continue; }
       if (t) {
-        out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value: t.value });
+        out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value: t.value, expires_at: t.expires_at });
         (out.github_app ??= []).push({ name, repositories: t.repositories, expires_at: t.expires_at });
+        continue;
+      }
+    }
+    // mold_v0-014: the slot's OAuth connection, when it has one (its access token, refreshed before it expires); a
+    // connection the provider refused to refresh gives nothing (never the pasted value in its place).
+    if (spec.oauth && run.id && opts.mint !== false) {
+      const { runOAuthToken } = await import("./oauth-connections.js");
+      const t = await runOAuthToken(run.id, run.org_id, s);
+      if (t && "missing" in t) { out.missing.push(name); (out.oauth_missing ??= []).push({ name, reason: t.missing }); continue; }
+      if (t) {
+        out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value: t.value, ...(t.expires_at ? { expires_at: t.expires_at } : {}) });
+        (out.oauth ??= []).push({ name, provider: spec.oauth, expires_at: t.expires_at });
         continue;
       }
     }
@@ -224,6 +248,12 @@ export async function workspaceCredentialValue(orgId: number, pack: string, name
     const { installationTokenForServer } = await import("./github-app.js");
     const t = await installationTokenForServer(orgId);
     if (t) return t;
+  }
+  if (spec.oauth) {
+    const { serverOAuthToken } = await import("./oauth-connections.js");
+    const t = await serverOAuthToken(orgId, { spec, asset: null, environment: null });
+    if (t && "missing" in t) throw new PackError(`the ${spec.label} connection needs to be made again (Credentials page): ${t.missing}`, 409);
+    if (t) return t.value;
   }
   const s: Slot = { spec, asset: null, environment: null };
   const [r] = await asPlatform(async () => (await getDb()).query<{ sealed: string }>(
@@ -276,9 +306,13 @@ export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
   if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length) return [];
   const pasted = (await runCredentials(run, { strict: true, mint: false })).credentials.map((c) => ({ name: c.name, value: c.value }));
   // mold_v0-014: and every GitHub App token minted for the run (expired or revoked ones too: the run may have printed them).
-  if (!run.id || !run.spec?.credentials?.some((n) => findCredential(run.pack, n)?.github_app)) return pasted;
-  const { runTokenSecrets } = await import("./github-app.js");
-  return [...pasted, ...(await runTokenSecrets(run.id, run.org_id))];
+  const fields = (run.spec?.credentials ?? []).map((n) => findCredential(run.pack, n));
+  if (!run.id) return pasted;
+  const out = [...pasted];
+  if (fields.some((f) => f?.github_app)) out.push(...(await (await import("./github-app.js")).runTokenSecrets(run.id, run.org_id)));
+  // mold_v0-014: and every OAuth access token it received, refreshed ones included.
+  if (fields.some((f) => f?.oauth)) out.push(...(await (await import("./oauth-connections.js")).runOAuthSecrets(run.id, run.org_id)));
+  return out;
 }
 
 /**

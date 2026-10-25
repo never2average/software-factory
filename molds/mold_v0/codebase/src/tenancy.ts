@@ -56,6 +56,9 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
     return null;
   });
   if (gh?.disconnected) log(`org ${orgId}: GitHub App installation ended (${gh.uninstalled ? "uninstalled on GitHub" : "GitHub did not confirm the uninstall"})`);
+  // Its OAuth connections (mold_v0-014): removed now, each provider told (best effort).
+  const oa = await (await import("./oauth-connections.js")).revokeWorkspace(orgId).catch(() => null);
+  if (oa) log(`org ${orgId}: ${oa} OAuth connection(s) revoked at their providers`);
 
   // 1-2. Revoke access and stop work first, so nothing writes new data while it is being purged.
   await db.transaction(async (tx) => {
