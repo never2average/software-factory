@@ -719,6 +719,51 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
   writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
   delivered); no rotation reminder or expiry.
+- **Repository access by a GitHub App per workspace** (mold_v0-014, built; `src/github-app.ts`,
+  `src/github-app-routes.ts`, `sql/migrations/0021_github_app.sql`; `npm run test:github-app`). A credential field may
+  say `github_app: true` (pack.json `credentials[].github_app`): a GitHub repository token. When the platform holds a
+  GitHub App and the workspace has connected an installation of it, a run receiving that field gets a short-lived
+  **installation token** in its place; with no app set up, or no live installation, the pasted value is delivered as
+  before. Nothing is mounted unless a field asks for it (the zero-pack MCP surface and routes are unchanged).
+  - **The app** is the platform's: its id, URL name, client id and secret, private key and webhook secret are one sealed
+    entry of the key vault (provider `github_app`, label `app`, direct mode with no environment names), set by an owner
+    of the platform on `/admin/keys` (section GitHub App, which also shows the addresses to register with GitHub and
+    the key's SHA256 fingerprint; never a secret). Only the server reads them: the app's JSON Web Token (RS256, nine
+    minutes) goes to GitHub's `/app/` endpoints only, and no run, session, answer, log or error carries the key or a
+    secret.
+  - **Install** (`/app/credentials`, section GitHub, owners): `POST /api/github-app/install` gives GitHub's install
+    address with a state signed by the client secret around a one-time nonce (its sha256 stored in `github_app_states`
+    for that workspace and person, ten minutes). GitHub returns the browser to `GET /api/github-app/callback` with the
+    installation id and a user-authorization code (the app must "Request user authorization (OAuth) during
+    installation"); the installation is bound only when the signature and expiry hold, the signed-in session is the same
+    person in the same workspace and an owner, the nonce is unused (then used), the code's user token lists the
+    installation in `/user/installations` (proof the person reaches it; that token is revoked at once and never
+    stored), the installation is of this app, and no other workspace holds it (one live installation per workspace,
+    one workspace per installation). Every refusal is a code on the redirect back, never an echo of the request.
+  - **Runs**: per run and field, a token scoped to read-only contents (`{contents: read}`; GitHub adds read metadata) and
+    to the installation's repositories, or to the ones an owner narrowed the run's asset record to
+    (`PUT /api/github-app/repositories`). GitHub's answer is checked: a token with more permission, or more
+    repositories, than asked is revoked and not delivered (the run gets none, never a broader pasted one). Tokens are
+    sealed with the workspace's data key in `run_github_app_tokens`, reused while more than five minutes are left,
+    minted again after, and all of a run's tokens are redacted from what it writes. The run's `credentials` event
+    names which fields were installation tokens, their repositories and expiry, or why none was given.
+  - **Revocation**: when a run's attempt ends its tokens are marked revoked with its gateway tokens
+    (`revokeRunTokens`) and GitHub is asked to revoke each (`DELETE /installation/token`). The app's webhook
+    (`POST /api/github-app/webhook`, `X-Hub-Signature-256` checked against the webhook secret before anything is read)
+    ends a connection at once on `installation.deleted`, stops minting while suspended, and keeps the repository list
+    (and every asset's narrowing) current on `installation_repositories`. Owners disconnect (`DELETE /api/github-app`),
+    staff revoke (`DELETE /api/admin/onboarding/github-app/installations/:org`), and removing a workspace
+    (`src/tenancy.ts`) does the same: the row ends, its tokens are revoked and the installation is uninstalled on GitHub.
+  - **Isolation**: the three tables have no grant for tenant work (`check:rls`, the live probe). `test:github-app`
+    proves it against a GitHub stand-in (`scripts/lib/github-standin.ts`): the install's refusals (another workspace's
+    session, another person, a used, tampered or expired state, an installation the person cannot reach, another
+    app's, one held by another workspace), the token's scope, reuse, re-mint near expiry and expiry, over-grants
+    refused, revocation at run end, the webhook, disconnect, staff revoke and workspace removal, 0 cross-workspace
+    injections, and no private key, client or webhook secret in any run's environment or files, answer, log or table.
+  - **Not covered**: GitHub caps an installation token at one hour; a run fetches its credentials once when it starts, so
+    a run longer than that holds an expired token for its later steps (re-fetching mid-run is the runner's to add). An
+    installation with more than 500 repositories needs each asset narrowed. GitHub Enterprise Server addresses are not
+    configurable yet. The webhook's deliveries are not de-duplicated (each handler is idempotent).
 - **A run user per run** (mold_v0-078, built; `src/run-users.ts`, used by `src/run-harness.ts` and
   `src/run-sandbox-runner.ts`): every run's programs run as a uid of their own, leased for that run alone from a reserved
   range (`APP_RUN_UIDS`, default `61000-64999`: never root, nobody or 65535; a uid `/etc/passwd` names is skipped)
@@ -1262,9 +1307,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   shell's, and the shell features it enables: `tips`, `journeys`, `research`; kept apart from the pages so the sidebar's
   bundle never carries them), `routes.json` (the URLs its pages keep: next.config
   rewrites each, from `src/config/pack-routes.generated.json`, to `app/{app,admin}/host/[pack]/[...path]` or
-  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects) and `guide.ts` (its
-  customer guide, which replaces the shell's short one at /app/docs; pure TS, as the docs corpus reads it). Its docs
-  (`packs/<id>/docs/*.md`) join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus.
+  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects). Its customer guide
+  and its staff docs are config since mold_v0-139 (pack.json `guide`, the whole guide at /app/docs, and `staff_docs`,
+  which join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus; "Customer guide" below):
+  a `guide.ts` here or a `packs/<id>/docs/*.md` file is refused, naming the declaration.
   *Its orchestrator* is `orchestrator/packs/<id>/main.ts`, which `orchestrator/main.ts` runs (else the deterministic
   worker); it is uploaded to orchestrator sandboxes with the rest of `orchestrator/` (its `test/` is not).
   *Its scripts* run with `npm run pack:run -- <script>` (`scripts/pack-script.ts`); `npm run smoke` runs the shell's
@@ -1363,7 +1409,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `workspaceStore` (`workspace_store`) | the workspace store's retention (keep_last, keep_days) and the paths its file viewer never shows (secret_paths) | the daily retention sweep and the console's Files page (mold_v0-056) |
 | `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
-| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
+| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path); `github_app: true` for a GitHub repository token a connected GitHub App replaces (mold_v0-014) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id (a host pack's under their own names: `host.schema`, mold_v0-049); every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
@@ -1529,8 +1575,24 @@ onboarding steps with the prompt to type and the generated `get_started` tool), 
 (fields, lifecycle, due dates, tools), the job kinds with their credentials and schedules, the MCP tools grouped by what
 they reach, and the account; whatever a pack's `mcp` settings withhold is left out. So a pack with no guide of its own
 still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
-guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
-before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+guide is the shell's, byte for byte (`PACK_GUIDE` null). `guide.tool_groups` (mold_v0-139, `[{ title, tools }]`) puts a
+pack's own groups of tools first on the MCP tools page (each tool in the order listed; one the build lacks is left out),
+and `guide.prompts_intro` is the line before its slash commands' list, in the pack's words (default "Clients that support
+MCP prompts also offer these:").
+
+A **host pack's** `guide` (mold_v0-139; it was its console code, `web/src/packs/<id>/guide.ts`, now refused) is the
+whole guide: its pages in its groups, nothing generated and no title reserved (`generated` is refused), written by
+gen-packs into `pack-guides.generated.ts` `HOST_GUIDE` (`PACK_GUIDE` null; a declarative pack's guide beside it is
+refused, as it would never show). Its page titled as the MCP tools page ("MCP tools" in the build's words) is followed by
+the tools: its `tool_groups`, then "More tools", then the slash commands (one is added in Reference when it wrote none).
+
+**Staff docs (mold_v0-139).** A pack's `pack.json` `staff_docs` (`src/staff-docs.ts`: `[{ path, title, markdown }]`,
+inline; a host pack's `packs/<id>/docs/*.md` until then, now refused) join the shell's `docs/` on /admin/docs
+(`web/scripts/sync-docs.mjs`) and in the docs answers' corpus (`scripts/sync-docs-corpus.ts`) as files at those paths
+would: `# <title>`, a blank line, then the markdown. The markdown is checked with the guide's rules, except that HTML
+is allowed (the renderer shows it as text) and so are relative links between docs (`journeys.md`, `../beta-guide.md`,
+which /admin/docs opens as that doc); a path the shell's `docs/` or another pack already has is refused.
+`npm run test:pack-guide`.
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
 operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by

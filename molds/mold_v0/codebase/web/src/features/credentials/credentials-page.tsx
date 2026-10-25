@@ -14,10 +14,13 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
+import { GithubAppSection } from './github-app-section';
 
 interface Field {
   pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
   area: string | null; environments: string[] | null; deliver_as: { env: string } | { file: string };
+  /** mold_v0-014: runs get a GitHub App installation token instead, when the workspace has connected GitHub. */
+  github_app?: boolean;
 }
 interface Stored { pack: string; name: string; bound_to: string; asset: string | null; environment: string | null; last4: string | null; updated_at: string; updated_by: string | null }
 interface Vault { fields: Field[]; values: Stored[]; can_manage: boolean }
@@ -44,6 +47,7 @@ export function CredentialsPage() {
         <p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>
       ) : (
         <div className='flex flex-col gap-10'>
+          <GithubAppSection />
           {data.fields.map((f) => (
             <FieldSection key={`${f.pack}/${f.name}`} f={f} values={data.values.filter((v) => v.pack === f.pack && v.name === f.name)} canManage={data.can_manage} onChanged={reload} />
           ))}
@@ -71,7 +75,8 @@ function FieldSection({ f, values, canManage, onChanged }: { f: Field; values: S
   const remove = (v: Stored) => call('DELETE', { pack: v.pack, name: v.name, asset: v.asset, environment: v.environment })
     .then(() => { toast.success('Removed'); return onChanged(); }).catch(fail);
   return (
-    <Section title={f.label} description={<>{f.help ?? bound(f)} <Badge variant='secondary' className='ml-1'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</Badge></>}>
+    <Section title={f.label} description={<>{f.help ?? bound(f)} <Badge variant='secondary' className='ml-1'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</Badge>
+      {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected above, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</>}>
       {values.length > 0 ? (
         <Table>
           <TableHeader>

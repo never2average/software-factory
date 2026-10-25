@@ -81,6 +81,7 @@
     "test:run-firewall": "tsx scripts/run-firewall-test.ts",
     "test:run-users": "tsx scripts/run-users-test.ts",
     "test:run-credentials": "tsx scripts/run-credentials-test.ts",
+    "test:github-app": "tsx scripts/github-app-test.ts",
     "test:run-approvals": "tsx scripts/run-approvals-test.ts",
     "runner:fleet": "tsx --env-file-if-exists=.env src/run-fleet.ts",
     "org:delete": "tsx scripts/delete-org.ts",

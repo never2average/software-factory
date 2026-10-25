@@ -23,6 +23,7 @@ import { CONSOLE_PAGES } from "./console-pages.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
+import { StaffDocsSchema } from "./staff-docs.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -147,9 +148,16 @@ export const PackJsonSchema = z.object({
   /**
    * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown (the only form since mold_v0-124:
    * a pack is its pack.json alone) and their navigation groups, before the pages the console writes from these declarations. Markdown only,
-   * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). Not for a host pack (its guide is its code).
+   * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). A host pack's (mold_v0-139; it was its console
+   * code, web/src/packs/<id>/guide.ts) is the whole guide: its pages, nothing generated, the MCP tools page grouped by
+   * `tool_groups`.
    */
   guide: GuideSchema.optional(),
+  /**
+   * Staff docs (mold_v0-139; src/staff-docs.ts): `[{ path, title, markdown }]`, inline, beside the shell's docs/*.md on
+   * /admin/docs and in the staff docs answers' corpus (a host pack's packs/<id>/docs files until then).
+   */
+  staff_docs: StaffDocsSchema.optional(),
   /**
    * The shell pages the customer console hides (mold_v0-130; src/console-pages.ts): `hide`, a list of page ids. Each leaves
    * the /app sidebar and redirects to /app; the app's profile.json `console` adds to it. The staff console is unchanged.

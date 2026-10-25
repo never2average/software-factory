@@ -117,7 +117,9 @@ turns it into shell, or builds it where nothing exists yet.
   workspace, an asset or an environment, sealed with the workspace data key, written in the console with only the
   last 4 characters shown, injected into a run by name only for its target; a canary test finds no value in events,
   results, logs, the database, the store or MCP output; `src/credentials.ts`, `workspace_credentials`),
-  mold_v0-014 (repository access by a GitHub App per workspace, later).
+  mold_v0-014, **built** (repository access by a GitHub App per workspace: a field declared `github_app: true` gets a
+  short-lived, read-only installation token per run from the installation the workspace connected, else its pasted
+  value; the app's keys sealed in the key vault, never handed to a run; `src/github-app.ts`, migration 0021).
 
 ### Storage and the workspace store
 
@@ -254,8 +256,8 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   `web/src/packs/octillion/` (pages, features, sidebar entries, `routes.json`), at their old URLs.
 - **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
   and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
-- **Docs.** The customer guide (`web/src/packs/octillion/guide.ts`), the product's internal docs and case studies
-  (`packs/octillion/docs/`), the README.
+- **Docs.** The customer guide and the product's internal docs and case studies, as config since mold_v0-139 (its
+  pack.json `guide` and `staff_docs`), the README.
 - **Other.** The client skill (`packs/octillion/integrations/claude-skill/octillion/`, the download in
   `packs/octillion/public/downloads/`), the operator scripts and the product's own smoke test and connector check
   (`packs/octillion/scripts/`: `npm run pack:run -- <script>`).
