@@ -220,6 +220,39 @@ legal.privacy_url = https://acme.com/privacy
   already deployed is not stopped for it: add the lines to its brief and re-run intake to turn its pages on.
 - The pages are the shell's neutral template in the app's own words (`molds/mold_v0/codebase/web/src/features/site/legal-text.ts`):
   a reasonable start, not legal advice. A company with its own reviewed terms sets `terms_url` and `privacy_url`.
+**The landing page** (mold_v0-094): the words of the app's public page at `/`, over what its pack declares (`pack.json`
+`landing`). Its sections are the shell's (`molds/mold_v0/codebase/src/landing.ts`: the hero, the sections a page picks
+and places, the header, footer and search snippet); the brief only gives the words. A few fields, one per line, in
+`## Profile`:
+
+```
+## Profile
+landing.hero.headline = Continuous compliance audits for your applications
+landing.hero.subheadline = Every control, every day, with the evidence attached.
+landing.seo.title = Acme Audits
+landing.footer.shell_links = false
+```
+
+or the whole block as JSON in a section of its own (the shell's format; lists such as `sections` or FAQ items need it):
+
+````
+## Landing
+
+```json
+{"sections": [{"type": "hero", "headline": "Continuous compliance audits"},
+              {"type": "faq", "items": [{"question": "Is it read only?", "answer": "Yes."}]}]}
+```
+````
+
+- One place only: `landing.` lines and a `## Landing` block together, or two blocks, are refused; a block in an HTML
+  comment is not read. `true` and `false` are kept as true and false.
+- The factory checks it as text (`.claude/scripts/lib/app_profile.py` `landing_problems`): every text plain on one line
+  (at most 1200 characters, no line breaks, control, zero-width or direction characters), a field called `href` a path
+  of this site, an `https://` or a `mailto:` address, lists of at most 50, at most 64 KB in all. Which sections and
+  fields exist is the shell's to say: the build checks the block again and refuses one it cannot draw, naming the field.
+- It is `application.json` `profile.landing`, written into the build's `profile.json`; the shell lays it over the pack's
+  block (the app's wins). `packs.py verify` checks the build's page carries the app's words.
+
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
   `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer.app`
