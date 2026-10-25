@@ -109,7 +109,7 @@ export const packCharts: PackChartSpec[] = [];
 export interface PackTabSpec {
   pack: string;
   id: string;
-  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files';
   label: string;
   description: string | null;
   icon: string;
@@ -131,5 +131,5 @@ export interface PackTabSpec {
 }
 export const packTabs: PackTabSpec[] = [];
 
-/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */
+/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */
 export const tabPortalNav: NavGroup[] = [];

@@ -52,6 +52,8 @@ export default function AppSidebar() {
   const { area, groups } = useNav();
   const canSwitch = usePlatformAdmin(area);
   const filteredGroups = useFilteredNavGroups(groups);
+  // A declared sidebar that lists API keys (mold_v0-133, a keys tab) has it in its group: not again in the footer.
+  const keysInNav = groups.some((g) => g.items.some((i) => i.url === '/app/keys'));
   const base = area === 'admin' ? '/admin' : '/app';
   // A module is active on its own page and its sub-pages; the area's home only on itself.
   const active = (url: string) => pathname === url || (url !== base && pathname.startsWith(`${url}/`));
@@ -158,7 +160,7 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
-          {area === 'portal' && memberKeysOn && (
+          {area === 'portal' && memberKeysOn && !keysInNav && (
             // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are, unless the profile
             // turns member keys off (mold_v0-099).
             <SidebarMenuItem>
