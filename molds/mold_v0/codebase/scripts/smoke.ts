@@ -210,8 +210,12 @@ for (const p of hostPackDirs()) {
   const own = hostScript(`${p.id}/smoke`);
   if (!own) continue;
   console.log(`\n---------- ${p.id}: its own smoke test (${path.relative(ROOT, own.file)}) ----------`);
-  // With the embedded database, each host pack's smoke test gets a fresh one, as the shell's did.
-  const env = ENV0.DATABASE_URL ? ENV0 : { ...ENV0, PGLITE_DIR: mkdtempSync(path.join(tmpdir(), `smoke-${p.id}-`)) };
+  // With the embedded database, each host pack's smoke test gets a fresh one, as the shell's did. It runs as every deploy
+  // configures the API (mold_v0-149; molds/mold_v0/mold.json APP_PROXY_HOPS 1 on Vercel and behind a server's Caddy):
+  // one proxy trusted, so a smoke that plays distinct callers through X-Forwarded-For is limited per caller, as live,
+  // not as one address. A value the environment already sets wins.
+  const hops = ENV0.APP_PROXY_HOPS ? {} : { APP_PROXY_HOPS: "1" };
+  const env = ENV0.DATABASE_URL ? { ...ENV0, ...hops } : { ...ENV0, ...hops, PGLITE_DIR: mkdtempSync(path.join(tmpdir(), `smoke-${p.id}-`)) };
   const r = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), ["--env-file-if-exists=.env", own.file], { cwd: ROOT, stdio: "inherit", env });
   if (r.status !== 0) { failed++; console.error(`${p.id}: its smoke test failed (${r.status})`); }
 }
