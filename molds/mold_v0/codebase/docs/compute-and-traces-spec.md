@@ -71,7 +71,7 @@ Repo: the product's repository (before the shell was generalised). This spec sta
   | Key vault | `/admin/keys` |
   | Agent configuration | `/admin/agents` |
   | Harness mix | `/admin/configuration` (exact page to confirm, see Q5) |
-  | Simulation | `/admin/accounts/<org>` (existing account detail) |
+  | Session-engine job | `/admin/accounts/<org>` (existing account detail) |
   | Trace | `/admin/health/traces/<job_id>` (section 3) |
 
   Deep-link query params (`?agent=`, `?harness=`) are added to those pages only if they are cheap. Otherwise the link opens the page.
@@ -191,7 +191,7 @@ An outlined table, one row per limit. Columns:
 - **Default view:** active, or finished in the last hour. Waiting jobs first, then running, then finished.
 - **Filters:**
   - State: Waiting, Booting, Running, Draining, Finished, Failed, All.
-  - Kind: Simulation, Research (product), Research (prospect).
+  - Kind: the session engine's jobs, Research (product), Research (prospect).
   - Account search.
   - "Has failures".
 - **Status rules** (server, first match wins):
@@ -208,11 +208,11 @@ An outlined table, one row per limit. Columns:
 | Job (id + kind chip; second line shows account · product) | `simulations` / `product_research`, joined to orgs and products |
 | State | rules above |
 | Why waiting (blank when the job is served) | Matching `last_tick.jobs[].served=false`, plus the note mapped to plain English: "Waiting for boat capacity (3 free, needs 41)", "At the orchestrator limit", "Relaunch cooldown", "No orchestrator yet", "Agents not scheduled" (unclaimable) |
-| Work | Simulation: sessions done / failed / running / queued as a mini stacked bar. Research: `stage` plus "attempt n" |
+| Work | Session-engine job: sessions done / failed / running / queued as a mini stacked bar. Research: `stage` plus "attempt n" |
 | Orchestrator | `orchestrator_id` with a state chip, or "2 (1 failed launch)" |
 | Pods: running / reserved | Σ `meta.running` / `pods` |
 | Waiting since / running for | first queued `queued_at` or research `created_at` / orchestrator `ready_at` |
-| Failures | count, plus the top class chip (simulations only) |
+| Failures | count, plus the top class chip (session-engine jobs only) |
 | Spend | session model $ + orchestrator model $ (`gateway_usage` by `orchestrator_id`) + sandbox est. Research shows "orchestrator model $ + sandbox est.", with the tooltip "Research spend is metered only through its orchestrator." |
 
 - **Row actions:**
@@ -552,7 +552,7 @@ Within that decision:
 | Hop | Slice 1 key | Slice 2 stored id | Propagation |
 |---|---|---|---|
 | MCP tool call (`src/server.ts:261`) | none (not linked) | `mcp_events.trace_id`, `span_id` | `runTool` passes `{trace_id, span_id}` into job creation |
-| Simulation / research (`src/queries.ts:437`, `src/research.ts`) | `sim_…` / `rsh_…` | `simulations.trace_id`, `origin_span_id`; same columns on `product_research` | research ↔ simulation through `product_research.simulation_id` / `simulations.research_id` |
+| Session-engine job / research (`src/queries.ts:437`, `src/research.ts`) | `sim_…` / `rsh_…` | `simulations.trace_id`, `origin_span_id`; same columns on `product_research` | research ↔ session-engine job through `product_research.simulation_id` / `simulations.research_id` |
 | Orchestrator launch (`src/autoscaler.ts:387`) | `orchestrator_sandboxes.job_id` | `orchestrator_sandboxes.trace_id` = the job's trace (a shared orchestrator gets its own) | `APP_TRACEPARENT` in the sandbox env (`boat-lib.ts launchOrchestrator`) |
 | Session claim (`src/worker.ts:46`) | `agent_sessions.simulation_id`, `worker_id`, `sandbox_id` | `agent_sessions.trace_id`, `span_id` (columns, so they can be indexed) | `traceparent` returned per job and session in the `/claim` and `/research/claim` responses; `orchestrator/core/util.ts:37 api()` sends it back as a header; worker routes parent their spans to it |
 | Gateway model call (`src/gateway.ts:199`) | `gateway_usage.session_id` / `orchestrator_id` (one aggregate span per session) | `trace_spans` row, layer `llm` | server-side: the `ogw_` token resolves to `gateway_tokens.session_id` / `orchestrator_id`, which gives the session span. The harness sends no header. |
@@ -595,7 +595,7 @@ Synthetic span ids are deterministic: `job:<id>`, `orch:<row id>`, `step:<row id
   - First error (class + message).
 - **Filters:**
   - Status.
-  - Kind: simulation, research product, research prospect (slice 2 adds tool call and autoscaler).
+  - Kind: session-engine job, research product, research prospect (slice 2 adds tool call and autoscaler).
   - Account.
   - Agent.
   - Harness.

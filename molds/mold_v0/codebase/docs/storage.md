@@ -7,7 +7,7 @@ managed services. There is one prefix per kind of data, and `src/storage.ts` is 
 |---|---|---|---|
 | `postgres/` | daily `pg_dump` of the database, copied hourly | `pg-backup-offsite` service (rclone) | newest 10 (`OFFSITE_KEEP`; the volume keeps `BACKUP_KEEP`, 10) |
 | `transcripts/org-<id>/<yyyy-mm>/<session>.jsonl.gz` | every finished session's full trace | `src/archive.ts` sweeper | indefinitely |
-| `research/org-<id>/<research_id>.json` | every finished onboarding research result (product, personas, problems, sources) | `src/archive.ts` sweeper | indefinitely |
+| `research/org-<id>/<research_id>.json` | every finished onboarding research result (product, agent profiles, problems, sources) | `src/archive.ts` sweeper | indefinitely |
 | `reports/org-<id>/<simulation>/<stamp>.pdf` and `.html` | run reports | reports (planned: `export_report`) | until deleted |
 | `diffs/org-<id>/<simulation>/<session>.diff.gz` | workspace diffs | reserved | — |
 | `exports/org-<id>/…` | customer data exports | reserved | — |
@@ -20,7 +20,7 @@ scoped per org by construction. Links handed out are signed, path-style and expi
 ## Trace archive
 
 A session's archive is gzipped JSONL. The first line is a header, `{"_session": {...}}`, with org, product,
-simulation, scenario, persona, agent, harness, model, status, completed reason, verdict, winner, cost and tokens. Every
+run, run definition, agent profile, agent, harness, model, status, completed reason, verdict, winner, cost and tokens. Every
 following line is one stored event, exactly as the transcript store returns it (`seq`, `ts`, `type`, `text`, `raw`).
 
 - **When:** the server's archive sweeper runs every `APP_ARCHIVE_INTERVAL_SECONDS` (300). It claims unarchived
