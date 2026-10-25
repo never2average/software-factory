@@ -6,10 +6,10 @@
 //   npx tsx scripts/sync-docs-corpus.ts          write it
 //   npx tsx scripts/sync-docs-corpus.ts --check  exit 1 if it differs from the docs
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { hostPackDirs } from "./lib/host-packs.js";
 import path from "node:path";
 import { CUSTOMER_DOCS_PATH, guidePages, type ToolCatalog } from "../web/src/content/customer-guide.js";
 import { markdownSections } from "../web/src/content/docs-text.js";
+import { staffDocBody, type StaffDoc } from "../src/staff-docs.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.join(ROOT, "src/docs-corpus.generated.json");
@@ -50,16 +50,28 @@ const walk = (dir: string): string[] => readdirSync(dir).sort().flatMap((name) =
   return statSync(p).isDirectory() ? walk(p) : name.endsWith(".md") ? [p] : [];
 });
 
+/** The packs' staff docs (mold_v0-139, src/staff-docs.ts): each pack's pack.json staff_docs under packs/, in pack order. */
+function packStaffDocs(): { rel: string; body: string }[] {
+  const dir = path.join(ROOT, "packs");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).sort().flatMap((id) => {
+    const file = path.join(dir, id, "pack.json");
+    if (!existsSync(file)) return [];
+    let m: { staff_docs?: unknown };
+    try { m = JSON.parse(readFileSync(file, "utf8")); } catch { return []; }
+    return Array.isArray(m.staff_docs) ? (m.staff_docs as StaffDoc[]).map((d) => ({ rel: d.path, body: staffDocBody(d) })) : [];
+  });
+}
+
 export function docsCorpus(): DocsChunk[] {
   const catalog = JSON.parse(readFileSync(path.join(ROOT, "web/src/content/mcp-tools.generated.json"), "utf8")) as ToolCatalog;
   const customer = guidePages(catalog).flatMap((p) => pageChunks("customer", p.title, `${CUSTOMER_DOCS_PATH}/${p.slug}`, p.body));
   // The same slugs, titles and body as web/scripts/sync-docs.mjs and features/docs/admin-docs.tsx.
-  // The shell's docs and a host pack's own (mold_v0-039: packs/<id>/docs), as one folder, in web/scripts/sync-docs.mjs's order.
-  const roots = [DOCS, ...hostPackDirs(ROOT).map((p) => path.join(p.dir, "docs")).filter((d) => existsSync(d))];
+  // The shell's docs and the packs' staff docs (mold_v0-139: pack.json staff_docs), as one folder, in web/scripts/sync-docs.mjs's order.
   const bySegments = (a: string, b: string) => { const x = a.split("/"), y = b.split("/"); for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return x.length - y.length; };
-  const files = roots.flatMap((root) => walk(root).map((file) => ({ file, rel: path.relative(root, file).split(path.sep).join("/") }))).sort((a, b) => bySegments(a.rel, b.rel));
-  const admin = files.flatMap(({ file, rel }) => {
-    const body = readFileSync(file, "utf8");
+  const files = [...(existsSync(DOCS) ? walk(DOCS) : []).map((file) => ({ rel: path.relative(DOCS, file).split(path.sep).join("/"), body: readFileSync(file, "utf8") })), ...packStaffDocs()]
+    .sort((a, b) => bySegments(a.rel, b.rel));
+  const admin = files.flatMap(({ rel, body }) => {
     const title = body.match(/^#\s+(.+)$/m)?.[1].trim() ?? rel;
     const slug = rel.replace(/\.md$/, "").replace(/\//g, "-");
     return pageChunks("admin", title, `/admin/docs/${slug}`, body.replace(/^\s*#\s+.+\n/, ""));

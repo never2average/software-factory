@@ -20,8 +20,9 @@
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
 //                                        and their pack.json engine.config (mold_v0-137) when one declares it
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
-//   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's guide code, else the packs' own guide pages
-//                                        (pack.json guide) and the facts its generated pages are written from (mold_v0-106)
+//   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's whole guide (pack.json guide, mold_v0-139),
+//                                        else the packs' own guide pages (pack.json guide) and the facts its generated
+//                                        pages are written from (mold_v0-106)
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
 //   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
 //                                        codebase root, mold_v0-050): names, places and providers, never a value; null
@@ -124,8 +125,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
-  // (mold_v0-102, src/access-request.ts)
-  "landing", "guide", "console", "access_request"]);
+  // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
+  "landing", "guide", "staff_docs", "console", "access_request"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -646,9 +647,14 @@ function loadPack(dirName) {
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
-  // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
-  // a declarative pack's is inline in pack.json (guide.markdown; guide.dir is gone, mold_v0-124), checked below.
-  if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
+  // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): inline in pack.json (guide.markdown; guide.dir is gone,
+  // mold_v0-124), checked below. A host pack's is the whole guide (mold_v0-139; it was its code, web/src/packs/<id>/guide.ts):
+  // nothing is generated beside it, so `generated` says nothing there.
+  if (host && m.guide && typeof m.guide === "object" && m.guide.generated !== undefined)
+    fail(where, "guide.generated: a host pack's guide is the whole guide (its pages, its MCP tools page): nothing is generated beside it");
+  // Its staff docs are pack.json staff_docs (mold_v0-139), not files: packs/<id>/docs/*.md is no longer read.
+  if (host && existsSync(path.join(dir, "docs"))) for (const e of walk(path.join(dir, "docs")))
+    if (!e.dir && /\.md$/i.test(e.p)) fail(where, `${posix(path.relative(dir, e.p))}: staff docs are pack.json staff_docs [{ path, title, markdown }] (mold_v0-139): this file is never read`);
   // A host pack's engine settings (mold_v0-137): read by its own code only (src/pack-host.ts engineConfig), so only a
   // host pack may have them; their shape is checked below (src/pack-manifest.ts) and against the host entry's schema when
   // the server starts (src/host.ts registerHosts).
@@ -721,6 +727,8 @@ const hostIds = new Set(packs.filter((p) => p.host).map((p) => p.id));
 const webPacks = !opt("--packs") ? checkSideCode(WEB_PACKS, "web", hostIds) : [];
 const orchPacks = !opt("--packs") ? checkSideCode(ORCH_PACKS, "orchestrator", hostIds) : [];
 for (const id of webPacks) if (!existsSync(path.join(WEB_PACKS, id, "index.ts"))) fail(`web/src/packs/${id}`, "a console pack's entry is index.ts (its pages, nav and landing)");
+// A host pack's customer guide is its pack.json guide (mold_v0-139): guide.ts is no longer read.
+for (const id of webPacks) if (existsSync(path.join(WEB_PACKS, id, "guide.ts"))) fail(`web/src/packs/${id}/guide.ts`, "the customer guide is pack.json guide (mold_v0-139): markdown (one page per ## heading), groups, and tool_groups for the MCP tools page; this file is never read");
 for (const id of orchPacks) if (!existsSync(path.join(ORCH_PACKS, id, "main.ts"))) fail(`orchestrator/packs/${id}`, "an orchestrator pack's entry is main.ts");
 
 // Nor may it name a shell table: pack "api" would own api_keys, and its migrations could then alter or re-secure it.
@@ -1039,7 +1047,7 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles, staffApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
@@ -1047,6 +1055,7 @@ const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAreas, tabColumns,
 const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
+const { staffDocProblems } = await import(pathToFileURL(staffApi).href);
 const out = {};
 const loaded = [];
 for (const [id, json, file] of entries) {
@@ -1072,7 +1081,10 @@ for (const [id, json, file] of entries) {
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
       // console's generated pages say of it, in its declared words.
-      guide: json.guide === undefined ? null : compileGuide(json.guide, guideTitles),
+      // A host pack's is the whole guide (mold_v0-139): no generated page beside it, so no title is reserved.
+      guide: json.guide === undefined ? null : compileGuide(json.guide, json.host ? [] : guideTitles),
+      // Its staff docs (mold_v0-139, src/staff-docs.ts), their shape checked with the rest of pack.json.
+      staff: json.staff_docs === undefined ? [] : staffDocProblems(json.staff_docs),
       facts: {
         name: json.name, description: json.description ?? null,
         onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id, label: st.label, help: st.help ?? null, prompt: st.prompt ?? null })),
@@ -1139,7 +1151,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
       path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
-      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES)]));
+      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES), path.join(ROOT, "src", "staff-docs.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -1153,7 +1165,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     for (const [id, v] of Object.entries(got)) {
       if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
       else if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = empty; }
-      else for (const pr of v.guide?.problems ?? []) fail(`packs/${id}/pack.json`, pr);
+      else for (const pr of [...(v.guide?.problems ?? []), ...(v.staff ?? [])]) fail(`packs/${id}/pack.json`, pr);
     }
     // A declared kind's programs are files of the pack (a workspace-harness kind's entry and validator).
     for (const p of packs) for (const k of got[p.id]?.kinds ?? []) for (const f of [k.entry, k.validator])
@@ -1402,20 +1414,40 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
     `export const HOST_NAV: readonly unknown[] = [${navs.map((_id, i) => `nav${i}`).join(", ")}];\n`);
 }
-// Their customer guides (web/src/packs/<id>/guide.ts: pure TS, relative imports only, as the docs corpus reads it), and
-// the other packs' guide (mold_v0-106): their own pages (pack.json guide) and the facts the console writes its generated
-// pages from, or null (zero packs, or a host pack's guide: the shell's or the host's guide, unchanged).
+// The customer guide (mold_v0-106, mold_v0-139): a host pack's pack.json guide is the whole guide (HOST_GUIDE: its pages
+// in its groups, its MCP tools page's tool groups); else the packs' own pages (pack.json guide) and the facts the console
+// writes its generated pages from (PACK_GUIDE), or null with zero packs (the shell's own guide).
 {
-  const guides = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "guide.ts")));
-  const packGuide = guides.length ? null : packGuideData();
+  const hostGuides = packs.filter((p) => p.host && defsByPack[p.id]?.guide);
+  if (hostGuides.length > 1) fail("packs", `two host packs declare the customer guide (${hostGuides.map((p) => p.id).join(", ")}): one guide replaces the shell's`);
+  const hg = hostGuides[0] ?? null;
+  if (hg) for (const p of packs) if (p !== hg && defsByPack[p.id]?.guide)
+    fail(`packs/${p.id}/pack.json`, `guide: host pack ${hg.id}'s guide is the whole customer guide (mold_v0-139), so this one would never show: write its pages there`);
+  const hostGuide = hg ? { pack: hg.id, tools_title: GUIDE_TITLES.tools, groups: defsByPack[hg.id].guide.groups, pages: defsByPack[hg.id].guide.pages,
+    tool_groups: defsByPack[hg.id].guide.tool_groups, prompts_intro: defsByPack[hg.id].guide.prompts_intro } : null;
+  const packGuide = hg ? null : packGuideData();
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-guides.generated.ts"), HEADER +
-    guides.map((id, i) => `import * as guide${i} from '../packs/${id}/guide';\n`).join("") +
-    "\n/** The host packs' customer guides (mold_v0-039): the first replaces the shell's (src/content/customer-guide.ts). */\n" +
-    `export const HOST_GUIDES: readonly unknown[] = [${guides.map((_id, i) => `guide${i}`).join(", ")}];\n\n` +
+    "/**\n * A host pack's customer guide (mold_v0-139; src/pack-guide.ts, web/src/content/customer-guide.ts HostGuideData): the whole\n" +
+    " * guide, from its pack.json `guide`: its pages in its groups, and the groups of its MCP tools page; null: no host pack's.\n */\n" +
+    `export const HOST_GUIDE: unknown = ${json(hostGuide)};\n\n` +
     "/**\n * The packs' customer guide (mold_v0-106; src/pack-guide.ts, web/src/content/customer-guide.ts PackGuideData): their own\n" +
     " * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.\n */\n" +
     `export const PACK_GUIDE: unknown = ${json(packGuide)};\n`);
+}
+// Staff docs (mold_v0-139, src/staff-docs.ts): each pack's pack.json staff_docs joins the shell's docs/ on /admin/docs
+// (web/scripts/sync-docs.mjs) and in the docs answers' corpus (scripts/sync-docs-corpus.ts), so no two at one path.
+{
+  const DOCS = path.join(ROOT, "docs");
+  const shellDocs = new Set(existsSync(DOCS) ? walk(DOCS).filter((e) => !e.dir && e.p.endsWith(".md")).map((e) => posix(path.relative(DOCS, e.p))) : []);
+  const owner = new Map();
+  for (const p of packs) for (const d of Array.isArray(p.json.staff_docs) ? p.json.staff_docs : []) {
+    if (!d || typeof d.path !== "string") continue;
+    if (shellDocs.has(d.path)) fail(`packs/${p.id}/pack.json`, `staff_docs[${d.path}]: the shell's docs/ has a doc at that path`);
+    else if (owner.has(d.path) && owner.get(d.path) !== p.id) fail(`packs/${p.id}/pack.json`, `staff_docs[${d.path}]: pack ${owner.get(d.path)} has a doc at that path`);
+    else owner.set(d.path, p.id);
+  }
+  refuse();
 }
 /**
  * Flat console URLs (mold_v0-132): a pack's customer page and each tab with a page of its own (overview, area, runs,
@@ -1710,6 +1742,10 @@ function packGuideData() {
   return {
     titles: GUIDE_TITLES,
     generated: !facts.some(({ g }) => g && g.generated === false),
+    // The packs' own groups of the MCP tools page (mold_v0-139, guide.tool_groups), in pack order; a tool in two packs' groups stays in the first.
+    tool_groups: facts.flatMap(({ g }) => g?.tool_groups ?? []),
+    // The first pack's line before the slash commands (mold_v0-139, guide.prompts_intro), or the shell's.
+    prompts_intro: facts.map(({ g }) => g?.prompts_intro ?? null).find((x) => x) ?? null,
     groups,
     pages,
     packs: facts.map(({ p, f }) => ({ id: p.id, name: f?.name ?? p.manifest.name, description: f?.description ?? null })),
