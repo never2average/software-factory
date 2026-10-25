@@ -268,7 +268,9 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 | `## Schedules` | `- <name>: <Label> \| <job> \| 0 3 * * * \| over <asset area> [keys a, b] \| environment prod \| off` (cron in UTC, at most every 5 minutes) |
 | `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` |
 | `## Words` | `- run: audit` (the shell's word on the left) |
-| `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`. Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_export_` (mold_v0-108: the area as CSV), `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
+| `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`. Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
+
+Every record area also gets `<prefix>_export_<area>` (mold_v0-108: its records as CSV, read only, the area's read roles), which `## MCP` may name like the other generated tools.
 
 Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
 `enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),
