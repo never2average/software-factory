@@ -13,6 +13,7 @@ import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
+import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
@@ -225,6 +226,8 @@ export function createApp() {
   app.use("/api/data", dataAppRouter());
   // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
   app.use("/api/credentials", credentialAppRouter());
+  // A workspace's GitHub App installation (mold_v0-014): only when a pack's credential field asks for one.
+  app.use("/api/github-app", githubAppRouter());
   // Per-company egress hosts (mold_v0-075): only when a kind takes them.
   app.use("/api/egress-hosts", egressHostAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
@@ -540,6 +543,8 @@ export function createApp() {
     await kv.deleteCredential(Number(req.params.id));
     res.status(204).end();
   });
+  // The platform's GitHub App and every workspace's installation of it (mold_v0-014), when a pack asks for one.
+  githubAppAdminRoutes(admin, need, adminActor);
   admin.get("/usage/models", async (req, res) => {
     const q = req.query as Record<string, string | undefined>;
     res.json(await usageReport({ days: q.days ? Number(q.days) : undefined, model: q.model }));
