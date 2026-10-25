@@ -261,8 +261,13 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
     return { requeued: rows.filter((r) => r.status === "queued").length, failed: rows.filter((r) => r.status === "failed").length, cancelled: rows.filter((r) => r.status === "cancelled").length };
   }));
   await removeObjects(gone);
+  // mold_v0-014: GitHub App tokens of ended runs that GitHub was not yet told to revoke (a process that ended before its
+  // own revocation ran, a serverless function frozen after its answer): told now, in the background.
+  // At most once a minute per process.
+  if (Date.now() - lastFlush > 60_000) { lastFlush = Date.now(); void import("./github-app.js").then((g) => g.flushRevocations()).catch(() => 0); }
   return out;
 }
+let lastFlush = 0;
 
 /**
  * Claim the oldest queued run of the given kinds ("pack/kind"; all when empty). Returns null when there is none.
@@ -435,7 +440,9 @@ export async function runCredentialsForLease(runId: string, leaseToken: string):
   const r = await leasedRun(runId, leaseToken);
   const out = await runCredentials(r);
   if (r.spec?.credentials?.length || r.spec?.operator_credentials?.length)
-    await event(r.id, r.org_id, r.attempt, "credentials", { delivered: out.credentials.map((c) => c.name), missing: out.missing });
+    await event(r.id, r.org_id, r.attempt, "credentials", { delivered: out.credentials.map((c) => c.name), missing: out.missing,
+      // mold_v0-014: which were GitHub App installation tokens (their repositories and expiry, never a token), and why not.
+      ...(out.github_app ? { github_app: out.github_app } : {}), ...(out.github_app_missing ? { github_app_missing: out.github_app_missing } : {}) });
   return out;
 }
 
