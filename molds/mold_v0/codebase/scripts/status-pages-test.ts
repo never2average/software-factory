@@ -345,7 +345,12 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
   ok(`the data hooks: a role refusal (with the role it needs), not found, a server error and no answer (Try again), no account and 401 (on to sign-in, back after) are each the status page; a suspended member${w.outsider ? ", someone in an organization that is not an account" : ""} and an admin account that is not there meet theirs for real`);
 
   // 7. axe, light and dark; three widths.
-  const theme = async (p: any, t: "dark" | "light") => p.evaluate((t: string) => { document.documentElement.classList.toggle("dark", t === "dark"); document.documentElement.style.colorScheme = t; }, t);
+  // The theme switched with transitions off, so axe never measures a colour half-way between the two.
+  const theme = async (p: any, t: "dark" | "light") => {
+    await p.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+    await p.evaluate((t: string) => { document.documentElement.classList.toggle("dark", t === "dark"); document.documentElement.style.colorScheme = t; }, t);
+    await p.waitForTimeout(100);
+  };
   const grade = async (who: Person | null, url: string, label: string, prep?: (p: any) => Promise<void>) => {
     const notes: string[] = [];
     for (const t of ["dark", "light"] as const) {
