@@ -33,8 +33,7 @@ import { ErrorBox, LoadingCards, Mono, Section, StatusBadge, Trend, When } from 
 import { ComputeJobs } from './compute-jobs';
 import { UrlTabs } from './compute-common';
 import { ComputeSessions } from './compute-sessions';
-import { PackRunKinds } from './compute-runs';
-import { packRuns, sessionEngine } from './engine';
+import { sessionEngine } from './engine';
 import { W } from '@/lib/vocabulary';
 import { NS } from '@/lib/namespace';
 
@@ -411,10 +410,11 @@ export function AdminAnalytics({ view = 'analytics' }: { view?: 'analytics' | 'h
 
 /**
  * Health's tabs: errors (this report), and the session engine's Jobs and Sessions record tables (?section=jobs|sessions);
- * in a build without it, the packs' runs per job kind (?section=runs, mold_v0-104), or nothing more with no job kind.
+ * in a build without it, errors only (the packs' runs per job kind are on FinOps, mold_v0-126).
  */
-const HEALTH_TABS: readonly (readonly [string, string])[] = sessionEngine() ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']]
-  : packRuns() ? [['errors', 'Errors'], ['runs', W.Runs]] : [['errors', 'Errors']];
+const HEALTH_TABS: readonly (readonly [string, string])[] = sessionEngine() ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']] : [['errors', 'Errors']];
+/** Health's runs tab moved to FinOps (mold_v0-126): its old links go there. */
+const MOVED: Record<string, string> = { runs: '/admin/finops?section=runs' };
 
 function HealthTabs({ tab }: { tab: string }) {
   return HEALTH_TABS.length > 1 ? <UrlTabs tabs={HEALTH_TABS} tab={tab} base='/admin/health' /> : null;
@@ -422,13 +422,16 @@ function HealthTabs({ tab }: { tab: string }) {
 
 function Report({ view }: { view: 'analytics' | 'health' }) {
   const section = useSearchParams().get('section');
+  const router = useRouter();
+  const moved = view === 'health' && section ? MOVED[section] : undefined;
+  useEffect(() => { if (moved) router.replace(moved); }, [moved, router]);
   const tab = view === 'health' && section && section !== 'errors' && HEALTH_TABS.some(([id]) => id === section) ? section : 'errors';
   if (tab !== 'errors') {
     return (
       <PageContainer>
         <div className='flex min-w-0 flex-col gap-3'>
           <HealthTabs tab={tab} />
-          {tab === 'jobs' ? <ComputeJobs /> : tab === 'runs' ? <PackRunKinds /> : <ComputeSessions />}
+          {tab === 'jobs' ? <ComputeJobs /> : <ComputeSessions />}
         </div>
       </PageContainer>
     );
