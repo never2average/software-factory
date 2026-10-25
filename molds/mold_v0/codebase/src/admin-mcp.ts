@@ -42,6 +42,8 @@ import { sessionEngine } from "./host-tables.js";
 import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
 import { reserveAdminTools } from "./packs.js";
 import type { AdminShellToolName, SameNames } from "./shell-tools.js";
+import { labelledAnswers } from "./access-request.js";
+import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 
 /** update_setting's example key: a shell setting, or in a build with the session engine (a host pack's tables) the
  * session engine's own spelling, as its admins have always seen it (the stored key prefix, src/settings.ts). */
@@ -114,7 +116,9 @@ export const ADMIN_TOOLS = {
     input: { status: z.enum(["pending", "approved", "declined"]).optional().describe("Default: all, pending first"), limit: z.number().int().min(1).max(500).optional().describe("Default 50") },
     run: async (a) => {
       const rows = await onboarding.listRequests(a.status);
-      return { total: rows.length, pending: rows.filter((r: any) => r.status === "pending").length, requests: rows.slice(0, a.limit ?? 50) };
+      // Each request's answers to the build's own questions under their labels (mold_v0-102, src/access-request.ts).
+      const requests = rows.slice(0, a.limit ?? 50).map((r: any) => ({ ...r, answers: Object.fromEntries(labelledAnswers(GENERATED_ACCESS_FIELDS, r.answers).map((x) => [x.label, x.text])) }));
+      return { total: rows.length, pending: rows.filter((r: any) => r.status === "pending").length, requests };
     },
     summary: (d) => `${d.total} request(s), ${d.pending} pending.`,
   },
