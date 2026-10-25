@@ -1742,10 +1742,11 @@ function packGuideData() {
   return {
     titles: GUIDE_TITLES,
     generated: !facts.some(({ g }) => g && g.generated === false),
-    // The packs' own groups of the MCP tools page (mold_v0-139, guide.tool_groups), in pack order; a tool in two packs' groups stays in the first.
-    tool_groups: facts.flatMap(({ g }) => g?.tool_groups ?? []),
-    // The first pack's line before the slash commands (mold_v0-139, guide.prompts_intro), or the shell's.
-    prompts_intro: facts.map(({ g }) => g?.prompts_intro ?? null).find((x) => x) ?? null,
+    // The packs' own groups of the MCP tools page (mold_v0-139, guide.tool_groups), in pack order (a tool in two packs'
+    // groups stays in the first), and the first pack's line before the slash commands (guide.prompts_intro); each left
+    // out when no pack says one, so a build without them writes what it wrote before.
+    ...(facts.some(({ g }) => g?.tool_groups?.length) ? { tool_groups: facts.flatMap(({ g }) => g?.tool_groups ?? []) } : {}),
+    ...(facts.some(({ g }) => g?.prompts_intro) ? { prompts_intro: facts.map(({ g }) => g?.prompts_intro ?? null).find((x) => x) } : {}),
     groups,
     pages,
     packs: facts.map(({ p, f }) => ({ id: p.id, name: f?.name ?? p.manifest.name, description: f?.description ?? null })),
