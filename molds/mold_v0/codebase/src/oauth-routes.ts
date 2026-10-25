@@ -2,10 +2,10 @@
  * Credential fields connected through OAuth, over HTTP (mold_v0-014; src/oauth-connections.ts). Nothing is mounted unless
  * a pack's credential field names an OAuth provider.
  *
- *   GET    /api/oauth            a signed-in person of the workspace: the providers and the workspace's connections
- *   POST   /api/oauth/connect    an owner: {pack, name, asset?, environment?} -> the provider's sign-in address
- *   GET    /api/oauth/callback   the provider sends the owner's browser back here; on to the Credentials page with a code
- *   DELETE /api/oauth            an owner: {pack, name, asset?, environment?} disconnects that slot
+ *   GET    /api/credential-connections            a signed-in person of the workspace: the providers and the workspace's connections
+ *   POST   /api/credential-connections/connect    an owner: {pack, name, asset?, environment?} -> the provider's sign-in address
+ *   GET    /api/credential-connections/callback   the provider sends the owner's browser back here; on to the Credentials page with a code
+ *   DELETE /api/credential-connections            an owner: {pack, name, asset?, environment?} disconnects that slot
  *
  *   staff (/api/admin/onboarding, oauthAdminRoutes): GET /oauth (providers, whether the vault holds their client values,
  *   the redirect address to register, every connection), DELETE /oauth/connections/:id ("accounts").

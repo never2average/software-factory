@@ -53,7 +53,7 @@ export const providerFor = (spec: Pick<CredentialSpec, "pack" | "oauth">) => (sp
 export const oauthFields = () => packs().flatMap((p) => (p.definition.credentials ?? []).filter((c) => c.oauth).map((c) => ({ pack: p.id, name: c.name, oauth: c.oauth! })));
 
 /** The address the providers send the browser back to: the console's, which forwards /api to this server. */
-export const redirectUri = () => `${consoleUrl()}/api/oauth/callback`;
+export const redirectUri = () => `${consoleUrl()}/api/credential-connections/callback`;
 
 /** Tests only: the fetch the token, refresh and revoke calls use (a stand-in provider). */
 let fetcher: typeof fetch = (...a) => fetch(...a);

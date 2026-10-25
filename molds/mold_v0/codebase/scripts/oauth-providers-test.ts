@@ -67,7 +67,7 @@ try {
 
   // ---------- 1. nothing mounted; definePack's checks ----------
   {
-    assert.equal(oauthRouter().stack.length, 0, "no field: nothing at /api/oauth");
+    assert.equal(oauthRouter().stack.length, 0, "no field: nothing at /api/credential-connections");
     const admin = express.Router();
     oauthAdminRoutes(admin, () => (_q, _s, n) => n(), () => "x");
     assert.equal(admin.stack.length, 0);
@@ -145,10 +145,10 @@ try {
 
     // ---------- 2. the client is the vault's ----------
     {
-      assert.equal((await req("POST", "/api/oauth/connect", bearer(ownerA), { pack: "fixture_oa", name: "api_token" })).status, 409, "no client in the vault: refused");
+      assert.equal((await req("POST", "/api/credential-connections/connect", bearer(ownerA), { pack: "fixture_oa", name: "api_token" })).status, 409, "no client in the vault: refused");
       const v0 = await req("GET", "/api/admin/onboarding/oauth", bearer(operator));
       assert.deepEqual([v0.body.providers[0].name, v0.body.providers[0].set], ["acme", { client_id: false, client_secret: false }]);
-      assert.match(v0.body.redirect_uri, /\/api\/oauth\/callback$/);
+      assert.match(v0.body.redirect_uri, /\/api\/credential-connections\/callback$/);
       for (const [label, secret] of [["acme.client_id", CLIENT_ID], ["acme.client_secret", CLIENT_SECRET]])
         assert.equal((await req("POST", "/api/admin/keyvault/credentials", bearer(owner), { provider: "oauth_clients", label, secret })).status, 201);
       const v1 = await req("GET", "/api/admin/onboarding/oauth", bearer(operator));
@@ -158,24 +158,24 @@ try {
 
     // ---------- 3. connect ----------
     const begin = async (tok: string, body: Record<string, unknown> = { pack: "fixture_oa", name: "api_token" }) => {
-      const r = await req("POST", "/api/oauth/connect", bearer(tok), body);
+      const r = await req("POST", "/api/credential-connections/connect", bearer(tok), body);
       assert.equal(r.status, 200, JSON.stringify(r.body));
       return r.body.url as string;
     };
     const back = async (tok: string, location: URL) => {
-      const r = await req("GET", `/api/oauth/callback${location.search}`, bearer(tok));
+      const r = await req("GET", `/api/credential-connections/callback${location.search}`, bearer(tok));
       assert.equal(r.status, 303, JSON.stringify(r.body));
       return new URL(r.location!).searchParams.get("oauth");
     };
     {
-      assert.equal((await req("POST", "/api/oauth/connect", bearer(memberA), { pack: "fixture_oa", name: "api_token" })).status, 403, "a member cannot connect");
-      assert.equal((await req("POST", "/api/oauth/connect", bearer(ownerA), { pack: "fixture_oa", name: "app_token", asset: "app-b" })).status, 404, "an asset the workspace lacks");
-      assert.equal((await req("POST", "/api/oauth/connect", { cookie: `__session=${ownerA}`, "content-type": "application/json" }, { pack: "fixture_oa", name: "api_token" })).status, 403, "a cookie POST without X-Pack-Request");
+      assert.equal((await req("POST", "/api/credential-connections/connect", bearer(memberA), { pack: "fixture_oa", name: "api_token" })).status, 403, "a member cannot connect");
+      assert.equal((await req("POST", "/api/credential-connections/connect", bearer(ownerA), { pack: "fixture_oa", name: "app_token", asset: "app-b" })).status, 404, "an asset the workspace lacks");
+      assert.equal((await req("POST", "/api/credential-connections/connect", { cookie: `__session=${ownerA}`, "content-type": "application/json" }, { pack: "fixture_oa", name: "api_token" })).status, 403, "a cookie POST without X-Pack-Request");
       const url = new URL(await begin(ownerA));
       assert.equal(url.origin + url.pathname, "https://login.acme.test/authorize");
       const q = url.searchParams;
       assert.deepEqual([q.get("response_type"), q.get("client_id"), q.get("scope"), q.get("code_challenge_method"), q.get("access_type")], ["code", CLIENT_ID, "read:all offline", "S256", "offline"]);
-      assert.match(q.get("redirect_uri")!, /\/api\/oauth\/callback$/);
+      assert.match(q.get("redirect_uri")!, /\/api\/credential-connections\/callback$/);
       assert.ok(!url.toString().includes(CLIENT_SECRET), "no secret in the address");
       // Another workspace's session, another person, a changed state.
       const ret = await oa.authorize(url.toString());
@@ -197,7 +197,7 @@ try {
       assert.equal(await back(ownerA, ret), "connected");
       assert.equal(await back(ownerA, ret), "state_used", "a state is used once");
       assert.equal(await back(ownerA, await oa.authorize(await begin(ownerA, { pack: "fixture_oa", name: "app_token", asset: "app-x" }))), "connected");
-      const list = await req("GET", "/api/oauth", bearer(memberA));
+      const list = await req("GET", "/api/credential-connections", bearer(memberA));
       assert.deepEqual(list.body.connections.map((c: any) => [c.name, c.asset, c.status, c.provider]), [["api_token", null, "active", "acme"], ["app_token", "app-x", "active", "acme"]]);
       assert.equal(list.body.can_manage, false);
       const [row] = await db.query<{ sealed: string }>("SELECT sealed FROM workspace_oauth_connections WHERE org_id = $1 AND name = 'api_token'", [A.orgId]);
@@ -310,7 +310,7 @@ try {
       assert.equal((await req("DELETE", "/api/credentials", bearer(ownerA), { pack: "fixture_oa", name: "api_token" })).status, 200);
       let done = false;
       const mid = await longRun(30, 30, async (i) => {
-        if (i === 6 && !done) { done = true; const d = await req("DELETE", "/api/oauth", bearer(ownerA), { pack: "fixture_oa", name: "api_token" }); assert.deepEqual(d.body, { removed: true, revoked_at_provider: true }); }
+        if (i === 6 && !done) { done = true; const d = await req("DELETE", "/api/credential-connections", bearer(ownerA), { pack: "fixture_oa", name: "api_token" }); assert.deepEqual(d.body, { removed: true, revoked_at_provider: true }); }
       });
       assert.ok(mid.reads.slice(-5).every((x) => x.oa === 0 && x.gh === 200), `after the disconnect the file is empty (and the other credential still works): ${JSON.stringify(mid.reads.slice(-2))}`);
       const firstOff = mid.reads.findIndex((x) => x.oa !== 200);

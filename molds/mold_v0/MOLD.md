@@ -762,12 +762,12 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     injections, and no private key, client or webhook secret in any run's environment or files, answer, log or table.
   - **Runs longer than an hour**: GitHub caps an installation token at one hour; the run harness renews it mid-run
     ("Short-lived credentials in long runs" below). The install's state is the shared one (`src/oauth-state.ts`,
-    table `oauth_states` since migration 0022).
+    table `oauth_states` since migration 0023).
   - **Not covered**: an installation with more than 500 repositories needs each asset narrowed. GitHub Enterprise
     Server addresses are not configurable yet. The webhook's deliveries are not de-duplicated (each handler is
     idempotent).
 - **Credentials connected through OAuth** (mold_v0-014, built; `src/oauth-connections.ts`, `src/oauth-routes.ts`,
-  `src/oauth-state.ts`, `sql/migrations/0022_oauth_connections.sql`; `npm run test:oauth-providers`). A pack declares
+  `src/oauth-state.ts`, `sql/migrations/0023_oauth_connections.sql`; `npm run test:oauth-providers`). A pack declares
   OAuth 2.0 providers (pack.json `oauth_providers`, definePack `oauthProviders`: `name`, `label`, `authorize_url`,
   `token_url`, optional `revoke_url` (RFC 7009), `scopes` and `scope_separator`, `client_id` and `client_secret` as
   `{vault: "<label>"}`, `pkce` (S256, on by default), `token_auth` (`body` or `basic`) and fixed `authorize_params`; https
@@ -776,11 +776,11 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   with neither is pasted, as before.
   - **The client** is the platform's: its id and secret are key-vault entries of provider `oauth_clients` under the labels
     the provider names, set by an owner of the platform with Add a key on `/admin/keys`; the page's OAuth providers
-    section shows which are set and the redirect address to register (`<console>/api/oauth/callback`), never a value.
+    section shows which are set and the redirect address to register (`<console>/api/credential-connections/callback`), never a value.
   - **Connect** (`/app/credentials`, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
-    environment): `POST /api/oauth/connect` gives the provider's sign-in address with the shared signed one-time state
+    environment): `POST /api/credential-connections/connect` gives the provider's sign-in address with the shared signed one-time state
     (bound to the person and the workspace, ten minutes, used once; the slot and the sealed PKCE verifier kept
-    server-side). `GET /api/oauth/callback` refuses another workspace's session, another person, a changed, used or
+    server-side). `GET /api/credential-connections/callback` refuses another workspace's session, another person, a changed, used or
     expired state, a sign-in the person cancelled and a code the provider refuses; otherwise it exchanges the code (with
     the verifier and the redirect address) and stores the tokens in `workspace_oauth_connections`, sealed with the
     workspace's data key and bound by additional data to their slot and provider. Every outcome is a code on the redirect
@@ -792,7 +792,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     expired) marks the connection `needs_reconnect`: nothing is sent, not even a pasted value, until an owner connects
     again. A slot with no connection gets its pasted value. The server's own reads with a workspace-bound field (an
     `http_api` repository's header) use the same token.
-  - **Disconnect**: an owner (`DELETE /api/oauth`), staff (`DELETE /api/admin/onboarding/oauth/connections/:id`) or the
+  - **Disconnect**: an owner (`DELETE /api/credential-connections`), staff (`DELETE /api/admin/onboarding/oauth/connections/:id`) or the
     workspace's removal deletes the connection (nothing is sent from then on) and tells the provider's revoke address.
   - **Not covered**: providers that do not return JSON or form-encoded token answers; a provider's ID token is not read
     (no account name is shown); one connection per slot (no per-person connections).

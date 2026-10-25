@@ -75,7 +75,7 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "run_approvals", "workspace_egress_hosts",
   // A workspace's GitHub App installation, installs in flight and the tokens minted for runs (mold_v0-014).
   "workspace_github_installations", "run_github_app_tokens",
-  // Sign-ins in flight (any kind), OAuth connections and the access tokens runs received (mold_v0-014, 0022).
+  // Sign-ins in flight (any kind), OAuth connections and the access tokens runs received (mold_v0-014, 0023).
   "oauth_states", "workspace_oauth_connections", "run_oauth_tokens"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {

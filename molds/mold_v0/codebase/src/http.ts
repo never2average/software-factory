@@ -230,7 +230,7 @@ export function createApp() {
   // A workspace's GitHub App installation (mold_v0-014): only when a pack's credential field asks for one.
   app.use("/api/github-app", githubAppRouter());
   // Credential fields connected through an OAuth provider (mold_v0-014): only when a pack's field names one.
-  app.use("/api/oauth", oauthRouter());
+  app.use("/api/credential-connections", oauthRouter());
   // Per-company egress hosts (mold_v0-075): only when a kind takes them.
   app.use("/api/egress-hosts", egressHostAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------

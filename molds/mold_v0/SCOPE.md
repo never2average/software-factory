@@ -121,7 +121,7 @@ turns it into shell, or builds it where nothing exists yet.
   short-lived, read-only installation token per run from the installation the workspace connected, else its pasted
   value; the app's keys sealed in the key vault, never handed to a run; `src/github-app.ts`, migration 0021; and credential
   fields connected through a pack's OAuth providers, tokens sealed and refreshed before expiry, renewed mid-run for runs
-  longer than a token's life; `src/oauth-connections.ts`, migration 0022).
+  longer than a token's life; `src/oauth-connections.ts`, migration 0023).
 
 ### Storage and the workspace store
 

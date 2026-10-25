@@ -1,5 +1,5 @@
 'use client';
-// A credential field connected through OAuth on /app/credentials (mold_v0-014; src/oauth-routes.ts at /api/oauth): its
+// A credential field connected through OAuth on /app/credentials (mold_v0-014; src/oauth-routes.ts at /api/credential-connections): its
 // connections (per slot: the workspace, a record, a record's environment), each with when its token expires and whether
 // the provider still accepts it, a Connect button that opens the provider's own sign-in, and Disconnect. No token is
 // ever shown: runs get the access token, refreshed before it expires.
@@ -21,7 +21,7 @@ export interface OAuthView { providers: { pack: string; name: string; label: str
 interface OAuthField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment'; area: string | null; environments: string[] | null; oauth?: string }
 
 export async function oauthCall<T>(method: string, path = '', body?: unknown): Promise<T | null> {
-  const res = await fetch(`/api/oauth${path}`, {
+  const res = await fetch(`/api/credential-connections${path}`, {
     method, credentials: 'same-origin',
     headers: { accept: 'application/json', ...(method !== 'GET' ? { 'x-pack-request': '1' } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body)
