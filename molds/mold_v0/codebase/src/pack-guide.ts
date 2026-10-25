@@ -4,9 +4,8 @@
  * code (web/src/packs/<id>/guide.ts, mold_v0-039); a host pack may not declare `guide`.
  *
  *   markdown   the guide inline: one page per `## ` heading (its `### ` subsections become the page's sections), as the
- *              shell's own guide is cut; nothing may stand before the first `## `
- *   dir        or a directory of the pack holding one .md file per page, in file-name order: its first line `# Title`,
- *              then the page (`## ` sections). Flat: .md files only
+ *              shell's own guide is cut; nothing may stand before the first `## `. A pack is its pack.json alone
+ *              (mold_v0-124): there is no directory of pages, the guide is written here
  *   groups     the navigation's groups, in order: [{ title, pages: [page titles] }]; a page no group names lands in
  *              "Guide". A group may be one the generated pages use ("Getting started", "Reference"): the pages join it
  *   generated  false leaves out the pages generated from the pack's declarations (the console, its records, its runs);
@@ -37,15 +36,17 @@ const TITLE = /^[^[\]`*_<>#|\\{}]+$/;
 const title = z.string().trim().min(1).max(GUIDE_LIMITS.titleChars)
   .refine((s) => TITLE.test(s) && !NOT_TEXT.test(s) && !/\n/.test(s), "plain text: no markdown, braces, line breaks, control or invisible characters");
 
+/** What `guide.dir` (taken until mold_v0-124) says now: the pages are written inline. */
+export const GUIDE_DIR_GONE = "not taken any more: a pack is its pack.json alone (mold_v0-124). Write the pages inline in guide.markdown, one page per ## heading (a page file's `# Title` becomes `## Title`, its `## ` sections `### `)";
 export const GuideSchema = z.object({
   $comment: z.string().max(2000).optional(),
   markdown: z.string().min(1).max(GUIDE_LIMITS.totalChars).optional(),
-  dir: z.string().regex(/^[a-z0-9_\-/]+$/i, "dir: a directory inside the pack").refine((p) => !p.split("/").includes("..") && !p.startsWith("/") && !p.endsWith("/"), "dir: a directory inside the pack").optional(),
   groups: z.array(z.object({ title: title.refine((s) => s.length <= GUIDE_LIMITS.groupChars, `at most ${GUIDE_LIMITS.groupChars} characters`), pages: z.array(title).min(1).max(GUIDE_LIMITS.pages) }).strict()).max(GUIDE_LIMITS.groups).optional(),
   generated: z.boolean().optional(),
+  /** Taken until mold_v0-124 (a directory of .md pages): refused now, saying where the pages go. */
+  dir: z.never({ error: GUIDE_DIR_GONE }).optional(),
 }).strict()
-  .refine((g) => !(g.markdown !== undefined && g.dir !== undefined), "a guide is inline (markdown) or a directory of the pack (dir), not both")
-  .refine((g) => g.markdown !== undefined || g.dir !== undefined || g.generated !== false, "a guide with neither markdown nor dir is its generated pages: generated cannot be false");
+  .refine((g) => g.markdown !== undefined || g.generated !== false, "a guide with no markdown is its generated pages: generated cannot be false");
 export type PackGuideJson = z.infer<typeof GuideSchema>;
 
 /** One hand-written page: its title, the anchor-style slug /app/docs/<slug> uses, its navigation group and markdown. */
@@ -123,29 +124,16 @@ function inlinePages(md: string, problems: string[]): { title: string; body: str
   return pages.map((p) => ({ title: p.title, body: p.lines.join("\n").trim() }));
 }
 
-/** One page per .md file of the guide's directory, in file-name order: its `# Title` line, then its body. */
-function dirPages(dir: string, files: readonly { name: string; text: string }[], problems: string[]): { title: string; body: string }[] {
-  return [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).flatMap((f) => {
-    const text = f.text.replace(/^\ufeff/, "");
-    const m = /^\s*# +(.+?)\s*#*\s*(\n|$)/.exec(text);
-    if (!m) { problems.push(`guide ${dir}/${f.name}: its first line is the page's title, as # Title`); return []; }
-    return [{ title: m[1]!.trim(), body: text.slice(m[0].length).trim() }];
-  });
-}
-
 /**
- * A pack's `guide` as pages, checked: the pages (inline markdown or the directory's files, read by gen-packs and given
- * here as {name, text}), each in its group, and every problem. `reserved` holds the titles of the pages the console
- * generates (words filled), which a hand-written page may not take.
+ * A pack's `guide` as pages, checked: the pages (its inline markdown), each in its group, and every problem. `reserved`
+ * holds the titles of the pages the console generates (words filled), which a hand-written page may not take.
  */
-export function compileGuide(json: unknown, files: readonly { name: string; text: string }[] | null, reserved: readonly string[] = []): { pages: GuidePageSource[]; groups: string[]; generated: boolean; problems: string[] } {
+export function compileGuide(json: unknown, reserved: readonly string[] = []): { pages: GuidePageSource[]; groups: string[]; generated: boolean; problems: string[] } {
   const r = GuideSchema.safeParse(json);
   if (!r.success) return { pages: [], groups: [], generated: true, problems: r.error.issues.map((i) => `guide${i.path.length ? `.${i.path.join(".")}` : ""}: ${i.message}`) };
   const g = r.data;
   const problems: string[] = [];
-  const raw = g.markdown !== undefined ? inlinePages(g.markdown.replace(/\r\n?/g, "\n"), problems)
-    : g.dir !== undefined ? dirPages(g.dir, (files ?? []).map((f) => ({ name: f.name, text: f.text.replace(/\r\n?/g, "\n") })), problems) : [];
-  if (g.dir !== undefined && files !== null && !files.length) problems.push(`guide.dir ${g.dir}: no .md pages in it`);
+  const raw = g.markdown !== undefined ? inlinePages(g.markdown.replace(/\r\n?/g, "\n"), problems) : [];
   if (raw.length > GUIDE_LIMITS.pages) problems.push(`guide: at most ${GUIDE_LIMITS.pages} pages (it has ${raw.length})`);
   const total = raw.reduce((n, p) => n + p.title.length + p.body.length, 0);
   if (total > GUIDE_LIMITS.totalChars) problems.push(`guide: at most ${GUIDE_LIMITS.totalChars} characters in all (it has ${total})`);

@@ -6,18 +6,19 @@
 // 1. pack.json `guide`, checked (src/pack-guide.ts): markdown only. Raw HTML, a script, an image, a # title inside a page,
 //    control and invisible characters, a link that is not a path of this site, an #anchor, https:// or mailto: (javascript:,
 //    data:, vbscript:, http:, //host, a user name in the address, bare http:// and www.), text before the first ## page,
-//    two pages at one address, a page taking a generated page's title, groups naming a missing page or one page twice,
-//    markdown and dir together are refused, each with where it is; code spans and fenced blocks are free text.
+//    two pages at one address, a page taking a generated page's title, groups naming a missing page or one page twice
+//    are refused, each with where it is; code spans and fenced blocks are free text. guide.dir is gone (mold_v0-124):
+//    refused, saying to write the pages inline.
 // 2. Zero packs: gen-packs writes PACK_GUIDE null, and the guide and the docs corpus are the shell's, byte for byte.
 // 3. A declarative pack with no guide gets a real one, written from its declarations in its words: what it does, its
 //    onboarding steps with get_started and the prompts to type, its record areas (fields, lifecycle, due dates, tools),
 //    its job kinds with their credentials and schedules, and the MCP tools grouped by what they reach. A kind whose start
 //    tool the pack withholds is left out, with the credentials only it uses; an area whose list tool is withheld too.
 //    The docs answers' corpus carries the same pages.
-// 4. A declarative pack with an inline guide and one with a directory guide: their pages come first, in their groups,
-//    with the generated pages after them (generated: false keeps only connecting, the tools and the account); the
-//    corpus cites them at /app/docs/<slug>. gen-packs refuses a bad guide (an unsafe link, raw HTML, a generated
-//    page's title, a file that is not .md in the directory) with the pack and the page.
+// 4. A declarative pack with an inline guide: its pages come first, in their groups, with the generated pages after
+//    them (generated: false keeps only connecting, the tools and the account); the corpus cites them at
+//    /app/docs/<slug>. gen-packs refuses a bad guide (an unsafe link, raw HTML, a generated page's title, guide.dir)
+//    with the pack and the page, and any file beside a declarative pack's pack.json (mold_v0-124: a page file, code).
 // 5. A host pack is untouched: with its guide code the build writes PACK_GUIDE null (its guide replaces the shell's as
 //    before, beside a declarative pack too), and a host pack may not declare pack.json guide.
 import assert from "node:assert/strict";
@@ -104,13 +105,13 @@ try {
     bad("a tag character", "a\u{E0041}b", /control or invisible characters/);
     bad("a page over its ceiling", "x".repeat(30_001), /at most 30000 characters a page/);
 
-    const g = compileGuide({ markdown: "## One\n\nFirst page.\n\n### Part\n\nA part.\n\n```\n## not a page\n```\n\n## Two\n\nSecond.", groups: [{ title: "Start", pages: ["Two"] }] }, null, ["Getting started"]);
+    const g = compileGuide({ markdown: "## One\n\nFirst page.\n\n### Part\n\nA part.\n\n```\n## not a page\n```\n\n## Two\n\nSecond.", groups: [{ title: "Start", pages: ["Two"] }] }, ["Getting started"]);
     assert.deepEqual(g.problems, []);
     assert.deepEqual(g.pages.map((p: { title: string; group: string; slug: string }) => [p.title, p.group, p.slug]), [["One", "Guide", "one"], ["Two", "Start", "two"]], "pages cut at ## (not inside a fence), each in its group or Guide");
     assert.match(g.pages[0]!.body, /^First page\.\n\n## Part\n\nA part\.\n\n```\n## not a page\n```$/, "### becomes ##; a fence's text stays");
     assert.deepEqual(g.groups, ["Guide", "Start"], "ungrouped pages first, then the declared groups in order");
-    const refusedGuide = (what: string, json: unknown, re: RegExp, files: { name: string; text: string }[] | null = null) => {
-      const r = compileGuide(json, files, ["Getting started", "MCP tools"]);
+    const refusedGuide = (what: string, json: unknown, re: RegExp) => {
+      const r = compileGuide(json, ["Getting started", "MCP tools"]);
       assert.ok(r.problems.some((x: string) => re.test(x)), `${what}: refused with ${re} (got ${JSON.stringify(r.problems)})`);
     };
     refusedGuide("text before the first page", { markdown: "Intro.\n\n## One\n\nx" }, /text before the first ## heading/);
@@ -118,17 +119,15 @@ try {
     refusedGuide("a generated page's title", { markdown: "## Getting Started\n\nx" }, /"Getting started" is a page the console writes/);
     refusedGuide("a group naming a missing page", { markdown: "## One\n\nx", groups: [{ title: "G", pages: ["Two"] }] }, /page "Two" is not a page of the guide/);
     refusedGuide("a page in two groups", { markdown: "## One\n\nx", groups: [{ title: "G", pages: ["One"] }, { title: "H", pages: ["One"] }] }, /page "One" is in two groups/);
-    refusedGuide("markdown and dir together", { markdown: "## One\n\nx", dir: "docs" }, /inline \(markdown\) or a directory/);
+    refusedGuide("guide.dir (mold_v0-124)", { dir: "docs" }, /guide\.dir: not taken any more: a pack is its pack\.json alone .*inline in guide\.markdown/);
+    refusedGuide("guide.dir beside markdown", { markdown: "## One\n\nx", dir: "docs" }, /guide\.dir: not taken any more/);
     refusedGuide("nothing and generated false", { generated: false }, /generated cannot be false/);
     refusedGuide("a markdown title", { markdown: "## One [x](/a)\n\nx" }, /its title: plain text/);
     refusedGuide("an unknown key", { markdown: "## One\n\nx", html: "<b>" }, /guide: .*html/i);
-    refusedGuide("a dir path outside the pack", { dir: "../x" }, /guide\.dir: dir: a directory inside the pack/);
     refusedGuide("a page with raw HTML", { markdown: "## One\n\n<iframe src=x>" }, /guide page "One": line 1: raw HTML/);
-    refusedGuide("a directory file with no title", { dir: "docs" }, /docs\/a\.md: its first line is the page's title/, [{ name: "a.md", text: "No title" }]);
-    const d = compileGuide({ dir: "docs" }, [{ name: "2-b.md", text: "# Bee\r\n\r\nSecond.\r\n\r\n## Part\r\n\r\nx" }, { name: "1-a.md", text: "\ufeff# Ay\n\nFirst." }], []);
-    assert.deepEqual(d.problems, []);
-    assert.deepEqual(d.pages.map((p: { title: string; body: string }) => [p.title, p.body]), [["Ay", "First."], ["Bee", "Second.\n\n## Part\n\nx"]], "a directory: one page per file, in file-name order, line endings and a byte-order mark normalised");
-    console.log("✓ pack.json guide: markdown only (no raw HTML, scripts, images or # titles), safe links only, pages and groups checked");
+    const crlf = compileGuide({ markdown: "\r\n## Ay\r\n\r\nFirst.\r\n\r\n### Part\r\n\r\nx" }, []);
+    assert.deepEqual(crlf.pages.map((p: { title: string; body: string }) => [p.title, p.body]), [["Ay", "First.\n\n## Part\n\nx"]], "line endings normalised");
+    console.log("✓ pack.json guide: markdown only (no raw HTML, scripts, images or # titles), safe links only, pages and groups checked; guide.dir refused (inline only)");
   }
 
   // ---------- 2. zero packs: the shell's guide, unchanged ----------
@@ -204,11 +203,11 @@ try {
     assert.match(page(g, "Your first scan").body, /## Then/, "### became ##");
     assert.ok(g.corpus.some((c) => c.href === "/app/docs/your-first-scan#then" && /Read the steps/.test(c.text)), "the corpus cites the pack's page at its anchor, links as text");
 
-    const dirGuide = tracker({ guide: { dir: "guide", generated: false } });
-    const w2 = world({ fixture_tracker: { "pack.json": JSON.stringify(dirGuide), "guide/02-second.md": "# Second page\n\nTwo.", "guide/01-first.md": "# First page\n\nOne.\n\n## A part\n\nx" } });
+    const onlyOwn = tracker({ guide: { markdown: "## First page\n\nOne.\n\n### A part\n\nx\n\n## Second page\n\nTwo.", generated: false } });
+    const w2 = world({ fixture_tracker: { "pack.json": JSON.stringify(onlyOwn) } });
     assert.equal(w2.gen.status, 0, w2.out);
     const g2 = guideOf(w2.dir);
-    assert.deepEqual(g2.pages.map((p) => p.title), ["First page", "Second page", "Getting started", "MCP tools", "Your account"], "a directory guide, in file-name order; generated false keeps connecting, the tools and the account");
+    assert.deepEqual(g2.pages.map((p) => p.title), ["First page", "Second page", "Getting started", "MCP tools", "Your account"], "generated false keeps connecting, the tools and the account");
 
     const refusedBuild = (what: string, files: Record<string, Record<string, string>>, re: RegExp, profile: Record<string, unknown> = {}, web: Record<string, string> = {}) => {
       const r = world(files, profile, web);
@@ -217,13 +216,19 @@ try {
     };
     refusedBuild("an unsafe link", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { markdown: "## One\n\nA [x](javascript:alert(1))." } })) } },
       /packs\/fixture_tracker\/pack\.json: guide page "One": line 1: the link "javascript:alert\(1\)"/);
-    refusedBuild("raw HTML in a directory page", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { dir: "guide" } })), "guide/a.md": "# A\n\n<script>x</script>" } }, /guide page "A": line 1: raw HTML/);
+    refusedBuild("raw HTML in a page", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { markdown: "## A\n\n<script>x</script>" } })) } }, /guide page "A": line 1: raw HTML/);
     refusedBuild("a generated page's title in the pack's words", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ words: { run: "scan" }, guide: { markdown: "## Scans\n\nx" } })) } },
       /"Scans" is a page the console writes/);
-    refusedBuild("a file that is not a page in the guide's directory", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { dir: "guide" } })), "guide/a.md": "# A\n\nx", "guide/b.txt": "x" } },
-      /guide\/b\.txt: a guide directory holds \.md pages only/);
-    refusedBuild("a guide directory that is not there", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { dir: "nope" } })) } }, /guide\.dir nope is not a directory of the pack/);
-    console.log("✓ a pack's own guide (inline, or a directory of pages) comes first in its groups, the generated pages after; a bad guide is refused with its pack and page");
+    // mold_v0-124: guide.dir is gone, and a declarative pack holds nothing but its pack.json.
+    refusedBuild("guide.dir", { fixture_tracker: { "pack.json": JSON.stringify(tracker({ guide: { dir: "guide" } })) } },
+      /packs\/fixture_tracker\/pack\.json: guide\.dir: not taken any more: a pack is its pack\.json alone/);
+    refusedBuild("a page file beside a declarative pack's pack.json", { fixture_tracker: { "pack.json": JSON.stringify(inline), "guide/a.md": "# A\n\nx" } },
+      /packs\/fixture_tracker\/pack\.json: guide\/a\.md: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone, so this file is never read; the customer guide's pages are pack\.json guide\.markdown/);
+    refusedBuild("code beside a declarative pack's pack.json", { fixture_tracker: { "pack.json": JSON.stringify({ ...inline, entry: undefined }), "lib/rows.ts": "export const x = 1;\n" } },
+      /lib\/rows\.ts: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone, so this file is never read; code: rows from the workspace's files or an upstream are repositories\.<name>\.map/);
+    refusedBuild("any other file beside a declarative pack's pack.json", { fixture_tracker: { "pack.json": JSON.stringify(inline), "notes.txt": "x" } },
+      /notes\.txt: a declarative pack .* everything a declarative pack says is in its pack\.json/);
+    console.log("✓ a pack's own guide comes first in its groups, the generated pages after; a bad guide (guide.dir included) is refused with its pack and page, and so is any file beside a declarative pack's pack.json");
 
     // ---------- 5. a host pack, untouched ----------
     const hostPack = (guide?: unknown) => ({ "pack.json": JSON.stringify({ id: "hosty", name: "Hosty", version: "1", host: { entry: "host.ts" }, ...(guide === undefined ? {} : { guide }) }),

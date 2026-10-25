@@ -144,6 +144,18 @@
     "host_packs": [
       "octillion"
     ],
+    "declarative": {
+      "$comment": "mold_v0-124 (operator rule: an app pack is config only). A pack the app names that is not one of host_packs adds its pack.json and nothing else: the shell reads every declaration from it (record areas, repositories and their row maps, job kinds, guide.markdown ...), and gen-packs refuses any other file in a pack with no entry, migrations or runner. Its pack.json may not name entry, migrations or runner (code). Each refusal names the declaration to write instead (MOLD.md \"Declared row maps\"). A host pack keeps its code.",
+      "files": [
+        "^packs/{pack}/pack\\.json$"
+      ],
+      "manifest": "packs/{pack}/pack.json",
+      "refused_keys": [
+        "entry",
+        "migrations",
+        "runner"
+      ]
+    },
     "required": [
       "packs/{pack}/pack.json"
     ],

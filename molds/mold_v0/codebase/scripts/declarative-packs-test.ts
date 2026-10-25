@@ -127,7 +127,8 @@ try {
     refused("a run-results mapping naming no area", tryPack(variant((j) => { j.run_results.check = ["nowhere"]; })), /run_results\.check names nowhere, which is not a record area of this build/);
     refused("a schedule giving an argument its kind lacks", tryPack(variant((j) => { j.schedules[0].scope = { nope: 1 }; })), /schedule nightly_scan: tracker_scan has no argument nope/);
     refused("an argument referring to no area", tryPack(variant((j) => { j.job_kinds[0].args[0].to = "nowhere"; })), /job kind tracker_scan's argument app refers to area nowhere, which no pack declares/);
-    refused("server code in a pack with no entry", tryPack(fixtureJson(), { "tools.ts": "export const x = 1;\n" }), /tools\.ts is server code but the pack has no entry/);
+    refused("server code in a declarative pack (mold_v0-124)", tryPack(fixtureJson(), { "tools.ts": "export const x = 1;\n" }), /tools\.ts: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone, so this file is never read; code: rows from .* repositories\.<name>\.map/);
+    refused("any other file in a declarative pack (mold_v0-124)", tryPack(fixtureJson(), { "notes/readme.md": "# x\n" }), /notes\/readme\.md: a declarative pack .* guide\.markdown/);
     refused("the same field twice", tryPack(variant((j) => { j.record_areas[1].fields.push({ name: "url", label: "Again" }); })), /record_areas\[1\]\.fields: a field is declared twice/);
     console.log(`✓ gen-packs refuses ${n} malformed pack.json files, each with its path and reason`);
   }
