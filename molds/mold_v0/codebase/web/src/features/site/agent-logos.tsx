@@ -36,3 +36,21 @@ export function AgentLogo({ id, ...p }: LogoProps & { id: string }) {
   const Logo = AGENT_LOGO[id] ?? TerminalMark;
   return <Logo {...p} />;
 }
+
+/**
+ * The install pages' clients (src/connect-catalog.ts ids) that share a mark above: Claude's apps are Claude's, ChatGPT is
+ * OpenAI's, VS Code's MCP client is Copilot Chat. Every other client without its own mark gets the terminal glyph.
+ */
+const CLIENT_MARK: Record<string, string> = { claude: 'claude-code', chatgpt: 'codex', vscode: 'copilot' };
+const GLYPH_ONLY = new Set(['opencode', 'cline']);
+
+/** Whether a client has a brand mark (not the terminal glyph): the landing page shows those first. */
+export function hasClientMark(id: string): boolean {
+  const k = CLIENT_MARK[id] ?? id;
+  return k in AGENT_LOGO && !GLYPH_ONLY.has(k);
+}
+
+/** The logo for an install client, by its src/connect-catalog.ts id. */
+export function ClientLogo({ id, ...p }: LogoProps & { id: string }) {
+  return <AgentLogo id={CLIENT_MARK[id] ?? id} {...p} />;
+}

@@ -1341,18 +1341,33 @@ facts the factory writes into the build copy (`deploy-facts.json`, names and pla
 `/api/admin/about` were removed with what only they showed, the running server's own measurements). Never a secret
 value: names, providers, regions and hosts only.
 
-**Landing page (mold_v0-091).** The console's `/` is the build's landing page, declared, not written: a declarative
-pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it, section by section (a section the
-profile names replaces the pack's; at most one pack of a build declares one). The sections, all optional, in page order:
-`hero` (eyebrow, headline, subheadline, primary and secondary call to action, note), `coverage` (a row of text badges,
-such as the regulators covered), `value_points`, `how_it_works` (numbered steps), `features` (a grid), `faq` (disclosures
-that open without script), `closing` (a last call to action), `footer` (a note and links) and `seo` (title and description
-for search results and Open Graph). Every value is plain text on one line, shown as text; a link is a path of this site,
-an https:// address or a mailto: address (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result and the
-source offer's footer items into `web/src/config/landing.generated.ts`). The page (`web/src/features/site/landing.tsx`)
-is in the build's brand (its name, tagline, `icon.svg` and the theme's tokens, light and dark) with a header (sign in,
-get started, install) and a footer that carries the source offer whenever the install pages do. With no block it is the
-neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
+**Landing page (mold_v0-091; pick and place, mold_v0-122).** The console's `/` is the build's landing page, declared,
+not written: a declarative pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it (at most one
+pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
+order: `sections: [{"type": ...}]`. The library is the first product's landing page generalised: each section and each
+drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
+footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
+and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
+The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
+second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text badges, named logos or
+the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
+`proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
+`install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
+carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
+shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
+links; the ways in: sign in and start, or one account button), `footer` (a tagline, a note, links, a copyright line,
+`shell_links: false`) and `seo` (title and description for search results and Open Graph). With no `sections` the page
+is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
+`{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
+one by one. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
+(`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
+footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
+`how_it_works`, `features`, `faq`, `closing` at the top level) is still read and converted to sections at build time
+(coverage becomes the hero's strip, value points the concept's cards, features proof's items, closing a cta), so a build
+that declared one still builds; a block that mixes the two is refused. Every call to action comes from
+`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack's own landing page
 (code, mold_v0-039) stays its own.
 
 **Share image (mold_v0-093).** What a shared link to the build shows (Open Graph and X: `web/src/app/opengraph-image.tsx`

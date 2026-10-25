@@ -1240,6 +1240,22 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+
+/**
+ * The AI clients the landing page may show (mold_v0-122: the hero's strip of logos, where_you_work): those the build's
+ * install pages offer (src/connect-catalog.ts, narrowed by profile.json install_clients), in the catalog's order, each
+ * with its short name ("Claude (web & desktop)" -> "Claude"). A where_you_work section that names a client the install
+ * pages do not offer is refused: the page would send people to steps that are not there.
+ */
+const landingClients = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)", client: "([^"]+)", group: "(chat|agent|editor)"/g)]
+  .filter((m) => m[1] !== "header" && (!profile.install_clients || profile.install_clients.includes(m[1])))
+  .map((m) => ({ id: m[1], name: m[2].replace(/\s*\([^)]*\)\s*$/, ""), group: m[3] }));
+for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
+  const off = (s.type === "where_you_work" ? s.clients ?? [] : []).filter((c) => !landingClients.some((k) => k.id === c));
+  if (off.length) fail("landing", `sections[${i}] (where_you_work).clients: ${off.join(", ")} ${off.length > 1 ? "are" : "is"} not offered by this build's install pages (${landingClients.map((k) => k.id).join(", ")}; profile.json install_clients narrows them)`);
+}
+/** The hero section of the build's block, if it picks one (the welcome email's pitch is its subheadline). */
+const landingHero = (landingPage.landing?.sections ?? []).find((s) => s.type === "hero") ?? null;
 refuse();
 
 // ---------- the share image (mold_v0-093) ----------
@@ -1410,7 +1426,7 @@ files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
 // never reaches the profile modules (the MCP surface and the console's names).
 files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
   "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
-  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingHero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();
@@ -1467,9 +1483,11 @@ files.set(path.join(OUT, "web", "src", "config", "share-image.generated.ts"), HE
   "/** The share image (mold_v0-093): drawn from these words and the build's brand, or the brand's own picture (brand/share-image.png). */\n" +
   `export const shareImage: ShareImageSpec = ${json(shareImage)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER +
-  "import type { LandingBlock, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
-  "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
+  "import type { LandingBlock, LandingClient, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
+  "/** The landing block (mold_v0-091, mold_v0-122; src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it, as sections; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
+  "/** The AI clients the install pages offer (src/connect-catalog.ts, profile.json install_clients), for the landing page's logos (mold_v0-122). */\n" +
+  `export const landingClients: readonly LandingClient[] = ${json(landingClients)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
 // The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.

@@ -1,0 +1,472 @@
+{
+  "$comment": "mold_v0-122: the first product's landing page (its host pack's pages/site/landing.tsx and features/site/*) written as a landing block, word for word, to check that the shell's section library reproduces it. scripts/landing-reference.ts builds both and compares screenshots; nothing ships this file.",
+  "header": {
+    "links": [
+      {
+        "label": "Early access",
+        "href": "/early-access"
+      }
+    ],
+    "account": "account"
+  },
+  "sections": [
+    {
+      "type": "hero",
+      "headline": "Get picked by",
+      "headline_highlight": "coding agents.",
+      "subheadline": "Octillion measures how often AI coding agents choose your dev tool, and shows why.",
+      "primary_cta": "account",
+      "secondary_cta": {
+        "label": "Early access",
+        "href": "/early-access"
+      },
+      "visual": {
+        "type": "decision_graph",
+        "label": "One prompt sent to four coding agents: two pick Postgres, one picks MongoDB, one uses SQLite.",
+        "root": "> add a database",
+        "branches": [
+          {
+            "logo": "claude-code",
+            "label": "claude-code",
+            "outcome": "✓ postgres",
+            "tone": "good"
+          },
+          {
+            "logo": "cursor",
+            "label": "cursor",
+            "outcome": "✓ postgres",
+            "tone": "good"
+          },
+          {
+            "logo": "codex",
+            "label": "codex",
+            "outcome": "✗ mongodb",
+            "tone": "bad"
+          },
+          {
+            "logo": "gemini-cli",
+            "label": "gemini-cli",
+            "outcome": "– sqlite",
+            "tone": "neutral"
+          }
+        ]
+      },
+      "strip": {
+        "label": "Agents measured",
+        "logos": [
+          {
+            "logo": "claude-code",
+            "label": "Claude Code"
+          },
+          {
+            "logo": "codex",
+            "label": "Codex"
+          },
+          {
+            "logo": "cursor",
+            "label": "Cursor"
+          },
+          {
+            "logo": "gemini-cli",
+            "label": "Gemini CLI"
+          },
+          {
+            "logo": "copilot",
+            "label": "GitHub Copilot"
+          },
+          {
+            "logo": "opencode",
+            "label": "OpenCode"
+          },
+          {
+            "logo": "cline",
+            "label": "Cline"
+          }
+        ]
+      }
+    },
+    {
+      "type": "problem",
+      "id": "why",
+      "nav_label": "Why now",
+      "eyebrow": "Why now",
+      "title": "Agents pick the stack now.",
+      "lead": "Developers type a task into Claude Code, Codex or Cursor and accept the diff. The agent picks the database, queue or auth library, and nobody reads your landing page.",
+      "visual": {
+        "type": "transcript",
+        "title": "claude-code · ~/acme-app",
+        "lines": [
+          {
+            "text": "> add background jobs to this app",
+            "tone": "prompt"
+          },
+          {
+            "text": "agent ▸ I need a durable job queue with retries.",
+            "tone": "agent"
+          },
+          {
+            "text": "agent ▸ I'll use BullMQ with Redis.",
+            "tone": "agent"
+          },
+          {
+            "text": "agent ▸ $ npm install bullmq ioredis",
+            "tone": "command"
+          },
+          {
+            "text": "agent ▸ ✓ done. 3 files changed.",
+            "tone": "ok"
+          }
+        ],
+        "highlight": "# was your product even considered?",
+        "aside": {
+          "title": "What it weighed",
+          "items": [
+            {
+              "label": "BullMQ",
+              "note": "picked and installed",
+              "tone": "pick"
+            },
+            {
+              "label": "Inngest",
+              "note": "mentioned, not used",
+              "tone": "neutral"
+            },
+            {
+              "label": "Trigger.dev",
+              "note": "not considered",
+              "tone": "muted"
+            },
+            {
+              "label": "Your product",
+              "note": "not considered",
+              "tone": "alert"
+            }
+          ],
+          "note": "Octillion shows you this shortlist for every agent, on tasks your buyers really give them."
+        }
+      },
+      "points": [
+        {
+          "icon": "eye-off",
+          "title": "Invisible",
+          "body": "No click, no referrer, no analytics event. You never see the decision being made."
+        },
+        {
+          "icon": "git-compare",
+          "title": "Different per agent",
+          "body": "Claude Code, Codex and Cursor each have their own favourites for the same task."
+        },
+        {
+          "icon": "code",
+          "title": "Made mid-task",
+          "body": "The choice lands inside a diff the developer accepts without a second look."
+        }
+      ]
+    },
+    {
+      "type": "concept",
+      "id": "apo",
+      "nav_label": "What is APO",
+      "eyebrow": "What is APO",
+      "title": "Earn the agent’s pick, and prove it.",
+      "lead": "Agentic Preference Optimization measures and improves how often coding agents choose your product in the middle of real work. Like SEO, you can’t buy the pick, but you can earn it.",
+      "visual": {
+        "type": "loop",
+        "label": "APO: profile your product, pose blind tasks, agents run them. If an agent picks you, track the pick rate every release; if not, score and fix your docs, SDKs and examples, then run again.",
+        "steps": [
+          {
+            "label": "Profile product",
+            "sub": "what you sell, who buys it"
+          },
+          {
+            "label": "Blind tasks",
+            "sub": "real work, never naming you"
+          },
+          {
+            "label": "Agents run",
+            "sub": "every major coding agent"
+          }
+        ],
+        "question": "Picked you?",
+        "yes": {
+          "label": "✓ Picked",
+          "sub": "track it every release"
+        },
+        "no": {
+          "label": "Score & fix",
+          "sub": "docs, SDKs, examples"
+        },
+        "again": "run again"
+      }
+    },
+    {
+      "type": "how_it_works",
+      "id": "convert",
+      "nav_label": "Why APO",
+      "eyebrow": "Why APO converts",
+      "title": "The step closest to revenue.",
+      "lead": "A click still has to become a signup, and a mention still has to become a visit. When a coding agent picks you, the install has already happened: your product is in the codebase, the step every other channel is working toward.",
+      "visual": {
+        "type": "paths",
+        "count_label": "{n} steps to an install",
+        "done_label": "Already installed",
+        "measure_label": "You measure",
+        "items": [
+          {
+            "icon": "search",
+            "title": "SEO",
+            "subtitle": "People decide",
+            "value_label": "You win",
+            "value": "A click",
+            "path": [
+              "Click",
+              "Visit",
+              "Signup",
+              "Install"
+            ],
+            "measure": "Rankings"
+          },
+          {
+            "icon": "message-chatbot",
+            "title": "GEO",
+            "subtitle": "Chatbots decide",
+            "value_label": "You win",
+            "value": "A mention",
+            "path": [
+              "Mention",
+              "Search",
+              "Visit",
+              "Signup",
+              "Install"
+            ],
+            "measure": "Citations"
+          },
+          {
+            "icon": "terminal",
+            "title": "APO",
+            "subtitle": "Coding agents decide",
+            "value_label": "You win",
+            "value": "An install",
+            "path": [
+              "Install"
+            ],
+            "highlight": true,
+            "measure": "Pick rate per agent"
+          }
+        ]
+      }
+    },
+    {
+      "type": "proof",
+      "id": "features",
+      "nav_label": "Scorecard",
+      "eyebrow": "Scorecard",
+      "title": "A number you can move.",
+      "lead": "See your pick rate by agent, task and competitor, with every verdict linked to the transcript behind it. Re-run the same tasks after each docs or SDK change to prove it moved.",
+      "visual": {
+        "type": "scorecard",
+        "bars": {
+          "title": "By agent",
+          "rows": [
+            {
+              "logo": "claude-code",
+              "label": "claude-code",
+              "value": 75
+            },
+            {
+              "logo": "cursor",
+              "label": "cursor",
+              "value": 62
+            },
+            {
+              "logo": "copilot",
+              "label": "copilot",
+              "value": 55
+            },
+            {
+              "logo": "gemini-cli",
+              "label": "gemini-cli",
+              "value": 40
+            },
+            {
+              "logo": "codex",
+              "label": "codex",
+              "value": 25
+            }
+          ]
+        },
+        "donut": {
+          "title": "Share of voice",
+          "slices": [
+            {
+              "label": "Postgres",
+              "value": 58,
+              "tone": "primary"
+            },
+            {
+              "label": "MongoDB",
+              "value": 30,
+              "tone": "alert"
+            },
+            {
+              "label": "SQLite",
+              "value": 12,
+              "tone": "muted"
+            }
+          ]
+        },
+        "trend": {
+          "title": "After your fix",
+          "delta": "+22 pts",
+          "points": [
+            22,
+            25,
+            24,
+            27,
+            26,
+            41,
+            46,
+            48
+          ],
+          "marker_after": 4,
+          "marker_label": "docs fix"
+        },
+        "chips": [
+          {
+            "label": "Adopted",
+            "tone": "primary"
+          },
+          {
+            "label": "Recommended",
+            "tone": "primary"
+          },
+          {
+            "label": "Mentioned",
+            "tone": "muted"
+          },
+          {
+            "label": "Competitor",
+            "tone": "alert"
+          },
+          {
+            "label": "None",
+            "tone": "secondary"
+          }
+        ],
+        "note": "Every verdict links to its transcript. Sample data."
+      }
+    },
+    {
+      "type": "where_you_work",
+      "id": "claude",
+      "nav": false,
+      "eyebrow": "Claude & ChatGPT",
+      "title": "Just ask.",
+      "lead": "Octillion is an MCP server, so you can set up products, launch simulations and explore results in plain language from Claude or ChatGPT, with charts rendered right in the chat.",
+      "visual": {
+        "type": "chat",
+        "messages": [
+          {
+            "from": "person",
+            "text": "Where does Codex pick MongoDB over Postgres?"
+          },
+          {
+            "from": "tool",
+            "text": "octillion · get_share_of_voice"
+          },
+          {
+            "from": "bars",
+            "rows": [
+              {
+                "label": "Python worker",
+                "value": 22
+              },
+              {
+                "label": "Next.js app",
+                "value": 64
+              },
+              {
+                "label": "Edge function",
+                "value": 71
+              }
+            ]
+          },
+          {
+            "from": "person",
+            "text": "Show me the Python transcripts."
+          }
+        ],
+        "note": "Illustrative · sample values"
+      }
+    },
+    {
+      "type": "faq",
+      "id": "faq",
+      "nav_label": "FAQ",
+      "eyebrow": "FAQ",
+      "title": "Questions.",
+      "lead": "Straight answers on how Octillion measures agent preference, what it does and doesn’t touch, which agents it covers, and how your team gets started during early access.",
+      "items": [
+        {
+          "question": "What is APO?",
+          "answer": "Agentic Preference Optimization: measuring and improving how often AI coding agents choose your product while they do real work."
+        },
+        {
+          "question": "How is it different from SEO or GEO?",
+          "answer": "SEO is for people reading search results, GEO for chatbots answering questions. APO is for agents writing code, where the outcome is an install, not a link."
+        },
+        {
+          "question": "Which coding agents do you test?",
+          "answer": "Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode, Cline and more, mixed in proportion to how developers actually use them."
+        },
+        {
+          "question": "Do the agents know about my product?",
+          "answer": "No. They get blind, realistic tasks in real repos. Your product is used only to score the transcript afterwards."
+        },
+        {
+          "question": "Does Octillion change the models?",
+          "answer": "No. No paid placement, no prompt injection. You improve docs, examples and SDKs; Octillion measures whether preference moved."
+        },
+        {
+          "question": "What counts as a pick?",
+          "answer": "Adopted means the agent installed, imported or configured you. Recommended means it explicitly advised you. Mentioned and Competitor are tracked separately, never counted as picks."
+        },
+        {
+          "question": "Can I check a verdict myself?",
+          "answer": "Yes. Every verdict links to the transcript lines behind it: the install command, the import or the sentence that earned it."
+        },
+        {
+          "question": "Can I bring my own tasks and repos?",
+          "answer": "Yes. Tasks should mirror what your buyers really ask agents to do. We help you shape a starting set during onboarding."
+        },
+        {
+          "question": "Where do I see results?",
+          "answer": "In your Octillion dashboard, or by asking in Claude or ChatGPT through the Octillion connector, with charts rendered in the chat."
+        },
+        {
+          "question": "Can my whole team use it?",
+          "answer": "Yes. Invite teammates, set roles, and split your usage budget across teams and people from the billing page."
+        },
+        {
+          "question": "How are transcripts stored?",
+          "answer": "Each transcript is kept with its verdict and scoped to your organization’s account. Tell us during onboarding if you have retention requirements."
+        },
+        {
+          "question": "How much does it cost?",
+          "answer": "We’re in early access. Pricing depends on scenarios, models and runs. Request early access and talk to us."
+        }
+      ]
+    }
+  ],
+  "footer": {
+    "tagline": "Agentic Preference Optimization: get picked by coding agents.",
+    "links": [
+      {
+        "label": "Early access",
+        "href": "/early-access"
+      }
+    ],
+    "shell_links": false,
+    "copyright": "© 2026 Octillion"
+  }
+}

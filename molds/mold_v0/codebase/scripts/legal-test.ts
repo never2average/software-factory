@@ -137,7 +137,9 @@ try {
     const { build } = await import("esbuild");
     writeFileSync(path.join(webDir, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
     // next/navigation as the pages use it: notFound and redirect throw, as Next's do, with what they were asked.
-    writeFileSync(path.join(webDir, "render-nav.ts"), "export function notFound(): never { throw new Error('NOT_FOUND'); }\nexport function redirect(to: string): never { throw new Error('REDIRECT ' + to); }\n");
+    writeFileSync(path.join(webDir, "render-nav.ts"), "export function notFound(): never { throw new Error('NOT_FOUND'); }\nexport function redirect(to: string): never { throw new Error('REDIRECT ' + to); }\n" +
+      // The header's sign-in hooks (src/lib/auth) load Clerk's client, which imports the router; never called in a render.
+      "export function useRouter() { return { push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} }; }\nexport function usePathname() { return '/'; }\nexport function useSearchParams() { return new URLSearchParams(); }\n");
     writeFileSync(path.join(webDir, "render-entry.tsx"), `import { renderToStaticMarkup } from 'react-dom/server';
 import { SiteFooter } from '@/features/site/landing';
 import { AuthShell } from '@/features/auth/components/auth-shell';
