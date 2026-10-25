@@ -33,6 +33,8 @@ export const TEXT_MASKS: [RegExp, string][] = [
   [/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, "<date>"],
   // Month and year alone (a billing period): October 2026.
   [/\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}\b/g, "<month>"],
+  // A billing period's day counter: Day 24 of 31.
+  [/\bDay \d{1,2} of \d{2}\b/g, "Day <n> of <n>"],
   // Weekdays (a "today is" line).
   [/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/g, "<weekday>"],
   // Clock times: 14:17, 14:17:49, 2:17 PM.

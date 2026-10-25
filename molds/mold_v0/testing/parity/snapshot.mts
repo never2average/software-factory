@@ -273,6 +273,13 @@ async function snapPages(out: string, ctx: Ctx, shots: boolean) {
         // A page still saying "Loading…" (a busy machine) is given up to 15s more, as browser.mjs does for skeletons.
         await p.waitForFunction(() => ![...document.querySelectorAll("body *")].some((e) => e.children.length === 0 && /^\s*Loading(…|\.\.\.)?\s*$/.test(e.textContent ?? "") && (e as HTMLElement).offsetParent !== null),
           null, { timeout: 15000 }).catch(() => { rec.note = "still loading after 15s more (recorded as it stood)"; });
+        // Then until its text stops changing (two reads 400ms apart agree; at most 8s): a tab or a row that renders after
+        // its own data arrives is part of the page, and a busy machine must not leave it out of one snapshot.
+        for (let i = 0, last = ""; i < 20; i++) {
+          const now = await p.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+          if (i && now === last) break;
+          last = now; await p.waitForTimeout(400);
+        }
         await maskDom(p);
         const at = new URL(p.url());
         const facts = await p.evaluate(() => ({

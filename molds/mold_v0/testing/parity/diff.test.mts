@@ -223,6 +223,7 @@ test("masks: times, ports, minted ids and keys go; the build's own words stay", 
   assert.equal(maskText("key oct_AbC123dEf456GhI789jKl0 shown once"), "key oct_<key> shown once");
   assert.equal(maskText("5 minutes ago; just now"), "<ago>; <ago>");
   assert.equal(maskText("default oct_79_3IT… Never"), "default oct_<key>… Never");
+  assert.equal(maskText("Day 24 of 31"), "Day <n> of <n>");
   const link = `cursor://x/install?config=${Buffer.from(JSON.stringify({ url: "http://127.0.0.1:42889/mcp" })).toString("base64")}`;
   assert.equal(maskText(link), 'cursor://x/install?config=b64({"url":"http://127.0.0.1:<port>/mcp"})');
   // Words that look like ids but are the build's: kept.
