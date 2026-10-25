@@ -241,6 +241,38 @@ or as one line in `## Profile`: `mcp_instructions = Acme Ops keeps a team's inci
   below). Without either, the server says the shell's two lines plus a paragraph per pack. A host pack that brings its
   own instructions in its profile is refused at the build (as for every profile field).
 - The first sentence is what the generated get-started tool says the app is, so start with what the app does.
+**The landing page** (mold_v0-094): the words of the app's public page at `/`, over what its pack declares (`pack.json`
+`landing`). Its sections are the shell's (`molds/mold_v0/codebase/src/landing.ts`: the hero, the sections a page picks
+and places, the header, footer and search snippet); the brief only gives the words. A few fields, one per line, in
+`## Profile`:
+
+```
+## Profile
+landing.hero.headline = Continuous compliance audits for your applications
+landing.hero.subheadline = Every control, every day, with the evidence attached.
+landing.seo.title = Acme Audits
+landing.footer.shell_links = false
+```
+
+or the whole block as JSON in a section of its own (the shell's format; lists such as `sections` or FAQ items need it):
+
+````
+## Landing
+
+```json
+{"sections": [{"type": "hero", "headline": "Continuous compliance audits"},
+              {"type": "faq", "items": [{"question": "Is it read only?", "answer": "Yes."}]}]}
+```
+````
+
+- One place only: `landing.` lines and a `## Landing` block together, or two blocks, are refused; a block in an HTML
+  comment is not read. `true` and `false` are kept as true and false.
+- The factory checks it as text (`.claude/scripts/lib/app_profile.py` `landing_problems`): every text plain on one line
+  (at most 1200 characters, no line breaks, control, zero-width or direction characters), a field called `href` a path
+  of this site, an `https://` or a `mailto:` address, lists of at most 50, at most 64 KB in all. Which sections and
+  fields exist is the shell's to say: the build checks the block again and refuses one it cannot draw, naming the field.
+- It is `application.json` `profile.landing`, written into the build's `profile.json`; the shell lays it over the pack's
+  block (the app's wins). `packs.py verify` checks the build's page carries the app's words.
 
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
@@ -291,6 +323,8 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 | `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` `\| prompt <the words a person types to their AI client for this step>` (mold_v0-119: one line, at most 200 characters, no `<` `>` `` ` `` or `\|`; the get-started tool and the console's checklist offer it, else "Help me with the next step: <label>.") |
 | `## Words` | `- run: audit` (the shell's word on the left) |
 | `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`, `- instructions: <one paragraph>` (mold_v0-119: what the server tells AI clients about the pack, `mcp.instructions`; one bullet per paragraph, at most 4000 characters in all; the app's `## MCP instructions` wins over it). Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
+
+Every record area also gets `<prefix>_export_<area>` (mold_v0-108: its records as CSV, read only, the area's read roles), which `## MCP` may name like the other generated tools.
 
 Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
 `enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),

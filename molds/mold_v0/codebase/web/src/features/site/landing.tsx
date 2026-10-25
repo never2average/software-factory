@@ -21,6 +21,7 @@ import {
 import { buildLegal } from './legal';
 import { legalLinks } from './legal-types';
 import { forAccess, siteCtas, type SiteCtas } from './site-ctas';
+import { ogImages, twitterCard } from './share-image-meta';
 
 /**
  * The shell's public landing page (mold_v0-091; a section library picked and placed since mold_v0-122). The build's
@@ -173,8 +174,9 @@ export function landingMetadata(): Metadata {
     title: { absolute: title },
     description,
     alternates: { canonical: '/' },
-    openGraph: { type: 'website', url: '/', siteName: profile.name, title, description },
-    twitter: { card: 'summary', title, description }
+    // The share image named here too (mold_v0-148): a page's own openGraph replaces the one app/opengraph-image adds.
+    openGraph: { type: 'website', url: '/', siteName: profile.name, title, description, images: ogImages() },
+    twitter: twitterCard(title, description)
   };
 }
 

@@ -211,6 +211,12 @@ try {
   assert.match(checkConcepts(tree, c({ "src/a.ts": 2, "web/src/b.tsx": 1, "src/gone.ts": 1 })).problems.join("\n"), /src\/gone\.ts: carries no concept word any more/);
   assert.match(checkConcepts(tree, c({})).problems.join("\n"), /web\/src\/b\.tsx: 1 concept word\(s\) as prose, ceiling 0/);
   ok("the concept ratchet: prose and labels count; identifiers, SQL, placeholders, code spans, keys and comments do not; over, under and stale ceilings fail");
+  // mold_v0-113: the staff docs (docs/*.md) are prose outside fenced blocks: a sentence counts, a code span, an
+  // identifier, a path and a fenced block do not.
+  put("docs/a.md", ["# Limits", "", "New simulations need a subscription.", "The `simulations` table and `run_simulation`; see docs/scenarios.md.", "```", "simulations running: 3", "```", "| Personas | x |"].join("\n"));
+  const md = checkConcepts(tree, { ...c({ "src/a.ts": 2, "web/src/b.tsx": 1, "docs/a.md": 2 }), scan: ["src/**/*.ts", "web/src/**/*.tsx", "docs/*.md"] });
+  assert.deepEqual([md.counts["docs/a.md"], md.problems], [2, []], `a doc's prose counts, its code spans, paths and fences do not (${md.hits.filter((h) => h.file === "docs/a.md").map((h) => `${h.line}:${h.text}`).join(" | ")})`);
+  ok("the concept ratchet reads the staff docs: a sentence and a table label count; code spans, paths and fenced blocks do not");
 } finally {
   setPacksForTest(null);
   rmSync(TMP, { recursive: true, force: true });

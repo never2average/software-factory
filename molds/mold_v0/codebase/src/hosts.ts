@@ -5,6 +5,8 @@
  * shell imports it, so a pack's code is never part of a shell module's own imports. Zero packs: nothing registers.
  */
 import { registerHosts, type HostDefinition } from "./host.js";
-import { HOSTS } from "./hosts.generated.js";
+import * as generated from "./hosts.generated.js";
 
-registerHosts(HOSTS as readonly HostDefinition[]);
+// Their pack.json engine.config (mold_v0-137), which a build writes only when a host pack declares one.
+const { HOSTS, HOST_ENGINE_CONFIG } = generated as typeof generated & { HOST_ENGINE_CONFIG?: Readonly<Record<string, unknown>> };
+registerHosts(HOSTS as readonly HostDefinition[], HOST_ENGINE_CONFIG ?? {});

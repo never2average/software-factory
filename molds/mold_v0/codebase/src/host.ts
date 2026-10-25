@@ -37,15 +37,24 @@ export interface HostAdminTool {
 
 export interface HostDefinition {
   id: string;
+  /**
+   * The host pack's engine settings (mold_v0-137): `config`, the schema its pack.json `engine.config` must meet (its
+   * tools' words, its messages). Checked when the host registers; its code reads the checked value with
+   * engineConfig(id) (src/pack-host.ts), never before (a module's top level runs before registration).
+   */
+  engine?: { config: z.ZodType };
   /** The customer MCP server (src/server.ts createServer). */
   mcp?: {
     /** Tool names the host registers, reserved so no pack takes one. */
     toolNames: readonly string[];
-    /** The server's instructions when the profile has none of its own (else the shell's neutral ones). */
+    /**
+     * The server's instructions when the profile has none of its own (else the shell's neutral ones). Since mold_v0-137
+     * the host pack's pack.json `mcp.instructions` says the same (src/server.ts leadInstructions); this wins over it.
+     */
     instructions?: string;
     /** Register resources and tools, before the packs' tools. */
     register(server: McpServer, org: Org): void;
-    /** Register prompts, after the packs' tools. */
+    /** Register prompts, after the packs' tools (and before the packs' declared ones, pack.json mcp.prompts: mold_v0-137). */
     registerPrompts?(server: McpServer, org: Org): void;
     /** Text appended to the instructions for this caller (the account's and the person's context). */
     context?(org: Org): Promise<string>;
@@ -135,8 +144,17 @@ export interface WorkerHelpers {
 export function defineHost(def: HostDefinition): HostDefinition { return def; }
 
 let registered: HostDefinition[] = [];
-/** Called once by src/hosts.ts with every host entry of the build (src/hosts.generated.ts), before anything is served. */
-export function registerHosts(list: readonly HostDefinition[]) {
+let engineConfigs = new Map<string, unknown>();
+/** A zod issue path as a reader writes it: tools.run_simulation.title. */
+const at = (p: readonly PropertyKey[]) => p.reduce<string>((s, k) => (typeof k === "number" ? `${s}[${k}]` : s ? `${s}.${String(k)}` : String(k)), "");
+
+/**
+ * Called once by src/hosts.ts with every host entry of the build (src/hosts.generated.ts) and their pack.json
+ * `engine.config` by pack id (mold_v0-137), before anything is served. A config that does not meet its host's schema, a
+ * config with no schema to meet and a schema with no config are refused here, every problem listed: the server does not
+ * start on words it cannot check.
+ */
+export function registerHosts(list: readonly HostDefinition[], configs: Readonly<Record<string, unknown>> = {}) {
   const ids = new Set<string>();
   for (const h of list) {
     if (!h || typeof h.id !== "string") throw new Error("a host pack's entry must default-export defineHost({ id, ... })");
@@ -148,7 +166,29 @@ export function registerHosts(list: readonly HostDefinition[]) {
     if (names.has(t)) throw new Error(`host packs ${names.get(t)} and ${h.id} both register the tool ${t}`);
     names.set(t, h.id);
   }
+  const problems: string[] = [];
+  const checked = new Map<string, unknown>();
+  for (const id of Object.keys(configs)) if (!ids.has(id)) problems.push(`pack ${id}: its pack.json has engine.config but no host entry with id ${JSON.stringify(id)} is registered`);
+  for (const h of list) {
+    const has = Object.hasOwn(configs, h.id);
+    if (!h.engine) { if (has) problems.push(`host pack ${h.id}: its pack.json has engine.config but its host entry gives no schema for it (defineHost({ engine: { config } }))`); continue; }
+    if (!has) { problems.push(`host pack ${h.id}: its host entry reads engine.config but its pack.json has none`); continue; }
+    const r = h.engine.config.safeParse(configs[h.id]);
+    if (r.success) checked.set(h.id, r.data);
+    else problems.push(...r.error.issues.map((i) => `host pack ${h.id}: pack.json engine.config${at(i.path) ? `.${at(i.path)}` : ""}: ${i.message}`));
+  }
+  if (problems.length) throw new Error(`host packs refused:\n  ${problems.join("\n  ")}`);
   registered = [...list];
+  engineConfigs = checked;
+}
+
+/**
+ * A host pack's pack.json `engine.config` (mold_v0-137), as its host entry's schema checked it. Read it where it is used
+ * (a tool's registration, a message): a module's top level runs before the host is registered and is refused.
+ */
+export function engineConfig<T = unknown>(id: string): T {
+  if (!engineConfigs.has(id)) throw new Error(`host pack ${id} has no engine.config registered (read it after src/hosts.ts registers the build's host packs, never at a module's top level)`);
+  return engineConfigs.get(id) as T;
 }
 /** The registered host packs, in pack order (none with zero packs). */
 export const hosts = (): readonly HostDefinition[] => registered;

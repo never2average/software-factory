@@ -20,6 +20,13 @@ each one the factory can check. Today (mold_v0):
                              tells an AI client about the app, over a host pack's and the packs' pack.json mcp.instructions.
                              From the brief: a `## MCP instructions` section (its text, paragraphs kept) or a
                              `mcp_instructions = <text>` line in `## Profile`
+  landing                    the app's landing page at / (mold_v0-094; the shell's src/landing.ts, mold_v0-091 and its
+                             pick-and-place sections): an object of plain text, true/false, numbers and lists, over the
+                             pack's pack.json landing. The factory checks it as TEXT (landing_problems: plain text on one
+                             line, links on this site, https:// or mailto:, sizes); its shape is the shell's, checked again
+                             by the build (scripts/gen-packs.mjs with src/landing.ts), so the factory follows the shell's
+                             sections as they change. From the brief: `landing.<key>.<key> = <text>` lines in ## Profile,
+                             or a ## Landing section holding the whole block as one ```json fenced block
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -47,7 +54,8 @@ Never a secret: every value this module accepts is a positive number under a nam
 false, or the word licensor_owned under one of the app's own pack ids.
 
 Where a value comes from: the brief (intake reads `limits.<section>.<name> = <number>`, `member_keys = false` and
-`source_offer.upstreams.<pack id> = licensor_owned` and `legal.<field> = <text>` lines in a `## Profile` or `## Budgets` section; docs/INTAKE.md;
+`source_offer.upstreams.<pack id> = licensor_owned` and `legal.<field> = <text>` lines in a `## Profile` or `## Budgets` section, and
+the landing page's `landing.<path> = <text>` lines or `## Landing` JSON block; docs/INTAKE.md;
 the legal block may also be an answer to intake's `legal` question), recorded in application.json `profile`, written by branding.py prepare and
 packs.py apply into build/<app_id>/profile.json over the mold's own profile.json (the app wins over the mold default; a
 field the app does not set is put back to the mold's, so a setting taken out of the brief does not linger in a build),
@@ -164,6 +172,65 @@ def instructions_problem(v, at="mcp_instructions"):
     if len(v) > MAX_INSTRUCTIONS: return f"{at}: at most {MAX_INSTRUCTIONS} characters (got {len(v)})"
     if INSTRUCTIONS_BAD.search(v): return f"{at}: plain text only (line breaks are fine; no control, zero-width or direction characters)"
     return None
+# ---- the landing page (mold_v0-094) --------------------------------------------------------------------------------
+# A TEXT check (the ticket's "text validator"): what the factory can say about any landing block whatever its sections,
+# so a brief is refused at intake for text the page could not show. The block's shape (which sections, which fields, how
+# many of each) is the shell's (src/landing.ts landingProblems, mold_v0-091 and mold_v0-122's pick-and-place sections),
+# checked again when the build runs scripts/gen-packs.mjs: a shape the shell refuses fails the build copy, never a deploy.
+LANDING_MAX_BYTES = 64 * 1024
+LANDING_MAX_TEXT = 1200            # the shell's longest text (an FAQ answer)
+LANDING_MAX_LIST = 50
+LANDING_MAX_DEPTH = 6
+LANDING_KEY = re.compile(r"[a-z][a-z0-9_]{0,40}")
+# The shell's (src/landing.ts NOT_PLAIN): C0 and C1 controls (line breaks included), zero-width, bidirectional and tag
+# characters, variation selectors.
+LANDING_NOT_PLAIN = re.compile("[\x00-\x1f\x7f-\x9f\xad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb"
+                               "\U000e0000-\U000e007f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+
+def href_problem(h):
+    """The shell's rule for a link (src/landing.ts hrefProblem): a path of this site, an https:// or a mailto: address."""
+    if not isinstance(h, str) or not h: return "an address is required"
+    if len(h) > 500: return "at most 500 characters"
+    if not re.fullmatch(r"[!-~]+", h) or re.search(r"[\"'<>\\`]", h): return "an address is printable ASCII with no spaces, quotes, angle brackets or backslashes"
+    if h.startswith("/"):
+        return "a path of this site has no //, /./, /../ or encoded / and \\ (they can lead to another site)" if re.search(r"//|/\.\.?(/|$|[?#])|%2f|%5c", h, re.I) else None
+    if re.match(r"https://", h, re.I):
+        from urllib.parse import urlsplit
+        try: u = urlsplit(h)
+        except ValueError: return "not a valid https:// address"
+        return None if u.scheme.lower() == "https" and u.hostname and not u.username and not u.password else "an https:// address with a host and no user name or password"
+    if re.fullmatch(r"mailto:[^@/?#]+@[^@/?#]+(\?[^#]*)?", h, re.I): return None
+    return "a path of this site (/install), an https:// address or a mailto: address"
+
+def landing_problems(v, at="landing"):
+    """Sentences: what is wrong with a landing block as text ([] when nothing). Never its shape (the shell's)."""
+    if not isinstance(v, dict) or not v: return [f"{at} must be an object of the landing page's sections (molds/mold_v0/codebase/src/landing.ts)"]
+    errs = []
+    if len(json.dumps(v, ensure_ascii=False).encode()) > LANDING_MAX_BYTES: return [f"{at} is larger than {LANDING_MAX_BYTES // 1024} KB"]
+    def walk(x, path, depth, key):
+        if len(errs) >= 20: return
+        if depth > LANDING_MAX_DEPTH: errs.append(f"{path}: nested deeper than {LANDING_MAX_DEPTH} levels"); return
+        if isinstance(x, dict):
+            for k, y in x.items():
+                if k == "$comment": continue
+                if not isinstance(k, str) or not LANDING_KEY.fullmatch(k): errs.append(f"{path}: {str(k)[:40]!r} is not a field name (lowercase letters, digits and _)"); continue
+                walk(y, f"{path}.{k}", depth + 1, k)
+        elif isinstance(x, list):
+            if len(x) > LANDING_MAX_LIST: errs.append(f"{path}: at most {LANDING_MAX_LIST} items"); return
+            for i, y in enumerate(x): walk(y, f"{path}[{i}]", depth + 1, key)
+        elif isinstance(x, bool): pass
+        elif isinstance(x, (int, float)):
+            if x != x or x in (float("inf"), float("-inf")): errs.append(f"{path}: a number")
+        elif isinstance(x, str):
+            if key == "href":
+                e = href_problem(x)
+                if e: errs.append(f"{path}: {e}")
+            elif not x.strip(): errs.append(f"{path}: text is required")
+            elif len(x) > LANDING_MAX_TEXT: errs.append(f"{path}: at most {LANDING_MAX_TEXT} characters")
+            elif LANDING_NOT_PLAIN.search(x): errs.append(f"{path}: plain text on one line: no line breaks, control or invisible characters")
+        else: errs.append(f"{path}: text, true or false, a number, a list or an object (got {type(x).__name__})")
+    walk(v, at, 0, None)
+    return errs
 
 # ---- the legal pages (mold_v0-109) ---------------------------------------------------------------------------------
 # The shell's rules (molds/mold_v0/codebase/src/legal.ts legalProblems), checked here so a brief or an answer is refused
@@ -340,6 +407,7 @@ def problems(profile, mold_id, root, packs=None):
         elif k == "mcp_instructions":
             e = instructions_problem(v, "profile.mcp_instructions")
             if e: errs.append(e)
+        elif k == "landing": errs += landing_problems(v, "profile.landing")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
     return errs
 
@@ -369,6 +437,11 @@ LEGAL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?legal\.([a-z_]+)`?[ \t]*(?:=|:)[ \t]
 # section whose whole text is them (paragraphs kept).
 INSTRUCTIONS_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?mcp_instructions`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
 INSTRUCTIONS_SECTION = re.compile(r"^##[ \t]+MCP[ \t]+instructions[ \t]*:?[ \t]*$", re.I | re.M)
+# The landing page (mold_v0-094): `landing.hero.headline = <text>` (any path of field names; `true`/`false` are kept as
+# true/false), or the whole block as JSON in a ```json fence under `## Landing`.
+LANDING_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?landing((?:\.[a-z][a-z0-9_]{0,40}){1,6})`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M)
+LANDING_SECTION = re.compile(r"^##[ \t]+Landing(?:[ \t]+page)?[ \t]*:?[ \t]*$", re.I | re.M)
+LANDING_FENCE = re.compile(r"^[ \t]*```[ \t]*json[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.S | re.M | re.I)
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
@@ -401,7 +474,7 @@ def from_brief(text):
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
     prof, errs, notes, seen = {}, [], [], {}
-    text = _clean(text); spans = []
+    raw_text, text = text, _clean(text); spans = []
     for head, start, end in _sections(text):
         body = text[start:end]; spans.append((start, end))
         for m in MENTION.finditer(body):
@@ -450,6 +523,17 @@ def from_brief(text):
             if "mcp_instructions" in seen and seen["mcp_instructions"] != raw: errs.append(f"{head}: mcp_instructions is set twice; keep one"); continue
             seen["mcp_instructions"] = raw
             prof["mcp_instructions"] = raw
+        for m in LANDING_LINE.finditer(body):
+            path, raw = m.group(1).lstrip(".").split("."), m.group(2).strip().strip("`").strip()
+            name = "landing." + ".".join(path)
+            if name in seen and seen[name] != raw: errs.append(f"{head}: {name} is set twice ({seen[name]} and {raw}); keep one"); continue
+            seen[name] = raw
+            d, bad = prof.setdefault("landing", {}), False
+            for part in path[:-1]:
+                if not isinstance(d.setdefault(part, {}), dict): bad = True; break
+                d = d[part]
+            if bad or isinstance(d.get(path[-1]), dict): errs.append(f"{head}: {name} is both a field and a group of fields; keep one"); continue
+            d[path[-1]] = {"true": True, "false": False}.get(raw, raw)
         for m in LEGAL_LINE.finditer(body):
             key, raw = m.group(1).lower(), m.group(2).strip().strip("`").strip()
             name = f"legal.{key}"
@@ -463,6 +547,18 @@ def from_brief(text):
         if not raw: errs.append(f"{m.group(0).strip()}: the section is empty; write what the MCP server should tell AI clients about the app, or remove it"); continue
         if "mcp_instructions" in prof: errs.append(f"{m.group(0).strip()}: the MCP instructions are given twice (here and as mcp_instructions in ## Profile, or in two sections); keep one"); continue
         prof["mcp_instructions"] = raw
+    # The landing page as one JSON block (mold_v0-094): read from the brief with its fences kept (_clean blanks code),
+    # HTML comments and struck-through text still left out.
+    keep = re.sub(r"<!--.*?(?:-->|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), raw_text, flags=re.S)
+    for m in LANDING_SECTION.finditer(keep):
+        nxt = HEADING.search(keep, m.end())
+        body = keep[m.end():nxt.start() if nxt else len(keep)]
+        f = LANDING_FENCE.search(body)
+        if not f: errs.append(f"{m.group(0).strip()}: write the landing block as JSON in one ```json fenced block (or use landing.<field> = <text> lines in ## Profile)"); continue
+        try: block = json.loads(f.group(1))
+        except ValueError as x: errs.append(f"{m.group(0).strip()}: the JSON block does not read ({str(x)[:120]})"); continue
+        if "landing" in prof: errs.append(f"{m.group(0).strip()}: the landing page is given twice (here and as landing. lines in ## Profile, or in two sections); keep one"); continue
+        prof["landing"] = block
     for m in MENTION.finditer(text):
         if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):
             notes.append(f"limits{m.group(1)} outside a ## Profile or ## Budgets section: ignored")
@@ -533,6 +629,21 @@ def write(build_dir, app, root, packs_applied=True):
     with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
     return True
 
+# Fields the shell compiles into modules of their own, never the profile modules (scripts/gen-packs.mjs): the module and
+# what shows the app's value reached it. legal (mold_v0-109): the checked block itself. landing (mold_v0-094): the page
+# the build writes is the pack's block with the app's over it, converted to sections, so only that it wrote one.
+COMPILED_ELSEWHERE = {
+    "legal": ("src/legal.generated.ts", lambda src, v: f'"company_name": {json.dumps(v.get("company_name"), ensure_ascii=False)}' in src if isinstance(v, dict) else False),
+    "landing": ("web/src/config/landing.generated.ts", lambda src, v: "export const landing: LandingBlock | null = null;" not in src
+                and all(json.dumps(t, ensure_ascii=False) in src for t in _texts(v)[:50])),
+}
+
+def _texts(v):
+    """Every text of a block, in order (the app's own words the build's page must carry)."""
+    if isinstance(v, dict): return [t for k, x in v.items() if k != "$comment" for t in _texts(x)]
+    if isinstance(v, list): return [t for x in v for t in _texts(x)]
+    return [v] if isinstance(v, str) else []
+
 def check(build_dir, app, root):
     """Sentences: where build_dir does not carry the app's profile (the file, and the server's generated module)."""
     s = spec(app.get("mold_id"), root)
@@ -556,7 +667,12 @@ def check(build_dir, app, root):
         if v is _NONE: continue
         what = f"the app's profile.{k}" if _get(own, k) is not _NONE else f"the factory's email default {k}"
         if _get(have, k) != v: bad.append(f"{s['file']} does not carry {what} ({describe(_nest(k, v))})")
-        if compiled is None or _get(compiled, k) != v: bad.append(f"src/profile.generated.ts does not carry {what} (the generator was not re-run)")
+        if k in COMPILED_ELSEWHERE:
+            mod, carried = COMPILED_ELSEWHERE[k]
+            try: src = open(os.path.join(build_dir, mod)).read()
+            except OSError: src = None
+            if src is None or not carried(src, v): bad.append(f"{mod} does not carry {what} (the generator was not re-run)")
+        elif compiled is None or _get(compiled, k) != v: bad.append(f"src/profile.generated.ts does not carry {what} (the generator was not re-run)")
     return bad
 
 def _nest(path, v):
