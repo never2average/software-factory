@@ -1076,8 +1076,12 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `profile`, or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
   from a fixed set (`TAB_ICONS`). Each tab is shown to `roles` narrowed by what it shows (an area's read permission;
   for an overview, the roles that may read one of its metrics; a build refuses a tab no role could see); the server
-  refuses the data whatever the sidebar shows. Tab pages render at `/app/packs/<pack>/<tab>` through the existing pack
-  page route (no new route). Boards and timelines show up to 200 records; a board by a workspace area's lifecycle field
+  refuses the data whatever the sidebar shows. Tab pages render at `/app/<tab>`, as a pack's own customer pages do at
+  `/app/<page>` (mold_v0-132, flat: one route, `web/src/app/app/[page]`; before, `/app/packs/<pack>/<id>`, which now
+  redirects to the flat address, `pack-routes.generated.json`). The breadcrumbs read "Account / <the tab's label>".
+  `gen-packs` refuses an id whose address another page holds: a shell page (a folder of `web/src/app/app`: `billing`,
+  `records`, ..., and `packs`, `host`), a host pack's page (its `routes.json`), or another pack's page or tab. Admin pack
+  pages stay at `/admin/packs/<pack>/<page>`. Boards and timelines show up to 200 records; a board by a workspace area's lifecycle field
   offers each card the moves its state allows (a menu, no drag), through the data API's move (`POST
   /api/data/:area/:key/move`, the record store's roles and transitions; the move stamps the state's time). `npm run test:console-tabs` checks the sidebar, the tab pages, a rendered overview and board in a headless
   browser (when the machine has one) and the build copy's typecheck.

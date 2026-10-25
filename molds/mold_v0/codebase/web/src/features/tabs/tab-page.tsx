@@ -1,5 +1,5 @@
 'use client';
-// A tab a pack declares (mold_v0-058), at /app/packs/<pack>/<tab>: the shell draws it from pack.json alone.
+// A tab a pack declares (mold_v0-058), at /app/<tab> (mold_v0-132): the shell draws it from pack.json alone.
 //   overview   the tab's charts (mold_v0-063; ./charts.tsx), below the shell's sections it includes, in its order
 //              (mold_v0-134, a home page): the Setup page's checklist (folded to a line once done), the notices
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date), each row opening
