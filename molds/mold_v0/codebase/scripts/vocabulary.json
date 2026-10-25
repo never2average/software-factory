@@ -138,13 +138,14 @@
     },
     "ceilings": {
       "host_gated": {
-        "why": "Text shown only where the build's host pack has the feature or the tables (hostFeature('journeys'), hostTable('products'), the session engine's tables): a declarative app never reaches it.",
+        "why": "Text shown only where the build's host pack has the feature or the tables (hostFeature('journeys'), hostFeature('research'), hostTable('products'), the session engine's tables): a declarative app never reaches it.",
         "migration": "Moves into the host pack when the hook it sits behind gets a pack field (HostWeb/HostDefinition copy hooks; audit rows 7, 8 and 17).",
         "files": {
           "web/src/features/portal/setup.tsx": 6,
           "src/account-roles.ts": 1,
           "src/admin-roles.ts": 1,
-          "web/src/hooks/use-breadcrumbs.tsx": 1
+          "web/src/hooks/use-breadcrumbs.tsx": 1,
+          "web/src/features/admin/requests.tsx": 1
         }
       },
       "host_tables": {
@@ -172,13 +173,6 @@
           "src/compute-jobs.ts": 1,
           "src/compute.ts": 1,
           "src/settings.ts": 1
-        }
-      },
-      "access_requests": {
-        "why": "The review page's fields for the first product's request form (agents, competitors, goals; audit row 6).",
-        "migration": "Declared access_request.fields in pack.json or the profile (audit row 6 ticket).",
-        "files": {
-          "web/src/features/admin/requests.tsx": 5
         }
       },
       "usage_page": {

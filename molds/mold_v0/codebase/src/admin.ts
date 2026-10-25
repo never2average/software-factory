@@ -475,11 +475,15 @@ async function accountRuns(orgId: number) {
 
 // ---------- access requests ----------
 
+/**
+ * Access requests, pending first: the shell's own fields, `answers` (the build's own questions, mold_v0-102: keyed by the
+ * fields src/access-request.ts declares; accessFields() gives their labels), where they came from and a host pack's research.
+ */
 export async function listRequests(status?: string) {
   if (status && !["pending", "approved", "declined"].includes(status)) throw new AdminError("status must be pending, approved or declined");
   return (await getDb()).query(
-    `SELECT q.id, q.email, q.company, q.product_url, q.message, q.created_at, q.status, q.decided_at, o.slug AS org_slug, o.name AS org_name,
-            q.name, q.role, q.team_size, q.agents, q.source, q.docs_url, q.competitors, q.goal, q.timeline, q.heard_from, q.subindustry, q.research, q.research_status, q.research_error, q.researched_at,
+    `SELECT q.id, q.email, q.company, q.message, q.created_at, q.status, q.decided_at, o.slug AS org_slug, o.name AS org_name,
+            q.name, q.source, q.answers, q.research, q.research_status, q.research_error, q.researched_at,
             ${researchJobs() ? `(SELECT json_build_object('id', r.id, 'status', r.status, 'stage', r.stage, 'note', r.note, 'error', r.error, 'created_at', r.created_at, 'finished_at', r.finished_at)
                FROM product_research r WHERE r.kind = 'prospect' AND r.request_id = q.id ORDER BY r.created_at DESC LIMIT 1)` : "NULL::json"} AS deep
        FROM access_requests q LEFT JOIN organizations o ON o.id = q.org_id

@@ -1,6 +1,8 @@
 'use client';
 // Access requests from the landing page as a database: views by status, approve (a new account, or a person added to
 // one), decline, reopen, one at a time from the ⋯ menu or in bulk. Everything is fetched once and the views filter here.
+// What a request asks besides the shell's own fields is the build's (mold_v0-102, src/access-request.ts): its answers are
+// shown under the labels the packs declare (pack.json access_request.fields), an answer no field declares under its key.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -23,12 +25,13 @@ import { ActionsMenu, Field, RecordView, type RecordCol, type RecordViewDef, typ
 import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
+import { accessFields } from '@/config/access-request.generated';
+import { answerText, labelledAnswers, type AccessAnswer } from '@/lib/access-request.generated';
 
 interface Req {
   id: number;
   email: string;
   company: string;
-  product_url: string | null;
   message: string | null;
   created_at: string;
   decided_at: string | null;
@@ -36,16 +39,9 @@ interface Req {
   org_slug: string | null;
   org_name: string | null;
   name: string | null;
-  role: string | null;
-  team_size: string | null;
-  agents: string[] | null;
   source: Record<string, string> | null;
-  docs_url: string | null;
-  competitors: string | null;
-  goal: string | null;
-  timeline: string | null;
-  heard_from: string | null;
-  subindustry: string | null;
+  /** The answers to the build's own questions, by field key (src/access-request.ts). */
+  answers: Record<string, AccessAnswer> | null;
   research: Brief | null;
   research_status: 'running' | 'done' | 'failed' | null;
   research_error: string | null;
@@ -71,8 +67,13 @@ export function matchOrg(req: Req, orgs: readonly OrgRow[] | undefined): OrgRow 
   if (!orgs || !d || !isWork(req)) return null;
   return orgs.find((o) => domainOf(o.contact || '') === d) ?? null;
 }
-const link = (q: Req) => (q.product_url ? (/^https?:\/\//.test(q.product_url) ? q.product_url : `https://${q.product_url}`) : null);
-const host = (q: Req) => { const u = link(q); try { return u ? new URL(u).host.replace(/^www\./, '') : null; } catch { return q.product_url; } };
+/** The build's first web-address question (src/access-request.ts type url): the request's site, shown under the company. */
+const SITE_FIELD = accessFields.find((f) => f.type === 'url') ?? null;
+const siteOf = (q: Req) => { const v = SITE_FIELD ? q.answers?.[SITE_FIELD.key] : null; return typeof v === 'string' && v ? v : null; };
+const link = (q: Req) => { const v = siteOf(q); return v ? (/^https?:\/\//.test(v) ? v : `https://${v}`) : null; };
+const host = (q: Req) => { const u = link(q); try { return u ? new URL(u).host.replace(/^www\./, '') : null; } catch { return siteOf(q); } };
+/** Every answer as text, for the search box. */
+const answersText = (q: Req) => labelledAnswers(accessFields, q.answers).map((a) => a.text).join(' ');
 const FIT = { strong: 'text-primary font-medium', possible: 'text-foreground', weak: 'text-muted-foreground', unknown: 'text-muted-foreground' } as const;
 const TONE = { pending: 'info', approved: 'ok', declined: 'neutral' } as const;
 // Days a request waited: still waiting when pending, else until it was decided.
@@ -152,7 +153,7 @@ export function AdminRequests() {
       // A requester's company research is a host pack's (mold_v0-039: the product's /requests/:id/research).
       ...(hostFeature('research') ? [lock({ label: q.research ? 'Re-run research' : 'Research the company', icon: <Icons.sparkles />, disabled: researchBusy(q), separator: true, onSelect: () => runResearch(q) }, 'requests')] : []),
       copyEmail(q),
-      ...(url ? [{ label: 'Open product site', icon: <Icons.externalLink />, onSelect: () => window.open(url, '_blank', 'noopener,noreferrer') }] : [])
+      ...(url && SITE_FIELD ? [{ label: `Open ${SITE_FIELD.label.toLowerCase()}`, icon: <Icons.externalLink />, onSelect: () => window.open(url, '_blank', 'noopener,noreferrer') }] : [])
     ];
   };
   const bulk = (sel: Req[], clear: () => void): RowAction[] => {
@@ -180,10 +181,11 @@ export function AdminRequests() {
       render: (q) => <StatusBadge tone={TONE[q.status]}>{q.status}</StatusBadge> },
     { key: 'person', label: 'Person', type: 'text', className: 'w-56', value: (q) => `${q.name ?? ''} ${q.email}`, render: (q) => (<>
       <p className='truncate text-sm leading-none'>{q.name || q.email}</p>
-      {(q.name || q.role || !isWork(q)) && <p className='text-muted-foreground mt-1.5 truncate text-xs leading-none'>{[q.role, q.name ? q.email : null, isWork(q) ? null : 'personal'].filter(Boolean).join(' · ')}</p>}
+      {(q.name || !isWork(q)) && <p className='text-muted-foreground mt-1.5 truncate text-xs leading-none'>{[q.name ? q.email : null, isWork(q) ? null : 'personal'].filter(Boolean).join(' · ')}</p>}
     </>) },
-    { key: 'fit', label: 'Fit', type: 'select', className: 'w-28', value: (q) => q.research?.fit ?? (q.research_status === 'running' ? 'researching' : 'not researched'),
-      render: (q) => q.research_status === 'running' ? muted('Researching…') : q.research ? <span className={cn('text-sm leading-none', FIT[q.research.fit])}>{q.research.fit}</span> : muted('—') },
+    // A host pack's research of the requester's company (hostFeature('research')): its verdict, only where it exists.
+    ...(hostFeature('research') ? [{ key: 'fit', label: 'Fit', type: 'select' as const, className: 'w-28', value: (q: Req) => q.research?.fit ?? (q.research_status === 'running' ? 'researching' : 'not researched'),
+      render: (q: Req) => q.research_status === 'running' ? muted('Researching…') : q.research ? <span className={cn('text-sm leading-none', FIT[q.research.fit])}>{q.research.fit}</span> : muted('—') } satisfies RecordCol<Req>] : []),
     { key: 'work', label: 'Work email', type: 'boolean', hidden: true, value: isWork, render: (q) => muted(isWork(q) ? 'Yes' : 'No') },
     { key: 'account', label: 'Account', type: 'text', hidden: true, value: (q) => q.org_name ?? matches.get(q.id), render: (q) => (q.org_name ? <span className='block truncate text-sm leading-none'>{q.org_name}</span> : muted(matches.get(q.id) ? `matches ${matches.get(q.id)}?` : '—')) },
     { key: 'created_at', label: 'Requested', type: 'date', className: 'w-28', keep: true, value: (q) => q.created_at, render: (q) => { const d = waited(q); return (<>
@@ -199,7 +201,7 @@ export function AdminRequests() {
       <RecordView<Req>
         id='admin-requests-v3' noun='requests' exportName='access-requests' views={VIEWS} defaultSort={[{ key: 'created_at', dir: 'desc' }]}
         rows={rows} rowKey={(q) => String(q.id)} cols={cols} actions={actions} bulk={bulk} loading={isLoading || !data}
-        searchText={(q) => `${q.company} ${q.email} ${q.name ?? ''} ${q.role ?? ''} ${q.competitors ?? ''} ${q.product_url ?? ''} ${q.message ?? ''} ${q.status} ${q.org_name ?? ''} ${q.research?.category ?? ''} ${q.research?.fit ?? ''}`}
+        searchText={(q) => `${q.company} ${q.email} ${q.name ?? ''} ${answersText(q)} ${q.message ?? ''} ${q.status} ${q.org_name ?? ''} ${q.research?.category ?? ''} ${q.research?.fit ?? ''}`}
         searchPlaceholder='Search access requests'
         primaryMenu={[{ label: 'Copy emails (current view)', icon: <IconCopy />, onSelect: () => {
           const v = currentView(), list = v.match ? rows.filter(v.match) : rows;
@@ -232,7 +234,7 @@ export function AdminRequests() {
             <div className='grid gap-2'>
               <Label htmlFor='decline-reason'>Reason (optional)</Label>
               <Textarea id='decline-reason' rows={3} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)}
-                placeholder='For example: we only support developer tools for now.' />
+                placeholder='For example: we are not opening new accounts in your region yet.' />
             </div>
           )}
           <AlertDialogFooter>
@@ -335,9 +337,6 @@ function ApproveDialog({ req, onClose, onDone }: { req: Req; onClose: () => void
 
 // ---------- the open request ----------
 
-const GOAL_LABEL: Record<string, string> = { baseline: 'Their APO baseline', competitor: 'Why agents pick a competitor', docs: 'Fixing docs and SDKs for agents', monitor: 'Tracking every release', other: 'Something else' };
-const TIMELINE_LABEL: Record<string, string> = { now: 'this week', month: 'this month', quarter: 'this quarter', exploring: 'just exploring' };
-
 const Label2 = ({ children }: { children: ReactNode }) => <div className='text-muted-foreground mb-2 text-xs font-medium leading-none'>{children}</div>;
 const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
 
@@ -346,22 +345,31 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
   const src = q.source ?? {};
   const came = [src.utm_source && `${src.utm_source}${src.utm_medium ? ` / ${src.utm_medium}` : ''}${src.utm_campaign ? ` · ${src.utm_campaign}` : ''}`,
     src.referrer && `via ${hostOf(src.referrer)}`, src.landing && `landed on ${src.landing}`, [src.city, src.country].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
-  const url = link(q);
   return (
     <div className='flex flex-col gap-8 text-sm'>
       <section>
         <Label2>From them</Label2>
         <dl>
-          <Field label='Person'>{q.name || '—'}{q.role && <span className='text-muted-foreground'> · {q.role}</span>}</Field>
+          <Field label='Person'>{q.name || '—'}</Field>
           <Field label='Email'><a className='hover:underline' href={`mailto:${q.email}`}>{q.email}</a>{!isWork(q) && <span className='text-amber-600 dark:text-amber-400'> · personal</span>}</Field>
-          <Field label='Company'>{q.company}{q.team_size && <span className='text-muted-foreground'> · {q.team_size} people</span>}</Field>
-          <Field label='Product'>{url ? <a className='text-primary hover:underline' href={url} target='_blank' rel='noopener noreferrer'>{host(q)}</a> : <span className='text-muted-foreground'>Not given</span>}</Field>
-          {q.docs_url && <Field label='Docs'><a className='text-primary hover:underline' href={q.docs_url} target='_blank' rel='noopener noreferrer'>{hostOf(q.docs_url)}</a></Field>}
-          {q.subindustry && <Field label='Sub-industry'>{q.subindustry}</Field>}
-          {q.competitors && <Field label='Competitors'>{q.competitors}</Field>}
-          {q.goal && <Field label='Wants first'>{GOAL_LABEL[q.goal] ?? q.goal}{q.timeline && <span className='text-muted-foreground'> · {TIMELINE_LABEL[q.timeline] ?? q.timeline}</span>}</Field>}
-          <Field label='Agents'>{q.agents?.length ? q.agents.join(', ') : <span className='text-muted-foreground'>Not given</span>}</Field>
-          {q.heard_from && <Field label='Heard from'>{q.heard_from}</Field>}
+          <Field label='Company'>{q.company}</Field>
+          {/* The build's own questions, in the order it declares them; one it asks but they left empty says so. */}
+          {accessFields.map((f) => {
+            const v = q.answers?.[f.key];
+            const text = answerText(f, v);
+            const href = f.type === 'url' && typeof v === 'string' && /^https?:\/\//.test(v) ? v : null;
+            return (
+              <Field key={f.key} label={f.label}>
+                {!text ? <span className='text-muted-foreground'>Not given</span>
+                  : href ? <a className='text-primary break-all hover:underline' href={href} target='_blank' rel='noopener noreferrer'>{hostOf(href)}</a>
+                  : f.type === 'email' ? <a className='break-all hover:underline' href={`mailto:${text}`}>{text}</a>
+                  : <span className='break-words whitespace-pre-wrap'>{text}</span>}
+              </Field>
+            );
+          })}
+          {labelledAnswers(accessFields, q.answers).filter((a) => !a.field).map((a) => (
+            <Field key={a.key} label={a.label}><span className='break-words whitespace-pre-wrap'>{a.text}</span></Field>
+          ))}
           <Field label='Came from'>{came || <span className='text-muted-foreground'>Unknown</span>}</Field>
           <Field label='Requested'><When d={q.created_at} />{q.status !== 'pending' && q.decided_at && <span className='text-muted-foreground'> · {q.status} <When d={q.decided_at} /></span>}</Field>
           {match && <Field label='Matches'>Same domain as {match}</Field>}

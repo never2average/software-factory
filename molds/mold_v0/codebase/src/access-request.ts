@@ -1,0 +1,235 @@
+/**
+ * The access-request form's own questions (mold_v0-102): what a build asks someone who requests access, declared by its
+ * packs (pack.json `access_request.fields`) or by the app (profile.json `access_request`, which then replaces the packs'),
+ * never by the shell. Pure, no imports, so the server (POST /api/access-requests, the staff console's list, the alert
+ * email), the console (web/src/features/site/request-access-form.tsx and web/src/features/admin/requests.tsx, through the
+ * generated copy) and scripts/gen-packs.mjs (node strips the types) run the same rules.
+ *
+ *   "access_request": {
+ *     "fields": [
+ *       { "key": "website", "label": "Company website", "type": "url", "required": true },
+ *       { "key": "team", "label": "Team size", "type": "select", "options": [{ "value": "1-10", "label": "1 to 10" }, ...] },
+ *       { "key": "tools", "label": "Tools you use", "type": "multi_select", "options": [...] },
+ *       { "key": "goal", "label": "What should it do first?", "type": "long_text", "max_length": 1000, "help": "..." }
+ *     ]
+ *   }
+ *
+ * `key`: lowercase letters, digits and _ (the answer's name where it is stored, access_requests.answers), never one of the
+ * shell's own fields (email, name, company, message, source), each once across the build. `type`: text (one line), long_text,
+ * url (http or https; one without a scheme gets https://), email, select (one of `options`) or multi_select (any of them).
+ * `max_length` (text kinds; default 200, long_text 2000, url and email 500), `help` and `placeholder` are optional, as is
+ * `required` (default false). Labels and help are plain text on one line. Without a declaration the form asks the shell's
+ * own fields only: a work email, a name, the company and a message.
+ *
+ * The server stores what the form sends under `answers` (an object of key -> answer); a declared key at the top level of
+ * the request is read too, so a host pack's own form that posts its fields flat keeps working. A key nobody declared is
+ * dropped, a required field left empty, an option not offered, an address that is not one or an answer over its length is
+ * refused (400, naming the field's label).
+ */
+
+export const ACCESS_FIELD_TYPES = ["text", "long_text", "url", "email", "select", "multi_select"] as const;
+export type AccessFieldType = (typeof ACCESS_FIELD_TYPES)[number];
+
+export interface AccessFieldOption { value: string; label: string }
+export interface AccessField {
+  key: string;
+  label: string;
+  type: AccessFieldType;
+  required?: boolean;
+  options?: AccessFieldOption[];
+  max_length?: number;
+  help?: string;
+  placeholder?: string;
+}
+export interface AccessRequestSpec { fields: AccessField[] }
+/** One stored answer: text, or the chosen options of a multi_select. */
+export type AccessAnswer = string | string[];
+
+/** The shell's own fields of a request: never a declared key. */
+export const SHELL_REQUEST_FIELDS = ["email", "name", "company", "message", "source"] as const;
+export const MAX_ACCESS_FIELDS = 20;
+const MAX_OPTIONS = 30;
+const KEY = /^[a-z][a-z0-9_]{0,39}$/;
+const DEFAULT_MAX: Record<AccessFieldType, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80 };
+const MAX_LENGTH: Record<AccessFieldType, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80 };
+const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder"];
+
+/** Characters a plain-text line may not hold (src/landing.ts NOT_PLAIN, src/legal.ts). */
+const NOT_PLAIN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u;
+/** Control characters an answer may not hold (a long answer keeps its line breaks and tabs). */
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+
+const plainProblem = (v: unknown, max: number): string | null =>
+  typeof v !== "string" || !v.trim() ? "text is required"
+    : v.length > max ? `at most ${max} characters`
+      : NOT_PLAIN.test(v) || /[<>{}]/.test(v) ? "plain text on one line: no line breaks, control or invisible characters, angle brackets or braces"
+        : null;
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Every problem with one `access_request` block (pack.json or profile.json), as "access_request.fields[i].x: ...". */
+export function accessRequestProblems(spec: unknown): string[] {
+  const out: string[] = [];
+  if (!isObject(spec)) return ["access_request: an object with fields"];
+  for (const k of Object.keys(spec)) if (k !== "fields" && k !== "$comment") out.push(`access_request.${k}: unknown key (known: fields)`);
+  if (spec.$comment !== undefined && (typeof spec.$comment !== "string" || spec.$comment.length > 2000)) out.push("access_request.$comment: text of up to 2000 characters");
+  const fields = spec.fields;
+  if (!Array.isArray(fields) || !fields.length) return [...out, "access_request.fields: a list of 1 to 20 fields"];
+  if (fields.length > MAX_ACCESS_FIELDS) out.push(`access_request.fields: at most ${MAX_ACCESS_FIELDS} fields`);
+  const seen = new Set<string>();
+  fields.forEach((f, i) => {
+    const at = `access_request.fields[${i}]`;
+    if (!isObject(f)) { out.push(`${at}: an object with key, label and type`); return; }
+    for (const k of Object.keys(f)) if (!FIELD_KEYS.includes(k)) out.push(`${at}.${k}: unknown key (known: ${FIELD_KEYS.join(", ")})`);
+    const key = f.key;
+    if (typeof key !== "string" || !KEY.test(key)) out.push(`${at}.key: 1-40 lowercase letters, digits or _, starting with a letter`);
+    else if ((SHELL_REQUEST_FIELDS as readonly string[]).includes(key)) out.push(`${at}.key: ${key} is the shell's own field (${SHELL_REQUEST_FIELDS.join(", ")}): the form always asks it`);
+    else if (seen.has(key)) out.push(`${at}.key: ${key} is declared twice`);
+    else seen.add(key);
+    const lp = plainProblem(f.label, 80);
+    if (lp) out.push(`${at}.label: ${lp}`);
+    const type = f.type as AccessFieldType;
+    if (!ACCESS_FIELD_TYPES.includes(type)) { out.push(`${at}.type: one of ${ACCESS_FIELD_TYPES.join(", ")}`); return; }
+    if (f.required !== undefined && typeof f.required !== "boolean") out.push(`${at}.required: true or false`);
+    for (const [k, max] of [["help", 200], ["placeholder", 120]] as const) {
+      if (f[k] === undefined) continue;
+      const p = plainProblem(f[k], max);
+      if (p) out.push(`${at}.${k}: ${p}`);
+    }
+    const choice = type === "select" || type === "multi_select";
+    if (choice) {
+      if (f.max_length !== undefined) out.push(`${at}.max_length: only for a text, long_text, url or email field`);
+      if (f.placeholder !== undefined && type === "multi_select") out.push(`${at}.placeholder: not for a multi_select field`);
+      const opts = f.options;
+      if (!Array.isArray(opts) || !opts.length || opts.length > MAX_OPTIONS) { out.push(`${at}.options: a list of 1 to ${MAX_OPTIONS} options`); return; }
+      const values = new Set<string>();
+      opts.forEach((o, j) => {
+        const oat = `${at}.options[${j}]`;
+        if (!isObject(o)) { out.push(`${oat}: an object with value and label`); return; }
+        for (const k of Object.keys(o)) if (k !== "value" && k !== "label") out.push(`${oat}.${k}: unknown key (known: value, label)`);
+        const vp = plainProblem(o.value, 80);
+        if (vp) out.push(`${oat}.value: ${vp}`);
+        else if (o.value !== (o.value as string).trim()) out.push(`${oat}.value: no space at either end`);
+        else if (values.has(o.value as string)) out.push(`${oat}.value: ${o.value} is offered twice`);
+        else values.add(o.value as string);
+        const p = plainProblem(o.label, 80);
+        if (p) out.push(`${oat}.label: ${p}`);
+      });
+    } else {
+      if (f.options !== undefined) out.push(`${at}.options: only for a select or multi_select field`);
+      if (f.max_length !== undefined && (!Number.isInteger(f.max_length) || (f.max_length as number) < 1 || (f.max_length as number) > MAX_LENGTH[type]))
+        out.push(`${at}.max_length: a whole number from 1 to ${MAX_LENGTH[type]}`);
+    }
+  });
+  return out;
+}
+
+/** A checked block's fields, with nothing but the known keys (defaults are left to the readers: maxLengthOf). */
+export function fieldsOf(spec: AccessRequestSpec): AccessField[] {
+  return spec.fields.map((f) => Object.fromEntries(FIELD_KEYS.flatMap((k) => (f[k as keyof AccessField] === undefined ? [] : [[k, f[k as keyof AccessField]]]))) as unknown as AccessField);
+}
+
+/**
+ * The build's fields: the packs' blocks in pack order, joined (a key declared by two packs is refused), unless the app's
+ * profile.json declares its own, which replaces them. -> the fields, or the problems.
+ */
+export function joinAccessFields(packs: { id: string; spec: unknown }[], profile: unknown): { fields: AccessField[]; problems: string[] } {
+  const problems: string[] = [];
+  if (profile !== undefined) {
+    const bad = accessRequestProblems(profile);
+    return bad.length ? { fields: [], problems: bad.map((b) => `profile.json: ${b}`) } : { fields: fieldsOf(profile as AccessRequestSpec), problems };
+  }
+  const fields: AccessField[] = [];
+  const owner = new Map<string, string>();
+  for (const p of packs) {
+    if (p.spec === undefined) continue;
+    const bad = accessRequestProblems(p.spec);
+    if (bad.length) { problems.push(...bad.map((b) => `packs/${p.id}: ${b}`)); continue; }
+    for (const f of fieldsOf(p.spec as AccessRequestSpec)) {
+      if (owner.has(f.key)) problems.push(`packs/${p.id}: access_request.fields: ${f.key} is already pack ${owner.get(f.key)}'s (a key is declared once in a build)`);
+      else { owner.set(f.key, p.id); fields.push(f); }
+    }
+  }
+  if (fields.length > MAX_ACCESS_FIELDS) problems.push(`access_request: the packs declare ${fields.length} fields together, at most ${MAX_ACCESS_FIELDS}`);
+  return { fields, problems };
+}
+
+export const maxLengthOf = (f: AccessField) => f.max_length ?? DEFAULT_MAX[f.type];
+
+/** An http(s) address as typed: one without a scheme gets https://. -> the address, or null when it is not one. */
+export function normalizeUrl(v: string): string | null {
+  const s = /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
+  try {
+    const u = new URL(s);
+    return (u.protocol === "https:" || u.protocol === "http:") && u.hostname.includes(".") && !u.username && !u.password && !/\s/.test(v) ? s : null;
+  } catch { return null; }
+}
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The answers a request carries, checked against the build's fields: `body.answers[key]`, else `body[key]` (a host pack's
+ * flat form). -> the answers to store (only what was given), or the first problem, naming the field's label.
+ */
+export function answersOf(body: unknown, fields: readonly AccessField[]): { answers: Record<string, AccessAnswer>; problem: string | null } {
+  const b = isObject(body) ? body : {};
+  const given = isObject(b.answers) ? b.answers : {};
+  const answers: Record<string, AccessAnswer> = {};
+  for (const f of fields) {
+    const raw = Object.prototype.hasOwnProperty.call(given, f.key) ? given[f.key] : Object.prototype.hasOwnProperty.call(b, f.key) ? b[f.key] : undefined;
+    if (f.type === "multi_select") {
+      const list = raw === undefined || raw === null || raw === "" ? [] : Array.isArray(raw) ? raw : [raw];
+      const offered = new Set((f.options ?? []).map((o) => o.value));
+      const chosen: string[] = [];
+      for (const x of list) {
+        if (typeof x !== "string" || !offered.has(x)) return { answers: {}, problem: `${f.label}: choose from the options offered.` };
+        if (!chosen.includes(x)) chosen.push(x);
+      }
+      if (!chosen.length) { if (f.required) return { answers: {}, problem: `${f.label}: choose at least one.` }; continue; }
+      answers[f.key] = chosen;
+      continue;
+    }
+    if (raw !== undefined && raw !== null && typeof raw !== "string") return { answers: {}, problem: `${f.label}: send text.` };
+    const v = typeof raw === "string" ? raw.trim() : "";
+    if (!v) { if (f.required) return { answers: {}, problem: `${f.label} is required.` }; continue; }
+    if (v.length > maxLengthOf(f)) return { answers: {}, problem: `${f.label}: at most ${maxLengthOf(f)} characters.` };
+    if (CONTROL.test(v) || (f.type !== "long_text" && /[\r\n\t]/.test(v))) return { answers: {}, problem: `${f.label}: plain text only.` };
+    if (f.type === "select") {
+      if (!(f.options ?? []).some((o) => o.value === v)) return { answers: {}, problem: `${f.label}: choose one of the options offered.` };
+      answers[f.key] = v;
+    } else if (f.type === "url") {
+      const u = normalizeUrl(v);
+      if (!u) return { answers: {}, problem: `${f.label}: enter a web address, such as https://example.com.` };
+      answers[f.key] = u;
+    } else if (f.type === "email") {
+      if (!EMAIL.test(v)) return { answers: {}, problem: `${f.label}: enter a valid email address.` };
+      answers[f.key] = v;
+    } else answers[f.key] = v;
+  }
+  return { answers, problem: null };
+}
+
+/** An answer as a person reads it: an option's label for a select, the labels joined for a multi_select. */
+export function answerText(f: AccessField | undefined, v: AccessAnswer | null | undefined): string {
+  if (v === null || v === undefined) return "";
+  const label = (x: string) => f?.options?.find((o) => o.value === x)?.label ?? x;
+  return Array.isArray(v) ? v.map((x) => label(String(x))).join(", ") : label(String(v));
+}
+
+/**
+ * The answers of a stored request in the order the build declares its fields, then any answer it no longer declares (an
+ * older form's) under its key: [label, text, field].
+ */
+export function labelledAnswers(fields: readonly AccessField[], answers: Record<string, unknown> | null | undefined): { key: string; label: string; text: string; field?: AccessField }[] {
+  const a = isObject(answers) ? answers : {};
+  const out: { key: string; label: string; text: string; field?: AccessField }[] = [];
+  const asAnswer = (v: unknown): AccessAnswer | null => (typeof v === "string" ? v : Array.isArray(v) ? v.map(String) : v === null || v === undefined ? null : String(v));
+  for (const f of fields) {
+    const t = answerText(f, asAnswer(a[f.key]));
+    if (t) out.push({ key: f.key, label: f.label, text: t, field: f });
+  }
+  for (const [k, v] of Object.entries(a)) {
+    if (fields.some((f) => f.key === k)) continue;
+    const t = answerText(undefined, asAnswer(v));
+    if (t) out.push({ key: k, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), text: t });
+  }
+  return out;
+}

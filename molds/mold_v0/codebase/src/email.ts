@@ -63,6 +63,8 @@ import { NS } from "./namespace.js";
 import { GENERATED_EMAIL_PITCH } from "./email-pitch.generated.js";
 import { vocabulary } from "./vocabulary.js";
 import { fillWith, type Words } from "./words.js";
+import { labelledAnswers, type AccessAnswer } from "./access-request.js";
+import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
@@ -411,7 +413,8 @@ const each = (to: string[], build: (to: string) => Email) => Promise.all(to.map(
 
 // ---------- access requests (src/http.ts, src/admin.ts) ----------
 
-export interface RequestFacts { id: number; email: string; company: string; name?: string | null; product_url?: string | null; message?: string | null }
+/** A request's facts; `answers` are the build's own questions' (mold_v0-102, src/access-request.ts), shown under their labels. */
+export interface RequestFacts { id: number; email: string; company: string; name?: string | null; message?: string | null; answers?: Record<string, AccessAnswer> | null }
 
 /** A new access request: "we got it" to the requester, and an alert to the operator. */
 export function requestReceived(r: RequestFacts) {
@@ -427,7 +430,7 @@ export function requestReceived(r: RequestFacts) {
     adminRecipients().then((to) => each(to, (t) => ({ kind: "request_alert", to: t, idempotencyKey: keyFor(`request:${r.id}:alert`, t), meta,
       subject: `New access request: ${r.company}`.slice(0, 200),
       text: lines(w.t`${r.name?.trim() || "Someone"} from ${r.company} asked for access to {product}.`,
-        [`Email: ${r.email}`, r.product_url ? `Product: ${r.product_url}` : null].filter(Boolean).join("\n"),
+        [`Email: ${r.email}`, ...labelledAnswers(GENERATED_ACCESS_FIELDS, r.answers).map((a) => `${a.label}: ${a.text.slice(0, 500)}`)].join("\n"),
         r.message ? `What they said:\n${r.message.slice(0, 1500)}` : null,
         `Review it: ${siteUrl()}/admin/requests`,
         sign(w)) }))),
