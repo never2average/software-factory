@@ -937,6 +937,18 @@ def self_test_v0(ok):
         ok_(bp == {"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}, "limits": {"runs": {"budget_usd_max": 40}}} and berrs == [],
             f"mold_v0-101: the brief's ## Profile sets the sender and the notifications: {bp} {berrs}")
         ok_(app_profile.from_brief("## Profile\nemail.notifications = none\n")[0] == {"email": {"notifications": []}}, "mold_v0-101: email.notifications = none turns every group off")
+        # mold_v0-119: the MCP server's instructions from the brief: a ## Profile line, or a ## MCP instructions section.
+        ip, ierrs, _ = app_profile.from_brief("## Profile\nmcp_instructions = Acme Ops tracks a team's incidents. Ask before closing one.\n")
+        ok_(ip == {"mcp_instructions": "Acme Ops tracks a team's incidents. Ask before closing one."} and ierrs == [], f"mold_v0-119: a mcp_instructions line in ## Profile: {ip} {ierrs}")
+        sec = "# Acme\n\n## MCP instructions\n\nAcme Ops tracks a team's incidents.\nIt reads them from the pager.\n\n\n\nAsk before closing one.\n\n## Records\n- x\n"
+        ip, ierrs, _ = app_profile.from_brief(sec)
+        ok_(ip == {"mcp_instructions": "Acme Ops tracks a team's incidents.\nIt reads them from the pager.\n\nAsk before closing one."} and ierrs == [],
+            f"mold_v0-119: a ## MCP instructions section is the instructions, paragraphs kept, up to the next heading: {ip} {ierrs}")
+        ok_(any("given twice" in e for e in app_profile.from_brief(sec + "\n## Profile\nmcp_instructions = Other\n")[1]), "mold_v0-119: instructions in two places are refused")
+        ok_(any("empty" in e for e in app_profile.from_brief("## MCP instructions\n\n## Records\n")[1]), "mold_v0-119: an empty section is refused")
+        ok_(app_profile.problems({"mcp_instructions": "Line one.\nLine two."}, "mold_v0", ROOT) == [], "mold_v0-119: mcp_instructions is settable, line breaks fine")
+        for bad, why in (("x" * 4001, "at most 4000"), ("Zero\u200bwidth", "plain text only"), ("  ", "must be text"), (7, "must be text")):
+            ok_(any(why in e for e in app_profile.problems({"mcp_instructions": bad}, "mold_v0", ROOT)), f"mold_v0-119: mcp_instructions refused ({why})")
         # mold_v0-094: the landing page from the brief, checked as text (its sections are the shell's to check).
         lp, lerrs, _ = app_profile.from_brief("## Profile\nlanding.hero.headline = Audits that never sleep\nlanding.footer.shell_links = false\n- `landing.seo.title`: Acme Ops\n")
         ok_(lp == {"landing": {"hero": {"headline": "Audits that never sleep"}, "footer": {"shell_links": False}, "seo": {"title": "Acme Ops"}}} and lerrs == [],

@@ -107,7 +107,7 @@ A desk where each workspace tracks the vulnerabilities found in its own applicat
 - nightly_audit: Nightly audit | audit_scan | 0 3 * * * | over audit_apps
 
 ## Onboarding
-- first_app: Add a first application | record audit_apps
+- first_app: Add a first application | record audit_apps | prompt Add my app at https://app.example.com to Vuln Desk
 - first_audit: Run a first audit | run audit_scan
 
 ## Words
@@ -119,6 +119,8 @@ A desk where each workspace tracks the vulnerabilities found in its own applicat
 - admin only: vd_start_audit_scan
 - rename list_audit_findings: list_vulnerabilities
 - describe vd_get_audit_findings: One vulnerability by its key, with its application and control.
+- instructions: Vuln Desk keeps a team's applications and the findings of their audits.
+- instructions: Ask before starting an audit: it runs against the live application.
 """
 
 # No ## Tabs, ## Credentials, ## Schedules or ## Onboarding, and no brand: each is a question.
@@ -171,7 +173,9 @@ Pack: adoption
 """
 
 
-MCP_WANT = {"prefix": "vd", "exclude": ["vd_cancel_audit"], "admin_only": ["vd_start_audit_scan"], "rename": {"vd_list_audit_findings": "list_vulnerabilities"}, "describe": {"vd_get_audit_findings": "One vulnerability by its key, with its application and control."}}
+MCP_WANT = {"prefix": "vd", "exclude": ["vd_cancel_audit"], "admin_only": ["vd_start_audit_scan"], "rename": {"vd_list_audit_findings": "list_vulnerabilities"}, "describe": {"vd_get_audit_findings": "One vulnerability by its key, with its application and control."},
+            # mold_v0-119: each `- instructions:` bullet is a paragraph of pack.json mcp.instructions
+            "instructions": "Vuln Desk keeps a team's applications and the findings of their audits.\n\nAsk before starting an audit: it runs against the live application."}
 
 
 def run(n=0, fails=None):
@@ -224,7 +228,8 @@ def run(n=0, fails=None):
             f = pj["record_areas"][2]; ag = pj["job_kinds"][0]["agent"]; n += 1
             if f["lifecycle"]["transitions"][2] != {"from": ["open", "triaged"], "to": "accepted", "label": "Accept the risk", "roles": ["owner"]} \
                or ag["command"] != ["node", "audit.mjs", "--app", "{app}"] or ag["args"] != {"app": {"from": "scope.app"}} or ag["timeout_seconds"] != 1200 \
-               or pj["metrics"][1]["where"][1] != {"field": "due", "op": "lt", "value": "today"} or pj["words"] != {"run": "audit"} or pj.get("mcp") != MCP_WANT:
+               or pj["metrics"][1]["where"][1] != {"field": "due", "op": "lt", "value": "today"} or pj["words"] != {"run": "audit"} or pj.get("mcp") != MCP_WANT \
+               or pj["onboarding"][0].get("prompt") != "Add my app at https://app.example.com to Vuln Desk" or "prompt" in pj["onboarding"][1]:
                 fails.append(f"vulnerability pack details: {f['lifecycle']['transitions'][2]} {ag} {pj['metrics'][1]}")
             man = json.load(open(os.path.join(P, "vuln_desk", "pack.json"))); n += 1
             if man.get("intake", {}).get("pack_json_sha256") != BP.sha(open(shell("vuln_desk"), "rb").read()) or "mcp" in man["intake"] \
@@ -403,7 +408,12 @@ def run(n=0, fails=None):
                                   ("an invisible character in a description", VULNS.replace("with its application", "with its\u200b application"), "zero-width"),
                                   ("markup in a description", VULNS.replace("with its application", "with <b>its</b> application"), "no < or >"),
                                   ("an admin tool moved to the admin MCP", VULNS.replace("- admin only: vd_start_audit_scan", "- admin only: vd_admin_list_audit_controls"), "on the admin MCP already"),
-                                  ("an unknown setting", VULNS.replace("- prefix: vd", "- prefix: vd\n- tools: generated"), "unknown MCP setting")):
+                                  ("an unknown setting", VULNS.replace("- prefix: vd", "- prefix: vd\n- tools: generated"), "unknown MCP setting"),
+                                  # mold_v0-119: the instructions and an onboarding step's prompt, as the shell checks them
+                                  ("an invisible character in the instructions", VULNS.replace("keeps a team's", "keeps a\u200b team's"), "instructions: plain text"),
+                                  ("instructions past 4000 characters", VULNS.replace("- instructions: Ask before", "- instructions: " + "x" * 3990 + "\n- instructions: Ask before"), "at most 4000 characters"),
+                                  ("markup in a prompt", VULNS.replace("| prompt Add my app", "| prompt Add <my> app"), "prompt is one line of plain text"),
+                                  ("a prompt given twice", VULNS.replace("| prompt Add my app", "| prompt Hello | prompt Add my app"), "prompt is given twice")):
             r = go("zz_mcp", brief.replace("Pack: vuln_desk", "Pack: mcp_bad")); n += 1
             if r.returncode == 0 or want not in out(r) or "Traceback" in out(r) or os.path.exists(os.path.join(P, "mcp_bad")):
                 fails.append(f"mcp, {what}: rc={r.returncode} {out(r)[-400:]}")
