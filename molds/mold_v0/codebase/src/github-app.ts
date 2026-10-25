@@ -155,9 +155,9 @@ export async function configSummary() {
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 /** The app's own JSON Web Token (RS256, nine minutes), signed with its private key. Never leaves this module but to GitHub. */
 function appJwt(c: GithubAppConfig): string {
-  const now = Math.floor(Date.now() / 1000);
+  const t = Math.floor(now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const body = b64u(JSON.stringify({ iat: now - 60, exp: now + 540, iss: c.app_id }));
+  const body = b64u(JSON.stringify({ iat: t - 60, exp: t + 540, iss: c.app_id }));
   const sig = createSign("RSA-SHA256").update(`${head}.${body}`).sign(privateKey(c.private_key));
   return `${head}.${body}.${b64u(sig)}`;
 }
