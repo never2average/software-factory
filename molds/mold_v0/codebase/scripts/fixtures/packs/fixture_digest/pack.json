@@ -1,0 +1,52 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_digest",
+  "name": "Fixture digest",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-137; scripts/mcp-prompts-test.ts): a workspace's notes and the slash commands that work with them, declared in pack.json mcp.prompts. Never shipped.",
+  "record_areas": [
+    {
+      "name": "digest_notes",
+      "label": "Notes",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["topic"],
+      "fields": [
+        { "name": "topic", "label": "Topic", "type": "text", "max_length": 120 },
+        { "name": "body", "label": "Body", "type": "text", "max_length": 2000 }
+      ]
+    }
+  ],
+  "mcp": {
+    "instructions": "Fixture digest keeps a workspace's notes. Read them with fixture_digest_list_digest_notes.",
+    "prompts": [
+      {
+        "name": "weekly_notes",
+        "title": "Weekly notes",
+        "description": "A short summary of the week's notes.",
+        "text": ["Summarise this week's notes.", "1. Call fixture_digest_list_digest_notes.", "Keep it under 100 words."]
+      },
+      {
+        "name": "explain_note",
+        "title": "Explain a note",
+        "description": "Read one note and explain it in plain words.",
+        "arguments": [{ "name": "key", "description": "The note's key, e.g. n-1", "required": true }],
+        "text": "Explain the note {key}.\n1. Call fixture_digest_get_digest_notes { key: {key|json} }.\n2. Say what it means in two sentences."
+      },
+      {
+        "name": "notes_report",
+        "title": "Notes report",
+        "description": "A report on the notes of one topic, or of a time window.",
+        "arguments": [
+          { "name": "topic", "description": "Only this topic; omit for every topic" },
+          { "name": "days", "description": "Look-back window in days (default 30)", "type": "integer" },
+          { "name": "since", "description": "Only notes since this date (YYYY-MM-DD); overrides days" }
+        ],
+        "text": [
+          "Call fixture_digest_list_digest_notes with {?since}{topic,since|json}{/since}{!since}{topic,days|json}{/since}{!topic} (then group the notes by topic){/topic}.",
+          "{?days}Cover the last {days} days.{/days}{!days}Cover the last 30 days.{/days} Literal braces stay as written: {} and { topic: ... } and {{topic}."
+        ]
+      }
+    ]
+  }
+}

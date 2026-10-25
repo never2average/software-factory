@@ -6,6 +6,7 @@ import { hostToolNames, hosts, type HostDefinition } from "./host.js";
 import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
 import { generatedInstructions, packInstructions } from "./mcp-tools.js";
+import { registerPackPrompts } from "./mcp-prompts.js";
 import { PROFILE } from "./profile.js";
 import { instructionsParagraph } from "./source-offer.js";
 import { currentOffer } from "./data-map.js";
@@ -14,8 +15,8 @@ import type { SameNames, ShellToolName } from "./shell-tools.js";
 /**
  * The customer MCP server (/mcp, one workspace's): its name and version from the profile, its instructions, then the
  * host packs' own tools (src/host.ts, mold_v0-039: a product's surface), then every pack's tools and the tools generated
- * from the packs' declarations (src/packs.ts), then the host packs' slash commands. With zero packs it has no tool: a
- * neutral shell.
+ * from the packs' declarations (src/packs.ts), then the host packs' slash commands and the packs' declared ones
+ * (mold_v0-137). With zero packs it has no tool and no prompt: a neutral shell.
  */
 
 /** The instructions of a server with no product: what the shell is, never a product's words (the profile's own win). */
@@ -95,11 +96,13 @@ const sameShellNames: SameNames<never, ShellToolName> = true;
 void sameShellNames;
 
 /**
- * The instructions' lead: the profile's `mcp_instructions` (mold_v0-060), else a host pack's (mold_v0-039), else the
- * packs' pack.json `mcp.instructions` (mold_v0-105), else the shell's neutral two sentences.
+ * The instructions' lead: the profile's `mcp_instructions` (mold_v0-060), else a host pack's (mold_v0-039: its host
+ * entry's, else its pack.json `mcp.instructions`, mold_v0-137), else the other packs' pack.json `mcp.instructions`
+ * (mold_v0-105), else the shell's neutral two sentences.
  */
 export function leadInstructions(profile: Pick<typeof PROFILE, "mcp_instructions"> = PROFILE, hostList: readonly HostDefinition[] = hosts()): string {
-  return profile.mcp_instructions ?? hostList.find((h) => h.mcp?.instructions)?.mcp?.instructions ?? packInstructions() ?? SHELL_INSTRUCTIONS;
+  const hostIds = hostList.map((h) => h.id);
+  return profile.mcp_instructions ?? hostList.find((h) => h.mcp?.instructions)?.mcp?.instructions ?? packInstructions(hostIds, true) ?? packInstructions(hostIds) ?? SHELL_INSTRUCTIONS;
 }
 
 /** `context`: the account's and the person's context (a host pack's, src/host.ts), appended to the instructions. */
@@ -121,6 +124,8 @@ export function createServer(org: Org, context = ""): McpServer {
   // A host pack's own resources and tools first (the order clients list them in), then every pack's (mold_v0-038).
   for (const h of hosts()) h.mcp?.register(server, org);
   registerPackTools(server, org);
+  // Slash commands after every tool: the host packs' own, then the ones the packs declare (mold_v0-137, pack.json mcp.prompts).
   for (const h of hosts()) h.mcp?.registerPrompts?.(server, org);
+  registerPackPrompts(server);
   return server;
 }

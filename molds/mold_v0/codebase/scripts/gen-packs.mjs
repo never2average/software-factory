@@ -17,7 +17,8 @@
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
-//   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts
+//   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
+//                                        and their pack.json engine.config (mold_v0-137) when one declares it
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
 //   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's guide code, else the packs' own guide pages
 //                                        (pack.json guide) and the facts its generated pages are written from (mold_v0-106)
@@ -117,6 +118,8 @@ const PAGE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
+  // a host pack's engine settings (mold_v0-137: engine.config, read by its own code through src/pack-host.ts engineConfig)
+  "engine",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
@@ -646,7 +649,12 @@ function loadPack(dirName) {
   // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
   // a declarative pack's is inline in pack.json (guide.markdown; guide.dir is gone, mold_v0-124), checked below.
   if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
-  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  // A host pack's engine settings (mold_v0-137): read by its own code only (src/pack-host.ts engineConfig), so only a
+  // host pack may have them; their shape is checked below (src/pack-manifest.ts) and against the host entry's schema when
+  // the server starts (src/host.ts registerHosts).
+  if (m.engine !== undefined && !host) fail(where, "engine: only a host pack's own code reads engine.config (a declarative pack says everything in its declarations)");
+  const engineConfig = host && m.engine && typeof m.engine === "object" && !Array.isArray(m.engine) && m.engine.config && typeof m.engine.config === "object" && !Array.isArray(m.engine.config) ? m.engine.config : null;
+  return { id, dir, json: m, host, schema, engineConfig, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -1108,6 +1116,12 @@ if (loaded.length === entries.length) {
   }
   const catalog = generateCatalog(loaded, { customer: shell, admin: ADMIN_SHELL_TOOL_NAMES });
   mcp.problems.push(...catalog.problems);
+  // The packs' declared slash commands (mold_v0-137, pack.json mcp.prompts): one name, one pack.
+  const promptOwner = new Map();
+  for (const p of loaded) for (const pr of p.definition.mcp?.prompts ?? []) {
+    if (promptOwner.has(pr.name)) mcp.problems.push(\`pack \${p.id}: prompt \${pr.name} is already pack \${promptOwner.get(pr.name)}'s\`);
+    else promptOwner.set(pr.name, p.id);
+  }
   mcp.withheld = catalog.withheld;
   // Each tab's empty state (mold_v0-107), in the build's words: an area is addable when its create tool is on the customer MCP.
   const addable = new Set(catalog.tools.filter((t) => t.op === "create" && t.door === "workspace" && !t.admin_only).map((t) => t.area));
@@ -1356,7 +1370,10 @@ files.set(srcHosts, HEADER +
   hostPacks.map((p, i) => `import host${i} from ${JSON.stringify(importPath(srcHosts, path.join(p.dir, p.host.entry)))};\n`).join("") +
   (hostPacks.length ? "\n" : "") +
   "/** The host packs of this build (src/host.ts), in pack order; none with zero packs. */\n" +
-  `export const HOSTS: readonly unknown[] = [${hostPacks.map((_p, i) => `host${i}`).join(", ")}];\n`);
+  `export const HOSTS: readonly unknown[] = [${hostPacks.map((_p, i) => `host${i}`).join(", ")}];\n` +
+  // Their pack.json engine.config (mold_v0-137), only when one declares it (a build without one writes what it did).
+  (hostPacks.some((p) => p.engineConfig) ? "\n/** Each host pack's pack.json `engine.config` (mold_v0-137), by pack id: checked against its host entry's schema when it registers (src/host.ts). */\n" +
+    `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : ""));
 // Their console code (web/src/packs/<id>/index.ts) and orchestrator entries (orchestrator/packs/<id>/main.ts).
 files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADER +
   "import type { HostWeb } from '@/features/packs/host-web';\n" +
@@ -1495,8 +1512,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
-  // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's.
-  (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).length) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
+  // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's. A host pack's mcp block (mold_v0-137:
+  // its server instructions and slash commands) adds no tool or run, so it alone does not count.
+  (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).some((k) => !(p.host && k === "mcp"))) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
     `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +

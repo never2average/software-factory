@@ -84,6 +84,13 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const catalog = generateCatalog(out.map((p) => ({ id: p.id, name: p.manifest.name, words: p.manifest.words, definition: p.definition })),
     { customer: [...reservedTools, ...RECORD_TOOL_NAMES], admin: reservedAdmin });
   problems.push(...catalog.problems);
+  // The packs' declared slash commands (mold_v0-137, pack.json mcp.prompts): one name, one pack.
+  const promptOwner = new Map<string, string>();
+  for (const p of out) for (const pr of p.definition.mcp?.prompts ?? []) {
+    const owner = promptOwner.get(pr.name);
+    if (owner) problems.push(`pack ${p.id}: prompt ${pr.name} is already pack ${owner}'s`);
+    else promptOwner.set(pr.name, p.id);
+  }
   const generated = new Set(catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => t.name));
   // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, a pack's (mold_v0-011),
   // or one generated for the customer MCP (mold_v0-060).

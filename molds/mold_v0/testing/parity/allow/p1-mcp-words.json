@@ -1,0 +1,7 @@
+{
+  "phase": "P1 (mold_v0-137): the host pack's MCP words read from config (pack.json mcp and engine.config)",
+  "allow": [
+    { "key": "generated::src/hosts.generated.ts", "reason": "the host pack's pack.json engine.config is written beside its host entry (HOST_ENGINE_CONFIG), checked against the entry's schema when it registers" },
+    { "key": "generated::src/packs.generated.ts", "reason": "the host pack's pack.json mcp block (server instructions, slash commands) is its compiled declarations now (declared: {mcp})" }
+  ]
+}

@@ -67,6 +67,7 @@ import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
+import { templateProblems } from "./text-template.js";
 
 export { z };
 
@@ -1205,11 +1206,56 @@ export const OnboardingStepSchema = z.object({
  *               the customer MCP (only the MCP tool moves: the data API and the console still serve the workspace)
  *   instructions  (mold_v0-105) the customer MCP server's instructions: what the app is and how to work with it, plain
  *               text, up to 4000 characters, used when the profile has no `mcp_instructions` and no host pack has its
- *               own (several packs' are joined, in pack order); the shell adds the generated tools' paragraph after it
+ *               own (several packs' are joined, in pack order); the shell adds the generated tools' paragraph after it.
+ *               A host pack's (mold_v0-137) stands where its host entry's own instructions did: it wins over the other
+ *               packs' and the profile's still wins over it
+ *   prompts     (mold_v0-137) slash commands (MCP prompts): each a name, a title, a description, its arguments (each a
+ *               name, a description, required or not, a string or an integer: a positive number, rounded) and its text,
+ *               a template (src/text-template.ts) filled with the arguments the person gives; on the customer MCP after
+ *               every tool, in pack order (McpPromptSchema)
  * A pack that declares onboarding steps also gets `<prefix>_get_started` (mold_v0-105): the caller's workspace's progress
  * through them, the next step and the prompt to type; the instructions tell clients to call it first.
  */
 const mcpToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a tool name: lowercase letters, digits and _, starting with a letter, at most 64");
+/** One line of plain text: no control, zero-width or direction characters. */
+const promptLine = (max: number) => z.string().trim().min(1).max(max)
+  .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text: one line, no control or direction characters");
+/** A prompt's text: plain text, line breaks and tabs allowed. */
+const PROMPT_TEXT = /^[^\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/;
+/** One argument of a declared slash command (mold_v0-137). Clients send every argument as text. */
+export const McpPromptArgSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an argument name: lowercase letters, digits and _, starting with a letter"),
+  description: promptLine(500).optional(),
+  /** Whether the person must give it (default false). */
+  required: z.boolean().optional(),
+  /** `integer`: given only when it is a positive number, then rounded to a whole one ({days} 14, {days|json} 14). */
+  type: z.enum(["string", "integer"]).optional(),
+}).strict();
+/**
+ * A declared slash command (mold_v0-137; pack.json `mcp.prompts[]`): the message a client puts in the conversation when
+ * the person picks it. `text` is a template (src/text-template.ts: {arg}, {arg|json}, {a,b|json}, {?arg}…{/arg},
+ * {!arg}…{/arg}) of its own arguments, one string or a list of lines (joined with line breaks).
+ */
+export const McpPromptSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  name: mcpToolName,
+  title: promptLine(200).optional(),
+  description: promptLine(1000).optional(),
+  arguments: z.array(McpPromptArgSchema).max(20).optional(),
+  text: z.union([z.string().min(1).max(20000), z.array(z.string().max(4000)).min(1).max(200)]),
+}).strict().superRefine((p, ctx) => {
+  const text = promptText(p);
+  if (!text.trim()) ctx.addIssue({ code: "custom", path: ["text"], message: "the text is empty" });
+  if (text.length > 20000) ctx.addIssue({ code: "custom", path: ["text"], message: "at most 20000 characters" });
+  if (!PROMPT_TEXT.test(text)) ctx.addIssue({ code: "custom", path: ["text"], message: "plain text: no control or direction characters (line breaks are fine)" });
+  const names = (p.arguments ?? []).map((a) => a.name);
+  const twice = names.find((n, i) => names.indexOf(n) !== i);
+  if (twice) ctx.addIssue({ code: "custom", path: ["arguments"], message: `argument ${twice} is declared twice` });
+  for (const pr of templateProblems(text, names)) ctx.addIssue({ code: "custom", path: ["text"], message: pr });
+});
+export type McpPrompt = z.output<typeof McpPromptSchema>;
+/** A declared prompt's text as one string (a list of lines joined with line breaks). */
+export const promptText = (p: Pick<McpPrompt, "text">): string => (Array.isArray(p.text) ? p.text.join("\n") : p.text);
 export const McpSettingsSchema = z.object({
   $comment: z.string().max(2000).optional(),
   prefix: z.string().regex(/^[a-z][a-z0-9_]{0,30}$/, "1-31 lowercase letters, digits or _, starting with a letter").optional(),
@@ -1221,6 +1267,7 @@ export const McpSettingsSchema = z.object({
   admin_only: z.array(mcpToolName).max(500).optional(),
   instructions: z.string().trim().min(1).max(4000)
     .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text: no control or direction characters (line breaks are fine)").optional(),
+  prompts: z.array(McpPromptSchema).max(50).refine((l) => new Set(l.map((p) => p.name)).size === l.length, "each prompt name once").optional(),
 }).strict();
 export type McpSettings = z.output<typeof McpSettingsSchema>;
 
