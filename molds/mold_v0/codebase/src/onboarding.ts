@@ -107,13 +107,19 @@ export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, 
 }
 
 /**
+ * The shell's setup step (src/app.ts setup) a pack step stands for, by its condition (mold_v0-146): the console's one
+ * checklist shows the pack's step in its place, so the same thing is never asked twice.
+ */
+const SHELL_STEP: Record<string, string> = { workspace: "joined", connected: "connected", first_call: "first_call" };
+
+/**
  * The checklist for workspace `orgId`: every pack step (or only pack `pack`'s: its get_started tool, mold_v0-105, in
  * src/mcp-tools.ts), done or not, with when it was done.
  */
 export async function onboardingFor(orgId: number, pack?: string) {
   const steps = await Promise.all(onboardingSteps().filter((s) => pack === undefined || s.pack === pack).map(async (s) => {
     const at = await doneAt(orgId, s);
-    return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, done: at !== null, at };
+    return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, done: at !== null, at, covers: SHELL_STEP[s.done_when.split(":", 1)[0]!] ?? null };
   }));
   return { steps, done: steps.filter((s) => s.done).length, total: steps.length };
 }

@@ -5,15 +5,15 @@ import { cn } from '@/lib/utils';
  * Flat page building blocks: the page is the container, so content sits in titled sections separated by space or a
  * hairline instead of boxed cards. Use a Card only for a dialog, a highlighted choice (e.g. a plan), or a call to action.
  */
-export function Section({ title, description, action, children, className }: {
-  title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string;
+export function Section({ title, titleId, description, action, children, className }: {
+  title?: ReactNode; /** The heading's id, for a region named by it (aria-labelledby). */ titleId?: string; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string;
 }) {
   return (
     <section className={cn('flex min-w-0 flex-col gap-3', className)}>
       {(title || action) && (
         <div className='flex flex-wrap items-end justify-between gap-2'>
           <div className='min-w-0'>
-            {title && <h2 className='text-base font-semibold tracking-tight'>{title}</h2>}
+            {title && <h2 id={titleId} className='text-base font-semibold tracking-tight'>{title}</h2>}
             {description && <p className='text-muted-foreground text-sm'>{description}</p>}
           </div>
           {action}

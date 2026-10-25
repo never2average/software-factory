@@ -29,6 +29,10 @@
 //    the tab page itself (the console's TabPage, bundled, its API answered in the page) draws the checklist (the next
 //    step's prompt, the connection panel), the first five notices and the charts, in that order; with every step done the
 //    checklist is one line that opens again. Screenshots with CONSOLE_TABS_SNAPSHOT_DIR (home-*.png).
+// 5b. One checklist (mold_v0-146): the setup steps and the pack's steps merged into one ordered list (setup-steps.ts:
+//    the shell's first, a pack step that stands for a shell step takes its place, the shell steps after it follow it); on
+//    the home tab one list, one count, the connection panel inside its connect step (no panel beside it), a done step's
+//    text behind its label.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -205,7 +209,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
   } finally { for (const f of ["render-home.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(web, f), { force: true }); }
   const step = (id: string, label: string, done: boolean, help: string, prompt: string | null = null) => ({ id, label, done, at: done ? "2026-10-20T00:00:00.000Z" : null, help, prompt });
   const steps = [step("joined", "Join your team's account", true, "You accepted the invitation and signed in."),
-    step("connected", "Add the connector to your AI client", true, "Copy the URL into your client."),
+    step("connected", "Add the connector to your AI client", complete, "Copy the URL into your client."),
     step("tools", "Switch the tools on", complete, "Turn the tools on in your client."),
     step("first_call", "Ask Fixture something", complete, "Your first question checks everything works end to end.", "What can Fixture do?")];
   const notices = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), kind: "due", area: "audit_findings", area_label: "Vulnerabilities", key: `f${i + 1}`, title: `Finding ${i + 1}`,
@@ -461,14 +465,17 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.ok(order.every((x) => x >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, `setup, then notices, then the charts: ${order}`);
       const setup = open.slice(order[0]!, order[1]!);
       assert.match(setup, /<h2 id="home-setup-title"[^>]*>Setup<\/h2>/, "the checklist is a section named Setup");
-      assert.match(setup, /2 of 5 steps done\./, "its progress across the packs' steps and the setup steps");
-      assert.match(setup, /Set up your workspace.*Add a first application.*Describe one application you want audited\./s, "the pack's open step, with its help");
-      assert.match(setup, /Get set up.*Join your team&#x27;s account|Get set up.*Join your team's account/s, "the setup steps");
+      assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
+      assert.equal([...setup.matchAll(/ of 5 steps done\./g)].length, 1, "one count");
+      assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
+      const order146 = ["Join your team", "Add the connector to your AI client", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
+      assert.ok(order146.every((x, i) => x >= 0 && (i === 0 || x > order146[i - 1]!)), `the shell's steps, then the pack's: ${order146}`);
       assert.doesNotMatch(setup, /You accepted the invitation/, "compact: a done step says nothing more");
-      assert.match(setup, /Turn the tools on in your client\./, "the next open setup step says what to do");
-      assert.match(setup, /Ask Fixture something/, "a later step is listed");
-      assert.doesNotMatch(setup, /Your first question checks/, "compact: only the next open step's text");
-      assert.match(setup, /Connect your AI client/, "the connection panel beside it");
+      assert.match(setup, /aria-expanded="false"[^>]*>Join your team(&#x27;|')s account/, "it opens from its label");
+      assert.match(setup, /Pick your client.*Copy URL.*Test my connection/s, "the next open step is connecting: the connection panel is its body");
+      assert.doesNotMatch(setup, /Connect your AI client/, "no connection panel beside the list");
+      assert.doesNotMatch(setup, /Turn the tools on in your client\.|Describe one application you want audited\./, "compact: only the next open step's text");
+      assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
       const notices = open.slice(order[1]!, order[2]!);
       assert.equal([...notices.matchAll(/href="\/app\/records\/audit_findings\//g)].length, 5, "the first five notices");
       assert.match(notices, /Show all 7/, "and a button for the rest");
@@ -478,9 +485,23 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(folded, /You&#x27;re all set|You're all set/, "every step done: one line");
       assert.match(folded, /5 of 5 setup steps done\./, "saying how many");
       assert.match(folded, /aria-expanded="false"[^>]*>Show setup<\/button>/, "that opens again");
-      assert.doesNotMatch(done, /Connect your AI client|Set up your workspace/, "folded: no checklist, no connection panel");
-      console.log("✓ rendered home tab: the checklist (the open steps, only the next one explained, the connection panel), five of seven notices with Show all, then the charts; all done, one line that opens again");
+      assert.doesNotMatch(done, /Connect your AI client|Pick your client|<ol class="mt-3"/, "folded: no checklist, no connection panel");
+      console.log("✓ rendered home tab: one checklist (shell steps then the pack's, one count, only the next one explained: the connection panel inside the connect step), five of seven notices with Show all, then the charts; all done, one line that opens again");
     }
+    // 5b. the merge itself (mold_v0-146)
+    const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.js");
+    const sh = (id: string, done = false) => ({ id, label: `shell ${id}`, done, at: null, help: `${id} help` });
+    const pk = (id: string, covers: string | null = null) => ({ pack: "p", id, label: `pack ${id}`, help: null, done: false, at: null, covers });
+    const shell = [sh("joined", true), sh("connected"), sh("tools"), sh("first_call")];
+    const keys = (x: { key: string }[]) => x.map((k) => k.key).join(" ");
+    assert.equal(keys(mergeSetupSteps(shell, [])), "shell:joined shell:connected shell:tools shell:first_call", "no pack steps: the shell's list");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("b")])), "shell:joined shell:connected shell:tools shell:first_call p/a p/b", "the shell's steps first, then the pack's");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("a"), pk("link", "connected"), pk("b")])), "shell:joined p/a p/link shell:tools shell:first_call p/b",
+      "a pack step standing for the connect step takes its place; the shell's steps after it follow it");
+    assert.equal(keys(mergeSetupSteps(shell, [pk("made", "joined"), pk("a"), pk("ask", "first_call")])), "p/made shell:connected shell:tools p/a p/ask",
+      "each covered shell step is dropped once, in the pack's place");
+    assert.equal(mergeSetupSteps(shell, [pk("link", "connected")]).find((x: { key: string }) => x.key === "p/link")?.shell, "connected", "the pack's connect step carries the connection panel");
+    console.log("✓ one checklist (mold_v0-146): the shell's steps then the packs', a pack step standing for a shell step in its place with the shell's later steps after it");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------

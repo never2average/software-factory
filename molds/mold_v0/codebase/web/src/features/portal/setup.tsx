@@ -3,7 +3,9 @@
 // tips. Main column: the selected journey. "Get set up" is the setup timeline and recent problems (workflow coverage
 // lives on /app/adoption); the other journeys (managed on /admin, src/playbooks.ts) show their stages, marked from real tool calls.
 // SetupChecklist is the same checklist as a section of a home tab (mold_v0-134: an overview tab's include: setup).
-import { useCallback, useEffect, useRef, useState } from 'react';
+// Either way it is one list (mold_v0-146): the shell's setup steps and the packs' onboarding steps, merged in order
+// (setup-steps.ts); on a home tab the connection panel is the body of its "connect your AI client" step.
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -23,10 +25,10 @@ import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
 import { hostFeature } from '@/features/packs/host-nav';
 import { onboardingAnchor } from '@/features/tabs/empty';
+import { mergeSetupSteps, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
 
-interface Step { id: string; label: string; done: boolean; at: string | null; help: string; optional?: boolean; prompt?: string | null }
 interface Setup {
-  steps: Step[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
+  steps: ShellSetupStep[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
   groups: { id: string; label: string; prompt: string; used: number; total: number }[];
   errors: { at: string; name: string | null; error: string | null; hint: string | null }[];
   connect: { connector_url: string; secret: boolean; clients: Client[] };
@@ -54,14 +56,15 @@ export function SetupPage() {
   const [selected, setSelected] = useQueryState('journey', { defaultValue: 'setup' });
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
+  const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
+  const stepsDone = steps.filter((x) => x.done).length;
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !s ? <LoadingCards count={4} /> : (
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
             {selected === 'setup' || !journey ? (<>
-              <PackChecklist data={pack.data} />
-              <Timeline s={s} />
+              <Checklist s={s} steps={steps} title='Get set up' anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
             {hostFeature('tips') && <TipsSection />}
@@ -69,7 +72,7 @@ export function SetupPage() {
           {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            {journeysOn && <JourneyPicker setup={{ done: s.done, total: s.total }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+            {journeysOn && <JourneyPicker setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
               void setSelected(id === 'setup' ? null : id);
               if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
             }} />}
@@ -81,10 +84,11 @@ export function SetupPage() {
 }
 
 /**
- * The Setup page's checklist on a home tab (mold_v0-134): the packs' onboarding steps and the setup steps, compact (only
- * the next open step says what to do), beside the connection panel. Once every step is done it folds to one line, which
- * opens it again (to connect another client, say). Journeys, tips and recent problems stay on the Setup page's own
- * layout (a build with a host pack; /app leads to this tab only when a declared tab includes the checklist).
+ * The Setup page's checklist on a home tab (mold_v0-134): one list (mold_v0-146) of the setup steps and the packs'
+ * onboarding steps, compact (only the next open step says what to do; any other opens on a click). The connection panel
+ * is the body of the step that connects an AI client. Once every step is done it folds to one line, which opens it again
+ * (to connect another client, say). Journeys, tips and recent problems stay on the Setup page's own layout (a build with
+ * a host pack; /app leads to this tab only when a declared tab includes the checklist).
  */
 export function SetupChecklist() {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
@@ -92,7 +96,8 @@ export function SetupChecklist() {
   const [open, setOpen] = useState(false);
   if (error) return <ErrorState error={error} />;
   if (!s || !pack.settled) return <LoadingCards count={1} />;
-  const done = s.done + (pack.data?.done ?? 0), total = s.total + (pack.data?.total ?? 0);
+  const steps = mergeSetupSteps(s.steps, pack.data?.steps ?? []);
+  const done = steps.filter((x) => x.done).length, total = steps.length;
   const complete = done >= total;
   if (complete && !open) return (
     <section aria-labelledby='home-setup-title' data-home-section='setup' data-complete=''
@@ -103,20 +108,18 @@ export function SetupChecklist() {
       <Button variant='link' size='sm' className='ml-auto h-auto px-0' aria-expanded={false} onClick={() => setOpen(true)}>Show setup</Button>
     </section>
   );
+  // A setup with no step to connect a client (a host pack's own steps) keeps the panel beside the list.
+  const inline = steps.some((x) => x.shell === 'connected');
+  const list = <Checklist s={s} steps={steps} title='Setup' titleId='home-setup-title' compact connect={inline ? reload : undefined} anchored
+    hide={complete ? <Button variant='link' size='sm' className='h-auto px-0' aria-expanded onClick={() => setOpen(false)}>Hide setup</Button> : null} />;
   return (
     <section aria-labelledby='home-setup-title' data-home-section='setup' className='flex min-w-0 flex-col gap-4'>
-      <div className='flex flex-wrap items-center gap-x-3 gap-y-1'>
-        <h2 id='home-setup-title' className='text-base font-semibold tracking-tight'>Setup</h2>
-        <span className='text-muted-foreground text-sm'>{done} of {total} steps done.</span>
-        {complete && <Button variant='link' size='sm' className='ml-auto h-auto px-0' aria-expanded onClick={() => setOpen(false)}>Hide setup</Button>}
-      </div>
-      <div className='grid w-full gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start'>
-        <div className='flex min-w-0 flex-col gap-6'>
-          <PackChecklist data={pack.data} compact />
-          <Timeline s={s} compact />
+      {inline ? list : (
+        <div className='grid w-full gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start'>
+          {list}
+          <ConnectionBox s={s} onConnected={reload} />
         </div>
-        <ConnectionBox s={s} onConnected={reload} />
-      </div>
+      )}
     </section>
   );
 }
@@ -133,6 +136,15 @@ function FloatPanel({ title, icon, description, className, children }: { title: 
 
 /** The connection string, always in view: copy it, then prove the client reaches the server. */
 function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }) {
+  return (
+    <FloatPanel title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
+      <ConnectSteps s={s} onConnected={onConnected} />
+    </FloatPanel>
+  );
+}
+
+/** Pick a client, add the connection URL to it, test it: the panel's three steps (a home tab's connect step shows them inline). */
+function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void }) {
   const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const clients = s.connect.clients;
@@ -172,7 +184,6 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
   const connected = live?.kind === 'ok' || s.clients.length > 0;
   const masked = url.replace(/([?&](?:key|token|k)=)[^&]+/i, '$1••••••••').replace(/(oct_[A-Za-z0-9]{4})[A-Za-z0-9_-]+/, '$1••••••••');
   return (
-    <FloatPanel title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
       <ol className='flex flex-col gap-4'>
           <NumberedStep n={1} title='Pick your client'>
             <NativeSelect id='client-pick' aria-label='Your AI client' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
@@ -210,7 +221,6 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
             )}
           </NumberedStep>
         </ol>
-    </FloatPanel>
   );
 }
 
@@ -376,34 +386,50 @@ interface TimelineItem { id: string; label: string; done: boolean; body: React.R
  * Get set up and every journey: progress, then a vertical timeline. The earliest open item is highlighted (ring on its
  * node, tinted body); done items show a check. One component, so every journey looks exactly like Get set up.
  */
-function TimelineSection({ title, done, total, noun, items, footer, compact = false }: {
-  title: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
-  /** A home tab's checklist (mold_v0-134): tighter, only the current item's text, a step the page links to (#anchor) too. */
+function TimelineSection({ title, titleId, done, total, noun, items, footer, extra, compact = false }: {
+  title: string; titleId?: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
+  /** Beside the percentage (a home tab's Hide setup). */
+  extra?: React.ReactNode;
+  /**
+   * A home tab's checklist (mold_v0-134): tighter, only the current item's text (and a step the page links to, #anchor);
+   * any other item's text opens from its label (mold_v0-146: a done connect step still reaches the connection panel).
+   */
   compact?: boolean;
 }) {
   const pct = Math.round((done / Math.max(1, total)) * 100);
   const current = items.find((x) => !x.done)?.id;
   const linked = typeof window !== 'undefined' ? decodeURIComponent(window.location.hash.slice(1)) : '';
+  const [opened, setOpened] = useState<Set<string>>(() => new Set());
+  const uid = useId();
+  const toggle = (id: string) => setOpened((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return (
-    <Section title={title} description={`${done} of ${total} ${noun} done.`}
-      action={<Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge>}>
+    <Section title={title} titleId={titleId} description={`${done} of ${total} ${noun} done.`}
+      action={<div className='flex items-center gap-3'>{extra}<Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge></div>}>
       <div className='bg-muted h-1.5 overflow-hidden rounded-full'><div className='bg-primary h-full rounded-full transition-all' style={{ width: `${pct}%` }} /></div>
       <ol className='mt-3'>
         {items.map((x, i) => {
           const cur = current === x.id;
           const last = i === items.length - 1;
+          const fixed = !compact || cur || (!!x.anchor && x.anchor === linked);
+          const shown = fixed || opened.has(x.id);
+          const bodyId = `${uid}-step-${i}`;
           return (
-            <li key={x.id} id={x.anchor} className={cn('relative flex scroll-mt-24 gap-4 last:pb-0', compact ? 'pb-3' : 'pb-7')}>
+            <li key={x.id} id={x.anchor} data-step={x.id} className={cn('relative flex scroll-mt-24 gap-4 last:pb-0', compact ? 'pb-3' : 'pb-7')}>
               {!last && <span aria-hidden='true' className={cn('absolute top-8 bottom-0 left-[15px] w-px', x.done ? 'bg-primary/60' : 'bg-border')} />}
               <span className={cn('relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums',
                 x.done ? 'border-primary bg-primary text-primary-foreground' : cur ? 'border-primary text-primary bg-background ring-primary/20 ring-4' : 'border-border text-muted-foreground bg-background')}>
-                {x.done ? <Icons.check className='size-4' /> : i + 1}
+                {x.done ? <><Icons.check aria-hidden='true' className='size-4' /><span className='sr-only'>Done:</span></> : i + 1}
               </span>
               <div className={cn('min-w-0 flex-1 pt-1', cur && 'bg-primary/5 -mt-1 rounded-lg px-4 py-3')}>
                 <div className='flex flex-wrap items-center gap-2'>
-                  <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span>
+                  {fixed || !x.body ? <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span> : (
+                    <button type='button' aria-expanded={shown} aria-controls={bodyId} onClick={() => toggle(x.id)}
+                      className={cn('-my-1.5 flex min-h-8 items-center gap-1.5 rounded-md text-left font-medium hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden', x.done && 'text-muted-foreground')}>
+                      {x.label}<Icons.chevronRight aria-hidden='true' className={cn('size-3.5 shrink-0 transition-transform', shown && 'rotate-90')} />
+                    </button>
+                  )}
                 </div>
-                {(!compact || cur || (!!x.anchor && x.anchor === linked)) && x.body}
+                {shown && x.body && <div id={bodyId}>{x.body}</div>}
               </div>
             </li>
           );
@@ -414,19 +440,11 @@ function TimelineSection({ title, done, total, noun, items, footer, compact = fa
   );
 }
 
-function Timeline({ s, compact }: { s: Setup; compact?: boolean }) {
-  return (
-    <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps' compact={compact}
-      items={s.steps.map((x) => ({ id: x.id, label: x.label.replace(' (team)', ''), done: x.done, body: <StepHelp help={x.help} done={x.done} prompt={x.prompt ?? null} /> }))}
-      footer={hostFeature('journeys') ? <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>Journeys</a>.</> : null} />
-  );
-}
-
-interface PackChecklistData { steps: { pack: string; id: string; label: string; help: string | null; done: boolean; at: string | null }[]; done: number; total: number }
+interface PackChecklistData { steps: PackSetupStep[]; done: number; total: number }
 
 /**
  * The packs' onboarding steps (mold_v0-011; src/onboarding.ts, /api/onboarding), each ticked from what really happened
- * in this workspace. Shown only when a pack declares a step (packOnboardingSteps): with none the page is the shell's.
+ * in this workspace. Asked for only when a pack declares a step (packOnboardingSteps): with none the list is the shell's.
  */
 function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
   const { data, error } = useOrgLoad(async () => {
@@ -438,19 +456,39 @@ function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
   return { data, settled: !packOnboardingSteps || data !== null || error !== null };
 }
 
-function PackChecklist({ data, compact }: { data: PackChecklistData | null; compact?: boolean }) {
+/**
+ * The one checklist (mold_v0-146): the setup steps and the packs' steps, merged (setup-steps.ts). `connect`: the step
+ * that connects an AI client shows the connection panel itself (a home tab; the Setup page has it pinned beside).
+ */
+function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored }: {
+  s: Setup; steps: ChecklistStep[]; title: string; titleId?: string; compact?: boolean;
+  connect?: () => void; hide?: React.ReactNode;
+  /** The packs' steps are in: scroll to a linked one. */
+  anchored: boolean;
+}) {
   // A link to one step (/app#onboarding-<pack>-<step>, from a tab's empty state; on a home tab, mold_v0-134, the redirect
   // keeps the anchor): the page loads the steps after the browser looked for the anchor, so scroll to it once drawn.
   useEffect(() => {
-    if (!data?.total || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
+    if (!anchored || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: 'start' });
-  }, [data]);
-  if (!data || !data.total) return null;
+  }, [anchored]);
+  const connectKey = connect ? steps.find((x) => x.shell === 'connected')?.key : undefined;
+  const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
+    body: x.key === connectKey ? (
+      <div className='mt-1 flex max-w-xl flex-col gap-3'>
+        <p className='text-muted-foreground text-sm'>{x.pack && x.help ? x.help : `${profile.name} runs inside the AI client you already use.`}{s.connect.secret ? ' Your connection URL contains your key: keep it private.' : ''}</p>
+        <ConnectSteps s={s} onConnected={connect!} />
+      </div>
+    ) : x.pack ? (x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null)
+      : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
+  const done = steps.filter((x) => x.done).length;
+  const ticks = steps.some((x) => x.pack);
   return (
-    <TimelineSection title='Set up your workspace' done={data.done} total={data.total} noun='steps' compact={compact}
-      items={data.steps.map((x) => ({ id: `${x.pack}/${x.id}`, anchor: onboardingAnchor(x.pack, x.id), label: x.label, done: x.done,
-        body: x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null }))}
-      footer={<>These steps tick themselves as you go.</>} />
+    <TimelineSection title={title} titleId={titleId} done={done} total={steps.length} noun='steps' compact={compact} items={items} extra={hide}
+      footer={ticks || hostFeature('journeys') ? <>
+        {ticks && 'These steps tick themselves as you go. '}
+        {hostFeature('journeys') && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>Journeys</a>.</>}
+      </> : null} />
   );
 }
 
