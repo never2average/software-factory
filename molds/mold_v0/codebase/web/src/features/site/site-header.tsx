@@ -38,7 +38,7 @@ export function SiteHeaderView({ name, mark, nav, links, account, ctas }: {
         ) : null}
         <div className='ml-auto flex shrink-0 items-center gap-2'>
           {links.map((l) => <Link key={l.href} href={l.href} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden sm:inline-flex')}>{l.label}</Link>)}
-          {account === 'account' ? <AccountButton signIn={ctas.signIn} open={ctas.open} /> : <AccountLinks start={ctas.start} signIn={ctas.signIn} open={ctas.open} />}
+          {account === 'account' ? <AccountButton signIn={ctas.signIn} open={ctas.open} /> : <AccountLinks start={ctas.start} signIn={ctas.signIn} open={ctas.open} compact={nav.length > 0} />}
           {nav.length ? (
             <Sheet open={open} onOpenChange={setOpen}>
               <SheetTrigger className={cn(buttonVariants({ variant: 'ghost', size: 'icon' }), 'lg:hidden')} aria-label='Open menu'>

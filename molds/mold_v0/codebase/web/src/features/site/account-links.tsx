@@ -24,12 +24,13 @@ export function useAccountLink(signIn: LandingLink, open: LandingLink) {
   return { ...(isLoaded && isSignedIn ? open : signIn), ready: isLoaded };
 }
 
-export function AccountLinks({ start, signIn, open }: { start: LandingLink; signIn: LandingLink; open: LandingLink }) {
+/** `compact`: "Sign in" only from small tablets up (the header's menu carries it on a phone, so the name keeps its room). */
+export function AccountLinks({ start, signIn, open, compact }: { start: LandingLink; signIn: LandingLink; open: LandingLink; compact?: boolean }) {
   const { isLoaded, isSignedIn } = useAuth();
   if (isLoaded && isSignedIn) return <Go link={open} className={cn(buttonVariants(), 'h-10 px-4')} />;
   return (
     <>
-      <Go link={signIn} className={cn(buttonVariants({ variant: 'ghost' }), 'h-10')} />
+      <Go link={signIn} className={cn(buttonVariants({ variant: 'ghost' }), 'h-10', compact && 'hidden sm:inline-flex')} />
       <Go link={start} className={cn(buttonVariants(), 'h-10 px-4')} />
     </>
   );
