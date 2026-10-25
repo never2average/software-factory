@@ -28,6 +28,8 @@ const INNER = process.argv.includes("--inner");
 const BROWSER = process.argv.includes("--browser");
 const SHOTS = process.argv.includes("--shots") ? path.resolve(process.argv[process.argv.indexOf("--shots") + 1]!) : null;
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
+/** The mold's testing folder (axe): beside the codebase, or named by the run that made this build copy. */
+const TESTING = process.env.MOLD_TESTING_DIR ?? path.resolve(ROOT, "..", "testing");
 const FIXTURES = ["fixture_vulns", "fixture_status"];
 
 let n = 0;
@@ -85,7 +87,7 @@ async function outer() {
 
     // ---------- 3 and 4: inside the build copy ----------
     const r = spawnSync(TSX, ["scripts/record-export-test.ts", "--inner", ...(BROWSER ? ["--browser"] : []), ...(SHOTS ? ["--shots", SHOTS] : [])],
-      { cwd: one, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, AUTH_PROVIDER: "builtin" } });
+      { cwd: one, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, AUTH_PROVIDER: "builtin", MOLD_TESTING_DIR: TESTING } });
     assert.equal(r.status, 0, "the checks inside the build copy");
   } finally { rmSync(TMP, { recursive: true, force: true }); }
   console.log(`record-export: ${n} checks passed here${BROWSER ? "" : " (add --browser for the console)"}`);
@@ -233,7 +235,7 @@ async function browserChecks(w: any) {
   assert.equal(v.status, 200);
   const cookie = v.headers.getSetCookie().find((c: string) => /^(__Host-)?oct_session=[^;]+/.test(c) && !/Max-Age=0/.test(c))!.split(";")[0]!;
 
-  const AXE = readFileSync(path.resolve(ROOT, "..", "testing", "accessibility", "vendor", "axe.min.js"), "utf8");
+  const AXE = readFileSync(path.join(TESTING, "accessibility", "vendor", "axe.min.js"), "utf8");
   const browser = await pw.chromium.launch();
   w.teardown.push(() => browser.close());
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
