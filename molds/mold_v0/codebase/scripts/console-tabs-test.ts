@@ -70,13 +70,13 @@ function inConsole<T>(web: string, code: string, args: string[] = []): T {
   } finally { rmSync(file, { force: true }); }
 }
 const NAV = `import { portalNav, adminNav } from '@/config/nav-config';
-import { packPageParams } from '@/features/packs/registry';
+import { appPageParams } from '@/features/packs/registry';
 import { tabPageParams, findTab } from '@/features/tabs/registry';
 import { tabPortalNav, packTabs } from '@/config/pack-nav.generated';
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...packPageParams('app'), ...tabPageParams()],
-  vulnerabilities: findTab('fixture_vulns', 'vulnerabilities'), billing: findTab('fixture_vulns', 'billing') }));
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...appPageParams(), ...tabPageParams()],
+  vulnerabilities: findTab('vulnerabilities'), billing: findTab('billing') }));
 `;
-type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { pack: string; page: string }[]; vulnerabilities: any; billing: any };
+type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
 const navOnly = (n: Nav) => JSON.stringify({ portalNav: n.portalNav, adminNav: n.adminNav }, null, 1);
 
 /** A headless Chrome on this machine: CHROME_BIN, else one a Playwright install left in its cache. */
@@ -269,10 +269,10 @@ try {
     assert.deepEqual(nav.portalNav, nav.tabPortalNav, "the /app sidebar is the declared tabs");
     const shape = nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url}`)]);
     assert.deepEqual(shape, [
-      ["Adoption", ["Pick rate /app/packs/fixture_adoption/pick-rate", "Tasks /app/packs/fixture_adoption/tasks", "Products /app/packs/fixture_adoption/products", "Simulations /app/packs/fixture_adoption/simulations"]],
+      ["Adoption", ["Pick rate /app/pick-rate", "Tasks /app/tasks", "Products /app/products", "Simulations /app/simulations"]],
       ["Account", ["Usage /app/activity", "Profile /app/profile"]],
-      ["Audit", ["Overview /app/packs/fixture_vulns/overview", "Vulnerabilities /app/packs/fixture_vulns/vulnerabilities", "Applications /app/packs/fixture_vulns/applications",
-        "Controls /app/packs/fixture_vulns/controls", "Audits /app/packs/fixture_vulns/audits", "Reports /app/packs/fixture_vulns/reports"]],
+      ["Audit", ["Overview /app/overview", "Vulnerabilities /app/vulnerabilities", "Applications /app/applications",
+        "Controls /app/controls", "Audits /app/audits", "Reports /app/reports"]],
       ["Workspace", ["Application tokens /app/credentials", "Due soon /app/notices", "Activity /app/activity", "Billing /app/billing"]],
     ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses");
     const item = (t: string) => nav.portalNav.flatMap((g) => g.items).find((i: any) => i.title === t);
@@ -280,9 +280,11 @@ try {
     assert.deepEqual(item("Billing").roles, ["billing", "owner"], "a tab's own roles");
     assert.deepEqual(item("Vulnerabilities").roles, ["viewer", "member", "billing", "owner"]);
     assert.deepEqual([item("Overview").icon, item("Reports").icon, item("Vulnerabilities").icon], ["dashboard", "page", "shield"], "icons from the fixed set (a kind's own by default)");
-    assert.ok(!nav.portalNav.flatMap((g) => g.items).some((i: any) => /pick-rate$|\/app\/personas|\/app\/tasks$|\/app\/context/.test(i.url) && !i.url.includes("/packs/")), "none of the shell's own product pages");
-    assert.deepEqual(nav.params.map((p) => `${p.pack}/${p.page}`), ["fixture_adoption/pick-rate", "fixture_adoption/tasks", "fixture_adoption/products", "fixture_adoption/simulations",
-      "fixture_vulns/overview", "fixture_vulns/vulnerabilities", "fixture_vulns/applications", "fixture_vulns/controls", "fixture_vulns/audits", "fixture_vulns/reports"], "each tab with a page is a page of the route");
+    // Flat addresses (mold_v0-132): /app/tasks is the pack's tab now, never a host product's page.
+    const tabUrls = new Set(nav.packTabs.map((t: any) => t.url));
+    assert.ok(!nav.portalNav.flatMap((g) => g.items).some((i: any) => /pick-rate$|\/app\/personas|\/app\/tasks$|\/app\/context/.test(i.url) && !tabUrls.has(i.url)), "none of the shell's own product pages");
+    assert.deepEqual(nav.params.map((p) => p.page), ["pick-rate", "tasks", "products", "simulations",
+      "overview", "vulnerabilities", "applications", "controls", "audits", "reports"], "each tab with a page is a page of the flat route (/app/<id>)");
     assert.deepEqual([nav.vulnerabilities.views, nav.vulnerabilities.board_by, nav.vulnerabilities.timeline_by, nav.vulnerabilities.charts], [["table", "board", "timeline", "detail"], "state", "due", ["severity", "due"]], "an area tab: its views, a board by the lifecycle's field");
     assert.equal(nav.billing, null, "a shell page's tab has no page of its own");
     // Empty states (mold_v0-107): the pack's own where it says one, the shell's default in the build's words for the rest.
@@ -379,7 +381,7 @@ try {
   {
     const nav = inConsole<Nav>(mergedWeb, NAV);
     assert.deepEqual(nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url} ${i.roles.join(",")}`)]), [
-      ["Requirements", ["Our requirements /app/packs/fixture_status/ours member,billing,owner", "Requirement library /app/packs/fixture_status/library viewer,member,billing,owner"]],
+      ["Requirements", ["Our requirements /app/ours member,billing,owner", "Requirement library /app/library viewer,member,billing,owner"]],
     ], "a merged tab is one sidebar entry, for the roles that may read every one of its areas");
     const chrome = findChrome();
     if (!chrome) console.log("✓ (no headless browser on this machine: the merged tab's rendered check is skipped; set CHROME_BIN)");
@@ -448,12 +450,12 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     const hweb = path.join(home, "web");
     const nav = inConsole<Nav>(hweb, NAV);
     const items = nav.portalNav.flatMap((g) => g.items.map((i: any) => `${g.label}: ${i.title} ${i.url}`));
-    assert.equal(items.find((x) => x.startsWith("Audit: ")), "Audit: Home /app/packs/fixture_vulns/overview", "the home tab first, in its group, by its label");
+    assert.equal(items.find((x) => x.startsWith("Audit: ")), "Audit: Home /app/overview", "the home tab first, in its group, by its label");
     assert.ok(!items.some((x) => x.includes("/app/notices")), `the notices tab is gone from the sidebar: ${items.join(", ")}`);
     const spec = nav.packTabs.find((t: any) => t.pack === "fixture_vulns" && t.id === "overview");
     assert.deepEqual([spec.include, spec.roles], [["setup", "notices"], ["viewer", "member", "billing", "owner"]], "its sections in order, and every role's");
-    const routes = JSON.parse(readFileSync(path.join(hweb, "src", "config", "pack-routes.generated.json"), "utf8")).redirects.map((r: any) => `${r.source} -> ${r.destination}`);
-    assert.deepEqual(routes, ["/app -> /app/packs/fixture_vulns/overview", "/app/notices -> /app/packs/fixture_vulns/overview", "/app/notices/:path* -> /app/packs/fixture_vulns/overview"],
+    const routes = JSON.parse(readFileSync(path.join(hweb, "src", "config", "pack-routes.generated.json"), "utf8")).redirects.filter((r: any) => !r.source.startsWith("/app/packs/")).map((r: any) => `${r.source} -> ${r.destination}`);
+    assert.deepEqual(routes, ["/app -> /app/overview", "/app/notices -> /app/overview", "/app/notices/:path* -> /app/overview"],
       "/app and /app/notices lead to the home tab (the pages stay, for a build without one)");
     console.log("✓ a home tab: the sidebar's Home, no Due soon tab; /app and /app/notices (and below) redirect to it");
     const chrome = findChrome();

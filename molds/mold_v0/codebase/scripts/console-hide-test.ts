@@ -57,7 +57,9 @@ function probe(copy: string): Probe {
   } finally { rmSync(file, { force: true }); }
 }
 const urls = (groups: any[]) => groups.flatMap((g) => g.items.map((i: any) => i.url));
-const redirects = (copy: string) => JSON.parse(readFileSync(path.join(copy, "web", "src", "config", "pack-routes.generated.json"), "utf8")).redirects;
+// Leaving out the nested addresses of before, which redirect to the flat ones (mold_v0-132; scripts/declarative-packs-test.ts).
+const redirects = (copy: string) => JSON.parse(readFileSync(path.join(copy, "web", "src", "config", "pack-routes.generated.json"), "utf8")).redirects
+  .filter((r: { source: string }) => !r.source.startsWith("/app/packs/"));
 const GENERATED = ["web/src/config/pack-nav.generated.ts", "web/src/config/pack-routes.generated.json", "web/src/config/pack-guides.generated.ts", "src/packs.generated.ts"];
 const read = (copy: string, f: string) => readFileSync(path.join(copy, f), "utf8");
 
