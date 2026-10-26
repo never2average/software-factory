@@ -29,7 +29,7 @@ export const CFG = {
   maxAgentTurns: Math.max(1, num(env.MAX_AGENT_TURNS, 100)),
   /** Consecutive nudged runs with no workspace change (and not done) before the session ends as agent_gave_up. */
   giveUpRuns: Math.max(1, num(env.GIVE_UP_RUNS, 3)),
-  dockerImage: env.SANDBOX_IMAGE ?? "octillion-sandbox:latest",
+  dockerImage: env.SANDBOX_IMAGE ?? "app-sandbox:latest",
   dockerNetwork: env.DOCKER_NETWORK || undefined,
   dockerCpus: env.DOCKER_CPUS ?? "2",
   dockerMemory: env.DOCKER_MEMORY ?? "4g",

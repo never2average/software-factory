@@ -41,10 +41,10 @@ agent's sandbox may never see is filtered on both spellings (`orchestrator/core/
 
 What is kept as written, because something outside the release holds it (the vocabulary check's allow list says what):
 the session engine's four platform settings keep their stored keys (`src/settings.ts` `ENGINE_SETTINGS`: rows on live
-databases and the host pack read them by name; their environment value is read under the `APP_` name first); the database's
-row-level security functions, tenant role and setting (`sql/migrations` made them and every policy names them); the agent
-images' tags and boat templates (built, pinned in `harnesses/registry.json`); the orchestrator sandboxes' service unit,
-home and host marker (running sandboxes hold them, and the next release stops and restarts those).
+databases and the host pack read them by name; their environment value is read under the `APP_` name first). The names
+held outside a release (the database's functions, tenant role and setting; the agent images' tags and boat templates; the
+orchestrator sandboxes' service unit, home and host marker) were renamed by mold_v0-097, each with its old name still
+answered to until a later cleanup: "Neutral names held outside a release" below.
 
 **The factory's side.** `mold.json` `env_names` declares the prefix and the old one. For a **new** app the factory reads
 the new names from the codebase as before (the compose file, `deploy/bootstrap.sh`, the console's `next.config.ts`,
@@ -63,6 +63,23 @@ a build with the host pack `octillion` keeps every key it wrote. The admin conso
 namespace's old header is still accepted, so a console deployed before the API keeps working). The self-hosted stack's
 compose project, API service, database and backups are `app` and `api`.
 
+**Neutral names held outside a release (mold_v0-097).** What a running database, host or sandbox already held under
+the first product's name, renamed so that what holds it keeps working, the old name still answered to until a later
+cleanup (the vocabulary check's `legacy-*` entries list where each old name is still spelled, and why):
+
+| Held by | Name | How the old one keeps working |
+|---|---|---|
+| the database (`sql/migrations/0024_neutral_database_names.sql`) | functions `app_tenant_role()`, `app_tenant_org()`, `app_session_org()`, `app_run_charge*()`; role `app_tenant_<hash>`; setting `app.org_id` | renamed in place (policies, the trigger and grants hold them by id: none rewritten, no table locked, no row touched); each old function a one-line alias; the old role a member of the new one with nothing of its own, for the release still serving during a rolling deploy; the old setting read when the new one is unset; a policy a pack migration writes through an old function re-pointed by the runner. `check:rls` holds the alias role to that and probes the old path. A rollback to a release from before: `sql/rollback/0024_neutral_database_names.sql` (docs/migrations.md "Rolling back") |
+| a host's local images (`harnesses/registry.json` `image.docker`, `SANDBOX_IMAGE`) | `app/agent-<harness>:<version>`, `app-sandbox:latest` | a tag the host does not have runs under its old name when only that is built (`orchestrator/core/runners.ts` `localImage`); images are never pulled (`--pull never`); `deploy/cleanup.sh` removes the old tag once the same version is built under the new one |
+| the boat account's named snapshots (`image.boat_snapshot`) | `app-<harness>-<version>` | nothing starts from a snapshot by name; the next bake (`orchestrator/images/boat-snapshot.sh`) saves the new names and the old snapshots can then be deleted |
+| an orchestrator sandbox (`orchestrator/deploy/boat-lib.ts`) | unit `app-orchestrator`, home `/home/user/app`, marker `/etc/app/host-role` | a sandbox set up before keeps running until the launcher configures it again (`update`, a relaunch), which stops, disables and removes the old unit and deletes its home (with its env file) and marker; `down` stops whichever unit runs; `status` and `logs` read it |
+
+Proof: `npm run test:migrations` (an 0023 database with rows upgraded, every row kept; the old release's tenant
+transaction before and after; the alias role held to nothing; the rollback leaving exactly what 0023 left; on a real
+Postgres also a database dropped and made again under one name), `npm run check:rls`, `npx tsx
+orchestrator/test/legacy-names.ts` (the image fallback over a stand-in docker; configure and stop run over a stand-in
+sandbox set up before).
+
 **The vocabulary check** (`npm run check:vocabulary`, also run by the smoke test; `npm run test:vocabulary` proves it)
 fails when a product word (`scripts/vocabulary.json` `words`) is in a file of the shell, in its text or its path, outside
 the allow list, where each entry is an exact spelling, the files it may be in and what holds it; an entry that covers
@@ -73,12 +90,13 @@ and run sandboxes and snapshot images under it; the service user baked into the 
 (the run users and the egress proxy's user the runner image creates, its tools directory, the uid leases and checkout
 cache on a runner's host, the proxy's logs and set-up paths, and the tests that check those names); cosmetic uses (a
 shell's `$0`, a local container's name, a test's own mock server) were renamed, and a new one fails. Renaming the held
-ones is mold_v0-097's rebuild. A pack's own files are not read. It also checks the table below, which it writes
+ones is a rebuild of the snapshots and the runner image and a namespace migration, left for a follow-up of mold_v0-097
+(which renamed the long names, above). A pack's own files are not read. It also checks the table below, which it writes
 (`npm run check:vocabulary -- --write`) from every `APP_` name in the shell's code and deploy files.
 
 <!-- env-names:begin (generated by `npm run check:vocabulary -- --write` in the codebase; do not edit) -->
 
-142 names. The old name is read only when the new one is unset (src/env-names.ts); a family (`*`) is every name with that start.
+144 names. The old name is read only when the new one is unset (src/env-names.ts); a family (`*`) is every name with that start.
 
 | Old name (still read) | Name |
 |---|---|
@@ -132,8 +150,10 @@ ones is mold_v0-097's rebuild. A pack's own files are not read. It also checks t
 | `OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP` | `APP_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP` |
 | `OCTILLION_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP` | `APP_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP` |
 | `OCTILLION_LIMIT_MCP_*` | `APP_LIMIT_MCP_*` |
+| `OCTILLION_LIMIT_MCP_PER_IP_PER_MINUTE` | `APP_LIMIT_MCP_PER_IP_PER_MINUTE` |
 | `OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE` | `APP_LIMIT_MCP_PER_KEY_PER_MINUTE` |
 | `OCTILLION_LIMIT_MCP_PER_MEMBER_PER_MINUTE` | `APP_LIMIT_MCP_PER_MEMBER_PER_MINUTE` |
+| `OCTILLION_LIMIT_MCP_PER_WORKSPACE_PER_MINUTE` | `APP_LIMIT_MCP_PER_WORKSPACE_PER_MINUTE` |
 | `OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX` | `APP_LIMIT_RUNS_BUDGET_USD_MAX` |
 | `OCTILLION_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE` | `APP_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE` |
 | `OCTILLION_LIMIT_RUNS_KIND_MONTH_BUDGET_USD` | `APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD` |
@@ -1421,7 +1441,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     earlier checksum, kept in `scripts/fixtures/pre-049-migrations/`). A database that applied the earlier version of a
     split file has the product's part already, rows and all: the host pack's migration that adopts it is recorded there
     without running (its one-time repairs, which already ran, never run again), and refused if its tables are missing.
-    Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (`octillion_session_org()`, 0003,
+    Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (a session lookup function, 0003,
     0009 and `0017_gateway_session_policies`, which rewrites it the same way on a database from before), so the shell's
     own policies hold with or without the pack.
   The session engine stays in the shell and reads those tables only in a build whose host pack has them

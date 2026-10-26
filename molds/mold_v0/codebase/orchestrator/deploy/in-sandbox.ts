@@ -5,7 +5,7 @@
  *   tsx deploy/in-sandbox.ts nested <boat-key-file>     selftest: create + exec + delete ONE worker sandbox from here
  */
 import { readFileSync, rmSync } from "node:fs";
-import { checkHost } from "../core/host-guard.js";
+import { checkHost, MARKER_PATH } from "../core/host-guard.js";
 import { ENV, ENV_PREFIX, LEGACY_ENV_PREFIX } from "../core/env-names.js";
 
 const [cmd, arg] = process.argv.slice(2);
@@ -14,7 +14,7 @@ if (cmd === "guard") {
   const r = checkHost(process.env.RUNNER ?? "boat");
   const boatId = process.env.BOAT_ID ?? process.env.BOX_ID ?? "";
   let marker: any = null;
-  try { marker = JSON.parse(readFileSync("/etc/octillion/host-role", "utf8")); } catch { /* none */ }
+  try { marker = JSON.parse(readFileSync(MARKER_PATH, "utf8")); } catch { /* none */ }
   console.log(JSON.stringify({ ok: r.ok, dev: r.dev, problems: r.problems, boat_id_matches_marker: !!marker?.sandbox_id && boatId === marker.sandbox_id, boat_id_shape: boatId.replace(/[a-z0-9]/g, "x") }));
   process.exit(r.ok ? 0 : 3);
 }

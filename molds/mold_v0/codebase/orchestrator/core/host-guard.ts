@@ -5,7 +5,7 @@
  *
  * A host passes when ALL of these hold:
  *  1. APP_HOST_ROLE=boat-orchestrator (written by the launcher into the orchestrator's env file)
- *  2. the launcher's marker file (/etc/octillion/host-role, root-owned) says {"role":"boat-orchestrator", ...}
+ *  2. the launcher's marker file (/etc/app/host-role, root-owned) says {"role":"boat-orchestrator", ...}
  *  3. boat's own indicators (seen on live boat VMs, 2026-10-10): BOAT_ID or BOX_ID in the env, /etc/ascii and
  *     /home/user/.ascii present (boat's agent + CLI)
  *  4. when the marker records a sandbox id and BOAT_ID looks like one (bx_...), they match
@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { appEnv } from "./env-names.js";
 
 export const HOST_ROLE = "boat-orchestrator";
-export const MARKER_PATH = "/etc/octillion/host-role";
+export const MARKER_PATH = "/etc/app/host-role";
 
 export interface HostProbe {
   env: Record<string, string | undefined>;

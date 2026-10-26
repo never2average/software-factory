@@ -161,6 +161,29 @@ export function capDiff(d: string): string {
   return d.length > BOAT.diffMaxBytes ? d.slice(0, BOAT.diffMaxBytes) + "\n[diff truncated by worker]\n" : d;
 }
 
+/**
+ * The local images' names before mold_v0-097 (agents app/agent-<harness> were octillion/agent-<harness>, the session
+ * sandbox app-sandbox was octillion-sandbox). A host whose images were built under the old names keeps running them
+ * until they are rebuilt: a tag this host does not have is looked up under its old name, until a later cleanup.
+ */
+const LEGACY_IMAGES: [RegExp, string][] = [[/^app\/agent-/, "octillion/agent-"], [/^app-sandbox:/, "octillion-sandbox:"]];
+const localImages = new Map<string, string>();
+/** The local image to run for `tag`: itself, or its old name when only that is on this host (never pulled: --pull never). */
+export async function localImage(tag: string): Promise<string> {
+  const known = localImages.get(tag);
+  if (known) return known;
+  if ((await sh("docker", ["image", "inspect", "-f", "{{.Id}}", tag])).code === 0) { localImages.set(tag, tag); return tag; }
+  for (const [re, old] of LEGACY_IMAGES) {
+    if (!re.test(tag)) continue;
+    const legacy = tag.replace(re, old);
+    if ((await sh("docker", ["image", "inspect", "-f", "{{.Id}}", legacy])).code !== 0) continue;
+    log(`image ${tag} is not on this host: running ${legacy}, its name before mold_v0-097 (rebuild it with orchestrator/images/build.sh)`);
+    localImages.set(tag, legacy);
+    return legacy;
+  }
+  return tag;
+}
+
 /** Image env minus the shell's own names, APP_* and their old spelling (blindness), for `env -i` at exec time. */
 export async function imageEnv(image: string): Promise<string[]> {
   const r = await sh("docker", ["image", "inspect", "-f", "{{json .Config.Env}}", image]);
@@ -194,8 +217,9 @@ export const dockerRunner: Runner = {
   name: "docker",
   async open(spec) {
     const name = `sandbox-${randomUUID().slice(0, 12)}`;
+    const image = await localImage(CFG.dockerImage);
     const args = [
-      "run", "-d", "--init",
+      "run", "-d", "--init", "--pull", "never",
       "--name", name,
       "--label", "app.sandbox=1",
       "--cpus", CFG.dockerCpus,
@@ -206,8 +230,8 @@ export const dockerRunner: Runner = {
       "-w", AGENT_WORKDIR,
     ];
     if (CFG.dockerNetwork) args.push("--network", CFG.dockerNetwork);
-    args.push(CFG.dockerImage, "sleep", "infinity");
-    const baseEnv = await imageEnv(CFG.dockerImage);
+    args.push(image, "sleep", "infinity");
+    const baseEnv = await imageEnv(image);
     const r = await sh("docker", args);
     if (r.code !== 0) throw new Error(`docker run failed: ${r.out.slice(-500)}`);
     const rmContainer = () => sh("docker", ["rm", "-f", name]).then(() => {});
@@ -720,7 +744,7 @@ export async function checkRunner(runner: Runner): Promise<void> {
     log(`boat.dev OK as ${me?.user?.login ?? me?.login ?? "?"}; size=${BOAT.size} ttl=${BOAT.ttlSeconds}s agentUser=${BOAT.agentUser} onFinish=${BOAT.onFinish}`);
   }
   if (runner.name === "docker") {
-    const r = await sh("docker", ["image", "inspect", CFG.dockerImage]);
+    const r = await sh("docker", ["image", "inspect", await localImage(CFG.dockerImage)]);
     if (r.code !== 0) throw new Error(`Docker image ${CFG.dockerImage} not found. Build it: docker build -f orchestrator/Dockerfile.sandbox -t ${CFG.dockerImage} orchestrator`);
   }
 }

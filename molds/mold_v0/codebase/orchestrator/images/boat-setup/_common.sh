@@ -85,7 +85,7 @@ linux_arch() {
 }
 
 # verify <harness> <bin> <version>: run `<bin> --version` the way the worker will (as an unprivileged user, env -i,
-# minimal PATH), check the pinned version, and record a manifest at /etc/octillion/harnesses/<harness>.json.
+# minimal PATH), check the pinned version, and record a manifest at /etc/app/harnesses/<harness>.json.
 verify() {
   local harness="$1" bin="$2" ver="$3" out all path
   path="$(PATH=/usr/local/bin:/usr/bin:/bin command -v "$bin")" || die "$bin not on /usr/local/bin:/usr/bin:/bin"
@@ -95,9 +95,9 @@ verify() {
     || die "$bin --version failed as nobody: $(printf %s "$all" | head -n 3)"
   out="$(printf '%s\n' "$all" | grep -F -m 1 -- "$ver")" \
     || die "$bin reports '$(printf '%s\n' "$all" | grep -v -i '^warning' | head -n 1)', expected $ver (another $bin earlier on PATH?)"
-  $SUDO mkdir -p /etc/octillion/harnesses
+  $SUDO mkdir -p /etc/app/harnesses
   printf '{"harness":"%s","bin":"%s","path":"%s","version":"%s","reported":"%s","installed_at":"%s"}\n' \
-    "$harness" "$bin" "$path" "$ver" "${out//\"/\'}" "$(date -u +%FT%TZ)" | $SUDO tee "/etc/octillion/harnesses/$harness.json" >/dev/null
+    "$harness" "$bin" "$path" "$ver" "${out//\"/\'}" "$(date -u +%FT%TZ)" | $SUDO tee "/etc/app/harnesses/$harness.json" >/dev/null
   log "OK $harness: $path -> $out"
 }
 

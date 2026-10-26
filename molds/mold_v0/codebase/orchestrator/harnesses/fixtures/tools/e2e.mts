@@ -9,14 +9,14 @@ import { getAdapter } from "../../adapters.js";
 const M = "http://127.0.0.1:18080";
 type Case = { img: string; model: string; extraEnv?: Record<string, string>; files?: Record<string, string> };
 const CASES: Record<string, Case> = {
-  copilot: { img: "octillion/agent-copilot:1.0.95", model: "gpt-4.1", extraEnv: { COPILOT_PROVIDER_BASE_URL: `${M}/v1`, COPILOT_PROVIDER_TYPE: "openai", COPILOT_PROVIDER_API_KEY: "mock-provider-key-0000", COPILOT_GITHUB_TOKEN: "gho_mock_token_0000" } },
-  opencode: { img: "octillion/agent-opencode:1.18.35", model: "anthropic/claude-sonnet-4-5", extraEnv: { ANTHROPIC_API_KEY: "mock-key-0000", OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { anthropic: { options: { baseURL: `${M}/v1` } } } }) } },
-  kilo: { img: "octillion/agent-kilo:7.8.8", model: "anthropic/claude-sonnet-4-5", extraEnv: { ANTHROPIC_API_KEY: "mock-key-0000", KILO_CONFIG_CONTENT: JSON.stringify({ provider: { anthropic: { options: { baseURL: `${M}/v1` } } } }) } },
-  "gemini-cli": { img: "octillion/agent-gemini-cli:0.63.0", model: "gemini-2.5-pro", extraEnv: { GEMINI_API_KEY: "mock-gemini-key-0000", GOOGLE_GEMINI_BASE_URL: M }, files: { ".gemini/settings.json": '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' } },
-  "qwen-code": { img: "octillion/agent-qwen-code:0.25.0", model: "mock-model", extraEnv: { DASHSCOPE_API_KEY: "mock-key-0000", DASHSCOPE_BASE_URL: `${M}/v1` } },
-  pi: { img: "octillion/agent-pi:1.1.0", model: "mock/mock-model", extraEnv: { ANTHROPIC_API_KEY: "unused" }, files: { ".pi/agent/models.json": JSON.stringify({ providers: { mock: { baseUrl: `${M}/v1`, api: "openai-completions", apiKey: "mock-key-0000", models: [{ id: "mock-model" }] } } }) } },
-  droid: { img: "octillion/agent-droid:0.238.0", model: "custom:mock-model", extraEnv: { FACTORY_API_KEY: "unused" }, files: { ".factory/settings.json": JSON.stringify({ customModels: [{ model: "mock-model", displayName: "Mock", baseUrl: `${M}/v1`, apiKey: "mock-key-0000", provider: "generic-chat-completion-api", maxOutputTokens: 4096 }] }) } },
-  antigravity: { img: "octillion/agent-antigravity:1.3.3", model: "default", extraEnv: { GEMINI_API_KEY: "mock-gemini-key-0000", GOOGLE_GEMINI_BASE_URL: M } },
+  copilot: { img: "app/agent-copilot:1.0.95", model: "gpt-4.1", extraEnv: { COPILOT_PROVIDER_BASE_URL: `${M}/v1`, COPILOT_PROVIDER_TYPE: "openai", COPILOT_PROVIDER_API_KEY: "mock-provider-key-0000", COPILOT_GITHUB_TOKEN: "gho_mock_token_0000" } },
+  opencode: { img: "app/agent-opencode:1.18.35", model: "anthropic/claude-sonnet-4-5", extraEnv: { ANTHROPIC_API_KEY: "mock-key-0000", OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { anthropic: { options: { baseURL: `${M}/v1` } } } }) } },
+  kilo: { img: "app/agent-kilo:7.8.8", model: "anthropic/claude-sonnet-4-5", extraEnv: { ANTHROPIC_API_KEY: "mock-key-0000", KILO_CONFIG_CONTENT: JSON.stringify({ provider: { anthropic: { options: { baseURL: `${M}/v1` } } } }) } },
+  "gemini-cli": { img: "app/agent-gemini-cli:0.63.0", model: "gemini-2.5-pro", extraEnv: { GEMINI_API_KEY: "mock-gemini-key-0000", GOOGLE_GEMINI_BASE_URL: M }, files: { ".gemini/settings.json": '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' } },
+  "qwen-code": { img: "app/agent-qwen-code:0.25.0", model: "mock-model", extraEnv: { DASHSCOPE_API_KEY: "mock-key-0000", DASHSCOPE_BASE_URL: `${M}/v1` } },
+  pi: { img: "app/agent-pi:1.1.0", model: "mock/mock-model", extraEnv: { ANTHROPIC_API_KEY: "unused" }, files: { ".pi/agent/models.json": JSON.stringify({ providers: { mock: { baseUrl: `${M}/v1`, api: "openai-completions", apiKey: "mock-key-0000", models: [{ id: "mock-model" }] } } }) } },
+  droid: { img: "app/agent-droid:0.238.0", model: "custom:mock-model", extraEnv: { FACTORY_API_KEY: "unused" }, files: { ".factory/settings.json": JSON.stringify({ customModels: [{ model: "mock-model", displayName: "Mock", baseUrl: `${M}/v1`, apiKey: "mock-key-0000", provider: "generic-chat-completion-api", maxOutputTokens: 4096 }] }) } },
+  antigravity: { img: "app/agent-antigravity:1.3.3", model: "default", extraEnv: { GEMINI_API_KEY: "mock-gemini-key-0000", GOOGLE_GEMINI_BASE_URL: M } },
 };
 
 const only = process.argv.slice(2);

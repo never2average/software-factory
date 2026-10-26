@@ -219,7 +219,7 @@ const BANNED_CODE = [
   [/\basPlatform\b/, "asPlatform (leaves the workspace's scope)"],
   [/\b(SET|RESET)\s+(LOCAL\s+|SESSION\s+)?ROLE\b/i, "SET/RESET ROLE (leaves the tenant role)"],
   [/\bset_config\b/i, "set_config (changes the tenant setting)"],
-  [/octillion\.org_id/, "the tenant setting"],
+  [/\b(?:app|octillion)\.org_id\b/, "the tenant setting (app.org_id, or its name before mold_v0-097)"],
   // The record tables are the shell's record store's (mold_v0-057): a pack reaches records through ctx.records, which
   // checks fields, states and permissions; a raw query would write past them.
   [/\b(workspace_records|platform_records)\b/i, "the record tables (use ctx.records: it checks fields, states and permissions)"],

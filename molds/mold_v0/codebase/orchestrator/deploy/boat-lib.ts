@@ -34,10 +34,20 @@ export const IMAGE_BUILDER_NAME = `${BOAT_NAMESPACE}-img-build`;
 /** Run sandboxes (mold_v0-055, src/run-sandboxes.ts): one per run, "<ns>-run-<row>-<id>". */
 export const RUN_PREFIX = `${BOAT_NAMESPACE}-run-`;
 export const MAX_TTL_SECONDS = 2_592_000; // 30 days: boat's maximum numeric TTL (docs.boat.dev/long-running-tasks)
-export const HOME = "/home/user/octillion";
+export const HOME = "/home/user/app";
 /** Unprivileged system user the orchestrator service runs as (no sudo); created by configure(). */
 export const SERVICE_USER = "octi";
-export const UNIT = "octillion-orchestrator";
+export const UNIT = "app-orchestrator";
+/** The launcher's root-owned host marker (core/host-guard.ts reads it). */
+export const MARKER_DIR = "/etc/app";
+/**
+ * The service unit, home and marker directory an orchestrator sandbox set up before mold_v0-097 has (the first product's
+ * name). A sandbox still running them is moved over when the next release configures it (configure: the old unit
+ * stopped and removed, its home with its env file and its marker deleted), and is stopped whichever unit it runs
+ * (stopService). LEGACY_UNIT_SH picks the unit a sandbox runs, for status and logs.
+ */
+export const LEGACY_UNIT = "octillion-orchestrator", LEGACY_HOME = "/home/user/octillion", LEGACY_MARKER_DIR = "/etc/octillion";
+export const LEGACY_UNIT_SH = `u=${UNIT}; [ -f /etc/systemd/system/${UNIT}.service ] || [ ! -f /etc/systemd/system/${LEGACY_UNIT}.service ] || u=${LEGACY_UNIT}`;
 const CHUNK = 3_500_000; // raw bytes per files-API PUT (limit: 5 MiB after base64 decoding)
 
 /** Non-secret tuning knobs that may go into an orchestrator's env file (nothing else is ever written). */
@@ -291,11 +301,15 @@ WantedBy=multi-user.target
 # the boat user still owns and deploys it) and writes only to its own home and the temp dir; systemd reads the env file.
 id ${SERVICE_USER} >/dev/null 2>&1 || sudo useradd -r -m -d /var/lib/${SERVICE_USER} -s /usr/sbin/nologin ${SERVICE_USER}
 sudo chmod 711 /home/user; sudo chmod 755 ${HOME}; sudo chmod -R a+rX ${HOME}/app
-sudo install -d -m 755 /etc/octillion
-printf '%s' '{"role":"boat-orchestrator","sandbox_id":"${id}","orchestrator_id":"${orchId}"}' | sudo tee /etc/octillion/host-role >/dev/null
-sudo chmod 644 /etc/octillion/host-role
+sudo install -d -m 755 ${MARKER_DIR}
+printf '%s' '{"role":"boat-orchestrator","sandbox_id":"${id}","orchestrator_id":"${orchId}"}' | sudo tee ${MARKER_DIR}/host-role >/dev/null
+sudo chmod 644 ${MARKER_DIR}/host-role
+# Set up before mold_v0-097: the old unit stops (gracefully, as a restart does) and goes, with its home and marker, so
+# one sandbox never runs two orchestrators.
+if [ -f /etc/systemd/system/${LEGACY_UNIT}.service ]; then sudo systemctl disable --now ${LEGACY_UNIT} || true; sudo rm -f /etc/systemd/system/${LEGACY_UNIT}.service; fi
+sudo rm -rf ${LEGACY_HOME} ${LEGACY_MARKER_DIR}
 sudo install -m 644 ${UNIT}.service /etc/systemd/system/${UNIT}.service && rm -f ${UNIT}.service
-sudo systemctl daemon-reload`, 120);
+sudo systemctl daemon-reload`, 360);
   if (r.code !== 0) throw new Error(`configure failed: ${r.stderr.slice(-500)}`);
 }
 
@@ -320,7 +334,7 @@ export async function startService(id: string): Promise<string> {
 
 /** Graceful stop: SIGTERM -> the orchestrator kills its sessions (deleting their workers) and leaves the fleet. */
 export async function stopService(id: string): Promise<string> {
-  const r = await run(id, `sudo systemctl stop ${UNIT}; systemctl is-active ${UNIT} || true`, 300).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
+  const r = await run(id, `${LEGACY_UNIT_SH}; sudo systemctl stop $u; systemctl is-active $u || true`, 300).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
   return r.stdout.trim() || "stopped";
 }
 

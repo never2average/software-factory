@@ -22,11 +22,11 @@ import { randomBytes } from "node:crypto";
 import type { Db, Queryable } from "./db.js";
 import { setTenantGate, setTenantRole, tenantRole } from "./tenant-scope.js";
 
-/** Read this database's tenant role name (octillion_tenant_role(), migration 0003) into src/tenant-scope.ts. */
+/** Read this database's tenant role name (app_tenant_role(), migrations 0003 and 0024) into src/tenant-scope.ts. */
 export async function loadTenantRole(db: Queryable): Promise<string | null> {
-  const [fn] = await db.query<{ ok: boolean }>("SELECT to_regprocedure('octillion_tenant_role()') IS NOT NULL AS ok");
+  const [fn] = await db.query<{ ok: boolean }>("SELECT to_regprocedure('app_tenant_role()') IS NOT NULL AS ok");
   if (!fn?.ok) return null;
-  const [{ r }] = await db.query<{ r: string }>("SELECT octillion_tenant_role() AS r");
+  const [{ r }] = await db.query<{ r: string }>("SELECT app_tenant_role() AS r");
   setTenantRole(r);
   return r;
 }
@@ -50,6 +50,16 @@ export function parentScoped(has: Set<string>): Record<string, string> {
     ...(has.has("developer_population_agents") ? { developer_population_agents: "SELECT count(*)::int AS n FROM developer_population_agents c JOIN developer_populations p ON p.id = c.population_id WHERE p.org_id IS NULL OR p.org_id = $1" } : {}),
   };
 }
+/**
+ * The tenant role's and the tenant setting's names before 0024_neutral_database_names (mold_v0-097), kept until a later
+ * cleanup so a release from before it (the replica still serving during a rolling deploy) keeps working: a role of the
+ * old name, a member of the tenant role with nothing of its own, that such a release switches to, and the setting it
+ * sets (app_tenant_org() reads it when app.org_id is unset). The catalog check holds the alias to exactly that, and the
+ * probe proves a query made the old way sees its own workspace's rows only, and none with no workspace set.
+ */
+export const LEGACY_TENANT_PREFIX = "octillion_tenant_", LEGACY_TENANT_SETTING = "octillion.org_id";
+export const legacyTenantRole = (role: string) => role.replace(/^app_tenant_/, LEGACY_TENANT_PREFIX);
+
 /** Tables whose rows with no organization are the platform's shared ones, readable by every tenant (the host pack's libraries). */
 export const SHARED_TABLES = ["developer_profiles", "developer_populations", "journey_templates"];
 /** Platform tables tenant work may read, never write, and that hold nothing of any one organization. */
@@ -91,7 +101,7 @@ export async function rlsCatalogProblems(db: Queryable): Promise<string[]> {
   // PG16 split SET from membership: SET ROLE needs the SET option, which pg_has_role names 'SET' from 16 on.
   const [{ v }] = await db.query<{ v: number }>("SELECT current_setting('server_version_num')::int AS v");
   const TENANT_ROLE = (await loadTenantRole(db)) ?? "";
-  if (!TENANT_ROLE) return ["octillion_tenant_role() does not exist (migration 0003_row_level_security not applied)"];
+  if (!TENANT_ROLE) return ["app_tenant_role() does not exist (migrations 0003_row_level_security and 0024_neutral_database_names not applied)"];
   const [role] = await db.query<{ rolsuper: boolean; rolbypassrls: boolean; usable: boolean }>(
     `SELECT rolsuper, rolbypassrls, pg_has_role(current_user, oid, $2) AS usable FROM pg_roles WHERE rolname = $1`, [TENANT_ROLE, v >= 160000 ? "SET" : "MEMBER"]);
   if (!role) return [`role ${TENANT_ROLE} does not exist (migration 0003_row_level_security not applied)`];
@@ -114,16 +124,16 @@ export async function rlsCatalogProblems(db: Queryable): Promise<string[]> {
     else if (!s.policies && s.reach.length) problems.push(`${t}: reachable by ${TENANT_ROLE} with no policy`);
   }
   // Every permissive policy for the role limits rows to the workspace it acts for (a pack's table included, mold_v0-038):
-  // a policy that does not name octillion_tenant_org() would open rows to every workspace. The one shell exception reads a
+  // a policy that does not name app_tenant_org() would open rows to every workspace. The one shell exception reads a
   // population's agents through the population's own policy.
   const policies = await db.query<{ tablename: string; policyname: string; qual: string | null; with_check: string | null }>(
     `SELECT tablename, policyname, qual, with_check FROM pg_policies
       WHERE schemaname = 'public' AND permissive = 'PERMISSIVE' AND ($1 = ANY (roles) OR 'public' = ANY (roles)) ORDER BY 1, 2`, [TENANT_ROLE]);
-  const scoped = (x: string | null) => x == null || x.includes("octillion_tenant_org()");
-  const PACK_RULE = "(org_id = octillion_tenant_org())";
+  const scoped = (x: string | null) => x == null || x.includes("app_tenant_org()");
+  const PACK_RULE = "(org_id = app_tenant_org())";
   for (const p of policies) {
     // Only the shell's own policy names (0003_row_level_security, and the packs' helper in src/migrate.ts): another
-    // permissive policy could open rows to a fixed organization while still naming octillion_tenant_org().
+    // permissive policy could open rows to a fixed organization while still naming app_tenant_org().
     if (!["tenant_isolation", "tenant_read", "tenant_write", "pack_tenant_isolation"].includes(p.policyname))
       problems.push(`${p.tablename}: unexpected policy ${p.policyname} for ${TENANT_ROLE}`);
     if (p.tablename === "developer_population_agents" && p.policyname === "tenant_read") continue;
@@ -137,6 +147,24 @@ export async function rlsCatalogProblems(db: Queryable): Promise<string[]> {
     if (!PLATFORM_READONLY.includes(s.relname)) problems.push(`${s.relname}: ${TENANT_ROLE} can ${s.reach.join("/")} it, but it is neither a tenant table nor a known platform table`);
     else if (s.reach.some((p) => p !== "SELECT")) problems.push(`${s.relname}: ${TENANT_ROLE} can ${s.reach.join("/")} a platform table (read-only expected)`);
   }
+  // The tenant role's old name (0024): an alias with nothing of its own, a member of the tenant role only. Anything more
+  // (a grant, a policy, another membership, a login) would reach past the tenant role's rules.
+  const LEGACY = legacyTenantRole(TENANT_ROLE);
+  const [alias] = await db.query<{ rolsuper: boolean; rolbypassrls: boolean; rolcanlogin: boolean; member_of: string[]; grants: number; policies: number }>(
+    `SELECT r.rolsuper, r.rolbypassrls, r.rolcanlogin,
+            ARRAY(SELECT m.roleid::regrole::text FROM pg_auth_members m WHERE m.member = r.oid ORDER BY 1) AS member_of,
+            ((SELECT count(*) FROM pg_class c, aclexplode(c.relacl) a WHERE a.grantee = r.oid)
+             + (SELECT count(*) FROM pg_attribute t, aclexplode(t.attacl) a WHERE a.grantee = r.oid)
+             + (SELECT count(*) FROM pg_proc p, aclexplode(p.proacl) a WHERE a.grantee = r.oid)
+             + (SELECT count(*) FROM pg_namespace n, aclexplode(n.nspacl) a WHERE a.grantee = r.oid))::int AS grants,
+            (SELECT count(*) FROM pg_policies p WHERE r.rolname = ANY (p.roles))::int AS policies
+       FROM pg_roles r WHERE r.rolname = $1`, [LEGACY]);
+  if (alias) {
+    if (alias.rolsuper || alias.rolbypassrls || alias.rolcanlogin) problems.push(`role ${LEGACY} (the tenant role's old name) can log in or bypass row-level security`);
+    if (alias.member_of.join(",") !== TENANT_ROLE) problems.push(`role ${LEGACY} (the tenant role's old name) is a member of ${alias.member_of.join(", ") || "nothing"}, expected ${TENANT_ROLE} only`);
+    if (alias.grants) problems.push(`role ${LEGACY} (the tenant role's old name) holds ${alias.grants} privilege(s) of its own`);
+    if (alias.policies) problems.push(`role ${LEGACY} (the tenant role's old name) is named by ${alias.policies} policy(ies) of its own`);
+  }
   return problems;
 }
 
@@ -145,7 +173,7 @@ class Rollback extends Error {}
 /** The live proof. Leaves nothing behind: everything happens in one transaction that is rolled back. */
 export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: number }> {
   const TENANT_ROLE = (await loadTenantRole(db)) ?? tenantRole();
-  if (!TENANT_ROLE) return { problems: ["octillion_tenant_role() does not exist (migration 0003_row_level_security not applied)"], checked: 0 };
+  if (!TENANT_ROLE) return { problems: ["app_tenant_role() does not exist (migrations 0003_row_level_security and 0024_neutral_database_names not applied)"], checked: 0 };
   const problems: string[] = [];
   let checked = 0;
   const tables = await tenantTables(db);
@@ -204,7 +232,7 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     for (const [t, sql] of Object.entries(PARENT_SCOPED)) expected[t] = (await one<{ n: number }>(sql, [a])).n;
     const as = async (orgId: number | null) => {
       await tx.query(`SET LOCAL ROLE ${TENANT_ROLE}`);
-      await tx.query("SELECT set_config('octillion.org_id', $1, true)", [orgId === null ? "" : String(orgId)]);
+      await tx.query("SELECT set_config('app.org_id', $1, true)", [orgId === null ? "" : String(orgId)]);
     };
 
     await as(a);
@@ -270,7 +298,9 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("run_charges: a tenant writes a charge", "INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'credit', 'p', 'p', 1, 'succeeded', 'usd', -100)", [`${tag}-run-${a}`, a]);
     await refused("run_charges: a tenant lowers its own charge", "/* tenant: rls probe */ UPDATE run_charges SET amount_minor = 0");
     await refused("run_charges: a tenant deletes its own charge", "/* tenant: rls probe */ DELETE FROM run_charges");
-    await refused("run_charges: a tenant writes a charge through the shell's function", "SELECT octillion_run_charge($1)", [`${tag}-run-${a}`]);
+    await refused("run_charges: a tenant writes a charge through the shell's function", "SELECT app_run_charge($1)", [`${tag}-run-${a}`]);
+    if ((await one<{ ok: boolean }>("SELECT to_regprocedure('octillion_run_charge(text)') IS NOT NULL AS ok")).ok)
+      await refused("run_charges: a tenant writes a charge through the function's old name", "SELECT octillion_run_charge($1)", [`${tag}-run-${a}`]);
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 
@@ -279,6 +309,37 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       const { n } = await one<{ n: number }>(`SELECT count(*)::int AS n FROM ${t}`);
       if (n) problems.push(`${t}: with no organization set the tenant role still sees ${n} row(s)`);
       checked++;
+    }
+
+    // A query made the way a release from before 0024 makes it (the role's and the setting's old names): its own
+    // workspace's rows only, none with no workspace set, and no write to another's.
+    const LEGACY = legacyTenantRole(TENANT_ROLE);
+    if ((await one<{ ok: boolean }>("SELECT to_regrole($1) IS NOT NULL AS ok", [LEGACY])).ok) {
+      const asLegacy = async (orgId: number | null) => {
+        await tx.query("RESET ROLE");
+        await tx.query(`SET LOCAL ROLE ${LEGACY}`);
+        await tx.query("SELECT set_config('app.org_id', '', true)");
+        await tx.query(`SELECT set_config('${LEGACY_TENANT_SETTING}', $1, true)`, [orgId === null ? "" : String(orgId)]);
+      };
+      const sample: string[] = [];
+      for (const t of ["organizations", "api_keys", "mcp_events", "workspace_records", "runs", "run_charges", ...(product ? ["products"] : [])])
+        if ((await one<{ ok: boolean }>("SELECT has_table_privilege($1, $2, 'SELECT') AS ok", [LEGACY, `public.${t}`])).ok) sample.push(t);
+      await asLegacy(a);
+      for (const t of sample) {
+        const col = t === "organizations" ? "id" : "org_id";
+        const { n } = await one<{ n: number }>(`/* tenant: rls probe, the old names on purpose */ SELECT count(*)::int AS n FROM ${t} WHERE ${col} IS DISTINCT FROM $1`, [a]);
+        if (n) problems.push(`${t}: under the tenant role's old name, organization A sees ${n} row(s) of other organizations`);
+        const own = (await one<{ n: number }>(`/* tenant: rls probe */ SELECT count(*)::int AS n FROM ${t}`)).n;
+        if (!own) problems.push(`${t}: under the tenant role's old name, organization A sees none of its own rows`);
+        checked += 2;
+      }
+      await refused("workspace_records: under the old names, A writes a record for B", "/* tenant: rls probe */ INSERT INTO workspace_records (org_id, pack, area, key) VALUES ($1, 'probe', 'probe', $2)", [b, `${tag}-legacy`]);
+      await asLegacy(null);
+      for (const t of sample) {
+        const { n } = await one<{ n: number }>(`SELECT count(*)::int AS n FROM ${t}`);
+        if (n) problems.push(`${t}: under the tenant role's old name with no organization set, ${n} row(s) are visible`);
+        checked++;
+      }
     }
     throw new Rollback();
   }).catch((e) => { if (!(e instanceof Rollback)) throw e; });

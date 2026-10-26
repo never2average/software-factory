@@ -175,8 +175,8 @@ Per agent:
 | `weight_source` | ids into `sources` |
 | `headless` | verified non-interactive command line (`<model>`, `<prompt>`, `<workdir>` are placeholders) |
 | `event_format` | id of the JSONL dialect the event parser needs |
-| `image.docker` | `octillion/agent-<harness>:<harness_version>`, the tag `orchestrator/images/build.sh` produces |
-| `image.boat_snapshot` | boat named snapshot `octillion-<harness>-<version with . → ->`. Boat names must match `^[a-z0-9][a-z0-9-]{0,62}$` |
+| `image.docker` | `app/agent-<harness>:<harness_version>`, the tag `orchestrator/images/build.sh` produces (a host whose images were built before mold_v0-097, under their old name, keeps running those until they are rebuilt: `orchestrator/core/runners.ts` `localImage`) |
+| `image.boat_snapshot` | boat named snapshot `app-<harness>-<version with . → ->`. Boat names must match `^[a-z0-9][a-z0-9-]{0,62}$` |
 | `requires_env` | API key / token env names passed at exec time; never baked into images |
 | `boat_preinstalled` | whether boat VMs ship this CLI (we still pin our own copy) |
 | `worker_adapter` | `supported` if `orchestrator/harnesses/adapters.ts` can drive it; `todo` if image and command are ready but no adapter exists |

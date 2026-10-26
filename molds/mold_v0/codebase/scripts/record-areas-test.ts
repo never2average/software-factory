@@ -209,9 +209,9 @@ try {
     // A policy opened on the workspace table fails the check.
     await db.exec("ALTER POLICY tenant_isolation ON workspace_records USING (true)");
     assert.ok((await rlsCatalogProblems(db)).some((p) => p.includes("workspace_records")), "an opened workspace_records policy fails the RLS check");
-    await db.exec("ALTER POLICY tenant_isolation ON workspace_records USING (org_id = octillion_tenant_org())");
+    await db.exec("ALTER POLICY tenant_isolation ON workspace_records USING (org_id = app_tenant_org())");
     // A write grant on the shared table fails it too.
-    const [{ r }] = await db.query<{ r: string }>("SELECT octillion_tenant_role() AS r");
+    const [{ r }] = await db.query<{ r: string }>("SELECT app_tenant_role() AS r");
     await db.exec(`GRANT INSERT ON platform_records TO ${r}`);
     assert.ok((await rlsCatalogProblems(db)).some((p) => p.includes("platform_records")), "a write grant on platform_records fails the RLS check");
     await db.exec(`REVOKE INSERT ON platform_records FROM ${r}`);

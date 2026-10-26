@@ -37,7 +37,7 @@ racing to migrate).
 own tables (its products, run definitions, runs and their sessions, agent profiles, tasks and the rest) moved to its host pack's
 migrations, under the names they had (MOLD.md "Host packs": `host.schema`), so a database built with no packs has none
 of them. Three merged files were rewritten once for it, the only time: `0001_baseline` (the shell's tables only),
-`0003_row_level_security` and `0009_usage_and_limits` (the gateway's session rule through `octillion_session_org()`, so
+`0003_row_level_security` and `0009_usage_and_limits` (the gateway's session rule through a function, `app_session_org()` since 0024, so
 it no longer names the sessions table). `src/migrate.ts` `SPLIT_MIGRATIONS` lists each file's earlier checksum: a
 database that applied the earlier version keeps it, and it is not reported as edited. That database already has the
 product's tables with their rows, so the host pack's migrations that took them over (`host.schema.adopts`) are recorded
@@ -56,5 +56,23 @@ Any other edit of a merged file is still refused.
   default), backfill, ship the code that uses it, and drop the old one in a later migration.
 
 **Rolling back.** A release older than the database (a rollback) runs and logs that the schema is newer; migrations
-must stay backward compatible for that. Rolling back to a release from before versioned migrations is not supported
+must stay backward compatible for that. One exception, with its own way back: `0024_neutral_database_names`
+(mold_v0-097) renames the shell's database functions, the tenant role and the tenant setting to neutral names
+(`app_tenant_role()`, `app_tenant_org()`, `app_session_org()`, `app_run_charge*()`, `app_tenant_<hash>`, `app.org_id`).
+It renames in place: a policy, a trigger and a grant hold a function or a role by its id, so every policy follows with
+none rewritten, no table is locked and no row is touched (a catalog row per name). Rehearsed on Postgres 17 as a
+non-superuser login with the right to create roles (as on a managed database), 520,000 rows, a long read open on the
+busiest table and a release from before 0024 serving tenant transactions the whole time: 47 ms, no lock on any of the
+app's tables (only catalog rows: functions, roles, memberships), no table or index rewritten, every row kept, no error
+and no row of another workspace for the release serving through it, `check:rls` clean after. The old names stay until a later cleanup, for the release still serving during a rolling deploy and for a
+pack migration written before: each old function is a one-line alias of the new one (the old role function names
+the new role, so a pack migration that grants through it grants to the role tenant work runs as; a policy a pack
+migration writes through an alias is re-pointed at the function by the runner, in the same transaction); the old role
+is a role of its own with nothing but membership in the new one, which that release switches to; and the new function
+reads the old setting when the new one is unset. `npm run check:rls` holds the alias role to that (no grant, no policy,
+no other membership, no login) and probes a query made the old way: its own workspace's rows only, none with no
+workspace set. A release from before 0024 started after it (a rollback) finds the new names in every policy and keeps
+tenant queries refused (platform work carries on; nothing is opened): run `sql/rollback/0024_neutral_database_names.sql`
+once (`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f ...`) before starting it; it is 0024 in reverse, renames only, and
+`npm run test:migrations` proves it leaves exactly the database 0023 left. Rolling back to a release from before versioned migrations is not supported
 once a migration after the baseline exists: those releases re-run the old schema file on every boot.

@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import { planFleet } from "../fleet/plan.js";
 import { CFG, env, num } from "./config.js";
 import type { Runner, Sandbox, RunExit, Turn } from "./runners.js";
-import { DIFF_SCRIPT, capDiff, AGENT_WORKDIR, AGENT_HOME, imageEnv, dockerExecHarness } from "./runners.js";
+import { DIFF_SCRIPT, capDiff, AGENT_WORKDIR, AGENT_HOME, imageEnv, dockerExecHarness, localImage } from "./runners.js";
 import { seedBase, seedScript } from "./workspaces.js";
 import { api, log, sh } from "./util.js";
 
@@ -59,7 +59,7 @@ function limits(): string[] {
 }
 
 const imageFor = (harness: string, image?: string | null, version?: string | null) =>
-  POOL.imageOverride ?? image ?? `octillion/agent-${harness}:${version ?? "latest"}`;
+  POOL.imageOverride ?? image ?? `app/agent-${harness}:${version ?? "latest"}`;
 
 /** Docker-label-safe form of an agent id ("claude-code/opus" -> "claude-code_opus") for container names. */
 const slug = (s: string) => s.replace(/[^a-zA-Z0-9_.-]+/g, "_");
@@ -146,11 +146,13 @@ export class PodPool {
     const pod: Pod = { id, name: `octi-pool-${slug(t.agent_id)}-${id}`, agentId: t.agent_id, harness: t.harness, model: t.model, image: t.image, state: "starting", baseEnv: [] };
     this.pods.set(id, pod);
     try {
-      if (!this.envCache.has(t.image)) this.envCache.set(t.image, await imageEnv(t.image));
-      pod.baseEnv = this.envCache.get(t.image)!;
+      // The registry's tag, or its name before mold_v0-097 on a host that has only that (runners.ts localImage).
+      const image = pod.image = await localImage(t.image);
+      if (!this.envCache.has(image)) this.envCache.set(image, await imageEnv(image));
+      pod.baseEnv = this.envCache.get(image)!;
       const labels = ["--label", "app.pool=1", "--label", `app.agent=${t.agent_id}`, "--label", `app.harness=${t.harness}`,
         "--label", `app.model=${t.model}`, "--label", `app.pool.owner=${this.orchestratorId}`];
-      const r = await sh("docker", ["run", "-d", "--init", "--name", pod.name, ...labels, ...limits(), "-w", AGENT_WORKDIR, t.image, "sleep", "infinity"]);
+      const r = await sh("docker", ["run", "-d", "--init", "--pull", "never", "--name", pod.name, ...labels, ...limits(), "-w", AGENT_WORKDIR, image, "sleep", "infinity"]);
       if (r.code !== 0) throw new Error(r.out.slice(-300));
       if (this.draining || !this.pods.has(id)) { await sh("docker", ["rm", "-f", pod.name]); return; }
       pod.state = "idle";
