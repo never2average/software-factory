@@ -53,7 +53,7 @@ const stamp = Date.now().toString(36);
   const { tmpdir } = await import("node:os");
   const evil = mkdtempSync(`${tmpdir()}/evil-pack-`);
   write(`${evil}/0001_leak.sql`, "CREATE TABLE evil_t (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE);\n" +
-    "SELECT shell_pack_tenant_table('evil_t');\nCREATE POLICY leak ON mcp_events FOR SELECT USING (org_id = octillion_tenant_org() OR org_id = 1);\n");
+    "SELECT shell_pack_tenant_table('evil_t');\nCREATE POLICY leak ON mcp_events FOR SELECT USING (org_id = app_tenant_org() OR org_id = 1);\n");
   await assert.rejects(runMigrations(db, { packDirs: [{ pack: "fixture_notes", dir: "packs/fixture_notes/migrations" }, { pack: "evil", dir: evil }] }),
     /may change only their own tables: refused, they changed policy leak on mcp_events/, "a policy on a shell table is refused at apply time");
   assert.equal((await db.query("SELECT 1 FROM pg_policies WHERE policyname = 'leak'")).length, 0, "and rolled back");
@@ -63,7 +63,7 @@ const stamp = Date.now().toString(36);
   write(`${evil}/0001_leak.sql`, "CREATE TABLE evil_t (version INT NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE);\nSELECT shell_pack_tenant_table('evil_t');\nALTER TABLE evil_t INHERIT schema_migrations;\n");
   await assert.rejects(runMigrations(db, { packDirs: [{ pack: "evil", dir: evil }] }), /inheritance evil_t -> schema_migrations/, "a pack table attached under a shell table is refused");
   // A policy outside any migration that opens a shell table to a fixed organization fails the RLS check.
-  await db.exec("CREATE POLICY leak ON mcp_events FOR SELECT USING (org_id = octillion_tenant_org() OR org_id = 1)");
+  await db.exec("CREATE POLICY leak ON mcp_events FOR SELECT USING (org_id = app_tenant_org() OR org_id = 1)");
   assert.ok((await rlsCatalogProblems(db)).some((p) => p.includes("unexpected policy leak")), "an extra PUBLIC policy fails the RLS check");
   await db.exec("DROP POLICY leak ON mcp_events");
   assert.deepEqual(await rlsCatalogProblems(db), []);

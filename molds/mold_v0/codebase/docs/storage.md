@@ -54,8 +54,9 @@ runs after every rolling deploy and daily at 04:17 UTC (`/etc/cron.d/app-cleanup
 - **Old server images:** untagged images of the app's compose project (each deploy leaves one, about 1 GB).
 - **Build cache:** capped at `APP_BUILD_CACHE_KEEP` (5 GB), oldest first. Docker's cache is shared; it is only
   cache.
-- **Local agent images** (`octillion/agent-*`, for the local Docker runner): removed when not at the version pinned in
-  `harnesses/registry.json`. Rebuild with `orchestrator/images/build.sh`.
+- **Local agent images** (`app/agent-*`, for the local Docker runner): removed when not at the version pinned in
+  `harnesses/registry.json`. Rebuild with `orchestrator/images/build.sh`. One built before mold_v0-097 under its old
+  name is kept (and run) until the same version is built under the new one, then removed.
 - **Test leftovers** in `/tmp` older than a day.
 - **Container logs:** capped at 20 MB x 5 files per container (`x-logging` in the compose file). The cap applies when
   a container is recreated: the server on its next deploy, the database services at the next maintenance restart.

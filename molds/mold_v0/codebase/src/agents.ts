@@ -111,7 +111,7 @@ export function platformAgent(row: PlatformHarness, fileAgents: AgentSpec[]): Ag
     id: row.id, harness: row.harness, label: row.label, model: row.model, harness_version: version, weight: 0, enabled: row.enabled !== false,
     ...(row.notes ? { notes: row.notes } : {}),
     // Another pin: the base's image / snapshot are for its version; workers install the pin with boat-setup/<harness>.sh.
-    ...(repinned ? { image: { docker: `octillion/agent-${row.harness}:${version}` }, boat_preinstalled: false } : {}),
+    ...(repinned ? { image: { docker: `app/agent-${row.harness}:${version}` }, boat_preinstalled: false } : {}),
     origin: "admin", base_agent: template.id,
   };
 }

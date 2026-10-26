@@ -1,5 +1,5 @@
 {
-  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, and names that outlive a release (a database's functions and roles, built images and boat templates, files on running orchestrator sandboxes), which only a migration of what holds them can rename. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
+  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, the old names a release still answers to for what was set up before it renamed them (mold_v0-097: the database's functions, tenant role and setting, kept as aliases; local agent images built under their old tags; an orchestrator sandbox's unit, home and marker, moved over at its next configure), until a later cleanup; and names on the sandbox provider and its runners that only a rebuild renames. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
   "words": [
     "octillion",
     "octi",
@@ -8,7 +8,8 @@
   "files": {
     "sql/migrations/*.sql": "applied migrations are checksummed (src/migrate.ts) and replayed on every new database: their text, comments included, stays as it was applied",
     "scripts/fixtures/pre-049-migrations/*.sql": "byte copies of the migrations as they were before mold_v0-049, the fixture test:migrations upgrades from",
-    "web/src/lib/octillion-format.ts": "the module path host packs' console pages written before mold_v0-045 import; it only re-exports display-format.ts"
+    "web/src/lib/octillion-format.ts": "the module path host packs' console pages written before mold_v0-045 import; it only re-exports display-format.ts",
+    "sql/rollback/*.sql": "the SQL that puts a migration's old names back, for a rollback to a release from before it (docs/migrations.md \"Rolling back\"): it names them by design"
   },
   "allow": [
     {
@@ -31,73 +32,34 @@
       "why": "a deploy script reading an env name, its old spelling as the fallback of the new one only"
     },
     {
-      "id": "database-identifiers",
-      "pattern": "\\boctillion_(?:tenant_role|tenant_org|session_org|run_charge(?:_refresh|_figures|_on_end)?|platform_of)\\b|\\boctillion_tenant_(?=<|\\[|\\$|\\{|[0-9a-f]{10}\\b)|\\boctillion\\\\?\\.org_id\\b",
+      "id": "legacy-database-names",
+      "pattern": "\\boctillion_(?:tenant_role|tenant_org|session_org|run_charge(?:_refresh|_figures|_on_end)?|platform_of)\\b|\\boctillion_tenant_(?=[\\\"'])|\\boctillion\\.org_id\\b|octillion(?=_\\((?:tenant_org\\|session_org)\\)\\\\?\\\\\\()|\\boctillion(?=\\)\\\\\\.org_id)",
       "paths": [
         "src/rls.ts",
         "src/migrate.ts",
-        "src/tenant-scope.ts",
-        "src/run-charges.ts",
         "scripts/gen-packs.mjs",
-        "scripts/migrations-test.ts",
-        "scripts/packs-test.ts",
-        "scripts/packs-fixture-check.ts",
-        "scripts/record-areas-test.ts",
-        "scripts/run-charges-test.ts",
-        "docs/migrations.md",
-        "docs/security.md",
-        "src/docs-corpus.generated.json",
-        "web/src/content/admin-docs.generated.ts"
+        "scripts/migrations-test.ts"
       ],
-      "why": "functions, the tenant role and its setting that sql/migrations created and that every row-level security policy on a live database names: renaming them is a migration of every policy (follow-up), not a rename"
+      "why": "the database's functions, tenant role and tenant setting before 0024_neutral_database_names (mold_v0-097), kept until a later cleanup for the release still serving during a rolling deploy and for pack migrations written before (applied ones are checksummed and replay on every new database): the catalog check and probe that hold the alias role to nothing of its own (src/rls.ts), the runner that re-points a policy written through an old function at the new one (src/migrate.ts), the pack check that refuses the tenant setting under either name (gen-packs.mjs), and the test that proves the aliases, the old release's path and the rollback (migrations-test.ts). octillion_platform_of is a pre-049 database's function the test leaves alone"
     },
     {
-      "id": "agent-images",
+      "id": "legacy-agent-images",
       "pattern": "\\boctillion/agent-|\\boctillion-sandbox\\b",
       "paths": [
-        "harnesses/registry.json",
-        "harnesses/README.md",
-        "scripts/fixtures/registry.json",
-        "src/agents.ts",
-        "orchestrator/fleet/plan.ts",
-        "orchestrator/core/pool.ts",
-        "orchestrator/core/config.ts",
-        "orchestrator/images/build.sh",
-        "orchestrator/images/README.md",
-        "orchestrator/Dockerfile.sandbox",
+        "orchestrator/core/runners.ts",
         "orchestrator/README.md",
-        "orchestrator/harnesses/fixtures/tools/e2e.mts",
-        "deploy/cleanup.sh",
-        "docs/storage.md",
-        "src/docs-corpus.generated.json",
-        "web/src/content/admin-docs.generated.ts"
+        "orchestrator/test/legacy-names.ts",
+        "deploy/cleanup.sh"
       ],
-      "why": "the tags of the coding agents' images and the sandbox image, already built on hosts and pinned in harnesses/registry.json (image.docker): a new tag needs every image rebuilt (follow-up)"
+      "why": "the local images' tags before mold_v0-097 (now app/agent-<harness>, app-sandbox): a host whose images were built under them keeps running them until they are rebuilt (runners.ts localImage, proven by test/legacy-names.ts), and cleanup.sh removes one once the same version is built under the new tag. Goes with a later cleanup, once no host has them"
     },
     {
-      "id": "boat-templates",
-      "pattern": "\\boctillion-(?:<harness>|[a-z]+(?:-[a-z]+)*-[0-9][0-9a-z.-]*)",
-      "paths": [
-        "harnesses/registry.json",
-        "harnesses/README.md",
-        "scripts/fixtures/registry.json",
-        "orchestrator/images/README.md"
-      ],
-      "why": "the boat named snapshots (image.boat_snapshot) the harnesses' sandboxes start from, which exist under these names in the boat account"
-    },
-    {
-      "id": "orchestrator-hosts",
+      "id": "legacy-orchestrator-hosts",
       "pattern": "/etc/octillion\\b|/home/user/octillion\\b|\\boctillion-orchestrator\\b",
       "paths": [
-        "orchestrator/deploy/boat-lib.ts",
-        "orchestrator/deploy/in-sandbox.ts",
-        "orchestrator/core/host-guard.ts",
-        "orchestrator/test/boat-fleet.ts",
-        "orchestrator/images/boat-setup/_common.sh",
-        "orchestrator/images/README.md",
-        "orchestrator/README.md"
+        "orchestrator/deploy/boat-lib.ts"
       ],
-      "why": "the orchestrator sandboxes' service unit, home and host marker, and the harness manifests in the boat templates: running sandboxes hold them, and the next release stops, restarts and checks those (boat-lib stopService, host-guard)"
+      "why": "an orchestrator sandbox's service unit, home and host marker before mold_v0-097 (now app-orchestrator, /home/user/app, /etc/app): a sandbox set up before still runs them until the launcher configures it again, which stops and removes them (configure), and is stopped whichever it runs (stopService); proven by orchestrator/test/legacy-names.ts. Goes with a later cleanup, once no sandbox has them"
     },
     {
       "id": "landing-reference-fixture",
@@ -127,7 +89,7 @@
         "src/run-sandboxes.ts",
         "web/src/content/admin-docs.generated.ts"
       ],
-      "why": "names on the sandbox provider (boat) and its VMs that running fleets hold: the default namespace (\"octi\" on a server, \"octv\" on Vercel) every autoscaler reaps orphans by, the names of orchestrator, worker, pool and run sandboxes and snapshot images under it, and the unprivileged `octi` user baked into the snapshots. Renaming them is a rebuild of the snapshots and a namespace migration (mold_v0-097), not a rename"
+      "why": "names on the sandbox provider (boat) and its VMs that running fleets hold: the default namespace (\"octi\" on a server, \"octv\" on Vercel) every autoscaler reaps orphans by, the names of orchestrator, worker, pool and run sandboxes and snapshot images under it, and the unprivileged `octi` user baked into the snapshots. Renaming them is a rebuild of the snapshots and a namespace migration (a follow-up of mold_v0-097, which renamed the long names held outside a release), not a rename"
     },
     {
       "id": "run-sandbox-runtime",
@@ -157,7 +119,7 @@
         "src/run-tools.ts",
         "src/run-users.ts"
       ],
-      "why": "users, groups, paths and units on run sandboxes, orchestrator pods and runner hosts that a built image or a host already holds: the run users (octirun-*) and the egress proxy's user (octiproxy) the runner image creates, its tools directory, the uid leases and checkout cache that outlive a release on a runner's host, the proxy's logs and set-up paths, and the tests that check those exact names. Renamed with the image rebuild (mold_v0-097)"
+      "why": "users, groups, paths and units on run sandboxes, orchestrator pods and runner hosts that a built image or a host already holds: the run users (octirun-*) and the egress proxy's user (octiproxy) the runner image creates, its tools directory, the uid leases and checkout cache that outlive a release on a runner's host, the proxy's logs and set-up paths, and the tests that check those exact names. Renamed with the image rebuild (a follow-up of mold_v0-097, which renamed the long names held outside a release)"
     }
   ],
   "concepts": {

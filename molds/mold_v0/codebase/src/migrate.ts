@@ -37,7 +37,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Db, Queryable } from "./db.js";
+import type { Db, Execable, Queryable } from "./db.js";
 import { PACK_MIGRATION_DIRS, type HostSchema } from "./pack-migrations.generated.js";
 import { ENV } from "./env-names.js";
 
@@ -202,7 +202,7 @@ const PACK_TABLE = `CREATE TABLE IF NOT EXISTS pack_schema_migrations (
 const PACK_HELPERS = `
 CREATE OR REPLACE FUNCTION shell_pack_tenant_table(t regclass) RETURNS void LANGUAGE plpgsql AS $fn$
 DECLARE
-  r TEXT := octillion_tenant_role();
+  r TEXT := app_tenant_role();
   fk RECORD;
   seq RECORD;
 BEGIN
@@ -211,7 +211,7 @@ BEGIN
   END IF;
   EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
   EXECUTE format('DROP POLICY IF EXISTS pack_tenant_isolation ON %s', t);
-  EXECUTE format('CREATE POLICY pack_tenant_isolation ON %s TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', t, r);
+  EXECUTE format('CREATE POLICY pack_tenant_isolation ON %s TO %I USING (org_id = app_tenant_org()) WITH CHECK (org_id = app_tenant_org())', t, r);
   EXECUTE format('REVOKE ALL ON %s FROM %I', t, r);
   EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO %I', t, r);
   FOR fk IN
@@ -241,7 +241,7 @@ END $fn$;
 CREATE OR REPLACE FUNCTION shell_pack_private_table(t regclass) RETURNS void LANGUAGE plpgsql AS $fn$
 BEGIN
   EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
-  EXECUTE format('REVOKE ALL ON %s FROM %I', t, octillion_tenant_role());
+  EXECUTE format('REVOKE ALL ON %s FROM %I', t, app_tenant_role());
 END $fn$;
 REVOKE ALL ON FUNCTION shell_pack_tenant_table(regclass) FROM PUBLIC;
 REVOKE ALL ON FUNCTION shell_pack_private_table(regclass) FROM PUBLIC;
@@ -349,6 +349,25 @@ async function securitySnapshot(q: Queryable, packIds: string[], host: { tables:
   return out;
 }
 
+/**
+ * The shell's functions' names before 0024_neutral_database_names (mold_v0-097): each still exists as a one-line alias
+ * of the new one, for a pack migration written before it (until a later cleanup). A policy written through an alias is
+ * re-pointed at the function itself, in the same transaction, so every policy names the new function and the alias can
+ * go without touching a policy. Same rule, same rows: the alias only calls the function.
+ */
+const LEGACY_FUNCTIONS = /\boctillion_(tenant_org|session_org)\(/g;
+async function repointLegacyPolicies(q: Execable) {
+  const rows = await q.query<{ tablename: string; policyname: string; qual: string | null; with_check: string | null }>(
+    "SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND (qual ~ $1 OR with_check ~ $1) ORDER BY 1, 2",
+    ["\\moctillion_(tenant_org|session_org)\\("]);
+  const fix = (x: string) => x.replace(LEGACY_FUNCTIONS, "app_$1(");
+  for (const p of rows) {
+    const using = p.qual == null ? "" : ` USING (${fix(p.qual)})`, check = p.with_check == null ? "" : ` WITH CHECK (${fix(p.with_check)})`;
+    await q.exec(`ALTER POLICY ${ident(p.policyname)} ON ${ident(p.tablename)}${using}${check}`);
+  }
+}
+const ident = (s: string) => `"${s.replace(/"/g, '""')}"`;
+
 const changedSecurity = (before: Map<string, string>, after: Map<string, string>) =>
   [...new Set([...before.keys(), ...after.keys()])].filter((k) => before.get(k) !== after.get(k)).sort();
 
@@ -405,6 +424,7 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
         applied.push(plabel(s.pack, m));
       }
     }
+    await repointLegacyPolicies(tx);
     // Once every pack table exists: secure each workspace table again, so a reference to a table secured after it
     // (another pack's, or a later migration's) gets its check too. Idempotent.
     for (const { t } of await tx.query<{ t: string }>("SELECT DISTINCT tablename AS t FROM pg_policies WHERE schemaname = 'public' AND policyname = 'pack_tenant_isolation' ORDER BY 1"))
@@ -418,11 +438,11 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
     const platformRead = sets.flatMap((s) => [...(s.schema?.platform_read ?? [])]);
     for (const r of platformRead.length ? await tx.query<{ t: string; org: boolean; writes: boolean }>(
       `SELECT t, EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = to_regclass('public.' || quote_ident(t)) AND a.attname = 'org_id' AND NOT a.attisdropped) AS org,
-              has_table_privilege(octillion_tenant_role(), to_regclass('public.' || quote_ident(t)), 'INSERT')
-                OR has_table_privilege(octillion_tenant_role(), to_regclass('public.' || quote_ident(t)), 'UPDATE')
-                OR has_table_privilege(octillion_tenant_role(), to_regclass('public.' || quote_ident(t)), 'DELETE')
-                OR has_any_column_privilege(octillion_tenant_role(), to_regclass('public.' || quote_ident(t)), 'INSERT')
-                OR has_any_column_privilege(octillion_tenant_role(), to_regclass('public.' || quote_ident(t)), 'UPDATE') AS writes
+              has_table_privilege(app_tenant_role(), to_regclass('public.' || quote_ident(t)), 'INSERT')
+                OR has_table_privilege(app_tenant_role(), to_regclass('public.' || quote_ident(t)), 'UPDATE')
+                OR has_table_privilege(app_tenant_role(), to_regclass('public.' || quote_ident(t)), 'DELETE')
+                OR has_any_column_privilege(app_tenant_role(), to_regclass('public.' || quote_ident(t)), 'INSERT')
+                OR has_any_column_privilege(app_tenant_role(), to_regclass('public.' || quote_ident(t)), 'UPDATE') AS writes
          FROM unnest($1::text[]) t`, [platformRead]) : [])
       if (r.org || r.writes) throw new MigrationError(`host pack platform library ${r.t} ${r.org ? "has an org_id (a workspace table needs row-level security)" : "is writable by tenant work"} (host.schema.platform_read)`);
     const open = (await unsecuredPackTables(tx, packIds, host.tables)).filter((t) => !platformRead.includes(t));
