@@ -5,7 +5,8 @@
 //
 // Always:
 // 1. The words: every kind has a title and one sentence, no placeholder left unfilled; the API's plain not-found page
-//    says the console's words (src/status-pages.ts NOT_FOUND_WORDS = statusText('not_found')).
+//    says the console's words (src/status-pages.ts NOT_FOUND_WORDS = statusText('not_found')). Which addresses are
+//    pages (mold_v0-155, web/src/lib/console-routes.ts): every dynamic route decided, unknown ones in each area known.
 // 2. The API: a browser's unknown address is a 404 page (the console's when it answers, else the plain one with the same
 //    words); an API client's, an /api address and the API's own pages are answered as before.
 // With --browser, the console itself (next build for this sign-in, next start against this API; under Clerk the lane
@@ -13,7 +14,8 @@
 // standard page (data-status-page):
 // 3. Signed out: /app, /app/usage, /admin and an unknown /app address go to sign-in (built-in: and back after).
 // 4. Unknown addresses: the site's, the portal's, the admin console's, sign-in's, a pack page, a record area, a doc, a
-//    host page: 404 and the not-found page, inside the area's shell where there is one; never the API's own text.
+//    host page: 404 and the not-found page, inside the area's shell where there is one; never the API's own text; drawn
+//    on the server (mold_v0-155): the page's HTML carries it and its links.
 // 5. Denied: /admin and any address under it for someone who is not platform staff is a 403 that names them and leads
 //    to their account; staff see the admin console's 404 for an unknown address there.
 // 6. The data hooks: a portal page whose API answer is 401, 403 (a role, with the role it needs), 403 suspended,
@@ -66,6 +68,26 @@ try {
     assert.equal(words.signInHref("/app/usage?x=1"), "/auth/sign-in?redirect_url=%2Fapp%2Fusage%3Fx%3D1");
     for (const bad of ["//evil.example", "https://evil.example", "/auth/sign-in", null]) assert.equal(words.signInHref(bad), "/auth/sign-in", `no return to ${bad}`);
     ok("the words: every kind has a title and one sentence with no placeholder left; the API's plain not-found page says the same; sign-in returns only to this site's pages");
+  }
+
+  // ---------- 1b. which addresses are pages (mold_v0-155: web/src/proxy.ts answers any other with a 404 drawn on the server) ----------
+  {
+    const routes = await import(pathToFileURL(path.join(ROOT, "web", "src", "lib", "console-routes.ts")).href);
+    const manifest = JSON.parse(readFileSync(path.join(ROOT, "web", "src", "config", "console-routes.generated.json"), "utf8")) as { routes: string[]; status_pages: string[] };
+    const undecided = manifest.routes.filter((r) => r.includes("[") && !(r in routes.RESOLVED) && !routes.OPEN.includes(r));
+    assert.deepEqual(undecided, [], "every dynamic page route is resolved from its registry (src/lib/console-routes.ts RESOLVED) or left OPEN to its page");
+    for (const r of [...Object.keys(routes.RESOLVED), ...routes.OPEN, ...Object.keys(routes.SHOWN)]) assert.ok(manifest.routes.includes(r), `${r}: a page route of the app directory`);
+    assert.deepEqual(manifest.status_pages, ["/console-status/not-found"], "the console-status page the API relays: no page of the build either (a 404)");
+    const doc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "customer-guide.ts")).href)).guidePages(JSON.parse(readFileSync(path.join(ROOT, "web", "src", "content", "mcp-tools.generated.json"), "utf8")))[0].slug;
+    const adminDoc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "admin-docs.generated.ts")).href)).ADMIN_DOCS[0]?.slug;
+    const known = ["/app", "/app/billing", "/app/usage", "/app/docs", `/app/docs/${doc}`, "/admin", "/admin/health", "/admin/accounts/any-account", "/auth/sign-in", "/auth/sign-in/factor-one", "/auth/sign-up", "/auth/consent", ...(adminDoc ? [`/admin/docs/${adminDoc}`] : [])];
+    const unknown = ["/app/no-such-page", "/app/records", "/app/records/no-area", "/app/records/no-area/key-1", "/app/packs/no-pack/no-page", "/app/docs/no-such-doc", "/app/host/no-pack/x", "/app/a/b/c",
+      "/admin/no-such-page", "/admin/docs/no-such-doc", "/admin/records/no-area", "/admin/packs/no-pack/no-page", "/auth/no-such-page", ...manifest.status_pages];
+    for (const a of known) assert.equal(routes.isConsoleAddress(a), true, `${a}: a page of this build`);
+    for (const a of unknown) assert.equal(routes.isConsoleAddress(a), false, `${a}: no page of this build`);
+    for (const [a, area] of [["/app/x", "app"], ["/admin/x/y", "admin"], ["/auth/x", "auth"], ["/console-status/not-found", "site"], ["/privacy", "site"]])
+      assert.equal(routes.notFoundAreaFor(a), area);
+    ok(`the console's addresses: ${manifest.routes.length} page routes (every dynamic one resolved from its registry or left to its page), the build's docs and pages known; unknown addresses in every area are drawn as that area's not-found page`);
   }
 
   const http = await startHttp();
@@ -302,7 +324,18 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     await expect(w.owner, url, 404, "not_found", inShell);
   for (const url of ["/admin/no-such-page", "/admin/docs/no-such-doc", "/admin/records/no-area"])
     await expect(w.staff, url, 404, "not_found", inShell);
-  ok("unknown addresses: the site's, sign-in's and every portal and admin route (pages, packs, records, docs, host pages) are a 404 with the not-found page, inside the area's shell where there is one");
+  // Drawn on the server (mold_v0-155): the page's HTML itself carries the status page and its links, no script needed.
+  const cookieOf = async (who: Person | null) => (who ? (await who.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") : "");
+  for (const [who, url] of [[null, "/no-such-page-anywhere"], [null, "/auth/no-such-page"], [w.owner, "/app/no-such-page"], [w.owner, "/app/docs/no-such-doc"], [w.owner, "/app/records/no-area"],
+    [w.owner, "/app/a/b/c"], [null, "/console-status/not-found"], [w.staff, "/admin/no-such-page"], [w.staff, "/admin/docs/no-such-doc"]] as const) {
+    const r = await fetch(`${origin}${url}`, { headers: { accept: "text/html", cookie: await cookieOf(who) }, redirect: "manual" });
+    const html = (await r.text()).replace(/<script[\s\S]*?<\/script>/g, "");
+    assert.equal(r.status, 404, `${url}: HTTP ${r.status}`);
+    assert.match(html, /data-status-page="not_found"/, `${url}: the not-found page in the server's HTML`);
+    assert.match(html, /<a [^>]*href="\/[^"]*"[^>]*>[^<]*(Go to|home)/i, `${url}: its link home in the server's HTML`);
+    assert.doesNotMatch(html, /id="__next_error__"/, `${url}: never Next's empty error shell`);
+  }
+  ok("unknown addresses: the site's, sign-in's and every portal and admin route (pages, packs, records, docs, host pages) are a 404 with the not-found page, inside the area's shell where there is one; drawn on the server (in the page's HTML, its links with it)");
 
   // 5. denied: the admin console for someone who is not platform staff.
   for (const url of ["/admin", "/admin/accounts", "/admin/no-such-page"])

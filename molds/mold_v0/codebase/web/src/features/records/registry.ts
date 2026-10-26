@@ -1,5 +1,5 @@
 // The record areas packs declare (mold_v0-047), from the generated web/src/config/pack-nav.generated.ts (scripts/gen-packs.mjs).
-import { recordAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
+import { recordAreas, type RecordAreaSpec } from '../../config/pack-nav.generated';
 
 /** The area shown at /<base>/records/<name>, or null (a 404). Staff pages show the shared (platform) areas only. */
 export function findRecordArea(base: 'app' | 'admin', name: string): RecordAreaSpec | null {
