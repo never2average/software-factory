@@ -19,13 +19,13 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { CONSOLE_PAGES } from "./console-pages.js";
+import { CONSOLE_COMPONENTS, CONSOLE_PAGES } from "./console-pages.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -41,6 +41,107 @@ const PageSchema = z.object({
   nav_group: z.string().optional(),
   icon: z.string().optional(),
 }).strict();
+
+const plain = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line: no control or direction characters");
+const settingKey = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment variable's name: capitals, digits and _");
+/**
+ * Global settings a pack adds to /admin (mold_v0-140; src/settings.ts, which reads them from src/hosts.generated.ts
+ * PACK_CONFIG): pure data. `groups` go after the group each names (a shell group: models, runs, capacity, docs, email,
+ * or one a pack adds before); each of `defs` is a setting keyed by the environment variable it overrides, in a group,
+ * before the setting `before` names or at the end of its group. Its value in force: set on /admin, else the environment,
+ * else `default`.
+ */
+const SettingsSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  groups: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _"), label: plain(60), after: z.string().max(31).optional() }).strict()).max(20).optional(),
+  defs: z.array(z.object({
+    key: settingKey, group: z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "a group's id"), label: plain(120),
+    kind: z.enum(["text", "int", "number", "choice"]), default: z.union([z.string().max(200), z.number()]),
+    min: z.number().optional(), max: z.number().optional(), options: z.array(z.string().min(1).max(60)).min(1).max(30).optional(),
+    format: z.enum(["model", "sender", "emails"]).optional(), help: plain(600), before: settingKey.optional(),
+  }).strict()
+    .refine((d) => (d.kind === "choice") === (d.options !== undefined), "options with kind choice (and only then)")
+    .refine((d) => d.kind !== "choice" || d.options!.includes(String(d.default)), "a choice's default is one of its options")
+    .refine((d) => (d.kind === "int" || d.kind === "number") === (typeof d.default === "number"), "a number's default is a number, text's is text")
+    .refine((d) => d.min === undefined || d.max === undefined || d.min <= d.max, "min at most max")
+    .refine((d) => d.format === undefined || d.kind === "text", "format is a text setting's")).max(100).optional(),
+}).strict();
+/**
+ * A pack's words for the admin MCP's shell tools and skills (mold_v0-140; src/admin-mcp.ts): `reword`, a shell tool's
+ * description and its summary line (`summary_template`, filled with the result's fields: src/text-template.ts
+ * summaryValues, {account_name}, {members_count}); `skills`, steps of a shell skill replaced, each one exact passage
+ * `from` (the build is refused when the skill no longer reads it: src/admin-skills.ts) by `to`, in order.
+ */
+const AdminMcpSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  reword: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a shell admin tool's name"), z.object({
+    description: plain(2000).optional(), summary_template: plain(400).optional(),
+  }).strict()).optional(),
+  skills: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a shell admin skill's name"), z.array(z.object({
+    from: z.string().min(10).max(2000), to: z.string().min(1).max(4000),
+  }).strict()).min(1).max(20)).optional(),
+}).strict();
+
+const stepId = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _");
+/**
+ * A host pack's Setup page (mold_v0-140; src/app.ts setup, src/host.ts SetupConfig): its own `steps` among the shell's
+ * (each after a step, done when the person read a resource whose address starts with a prefix, `resource:<prefix>`, or
+ * the account reached a session-engine stage, `stage:onboarded|simulated|reported`), the shell's steps in its words
+ * (`shell_steps`: joined, connected, tools, first_call), the note shown for a step that starts work to someone who may
+ * not (`viewer_note`, with `launch` on the step), and the `workflow`: the tool groups that make up using it fully.
+ */
+const ShellStepWords = z.object({ label: plain(120).optional(), help: plain(600).optional(), prompt: plain(400).optional() }).strict();
+const SetupSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  steps: z.array(z.object({
+    $comment: z.string().max(2000).optional(),
+    id: stepId, label: plain(120), help: plain(600), help_text_only: plain(600).optional(), prompt: plain(400).optional(),
+    optional: z.boolean().optional(), launch: z.boolean().optional(), after: stepId.optional(),
+    done_when: z.string().regex(/^(resource:[a-z][a-z0-9+.-]*:\/\/[^\s]{0,200}|stage:[a-z][a-z0-9_]{1,30})$/, "resource:<address prefix> (ui://...) or stage:<id>"),
+  }).strict()).max(12).optional(),
+  shell_steps: z.object(Object.fromEntries(["joined", "connected", "tools", "first_call"].map((id) => [id, ShellStepWords.optional()]))).strict().optional(),
+  viewer_note: plain(300).optional(),
+  workflow: z.array(z.object({
+    id: stepId, label: plain(80),
+    tools: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's name")).min(1).max(40),
+    prompt: plain(400),
+  }).strict()).max(20).optional(),
+}).strict();
+
+/**
+ * The session engine's account stages in the product's words (mold_v0-121; src/admin.ts, src/insights.ts, the console's
+ * Accounts pages): the host pack that owns the engine's tables declares them (scripts/gen-packs.mjs requires it). Each of
+ * the engine's stages, in order (onboarded, simulated, reported): its label, the next step after it and its Analytics
+ * funnel label; the next step after an account's first tool call; and the needs-attention messages (an onboarding that
+ * failed, and an account two days at the first call, at onboarded or at simulated). The build's words ({run}) are filled in.
+ */
+const AccountStagesSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  first_next: plain(120),
+  stages: z.array(z.object({ id: z.enum(["onboarded", "simulated", "reported"]), label: plain(60), next: plain(120), funnel: plain(60) }).strict()).length(3)
+    .refine((l) => l.map((s) => s.id).join() === "onboarded,simulated,reported", "the engine's three stages in order: onboarded, simulated, reported"),
+  attention: z.object({ failed: plain(120), first_call: plain(120), onboarded: plain(120), simulated: plain(120) }).strict(),
+}).strict();
+
+/** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
+const NavItemSchema = (area: "/app" | "/admin") => z.object({
+  title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
+  url: z.string().regex(area === "/app" ? /^\/app(\/[a-z0-9][a-z0-9-]*)+$/ : /^\/admin(\/[a-z0-9][a-z0-9-]*)+$/, `one of the pack's ${area} pages: ${area}/<path>`),
+  icon: z.enum(TAB_ICONS),
+  shortcut: z.tuple([z.string().regex(/^[a-z]$/, "a lowercase letter"), z.string().regex(/^[a-z0-9]$/, "a lowercase letter or digit")]).optional(),
+}).strict();
+/** Where a host pack's sidebar entries go (mold_v0-140): a new group by a group's label, or into a group by an entry's url. */
+const NavPlacementSchema = (area: "/app" | "/admin") => z.object({
+  $comment: z.string().max(2000).optional(),
+  label: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets").optional(),
+  into: z.string().trim().min(1).max(40).optional(),
+  before: z.string().trim().min(1).max(200).optional(),
+  after: z.string().trim().min(1).max(200).optional(),
+  items: z.array(NavItemSchema(area)).min(1).max(20),
+}).strict()
+  .refine((p) => (p.label === undefined) !== (p.into === undefined), "either label (a new group) or into (entries put into a group), not both")
+  .refine((p) => p.before === undefined || p.after === undefined, "before or after, not both")
+  .refine((p) => p.into === undefined || [p.before, p.after].every((u) => u === undefined || u.startsWith(`${area}`)), `into a group, before and after name an entry by its url (${area}...)`);
 
 /**
  * The access-request form's own fields (mold_v0-102; src/access-request.ts, which gen-packs runs for the rules this shape
@@ -172,10 +273,33 @@ export const PackJsonSchema = z.object({
    * joined in pack order; the app's profile.json `access_request` replaces them.
    */
   access_request: AccessRequestSchema.optional(),
+  /** Global settings on /admin (mold_v0-140; src/settings.ts): groups and pure-data settings (SettingsSchema above). */
+  settings: SettingsSchema.optional(),
+  /** The session engine's account stages in the words of the host pack that owns its tables (mold_v0-121; AccountStagesSchema above). */
+  account_stages: AccountStagesSchema.optional(),
+  /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
+  setup: SetupSchema.optional(),
+  /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
+  admin_mcp: AdminMcpSchema.optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
       .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+    /**
+     * A host pack's sidebar entries among the shell's (mold_v0-140; they were its web/src/packs/<id>/nav.ts): /app's and
+     * /admin's, each a list of placements applied in order. A new group: {"label", "before" or "after": a group's label,
+     * "items"}; entries put into a group: {"into": its label, "before" or "after": an entry's url, "items"}. Each item
+     * names one of the pack's own console pages (its routes.json), with its icon and an optional two-key shortcut.
+     */
+    nav: z.object({ $comment: z.string().max(2000).optional(), app: z.array(NavPlacementSchema("/app")).max(12).optional(), admin: z.array(NavPlacementSchema("/admin")).max(12).optional() }).strict().optional(),
+    /** The shell's console components a host pack's routes serve (mold_v0-140; src/console-pages.ts CONSOLE_COMPONENTS): shown only then. */
+    components: z.array(z.enum(CONSOLE_COMPONENTS)).max(CONSOLE_COMPONENTS.length).refine((c) => new Set(c).size === c.length, "each component once").optional(),
+    /** Old console addresses kept working (mold_v0-140; they were its routes.json `redirects`): next.config redirects, in order. */
+    redirects: z.array(z.object({
+      source: z.string().regex(/^\/[A-Za-z0-9_\-/:*.]*$/, "a path on this site, starting with / (:name and :path* allowed)").max(200),
+      destination: z.string().regex(/^\/[A-Za-z0-9_\-/:*.?=&]*$/, "a path on this site, starting with /").max(200),
+      permanent: z.boolean().optional(),
+    }).strict()).max(50).optional(),
   }).strict().optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;

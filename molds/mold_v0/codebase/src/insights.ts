@@ -256,11 +256,8 @@ async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Aw
     const steps = [
       { id: "requests", label: "Access requests", reached: Number(base[0]?.requests ?? 0) },
       { id: "created", label: "Accounts", reached: f.get("created") ?? 0 },
-      ...(eng ? [
-        { id: "onboarded", label: "Onboarded", reached: f.get("onboarded") ?? 0 },
-        { id: "simulated", label: fill("First {run}"), reached: f.get("simulated") ?? 0 },
-        { id: "reported", label: "First report", reached: f.get("reported") ?? 0 },
-      ] : [
+      // The session engine's stages by their funnel labels, in its pack's words (mold_v0-121: pack.json account_stages).
+      ...(eng ? (await import("./admin.js")).engineWords().stages.map((s) => ({ id: s.id, label: fill(s.funnel), reached: f.get(s.id) ?? 0 })) : [
         // The shell's first tool call, then the packs' onboarding steps (src/admin.ts accountStages).
         { id: "first_call", label: "First tool call", reached: f.get("first_call") ?? 0 },
         ...all.slice(all.findIndex((s) => s.id === "first_call") + 1),

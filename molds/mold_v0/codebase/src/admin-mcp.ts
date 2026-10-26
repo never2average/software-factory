@@ -16,6 +16,7 @@
  * vault gives hints, and a legacy API key minted by an approval is reported as issued, never returned.
  */
 import { PROFILE } from "./profile.js";
+import { ADMIN_SKILL_TEXTS, type AdminSkillName } from "./admin-skills.js";
 import type { Express, Request, Response } from "express";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -30,7 +31,8 @@ import { clerkEnabled, frontendApi, mcpAudience, mcpAudiences, verifyOAuthToken 
 import { getDb } from "./db.js";
 import * as onboarding from "./admin.js";
 import { modelKeys, saveSettingValues } from "./platform-keys.js";
-import { hosts, type HostAdminTool } from "./host.js";
+import { hosts, packConfigs, type HostAdminTool } from "./host.js";
+import { fillTemplate, summaryValues } from "./text-template.js";
 import * as jobs from "./compute-jobs.js";
 import * as spend from "./spend.js";
 import { computeSummary } from "./compute.js";
@@ -285,12 +287,14 @@ export type AdminToolName = string;
  */
 export function adminTools(): Record<string, AdminTool> {
   const out: [string, AdminTool][] = Object.entries(ADMIN_TOOLS as Record<string, AdminTool>).map(([name, t]) => [name, { ...t }]);
-  // A host pack may reword a shell tool (mold_v0-049): its description and summary, never its input, permission or run.
-  for (const h of hosts()) for (const [name, w] of Object.entries(h.adminMcp?.reword ?? {})) {
+  // A pack may reword a shell tool (mold_v0-049; its pack.json admin_mcp.reword since mold_v0-140): its description and its
+  // summary line (a template filled with the result's fields), never its input, permission or run.
+  for (const c of packConfigs()) for (const [name, w] of Object.entries(c.admin_mcp?.reword ?? {})) {
     const at = out.find(([n]) => n === name);
-    if (!at) throw new Error(`host pack ${h.id}: rewords admin tool ${name}, which is not the shell's`);
+    if (!at) throw new Error(`pack ${c.pack}: pack.json admin_mcp.reword names admin tool ${name}, which is not the shell's`);
     if (w.description !== undefined) at[1].description = w.description;
-    if (w.summary !== undefined) at[1].summary = w.summary;
+    const template = w.summary_template;
+    if (template !== undefined) at[1].summary = (d) => fillTemplate(template, summaryValues(d));
   }
   for (const h of hosts()) for (const [name, t] of Object.entries(h.adminMcp?.tools ?? {})) {
     if (out.some(([n]) => n === name)) throw new Error(`host pack ${h.id}: admin tool ${name} is already the shell's`);
@@ -364,7 +368,6 @@ export async function runAdminToolWith(c: AdminCaller, name: string, t: AdminToo
 // ---------- skills: playbooks for recurring jobs, as MCP prompts (slash commands in the client) ----------
 
 const say = (text: string) => ({ messages: [{ role: "user" as const, content: { type: "text" as const, text } }] });
-const CONFIRM = "Never make a change without the user's explicit yes in this conversation; say which role it needs.";
 
 /**
  * Skills shipped with the admin MCP server: each chains the tools above for one recurring job and ends with a written
@@ -375,74 +378,37 @@ export const ADMIN_SKILLS = {
     title: "Daily operations review",
     description: "Health, stuck or failed runs, waiting access requests and accounts needing attention, in one short report with next steps.",
     args: {},
-    text: () => [
-      `Do ${PROFILE.name}'s daily operations review.`,
-      "1. health_summary with failures: true. 2. list_access_requests with status 'pending'. 3. list_accounts with attention_only: true.",
-      "Write a short report: **Health** (verdict, orchestrators, anything degraded), **Failures** (grouped by reason, with counts and the fix the data points to), " +
-      "**Runs** (active ones and any stuck: queued or booting a long time), **Access requests** (who is waiting and for how long), **Accounts** (what needs attention and why). " +
-      "End with at most 5 next steps, most urgent first, each naming the tool that would do it. " + CONFIRM,
-    ].join("\n"),
+    text: () => ADMIN_SKILL_TEXTS.ops_review(PROFILE.name),
   },
   triage_requests: {
     title: "Triage access requests",
     description: "Every pending access request with who they are, fit and a recommendation to approve or decline; acts only on your yes.",
     args: {},
-    text: () => [
-      "Triage the pending access requests.",
-      "1. list_access_requests with status 'pending'.",
-      "2. For each: one line on the person and company (role, team size, product, what they want), the fit signals the request carries, how long it has waited, " +
-      "and a recommendation: approve, decline, or ask a question first, with the reason.",
-      "3. Show them as a table, oldest first. Then ask which to approve or decline; call approve_access_request / decline_access_request only for the ones the user confirms (Support role). " + CONFIRM,
-    ].join("\n"),
+    text: () => ADMIN_SKILL_TEXTS.triage_requests(PROFILE.name),
   },
   account_review: {
     title: "Account review",
     description: "One account end to end: stage, people, usage, spend against its allowance, plan and runs, what is wrong and the next step.",
     args: { account: z.string().describe("Account slug or name (list_accounts finds it)") },
-    text: ({ account }: { account?: string }) => [
-      `Review the ${PROFILE.name} account "${account ?? ""}".`,
-      "1. list_accounts with q set to it to find the slug if needed, then get_account. 2. model_spend with account set to the slug.",
-      "Write: **Where they are** (stage, next step, people and who is active), **Usage** (tool calls, runs and their outcomes, errors), **Money** (model spend this month against the allowance, plan, " +
-      "subscription state), **Problems** (anything blocking or wrong, with evidence), **Next step** (one concrete action for us, one for them). " + CONFIRM,
-    ].join("\n"),
+    text: (a: Parameters<typeof ADMIN_SKILL_TEXTS.account_review>[1]) => ADMIN_SKILL_TEXTS.account_review(PROFILE.name, a),
   },
   finops_digest: {
     title: "FinOps digest",
     description: "Revenue, plans, pricing experiments and model spend for a period: MRR, collected, margin, anomalies and experiment results.",
     args: { from: z.string().optional().describe("First day, YYYY-MM-DD (default: this month)"), to: z.string().optional().describe("Last day, YYYY-MM-DD") },
-    text: ({ from, to }: { from?: string; to?: string }) => {
-      const r = JSON.stringify({ ...(from ? { from } : {}), ...(to ? { to } : {}) });
-      return [
-        `Write ${PROFILE.name}'s FinOps digest for ${from || to ? `${from ?? "…"} to ${to ?? "today"}` : "this month"}.`,
-        `1. finops_revenue ${r}. 2. finops_plans ${r}. 3. finops_experiments ${r}. 4. model_spend ${r}.`,
-        "Write: **Revenue** (MRR now, collected, paying accounts, gross margin, the accounts that moved it), **Plans** (subscribers and MRR per plan), " +
-        "**Experiments** (per running experiment: each variant's shown, subscribed, conversion with its interval, lift vs control and whether it is significant yet; say plainly when it is too early), " +
-        "**Model spend** (by provider and top accounts; flag unpriced requests and anything spending fast against its allowance). Numbers from the tools only; no estimates.",
-      ].join("\n");
-    },
+    text: (a: Parameters<typeof ADMIN_SKILL_TEXTS.finops_digest>[1]) => ADMIN_SKILL_TEXTS.finops_digest(PROFILE.name, a),
   },
   pricing_experiment: {
     title: "Set up a pricing experiment",
     description: "Design an A/B test between plans: drafts each variant's JSON config, dry-runs it in Stripe, and creates them only on your yes.",
     args: { experiment: z.string().describe("Experiment name, e.g. growth-price-q4"), idea: z.string().describe("What to test, e.g. Growth at $499 vs $399 with higher usage rates") },
-    text: ({ experiment, idea }: { experiment?: string; idea?: string }) => [
-      `Set up the pricing experiment "${experiment ?? ""}": ${idea ?? ""}`,
-      "1. finops_plans to see the existing plans and their configs (reuse one as the control if it fits).",
-      "2. Draft one plan config per variant (the create_plan config: name, base_fee_usd, monthly_budget_usd, usage, trial_days, experiment, weight). Use real, marketable plan names.",
-      "3. create_plan with dry_run: true for each and show what Stripe would get. 4. Ask the user to confirm; then create_plan for each (Owner role), and set_plan_experiment " +
-      "to put an existing control plan in the experiment. 5. Remind them only accounts allowed plans are shown variants, and that results are on FinOps › Experiments (finops_experiments). " + CONFIRM,
-    ].join("\n"),
+    text: (a: Parameters<typeof ADMIN_SKILL_TEXTS.pricing_experiment>[1]) => ADMIN_SKILL_TEXTS.pricing_experiment(PROFILE.name, a),
   },
   cost_check: {
     title: "Model cost check",
     description: "Where model spend goes and whether anything is off: by provider and account, unpriced usage, and accounts near their allowance.",
     args: { from: z.string().optional().describe("First day, YYYY-MM-DD"), to: z.string().optional().describe("Last day, YYYY-MM-DD") },
-    text: ({ from, to }: { from?: string; to?: string }) => [
-      `Check ${PROFILE.name}'s model costs${from || to ? ` for ${from ?? "…"} to ${to ?? "today"}` : " this month"}.`,
-      `1. model_spend ${JSON.stringify({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}. 2. list_accounts. 3. analytics_overview for the same days.`,
-      "Write: total spend and its split (sessions vs orchestrators, by provider and model), the top accounts and their spend against allowance, unpriced requests (spend is understated: name the models), " +
-      "and anything unusual (a day or account far above the rest). End with concrete fixes (a price row, an allowance, a setting), each naming the tool. " + CONFIRM,
-    ].join("\n"),
+    text: (a: Parameters<typeof ADMIN_SKILL_TEXTS.cost_check>[1]) => ADMIN_SKILL_TEXTS.cost_check(PROFILE.name, a),
   },
 } satisfies Record<string, { title: string; description: string; args: Record<string, z.ZodType>; text: (a: any) => string }>;
 
@@ -487,8 +453,15 @@ export function createAdminServer(c: AdminCaller): McpServer {
 
 /** The host packs' changes among the admin tools (mold_v0-049: the session engine's cancel), named after the shell's. */
 const hostChanges = (tools: Record<string, AdminTool>) => Object.entries(tools).filter(([n, t]) => t.needs !== "read" && !(n in ADMIN_TOOLS)).map(([n]) => n);
-/** A skill's text with each host pack's rewording (its own tools in the steps, mold_v0-049). */
-export const skillText = (name: string, text: string) => hosts().reduce((x, h) => h.adminMcp?.skills?.[name]?.(x) ?? x, text);
+/**
+ * A skill's text with each pack's steps (its own tools in them, mold_v0-049; pack.json admin_mcp.skills since mold_v0-140):
+ * each {from, to} replaces one exact passage, in pack order. A passage the text no longer has is refused loudly, never
+ * silently lost (the build refuses it first: scripts/gen-packs.mjs reads src/admin-skills.ts).
+ */
+export const skillText = (name: string, text: string) => packConfigs().reduce((x, c) => (c.admin_mcp?.skills?.[name] ?? []).reduce((t, st) => {
+  if (!t.includes(st.from)) throw new Error(`pack ${c.pack}: the shell's admin skill ${name} no longer reads "${st.from.slice(0, 60)}…" (pack.json admin_mcp.skills)`);
+  return t.replace(st.from, () => st.to);
+}, x), text);
 
 // ---------- HTTP: /admin/mcp and /api/admin/mcp, with OAuth discovery like /mcp ----------
 

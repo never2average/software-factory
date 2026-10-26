@@ -17,7 +17,7 @@ import * as accountRolesModule from "./account-roles.js";
 // ---------- the host seam itself ----------
 export { defineHost, type HostDefinition, type HostAdminTool, type PortalHelpers, type AdminHelpers, type WorkerHelpers, type PortalSession } from "./host.js";
 // Its pack.json engine.config, as its schema checked it, and the text templates its words are written in (mold_v0-137).
-export { engineConfig } from "./host.js";
+export { engineConfig, setupWorkflow } from "./host.js";
 export { fillTemplate, templateProblems, type TemplateValues } from "./text-template.js";
 
 // ---------- database, tenancy, sign-in ----------

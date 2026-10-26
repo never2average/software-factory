@@ -3,7 +3,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminApi } from '@/lib/api-client';
-import { W } from '@/lib/vocabulary';
+import { fill } from '@/lib/vocabulary';
+import { engineWords } from './engine';
 import { isStatusError } from '@/features/status/from-error';
 
 /** GET /api/admin/onboarding<path>, cached under ['admin', path]. `keep`: show the last result while a new path loads
@@ -43,8 +44,9 @@ export const accountRoleOf = (x: { role?: string | null; account_role?: string |
 export const accountRoleLabel = (x: { role?: string | null; account_role?: string | null }) => ACCOUNT_ROLES.find((r) => r.id === accountRoleOf(x))?.label ?? 'Member';
 
 /**
- * The shell's account stages and the session engine's, by id (src/admin.ts accountStages); a pack's onboarding steps
- * (`<pack>:<step>`) are labelled by the server's list (GET /orgs `stages`).
+ * The shell's account stages and, in a build with it, the session engine's in its pack's words (mold_v0-121), by id
+ * (src/admin.ts accountStages); a pack's onboarding steps (`<pack>:<step>`) are labelled by the server's list (GET /orgs
+ * `stages`).
  */
 export const STAGE_LABELS: Record<string, string> = {
   created: 'Account created',
@@ -52,9 +54,7 @@ export const STAGE_LABELS: Record<string, string> = {
   joined: 'Joined',
   connected: 'Connected',
   first_call: 'First tool call',
-  onboarded: 'Product onboarded',
-  simulated: `${W.Run} run`,
-  reported: 'Report read'
+  ...Object.fromEntries((engineWords()?.stages ?? []).map((s) => [s.id, fill(s.label)]))
 };
 
 export interface Subscription {
