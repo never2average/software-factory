@@ -185,6 +185,108 @@
           "description": "mold_v0-050: where a mold_v0 app's own source is offered, written into each deploy copy's profile.json (.claude/scripts/packs.py). {\"app\": \"licensor_exception\"} when the factory's LICENSE-EXCEPTION.md permission covers the operator who runs the deployments (the app then says so and offers no link to its own source), or {\"app\": {\"url\": \"https://...\", \"license\": \"AGPL-3.0-only\"}}. Set it in state/factory.local.json, the machine's own file. Absent: the app says nothing about its own source. A pack's copyleft upstream is offered either way."
         }
       }
+    },
+    "sweep": {
+      "type": "object",
+      "description": "The factory sweep's settings (.claude/scripts/sweep.py, skill `sweep`). Every key is optional; sweep.py's DEFAULTS fill the rest. Lists of app ids here are this factory's own choices, made by the operator.",
+      "properties": {
+        "max_builders": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "builders (in_progress tickets) at once, over every mold"
+        },
+        "builders_per_train": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "builders per train; 1 = a train's tickets run one after another"
+        },
+        "trains": {
+          "type": "object",
+          "description": "train name -> {ids, prefixes, molds, types}: tickets without their own `train` field join the first rule that matches, else the train named after their mold"
+        },
+        "molds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "molds whose tickets are swept; empty = every mold whose status is active or wip"
+        },
+        "gated_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "tickets a sweep never starts"
+        },
+        "gated_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ticket `gate` kinds that hold a ticket back (dated_decision, operator_action, live_data_migration)"
+        },
+        "gated_owners": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "ticket owners whose tickets are the operator's own actions"
+        },
+        "auto_deploy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "apps whose 'the mold moved' redeploys are pre-approved when the change holds no database migration"
+        },
+        "parity_deploy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "apps redeployed only after a parity check proves the change, and never for a migration"
+        },
+        "migration_dirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "glob patterns (repository-relative) of folders holding numbered database migrations"
+        },
+        "stale_wait_hours": {
+          "type": "number",
+          "minimum": 0
+        },
+        "server_max_hours": {
+          "type": "number",
+          "minimum": 0
+        },
+        "scratch_idle_hours": {
+          "type": "number",
+          "minimum": 0
+        },
+        "disk_free_min_gb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tmp_roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "glob patterns of tmp folders whose sub-folders are builders' scratch (~ is the home folder)"
+        },
+        "base_branch": {
+          "type": "string"
+        },
+        "server_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "regular expressions for dev/test server command lines"
+        }
+      }
     }
   },
   "$defs": {

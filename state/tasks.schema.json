@@ -119,6 +119,17 @@
     "updated": {
       "type": "string",
       "format": "date"
+    },
+    "train": {
+      "type": "string",
+      "description": "The build train this ticket runs on (sweep.py): a train runs sweep.builders_per_train builders at once, in priority and depends_on order. Without it: state/factory.json sweep.trains, else the mold."
+    },
+    "gate": {
+      "type": [
+        "string",
+        "object"
+      ],
+      "description": "Holds the ticket back from the sweep until the operator lifts it: a kind (dated_decision, operator_action, live_data_migration) or {\"kind\", \"until\" (YYYY-MM-DD), \"why\"}. Remove it to release the ticket."
     }
   }
 }

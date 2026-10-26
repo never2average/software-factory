@@ -294,7 +294,8 @@
         ]
       },
       "app_ids": [
-        "octillion"
+        "octillion",
+        "maxwell"
       ],
       "deploy_targets": [
         "vercel",
