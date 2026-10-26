@@ -7,7 +7,7 @@
  * orchestrator sandbox's 0600 env file.
  *
  * Cold start (measured live 2026-10-10): code upload as a tarball through the files API + `npm ci` there -> service
- * active ~8s after the create call. Optional named snapshot image "octi-orch-img-<code hash>" (code + node_modules):
+ * active ~8s after the create call. Optional named snapshot image "<ns>-orch-img-<code hash>" (code + node_modules):
  * ~22s (lazy disk hydration) and a ~170s build per code change, so it is opt-in (APP_ORCH_SNAPSHOT=on).
  */
 import { gzipSync } from "node:zlib";
@@ -18,25 +18,44 @@ import { fileURLToPath } from "node:url";
 import { BOAT } from "../core/config.js";
 import { boatApi, boatCreate, boatExec, BoatError } from "../core/boat.js";
 import { sleep } from "../core/util.js";
-import { ENV } from "../core/env-names.js";
+import { boatNamespace, boatNamespaces } from "../core/boat-namespace.js";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 /**
  * Sandbox names start with a namespace so two deployments sharing one boat account never touch each other's
- * sandboxes: each autoscaler reaps "orphans" by name prefix. "octi" (the VM production) by default; the Vercel
- * preview uses "octv". Orchestrators get it as a tuning var, so their worker sandboxes carry it too.
+ * sandboxes: each autoscaler reaps "orphans" by name prefix. "app" (the VM production) by default; the Vercel
+ * preview uses "appv" (core/boat-namespace.ts). Orchestrators get it as a tuning var, so their worker sandboxes carry it too.
  */
-export const BOAT_NAMESPACE = (ENV.APP_BOAT_NAMESPACE || (process.env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
+export const BOAT_NAMESPACE = boatNamespace();
 export const ORCH_PREFIX = `${BOAT_NAMESPACE}-orch-`;
 export const WORKER_PREFIX = `${BOAT_NAMESPACE}-w-`;
 export const IMAGE_PREFIX = `${BOAT_NAMESPACE}-orch-img-`;
 export const IMAGE_BUILDER_NAME = `${BOAT_NAMESPACE}-img-build`;
 /** Run sandboxes (mold_v0-055, src/run-sandboxes.ts): one per run, "<ns>-run-<row>-<id>". */
 export const RUN_PREFIX = `${BOAT_NAMESPACE}-run-`;
+/**
+ * Every namespace whose sandboxes are ours: BOAT_NAMESPACE, and the default before mold_v0-156 when APP_BOAT_NAMESPACE
+ * is unset (core/boat-namespace.ts): what was launched under it before this release is listed, counted and reaped as
+ * ours, never leaked or taken for another deployment's. New names always use BOAT_NAMESPACE (the prefixes above).
+ */
+export const NAMESPACES = boatNamespaces();
+const underAny = (name: string | undefined, part: string) => !!name && NAMESPACES.some((ns) => name.startsWith(`${ns}-${part}`));
+/** An orchestrator sandbox of ours (its snapshot images too: "<ns>-orch-img-…" start the same way). */
+export const isOrchName = (name?: string) => underAny(name, "orch-");
+export const isWorkerName = (name?: string) => underAny(name, "w-");
+export const isRunName = (name?: string) => underAny(name, "run-");
+export const isImageName = (name?: string) => underAny(name, "orch-img-");
+export const isImageBuilderName = (name?: string) => !!name && NAMESPACES.some((ns) => name === `${ns}-img-build`);
+/** An orchestrator or a worker of ours: what this deployment holds on the boat plan. */
+export const isOursName = (name?: string) => isOrchName(name) || isWorkerName(name);
 export const MAX_TTL_SECONDS = 2_592_000; // 30 days: boat's maximum numeric TTL (docs.boat.dev/long-running-tasks)
 export const HOME = "/home/user/app";
-/** Unprivileged system user the orchestrator service runs as (no sudo); created by configure(). */
-export const SERVICE_USER = "octi";
+/**
+ * Unprivileged system user the orchestrator service runs as (no sudo); created by configure(). A sandbox set up before
+ * mold_v0-156 has its old account too, which nothing runs as once configure has installed the unit again (no sudo, no
+ * login shell, owns only its own home): it goes with the sandbox (recycled on every deploy, at most 30 days).
+ */
+export const SERVICE_USER = "appsvc";
 export const UNIT = "app-orchestrator";
 /** The launcher's root-owned host marker (core/host-guard.ts reads it). */
 export const MARKER_DIR = "/etc/app";
@@ -115,6 +134,12 @@ export async function listSandboxes(): Promise<Sb[]> {
 export const isLive = (s: Sb) => !["archived", "archiving", "cancelled", "error", "deleted"].includes(s.state);
 export const orchIdOf = (sandboxId: string) => `orch-${sandboxId.replace(/^bx_/, "")}`;
 export const workerPrefixOf = (orchId: string) => `${WORKER_PREFIX}${orchId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+/**
+ * Every name start an orchestrator's workers may have: under each of NAMESPACES (an orchestrator launched before
+ * mold_v0-156 names its workers under the old default it was given). Ends with "-": an id is never another's prefix.
+ */
+export const workerPrefixesOf = (orchId: string) => NAMESPACES.map((ns) => `${ns}-w-${orchId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-") + "-");
+export const isWorkerOf = (name: string | undefined, orchId: string) => !!name && workerPrefixesOf(orchId).some((p) => name.startsWith(p));
 
 export async function waitReady(id: string, timeoutMs = 300_000) {
   for (const t0 = Date.now(); Date.now() - t0 < timeoutMs; await sleep(2000)) {
@@ -349,7 +374,7 @@ export async function imageStatus(name: string): Promise<"ready" | "saving" | "f
 
 /**
  * Build the orchestrator image for the current code: a builder sandbox gets the code + `npm ci` (no env file, no
- * marker, no token), is saved as the named snapshot, then deleted. Older octi-orch-img-* snapshots are removed.
+ * marker, no token), is saved as the named snapshot, then deleted. Older orchestrator snapshot images (any of NAMESPACES) are removed.
  */
 export async function buildImage(ctx: Pick<LaunchContext, "root" | "log">): Promise<{ name: string; ms: number }> {
   const t0 = Date.now();
@@ -373,7 +398,7 @@ export async function buildImage(ctx: Pick<LaunchContext, "root" | "log">): Prom
   }
   // Keep only the current image (each named snapshot above the free 10 costs money).
   const all = (await boatApi("/named-snapshots").catch(() => null))?.snapshots ?? [];
-  for (const s of all) if (typeof s?.name === "string" && s.name.startsWith(IMAGE_PREFIX) && s.name !== name)
+  for (const s of all) if (typeof s?.name === "string" && isImageName(s.name) && s.name !== name)
     await boatApi(`/named-snapshots/${encodeURIComponent(s.name)}`, { method: "DELETE" }).catch(() => {});
   ctx.log?.(`orchestrator image ${name} ready in ${Math.round((Date.now() - t0) / 1000)}s`);
   return { name, ms: Date.now() - t0 };

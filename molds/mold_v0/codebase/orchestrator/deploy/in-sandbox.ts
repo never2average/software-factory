@@ -7,6 +7,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { checkHost, MARKER_PATH } from "../core/host-guard.js";
 import { ENV, ENV_PREFIX, LEGACY_ENV_PREFIX } from "../core/env-names.js";
+import { boatNamespace } from "../core/boat-namespace.js";
 
 const [cmd, arg] = process.argv.slice(2);
 
@@ -50,7 +51,7 @@ if (cmd === "nested") {
     const c = await boatCreate({ type: "small", ttlSeconds: 600, noEnv: true, snapshots: false });
     id = c.sandbox.id;
     out.worker_sandbox = id;
-    await boatApi(`/sandboxes/${id}`, { method: "PATCH", json: { name: "octi-w-selftest" } }).catch(() => {});
+    await boatApi(`/sandboxes/${id}`, { method: "PATCH", json: { name: `${boatNamespace()}-w-selftest` } }).catch(() => {});
     for (let i = 0; i < 90; i++) {
       const s = (await boatApi(`/sandboxes/${id}`)).sandbox.state;
       if (["ready", "idle", "running"].includes(s)) break;
