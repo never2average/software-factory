@@ -3,7 +3,8 @@
 // pages and the health check answer; MCP over HTTP with a workspace key lists exactly the build's tools (none with zero
 // packs), names the profile's server and refuses a missing or foreign key; the admin API and the admin MCP need an admin
 // token; an access request is stored; the worker API and the cron need their secrets; the security checks
-// (scripts/smoke-security.ts) hold; a workspace is deleted cleanly.
+// (scripts/smoke-security.ts) hold; last, the per-tool isolation sweep (scripts/smoke-isolation.ts): every MCP tool called
+// as a second workspace with every identifier of the first; a workspace is deleted cleanly.
 // Then each host pack's own smoke test runs (packs/<id>/<scripts>/smoke.ts: the product's), and the result is both.
 import "../src/hosts.js";
 import assert from "node:assert/strict";
@@ -193,6 +194,15 @@ try {
     assert.equal((await resolveKey(b.key))?.orgId, b.org.orgId);
     ok("each workspace's key resolves to its own workspace only");
   }
+
+  // ---------- last: the per-tool isolation sweep (scripts/smoke-isolation.ts, mold_v0-154) ----------
+  // Every MCP tool of this build, called as workspace B with every identifier of workspace A's: nothing of A's comes
+  // back and nothing of A's changes. The functional lane reads this line; a build of any packs reaches it.
+  {
+    const { isolationSweep } = await import("./smoke-isolation.js");
+    const s = await isolationSweep({ base, db, a });
+    ok(`isolation sweep: ${s.tools} tools x ${s.argSets} argument sets as a second workspace (${s.calls} calls, ${s.ids} identifiers of workspace A's): nothing of A's returned or changed`);
+  }
 } finally {
   const { deleteOrg } = await import("../src/tenancy.js");
   for (const o of [a, b]) await deleteOrg(o.org.orgId).catch((e) => console.error(`delete ${o.org.slug}: ${(e as Error).message}`));
@@ -222,4 +232,5 @@ for (const p of hostPackDirs()) {
   const r = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), ["--env-file-if-exists=.env", own.file], { cwd: ROOT, stdio: "inherit", env });
   if (r.status !== 0) { failed++; console.error(`${p.id}: its smoke test failed (${r.status})`); }
 }
+if (!failed) console.log(`\nsmoke test passed (the shell's ${passed} checks${hostPackDirs().length ? ", then each host pack's own smoke test" : ""})`);
 process.exit(failed ? 1 : 0);
