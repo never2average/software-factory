@@ -117,7 +117,11 @@ turns it into shell, or builds it where nothing exists yet.
   workspace, an asset or an environment, sealed with the workspace data key, written in the console with only the
   last 4 characters shown, injected into a run by name only for its target; a canary test finds no value in events,
   results, logs, the database, the store or MCP output; `src/credentials.ts`, `workspace_credentials`),
-  mold_v0-014 (repository access by a GitHub App per workspace, later).
+  mold_v0-014, **built** (repository access by a GitHub App per workspace: a field declared `github_app: true` gets a
+  short-lived, read-only installation token per run from the installation the workspace connected, else its pasted
+  value; the app's keys sealed in the key vault, never handed to a run; `src/github-app.ts`, migration 0021; and credential
+  fields connected through a pack's OAuth providers, tokens sealed and refreshed before expiry, renewed mid-run for runs
+  longer than a token's life; `src/oauth-connections.ts`, migration 0023).
 
 ### Storage and the workspace store
 

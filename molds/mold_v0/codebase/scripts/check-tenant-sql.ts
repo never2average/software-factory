@@ -26,7 +26,11 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-013 the built-in MCP authorization server's grants (a person in one workspace; platform-only, carries org_id)
   "oauth_grants",
   // mold_v0-079 approvals of previews, mold_v0-075 a company's egress hosts
-  "run_approvals", "workspace_egress_hosts"];
+  "run_approvals", "workspace_egress_hosts",
+  // mold_v0-014 a workspace's GitHub App installation, installs in flight, the tokens minted for its runs
+  "workspace_github_installations", "run_github_app_tokens",
+  // Sign-ins in flight (any kind), OAuth connections and the access tokens runs received (mold_v0-014, 0023).
+  "oauth_states", "workspace_oauth_connections", "run_oauth_tokens"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

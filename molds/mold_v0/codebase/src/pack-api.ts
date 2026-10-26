@@ -1133,9 +1133,52 @@ export const CredentialSchema = z.object({
   area: name.optional(),
   environments: z.array(envLabel).min(1).max(20).optional(),
   deliver_as: deliverAs,
+  /**
+   * mold_v0-014: a GitHub repository token. When the platform holds a GitHub App (key vault provider github_app) and the
+   * workspace has connected an installation of it, a run receiving this field gets a short-lived installation token
+   * (read-only contents, the installation's repositories, narrowed per asset by the workspace's owners) instead of a
+   * pasted value; with no app or no installation the pasted value is delivered as before.
+   */
+  github_app: z.boolean().optional(),
+  /**
+   * mold_v0-014: the name of one of this pack's OAuth providers (oauthProviders). A workspace's owner connects the field
+   * from the console (the provider's sign-in, then back); runs get the connection's access token, refreshed before it
+   * expires; with no connection the pasted value is delivered as before.
+   */
+  oauth: name.optional(),
 }).strict()
+  .refine((c) => !(c.github_app && c.oauth), "a field is either github_app or oauth, not both")
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
+
+/**
+ * A generic OAuth 2.0 provider a credential field connects to (mold_v0-014; src/oauth-connections.ts). The authorization
+ * code flow, with PKCE (S256) unless `pkce: false`, the state signed, one-time and bound to the person and workspace.
+ *   authorize_url, token_url, revoke_url   https addresses of the provider (revoke_url: RFC 7009, optional)
+ *   scopes                                  asked for at sign-in, joined by scope_separator (a space by default)
+ *   client_id, client_secret                by name: labels in the platform's key vault (provider "oauth_clients"), set
+ *                                           by an owner of the platform on /admin Key vault; never in the pack
+ *   token_auth                              how the client authenticates at the token address: "body" (default) or "basic"
+ *   authorize_params                        extra fixed parameters of the sign-in address (access_type=offline, prompt=...)
+ */
+const httpsUrl = z.string().max(500).regex(/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%!$&'()*+,;=:@\/-]*)?$/, "an https:// address with no query or fragment");
+const vaultLabel = z.object({ vault: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,79}$/, "a key vault label: lowercase letters, digits, _ . -") }).strict();
+export const OAuthProviderSchema = z.object({
+  name,
+  label: z.string().min(1).max(80),
+  authorize_url: httpsUrl,
+  token_url: httpsUrl,
+  revoke_url: httpsUrl.optional(),
+  scopes: z.array(z.string().regex(/^[\x21\x23-\x5b\x5d-\x7e]{1,200}$/, "a scope: printable, no spaces, quotes or backslashes")).max(50).default([]),
+  scope_separator: z.enum([" ", ","]).default(" "),
+  client_id: vaultLabel,
+  client_secret: vaultLabel,
+  pkce: z.boolean().default(true),
+  token_auth: z.enum(["body", "basic"]).default("body"),
+  authorize_params: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,40}$/), z.string().max(200)).optional()
+    .refine((o) => !o || !Object.keys(o).some((k) => ["client_id", "redirect_uri", "state", "scope", "response_type", "code_challenge", "code_challenge_method"].includes(k)),
+      "authorize_params may not set the flow's own parameters"),
+}).strict();
 
 /**
  * A credential the platform's operators hold for a pack (mold_v0-075): a login to a catalogue every workspace's runs
@@ -1290,6 +1333,8 @@ export interface PackDefinition {
   agentJobKinds?: z.input<typeof AgentJobKindSchema>[];
   recordAreas?: z.input<typeof RecordAreaSchema>[];
   credentials?: z.input<typeof CredentialSchema>[];
+  /** OAuth providers its credential fields connect to (mold_v0-014). */
+  oauthProviders?: z.input<typeof OAuthProviderSchema>[];
   /** Credentials the platform's operators hold for the pack's runs (mold_v0-075), never a workspace's to see. */
   operatorCredentials?: z.input<typeof OperatorCredentialSchema>[];
   schedules?: z.input<typeof ScheduleSchema>[];
@@ -1392,6 +1437,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const t of p.tabs ?? []) for (const c of t?.charts ?? []) if (!chartNames.has(c)) problems.push(at(`tab ${t.id} shows chart ${c}, which this pack does not declare`));
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");
+  each(p.oauthProviders, OAuthProviderSchema, "oauthProviders");
   each(p.operatorCredentials, OperatorCredentialSchema, "operatorCredentials");
   each(p.schedules, ScheduleSchema, "schedules");
   each(p.onboarding, OnboardingStepSchema, "onboarding");
@@ -1438,7 +1484,12 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const c of p.credentials ?? []) {
     if (c?.area !== undefined && !(p.recordAreas ?? []).some((a) => a?.name === c.area && a.role === "asset"))
       problems.push(at(`credential ${c.name} is bound to area ${c.area}, which is not one of this pack's asset areas`));
+    // mold_v0-014: an OAuth field names one of this pack's own providers.
+    if (c?.oauth !== undefined && !(p.oauthProviders ?? []).some((o) => o?.name === c.oauth))
+      problems.push(at(`credential ${c.name} connects to OAuth provider ${c.oauth}, which this pack does not declare (oauthProviders)`));
   }
+  const oauthNames = (p.oauthProviders ?? []).map((o) => o?.name);
+  if (new Set(oauthNames).size !== oauthNames.length) problems.push(at("each OAuth provider name once"));
   // Workspace and operator credentials (mold_v0-075) share the targets: two never deliver to the same variable or file
   // (a file's path_env is a variable too), and a name is one or the other.
   const targets = new Map<string, string>();

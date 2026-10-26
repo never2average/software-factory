@@ -14,10 +14,16 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
+import { GithubAppSection } from './github-app-section';
+import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
 
 interface Field {
   pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
   area: string | null; environments: string[] | null; deliver_as: { env: string } | { file: string };
+  /** mold_v0-014: runs get a GitHub App installation token instead, when the workspace has connected GitHub. */
+  github_app?: boolean;
+  /** mold_v0-014: the OAuth provider this field connects to, when it does. */
+  oauth?: string;
 }
 interface Stored { pack: string; name: string; bound_to: string; asset: string | null; environment: string | null; last4: string | null; updated_at: string; updated_by: string | null }
 interface Vault { fields: Field[]; values: Stored[]; can_manage: boolean }
@@ -38,14 +44,19 @@ const bound = (f: Field) => (f.bound_to === 'workspace' ? 'One value for the wor
 
 export function CredentialsPage() {
   const { data, error, reload } = useOrgLoad(() => call<Vault>('GET'));
+  // mold_v0-014: the OAuth connections, when a field connects through a provider (else the API answers 404: null).
+  const { data: oauth, reload: reloadOAuth } = useOrgLoad(() => oauthCall<OAuthView>('GET'));
+  useOAuthOutcome();
   return (
     <PageContainer pageTitle='Credentials' pageDescription='Keys and tokens your runs use to reach your own systems. Stored encrypted; only the last 4 characters are ever shown again.'>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : !data.fields.length ? (
         <p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>
       ) : (
         <div className='flex flex-col gap-10'>
+          <GithubAppSection />
           {data.fields.map((f) => (
-            <FieldSection key={`${f.pack}/${f.name}`} f={f} values={data.values.filter((v) => v.pack === f.pack && v.name === f.name)} canManage={data.can_manage} onChanged={reload} />
+            <FieldSection key={`${f.pack}/${f.name}`} f={f} values={data.values.filter((v) => v.pack === f.pack && v.name === f.name)} canManage={data.can_manage} onChanged={reload}
+              oauth={f.oauth && oauth ? <OAuthConnections f={f} view={oauth} onChanged={reloadOAuth} /> : null} />
           ))}
         </div>
       )}
@@ -53,7 +64,7 @@ export function CredentialsPage() {
   );
 }
 
-function FieldSection({ f, values, canManage, onChanged }: { f: Field; values: Stored[]; canManage: boolean; onChanged: () => unknown }) {
+function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; values: Stored[]; canManage: boolean; onChanged: () => unknown; oauth?: React.ReactNode }) {
   const [asset, setAsset] = useState('');
   const [environment, setEnvironment] = useState(f.environments?.[0] ?? '');
   const [value, setValue] = useState('');
@@ -71,7 +82,10 @@ function FieldSection({ f, values, canManage, onChanged }: { f: Field; values: S
   const remove = (v: Stored) => call('DELETE', { pack: v.pack, name: v.name, asset: v.asset, environment: v.environment })
     .then(() => { toast.success('Removed'); return onChanged(); }).catch(fail);
   return (
-    <Section title={f.label} description={<>{f.help ?? bound(f)} <Badge variant='secondary' className='ml-1'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</Badge></>}>
+    <Section title={f.label} description={<>{f.help ?? bound(f)} <Badge variant='secondary' className='ml-1'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</Badge>
+      {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected above, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</>}>
+      {oauth}
+      {oauth && <p className='text-muted-foreground text-xs'>Or paste a value: it is used where nothing is connected.</p>}
       {values.length > 0 ? (
         <Table>
           <TableHeader>
