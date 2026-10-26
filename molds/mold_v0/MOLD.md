@@ -557,7 +557,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `src/hosts.generated.ts` `PACK_CONFIG` (`src/texts.ts` `shellText`), console texts the console in
   `build-facts.generated.ts` `TEXTS` (`web/src/lib/texts.ts` `text`, over gen-packs' copy of the list,
   `web/src/lib/shell-texts.generated.ts`). Today: the viewer refusals (`refusal.viewer_launch`, `refusal.viewer_edit`),
-  the Support role's help, New plan's example description, the research brief's comparison label, the tip dock's
+  the Support role's help, Billing's no-plan notice, New plan's example description, the research brief's comparison label, the tip dock's
   sequence field, a host pack's journeys' nouns on Setup and the session engine's score on /app/usage. A host pack's
   tables are named on the Storage page by its `host.schema.labels` (else the table's name, capitalised). The session
   engine's plan metric, compute knob and settings help say `{run}`. `npm run test:words`.

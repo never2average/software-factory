@@ -9080,6 +9080,13 @@
           "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
           "description": "what the Support platform role may do (src/admin-roles.ts roleHelp: /admin Admins, the admin MCP). The shell's own: Viewer, plus access requests, new accounts and invitations."
         },
+        "billing.needs_plan": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "/app/billing with no plan and no allowance: what is off until the account has a plan. The shell's own: Running {runs} needs a prepaid plan. Plans are invite-only for now: reply to your {product} contact, or write to us, and we'll set one up for your team."
+        },
         "plans.example_description": {
           "type": "string",
           "minLength": 1,

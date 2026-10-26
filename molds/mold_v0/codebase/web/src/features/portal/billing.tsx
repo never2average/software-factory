@@ -27,12 +27,13 @@ import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type Acc
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { profile } from '@/config/profile.generated';
 import { fill } from '@/lib/vocabulary';
+import { text } from '@/lib/texts';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
   /** Usage pricing, one line per metric (model spend, agent sessions, simulations, sandbox hours), in words. */
   usage?: { metric: string; summary: string }[] }
-interface Billing { onboards_products?: boolean; enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
+interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
   contributions?: Contributions; run_charges?: RunCharges }
 /** Price per run (mold_v0-019): this month's run charges and credits per currency, and the latest rows. Only when the app bills runs. */
 interface RunCharges { enabled: boolean; currency: string;
@@ -167,7 +168,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
       {/* No plan and no allowance: runs are off. Plans are invite-only while inference costs are high. */}
       {cap <= 0 && !(b.enabled && b.plans.length > 0) && (
         <Alert><Icons.lock /><AlertDescription>
-          {fill(`Running {runs}${b.onboards_products ? ' and onboarding' : ''} needs a prepaid plan. Plans are invite-only for now: reply to your {product} contact, or write to us, and we'll set one up for your team.`)}
+          {text('billing.needs_plan')}
         </AlertDescription></Alert>
       )}
       {b.enabled && b.plans.length > 0 && !(live && b.customer) && (

@@ -17,6 +17,8 @@ export const SHELL_TEXTS = {
     where: "the refusal a viewer gets on changing anything (pack tools and routes, src/account-roles.ts accountRefusal); the shell adds who can change the role" },
   "admin_roles.support": { side: "server", text: "Viewer, plus access requests, new accounts and invitations.",
     where: "what the Support platform role may do (src/admin-roles.ts roleHelp: /admin Admins, the admin MCP)" },
+  "billing.needs_plan": { side: "console", text: "Running {runs} needs a prepaid plan. Plans are invite-only for now: reply to your {product} contact, or write to us, and we'll set one up for your team.",
+    where: "/app/billing with no plan and no allowance: what is off until the account has a plan" },
   "plans.example_description": { side: "console", text: "For teams using {product} every week",
     where: "the description in New plan › JSON's starting point (/admin Spend › Plans)" },
   "requests.research_alternatives": { side: "console", text: "Alternatives",
