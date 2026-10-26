@@ -98,6 +98,12 @@ def slug(root=None):
     return factory_local.repo_slug(out.strip()) if rc == 0 and out.strip() else None
 
 
+# Build caches a typecheck, build or test run writes next to the source (mold_v0-153): `tsc --incremental` (web's
+# tsconfig.tsbuildinfo), Next.js, Turborepo, ESLint, Python. Never authored, never shipped (the deploy builds its own),
+# so they never make the codebase "not exactly HEAD", whether a .gitignore covers them or not.
+BUILD_CACHES = ("*.tsbuildinfo", ".next", ".turbo", ".eslintcache", "__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache")
+
+
 def _excluded(rel, excludes):
     parts = rel.strip("/").split("/")
     for e in excludes:
@@ -109,6 +115,7 @@ def _excluded(rel, excludes):
 def uncommitted(mold_id, root=None, excludes=()):
     """Paths under molds/<mold_id>/codebase that make the files on disk differ from HEAD: tracked changes, untracked
     files, and ignored files a deploy would still carry (ignored but not in `excludes`, mold.json's source_excludes).
+    Build caches (BUILD_CACHES), ignored or untracked, never count.
     -> (list of "XY path" lines, or None when git cannot say)."""
     root = root or ROOT; cb = f"molds/{mold_id}/codebase"
     rc, out = git(root, "status", "--porcelain=v1", "--untracked-files=normal", "--ignored=traditional", "--", cb)
@@ -118,6 +125,7 @@ def uncommitted(mold_id, root=None, excludes=()):
         if len(line) < 4: continue
         code, path = line[:2], line[3:].strip().strip('"')
         rel = path[len(cb) + 1:] if path.startswith(cb + "/") else path
+        if code in ("!!", "??") and _excluded(rel, BUILD_CACHES): continue
         if code == "!!" and _excluded(rel, excludes): continue
         bad.append(f"{code} {path}")
     return bad

@@ -30,7 +30,8 @@ AN IN-TREE MOLD (lib/intree.py; today mold_v0, authored in THIS repository since
 source of its own to ask. Its gate reads THIS repository instead, for the commit being deployed:
   0. the commit is HEAD of the checkout the deploy runs from, and molds/<mold_id>/codebase on disk must be exactly that
      commit: no tracked change, no untracked file, no ignored file the deploy would carry (anything ignored that is
-     not in mold.json's source_excludes). Otherwise: unverifiable, naming the paths. No git, no HEAD: unverifiable;
+     not in mold.json's source_excludes; build caches such as tsconfig.tsbuildinfo never count, intree.BUILD_CACHES).
+     Otherwise: unverifiable, naming the paths. No git, no HEAD: unverifiable;
   1. the repository is this checkout's `origin` (a GitHub address), never a tracked value;
   2. with mold.json "source": {"ci": {"workflow": ".github/workflows/<file>.yml"}} (ticket mold_v0-001 adds it): the
      same three rules as above, for that workflow of this repository at that commit;
@@ -507,6 +508,9 @@ def self_test():
             shutil.rmtree(os.path.join(fcb, "dist")); os.makedirs(os.path.join(fcb, "node_modules", "p")); open(os.path.join(fcb, "node_modules", "p", "i.js"), "w").write("1\n")
             open(os.path.join(fcb, ".env"), "w").write("X=1\n")
             ok(check("m0", state_dir=fst)["state"] == "green", "in-tree: installed node_modules and a local .env (source_excludes) do not count")
+            open(os.path.join(fcb, "tsconfig.tsbuildinfo"), "w").write("{}\n"); os.makedirs(os.path.join(fcb, ".next", "cache")); open(os.path.join(fcb, ".next", "cache", "c"), "w").write("1\n")
+            ok(check("m0", state_dir=fst)["state"] == "green", "in-tree: build caches a typecheck or build writes (tsconfig.tsbuildinfo, .next) do not count (mold_v0-153)")
+            os.remove(os.path.join(fcb, "tsconfig.tsbuildinfo")); shutil.rmtree(os.path.join(fcb, ".next"))
             open(os.path.join(fcb, "new.ts"), "w").write("n\n")
             ok(check("m0", state_dir=fst)["state"] == "unverifiable", "in-tree: an untracked new file: unverifiable"); os.remove(os.path.join(fcb, "new.ts"))
             mj["source"]["ci"]["workflow"] = ".github/workflows/shell.yml"; json.dump(mj, open(os.path.join(fr, "molds", "m0", "mold.json"), "w"))
