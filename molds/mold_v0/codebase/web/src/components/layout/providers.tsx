@@ -6,7 +6,9 @@ import React from 'react';
 import { ActiveThemeProvider } from '../themes/active-theme';
 import QueryProvider from './query-provider';
 import { profile } from '@/config/profile.generated';
-import { hostSignUpSubtitle } from '@/features/packs/host-nav';
+
+/** The sign-up form's subtitle: the profile's sign_up_subtitle (mold_v0-140; a host pack's profile may set it), else its short description. */
+const signUpSubtitle = (profile as Readonly<Record<string, unknown>>).sign_up_subtitle;
 
 export default function Providers({
   activeThemeValue,
@@ -22,7 +24,7 @@ export default function Providers({
         {!CLERK ? <BuiltinAuthProvider><QueryProvider>{children}</QueryProvider></BuiltinAuthProvider> : <ClerkProvider
           localization={{
             signIn: { start: { title: `Sign in to ${profile.name}`, subtitle: 'Welcome back' } },
-            signUp: { start: { title: `Create your ${profile.name} account`, subtitle: hostSignUpSubtitle() ?? profile.short_description } }
+            signUp: { start: { title: `Create your ${profile.name} account`, subtitle: typeof signUpSubtitle === 'string' ? signUpSubtitle : profile.short_description } }
           }}
           appearance={{
             variables: {

@@ -18,7 +18,11 @@
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
-//                                        and their pack.json engine.config (mold_v0-137) when one declares it
+//                                        their pack.json engine.config (mold_v0-137) when one declares it, and every pack's
+//                                        server config (PACK_CONFIG, mold_v0-140: settings, admin_mcp, setup,
+//                                        mcp.error_hints, account_stages) when one declares any
+//   web/src/config/pack-host-nav.generated.ts  the host packs' sidebar entries and the shell components they serve
+//                                        (pack.json console.nav, console.components; mold_v0-140)
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
 //   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's whole guide (pack.json guide, mold_v0-139),
 //                                        else the packs' own guide pages (pack.json guide) and the facts its generated
@@ -84,6 +88,11 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await imp
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
 const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+// The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
+// the words engine, so a pack's admin_mcp words are checked against them here.
+const { ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-tools.ts")).href);
+const { ADMIN_SKILL_TEXTS } = await import(pathToFileURL(path.join(HERE, "..", "src", "admin-skills.ts")).href);
+const { templateNames, templateProblems } = await import(pathToFileURL(path.join(HERE, "..", "src", "text-template.ts")).href);
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
@@ -126,7 +135,12 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
-  "landing", "guide", "staff_docs", "console", "access_request"]);
+  "landing", "guide", "staff_docs", "console", "access_request",
+  // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
+  // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
+  "settings", "admin_mcp", "setup",
+  // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
+  "account_stages"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -729,6 +743,8 @@ const orchPacks = !opt("--packs") ? checkSideCode(ORCH_PACKS, "orchestrator", ho
 for (const id of webPacks) if (!existsSync(path.join(WEB_PACKS, id, "index.ts"))) fail(`web/src/packs/${id}`, "a console pack's entry is index.ts (its pages, nav and landing)");
 // A host pack's customer guide is its pack.json guide (mold_v0-139): guide.ts is no longer read.
 for (const id of webPacks) if (existsSync(path.join(WEB_PACKS, id, "guide.ts"))) fail(`web/src/packs/${id}/guide.ts`, "the customer guide is pack.json guide (mold_v0-139): markdown (one page per ## heading), groups, and tool_groups for the MCP tools page; this file is never read");
+// Its sidebar entries, the shell components it serves and its sign-up subtitle are config (mold_v0-140): nav.ts is no longer read.
+for (const id of webPacks) if (existsSync(path.join(WEB_PACKS, id, "nav.ts"))) fail(`web/src/packs/${id}/nav.ts`, "the sidebar entries are pack.json console.nav ({app, admin}: groups and entries placed among the shell's), the shell components its routes serve console.components, and the sign-up subtitle host.profile.sign_up_subtitle (mold_v0-140); this file is never read");
 for (const id of orchPacks) if (!existsSync(path.join(ORCH_PACKS, id, "main.ts"))) fail(`orchestrator/packs/${id}`, "an orchestrator pack's entry is main.ts");
 
 // Nor may it name a shell table: pack "api" would own api_keys, and its migrations could then alter or re-secure it.
@@ -976,6 +992,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "entitlements") { const bad = entitlementsProblem(v, pf.limits); if (bad) fail(rel(PROFILE_FILE), `entitlements: ${bad}`); else profile.entitlements = v; continue; }
       // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
       if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
+      // The sign-up form's subtitle (mold_v0-140; it was a host pack's nav.ts signUpSubtitle), optional: absent, short_description.
+      if (k === "sign_up_subtitle") { if (typeof v !== "string" || !v.trim() || v.length > 160 || /[<>{}\r\n]/.test(v)) fail(rel(PROFILE_FILE), "sign_up_subtitle: one line of plain text, up to 160 characters"); else profile[k] = v; continue; }
       if (k === "mcp_instructions") {
         if (typeof v !== "string" || !v.trim() || v.length > 4000 || /[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u.test(v)) fail(rel(PROFILE_FILE), "mcp_instructions: plain text of up to 4000 characters");
         else profile[k] = v;
@@ -1003,7 +1021,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1386,6 +1404,114 @@ files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HE
   `export const HOST_TABLES: readonly string[] = ${json(packs.flatMap((p) => p.schema?.tables ?? []))};\n` +
   "/** The packs' job kinds (jobKinds and agentJobKinds): the pack, the kind's name and its label (null: the name). */\n" +
   `export const JOB_KINDS: readonly { pack: string; name: string; label: string | null }[] = ${json(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).map((k) => ({ pack: p.id, name: k.name, label: k.label ?? null }))))};\n`);
+/**
+ * Every pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig), checked here for what its shape
+ * cannot say, in pack order: `settings` (a group or a key once across the packs, never one of the shell's groups; a
+ * setting in a group the shell or a pack has), `admin_mcp` (a shell tool or skill it names, a summary template that
+ * parses, each skill passage it replaces still in the skill's text as the earlier packs leave it), `setup` and
+ * `mcp.error_hints` (a host pack's: setupConfigOf). Written only when a pack declares one, so a build without writes what
+ * it did.
+ */
+// The shell's Setup steps and the session engine's stages a host pack's setup.steps may name (src/app.ts, src/admin.ts).
+const SHELL_SETUP_STEPS = ["joined", "connected", "tools", "first_call"];
+const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
+let setupOwner = null;
+/** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
+let engineWords = null;
+const packConfig = [];
+{
+  const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
+  const groups = new Map(SHELL_GROUPS.map((g) => [g, "the shell"])), keys = new Map(), reworded = new Map();
+  const skillText = Object.fromEntries(Object.entries(ADMIN_SKILL_TEXTS).map(([n, f]) => [n, f(profile.name, {})]));
+  for (const p of packs) {
+    const at = `packs/${p.id}/pack.json`, j = p.json ?? {};
+    const c = { pack: p.id };
+    if (j.settings) {
+      for (const g of j.settings.groups ?? []) {
+        if (groups.has(g.id)) fail(at, `settings.groups ${g.id}: ${groups.get(g.id)} has a group ${g.id}`);
+        else groups.set(g.id, `pack ${p.id}`);
+      }
+      for (const d of j.settings.defs ?? []) {
+        if (keys.has(d.key)) fail(at, `settings.defs ${d.key}: pack ${keys.get(d.key)} has that setting`);
+        else keys.set(d.key, p.id);
+        if (!groups.has(d.group)) fail(at, `settings.defs ${d.key}: group ${d.group} is not one of the build's (${[...groups.keys()].join(", ")})`);
+      }
+      const { $comment: _c, ...rest } = j.settings;
+      c.settings = rest;
+    }
+    if (j.admin_mcp) {
+      for (const [tool, w] of Object.entries(j.admin_mcp.reword ?? {})) {
+        if (!ADMIN_SHELL_TOOL_NAMES.includes(tool)) { fail(at, `admin_mcp.reword ${tool}: not one of the shell's admin tools (${ADMIN_SHELL_TOOL_NAMES.join(", ")})`); continue; }
+        if (reworded.has(tool)) fail(at, `admin_mcp.reword ${tool}: pack ${reworded.get(tool)} rewords it too: one pack's words`);
+        reworded.set(tool, p.id);
+        if (w.summary_template !== undefined) for (const b of templateProblems(w.summary_template, templateNames(w.summary_template))) fail(at, `admin_mcp.reword ${tool}.summary_template: ${b}`);
+      }
+      for (const [skill, steps] of Object.entries(j.admin_mcp.skills ?? {})) {
+        if (!(skill in skillText)) { fail(at, `admin_mcp.skills ${skill}: not one of the shell's admin skills (${Object.keys(skillText).join(", ")})`); continue; }
+        for (const [i, st] of steps.entries()) {
+          if (!skillText[skill].includes(st.from)) { fail(at, `admin_mcp.skills ${skill}[${i}].from: the shell's skill no longer reads "${st.from.slice(0, 80)}${st.from.length > 80 ? "…" : ""}" (src/admin-skills.ts): write the step as it reads now`); continue; }
+          skillText[skill] = skillText[skill].replace(st.from, () => st.to);
+        }
+      }
+      const { $comment: _c, ...rest } = j.admin_mcp;
+      c.admin_mcp = rest;
+    }
+    Object.assign(c, setupConfigOf(p));
+    // The session engine's account stages (mold_v0-121): the words of the host pack that owns its tables, required then.
+    const ownsEngine = ["products", "scenarios", "simulations", "agent_sessions"].every((t) => (p.schema?.tables ?? []).includes(t));
+    if (j.account_stages && !ownsEngine) fail(at, "account_stages: the session engine's stages are the words of the host pack that owns its tables (host.schema: products, scenarios, simulations, agent_sessions)");
+    else if (ownsEngine && !j.account_stages) fail(at, "account_stages: this pack owns the session engine's tables, so it names the engine's account stages (each stage's label, next step and funnel label, the next step after the first tool call, the attention messages)");
+    else if (j.account_stages) { const { $comment: _c, ...rest } = j.account_stages; c.account_stages = rest; engineWords = rest; }
+    if (Object.keys(c).length > 1) packConfig.push(c);
+  }
+  refuse();
+}
+// The session engine's account-stage words for the console's Accounts pages (mold_v0-121), only in a build with the engine.
+if (engineWords) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The session engine's account-stage words (mold_v0-121: its host pack's pack.json account_stages), as templates of the build's words. */\n" +
+    `export const ENGINE_WORDS = ${json(engineWords)};\n`);
+}
+/**
+ * A pack's `setup` and `mcp.error_hints` for the server (mold_v0-140), checked; {} when it declares neither. `setup` is a
+ * host pack's, one per build (a pack's own checklist steps are pack.json onboarding): its steps' ids are new, each placed
+ * after a step there is, a `stage:` step only in a build with the session engine (its host tables), a `launch` step only
+ * with a viewer_note; its workflow's group ids and tools are each once.
+ */
+function setupConfigOf(p) {
+  const at = `packs/${p.id}/pack.json`, out = {};
+  const hints = p.json?.mcp?.error_hints;
+  if (hints?.length) out.error_hints = hints;
+  const st = p.json?.setup;
+  if (!st) return out;
+  if (!p.host) { fail(at, "setup is a host pack's (its Setup page): a pack's own checklist steps are pack.json onboarding"); return out; }
+  if (setupOwner) { fail(at, `setup: host pack ${setupOwner} declares the Setup page too: one pack's`); return out; }
+  setupOwner = p.id;
+  const engine = ["products", "scenarios", "simulations", "agent_sessions"].every((t) => packs.some((x) => (x.schema?.tables ?? []).includes(t)));
+  const ids = new Set(SHELL_SETUP_STEPS);
+  for (const [i, s] of (st.steps ?? []).entries()) {
+    const w = `${at} setup.steps[${i}] ${s.id}`;
+    if (ids.has(s.id)) fail(w, SHELL_SETUP_STEPS.includes(s.id) ? "is one of the shell's steps: give its words in setup.shell_steps" : "is there twice");
+    if (s.after !== undefined && !ids.has(s.after)) fail(w, `after: ${s.after} is not a step before it (${[...ids].join(", ")})`);
+    ids.add(s.id);
+    if (s.done_when.startsWith("stage:")) {
+      const stage = s.done_when.slice("stage:".length);
+      if (!engine) fail(w, "done_when stage: the build has no session engine (its tables in a host pack's host.schema): a pack's own steps are pack.json onboarding");
+      else if (!ENGINE_STAGE_IDS.includes(stage)) fail(w, `done_when ${s.done_when}: not one of the session engine's stages (${ENGINE_STAGE_IDS.join(", ")})`);
+    }
+    if (s.launch && st.viewer_note === undefined) fail(w, "launch: give setup.viewer_note, what someone who may not launch reads in its place");
+  }
+  const groups = new Set(), tools = new Map();
+  for (const g of st.workflow ?? []) {
+    if (groups.has(g.id)) fail(at, `setup.workflow ${g.id}: there twice`);
+    groups.add(g.id);
+    for (const t of g.tools) { if (tools.has(t)) fail(at, `setup.workflow ${g.id}: tool ${t} is in group ${tools.get(t)} too`); else tools.set(t, g.id); }
+  }
+  const strip = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== "$comment"));
+  out.setup = { ...strip(st), ...(st.steps ? { steps: st.steps.map(strip) } : {}) };
+  return out;
+}
+
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
@@ -1398,21 +1524,51 @@ files.set(srcHosts, HEADER +
   `export const HOSTS: readonly unknown[] = [${hostPacks.map((_p, i) => `host${i}`).join(", ")}];\n` +
   // Their pack.json engine.config (mold_v0-137), only when one declares it (a build without one writes what it did).
   (hostPacks.some((p) => p.engineConfig) ? "\n/** Each host pack's pack.json `engine.config` (mold_v0-137), by pack id: checked against its host entry's schema when it registers (src/host.ts). */\n" +
-    `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : ""));
+    `export const HOST_ENGINE_CONFIG: Readonly<Record<string, unknown>> = ${JSON.stringify(Object.fromEntries(hostPacks.filter((p) => p.engineConfig).map((p) => [p.id, p.engineConfig])), null, 2)};\n` : "") +
+  // Every pack's server config (mold_v0-140), only when one declares it.
+  (packConfig.length ? "\n/** Each pack's server config from its pack.json (mold_v0-140; src/host.ts PackConfig): settings, admin_mcp, setup, mcp.error_hints, account_stages, in pack order. */\n" +
+    `export const PACK_CONFIG: readonly unknown[] = ${json(packConfig)};\n` : ""));
 // Their console code (web/src/packs/<id>/index.ts) and orchestrator entries (orchestrator/packs/<id>/main.ts).
 files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADER +
   "import type { HostWeb } from '@/features/packs/host-web';\n" +
   webPacks.map((id, i) => `import * as web${i} from '@/packs/${id}';\n`).join("") +
   "\n/** The host packs' console code (mold_v0-039): pages at their own URLs, sidebar entries, the landing page; none with zero packs. */\n" +
   `export const HOST_WEB: readonly HostWeb[] = [${webPacks.map((_id, i) => `web${i}.default`).join(", ")}];\n`);
-// Their sidebar entries and the shell features they enable (web/src/packs/<id>/nav.ts), apart from their pages so the
-// sidebar's bundle never carries the pages.
+// Their sidebar entries and the shell components their routes serve (mold_v0-140: pack.json console.nav and
+// console.components; they were web/src/packs/<id>/nav.ts), as data apart from their pages so the sidebar's bundle never
+// carries the pages. Each entry names one of the pack's own console pages (its routes.json), in the console it is in.
 {
-  const navs = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "nav.ts")));
+  const navs = [];
+  for (const p of packs) {
+    const c = p.json?.console ?? {};
+    if (c.nav === undefined && c.components === undefined) continue;
+    const at = `packs/${p.id}/pack.json`;
+    if (!p.host || !webPacks.includes(p.id)) { fail(at, "console.nav and console.components are a host pack's (its own console pages, web/src/packs/<id>/, and routes)"); continue; }
+    const file = path.join(WEB_PACKS, p.id, "routes.json");
+    const r = existsSync(file) ? readJson(file, `web/src/packs/${p.id}/routes.json`) : {};
+    const entry = { pack: p.id };
+    for (const area of ["app", "admin"]) {
+      const placements = c.nav?.[area];
+      if (placements === undefined) continue;
+      const own = new Set((Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`));
+      const keys = new Map();
+      for (const [i, pl] of placements.entries()) for (const [j, it] of pl.items.entries()) {
+        const w = `${at} console.nav.${area}[${i}].items[${j}]`;
+        if (!own.has(it.url)) fail(w, `${it.url} is not one of the pack's own /${area} pages (web/src/packs/${p.id}/routes.json ${area}: ${[...own].join(", ") || "none"})`);
+        const k = it.shortcut?.join(" ");
+        if (k && keys.has(k)) fail(w, `shortcut ${k} is ${keys.get(k)}'s too: each entry its own`);
+        else if (k) keys.set(k, it.url);
+      }
+      // As the sidebar's own entries are written: {title, url, icon, shortcut?, items: []} (web/src/features/packs/host-nav.ts).
+      entry[area] = placements.map(({ $comment: _c, ...pl }) => pl);
+    }
+    if (c.components?.length) entry.components = c.components;
+    navs.push(entry);
+  }
+  refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
-    navs.map((id, i) => `import * as nav${i} from '@/packs/${id}/nav';\n`).join("") +
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
-    `export const HOST_NAV: readonly unknown[] = [${navs.map((_id, i) => `nav${i}`).join(", ")}];\n`);
+    `export const HOST_NAV: readonly unknown[] = ${navs.length ? json(navs) : "[]"};\n`);
 }
 // The customer guide (mold_v0-106, mold_v0-139): a host pack's pack.json guide is the whole guide (HOST_GUIDE: its pages
 // in its groups, its MCP tools page's tool groups); else the packs' own pages (pack.json guide) and the facts the console
@@ -1559,10 +1715,12 @@ const profileSidebar = (() => {
         rewrites.push({ source, destination: to + p });
       }
     }
-    for (const x of Array.isArray(r.redirects) ? r.redirects : []) {
-      if (!x || typeof x.source !== "string" || typeof x.destination !== "string" || !x.source.startsWith("/") || !x.destination.startsWith("/")) { fail(`web/src/packs/${id}/routes.json`, "a redirect is {source, destination, permanent} with paths on this site"); continue; }
-      redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
-    }
+    if (r.redirects !== undefined) fail(`web/src/packs/${id}/routes.json`, "redirects are pack.json console.redirects (mold_v0-140): [{source, destination, permanent}]; this list is never read");
+  }
+  // Each pack's old addresses kept working (mold_v0-140: pack.json console.redirects, checked by src/pack-manifest.ts), in pack order.
+  for (const p of packs) for (const x of p.json?.console?.redirects ?? []) {
+    if (seenUrl.has(x.source)) fail(`packs/${p.id}/pack.json`, `console.redirects: ${x.source} is a page of the build (a host pack's routes.json): it cannot redirect`);
+    redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
   }
   // A page the build declares (mold_v0-138): the landing block's request_page at its own path, rewritten to the shell's
   // route for it (web/src/app/(site)/declared/[page]); the lanes read `declared` to visit it (testing/console/surface.mts).

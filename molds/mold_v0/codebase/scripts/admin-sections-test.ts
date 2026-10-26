@@ -14,10 +14,14 @@
 //      (with their cost, over its period) read the same runs; an account shown a plan variant brings Experiments back
 // A build with the session engine (a host pack owns its tables: run this test in that build):
 //   3. the stages, their next steps, the attention messages, the funnel and the account page are exactly the engine's,
-//      as they were before mold_v0-103: no pack stage, no pack runs, no new field on its rows
+//      as they were before mold_v0-103 (in its host pack's words since mold_v0-121: pack.json account_stages): no pack
+//      stage, no pack runs, no new field on its rows
 // Every build: the console lists FinOps' runs tab in the Experiments slot, and Health no longer lists one (its old link
 // redirects to FinOps).
 import "./lib/test-world.js";
+// The build's packs registered as a process registers them: the session engine's words are its host pack's pack.json
+// account_stages (mold_v0-121), which reach the server through src/hosts.ts.
+import "../src/hosts.js";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { cleanup, STAMP } from "./lib/test-world.js";

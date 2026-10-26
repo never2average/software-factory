@@ -9,7 +9,7 @@ import type { Metadata } from 'next';
  * scripts/gen-packs.mjs in src/config/pack-web.generated.ts. Its pages keep their own URLs: next.config rewrites each
  * (from src/config/pack-routes.generated.json, written from the pack's routes.json) to the shell's host page routes,
  * app/{app,admin}/host/[pack]/[...path] and app/(site)/host/[pack]/[...path], which render the page module named here.
- * Its sidebar entries and the shell features it enables are its nav.ts (features/packs/host-nav.ts). With zero packs none
+ * Its sidebar entries and the shell components it serves are its pack.json console (mold_v0-140; features/packs/host-nav.ts). With zero packs none
  * of this exists: the sidebar, the landing page and every route are the shell's.
  */
 

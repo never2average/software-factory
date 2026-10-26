@@ -13,6 +13,7 @@
  *   mcp_server_version optional (mold_v0-060): the customer MCP server's version (absent: the shell's)
  *   mcp_instructions   optional (mold_v0-060): the customer MCP server's instructions, in place of the shell's; the
  *                      paragraph for the tools generated from the packs is added after either
+ *   sign_up_subtitle   optional (mold_v0-140): the console's sign-up form's subtitle, one line (absent: short_description)
  *   install_clients    optional (mold_v0-010): the clients the install pages and a member's key setup offer, by id
  *                      (src/connect-catalog.ts); absent, every client
  *   source_offer       optional (mold_v0-050): where this build's own source is offered, {app: {url, license}}, or
@@ -68,6 +69,8 @@ export interface Profile {
   limits?: ProfileLimits;
   mcp_server_version?: string;
   mcp_instructions?: string;
+  /** The sign-up form's subtitle (mold_v0-140), one line; absent, short_description. A host pack's profile may set it. */
+  sign_up_subtitle?: string;
   install_clients?: readonly string[];
   source_offer?: SourceOfferSetting;
   member_keys?: boolean;

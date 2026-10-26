@@ -7,6 +7,7 @@
 import { registerHosts, type HostDefinition } from "./host.js";
 import * as generated from "./hosts.generated.js";
 
-// Their pack.json engine.config (mold_v0-137), which a build writes only when a host pack declares one.
-const { HOSTS, HOST_ENGINE_CONFIG } = generated as typeof generated & { HOST_ENGINE_CONFIG?: Readonly<Record<string, unknown>> };
-registerHosts(HOSTS as readonly HostDefinition[], HOST_ENGINE_CONFIG ?? {});
+// Their pack.json engine.config (mold_v0-137), which a build writes only when a host pack declares one; and every pack's
+// server config (mold_v0-140: settings, admin_mcp, setup, mcp.error_hints), written only when a pack declares one.
+const { HOSTS, HOST_ENGINE_CONFIG, PACK_CONFIG } = generated as typeof generated & { HOST_ENGINE_CONFIG?: Readonly<Record<string, unknown>>; PACK_CONFIG?: readonly unknown[] };
+registerHosts(HOSTS as readonly HostDefinition[], HOST_ENGINE_CONFIG ?? {}, PACK_CONFIG ?? []);

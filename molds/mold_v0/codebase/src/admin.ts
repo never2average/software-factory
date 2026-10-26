@@ -35,6 +35,7 @@ import { accountRoleOf, clerkRoleFor, parseAccountRole, ACCOUNT_ROLE_LABELS, typ
 import { ENV } from "./env-names.js";
 import { KEY_PREFIX, NS_KEYS, nsGet } from "./namespace.js";
 import { PROFILE } from "./profile.js";
+import { packConfigs, type AccountStagesConfig } from "./host.js";
 
 export class AdminError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -203,14 +204,17 @@ const SHELL_STAGES = (): Stage[] => [
   { id: "connected", label: "Connected", next: `Ask: "Get me started with ${PROFILE.name}"` },
   { id: "first_call", label: "First tool call", next: `Keep using ${PROFILE.name} in their own work` },
 ];
-/** The session engine's steps (its tables: products, their research, simulations; its report tool), as they always were. */
-const ENGINE_STAGES = (): Stage[] => [
-  { id: "onboarded", label: "Product onboarded", next: fill("Run a {run}") },
-  { id: "simulated", label: fill("{Run} run"), next: "Open the visibility report" },
-  { id: "reported", label: "Report read", next: "Act on the report and re-run" },
-];
+/**
+ * The session engine's words (mold_v0-121): its host pack's pack.json account_stages (src/host.ts AccountStagesConfig),
+ * which the build requires with the engine. A build that registers none (a test's) shows the stage ids.
+ */
+export const engineWords = (): AccountStagesConfig => packConfigs().find((c) => c.account_stages)?.account_stages ?? {
+  first_next: "onboarded", stages: ENGINE_STAGE_IDS.map((id) => ({ id, label: id, next: "", funnel: id })),
+  attention: { failed: "failed", first_call: "first_call", onboarded: "onboarded", simulated: "simulated" },
+};
+/** The session engine's steps (its tables: products, their research, simulations; its report tool), in its pack's words. */
+const ENGINE_STAGES = (): Stage[] => engineWords().stages.map((s) => ({ id: s.id, label: fill(s.label), next: fill(s.next) }));
 const SHELL_STAGE_COUNT = 5;
-const ENGINE_FIRST_NEXT = "Onboard a product (name, website, docs)";
 
 let stageCache: { from: unknown; list: Stage[] } | null = null;
 /** The build's account stages, in order: the shell's, then the session engine's or the packs' onboarding steps. */
@@ -220,7 +224,7 @@ export function accountStages(): Stage[] {
   const shell = SHELL_STAGES();
   let tail: Stage[];
   if (sessionEngine()) {
-    shell[shell.length - 1]!.next = ENGINE_FIRST_NEXT;
+    shell[shell.length - 1]!.next = fill(engineWords().first_next);
     tail = ENGINE_STAGES();
   } else {
     const steps = stageSteps();
@@ -245,7 +249,7 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     invited: minDate(invites.map((i) => i.created_at)),
     joined: minDate(members.map((m) => m.created_at)),
     connected: f.first_seen, first_call: f.first_call_at,
-    ...(eng ? { onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at }
+    ...(eng ? engineStagesAt(f)
       : Object.fromEntries(STAGES.slice(SHELL_STAGE_COUNT).map((s) => [s.id, steps[s.id] ?? null]))),
   };
   let i = STAGES.length - 1;
@@ -298,12 +302,21 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     prepaid_allowed: Boolean(f.prepaid_allowed), allowance_usd: override, attention,
   };
 }
-/** The session engine's attention messages (a host pack's onboarding and simulations), as they always were. */
+/**
+ * When an account reached each of the session engine's stages (ENGINE_STAGES: its products, simulations and report), from
+ * its facts; the Setup page's steps that wait on a stage (pack.json setup.steps done_when "stage:<id>", src/app.ts) read
+ * the same.
+ */
+export const engineStagesAt = (f: Pick<OrgFacts, "onboarded_at" | "first_sim_at" | "first_report_at">): Record<string, Date | string | null> =>
+  ({ onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at });
+/** The session engine's stage ids, in order (a Setup step may wait on one: pack.json setup.steps done_when "stage:<id>"). */
+export const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"] as const;
+/** The session engine's attention messages (a host pack's onboarding and simulations), in its pack's words (mold_v0-121). */
 const ENGINE_ATTENTION = {
-  get failed() { return "Product onboarding failed"; },
-  get first_call() { return "Using tools but has not onboarded a product"; },
-  get onboarded() { return fill("Product onboarded, no {run} yet"); },
-  get simulated() { return fill("{Run} ran, report never opened"); },
+  get failed() { return fill(engineWords().attention.failed); },
+  get first_call() { return fill(engineWords().attention.first_call); },
+  get onboarded() { return fill(engineWords().attention.onboarded); },
+  get simulated() { return fill(engineWords().attention.simulated); },
 };
 export type AdminOrg = ReturnType<typeof shapeOrg>;
 

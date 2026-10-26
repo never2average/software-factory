@@ -23,7 +23,7 @@ import { RUN_USD } from "./run-spend.js";
 import { workspaceRunUsage } from "./usage-report.js";
 import { endpointLimit } from "./rate-limits.js";
 import { currentPopulation } from "./agent-mix.js";
-import { hosts } from "./host.js";
+import { errorHints, hosts, setupConfig, setupWorkflow } from "./host.js";
 import { PROFILE } from "./profile.js";
 import { fill } from "./vocabulary.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
@@ -63,36 +63,78 @@ async function withUsageShares(c: ReturnType<typeof admin.connectInfo>) {
   return { ...c, clients };
 }
 
+/** AI clients that draw a tool's widget under the answer (MCP Apps): a person whose every client is another sees results as text. */
+const WIDGET_CLIENTS = /claude-ai|claude\.ai|openai|chatgpt/i;
+/** A LIKE pattern for text that starts with `prefix` (its own %, _ and \ taken literally). */
+const startsWith = (prefix: string) => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
+
 /**
- * The shell's Setup page: joining, connecting a client, its tools and a first call, from the connector log. A host pack
- * (src/host.ts) replaces this route with its own steps and tool groups (mold_v0-039); with zero packs this is the page.
+ * The Setup page: joining, connecting a client, its tools and a first call, from the connector log, then the product's
+ * own steps (mold_v0-140: the host pack's pack.json `setup`, src/host.ts SetupConfig; with zero packs, none):
+ *   steps        each placed after a step (`after`, else last), done when the person read a resource whose address starts
+ *                with a prefix (`resource:<prefix>`, their widget) or when the account reached one of the session engine's
+ *                stages (`stage:<id>`: onboarded, simulated, reported); `optional` ones are not counted; `help_text_only`
+ *                is its help for someone whose every AI client shows results as text; `launch` ones (they start work) show
+ *                `viewer_note` instead to someone who may not launch
+ *   shell_steps  the shell's steps (joined, connected, tools, first_call) in the product's words
+ *   workflow     the tool groups that make up using it fully: per group, how many of its tools the account has called
+ *                (coverage, and the next group nobody has used, with the prompt that starts it)
+ * and a plain-language fix for each recent error from the packs' pack.json mcp.error_hints.
  */
 async function setup(s: Session, since?: string) {
   const db = await getDb();
   const P = PROFILE.name;
+  const cfg = setupConfig();
   // Per person (the Clerk user); per account for a session without a user.
   const who = s.user ? "org_id = $1 AND user_id = $2" : "org_id = $1 AND user_id IS NULL";
   const args = s.user ? [s.org, s.user] : [s.org];
+  const own = cfg.steps ?? [];
+  const resources = own.filter((st) => st.done_when.startsWith("resource:"));
   const [m] = await db.query<Record<string, any>>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT min(at) FILTER (WHERE method = 'initialize') AS connected,
-            min(at) FILTER (WHERE method = 'tools/list') AS tools_listed,
+            min(at) FILTER (WHERE method = 'tools/list') AS tools_listed,${resources.map((_st, i) => `
+            min(at) FILTER (WHERE method = 'resources/read' AND name LIKE $${args.length + i + 1}) AS resource_${i},`).join("")}
             min(at) FILTER (WHERE method = 'tools/call' AND ok) AS first_call,
             count(*) FILTER (WHERE method = 'tools/call') AS calls
-       FROM mcp_events WHERE ${who}`, args);
+       FROM mcp_events WHERE ${who}`, [...args, ...resources.map((st) => startsWith(st.done_when.slice("resource:".length)))]);
   const clients = await db.query<{ client: string; last: Date }>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT client, max(at) AS last FROM mcp_events WHERE ${who} AND method = 'initialize' AND client IS NOT NULL GROUP BY client ORDER BY max(at) DESC LIMIT 5`, args);
+  const workflow = cfg.workflow ?? [];
+  // The account's tools in use (everyone's), for the workflow's coverage.
+  const used = new Set(workflow.length ? (await db.query<{ name: string }>(
+    `SELECT DISTINCT name FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok`, [s.org])).map((r) => r.name) : []);
   const errors = await db.query<{ at: Date; name: string | null; error: string | null }>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT at, name, error FROM mcp_events WHERE ${who} AND NOT ok ORDER BY at DESC LIMIT 5`, args);
-  const steps = [
-    { id: "joined", label: "Join your team's account", done: true, at: null, help: "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account." },
-    { id: "connected", label: `Add the ${P} connector to your AI client`, done: Boolean(m.connected), at: m.connected,
-      help: `${P} runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.` },
-    { id: "tools", label: `Switch the ${P} tools on`, done: Boolean(m.tools_listed), at: m.tools_listed,
-      help: `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.` },
-    { id: "first_call", label: `Ask ${P} something`, done: Boolean(m.first_call), at: m.first_call, help: `Your first question checks everything works end to end. Type: "What can ${P} do?"` },
+  const stageAt = own.some((st) => st.done_when.startsWith("stage:")) ? admin.engineStagesAt(await admin.accountFacts(s.slug)) : {};
+  const textOnly = clients.length > 0 && clients.every((c) => !WIDGET_CLIENTS.test(c.client));
+  const shellWords = (id: string, label: string, help: string) => ({ label: cfg.shell_steps?.[id]?.label ?? label, help: cfg.shell_steps?.[id]?.help ?? help });
+  type Step = { id: string; label: string; done: boolean; at: Date | string | null; optional?: true; help: string };
+  const steps: Step[] = [
+    { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },
+    { id: "connected", ...shellWords("connected", `Add the ${P} connector to your AI client`,
+      `${P} runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
+    { id: "tools", ...shellWords("tools", `Switch the ${P} tools on`,
+      `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
+    { id: "first_call", ...shellWords("first_call", `Ask ${P} something`, `Your first question checks everything works end to end. Type: "What can ${P} do?"`), done: Boolean(m.first_call), at: m.first_call },
   ];
-  const STEP_PROMPTS: Record<string, string> = { connected: `Is ${P} connected? Tell me what it can do.`, tools: `Which ${P} tools can you use?` };
-  const prompted = steps.map((st) => ({ ...st, prompt: STEP_PROMPTS[st.id] ?? st.help.match(/Type:\s*"(.+?)"/)?.[1] ?? null }));
+  for (const st of own) {
+    const at = st.done_when.startsWith("resource:") ? m[`resource_${resources.indexOf(st)}`] ?? null : stageAt[st.done_when.slice("stage:".length)] ?? null;
+    const step: Step = { id: st.id, label: st.label, done: Boolean(at), at, ...(st.optional ? { optional: true as const } : {}), help: textOnly && st.help_text_only ? st.help_text_only : st.help };
+    const after = st.after ? steps.findIndex((x) => x.id === st.after) : -1;
+    if (after >= 0) steps.splice(after + 1, 0, step); else steps.push(step);
+  }
+  // Every step has a prompt to paste into the AI client: the one it declares, or the one its help names (Type: "…").
+  const STEP_PROMPTS: Record<string, string | undefined> = {
+    connected: `Is ${P} connected? Tell me what it can do.`, tools: `Which ${P} tools can you use?`,
+    ...Object.fromEntries([...Object.entries(cfg.shell_steps ?? {}).map(([id, w]) => [id, w.prompt]), ...own.map((st) => [st.id, st.prompt])].filter(([, x]) => x !== undefined)),
+  };
+  // Someone who may not launch: where a step that starts work would ask them to, the product's note instead.
+  const viewer = !roles.canAccount(s.accountRole, "launch") && cfg.viewer_note !== undefined;
+  const launch = new Set(own.filter((st) => st.launch).map((st) => st.id));
+  const prompted = steps.map((st) => viewer && launch.has(st.id)
+    ? { ...st, help: cfg.viewer_note!, prompt: null } : { ...st, prompt: STEP_PROMPTS[st.id] ?? st.help.match(/Type:\s*"(.+?)"/)?.[1] ?? null });
+  const groups = workflow.map((g) => ({ id: g.id, label: g.label, prompt: g.prompt, used: g.tools.filter((t) => used.has(t)).length, total: g.tools.length }));
+  const hints = errorHints().map((h) => ({ re: new RegExp(h.match, "i"), text: h.text }));
   let live = null;
   if (since) {
     const [r] = await db.query<{ at: Date; client: string | null }>(
@@ -101,10 +143,11 @@ async function setup(s: Session, since?: string) {
     live = r ?? null;
   }
   return {
-    steps: prompted, done: steps.filter((x) => x.done).length, total: steps.length,
-    clients, calls: Number(m.calls), groups: [] as { id: string; label: string; prompt: string; used: number; total: number }[], coverage: 0, next: null,
-    errors: errors.map((e) => ({ ...e, hint: null })),
-    connect: await withUsageShares(admin.connectInfo()), live, viewer_note: null,
+    steps: prompted, done: steps.filter((x) => x.done && !x.optional).length, total: steps.filter((x) => !x.optional).length,
+    clients, calls: Number(m.calls), groups, coverage: groups.length ? groups.filter((g) => g.used > 0).length / groups.length : 0,
+    next: groups.find((g) => g.used === 0) ?? null,
+    errors: errors.map((e) => ({ ...e, hint: hints.find((h) => h.re.test(e.error ?? ""))?.text ?? null })),
+    connect: await withUsageShares(admin.connectInfo()), live, viewer_note: viewer ? cfg.viewer_note! : null,
   };
 }
 
@@ -274,8 +317,9 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
   const who = new Map(members.map((m) => [m.user_id, m.email ?? m.name ?? null]));
   const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
   return {
-    // Workflow groups are a host pack's (its own /usage): none in the shell.
-    workflow: [] as { id: string; label: string; total: number; used: number; calls: number }[],
+    // The Setup page's workflow groups (pack.json setup.workflow, mold_v0-140): each group's tools called in the period.
+    workflow: setupWorkflow().map((g) => ({ id: g.id, label: g.label, total: g.tools.length,
+      used: g.tools.filter((x) => calls.get(x)).length, calls: g.tools.reduce((n, x) => n + (calls.get(x) ?? 0), 0) })),
     clients: clients.map((c) => ({ client: c.client, calls: Number(c.calls) })),
     sims_weekly: weeks.map((week) => ({ week, completed: Number(simW.get(week)?.completed ?? 0), other: Number(simW.get(week)?.other ?? 0), partial: partial(week) })),
     harnesses: harnesses.map((h) => ({ harness: h.harness, sessions: Number(h.sessions), completed: Number(h.completed) })),
