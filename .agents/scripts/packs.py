@@ -613,8 +613,9 @@ def rules_self_test():
         try:
             ROOT, PACKS = t, os.path.join(t, "packs")
             mold = os.path.join(t, "molds", "mold_t"); cb = os.path.join(mold, "codebase")
-            os.makedirs(os.path.join(cb, "scripts")); os.makedirs(os.path.join(cb, "packs")); os.makedirs(os.path.join(cb, "node_modules", "x"))
-            open(os.path.join(cb, "node_modules", "x", "i.js"), "w").write("1\n")
+            os.makedirs(os.path.join(cb, "scripts")); os.makedirs(os.path.join(cb, "packs"))
+            for nmd in ("node_modules", "orchestrator/node_modules", "web/node_modules"):   # every folder mold_v0 installs
+                os.makedirs(os.path.join(cb, nmd, "x")); open(os.path.join(cb, nmd, "x", "i.js"), "w").write("1\n")
             open(os.path.join(cb, "packs", "README.md"), "w").write("packs live here\n"); open(os.path.join(cb, ".env"), "w").write("SECRET=standin\n")
             open(os.path.join(cb, "scripts", "gen-packs.mjs"), "w").write(
                 "// stand-in: writes src/packs.generated.ts from the pack directories\nimport { readdirSync, mkdirSync, writeFileSync } from 'node:fs';\n"
@@ -642,6 +643,15 @@ def rules_self_test():
                                          "apply: the packs' files under packs/<id>/, then the mold's generator")
             ok(not os.path.exists(os.path.join(b, ".env")) and os.path.samefile(os.path.join(b, "node_modules", "x", "i.js"), os.path.join(cb, "node_modules", "x", "i.js")),
                "the build copy leaves out what mold.json build_copy excludes (.env) and links the mold's node_modules")
+            # mold_v0-154 follow-up: the lane copy is this copy, and the functional lane's typecheck requires the
+            # orchestrator's and the console's dependencies too; without them it was skipped for every app with packs.
+            ok(all(os.path.exists(os.path.join(b, d, "x", "i.js")) and os.path.samefile(os.path.join(b, d, "x", "i.js"), os.path.join(cb, d, "x", "i.js")) for d in ("orchestrator/node_modules", "web/node_modules")),
+               "and the orchestrator's and the console's node_modules, each hard-linked")
+            lane = load(os.path.join(keep[0], "molds", "mold_v0", "testing", "functional", "lane.json"))
+            needed = sorted({r["path"][len("{codebase}/"):].split("/.bin/")[0] for c in lane["checks"] for r in c.get("requires") or []
+                             if isinstance(r.get("path"), str) and r["path"].startswith("{codebase}/") and "node_modules" in r["path"]})
+            ok(needed and all(any(x == d or x.startswith(d + "/") for d in man["build_copy"]["node_modules"]) for x in needed),
+               f"mold_v0's build copy links every node_modules folder its functional lane requires ({', '.join(needed)})")
             app(["notes"]); ok(quiet(apply, "zz") == 0 and reg() == '["notes"]' and not os.path.exists(os.path.join(b, "packs", "tasks")),
                                "a pack the app no longer names is pruned from the build copy and the registry")
             # mold_v0-050: the deploy facts (names, places, providers) and the operator's source offer, in the deploy copy only
@@ -726,7 +736,7 @@ def rules_self_test():
             os.remove(os.path.join(b, "packs")); shutil.rmtree(b)
             ok(quiet(lane_copies, "zz") == 0 and reg(os.path.join(t, "build", "zz.lane")) == '["notes"]' and reg(os.path.join(t, "build", "zz.lane-default")) == '["notes"]',
                "lane-copy: both lane copies carry the packs (a mold with no deployment profiles has no other default)")
-            ok(sorted(os.listdir(os.path.join(cb, "packs"))) == ["README.md"] and sorted(os.listdir(cb)) == [".env", "node_modules", "packs", "scripts"],
+            ok(sorted(os.listdir(os.path.join(cb, "packs"))) == ["README.md"] and sorted(os.listdir(cb)) == [".env", "node_modules", "orchestrator", "packs", "scripts", "web"],
                "the mold itself is never written")
         finally:
             ROOT, PACKS = keep
