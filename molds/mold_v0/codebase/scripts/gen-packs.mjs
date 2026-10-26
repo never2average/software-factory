@@ -96,6 +96,8 @@ const { templateNames, templateProblems } = await import(pathToFileURL(path.join
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
+// The account context and memory component's lists and words (mold_v0-142): plain TypeScript with no imports.
+const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "account-context-words.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -140,7 +142,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
-  "account_stages"]);
+  "account_stages",
+  // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
+  "memory"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -1431,6 +1435,8 @@ const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
 /** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
 let engineWords = null;
+/** The account context and memory component's pages and words for the console (mold_v0-142); null when it is off. */
+let memoryFacts = null;
 const packConfig = [];
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
@@ -1475,9 +1481,32 @@ const packConfig = [];
     if (j.account_stages && !ownsEngine) fail(at, "account_stages: the session engine's stages are the words of the host pack that owns its tables (host.schema: products, scenarios, simulations, agent_sessions)");
     else if (ownsEngine && !j.account_stages) fail(at, "account_stages: this pack owns the session engine's tables, so it names the engine's account stages (each stage's label, next step and funnel label, the next step after the first tool call, the attention messages)");
     else if (j.account_stages) { const { $comment: _c, ...rest } = j.account_stages; c.account_stages = rest; engineWords = rest; }
+    // The account context and memory component (mold_v0-142): one pack's per build; its pages' aliases are not its pages.
+    if (j.memory) {
+      if (memoryFacts) fail(at, `memory: pack ${memoryFacts.pack} turns the account context and memory component on too: one pack's`);
+      else {
+        const { $comment: _c, ...rest } = j.memory;
+        const sections = rest.scopes.map((sc) => ({ scope: sc, section: CONTEXT_SECTIONS[sc].section, path: `/app/context/${CONTEXT_SECTIONS[sc].section}`,
+          title: rest.pages?.titles?.[CONTEXT_SECTIONS[sc].section] ?? CONTEXT_SECTIONS[sc].title, icon: CONTEXT_SECTIONS[sc].icon }));
+        for (const [alias, to] of Object.entries(rest.pages?.aliases ?? {})) {
+          if (sections.some((x) => x.section === alias)) fail(at, `memory.pages.aliases ${alias}: it is one of the pages`);
+          if (!sections.some((x) => x.section === to)) fail(at, `memory.pages.aliases ${alias}: ${to} is not one of the pages (memory.scopes: ${rest.scopes.join(", ")})`);
+        }
+        if (rest.tool_words && !rest.tools) fail(at, "memory.tool_words: name the tools (memory.tools {save, search}) they are the words of");
+        c.memory = rest;
+        memoryFacts = { pack: p.id, sections, aliases: rest.pages?.aliases ?? {},
+          words: Object.fromEntries(WEB_WORDS.map((k) => [k, rest.words?.[k] ?? MEMORY_WORDS[k]])) };
+      }
+    }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
   refuse();
+}
+// The account context and memory component's pages, old addresses and words for the console (mold_v0-142), only when it is on.
+if (memoryFacts) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
+    `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
 }
 // The session engine's account-stage words for the console's Accounts pages (mold_v0-121), only in a build with the engine.
 if (engineWords) {
@@ -1563,7 +1592,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     for (const area of ["app", "admin"]) {
       const placements = c.nav?.[area];
       if (placements === undefined) continue;
-      const own = new Set((Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`));
+      // Its own pages, and the account context pages where it turns that component on (mold_v0-142).
+      const own = new Set([...(Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`),
+        ...(area === "app" && memoryFacts?.pack === p.id ? memoryFacts.sections.map((x) => x.path) : [])]);
       const keys = new Map();
       for (const [i, pl] of placements.entries()) for (const [j, it] of pl.items.entries()) {
         const w = `${at} console.nav.${area}[${i}].items[${j}]`;
@@ -1578,6 +1609,10 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     if (c.components?.length) entry.components = c.components;
     navs.push(entry);
   }
+  // The account context pages in the sidebar (mold_v0-142): where no pack's console.nav places them, a Context group of
+  // their own, after the shell's groups.
+  if (memoryFacts && !navs.some((n) => (n.app ?? []).some((pl) => pl.items.some((it) => it.url.startsWith("/app/context/")))))
+    navs.push({ pack: memoryFacts.pack, app: [{ label: "Context", items: memoryFacts.sections.map((x) => ({ title: x.title.split(" · ")[0], url: x.path, icon: x.icon })) }] });
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
@@ -1722,6 +1757,8 @@ const profileSidebar = (() => {
     for (const [area, prefix, to] of [["app", "/app/", `/app/host/${id}/`], ["admin", "/admin/", `/admin/host/${id}/`], ["site", "/", `/host/${id}/`]]) {
       for (const p of Array.isArray(r[area]) ? r[area] : []) {
         if (typeof p !== "string" || !ROUTE_PATH.test(p) || p.startsWith("host/") || p === "host") { fail(`web/src/packs/${id}/routes.json`, `${area}: ${JSON.stringify(p)} is not a page path`); continue; }
+      // The shell's own pages win over a rewrite (mold_v0-142: /app/context is the account context component's).
+      if (area === "app" && SHELL_APP_SEGMENTS.has(p.split("/")[0])) { fail(`web/src/packs/${id}/routes.json`, `app: ${p} is under the shell's own /app/${p.split("/")[0]}${p.split("/")[0] === "context" ? " (the account context and memory pages: pack.json memory turns them on, mold_v0-142)" : ""}`); continue; }
         const source = prefix + p;
         if (seenUrl.has(source)) fail(`web/src/packs/${id}/routes.json`, `${source} is claimed twice`);
         seenUrl.add(source);

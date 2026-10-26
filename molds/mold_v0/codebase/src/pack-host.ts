@@ -20,6 +20,10 @@ export { defineHost, type HostDefinition, type HostAdminTool, type PortalHelpers
 export { engineConfig, setupWorkflow } from "./host.js";
 export { fillTemplate, templateProblems, type TemplateValues } from "./text-template.js";
 
+// ---------- the account context and memory component (mold_v0-142; src/account-context.ts) ----------
+// What the account says about itself, for a host pack's own prompts (a company's research starts from it).
+export { getCompany as accountContext, type CompanyContext } from "./account-context.js";
+
 // ---------- database, tenancy, sign-in ----------
 export { getDb, type Queryable } from "./db.js";
 export { asPlatform, withTenant } from "./tenant-scope.js";

@@ -7,6 +7,7 @@
  * Nothing new is stored. Setup and usage come from the connector log the server already keeps (mcp_events, per user);
  * people from Clerk and the plan from Stripe, through src/admin.ts.
  */
+import { ContextError, contextLargeBody, contextRoutes } from "./account-context.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { withTenant } from "./tenant-scope.js";
 import { workspaceCharges } from "./run-charges.js";
@@ -521,7 +522,7 @@ export function appRouter() {
   const api = express.Router();
   // Small bodies everywhere except imports (memory, use cases, personas, tasks), which parse their own.
   const small = express.json({ limit: "16kb" });
-  api.use((req, res, next) => (hosts().some((h) => h.routes?.appLargeBody?.(req)) ? next() : small(req, res, next)));
+  api.use((req, res, next) => (hosts().some((h) => h.routes?.appLargeBody?.(req)) || contextLargeBody(req) ? next() : small(req, res, next)));
   api.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   api.use(customerSession);
   // Under the built-in sign-in (a long-lived cookie, mold_v0-004) a change riding the cookie carries X-Pack-Request: 1,
@@ -545,6 +546,8 @@ export function appRouter() {
   // here, else customerSession's 403 (no_account: the console shows its own page for it). Ahead of the host packs' routes.
   api.get("/access", (_req, res) => void res.json({ ok: true }));
   for (const h of hosts()) h.routes?.app?.(api, { S, need, can, actor, orgOf, AppError });
+  // The account context and memory component's routes (mold_v0-142, src/account-context.ts): only when it is on.
+  contextRoutes(api, { S, need, can, actor, orgOf, AppError, perms });
 
   api.get("/me", async (_req, res) => {
     const s = S(res);
@@ -680,7 +683,7 @@ export function appRouter() {
   api.post("/billing/checkout", async (req, res) => { need(res, "billing"); res.json(await admin.checkoutLink(actor(res), S(res).slug, req.body?.price_id, `${publicUrl()}/app#billing`, { requireAllowed: true })); });
   api.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
     const hostError = hosts().some((h) => (h.routes?.appErrors ?? []).some((C) => err instanceof C));
-    if (!(err instanceof AppError || hostError || err instanceof limits.LimitError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
+    if (!(err instanceof AppError || hostError || err instanceof ContextError || err instanceof limits.LimitError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
     // A Budget rules refusal also says which rule (code), the limit and what's left, who set it and the admins to ask.
     res.status(err.status ?? 400).json({ error: err.message, ...(err instanceof limits.LimitError || err instanceof AppError ? err.info : {}) });
   });

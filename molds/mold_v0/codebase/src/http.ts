@@ -41,7 +41,9 @@ import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./server.js";
-import { hosts, hostToolNames } from "./host.js";
+import { hosts, hostToolNames, memoryToolNames } from "./host.js";
+import { connectContext } from "./account-context.js";
+import { runMemoryTool } from "./account-context-tools.js";
 import { memberKeysOn, PROFILE } from "./profile.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
@@ -361,8 +363,9 @@ export function createApp() {
     res.locals.org = org.slug;
     transcripts().warm(); // a user is here: have transcript search awake by the time they ask for evidence
     for (const e of connectorEvents(req.body, req.get("user-agent"))) recordMcpEvent(org, e);
-    // A host pack's context for this caller (src/host.ts mcp.context; the account's and the person's), after the instructions.
-    const context = (await Promise.all(hosts().map((h) => h.mcp?.context?.(org).catch(() => "") ?? ""))).join("");
+    // The account's and the person's context for this caller (src/account-context.ts, mold_v0-142: the memory
+    // component's, then a host pack's own, src/host.ts mcp.context), after the instructions.
+    const context = await connectContext(org);
     const server = createServer(org, context);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
@@ -770,14 +773,16 @@ export function createApp() {
   const previewHost = hosts().find((h) => h.mcp?.runTool && h.mcp.widgetHtml);
   if (ENV.APP_PREVIEW === "1" && previewHost) {
     const runTool = previewHost.mcp!.runTool!, WIDGET_HTML = previewHost.mcp!.widgetHtml!;
-    const isTool = (n: string) => hostToolNames().includes(n);
+    const isTool = (n: string) => hostToolNames().includes(n) || memoryToolNames().includes(n);
     const keyOf = (req: Request) => String(req.query.key ?? req.body?.key ?? "");
     app.post("/preview/api/tool", express.json(), async (req, res) => {
       const org = await resolveKey(keyOf(req), { inUrl: true });
       const { name, arguments: args = {} } = req.body ?? {};
       if (!org) return void res.status(401).json({ isError: true, content: [{ type: "text", text: "Invalid key" }] });
       if (!isTool(name)) return void res.status(404).json({ isError: true, content: [{ type: "text", text: `Unknown tool ${name}` }] });
-      res.json(await runTool(org, name, args));
+      // The memory component's tools are the shell's (mold_v0-142), the rest the host pack's.
+      const memory = memoryToolNames().indexOf(name);
+      res.json(memory >= 0 ? await runMemoryTool(org, memory === 0 ? "save" : "search", args) : await runTool(org, name, args));
     });
     app.get("/preview/:tool", async (req, res) => {
       const org = await resolveKey(keyOf(req), { inUrl: true });

@@ -12,6 +12,7 @@
     "db:rehearse": "tsx scripts/migration-rehearsal.ts",
     "test:migrations": "tsx scripts/migrations-test.ts",
     "test:zero-pack": "tsx scripts/zero-pack-test.ts",
+    "test:context-memory": "tsx scripts/context-memory-test.ts",
     "check:tenant-sql": "tsx scripts/check-tenant-sql.ts",
     "check:rls": "tsx --env-file-if-exists=.env scripts/check-rls.ts",
     "catalogs:index": "tsx --env-file-if-exists=.env scripts/catalogs-index.ts",

@@ -136,7 +136,7 @@ const memoryTool = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's nam
 const MemoryToolWordsSchema = z.object({
   title: plain(80).optional(), description: z.string().trim().min(1).max(2000).optional(),
   status: z.tuple([plain(64), plain(64)]).optional(),
-  args: z.record(z.enum(["body", "kind", "scope", "product", "query", "limit"]), z.string().trim().min(1).max(600)).optional(),
+  args: z.partialRecord(z.enum(["body", "kind", "scope", "product", "query", "limit"]), z.string().trim().min(1).max(600)).optional(),
 }).strict();
 const SECTION = z.enum(["company", "users", "products"]);
 const MemorySchema = z.object({
@@ -145,7 +145,7 @@ const MemorySchema = z.object({
   tools: z.object({ save: memoryTool, search: memoryTool }).strict().refine((t) => t.save !== t.search, "two names").optional(),
   tool_words: z.object({ save: MemoryToolWordsSchema.optional(), search: MemoryToolWordsSchema.optional() }).strict().optional(),
   tool_meta: z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= 8 * 1024, "at most 8 kB of JSON").optional(),
-  words: z.record(z.enum(Object.keys(MEMORY_WORDS) as [MemoryWord, ...MemoryWord[]]), z.string().trim().min(1).max(600)
+  words: z.partialRecord(z.enum(Object.keys(MEMORY_WORDS) as [MemoryWord, ...MemoryWord[]]), z.string().trim().min(1).max(600)
     .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line")).optional(),
   answer_styles: z.object(Object.fromEntries(ANSWER_STYLES.map((k) => [k, plain(400).optional()])) as Record<(typeof ANSWER_STYLES)[number], z.ZodOptional<z.ZodString>>).strict().optional(),
   pages: z.object({
