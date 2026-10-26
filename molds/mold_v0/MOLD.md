@@ -760,10 +760,55 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     app's, one held by another workspace), the token's scope, reuse, re-mint near expiry and expiry, over-grants
     refused, revocation at run end, the webhook, disconnect, staff revoke and workspace removal, 0 cross-workspace
     injections, and no private key, client or webhook secret in any run's environment or files, answer, log or table.
-  - **Not covered**: GitHub caps an installation token at one hour; a run fetches its credentials once when it starts, so
-    a run longer than that holds an expired token for its later steps (re-fetching mid-run is the runner's to add). An
-    installation with more than 500 repositories needs each asset narrowed. GitHub Enterprise Server addresses are not
-    configurable yet. The webhook's deliveries are not de-duplicated (each handler is idempotent).
+  - **Runs longer than an hour**: GitHub caps an installation token at one hour; the run harness renews it mid-run
+    ("Short-lived credentials in long runs" below). The install's state is the shared one (`src/oauth-state.ts`,
+    table `oauth_states` since migration 0023).
+  - **Not covered**: an installation with more than 500 repositories needs each asset narrowed. GitHub Enterprise
+    Server addresses are not configurable yet. The webhook's deliveries are not de-duplicated (each handler is
+    idempotent).
+- **Credentials connected through OAuth** (mold_v0-014, built; `src/oauth-connections.ts`, `src/oauth-routes.ts`,
+  `src/oauth-state.ts`, `sql/migrations/0023_oauth_connections.sql`; `npm run test:oauth-providers`). A pack declares
+  OAuth 2.0 providers (pack.json `oauth_providers`, definePack `oauthProviders`: `name`, `label`, `authorize_url`,
+  `token_url`, optional `revoke_url` (RFC 7009), `scopes` and `scope_separator`, `client_id` and `client_secret` as
+  `{vault: "<label>"}`, `pkce` (S256, on by default), `token_auth` (`body` or `basic`) and fixed `authorize_params`; https
+  only, and never the flow's own parameters) and a credential field names one (`oauth: "<provider>"`; not with
+  `github_app`). Nothing is mounted unless a field does. The GitHub App is the other kind of connection (above); a field
+  with neither is pasted, as before.
+  - **The client** is the platform's: its id and secret are key-vault entries of provider `oauth_clients` under the labels
+    the provider names, set by an owner of the platform with Add a key on `/admin/keys`; the page's OAuth providers
+    section shows which are set and the redirect address to register (`<console>/api/credential-connections/callback`), never a value.
+  - **Connect** (`/app/credentials`, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
+    environment): `POST /api/credential-connections/connect` gives the provider's sign-in address with the shared signed one-time state
+    (bound to the person and the workspace, ten minutes, used once; the slot and the sealed PKCE verifier kept
+    server-side). `GET /api/credential-connections/callback` refuses another workspace's session, another person, a changed, used or
+    expired state, a sign-in the person cancelled and a code the provider refuses; otherwise it exchanges the code (with
+    the verifier and the redirect address) and stores the tokens in `workspace_oauth_connections`, sealed with the
+    workspace's data key and bound by additional data to their slot and provider. Every outcome is a code on the redirect
+    back to the page, never an echo.
+  - **Tokens**: a run receiving the field gets the slot's access token, delivered like any credential (a variable or a
+    file), recorded sealed in `run_oauth_tokens` so everything the run writes is redacted of it. With less than ten
+    minutes left (`src/clock.ts` `REFRESH_MARGIN_MS`) it is refreshed first, the row locked (concurrent askers: one
+    refresh; a rotating refresh token is used once). A provider that refuses the refresh (`invalid_grant`: revoked,
+    expired) marks the connection `needs_reconnect`: nothing is sent, not even a pasted value, until an owner connects
+    again. A slot with no connection gets its pasted value. The server's own reads with a workspace-bound field (an
+    `http_api` repository's header) use the same token.
+  - **Disconnect**: an owner (`DELETE /api/credential-connections`), staff (`DELETE /api/admin/onboarding/oauth/connections/:id`) or the
+    workspace's removal deletes the connection (nothing is sent from then on) and tells the provider's revoke address.
+  - **Not covered**: providers that do not return JSON or form-encoded token answers; a provider's ID token is not read
+    (no account name is shown); one connection per slot (no per-person connections).
+- **Short-lived credentials in long runs** (mold_v0-014, built; `src/run-harness.ts`, `src/clock.ts`). The engine gives a
+  GitHub App's or an OAuth connection's token with its `expires_at` (in the run's `credentials`), and hands out a fresh
+  one once it has less than ten minutes left. While a run goes, the harness checks every minute (`credentialRefreshMs`)
+  and before each step and the command: once a token is within that margin it asks for the run's credentials again and
+  rewrites every credential file the running program holds, and git's token files (`git_credentials`, read by the helper
+  at each request), in place (a new file renamed over the old, the run user's, 0400); a credential no longer given (a
+  connection removed, an installation uninstalled) has its files emptied. The next step gets the fresh values as it
+  starts, and everything the run writes is redacted of the old and the new (`credentials_refreshed` events name what
+  changed, never a value). A variable is fixed when a program starts: a program that runs longer than its token's hour
+  must take such a credential as a file (`deliver_as: {file, path_env}`) or through `git_credentials`.
+  `test:oauth-providers` runs a 4.5-hour run on a simulated clock (the stand-ins' tokens live one hour) reading an OAuth
+  token file and a GitHub App token file every few simulated minutes: every read works and the files held six tokens
+  each; the same run without the refresh fails after the first hour.
 - **A run user per run** (mold_v0-078, built; `src/run-users.ts`, used by `src/run-harness.ts` and
   `src/run-sandbox-runner.ts`): every run's programs run as a uid of their own, leased for that run alone from a reserved
   range (`APP_RUN_UIDS`, default `61000-64999`: never root, nobody or 65535; a uid `/etc/passwd` names is skipped)
@@ -1409,7 +1454,8 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `workspaceStore` (`workspace_store`) | the workspace store's retention (keep_last, keep_days) and the paths its file viewer never shows (secret_paths) | the daily retention sweep and the console's Files page (mold_v0-056) |
 | `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
-| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path); `github_app: true` for a GitHub repository token a connected GitHub App replaces (mold_v0-014) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
+| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path); `github_app: true` for a GitHub repository token a connected GitHub App replaces, or `oauth: "<provider>"` for one connected through an OAuth provider (mold_v0-014) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
+| `oauth_providers` (`oauthProviders`) | OAuth 2.0 providers the pack's credential fields connect to: sign-in, token and revoke addresses, scopes, the client id and secret by key-vault label, PKCE | credentials connected through OAuth (mold_v0-014, built): the Credentials page's Connect, tokens sealed and refreshed, `/admin/keys` lists providers and connections |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id (a host pack's under their own names: `host.schema`, mold_v0-049); every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |

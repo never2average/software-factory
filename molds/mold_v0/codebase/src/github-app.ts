@@ -6,8 +6,8 @@
  *   the app        the platform's: its id, URL name, client id and secret, private key and webhook secret are one sealed
  *                  entry of the key vault (provider github_app, label "app"; set on /admin Key vault). Read here only, on
  *                  the server: no answer, run, session, log or error ever carries the private key or a secret.
- *   install        an owner asks for the install address (beginInstall): a one-time nonce (stored as its sha256, ten
- *                  minutes, for that workspace and person) inside a state signed with the app's client secret. GitHub
+ *   install        an owner asks for the install address (beginInstall): the shared signed one-time state
+ *                  (src/oauth-state.ts: ten minutes, for that workspace and person, used once). GitHub
  *                  sends the browser back to the callback with the installation id, the state and a user-authorization
  *                  code (the app must "Request user authorization (OAuth) during installation"); completeInstall checks
  *                  the signature, the expiry, that the signed-in session is the same person in the same workspace and
@@ -18,7 +18,8 @@
  *   runs           installationTokenForRun: a token per run and field, scoped to read-only contents of the installation's
  *                  repositories (or the ones an owner narrowed the run's asset record to), sealed with the workspace's
  *                  data key in run_github_app_tokens (so the run's output can be redacted of it), reused while it has more
- *                  than five minutes left, re-minted after. GitHub's answer is checked: a token with any permission but
+ *                  than ten minutes left (src/clock.ts REFRESH_MARGIN_MS), re-minted after: a run longer than GitHub's
+ *                  one-hour token asks again (src/run-harness.ts) and gets a fresh one. GitHub's answer is checked: a token with any permission but
  *                  read contents (and read metadata, which GitHub adds) is revoked and never delivered.
  *   revocation     a run's tokens are revoked when its attempt ends (src/gateway.ts revokeRunTokens marks them, then
  *                  flushRevocations asks GitHub to revoke each); the app's webhook (verified by the webhook secret)
@@ -31,7 +32,9 @@
  * Every table here is closed to tenant work (sql/migrations/0021_github_app.sql); the workspace is always the caller's
  * session's, the signed state's or the run row's, never an input.
  */
-import { createHash, createHmac, createPrivateKey, createPublicKey, createSign, randomBytes, timingSafeEqual, type KeyObject } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, createSign, timingSafeEqual, type KeyObject } from "node:crypto";
+import { now, REFRESH_MARGIN_MS } from "./clock.js";
+import { consumeState, issueState, StateRefused } from "./oauth-state.js";
 import { getDb, type Queryable } from "./db.js";
 import { decrypt, encrypt } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
@@ -44,9 +47,8 @@ export const GITHUB_APP_PROVIDER = "github_app";
 const CONFIG_LABEL = "app";
 /** What a run's token may do: read the repositories' contents (GitHub adds read metadata to every token). */
 export const TOKEN_PERMISSIONS = { contents: "read" } as const;
-const STATE_MINUTES = 10;
-/** A cached token is handed out again only while it has more than this left. */
-const REUSE_MARGIN_MS = 5 * 60_000;
+/** A cached token is handed out again only while it has more than this left (the runner asks again below it). */
+const REUSE_MARGIN_MS = REFRESH_MARGIN_MS;
 const MAX_REPOS = 500;
 
 // ---------- the packs' fields ----------
@@ -153,9 +155,9 @@ export async function configSummary() {
 const b64u = (b: Buffer | string) => Buffer.from(b).toString("base64url");
 /** The app's own JSON Web Token (RS256, nine minutes), signed with its private key. Never leaves this module but to GitHub. */
 function appJwt(c: GithubAppConfig): string {
-  const now = Math.floor(Date.now() / 1000);
+  const t = Math.floor(now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const body = b64u(JSON.stringify({ iat: now - 60, exp: now + 540, iss: c.app_id }));
+  const body = b64u(JSON.stringify({ iat: t - 60, exp: t + 540, iss: c.app_id }));
   const sig = createSign("RSA-SHA256").update(`${head}.${body}`).sign(privateKey(c.private_key));
   return `${head}.${body}.${b64u(sig)}`;
 }
@@ -253,24 +255,13 @@ export async function workspaceView(orgId: number) {
   };
 }
 
-/** The state the install redirect carries: payload.signature, signed with the app's client secret. */
-const signState = (c: GithubAppConfig, payload: string) => createHmac("sha256", c.client_secret).update(`github-app-state/v1.${payload}`).digest("base64url");
-const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
-
-/** The install address for workspace `orgId` and person `userId` (an owner: the route checks). */
+/** The install address for workspace `orgId` and person `userId` (an owner: the route checks). The state is the shared
+ * signed one-time state (src/oauth-state.ts), purpose "github_app". */
 export async function beginInstall(orgId: number, userId: string): Promise<{ url: string; expires_at: string }> {
   const c = await appConfig();
   if (!c) throw new PackError("the platform has no GitHub App set up: paste a token instead, or ask the platform's staff", 409);
-  const nonce = randomBytes(24).toString("base64url");
-  const exp = Date.now() + STATE_MINUTES * 60_000;
-  await asPlatform(async () => {
-    const db = await getDb();
-    await db.query("/* tenant: platform sweep of expired install states */ DELETE FROM github_app_states WHERE expires_at < now() - interval '1 day'");
-    await db.query("INSERT INTO github_app_states (nonce_sha256, org_id, user_id, expires_at) VALUES ($1, $2, $3, $4)", [sha256(nonce), orgId, userId, new Date(exp)]);
-  });
-  const payload = b64u(JSON.stringify({ v: 1, o: orgId, n: nonce, e: exp }));
-  const state = `${payload}.${signState(c, payload)}`;
-  return { url: `${endpoints.web}/apps/${encodeURIComponent(c.slug)}/installations/new?state=${encodeURIComponent(state)}`, expires_at: new Date(exp).toISOString() };
+  const { state, expires_at } = await issueState(orgId, userId, "github_app");
+  return { url: `${endpoints.web}/apps/${encodeURIComponent(c.slug)}/installations/new?state=${encodeURIComponent(state)}`, expires_at };
 }
 
 /** Why an install was refused: a code the console turns into words (never anything GitHub or the caller sent). */
@@ -283,21 +274,9 @@ export class InstallRefused extends Error { constructor(public code: string, pub
 export async function completeInstall(who: { org: number; user: string; by: string }, q: Record<string, unknown>): Promise<{ outcome: "connected" | "requested"; account: string | null }> {
   const c = await appConfig();
   if (!c) throw new InstallRefused("not_configured", 409);
-  const state = typeof q.state === "string" ? q.state : "";
-  const [payload, sig] = state.split(".");
-  if (!payload || !sig || state.length > 1000) throw new InstallRefused("bad_state");
-  const want = Buffer.from(signState(c, payload)), got = Buffer.from(sig);
-  if (want.length !== got.length || !timingSafeEqual(want, got)) throw new InstallRefused("bad_state");
-  let p: { v?: number; o?: number; n?: string; e?: number };
-  try { p = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); } catch { throw new InstallRefused("bad_state"); }
-  if (p.v !== 1 || !Number.isSafeInteger(p.o) || typeof p.n !== "string" || typeof p.e !== "number") throw new InstallRefused("bad_state");
-  if (p.e < Date.now()) throw new InstallRefused("expired");
-  // Bound to the workspace it was made for: a session now in another workspace (or another person's) is refused.
-  if (p.o !== who.org) throw new InstallRefused("other_workspace", 403);
-  const used = await asPlatform(async () => (await getDb()).query<{ org_id: number }>(
-    `UPDATE github_app_states SET used_at = now() WHERE nonce_sha256 = $1 AND org_id = $2 AND user_id = $3 AND used_at IS NULL AND expires_at > now() RETURNING org_id`,
-    [sha256(p.n!), who.org, who.user]));
-  if (!used.length) throw new InstallRefused("state_used", 403);
+  // Bound to the workspace and person it was made for, used once (src/oauth-state.ts).
+  try { await consumeState(q.state, who, "github_app"); }
+  catch (e) { if (e instanceof StateRefused) throw new InstallRefused(e.code, e.status); throw e; }
   // An organization member who may not install asked an organization owner to: nothing to connect yet.
   if (q.setup_action === "request") return { outcome: "requested", account: null };
   const idText = typeof q.installation_id === "string" ? q.installation_id : "";
@@ -493,7 +472,7 @@ export async function installationTokenForRun(req: RunTokenRequest): Promise<Run
   const [cached] = await asPlatform(() => db.query<{ sealed: string; repositories: Repo[]; expires_at: Date | string }>(
     `SELECT sealed, repositories, expires_at FROM run_github_app_tokens
       WHERE run_id = $1 AND org_id = $2 AND name = $3 AND scope_key = $4 AND installation_id = $5 AND revoked_at IS NULL AND expires_at > $6
-      ORDER BY expires_at DESC LIMIT 1`, [req.runId, req.orgId, req.name, scopeKey, i.installation_id, new Date(Date.now() + REUSE_MARGIN_MS)]));
+      ORDER BY expires_at DESC LIMIT 1`, [req.runId, req.orgId, req.name, scopeKey, i.installation_id, new Date(now() + REUSE_MARGIN_MS)]));
   if (cached) {
     const value = (await asPlatform(() => openBytes(req.orgId, Buffer.from(cached.sealed, "base64"), tokenAad(req.orgId, req.runId, req.name, i.installation_id, scopeKey)))).toString("utf8");
     return { value, repositories: cached.repositories.map((r) => r.full_name), expires_at: iso(cached.expires_at)! };
@@ -556,7 +535,7 @@ export async function installationTokenForServer(orgId: number): Promise<string 
   if (!i) { memo.delete(orgId); return null; }
   if (i.suspended_at) throw new PackError("the workspace's GitHub App installation is suspended", 409);
   const m = memo.get(orgId);
-  if (m && m.installation === i.installation_id && m.expires - Date.now() > REUSE_MARGIN_MS) return m.token;
+  if (m && m.installation === i.installation_id && m.expires - now() > REUSE_MARGIN_MS) return m.token;
   if (!i.repositories.length || i.repositories.length > MAX_REPOS) throw new PackError("the workspace's GitHub App installation has no repository to read", 409);
   const t = await mintToken(c, i.installation_id, { repository_ids: i.repositories.map((r) => r.id), permissions: { ...TOKEN_PERMISSIONS } });
   memo.set(orgId, { token: t.token, expires: Date.parse(t.expires_at), installation: i.installation_id });

@@ -1932,6 +1932,10 @@
           },
           "github_app": {
             "type": "boolean"
+          },
+          "oauth": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
           }
         },
         "required": [
@@ -1939,6 +1943,114 @@
           "label",
           "bound_to",
           "deliver_as"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "oauth_providers": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "authorize_url": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\\/[A-Za-z0-9._~%!$&'()*+,;=:@\\/-]*)?$"
+          },
+          "token_url": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\\/[A-Za-z0-9._~%!$&'()*+,;=:@\\/-]*)?$"
+          },
+          "revoke_url": {
+            "type": "string",
+            "maxLength": 500,
+            "pattern": "^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\\/[A-Za-z0-9._~%!$&'()*+,;=:@\\/-]*)?$"
+          },
+          "scopes": {
+            "default": [],
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[\\x21\\x23-\\x5b\\x5d-\\x7e]{1,200}$"
+            }
+          },
+          "scope_separator": {
+            "default": " ",
+            "type": "string",
+            "enum": [
+              " ",
+              ","
+            ]
+          },
+          "client_id": {
+            "type": "object",
+            "properties": {
+              "vault": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"
+              }
+            },
+            "required": [
+              "vault"
+            ],
+            "additionalProperties": false
+          },
+          "client_secret": {
+            "type": "object",
+            "properties": {
+              "vault": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"
+              }
+            },
+            "required": [
+              "vault"
+            ],
+            "additionalProperties": false
+          },
+          "pkce": {
+            "default": true,
+            "type": "boolean"
+          },
+          "token_auth": {
+            "default": "body",
+            "type": "string",
+            "enum": [
+              "body",
+              "basic"
+            ]
+          },
+          "authorize_params": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,40}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "authorize_url",
+          "token_url",
+          "client_id",
+          "client_secret"
         ],
         "additionalProperties": false
       }

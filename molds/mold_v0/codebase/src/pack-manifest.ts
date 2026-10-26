@@ -25,7 +25,7 @@ import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -126,6 +126,8 @@ export const PackJsonSchema = z.object({
   record_areas: z.array(RecordAreaSchema).max(100).optional(),
   job_kinds: z.array(JobKindJson).max(50).optional(),
   credentials: z.array(CredentialSchema).max(50).optional(),
+  /** OAuth providers the pack's credential fields connect to (mold_v0-014; definePack oauthProviders). */
+  oauth_providers: z.array(OAuthProviderSchema).max(20).optional(),
   /** Credentials the platform's operators hold for the pack's runs (mold_v0-075; definePack operatorCredentials). */
   operator_credentials: z.array(OperatorCredentialSchema).max(20).optional(),
   schedules: z.array(ScheduleSchema).max(50).optional(),
@@ -179,8 +181,8 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -208,6 +210,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (agent.length) out.agentJobKinds = agent as DeclaredPack["agentJobKinds"];
   if (p.credentials?.length) out.credentials = p.credentials;
   if (p.operator_credentials?.length) out.operatorCredentials = p.operator_credentials;
+  if (p.oauth_providers?.length) out.oauthProviders = p.oauth_providers;
   if (p.schedules?.length) out.schedules = p.schedules;
   if (p.onboarding?.length) out.onboarding = p.onboarding;
   if (p.metrics?.length) out.metrics = p.metrics;

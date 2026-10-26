@@ -122,7 +122,7 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // a host pack's engine settings (mold_v0-137: engine.config, read by its own code through src/pack-host.ts engineConfig)
   "engine",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
-  "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
+  "record_areas", "job_kinds", "credentials", "oauth_providers", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
   // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
