@@ -31,8 +31,8 @@ orchestrator/
 | where | what runs there |
 |---|---|
 | **Main VM** | Only the server stack: Postgres, ClickHouse, the server and Caddy. It may run the launcher (`npm run boat-orchestrators -- …`), which only calls APIs. **No orchestrator, Pi, harness or pod.** |
-| **Orchestrator sandboxes** (boat, `small`, 30-day TTL, `octi-orch-*`) | One orchestrator each (Pi brain + claim loop + research loop) under systemd (`Restart=on-failure`; a clean idle exit is final). The env file (0600) holds only `APP_URL`, `APP_WORKER_TOKEN`, `ORCHESTRATOR_ID`, `RUNNER=boat`, `POD_CAPACITY`, `APP_HOST_ROLE` and boat's own `BOAT_ID`. The boat key and the GPT brain come from the broker at runtime. |
-| **Worker sandboxes** (boat, `default`, ephemeral, `octi-w-<orchestrator>-<agent>`) | One fresh VM per agent session, created **from inside** the orchestrator sandbox and deleted when the session ends. Resume and simulated-developer turns stay in it. It holds only per-session gateway tokens, **never the worker token**. |
+| **Orchestrator sandboxes** (boat, `small`, 30-day TTL, `app-orch-*`) | One orchestrator each (Pi brain + claim loop + research loop) under systemd (`Restart=on-failure`; a clean idle exit is final). The env file (0600) holds only `APP_URL`, `APP_WORKER_TOKEN`, `ORCHESTRATOR_ID`, `RUNNER=boat`, `POD_CAPACITY`, `APP_HOST_ROLE` and boat's own `BOAT_ID`. The boat key and the GPT brain come from the broker at runtime. |
+| **Worker sandboxes** (boat, `default`, ephemeral, `app-w-<orchestrator>-<agent>`) | One fresh VM per agent session, created **from inside** the orchestrator sandbox and deleted when the session ends. Resume and simulated-developer turns stay in it. It holds only per-session gateway tokens, **never the worker token**. |
 
 - **Host guard** (`core/host-guard.ts`). The orchestrator refuses to start unless all of the following hold:
   - `APP_HOST_ROLE=boat-orchestrator`;
@@ -131,13 +131,13 @@ No GUI toolchains are installed.
   - Desired is clamped to `APP_MAX_ORCHESTRATORS` (4) and to the live boat budget (`(1 + capacity) × n ≤ plan concurrency`), with at most 2 launches per tick.
 - **Launch.** Uses the vault boat key (`useCredential("boat")`). A `booting` row is written in `orchestrator_sandboxes` first, so a crash can't double-launch. The launch path is the same as `up`: code tarball, `npm ci`, env file, marker, unit and preflight. The worker token goes only into that sandbox's 0600 env file.
 - **Scale down.** An orchestrator with no claimable work for `APP_ORCH_IDLE_MINUTES` (10) SIGTERMs itself. It leaves the fleet (the row becomes `draining`) and exits 0, so systemd doesn't restart it. The next tick deletes the sandbox.
-- **Reaping, each tick, against boat's listing by the `octi-orch-` prefix:**
+- **Reaping, each tick, against boat's listing by the `<ns>-orch-` prefix** (`<ns>`: `APP_BOAT_NAMESPACE`, default `app`, `appv` on Vercel; with it unset, also the default before mold_v0-156, for what was launched before: `orchestrator/core/boat-namespace.ts`)**:**
   - sandbox gone or draining → delete;
   - no fleet check-in for `APP_ORCH_STALE_MINUTES` (5) → delete;
   - stuck booting for more than `APP_ORCH_BOOT_MINUTES` (10) → delete;
   - TTL nearly expired → delete;
-  - `octi-orch-*` sandboxes with no row (orphans) → delete;
-  - leftover `octi-w-<orch>-*` workers of reaped orchestrators → delete.
+  - `<ns>-orch-*` sandboxes with no row (orphans) → delete;
+  - leftover `<ns>-w-<orch>-*` workers of reaped orchestrators → delete.
 - **Cold start (measured live 2026-10-10).**
   - Code upload + `npm ci`: service active in **~8s** (create 0.5s, ready 0.7s, code 3.7s).
   - From a named snapshot (`APP_ORCH_SNAPSHOT=on`): **~22s**, because restoring the image is slower than this small install, plus ~170s per build.
@@ -297,8 +297,8 @@ Base URL `https://boat.dev/api/v1`, `Authorization: Bearer $BOAT_API_KEY` ([API 
 
 1. `POST /sandboxes {type, ttlSeconds, noEnv: true, snapshots: false}` with an `Idempotency-Key`. `noEnv` keeps account
    secrets off the VM ([create](https://docs.boat.dev/api/reference/sandboxes/create-sandbox)). Then poll `GET /sandboxes/{id}` until the state is `ready`, `idle` or `running`.
-2. `PUT /files`: the env file and scripts go into `/tmp/octi` (mode 700). `prepare.sh` (a sync exec) creates an unprivileged `agent` user,
-   builds a PATH to the preinstalled CLIs, installs the harness env file at `/home/agent/.octi-env` (mode 600), and
+2. `PUT /files`: the env file and scripts go into `/tmp/app` (mode 700). `prepare.sh` (a sync exec) creates an unprivileged `agent` user,
+   builds a PATH to the preinstalled CLIs, installs the harness env file at `/home/agent/.app-env` (mode 600), and
    optionally clones the repo into `/home/agent/work`.
 3. Each run writes `in-N.txt` and `launch-N.sh`, then `POST /commands {detached: true}` (sync exec caps at 600s). The run is
    `env -i` as `agent`, and its stdout goes to `out-N.jsonl`. The worker follows it with `POST /commands {stream: true}` running

@@ -5,7 +5,7 @@
  * src/run-tools.generated.json) and the runner image is built with exactly those (scripts/install-run-tools.ts, run by
  * the Dockerfile; a boat run sandbox runs the same installer when it is set up, before the runner starts): each artifact
  * downloaded once, its sha256 checked against this catalogue (any other bytes are refused and nothing is installed),
- * unpacked under /opt/octi-tools (APP_RUN_TOOLS_DIR), root-owned, with a manifest.
+ * unpacked under /opt/app-tools (APP_RUN_TOOLS_DIR), root-owned, with a manifest.
  *
  * At run time nothing is downloaded: the harness (src/run-harness.ts) checks each tool the kind names against the
  * manifest and this catalogue (the pinned version, the artifact's sha256, the installed program's own sha256, owned by
@@ -82,7 +82,7 @@ export const RUN_TOOL_CATALOG: ToolCatalog = {
 };
 
 export const RUN_TOOL_NAMES = Object.keys(RUN_TOOL_CATALOG) as RunToolName[];
-export const runToolsDir = () => ENV.APP_RUN_TOOLS_DIR || "/opt/octi-tools";
+export const runToolsDir = () => ENV.APP_RUN_TOOLS_DIR || "/opt/app-tools";
 export const toolArch = (a: string = process.arch): ToolArch => {
   if (a === "x64" || a === "arm64") return a;
   throw new Error(`no run tools for the architecture ${a}`);

@@ -86,7 +86,7 @@ z.close()`, path.join(TMP, "aws.zip")], { cwd: stage });
     "claude-code": { version: "2.1.295", format: "npm-tgz", bins: { claude: "package/claude" }, source: "stand-in", artifacts: pin("/claude.tgz") },
     aws: { version: "2.37.5", format: "aws-zip", bins: { aws: "dist/aws" }, source: "stand-in", artifacts: pin("/aws.zip") },
   };
-  const dir = path.join(TMP, "opt", "octi-tools");
+  const dir = path.join(TMP, "opt", "app-tools");
 
   try {
     // ---------- 2. installTools ----------
@@ -170,7 +170,7 @@ z.close()`, path.join(TMP, "aws.zip")], { cwd: stage });
       const none = verify("");
       assert.equal(none.status, 0, `no tools: nothing to verify (${none.stderr})`);
       const dockerfile = readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
-      assert.match(dockerfile, /install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/octi-tools/, "the image installs the build's tools");
+      assert.match(dockerfile, /install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/app-tools/, "the image installs the build's tools");
       assert.match(dockerfile, /install-run-tools\.ts --verify --from src\/run-tools\.generated\.json/, "and checks them last");
       console.log("✓ the build: gen-packs writes the union of the kinds' tools and refuses one outside the catalogue; --verify (the Dockerfile's last step) refuses an image that lacks a tool the build needs");
     }

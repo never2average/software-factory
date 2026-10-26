@@ -2,7 +2,7 @@
  * Pool status: pods per POD GROUP (registry agent = harness + model) on this Docker host, idle vs busy, next to the plan.
  *   npx tsx orchestrator/fleet/status.ts [--owner <ORCHESTRATOR_ID>] [--json]
  * Plan column: the server's global fleet (GET /api/worker/fleet, needs APP_URL + APP_WORKER_TOKEN),
- * else the standalone plan (fleet/plan.ts, POD_CAPACITY). Busy pods are named octi-busy-*, idle ones octi-pool-*.
+ * else the standalone plan (fleet/plan.ts, POD_CAPACITY). Busy pods are named app-busy-*, idle ones app-pool-*.
  */
 import { execFileSync } from "node:child_process";
 import { planFleet } from "./plan.js";
@@ -27,7 +27,8 @@ for (const line of out.split("\n").filter(Boolean)) {
   const [name, agent, harness, model, own] = line.split("\t");
   owners.add(own!);
   const r = row(agent || harness!, harness, model);
-  if (name!.startsWith("octi-busy-")) r.busy++; else r.idle++;
+  // "<prefix>-busy-…": a pod an orchestrator from before mold_v0-156 renamed (another prefix) is busy all the same.
+  if (/^[a-z0-9]+-busy-/.test(name!)) r.busy++; else r.idle++;
 }
 
 let source = "standalone plan";

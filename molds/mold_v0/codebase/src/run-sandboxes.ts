@@ -40,12 +40,13 @@ import { keepAlive } from "./telemetry.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
+import { boatNamespace, boatNamespaces } from "../orchestrator/core/boat-namespace.js";
 
 const env = ENV;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 /** The image's fixed run account (kept for an older runner); runs now lease a uid of their own per run (mold_v0-078). */
-export const RUN_USER = "octirun";
+export const RUN_USER = "apprun";
 /** The range a sandbox's runner leases its run's user from (mold_v0-078, src/run-users.ts). */
 const runUids = () => env.APP_RUN_UIDS || DEFAULT_RUN_UIDS;
 
@@ -141,14 +142,14 @@ command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || sudo -n
 command -v git >/dev/null 2>&1 || { echo "git is missing in the run sandbox" >&2; exit 30; }
 command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || { echo "neither nft nor iptables in the run sandbox" >&2; exit 31; }
 # The run tools the packs' agent kinds declare (mold_v0-072), as the runner image has them: each artifact checked against
-# its pinned sha256 before it is unpacked (root's, /opt/octi-tools). Before the runner starts: a run never downloads one.
+# its pinned sha256 before it is unpacked (root's, /opt/app-tools). Before the runner starts: a run never downloads one.
 cd ${lib.HOME}/app
 grep -q '"aws"' src/run-tools.generated.json && { command -v unzip >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null 2>&1 || true; }
-sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/octi-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 900);
+sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 900);
         if (conf.code !== 0) throw new Error(`configure failed: ${conf.stderr.slice(-500)}`);
         step = "start";
         // As root (the runner switches to the run's user for the run itself), as a unit that outlives this command.
-        const st = await lib.run(id, `sudo -n systemd-run --quiet --unit=octi-runner --property=EnvironmentFile=/etc/${NS}/runner.env --property=WorkingDirectory=${lib.HOME}/app \
+        const st = await lib.run(id, `sudo -n systemd-run --quiet --unit=app-runner --property=EnvironmentFile=/etc/${NS}/runner.env --property=WorkingDirectory=${lib.HOME}/app \
 --property=Environment=PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx src/run-sandbox-runner.ts`, 60);
         if (st.code !== 0) throw new Error(`the runner did not start: ${st.stderr.slice(-300)}`);
         return { sandboxId: id };
@@ -159,7 +160,8 @@ sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_
     },
     async list() {
       const lib = await libP;
-      return (await lib.listSandboxes()).filter((s) => s.name?.startsWith(lib.RUN_PREFIX))
+      // Ours under the namespace's old default too (lib.NAMESPACES): a run sandbox launched before mold_v0-156.
+      return (await lib.listSandboxes()).filter((s) => lib.isRunName(s.name))
         .map((s) => ({ id: s.id, name: s.name ?? "", live: lib.isLive(s), state: s.state }));
     },
     async remove(id) { await (await libP).deleteSandbox(id); },
@@ -183,7 +185,8 @@ function dockerApi(socketPath: string, method: string, p: string, body?: unknown
   });
 }
 const DOCKER_LABEL = `org.${NS}.run-sandbox`;
-const namespace = () => (env.APP_BOAT_NAMESPACE || (env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
+/** This deployment's namespace (orchestrator/core/boat-namespace.ts), as the orchestrators' sandboxes are named. */
+const namespace = boatNamespace;
 
 /**
  * docker: a container per run on this server's Docker, from the image the runner service itself runs (the app's image,
@@ -211,6 +214,9 @@ export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider
   if (!apiUrl) return "APP_RUN_API_URL is not set (where run containers reach the API on the runs network)";
   // Per compose project (its runs network): two apps on one Docker host never list, or delete, each other's containers.
   const ns = `${namespace()}.${network}`;
+  // Every label value whose containers are ours: this namespace's, and its old default's (a container launched before
+  // mold_v0-156, still running or left to reap), until a later cleanup.
+  const labelled = boatNamespaces().map((n) => `${n}.${network}`);
   const call = (m: string, p: string, b?: unknown) => dockerApi(socketPath, m, p, b);
   return {
     name: "docker",
@@ -247,9 +253,14 @@ export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider
       }
     },
     async list() {
-      const r = await call("GET", `/containers/json?all=true&filters=${encodeURIComponent(JSON.stringify({ label: [`${DOCKER_LABEL}=${ns}`] }))}`);
-      if (r.status !== 200) throw new Error(`docker list: ${r.status}`);
-      return (r.json ?? []).map((c: any) => ({ id: String(c.Id), name: String(c.Names?.[0] ?? "").replace(/^\//, ""), state: String(c.State),
+      // One call per label value: Docker's label filters all have to hold, so two values in one call match nothing.
+      const found: any[] = [];
+      for (const value of labelled) {
+        const r = await call("GET", `/containers/json?all=true&filters=${encodeURIComponent(JSON.stringify({ label: [`${DOCKER_LABEL}=${value}`] }))}`);
+        if (r.status !== 200) throw new Error(`docker list: ${r.status}`);
+        found.push(...(r.json ?? []));
+      }
+      return found.map((c: any) => ({ id: String(c.Id), name: String(c.Names?.[0] ?? "").replace(/^\//, ""), state: String(c.State),
         live: ["created", "running", "restarting"].includes(String(c.State)) }));
     },
     async remove(id) {

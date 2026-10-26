@@ -1,7 +1,7 @@
 // Install the run tools the build's packs need (mold_v0-072; src/run-tools.ts) into the runner image, at their pinned
 // versions, each artifact checked against the catalogue's sha256 before it is unpacked. Run by the Dockerfile (as root,
 // at build) and by a boat run sandbox's set-up (before its runner starts). Never by a run.
-//   tsx scripts/install-run-tools.ts [--from src/run-tools.generated.json | --tools a,b] [--dir /opt/octi-tools] [--verify]
+//   tsx scripts/install-run-tools.ts [--from src/run-tools.generated.json | --tools a,b] [--dir /opt/app-tools] [--verify]
 // --verify installs nothing: it checks that the directory holds exactly the pinned tools named (exit 1 otherwise), as
 // the image's build does last, so an image that lacks a tool a kind needs is refused at build.
 import path from "node:path";
