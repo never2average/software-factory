@@ -32,6 +32,10 @@
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]       a deployed app, on Vercel or on its own server; see below
   provision.py <app_id> --library-apply [--apply] [--org <id>]         the same; see below
+  provision.py <app_id> --rehearse-migrations [--dry-run] [--yes] [--codebase DIR] [--json]   the next release's database
+                        migrations applied to a temporary copy of the app's live database (a Neon branch), measured
+                        (pending, applied or adopted, DDL, rows, check:rls) and deleted; the live database is only read.
+                        A yes first (exit 3 without --yes). lib/migration_rehearsal.py (mold_v0-142)
   provision.py <app_id> --operator <script> [--dry-run] [--yes] -- <args>   one of the build's own operator:* scripts against
                         the deployed app (Vercel or its own server); see below and lib/operator_run.py (mold_v1-230)
 
@@ -3449,6 +3453,8 @@ def self_test():
     import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
     self_test_single(check)                              # a single-service mold (mold_v0-028): the hand-off and its own module
     self_test_build_caches(check)                        # a typecheck's build cache never refuses an in-tree deploy (mold_v0-153)
+    import migration_rehearsal                           # --rehearse-migrations (mold_v0-142): a stand-in Neon API and runner
+    check("lib/migration_rehearsal.py --self-test passes (copy, rehearse, delete; plan, yes, key, lock, failures)", migration_rehearsal.self_test() == 0)
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
@@ -3878,6 +3884,11 @@ def _main(a):
     global ADMIN_KEYS
     ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if "--rehearse-migrations" in a:
+        # mold_v0-142: the next release's migrations on a temporary copy of the live database (a Neon branch), measured
+        # and deleted (lib/migration_rehearsal.py). --dry-run is the plan; without --yes it asks for the yes (exit 3).
+        import migration_rehearsal
+        sys.exit(migration_rehearsal.main_for(app_id, a, app, infra, ds, adir))
     if single_service.applies(app) or target == "compose_remote":
         # A single-service mold (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028): its own compose stack on a
         # server of its own (target compose_remote) or two Vercel projects, its API and its console (mold_v0-029).
@@ -4231,7 +4242,7 @@ def _action(a):
     a = a[:a.index("--")] if "--" in a else a
     for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
                    ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke"),
-                   ("--google-hub", "google-hub"), ("--google-signin", "google-signin")):
+                   ("--google-hub", "google-hub"), ("--google-signin", "google-signin"), ("--rehearse-migrations", "rehearse-migrations")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
 
