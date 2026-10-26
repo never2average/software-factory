@@ -20,6 +20,7 @@ import catalog from '../content/mcp-tools.generated.json';
 import { findAppPage, findPackPage } from '../features/packs/registry';
 import { findRecordArea } from '../features/records/registry';
 import { findTab } from '../features/tabs/registry';
+import { resolveContext } from '../features/context/config';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -46,6 +47,8 @@ export const RESOLVED: Readonly<Record<string, (p: Params) => boolean>> = {
   '/admin/host/[pack]/[...path]': host('/admin'),
   '/host/[pack]/[...path]': host(''),
   '/declared/[page]': (p) => first(p, 'page') === 'request' && !!landing?.request_page,
+  // The account context and memory pages (mold_v0-142): only where a pack turns them on, each page and each old name.
+  '/app/context/[[...section]]': (p) => resolveContext(p.section) !== null,
 };
 
 /**

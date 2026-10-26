@@ -1,4 +1,4 @@
-import * as facts from '@/config/build-facts.generated';
+import * as facts from '../../config/build-facts.generated';
 
 /**
  * The account context and memory component's pages (mold_v0-142; src/account-context.ts on the server): pack.json
