@@ -213,6 +213,23 @@ copilot -p "<prompt>" --no-ask-user \
 
 Its user-level `~/.copilot/permissions-config.json` is allow-only and keyed by the checkout's absolute path. The docs show identifiers only in the `git:*` form, so no factory entry is offered.
 
+## Running the factory sweep on a schedule
+
+The `sweep` skill (`.agents/skills/sweep/SKILL.md`) is the factory's housekeeping loop: `sweep.py plan --json` lists
+open PRs (mergeable, migration-number clashes), tickets ready to start within the builder and train limits, apps behind
+their mold (which deploys are pre-approved and which need a yes) and stale processes, disk and scratch; the agent then
+merges, deploys and starts builders under AGENTS.md's rules, and `sweep.py clean` stops stale processes by PID and removes
+finished scratch (with a yes). Every agent above can run one pass from the same prompt; what differs is the scheduler:
+
+- **Claude Code:** `/loop 30m <prompt>` in an open session, or a scheduled prompt (CronCreate, `*/30 * * * *`).
+- **Any agent with a headless command** (the "Benchmark adapter" column above): an OS cron entry on the factory machine running
+  that command with the prompt from the repository, under `flock -n` so passes never overlap. Headless, an ask is a no:
+  what needs a yes stays in the report.
+- **No headless mode:** a reminder to paste the prompt.
+
+The skill has the sample prompt and the cron line. The permission files above allow `sweep.py plan` and
+`clean --dry-run` and ask before `clean --apply` where the agent takes per-command rules.
+
 ## Secrets, for every agent
 
 No in-session shortcut is safe in every tool, so the factory relies on one path that is:

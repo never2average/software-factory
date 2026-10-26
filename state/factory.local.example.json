@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). legacy_names: {current: old} spellings of state keys older applications still carry (optional).",
+  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). legacy_names: {current: old} spellings of state keys older applications still carry (optional). sweep: this machine's own sweep choices (optional; .claude/scripts/sweep.py merges them over state/factory.json's sweep block): which apps' mold-moved redeploys are pre-approved (auto_deploy) or allowed once parity is proven (parity_deploy), and any trains or gated tickets.",
   "defaults": {
     "operator_email": "you@yourcompany.com",
     "notify_domain": "yourcompany.com",
@@ -16,5 +16,14 @@
     "web": "your-live-web-project",
     "api": "your-live-api-project",
     "workflow": "your-live-workflow-project"
+  },
+  "sweep": {
+    "auto_deploy": [
+      "your_internal_app"
+    ],
+    "parity_deploy": [
+      "your_host_pack_app"
+    ],
+    "gated_ids": []
   }
 }
