@@ -39,7 +39,7 @@ built=0
 for row in "${ROWS[@]}"; do
   IFS=$'\t' read -r harness version tag cli <<<"$row"
   # The tag must be exactly what the fleet planner reads from the registry.
-  [ "$tag" = "octillion/agent-$harness:$version" ] || echo "warning: $harness tag $tag is not octillion/agent-$harness:$version" >&2
+  [ "$tag" = "app/agent-$harness:$version" ] || echo "warning: $harness tag $tag is not app/agent-$harness:$version" >&2
   if [ "${#WANT[@]}" -gt 0 ] && [[ ! " ${WANT[*]} " == *" $harness "* ]]; then continue; fi
   df="$HERE/Dockerfile.$harness"
   [ -f "$df" ] || { echo "missing $df for enabled harness $harness" >&2; exit 1; }

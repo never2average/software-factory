@@ -3,7 +3,7 @@
  * shell any app turns on from pack.json `memory` (src/host.ts MemoryConfig; one pack's per build). Off (zero packs, or no
  * pack declares it) nothing of it is served: no route, no tool, nothing added to the instructions, no page.
  *
- * What it keeps, in the shell's own tables (sql/migrations/0024_account_context_memory.sql):
+ * What it keeps, in the shell's own tables (sql/migrations/0025_account_context_memory.sql):
  *  - the company's context (account_context: what it does, who it serves, names it tracks, its own terms, notes for the
  *    AI client), set by the account's owners;
  *  - each person's own (user_context: role, focus, interests, answer style, notes), set by that person (or an owner);

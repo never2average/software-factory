@@ -83,7 +83,7 @@ async function cmdStatus() {
   out(`fleet: ${fleet?.orchestrators ?? "?"} orchestrator(s) checked in, ${fleet?.total_pods ?? "?"} worker slots planned, queue ${JSON.stringify(fleet?.queue ?? {})}`);
   for (const s of orchs) {
     const orchId = lib.orchIdOf(s.id);
-    const svc = await lib.run(s.id, `systemctl is-active ${lib.UNIT}; systemctl show ${lib.UNIT} -p ActiveEnterTimestamp --value`, 30).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
+    const svc = await lib.run(s.id, `${lib.LEGACY_UNIT_SH}; systemctl is-active $u; systemctl show $u -p ActiveEnterTimestamp --value`, 30).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
     const [active, since] = svc.stdout.trim().split("\n");
     const ttlLeft = s.archiveAfter ? Math.round((Date.parse(s.archiveAfter) - Date.now()) / 3600_000) : null;
     out(`${s.id} ${orchId} state=${s.state} service=${active ?? "?"} since=${since ?? "?"} up=${s.createdAt ? Math.round((Date.now() - Date.parse(s.createdAt)) / 3600_000) : "?"}h ttl_left=${ttlLeft ?? "none"}h ` +
@@ -93,7 +93,7 @@ async function cmdStatus() {
 }
 
 async function cmdLogs(id: string, lines = 200) {
-  const r = await lib.run(id, `journalctl -u ${lib.UNIT} -n ${lines} --no-pager 2>&1 | tail -n ${lines}`, 60);
+  const r = await lib.run(id, `${lib.LEGACY_UNIT_SH}; journalctl -u $u -n ${lines} --no-pager 2>&1 | tail -n ${lines}`, 60);
   out(r.stdout || r.stderr);
 }
 

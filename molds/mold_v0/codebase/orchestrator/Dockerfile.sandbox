@@ -1,5 +1,5 @@
 # Sandbox image: a neutral, generic dev box with Claude Code + Codex CLI.
-# Build: docker build -f orchestrator/Dockerfile.sandbox -t octillion-sandbox:latest orchestrator
+# Build: docker build -f orchestrator/Dockerfile.sandbox -t app-sandbox:latest orchestrator
 # Keep this image product-neutral: do NOT preinstall any customer or competitor SDKs,
 # configs, CLAUDE.md / AGENTS.md files - that would bias (or leak into) the agent's choices.
 FROM node:22-bookworm

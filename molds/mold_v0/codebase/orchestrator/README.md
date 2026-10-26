@@ -36,7 +36,7 @@ orchestrator/
 
 - **Host guard** (`core/host-guard.ts`). The orchestrator refuses to start unless all of the following hold:
   - `APP_HOST_ROLE=boat-orchestrator`;
-  - the launcher's root-owned marker `/etc/octillion/host-role` is present;
+  - the launcher's root-owned marker `/etc/app/host-role` is present;
   - boat's own indicators are present (`BOAT_ID`/`BOX_ID` and `/etc/ascii` + `/home/user/.ascii`, seen on live boat VMs);
   - `BOAT_ID` equals the marker's sandbox id;
   - `RUNNER=boat`.
@@ -490,7 +490,7 @@ Heartbeats and `/complete` always go to the API. The server recounts events from
 | **boat** | | |
 | `BOAT_API_URL`, `BOAT_SANDBOX_SIZE` (`default`), `BOAT_TTL_MARGIN_MINUTES` (15), `BOAT_READY_TIMEOUT_SECONDS` (300), `BOAT_ORG`, `BOAT_AGENT_USER` (`agent`), `BOAT_ON_FINISH` (`delete`), `BOAT_DIFF_MAX_BYTES` | | the key comes from the broker (`BOAT_API_KEY` in env mode only) |
 | **docker / local** | | |
-| `SANDBOX_IMAGE` (`octillion-sandbox:latest`), `DOCKER_NETWORK`, `DOCKER_CPUS` (2), `DOCKER_MEMORY` (4g) | | docker and pool limits |
+| `SANDBOX_IMAGE` (`app-sandbox:latest`; one built as `octillion-sandbox:latest` before mold_v0-097 is still run where it is the only one), `DOCKER_NETWORK`, `DOCKER_CPUS` (2), `DOCKER_MEMORY` (4g) | | docker and pool limits |
 | `CLAUDE_BIN`, `CODEX_BIN` | | local runner only |
 
 ## Run

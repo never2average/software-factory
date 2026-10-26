@@ -41,10 +41,10 @@ agent's sandbox may never see is filtered on both spellings (`orchestrator/core/
 
 What is kept as written, because something outside the release holds it (the vocabulary check's allow list says what):
 the session engine's four platform settings keep their stored keys (`src/settings.ts` `ENGINE_SETTINGS`: rows on live
-databases and the host pack read them by name; their environment value is read under the `APP_` name first); the database's
-row-level security functions, tenant role and setting (`sql/migrations` made them and every policy names them); the agent
-images' tags and boat templates (built, pinned in `harnesses/registry.json`); the orchestrator sandboxes' service unit,
-home and host marker (running sandboxes hold them, and the next release stops and restarts those).
+databases and the host pack read them by name; their environment value is read under the `APP_` name first). The names
+held outside a release (the database's functions, tenant role and setting; the agent images' tags and boat templates; the
+orchestrator sandboxes' service unit, home and host marker) were renamed by mold_v0-097, each with its old name still
+answered to until a later cleanup: "Neutral names held outside a release" below.
 
 **The factory's side.** `mold.json` `env_names` declares the prefix and the old one. For a **new** app the factory reads
 the new names from the codebase as before (the compose file, `deploy/bootstrap.sh`, the console's `next.config.ts`,
@@ -63,6 +63,23 @@ a build with the host pack `octillion` keeps every key it wrote. The admin conso
 namespace's old header is still accepted, so a console deployed before the API keeps working). The self-hosted stack's
 compose project, API service, database and backups are `app` and `api`.
 
+**Neutral names held outside a release (mold_v0-097).** What a running database, host or sandbox already held under
+the first product's name, renamed so that what holds it keeps working, the old name still answered to until a later
+cleanup (the vocabulary check's `legacy-*` entries list where each old name is still spelled, and why):
+
+| Held by | Name | How the old one keeps working |
+|---|---|---|
+| the database (`sql/migrations/0024_neutral_database_names.sql`) | functions `app_tenant_role()`, `app_tenant_org()`, `app_session_org()`, `app_run_charge*()`; role `app_tenant_<hash>`; setting `app.org_id` | renamed in place (policies, the trigger and grants hold them by id: none rewritten, no table locked, no row touched); each old function a one-line alias; the old role a member of the new one with nothing of its own, for the release still serving during a rolling deploy; the old setting read when the new one is unset; a policy a pack migration writes through an old function re-pointed by the runner. `check:rls` holds the alias role to that and probes the old path. A rollback to a release from before: `sql/rollback/0024_neutral_database_names.sql` (docs/migrations.md "Rolling back") |
+| a host's local images (`harnesses/registry.json` `image.docker`, `SANDBOX_IMAGE`) | `app/agent-<harness>:<version>`, `app-sandbox:latest` | a tag the host does not have runs under its old name when only that is built (`orchestrator/core/runners.ts` `localImage`); images are never pulled (`--pull never`); `deploy/cleanup.sh` removes the old tag once the same version is built under the new one |
+| the boat account's named snapshots (`image.boat_snapshot`) | `app-<harness>-<version>` | nothing starts from a snapshot by name; the next bake (`orchestrator/images/boat-snapshot.sh`) saves the new names and the old snapshots can then be deleted |
+| an orchestrator sandbox (`orchestrator/deploy/boat-lib.ts`) | unit `app-orchestrator`, home `/home/user/app`, marker `/etc/app/host-role` | a sandbox set up before keeps running until the launcher configures it again (`update`, a relaunch), which stops, disables and removes the old unit and deletes its home (with its env file) and marker; `down` stops whichever unit runs; `status` and `logs` read it |
+
+Proof: `npm run test:migrations` (an 0023 database with rows upgraded, every row kept; the old release's tenant
+transaction before and after; the alias role held to nothing; the rollback leaving exactly what 0023 left; on a real
+Postgres also a database dropped and made again under one name), `npm run check:rls`, `npx tsx
+orchestrator/test/legacy-names.ts` (the image fallback over a stand-in docker; configure and stop run over a stand-in
+sandbox set up before).
+
 **The vocabulary check** (`npm run check:vocabulary`, also run by the smoke test; `npm run test:vocabulary` proves it)
 fails when a product word (`scripts/vocabulary.json` `words`) is in a file of the shell, in its text or its path, outside
 the allow list, where each entry is an exact spelling, the files it may be in and what holds it; an entry that covers
@@ -73,7 +90,8 @@ and run sandboxes and snapshot images under it; the service user baked into the 
 (the run users and the egress proxy's user the runner image creates, its tools directory, the uid leases and checkout
 cache on a runner's host, the proxy's logs and set-up paths, and the tests that check those names); cosmetic uses (a
 shell's `$0`, a local container's name, a test's own mock server) were renamed, and a new one fails. Renaming the held
-ones is mold_v0-097's rebuild. A pack's own files are not read. It also checks the table below, which it writes
+ones is a rebuild of the snapshots and the runner image and a namespace migration, left for a follow-up of mold_v0-097
+(which renamed the long names, above). A pack's own files are not read. It also checks the table below, which it writes
 (`npm run check:vocabulary -- --write`) from every `APP_` name in the shell's code and deploy files.
 
 <!-- env-names:begin (generated by `npm run check:vocabulary -- --write` in the codebase; do not edit) -->
@@ -550,9 +568,19 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
   values are contracts and are not counted; since mold_v0-113 the staff docs (`docs/*.md`, which `/admin/docs` and the
-  docs answers serve) are read too, every line outside a fenced block, and say the engine's units in neutral words; each file that still carries one has a ceiling in a group that says why
-  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, /app/usage, email copy for
-  mold_v0-101). `npm run test:words`.
+  docs answers serve) are read too, every line outside a fenced block, and say the engine's units in neutral words.
+  Since mold_v0-141 no file carries one (`concepts.ceilings` is empty; a ceiling is only for a stored identifier that
+  cannot be written otherwise, with its migration). Where a product's own concept would stand and no word says it, the
+  shell writes a **shell text** (`src/shell-texts.ts`, no imports): an id, where it is shown, and the shell's neutral
+  text, which any pack's pack.json `texts` replaces in its product's words (the first pack wins; gen-packs refuses an
+  unknown id, a text two packs write and a placeholder that is not the build's). Server texts reach the server in
+  `src/hosts.generated.ts` `PACK_CONFIG` (`src/texts.ts` `shellText`), console texts the console in
+  `build-facts.generated.ts` `TEXTS` (`web/src/lib/texts.ts` `text`, over gen-packs' copy of the list,
+  `web/src/lib/shell-texts.generated.ts`). Today: the viewer refusals (`refusal.viewer_launch`, `refusal.viewer_edit`),
+  the Support role's help, Billing's no-plan notice, New plan's example description, the research brief's comparison label, the tip dock's
+  sequence field, a host pack's journeys' nouns on Setup and the session engine's score on /app/usage. A host pack's
+  tables are named on the Storage page by its `host.schema.labels` (else the table's name, capitalised). The session
+  engine's plan metric, compute knob and settings help say `{run}`. `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
   non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.
@@ -1414,7 +1442,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     earlier checksum, kept in `scripts/fixtures/pre-049-migrations/`). A database that applied the earlier version of a
     split file has the product's part already, rows and all: the host pack's migration that adopts it is recorded there
     without running (its one-time repairs, which already ran, never run again), and refused if its tables are missing.
-    Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (`octillion_session_org()`, 0003,
+    Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (a session lookup function, 0003,
     0009 and `0017_gateway_session_policies`, which rewrites it the same way on a database from before), so the shell's
     own policies hold with or without the pack.
   The session engine stays in the shell and reads those tables only in a build whose host pack has them
@@ -1436,8 +1464,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   edited; with zero packs admin-added harnesses cannot be managed in the console (their routes
   add to the product's developer population, so they are the host pack's);
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
-  console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
-  contribution credits on Billing), the default icons and Open Graph image are the
+  pages name the engine's work in the build's words and its own concepts in its host pack's (`texts`,
+  `host.schema.labels`, mold_v0-141), but still carry its structure (the research brief's fields, the engine's
+  onboarding-research sections, the library contribution credits on Billing); the default icons and Open Graph image are the
   first product's; the shell components a host
   pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its pack.json
   `console.components` names them; a dropped host pack's console and orchestrator folders are not
@@ -1683,12 +1712,14 @@ declares one, so a build without writes what it did:
   label, next step and Analytics funnel label, the next step after the first tool call, and the needs-attention messages
   ("Product onboarding failed" and the rest were the shell's words), filled with the build's words; the console reads them
   from `build-facts.generated.ts` `ENGINE_WORDS`.
+- `texts` (mold_v0-141; any pack): the shell's texts in the product's words, by id (`src/shell-texts.ts`; see "The
+  vocabulary"), and a host pack's `host.schema.labels` (table -> its Storage page label).
 `npm run test:host-config`; `npm run test:admin-sections` in a build with the engine.
 
 **Account context and memory (mold_v0-142).** A component of the shell any app turns on from its pack.json `memory` (one
 pack's per build; `src/account-context.ts`, `src/account-context-tools.ts`, `src/account-context-words.ts`); off, nothing
 of it is served and the MCP surface is exactly the shell's. What it keeps, in the shell's own tables
-(`sql/migrations/0024_account_context_memory.sql`): the company's context (`account_context`: what it does, who it
+(`sql/migrations/0025_account_context_memory.sql`): the company's context (`account_context`: what it does, who it
 serves, names it tracks, its terms, notes for the AI client; the account's owners edit it), each person's own
 (`user_context`: role, focus, interests, answer style, notes; the person, or an owner) and memory (`context_memories`:
 short items, a fact, decision, preference or note, about the company, one person, or one subject, scope `product`).
@@ -1714,7 +1745,7 @@ short items, a fact, decision, preference or note, about the company, one person
   answers (Octillion: its in-chat tip). `src/pack-host.ts` `accountContext` gives a host pack the company's context (its
   research prompt starts from it).
 - **The tables, adopted.** They were a host pack's (Octillion's 0001, and before mold_v0-049 the shell's base schema).
-  0024 makes them with exactly those statements and the same row-level security; `src/migrate.ts`
+  0025 makes them with exactly those statements and the same row-level security; `src/migrate.ts`
   `ADOPTING_MIGRATIONS` records it as adopted, running nothing, on a database that has all three in the shape it gives
   (`tableShape`: columns, constraints, indexes, RLS, policies, the tenant role's grants; independent of the server's
   version and the tenant role's name), with a row in the ledger `schema_adoptions` (what, from what, the shape's sha256);

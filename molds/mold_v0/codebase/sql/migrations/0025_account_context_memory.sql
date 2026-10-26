@@ -8,9 +8,12 @@
 -- Adopted, never rebuilt (src/migrate.ts ADOPTING_MIGRATIONS). These three tables were a host pack's (and, before
 -- mold_v0-049, the shell's own base schema's) under exactly these statements: each CREATE below is that DDL byte for
 -- byte, and the security block gives them the same policies and grants that pack's row-level security migration gave
--- them. A database that already has all three, in exactly this shape, records this migration as adopted without running
--- it (schema_adoptions: what was adopted and the shape it had): no statement touches those tables or their rows. A
--- database with none of them runs it and gets them. Some but not all, or another shape: refused, nothing changed.
+-- them, through the names 0024_neutral_database_names gave the functions and the role (app_tenant_role(),
+-- app_tenant_org()). That pack wrote them through the names before (octillion_*); 0024 renamed those in place, so its
+-- policies and grants already name these. A database that already has all three, in exactly this shape, records this
+-- migration as adopted without running it (schema_adoptions: what was adopted and the shape it had): no statement
+-- touches those tables or their rows. A database with none of them runs it and gets them. Some but not all, or another
+-- shape: refused, nothing changed.
 
 -- Context for the AI client (src/account-context.ts, /app/context): the company's, set by its owners, and each person's own.
 CREATE TABLE IF NOT EXISTS account_context (
@@ -53,14 +56,14 @@ CREATE INDEX IF NOT EXISTS context_memories_scope ON context_memories (org_id, s
 -- Row-level security: the workspace policy on each, read and write for the tenant role, nextval for its inserts.
 DO $mig$
 DECLARE
-  r TEXT := octillion_tenant_role();
+  r TEXT := app_tenant_role();
   t TEXT;
 BEGIN
   FOREACH t IN ARRAY ARRAY['account_context', 'user_context', 'context_memories'] LOOP
     EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
-    EXECUTE format('CREATE POLICY tenant_isolation ON %I TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', t, r);
+    EXECUTE format('CREATE POLICY tenant_isolation ON %I TO %I USING (org_id = app_tenant_org()) WITH CHECK (org_id = app_tenant_org())', t, r);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO %I', t, r);
   END LOOP;
   EXECUTE format('GRANT USAGE ON SEQUENCE context_memories_id_seq TO %I', r);

@@ -51,7 +51,7 @@ console.error = (...a: unknown[]) => { logged.push(a.map((x) => (x instanceof Er
 
 /**
  * The product's tables: the 21 the pre-049 baseline created that the shell's migrations no longer do (its account
- * context and memory tables are the shell's again since mold_v0-142: 0024_account_context_memory).
+ * context and memory tables are the shell's again since mold_v0-142: 0025_account_context_memory).
  */
 const PRODUCT_TABLES = ["adoption_help", "agent_sessions", "developer_population_agents", "developer_populations",
   "developer_profiles", "journey_progress", "journey_seed", "journey_templates", "library_submissions", "library_tasks", "nudge_prefs", "nudges",

@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { hostTable, researchJobs, sessionEngine } from "./host-tables.js";
+import { hostTable, hostTableLabel, researchJobs, sessionEngine } from "./host-tables.js";
 import { memoryConfig } from "./host.js";
 import { spendRange, SHARED, SHARED_NAME } from "./spend.js";
 import { transcripts } from "./transcripts.js";
@@ -224,20 +224,21 @@ export async function computeReport(q: { from?: unknown; to?: unknown } = {}, no
 
 /**
  * The app's tables (sql/migrations/0001_baseline.sql): a plain label, the created timestamp new rows are counted by, the last-write
- * timestamp (default: created), and how a row belongs to an account. Every count is exact (count(*)).
+ * timestamp (default: created), and how a row belongs to an account. Every count is exact (count(*)). A host pack's
+ * table has no label here: its pack's words name it (mold_v0-141: pack.json host.schema.labels, src/host-tables.ts).
  */
-interface TableDef { table: string; label: string; created?: string; written?: string; org?: string; from?: string; where?: string }
+interface TableDef { table: string; label?: string; created?: string; written?: string; org?: string; from?: string; where?: string }
 const ALL_TABLES: TableDef[] = [
   { table: "organizations", label: "Accounts", created: "created_at" },
   { table: "api_keys", label: "API keys", created: "created_at", written: "greatest(created_at, last_used_at, revoked_at)", org: "org_id" },
-  { table: "products", label: "Products", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
-  { table: "scenarios", label: "Scenarios", created: "x.created_at", written: "greatest(x.created_at, x.updated_at)", org: "p.org_id", from: "scenarios x JOIN products p ON p.id = x.product_id" },
-  { table: "simulations", label: "Simulations", created: "created_at", written: "greatest(created_at, finished_at)", org: "org_id" },
-  { table: "agent_sessions", label: "Agent sessions", created: "queued_at", written: "greatest(queued_at, ended_at)", org: "org_id" },
-  { table: "transcript_events", label: "Transcript events", created: "ts" },
+  { table: "products", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
+  { table: "scenarios", created: "x.created_at", written: "greatest(x.created_at, x.updated_at)", org: "p.org_id", from: "scenarios x JOIN products p ON p.id = x.product_id" },
+  { table: "simulations", created: "created_at", written: "greatest(created_at, finished_at)", org: "org_id" },
+  { table: "agent_sessions", created: "queued_at", written: "greatest(queued_at, ended_at)", org: "org_id" },
+  { table: "transcript_events", created: "ts" },
   { table: "access_requests", label: "Access requests", created: "created_at", org: "org_id" },
-  { table: "developer_profiles", label: "Developer profiles", created: "synced_at", written: "greatest(synced_at, edited_at)", org: "org_id" },
-  { table: "library_tasks", label: "Library tasks", created: "synced_at", written: "greatest(synced_at, edited_at)" },
+  { table: "developer_profiles", created: "synced_at", written: "greatest(synced_at, edited_at)", org: "org_id" },
+  { table: "library_tasks", created: "synced_at", written: "greatest(synced_at, edited_at)" },
   { table: "orchestrators", label: "Orchestrators", created: "registered_at", written: "last_seen" },
   { table: "orchestrator_sandboxes", label: "Orchestrator sandboxes", created: "created_at", written: "greatest(created_at, deleted_at)" },
   { table: "compute_events", label: "Compute events", created: "at" },
@@ -249,29 +250,29 @@ const ALL_TABLES: TableDef[] = [
   { table: "gateway_usage", label: "Gateway usage", written: "last_at" },
   { table: "gateway_model_usage", label: "Gateway usage by model", created: "(day::timestamp AT TIME ZONE 'UTC')" },
   { table: "model_prices", label: "Model prices", written: "updated_at" },
-  { table: "developer_populations", label: "Developer populations", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
-  { table: "developer_population_agents", label: "Population agents", written: "updated_at" },
-  { table: "product_research", label: "Product research", created: "created_at", written: "greatest(created_at, finished_at)", org: "org_id" },
+  { table: "developer_populations", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
+  { table: "developer_population_agents", written: "updated_at" },
+  { table: "product_research", created: "created_at", written: "greatest(created_at, finished_at)", org: "org_id" },
   { table: "usage_alerts", label: "Usage alerts", created: "sent_at" },
   { table: "mcp_events", label: "MCP events", created: "at", org: "org_id" },
-  { table: "nudges", label: "Nudges", created: "created_at", org: "org_id" },
-  { table: "nudge_prefs", label: "Nudge preferences", written: "last_shown_at", org: "org_id" },
+  { table: "nudges", created: "created_at", org: "org_id" },
+  { table: "nudge_prefs", written: "last_shown_at", org: "org_id" },
   { table: "usage_policies", label: "Usage policies", written: "updated_at", org: "org_id" },
   { table: "usage_teams", label: "Usage teams", created: "created_at", org: "org_id" },
   { table: "usage_members", label: "Usage members", org: "org_id" },
   { table: "usage_rule_changes", label: "Usage rule changes", created: "at", org: "org_id" },
   { table: "usage_rule_migrations", label: "Usage rule migrations", created: "applied_at" },
-  { table: "account_context", label: "Account context", written: "updated_at", org: "org_id" },
-  { table: "user_context", label: "User context", written: "updated_at", org: "org_id" },
-  { table: "journey_templates", label: "Journey templates", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
-  { table: "journey_progress", label: "Journey progress", created: "done_at", org: "org_id" },
-  { table: "journey_seed", label: "Journey seed", created: "seeded_at" },
-  { table: "context_memories", label: "Context memories", created: "created_at", org: "org_id" },
-  { table: "adoption_help", label: "Adoption help requests", created: "created_at", org: "org_id" },
+  { table: "account_context", written: "updated_at", org: "org_id" },
+  { table: "user_context", written: "updated_at", org: "org_id" },
+  { table: "journey_templates", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
+  { table: "journey_progress", created: "done_at", org: "org_id" },
+  { table: "journey_seed", created: "seeded_at" },
+  { table: "context_memories", created: "created_at", org: "org_id" },
+  { table: "adoption_help", created: "created_at", org: "org_id" },
   { table: "worker_tokens", label: "Worker tokens", created: "created_at", org: "org_id" },
   { table: "org_deletions", label: "Account deletions", created: "deleted_at" },
-  { table: "org_task_sets", label: "Account task sets", created: "created_at", org: "org_id" },
-  { table: "org_harnesses", label: "Account harnesses", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
+  { table: "org_task_sets", created: "created_at", org: "org_id" },
+  { table: "org_harnesses", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
   { table: "org_keys", label: "Account keys", created: "created_at", org: "org_id" },
   { table: "admin_access_log", label: "Admin access log", created: "at" },
   { table: "platform_settings", label: "Platform settings", written: "updated_at" },
@@ -294,7 +295,8 @@ let tableList: TableDef[] | null = null;
 /** Read on first use, once the build's packs are registered (the component's config is theirs). */
 const TABLES_NOW = (): TableDef[] => (tableList ??= ALL_TABLES.filter((t) => (!HOST_TABLE_NAMES.has(t.table) || hostTable(t.table)
   // scenarios is read through products (its account): both must be there
-  && (t.table !== "scenarios" || hostTable("products"))) && (!CONTEXT_TABLE_NAMES.has(t.table) || memoryConfig() !== null)));
+  && (t.table !== "scenarios" || hostTable("products"))) && (!CONTEXT_TABLE_NAMES.has(t.table) || memoryConfig() !== null))
+  .map((t) => ({ ...t, label: t.label ?? hostTableLabel(t.table) })));
 
 /** One scan per table: rows per (account, created day in the range, or null outside it), and the latest write. */
 const COUNTS_NOW = () => TABLES_NOW().map((t) => {

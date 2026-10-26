@@ -200,7 +200,7 @@ status, finding fingerprint, evidence reference).
   (`src/account-context.ts`, `src/account-context-tools.ts`, `web/src/features/context`): the company's and each person's
   context and the account's memory (company, a person, a subject), shown on `/app/context`, given to the AI client at
   connect time and saved and searched by two MCP tools the pack names, every word the pack's or a neutral default. Its
-  tables are the shell's (`0024_account_context_memory`), adopted where a host pack made them. Off with zero packs.
+  tables are the shell's (`0025_account_context_memory`), adopted where a host pack made them. Off with zero packs.
 
 ### Billing and email (optional)
 
@@ -259,7 +259,7 @@ at the same paths and with the same MCP surface. Paths below are where each now 
 - **Tables** (mold_v0-049). The product's 21 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
   verdicts, `transcript_events`, `product_research`, `developer_profiles`, `library_tasks`, `product_personas`,
   `developer_populations` and their agents, `library_submissions`, `visibility_reports`, journeys, nudges, task sets and
-  private harnesses; its context and memory tables are the shell's since mold_v0-142, adopted by its 0024) are the pack's own migrations (`packs/octillion/migrations/`), under the names
+  private harnesses; its context and memory tables are the shell's since mold_v0-142, adopted by the shell's 0025) are the pack's own migrations (`packs/octillion/migrations/`), under the names
   they had, by the host-pack schema allowance (MOLD.md "Host packs": `host.schema`); a database built before keeps
   them and its rows (the pack adopts what the earlier base schema made). The admin MCP's job tools named for them
   (`list_simulations`, `get_simulation`, `cancel_simulation`) are the pack's (`server/admin-tools.ts`).
@@ -268,7 +268,9 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   global setting, stays the shell's page):
   `web/src/packs/octillion/` (pages, features, `routes.json`), at their old URLs; its sidebar entries, redirects, Setup
   page (steps, workflow, error hints), admin MCP words and account-stage words are pack.json config since mold_v0-140
-  and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`).
+  and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`); the shell's texts that named
+  its concepts (viewer refusals, the Support role's help, the plan example, competitors, journeys, hit rate) and its
+  tables' Storage labels are its pack.json `texts` and `host.schema.labels` since mold_v0-141.
 - **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
   and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
 - **Docs.** The customer guide and the product's internal docs and case studies, as config since mold_v0-139 (its

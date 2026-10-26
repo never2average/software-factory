@@ -34,11 +34,16 @@
  */
 import { experimentKey, planLookupKey } from "./billing.js";
 import { KEY_PREFIX, NS } from "./namespace.js";
+import { fill } from "./vocabulary.js";
 
+/** One completed run, as a meter counts it: "simulation run", "audit run"; "run" where the build's word is run itself. */
+const runUnit = () => { const r = fill("{run}"); return r === "run" ? r : `${r} run`; };
 export const METRICS = {
   model_spend: { event: () => process.env.STRIPE_SPEND_METER || `${KEY_PREFIX}model_spend`, label: "Model spend", unit: "cent of model spend", suffix: "usage" },
   agent_sessions: { event: () => `${KEY_PREFIX}agent_sessions`, label: "Agent sessions", unit: "agent session", suffix: "agent_sessions" },
-  simulations: { event: () => `${KEY_PREFIX}simulations`, label: "Simulations", unit: "simulation run", suffix: "simulations" },
+  // The session engine's completed runs, in the build's words ({Runs}: src/vocabulary.ts, mold_v0-141); the metric's id,
+  // meter event and lookup suffix are stored names (Stripe's) and stay.
+  simulations: { event: () => `${KEY_PREFIX}simulations`, get label() { return fill("{Runs}"); }, get unit() { return runUnit(); }, suffix: "simulations" },
   sandbox_hours: { event: () => `${KEY_PREFIX}sandbox_minutes`, label: "Sandbox hours", unit: "sandbox minute", suffix: "sandbox_hours" },
 } as const;
 export type Metric = keyof typeof METRICS;

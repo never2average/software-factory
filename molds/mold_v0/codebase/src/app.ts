@@ -675,7 +675,9 @@ export function appRouter() {
   api.get("/billing", async (_req, res) => {
     const extras = await Promise.all(hosts().map((h) => h.routes?.billingExtras?.(S(res).org) ?? {}));
     res.json({ ...(await billingView(S(res))), can_manage: can(res, "billing"), permissions: perms(res),
-      // Whether the build's host pack onboards products (mold_v0-100: the page's copy names it only then).
+      // Whether the build's host pack onboards products (mold_v0-100). The console's copy no longer reads it (mold_v0-141:
+      // the page's no-plan notice is the shell text billing.needs_plan, in the host pack's words); kept in the answer
+      // for a console of the release before, which reads it while a deploy rolls out.
       onboards_products: hostTable("products"), ...Object.assign({}, ...extras) });
   });
   api.get("/billing/usage", async (_req, res) => void res.json(await billingUsage(S(res))));

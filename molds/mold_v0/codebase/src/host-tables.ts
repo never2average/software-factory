@@ -1,4 +1,6 @@
-import { PACK_MIGRATION_DIRS } from "./pack-migrations.generated.js";
+import * as migrations from "./pack-migrations.generated.js";
+
+const { PACK_MIGRATION_DIRS } = migrations;
 
 /**
  * Which of the session engine's tables this build has (mold_v0-049). The product's tables left the shell's base schema
@@ -16,3 +18,10 @@ export const hostTable = (name: string): boolean => HOST_TABLES.has(name);
 export const sessionEngine = (): boolean => ["products", "scenarios", "simulations", "agent_sessions"].every(hostTable);
 /** Whether this build has research jobs too (the host pack's product_research), which the engine also runs. */
 export const researchJobs = (): boolean => sessionEngine() && hostTable("product_research");
+/**
+ * A host pack's table as people read its name (mold_v0-141): its pack.json host.schema.labels entry (the product's
+ * words, src/pack-migrations.generated.ts HOST_TABLE_LABELS), else the stored name with its first letter raised and
+ * spaces for underscores.
+ */
+export const hostTableLabel = (name: string): string =>
+  (migrations as { HOST_TABLE_LABELS?: Readonly<Record<string, string>> }).HOST_TABLE_LABELS?.[name] ?? (name[0]!.toUpperCase() + name.slice(1)).replaceAll("_", " ");

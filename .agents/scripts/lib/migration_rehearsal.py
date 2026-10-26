@@ -6,7 +6,7 @@
                [--codebase DIR]                                  run another copy of the code than build/<app_id>/ made afresh
   migration_rehearsal.py --self-test                              offline: a stand-in Neon API and a stand-in runner
 
-WHY. A release whose migrations touch tables with live rows (mold_v0-142: the shell's 0024 adopts the account context and
+WHY. A release whose migrations touch tables with live rows (mold_v0-142: the shell's 0025 adopts the account context and
 memory tables a host pack made) is proven on throwaway databases by the mold's own tests. This proves it on the app's own
 data, without touching it: the migrations the next deploy would apply are applied to a COPY, measured from that copy
 (the codebase's `npm run db:rehearse`, src/migration-rehearsal.ts: what was pending, what ran and what was adopted
@@ -364,8 +364,8 @@ def self_test():
                 S.ran.append((cmd, cwd, env))
                 class R: pass
                 r = R(); r.returncode = exit_; r.stderr = ""
-                r.stdout = "noise before\n" + json.dumps(report if report is not None else {"status": "ok", "problems": [], "pending": ["0024_account_context_memory"],
-                    "applied": ["0024_account_context_memory (adopted)"], "ddl": {"created": ["table schema_adoptions"], "changed": [], "dropped": []},
+                r.stdout = "noise before\n" + json.dumps(report if report is not None else {"status": "ok", "problems": [], "pending": ["0025_account_context_memory"],
+                    "applied": ["0025_account_context_memory (adopted)"], "ddl": {"created": ["table schema_adoptions"], "changed": [], "dropped": []},
                     "adopted_tables": [{"table": "account_context", "rows_before": 3, "rows_after": 3, "rows_identical": True, "catalog_unchanged": True, "shape": "as_migration_gives"}],
                     "rows_changed": [], "tables_checked": 70, "rls": {"pass": True, "problems": [], "probe_checks": 40}, "echo": env.get("DATABASE_URL")})
                 return r
