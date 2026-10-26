@@ -1,5 +1,5 @@
 // The packs' console pages (mold_v0-038), from the generated web/src/config/pack-nav.generated.ts (scripts/gen-packs.mjs).
-import { packPages, type PackPage } from '@/config/pack-nav.generated';
+import { packPages, type PackPage } from '../../config/pack-nav.generated';
 
 /** The page a pack declares for this area, or null (an unknown pack or page is a 404). */
 export function findPackPage(area: 'app' | 'admin', pack: string, page: string): PackPage | null {
