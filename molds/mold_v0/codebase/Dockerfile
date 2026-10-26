@@ -8,16 +8,16 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 # Run sandboxes on a server of its own (mold_v0-055, src/run-sandboxes.ts): each run is a container of this same image,
 # started as root only to lock its run user down (nftables) and switch to it. git for agent-workspace runs; the run's
-# user (octirun) and the egress proxy's (octiproxy), neither with a login or sudo. The server itself runs as node.
+# user (apprun) and the egress proxy's (appproxy), neither with a login or sudo. The server itself runs as node.
 # The run tools the packs' agent kinds declare (mold_v0-072; src/run-tools.generated.json, written by gen-packs): each
 # at its pinned version, its artifact checked against src/run-tools.ts's sha256 before it is unpacked into
-# /opt/octi-tools (root's). A run never downloads a tool: the harness checks these and refuses a kind the image lacks.
+# /opt/app-tools (root's). A run never downloads a tool: the harness checks these and refuses a kind the image lacks.
 COPY src/run-tools.ts src/run-tools.generated.json ./src/
 COPY scripts/install-run-tools.ts ./scripts/
 RUN apt-get update && apt-get install -y --no-install-recommends git nftables iptables ca-certificates unzip \
  && rm -rf /var/lib/apt/lists/* \
- && useradd -r -M -u 10001 -s /usr/sbin/nologin octirun && useradd -r -M -s /usr/sbin/nologin octiproxy \
- && node --import tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/octi-tools
+ && useradd -r -M -u 10001 -s /usr/sbin/nologin apprun && useradd -r -M -s /usr/sbin/nologin appproxy \
+ && node --import tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools
 COPY tsconfig.json ./
 COPY sql ./sql
 COPY src ./src
@@ -38,7 +38,7 @@ COPY orchestrator/images ./orchestrator/images
 COPY orchestrator/packs ./orchestrator/packs
 COPY orchestrator/workspaces ./orchestrator/workspaces
 # Refused at build when the image lacks a tool a pack's agent kind declares (the generated list, as the code has it).
-RUN node --import tsx scripts/install-run-tools.ts --verify --from src/run-tools.generated.json --dir /opt/octi-tools
+RUN node --import tsx scripts/install-run-tools.ts --verify --from src/run-tools.generated.json --dir /opt/app-tools
 USER node
 EXPOSE 3333
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:3333/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

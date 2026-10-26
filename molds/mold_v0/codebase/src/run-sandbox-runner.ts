@@ -17,7 +17,7 @@
  *   APP_RUN_ID                        the run (for logs; the token alone decides what is claimed)
  *   APP_RUN_UIDS                      the range the run's user is leased from (mold_v0-078, src/run-users.ts;
  *                                           default 61000-64999): a uid of its own for this run, locked down by number
- *                                           and given an account (octirun-<uid>) in the sandbox, which lives one run.
+ *                                           and given an account (apprun-<uid>) in the sandbox, which lives one run.
  *                                           (APP_RUN_USER, a fixed account by name, from an older autoscaler.)
  *   APP_RUN_PACK_DIR                  the pack's directory, relative to the code (programs of the pack's own)
  *   APP_RUN_LOCKDOWN                  "on" (the autoscaler always writes it). "off" runs with no firewall and is
@@ -58,7 +58,7 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[] }
   if (process.getuid?.() !== 0) throw new Error("the lockdown needs the runner to be root in the sandbox");
   const gatewayHost = (() => { try { return new URL(gatewayUrl).hostname.toLowerCase(); } catch { return ""; } })();
   if (!gatewayHost) throw new Error("the lockdown needs the gateway's host for its probe");
-  const dir = mkdtempSync("/run/octi-egress-setup-");
+  const dir = mkdtempSync("/run/app-egress-setup-");
   try {
     chmodSync(dir, 0o700);
     writeFileSync(path.join(dir, "egress-proxy.mjs"), proxySource());
@@ -74,7 +74,7 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[] }
     for (const s of ["/run/systemd/resolve/io.systemd.Resolve", "/run/systemd/resolve/io.systemd.Resolve.Monitor", "/run/dbus/system_bus_socket"])
       if (existsSync(s)) spawnSync("setfacl", ["-m", `u:${uid}:---`, s], { stdio: "ignore", timeout: 10_000 });
     // The probe reads its program from the proxy's install directory (root-owned, world-readable), as the run's user.
-    const probe = spawnSync(process.execPath, ["/opt/octi-egress/probe.mjs"], { encoding: "utf8", timeout: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
+    const probe = spawnSync(process.execPath, ["/opt/app-egress/probe.mjs"], { encoding: "utf8", timeout: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
     if (probe.status !== 0) throw new Error(`egress probe failed, the run is not started: ${(probe.stdout || probe.stderr).slice(-800)}`);
     log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts, probe ok`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -108,8 +108,8 @@ async function main(): Promise<number> {
   try {
     if (lockdown) {
       // The sandbox lives one run: its run user gets an account (tools that look their user up find one).
-      const name = named?.name ?? (registerSandboxRunUser(leased!.uid) ? `${RUN_USER_PREFIX}${leased!.uid}` : "octirun");
-      try { lockDown(claim.egress, claim.gateway.gateway_url, name.length <= 32 ? name : "octirun", leased!.uid, leased!.gid); }
+      const name = named?.name ?? (registerSandboxRunUser(leased!.uid) ? `${RUN_USER_PREFIX}${leased!.uid}` : "apprun");
+      try { lockDown(claim.egress, claim.gateway.gateway_url, name.length <= 32 ? name : "apprun", leased!.uid, leased!.gid); }
       catch (e) {
         // Nothing of the run has started: an infrastructure failure, retried in a new sandbox while attempts remain.
         await client.complete(claim.run.id, claim.lease_token, { outcome: "failed", error_kind: "infrastructure", error: String((e as Error).message).slice(0, 2000) }).catch(() => {});

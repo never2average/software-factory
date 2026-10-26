@@ -128,10 +128,10 @@ try {
     sops: { version: "3.13.3", format: "binary" as const, bins: { sops: "sops" }, source: "stand-in", artifacts: { [arch]: { url: `${artUrl}/sops`, sha256: sha(sopsBody), bytes: sopsBody.length } } },
     kubectl: { version: "1.37.1", format: "binary" as const, bins: { kubectl: "kubectl" }, source: "stand-in", artifacts: { [arch]: { url: `${artUrl}/kubectl`, sha256: "0".repeat(64), bytes: 1 } } },
   };
-  // Where the run's user can reach it (as /opt/octi-tools): not inside the test's own 0700 directory.
+  // Where the run's user can reach it (as /opt/app-tools): not inside the test's own 0700 directory.
   const toolsRoot = mkdtempSync(path.join(tmpdir(), "steps-tools-"));
   chmodSync(toolsRoot, 0o755);
-  const toolsDir = path.join(toolsRoot, "octi-tools");
+  const toolsDir = path.join(toolsRoot, "app-tools");
   await tools.installTools(["sops"], { dir: toolsDir, catalog });
   const runTools = { dir: toolsDir, catalog };
 
@@ -155,11 +155,11 @@ try {
     appId: { type: "string", pattern: "^[a-z][a-z0-9-]{1,40}$" },
     repos: { type: "array", maxItems: 8, items: { type: "object", required: ["repoId", "url", "pinnedCommit"], additionalProperties: false, properties: {
       repoId: { type: "string", pattern: "^[a-z][a-z0-9-]{0,40}$" }, url: { type: "string", maxLength: 2000 }, pinnedCommit: { type: "string", pattern: "^[0-9a-f]{40}$" } } } } } };
-  const inputs = { spec: { from: "scope.spec", path: ".octi-inputs/spec.json", schema: specSchema, max_bytes: 4096 } };
+  const inputs = { spec: { from: "scope.spec", path: ".app-inputs/spec.json", schema: specSchema, max_bytes: 4096 } };
   const checkout = { manifests: "data/{company}/repos/*.json", url: "url", commit: "pinnedCommit", name: "repoId", mount: "data/{company}/repos/{name}",
     hosts: ["git.allowed.example"], credential: "git_token", max_bytes: 1024 * 1024, source: "checkout" };
   const steps = [
-    { name: "add", command: ["node", "steps.mjs", "add", ".octi-inputs/spec.json", "--company", "{company}"] },
+    { name: "add", command: ["node", "steps.mjs", "add", ".app-inputs/spec.json", "--company", "{company}"] },
     { name: "gitfill", command: ["node", "steps.mjs", "gitfill", "git.allowed.example"], git_credentials: [{ credential: "agent_token", host: "git.allowed.example" }] },
     { name: "checkout", checkout },
     { name: "read", command: ["node", "steps.mjs", "readrepo", "data/{company}/repos/one", "{other}"] },
@@ -334,7 +334,7 @@ try {
       // As the run holds it (the database keeps the scope's keys in its own order).
       const specBody = `${JSON.stringify((r.claim.run.scope as { spec: unknown }).spec, null, 2)}\n`;
       assert.deepEqual((r.claim.run.scope as { spec: unknown }).spec, spec([{ repoId: "one", url: one.url, pinnedCommit: one.commit }, { repoId: "private", url: privUrl, pinnedCommit: priv.commit }]));
-      assert.deepEqual(inp, { name: "spec", path: ".octi-inputs/spec.json", bytes: Buffer.byteLength(specBody), sha256: sha(specBody) }, "the input, written as given");
+      assert.deepEqual(inp, { name: "spec", path: ".app-inputs/spec.json", bytes: Buffer.byteLength(specBody), sha256: sha(specBody) }, "the input, written as given");
       const add = await stepLine(id, "add");
       assert.deepEqual(add.add, { app: "payments", repos: 2, input_mode: "644" }, "the step read the spec from its file");
       assert.deepEqual([add.token_env, add.git_env, add.cred_dir, add.git_config], ["unset", "unset", null, null], "a step with no credentials gets none");

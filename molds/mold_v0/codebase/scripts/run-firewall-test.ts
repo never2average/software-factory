@@ -110,16 +110,16 @@ console.log(JSON.stringify(out));`);
     writeFileSync(path.join(dir, f), body);
   const inst = path.join(dir, "inst"), logs = path.join(dir, "log");
   sh(["install", "-d", "-m", "755", logs]);
-  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "octirun", uid: RUID, sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs }));
+  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "apprun", uid: RUID, sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs }));
   const set = spawnSync("ip", ["netns", "exec", nsS, "bash", path.join(dir, "setup.sh")], { encoding: "utf8", timeout: 60_000 });
   assert.equal(set.status, 0, `lockdown: ${set.stderr}`);
-  assert.match(set.stdout, new RegExp(`egress: locked down \\(octirun uid ${RUID};`), "the run's own uid, by number (it has no account)");
+  assert.match(set.stdout, new RegExp(`egress: locked down \\(apprun uid ${RUID};`), "the run's own uid, by number (it has no account)");
   const after = asRunUser("after");
   console.log(JSON.stringify(after));
   if (process.env.FW_DEBUG) {
     console.log(spawnSync("ip", ["netns", "exec", nsS, "nft", "list", "ruleset"], { encoding: "utf8" }).stdout);
     console.log(spawnSync("ip", ["netns", "exec", nsS, "ss", "-lntup"], { encoding: "utf8" }).stdout);
-    console.log(readFileSync(path.join(logs, "octi-egress.log"), "utf8"), readFileSync(path.join(logs, "octi-egress.err"), "utf8"));
+    console.log(readFileSync(path.join(logs, "app-egress.log"), "utf8"), readFileSync(path.join(logs, "app-egress.err"), "utf8"));
   }
   assert.equal(after.direct8080, false, "direct TCP to the outside is dropped");
   assert.equal(after.direct22, false, "any port");
@@ -134,7 +134,7 @@ console.log(JSON.stringify(out));`);
   assert.match(after.proxy_ip, /403/);
   assert.match(after.proxy_unlisted, /403/);
   assert.equal(seenLines().length, base, `nothing of the run user reached the outside: ${JSON.stringify(seenLines().slice(base))}`);
-  const plog = readFileSync(path.join(logs, "octi-egress.log"), "utf8");
+  const plog = readFileSync(path.join(logs, "app-egress.log"), "utf8");
   assert.match(plog, /"deny":"example.com","why":"host not allowed"/);
   // mold_v0-075: a company's host passes the list exactly (then the proxy looks it up: offline, no such name); a
   // subdomain of it does not pass the list at all.

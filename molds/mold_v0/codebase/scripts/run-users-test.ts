@@ -42,6 +42,27 @@ try {
     console.log("✓ the range: first-last, never root, a system uid, nobody (65534) or 65535");
   }
 
+  // ---------- 1b. the host's directories under their names before mold_v0-156 ----------
+  {
+    // A host where a runner of the release before keeps its leases (and its checkout cache) in the old directory: a
+    // runner of this release uses that one while the host has it and not the new one, so two runners on one host
+    // during a rolling deploy never lease from two directories (which would hand one uid to two runs at once).
+    const base = path.join(TMP, "host-dirs"), now = path.join(base, "new"), old = path.join(base, "old");
+    assert.equal(ru.hostDir(now, old), now, "neither there: the new name");
+    mkdirSync(old, { recursive: true });
+    assert.equal(ru.hostDir(now, old), old, "only the old one there: the old one, still in use");
+    const range = { first: 66110, last: 66110 };
+    const held = await ru.leaseRunUser("run_old_release", { range, dir: old });
+    await assert.rejects(ru.leaseRunUser("run_new_release", { range, dir: ru.hostDir(now, old) }), /every run user of 66110-66110 is in use/,
+      "a uid the release before holds there is never handed out by this one");
+    await held.release();
+    mkdirSync(now, { recursive: true });
+    assert.equal(ru.hostDir(now, old), now, "both there (the host was rebooted, or the old one remade): the new one");
+    assert.ok([ "/run/app-run-uids", ru.LEGACY_HOST_DIRS.leases].includes(ru.runUidDir()) || !!process.env.APP_RUN_UID_DIR, `the default lease directory as root: ${ru.runUidDir()}`);
+    assert.match(readFileSync(path.join(ROOT, "src", "run-harness.ts"), "utf8"), /hostDir\("\/var\/cache\/app-checkouts", LEGACY_HOST_DIRS\.cache\)/, "the checkout cache likewise");
+    console.log("✓ the host's lease and cache directories: the old name while a host has only that (mold_v0-156), never two at once");
+  }
+
   // ---------- 2. leases ----------
   {
     const dir = path.join(TMP, "leases");
@@ -70,7 +91,7 @@ try {
     const ghost = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
     writeFileSync(path.join(dir, String(stale)), JSON.stringify({ pid: Number(ghost), start: "1", boot: "x", token: "t", run: "run_dead" }));
     const left = asUser(stale, "sleep", ["120"]);
-    const leftFile = `/tmp/octi-run-users-stale-${STAMP}`;
+    const leftFile = `/tmp/app-run-users-stale-${STAMP}`;
     writeFileSync(leftFile, "x"); spawnSync("chown", [`${stale}:${stale}`, leftFile]);
     await new Promise((r) => setTimeout(r, 200));
     assert.ok(alive(left), "(the dead run's process is there)");
@@ -150,10 +171,10 @@ try {
       const [sd] = await events(short.id, "short_done");
       // The early run's end: what it left behind is gone.
       assert.ok(!alive(sd.child), "the process the early run left behind is killed at its end");
-      assert.ok(!existsSync(`/tmp/octi-run-users-${short.id}`), "and its file in /tmp is removed");
+      assert.ok(!existsSync(`/tmp/app-run-users-${short.id}`), "and its file in /tmp is removed");
       const [ls] = await events(long.id, "long_started");
       assert.ok(alive(ls.child), "the other run's process is untouched by that end");
-      assert.ok(existsSync(`/tmp/octi-run-users-${long.id}`), "and so is its file in /tmp");
+      assert.ok(existsSync(`/tmp/app-run-users-${long.id}`), "and so is its file in /tmp");
       const r = await other;
       assert.equal(r.status, "succeeded", `the other run keeps running and finishes: ${JSON.stringify(r)}`);
       const [lc] = await events(long.id, "long_checked");
