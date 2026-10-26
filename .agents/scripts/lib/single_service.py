@@ -165,6 +165,47 @@ def rls_said(out, spec):
 
 def rls_passed(rc, out, spec): return rc == 0 and bool(spec) and spec["pass_text"] in (out or "")
 
+def catalogs_spec(cb, man):
+    """mold.json "catalogs" (mold_v0-128) when the codebase's package.json really has that script, else None."""
+    spec = (man or {}).get("catalogs")
+    if not isinstance(spec, dict) or not spec.get("script"): return None
+    try: scripts = (json.load(open(os.path.join(cb, "package.json"))).get("scripts") or {})
+    except (OSError, ValueError): return None
+    return dict(spec, said_text=spec.get("said") or "CATALOGS INDEX:") if spec["script"] in scripts else None
+
+def catalogs_said(out, spec):
+    """The index's summary line (its said_text line), else its last lines; redacted, one line."""
+    lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    hit = [l for l in lines if spec and l.startswith(spec["said_text"])]
+    return VR.redact(" | ".join(hit[-1:] or lines[-3:]))[:600]
+
+def record_catalogs(adir, said, rc, how, save_fn=None):
+    """infrastructure.json catalog_index: what the deploy's index of the upstream catalogs said (mold_v0-128). Never a verdict
+    on the deploy: a catalog that could not be indexed is retried by the server and shown to staff."""
+    ip = os.path.join(adir, "infrastructure.json")
+    try: infra = load(ip)
+    except (OSError, ValueError): return
+    infra["catalog_index"] = {"at": now(), "exit": rc, "said": said, "how": how}
+    (save_fn or save)(ip, infra)
+
+def catalogs_vercel(P, cb, build, api, spec, say=print, run=None):
+    """Vercel: the index from the app's build copy (its packs) against the api project's production database, once, after
+    the deploy. -> (exit, said). Never raises: what it could not do is said."""
+    import agent_result as AR
+    if not os.path.exists(os.path.join(build, "node_modules", ".bin", "tsx")) and not os.path.exists(os.path.join(cb, "node_modules", ".bin", "tsx")):
+        return None, "not run: the mold's dependencies are not installed on this machine (the server indexes the catalogs by itself)"
+    if not os.path.exists(os.path.join(build, "node_modules")) and os.path.isdir(os.path.join(cb, "node_modules")):
+        try: os.symlink(os.path.join(cb, "node_modules"), os.path.join(build, "node_modules"))
+        except OSError: pass
+    try:
+        url = P.pull_env(cb, api, required=False).get("DATABASE_URL")
+        if not url or url == "[SENSITIVE]": return None, f"not run: DATABASE_URL could not be read back from {api} (the server indexes the catalogs by itself)"
+        AR.forbid(url)
+        rc, out = (run or rls_local)(build, url, {"script": spec["script"]}, timeout=900)
+        return rc, catalogs_said(out, spec)
+    except Exception as e:   # never the deploy's failure
+        return None, f"not run: {type(e).__name__} (the server indexes the catalogs by itself)"
+
 RLS_SOURCE = "check:rls"      # rls_verified.source starts with this for a single-service app (factory.py reads it)
 def record_rls(adir, spec, passed, said, how, running, detail, save_fn=None):
     """datastores.postgres.rls_verified for a single-service app, from the product's own check (module docstring):
@@ -344,7 +385,7 @@ def compose_facts(cb, man):
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
             "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)),
             "dockerfile_sources": dockerfile_sources(dtext) + [x for x in (K["dockerfile_sources"] if K else []) if x not in dockerfile_sources(dtext)],
-            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "console": K, "aliases": env_aliases(man)}
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "catalogs": catalogs_spec(cb, man), "console": K, "aliases": env_aliases(man)}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -760,15 +801,22 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
         {"id": "rls", "title": f"row-level security on the deployed database: the product's own `npm run {F['rls']['script']}` in a one-off "
                                f"container of the new release, with the server's env file (catalog + live probe, rolled back)",
          "argv": ssh(rls_cmd(S, F)), "timeout": 300},
-    ] if F.get("rls") else []) + [
+    ] if F.get("rls") else []) + ([
+        {"id": "catalogs", "title": f"the upstream catalogs indexed at their pins: the product's own `npm run {F['catalogs']['script']}` in a one-off "
+                                    f"container of the new release, with the server's env file (said, never a failed deploy)",
+         "argv": ssh(script_cmd(S, F, F["catalogs"]["script"])), "timeout": 900},
+    ] if F.get("catalogs") else []) + [
         {"id": "keep", "title": "every release but the serving and the previous one removed", "argv": ssh(g(f"bash {S['factory_dir']}/keep.sh")), "timeout": 300},
         {"id": "back", "title": "ONLY if the health step or the public read fails: back to the release that served before (up.sh --back --drop)",
          "argv": ssh(g(f"bash {S['factory_dir']}/up.sh --back --drop")), "timeout": UP_WAIT_S * 2 + 600},
     ]
 
-def rls_cmd(S, F):
+def rls_cmd(S, F): return script_cmd(S, F, F["rls"]["script"])
+
+def script_cmd(S, F, script):
+    """One of the product's npm scripts in a one-off container of the serving release, with the server's env file."""
     return (f"{S['sudo']}docker compose -p {shlex.quote(S['project'])} -f {S['current']}/{S['compose_file']} --env-file {shlex.quote(S['env_file'])} "
-            f"run --rm -T --no-deps {shlex.quote(F['service'])} npm run --silent {shlex.quote(F['rls']['script'])}")
+            f"run --rm -T --no-deps {shlex.quote(F['service'])} npm run --silent {shlex.quote(script)}")
 
 def print_plan(S, F, steps, say=print):
     say(f"{S['app_id']}: deploy plan for its own server (compose project {S['project']}, never {F['default_project']!r}); nothing is contacted by this --dry-run")
@@ -988,11 +1036,15 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             e = Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
             e.rls = rls; raise e
         say(f"[public] {url} answered 200 ok" + (f" through the console; {', '.join(f'{p} {c[0]}' for p, c in pages.items())}" if F.get("console") else ""))
+        catalogs = None
+        if F.get("catalogs"):   # the upstream catalogs at their pins (mold_v0-128): said, never a reason to go back
+            r = run("catalogs", check=False); catalogs = {"exit": r.returncode, "said": catalogs_said((r.stdout or "") + "\n" + (r.stderr or ""), F["catalogs"])}
+            say(f"    {catalogs['said'] or 'the catalogs index said nothing'}" + (f" (exit {r.returncode}; the server indexes them by itself)" if r.returncode else ""))
         run("keep", check=False)
         health = {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
                   "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}
         if F.get("console"): health.update(console=kv.get("CONSOLE_STATE", ""), console_uid=kv.get("CONSOLE_UID", ""), pages={p: c[0] for p, c in pages.items()})
-        return {"release": release, "facts": facts, "health": health, "rls": rls}
+        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1577,7 +1629,7 @@ def _rollback_said(rec, names):
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run, read_json=None):
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run, read_json=None, catalogs_run=None):
     """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
     anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1707,6 +1759,10 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(ipath, infra); save(os.path.join(adir, "application.json"), app)
     if rls: record_rls(adir, F["rls"], True, rls[1], "by provision.py --deploy", rls[2], rls[3])
+    if F.get("catalogs"):   # the upstream catalogs at their pins (mold_v0-128): after the deploy, said, never a reason to go back
+        rc, said = catalogs_vercel(P, cb, build, api, F["catalogs"], say, catalogs_run)
+        say(f"  {api}: {said}" + (f" (exit {rc}; the server indexes them by itself)" if rc else ""))
+        record_catalogs(adir, said, rc, "by provision.py --deploy, on this machine against the api project's production database")
     fr = ((ck or {}).get("facts") or {}).get("frontend")
     if fr:    # Clerk's own setting (mold_v0-116): said after the deploy, never a reason to roll it back
         reg = clerk_mcp.registration(fr, read_json)
@@ -1912,6 +1968,8 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
         if res.get("rls"):
             record_rls(adir, F["rls"], True, res["rls"]["said"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}",
                        "enforced", "ran in a one-off container of the serving release's image, with the env file its containers read (the same database and login).")
+        if res.get("catalogs"):
+            record_catalogs(adir, res["catalogs"]["said"], res["catalogs"]["exit"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}")
         say(f"{app_id}: deployed release {res['release']} to {S['url']}; health {S['health_path']} answered 200 ok. Next: python3 .claude/scripts/lanes.py {app_id}")
         return 0
     except Stop as e:
