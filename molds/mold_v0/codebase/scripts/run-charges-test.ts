@@ -114,8 +114,13 @@ try {
       assert.equal((await rc.deliverCharges()).stripe, 0);
       assert.equal(meterPosts().length, 0, "off: nothing is sent to Stripe");
       const bill = await (await w.http.req("GET", "/api/app/billing", { authorization: `Bearer ${ta0}` })).json() as Record<string, unknown>;
-      assert.deepEqual(Object.keys(bill).sort(), ["budget_source", "budget_usd", "can_manage", "customer", "enabled", "month_spend_usd", "permissions", "plans", "prepaid_allowed", "subscription"],
+      // onboards_products is not run billing's: mold_v0-100 added it (whether the build's host pack onboards products) and
+      // mold_v0-141 stopped the console reading it (the no-plan notice is the shell text billing.needs_plan); the answer
+      // keeps it for one release, for a console of the release before while a deploy rolls out.
+      assert.deepEqual(Object.keys(bill).sort(), ["budget_source", "budget_usd", "can_manage", "customer", "enabled", "month_spend_usd", "onboards_products", "permissions", "plans", "prepaid_allowed", "subscription"],
         "off: the Billing page's answer has exactly its fields from before");
+      const { hostTable } = await import("../src/host-tables.js");
+      assert.equal(bill.onboards_products, hostTable("products"), "off: onboards_products still says whether the build's host pack onboards products");
       assert.deepEqual(Object.keys(billOff).sort(), Object.keys(bill).sort());
       const admin = await w.http.adminToken("viewer");
       const rev = await (await w.http.req("GET", "/api/admin/onboarding/spend/revenue", { authorization: `Bearer ${admin}` })).json() as Record<string, unknown>;
