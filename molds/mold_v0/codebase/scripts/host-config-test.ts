@@ -14,7 +14,10 @@
 //    shell has, a key two packs declare, a setting in no group; a reword of a tool the shell lacks, two packs rewording one
 //    tool, a summary template that does not parse; a skill the shell lacks, a skill step it no longer reads; a setup step
 //    after a step there is not, a stage step without the session engine, a launch step without a viewer note; and
-//    account_stages from a pack that does not own the engine's tables.
+//    account_stages from a pack that does not own the engine's tables; a shell text the shell does not have, one two packs
+//    write, one with a placeholder that is not the build's; a host.schema label of a table it does not declare.
+// 4. Shell texts (mold_v0-141): a pack's server texts reach PACK_CONFIG, its console texts build-facts TEXTS (none: the
+//    file as before); the server fills a pack's text, else the shell's neutral one; the console the same.
 // 3. The server: the packs' settings in their groups and places, a key the shell has refused; a shell tool reworded (its
 //    summary a template of the result's fields: summaryValues), a skill's steps replaced in pack order, a step the skill no
 //    longer reads refused loudly; the Setup page with the pack's steps (a resource read, optional, the text-only help),
@@ -176,7 +179,35 @@ try {
   refused("an error hint that does not compile", { hosty: hostPack({ mcp: { error_hints: [{ match: "(", text: "Fix it." }] } }) }, /error_hints\[0\]\.match: a regular expression that compiles/);
   refused("account_stages without the engine", { hosty: hostPack({ account_stages: { first_next: "Do it", stages: ["onboarded", "simulated", "reported"].map((id) => ({ id, label: id, next: "n", funnel: id })),
     attention: { failed: "f", first_call: "c", onboarded: "o", simulated: "s" } } }) }, /account_stages: the session engine's stages are the words of the host pack that owns its tables/);
-  console.log("✓ refused: nav.ts and routes.json redirects, a nav entry not the pack's page or from a declarative pack, a shortcut twice, bad settings, rewords and skill steps, bad setup steps and hints, account_stages without the engine");
+  refused("a shell text the shell does not have", { hosty: hostPack({ texts: { "refusal.nothing": "No." } }) }, /texts/);
+  refused("a shell text two packs write", { hosty: hostPack({ texts: { "usage.score": "Hits" } }), plainpack: decl({ texts: { "usage.score": "Points" } }) },
+    /packs\/plainpack\/pack\.json: texts usage\.score: pack hosty writes it too/);
+  refused("a shell text with a placeholder that is not the build's", { hosty: hostPack({ texts: { "refusal.viewer_launch": "Viewers can't run {sims}." } }) },
+    /texts refusal\.viewer_launch: \{sims\} is not a placeholder of the build's words/);
+  refused("a label of a table host.schema does not declare", { hosty: hostPack({ migrations: "migrations", host: { entry: "host.ts", schema: { tables: ["things"], labels: { widgets: "Widgets" } } } }) },
+    /host\.schema\.labels\.widgets: not one of host\.schema\.tables/);
+  console.log("✓ refused: nav.ts and routes.json redirects, a nav entry not the pack's page or from a declarative pack, a shortcut twice, bad settings, rewords and skill steps, bad setup steps and hints, account_stages without the engine, bad shell texts and table labels");
+
+  // ---------- 4. shell texts (mold_v0-141) ----------
+  const TEXTS = { $comment: "x", "refusal.viewer_edit": "Hosty viewers look, never touch.", "admin_roles.support": "Viewer, plus Hosty's {runs}.", "usage.score": "Hits", "journeys.one": "tour" };
+  const worded = world({ hosty: hostPack({ texts: TEXTS }) }, HOST_PROFILE, { "web/src/packs/hosty/index.ts": HOST_WEB["web/src/packs/hosty/index.ts"] });
+  assert.equal(worded.status, 0, worded.out);
+  const wh = read(worded.dir, "src/hosts.generated.ts");
+  const wpc = JSON.parse(wh.slice(wh.indexOf("PACK_CONFIG: readonly unknown[] = ") + "PACK_CONFIG: readonly unknown[] = ".length, wh.lastIndexOf(";")));
+  assert.deepEqual(wpc, [{ pack: "hosty", texts: { "refusal.viewer_edit": TEXTS["refusal.viewer_edit"], "admin_roles.support": TEXTS["admin_roles.support"] } }], "the server's texts in PACK_CONFIG, no $comment");
+  const facts = read(worded.dir, "web/src/config/build-facts.generated.ts");
+  assert.match(facts, /export const TEXTS: Readonly<Record<string, string>> = \{\n  "usage\.score": "Hits",\n  "journeys\.one": "tour"\n\};/, "the console's texts in its build facts");
+  assert.equal(read(plain.dir, "web/src/config/build-facts.generated.ts"), read(zero.dir, "web/src/config/build-facts.generated.ts"), "no texts: the build facts as before");
+  assert.equal(read(zero.dir, "web/src/lib/shell-texts.generated.ts").split("\n").slice(1).join("\n"), read(ROOT, "src/shell-texts.ts"), "the console's copy of the shell's texts");
+  // The console's text(): the pack's, filled, else the shell's.
+  {
+    const web = path.join(worded.dir, "web"), file = path.join(web, "probe-texts.tsx");
+    writeFileSync(file, "import { text } from '@/lib/texts';\nprocess.stdout.write('\\u0001' + JSON.stringify(['usage.score', 'journeys.one', 'journeys.many', 'usage.score_description'].map((t) => text(t as never))));\n");
+    const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr.slice(0, 2000));
+    assert.deepEqual(JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1)), ["Hits", "tour", "guides", "Score of the latest runs in this period."], "the console: a pack's text, else the shell's, filled");
+  }
+  console.log("✓ shell texts: a pack's server texts in PACK_CONFIG, its console texts in build-facts TEXTS (none declared, the file as before); the console fills a pack's text, else the shell's");
 
   // ---------- 3. the server ----------
   const host = await import("../src/host.js");
@@ -206,6 +237,19 @@ try {
   assert.deepEqual(summaryValues({ a: { b: "x", c: [1, 2], d: { e: 3, f: { g: 1 } } }, n: null, BAD: 1, "x-y": 2, t: true }),
     { a_b: "x", a_c_count: 2, a_d_e: 3, n: null, t: true }, "paths joined by _, lists counted, three levels, template names only");
   console.log("✓ server: the packs' settings in their groups and places (a shell key refused), get_account reworded with its summary template, skill steps replaced (a missing one refused)");
+  // The server's shell texts (mold_v0-141): the pack's, its placeholders filled, else the shell's.
+  const { shellText } = await import("../src/texts.js");
+  const { accountRefusal } = await import("../src/account-roles.js");
+  const { roleHelp } = await import("../src/admin-roles.js");
+  host.setPackConfigsForTest([]);
+  assert.equal(accountRefusal("edit").message, "Viewers can read but can't make changes. Ask an account owner to change your role on the Team page.", "the shell's own");
+  assert.equal(shellText("admin_roles.support"), "Viewer, plus access requests, new accounts and invitations.");
+  host.setPackConfigsForTest(wpc);
+  assert.equal(accountRefusal("edit").message, "Hosty viewers look, never touch. Ask an account owner to change your role on the Team page.", "the pack's refusal");
+  assert.equal(roleHelp("support"), "Viewer, plus Hosty's runs.", "the pack's text, its placeholder filled");
+  assert.equal(accountRefusal("launch").message, "Viewers can read reports, usage and transcripts but can't run runs. Ask an account owner to change your role on the Team page.", "a text the pack leaves: the shell's");
+  host.setPackConfigsForTest([cfg]);
+  console.log("✓ server: shell texts from the pack's pack.json texts, filled, else the shell's own");
 
   // The Setup page, as the shell's route answers it.
   host.setPackConfigsForTest([]);

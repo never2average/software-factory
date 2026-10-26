@@ -1,0 +1,10 @@
+{
+  "phase": "P5 (mold_v0-141), a build without the first product (Maxwell: a declarative pack whose run is an audit): the shell's leftovers of the first product's concepts give way to the build's own words or the shell's neutral text; every other answer and page unchanged",
+  "allow": [
+    { "key": "generated::web/src/lib/shell-texts.generated.ts", "reason": "new in every build: gen-packs' copy of src/shell-texts.ts (the shell texts' ids and neutral words) for the console" },
+    { "key": "api::/api/admin/onboarding/admins::body::roles::support::help", "reason": "the Support role's help is the shell text admin_roles.support: the shell's neutral one (no journey tips, the first product's host feature) where no pack writes it" },
+    { "key": "api::/api/admin/onboarding/compute::body::settings::*::help", "reason": "the per-job orchestrators setting's help says the build's run word ({run}: audit), the first product's simulation before" },
+    { "key": "api::/api/admin/onboarding/compute/summary::body::settings::*::help", "reason": "the same setting in the compute summary" },
+    { "key": "api::/api/admin/onboarding/compute/summary::body::knobs::*::meaning", "reason": "APP_ORCH_PER_JOB's meaning says the build's run word ({run}: audit)" }
+  ]
+}

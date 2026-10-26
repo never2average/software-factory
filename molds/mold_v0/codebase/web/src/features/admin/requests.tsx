@@ -27,6 +27,7 @@ import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
 import { accessFields } from '@/config/access-request.generated';
 import { answerText, labelledAnswers, type AccessAnswer } from '@/lib/access-request.generated';
+import { text } from '@/lib/texts';
 
 interface Req {
   id: number;
@@ -415,7 +416,7 @@ function Research({ b, at }: { b: Brief; at: string | null }) {
         {b.audience && <Field label='Audience'>{b.audience}</Field>}
         {b.stage && <Field label='Stage'>{b.stage}</Field>}
         {b.packages.length > 0 && <Field label='Packages'><span className='font-mono text-xs'>{b.packages.join(', ')}</span></Field>}
-        {b.competitors.length > 0 && <Field label='Competitors'>{b.competitors.map((c, i) => (
+        {b.competitors.length > 0 && <Field label={text('requests.research_alternatives')}>{b.competitors.map((c, i) => (
           <span key={c.name}>{i > 0 && ', '}{c.url ? <a className='hover:underline' href={c.url} target='_blank' rel='noopener noreferrer'>{c.name}</a> : c.name}</span>
         ))}</Field>}
       </dl>

@@ -224,15 +224,17 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       checked++;
     }
     if (product) {
+      // The host pack's tables by their stored names (mold_v0-049): the products' child rows and the engine's runs.
+      const CHILD = "scenarios", RUNS = "simulations";
       if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pb])).length) problems.push("products: A reads B's product by id");
       if (!(await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pa])).length) problems.push("products: A cannot read its own product");
       if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ UPDATE products SET name = 'rls probe' WHERE id = $1 RETURNING id", [pb])).length) problems.push("products: A updated B's product");
-      if ((await tx.query("/* tenant: rls probe */ DELETE FROM scenarios WHERE product_id = $1 RETURNING id", [pb])).length) problems.push("scenarios: A deleted B's scenario");
+      if ((await tx.query("/* tenant: rls probe */ DELETE FROM scenarios WHERE product_id = $1 RETURNING id", [pb])).length) problems.push(`${CHILD}: A deleted a row of B's product`);
       checked += 4;
       await refused("products: A inserts a row for B", "INSERT INTO products (org_id, slug, name) VALUES ($1, $2, $2)", [b, `${tag}-x`]);
       await refused("products: A moves its product to B", "/* tenant: rls probe */ UPDATE products SET org_id = $2 WHERE id = $1", [pa, b]);
-      await refused("scenarios: A adds a scenario to B's product", "/* tenant: rls probe, as tenant A on purpose */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, 'x', 'x')", [pb]);
-      if (has.has("simulations")) await refused("simulations: A points its own run at B's product", "/* tenant: rls probe */ INSERT INTO simulations (org_id, product_id, name, models, harness, repeats) VALUES ($1, $2, 'x', '{x}', 'x', 1)", [a, pb]);
+      await refused(`${CHILD}: A adds a row to B's product`, "/* tenant: rls probe, as tenant A on purpose */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, 'x', 'x')", [pb]);
+      if (has.has(RUNS)) await refused(`${RUNS}: A points its own run at B's product`, "/* tenant: rls probe */ INSERT INTO simulations (org_id, product_id, name, models, harness, repeats) VALUES ($1, $2, 'x', '{x}', 'x', 1)", [a, pb]);
       if (has.has("org_task_sets")) await refused("org_task_sets: A attaches its own task set to B's product", "/* tenant: rls probe */ INSERT INTO org_task_sets (public_id, org_id, product_id, name) VALUES ($1, $2, $3, 'x')", [`${tag}-ts`, a, pb]);
     }
     await refused("api_keys: A issues itself a key", "INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, 'x', 'oct_x', $2)", [a, `${tag}-own`]);

@@ -257,7 +257,9 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   global setting, stays the shell's page):
   `web/src/packs/octillion/` (pages, features, `routes.json`), at their old URLs; its sidebar entries, redirects, Setup
   page (steps, workflow, error hints), admin MCP words and account-stage words are pack.json config since mold_v0-140
-  and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`).
+  and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`); the shell's texts that named
+  its concepts (viewer refusals, the Support role's help, the plan example, competitors, journeys, hit rate) and its
+  tables' Storage labels are its pack.json `texts` and `host.schema.labels` since mold_v0-141.
 - **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
   and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
 - **Docs.** The customer guide and the product's internal docs and case studies, as config since mold_v0-139 (its

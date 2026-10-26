@@ -16,6 +16,8 @@ import { Icons } from '@/components/icons';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, useOrgLoad } from './shared';
 import { profile } from '@/config/profile.generated';
+import { text } from '@/lib/texts';
+import { fill } from '@/lib/vocabulary';
 
 interface Week { week: string; partial: boolean }
 interface Usage {
@@ -119,7 +121,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
       <StatStrip className='border-x [&>div:first-child]:pl-4 max-sm:[&>div:nth-child(odd)]:pl-4' items={[
         { label: 'Tool calls', value: num(calls), spark: series.map((d) => d.calls) },
         { label: 'Active people', value: num(u.active_people), spark: u.series?.people ?? series.map((d) => d.people) },
-        { label: 'Simulations run', value: num(u.runs.simulations), spark: u.series?.simulations },
+        { label: fill('{Runs} run'), value: num(u.runs.simulations), spark: u.series?.simulations },
         { label: u.spend.filtered ? 'Their model spend this month' : 'Model spend this month', value: usd(u.spend.month_usd), spark: u.series?.spend }
       ]} />
 
@@ -180,7 +182,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
         </div>
 
         <div className='grid lg:grid-cols-2'>
-          <Box title='Simulations per week' description='Simulations started each week, completed and the rest.'>
+          <Box title={fill('{Runs} per week')} description={fill('{Runs} started each week, completed and the rest.')}>
             {(c?.sims_weekly ?? []).some((w) => w.completed + w.other > 0) ? (
               <ChartContainer config={simsConfig} className='aspect-auto h-[240px] w-full'>
                 <BarChart data={c!.sims_weekly} margin={{ left: 0, right: 8, top: 8 }}>
@@ -193,7 +195,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
                   <ChartLegend content={<ChartLegendContent />} />
                 </BarChart>
               </ChartContainer>
-            ) : <Empty>No simulations in this period.</Empty>}
+            ) : <Empty>{fill('No {runs} in this period.')}</Empty>}
           </Box>
           <Box title='Agent sessions by harness' description='Which coding agents worked your tasks in this period.'>
             <RankBars data={top(c?.harnesses ?? [], (h) => h.sessions).map((h) => ({ name: h.harness, value: h.sessions }))} label='Sessions' color='var(--chart-2)' format={num} mono empty='No agent sessions in this period.' />
@@ -201,7 +203,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
         </div>
 
         <div className='grid lg:grid-cols-2'>
-          <Box title='Model spend per day this month' description={pace ? 'Daily model spend; the dashed line is your allowance spread evenly over the month.' : 'Daily model spend on your simulations this month.'}>
+          <Box title='Model spend per day this month' description={pace ? 'Daily model spend; the dashed line is your allowance spread evenly over the month.' : fill('Daily model spend on your {runs} this month.')}>
             {spendDaily.some((d) => d.usd > 0) ? (
               <ChartContainer config={spendConfig} className='aspect-auto h-[240px] w-full'>
                 <BarChart data={spendDaily} margin={{ left: 0, right: 8, top: 8 }}>
@@ -221,15 +223,15 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
               <RankBars data={c.spend_by.rows.map((r) => ({ name: r.name, value: r.usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No model spend this month.' />
             </Box>
           ) : (
-            <Box title='Spend by simulation' description='Model spend this month on each simulation.'>
+            <Box title={fill('Spend by {run}')} description={fill('Model spend this month on each {run}.')}>
               <RankBars data={(c?.spend_by.rows ?? []).map((r) => ({ name: r.name, value: r.usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No model spend this month.' />
             </Box>
           )}
         </div>
 
-        <Box title='Recent simulations' description='Hit rate of the latest simulations in this period: how often agents picked your product.'>
+        <Box title={fill('Recent {runs}')} description={text('usage.score_description')}>
           <RankBars data={(c?.recent ?? []).filter((r) => r.scored > 0).map((r) => ({ name: r.name, value: r.hit_pct ?? 0 }))}
-            color='var(--chart-2)' format={(v) => `${v}%`} label='Hit rate' empty='No scored simulations in this period.' />
+            color='var(--chart-2)' format={(v) => `${v}%`} label={text('usage.score')} empty={fill('No scored {runs} in this period.')} />
         </Box>
         {u.run_usage && <RunUsage r={u.run_usage} />}
       </div>

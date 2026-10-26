@@ -40,6 +40,7 @@ import { KEY_PREFIX } from '@/lib/namespace';
 import { W } from '@/lib/vocabulary';
 import { kindLabel, packRuns, sessionEngine } from './engine';
 import { PackRunKinds } from './compute-runs';
+import { text } from '@/lib/texts';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -761,7 +762,7 @@ function PlanExperiment({ plan, experiments, onClose }: { plan: RevenuePlan; exp
  * those for its sessions only); a build without it meters model spend.
  */
 const PLAN_TEMPLATE = sessionEngine() ? {
-  name: 'Growth', description: 'For product teams tracking their agent pick rate every week', interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
+  name: 'Growth', description: text('plans.example_description'), interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
   usage: [
     { metric: 'model_spend', included_usd: 150, tiers: [{ up_to_usd: 2000, markup: 1.3 }, { up_to_usd: null, markup: 1.15 }] },
     { metric: 'agent_sessions', included: 500, unit_price_usd: 0.08 },
@@ -770,7 +771,7 @@ const PLAN_TEMPLATE = sessionEngine() ? {
   ],
   experiment: '', weight: 1, metadata: {}
 } : {
-  name: 'Growth', description: `For teams using ${profile.name} every week`, interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
+  name: 'Growth', description: text('plans.example_description'), interval: 'month', base_fee_usd: 499, trial_days: 14, monthly_budget_usd: 3000,
   usage: [
     { metric: 'model_spend', included_usd: 150, tiers: [{ up_to_usd: 2000, markup: 1.3 }, { up_to_usd: null, markup: 1.15 }] }
   ],

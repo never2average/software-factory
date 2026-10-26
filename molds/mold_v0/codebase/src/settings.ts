@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { defaultSender } from "./profile.js";
 import { packConfigs } from "./host.js";
+import { fill } from "./vocabulary.js";
 import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
 
 /**
@@ -55,7 +56,7 @@ export const SETTINGS: SettingDef[] = [
   { key: ENGINE_SETTINGS.maxOrchestrators, group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
     help: "Most shared orchestrators the autoscaler keeps running at once." },
   { key: ENGINE_SETTINGS.maxJobOrchestrators, group: "capacity", label: "Per-job orchestrators", kind: "int", default: 12, min: 1, max: 1000,
-    help: "Most one-job orchestrators (one per simulation or research job) running at once." },
+    help: "Most one-job orchestrators (one per {run} or research job) running at once." },
   { key: ENGINE_SETTINGS.jobPodCapacity, group: "capacity", label: "Worker sandboxes per job", kind: "int", default: 40, min: 1, max: 50,
     help: "Worker sandboxes one per-job orchestrator runs at once." },
   { key: "BOAT_SANDBOX_SIZE", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
@@ -92,7 +93,8 @@ export function settingGroups(): { id: SettingGroup; label: string }[] {
  */
 export function allSettings(): SettingDef[] {
   const order = new Map(settingGroups().map((g, i) => [g.id, i]));
-  const all: SettingDef[] = [...SETTINGS];
+  // The shell's help in the build's words ({run}: src/vocabulary.ts, mold_v0-141); a pack's own is its words already.
+  const all: SettingDef[] = SETTINGS.map((d) => ({ ...d, help: fill(d.help) }));
   for (const c of packConfigs()) for (const { before, ...d } of c.settings?.defs ?? []) {
     if (all.some((x) => x.key === d.key)) throw new Error(`pack ${c.pack}: pack.json settings.defs ${d.key} is a setting the build already has`);
     const at = before ? all.findIndex((x) => x.key === before) : -1;

@@ -24,6 +24,7 @@ import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
+import { SHELL_TEXTS, SHELL_TEXT_IDS } from "./shell-texts.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -123,6 +124,15 @@ const AccountStagesSchema = z.object({
   attention: z.object({ failed: plain(120), first_call: plain(120), onboarded: plain(120), simulated: plain(120) }).strict(),
 }).strict();
 
+/**
+ * The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): by id, each one sentence or label on one
+ * line, its word placeholders the shell's (scripts/gen-packs.mjs checks those, and that one pack writes each text).
+ */
+const TextsSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  ...Object.fromEntries(SHELL_TEXT_IDS.map((t) => [t, plain(400).describe(`${SHELL_TEXTS[t].where}. The shell's own: ${SHELL_TEXTS[t].text}`).optional()])),
+}).strict();
+
 /** One sidebar entry of a host pack (mold_v0-140): one of its own pages in that console, its icon, an optional shortcut (g then a key). */
 const NavItemSchema = (area: "/app" | "/admin") => z.object({
   title: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/, "plain text: no braces or angle brackets"),
@@ -210,6 +220,8 @@ export const PackJsonSchema = z.object({
       references: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}\.[a-z][a-z0-9_]{1,62}$/, "table.column"), z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name")).optional(),
       functions: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a function name")).max(50).optional(),
       adopts: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a shell migration (NNNN_name)")).optional(),
+      /** Each table's label in the product's words (mold_v0-141): the Storage page's name for it (src/host-tables.ts hostTableLabel); else its name, capitalised. */
+      labels: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name"), plain(60)).optional(),
     }).strict().optional(),
   }).strict().optional(),
   /**
@@ -277,6 +289,8 @@ export const PackJsonSchema = z.object({
   settings: SettingsSchema.optional(),
   /** The session engine's account stages in the words of the host pack that owns its tables (mold_v0-121; AccountStagesSchema above). */
   account_stages: AccountStagesSchema.optional(),
+  /** The shell's texts in the product's words (mold_v0-141; TextsSchema above). */
+  texts: TextsSchema.optional(),
   /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
   setup: SetupSchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */

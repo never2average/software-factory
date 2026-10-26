@@ -1,0 +1,9 @@
+{
+  "phase": "P5 (mold_v0-141): the shell's last concept words of the first product come from pack words: its shell texts (pack.json texts: the viewer refusals, the Support role's help, Billing's no-plan notice, the plan example, the research brief's competitors, the tip dock's journey field, the journeys' nouns on Setup, the usage page's hit rate), its tables' Storage labels (host.schema.labels) and the session engine's {run} placeholders; every answer, page, email, limit and refusal unchanged",
+  "allow": [
+    { "key": "generated::src/hosts.generated.ts", "reason": "the pack's server texts (refusal.viewer_launch, refusal.viewer_edit, admin_roles.support) join its PACK_CONFIG as texts; a build that writes none writes the file as before" },
+    { "key": "generated::web/src/config/build-facts.generated.ts", "reason": "the pack's console texts are written here as TEXTS (Billing's no-plan notice, the plan example, competitors, the tip dock's journey field, journeys, hit rate); a build that writes none writes the file as before" },
+    { "key": "generated::src/pack-migrations.generated.ts", "reason": "the host pack's table labels (host.schema.labels) are written here as HOST_TABLE_LABELS, the Storage page's names, which the shell's src/spend-usage.ts spelled before; a build with none writes the file as before" },
+    { "key": "generated::web/src/lib/shell-texts.generated.ts", "reason": "new in every build: gen-packs' copy of src/shell-texts.ts (the shell texts' ids and neutral words) for the console, as web/src/lib/words.generated.ts copies the words engine" }
+  ]
+}

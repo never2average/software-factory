@@ -17,10 +17,11 @@
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
+//   web/src/lib/shell-texts.generated.ts a copy of src/shell-texts.ts, the shell's texts a pack may write (mold_v0-141)
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
 //                                        their pack.json engine.config (mold_v0-137) when one declares it, and every pack's
 //                                        server config (PACK_CONFIG, mold_v0-140: settings, admin_mcp, setup,
-//                                        mcp.error_hints, account_stages) when one declares any
+//                                        mcp.error_hints, account_stages; texts, mold_v0-141) when one declares any
 //   web/src/config/pack-host-nav.generated.ts  the host packs' sidebar entries and the shell components they serve
 //                                        (pack.json console.nav, console.components; mold_v0-140)
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
@@ -83,7 +84,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The words engine (mold_v0-100): plain TypeScript node runs as it is (types stripped), shared with the server and the console.
 const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
-const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
+const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, unknownPlaceholders, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
+// The shell's texts a pack may write in its product's words (mold_v0-141): plain TypeScript with no imports, as the words engine.
+const { SHELL_TEXTS } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-texts.ts")).href);
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
@@ -140,7 +143,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
-  "account_stages"]);
+  "account_stages",
+  // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
+  "texts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -522,7 +527,7 @@ function hostSchemaOf(m, dirName, where) {
   const IDENT = /^[a-z][a-z0-9_]{1,62}$/;
   if (!HOST_PACKS.has(dirName)) { fail(where, "host.schema: only a host pack of this build may declare its own tables"); return null; }
   if (!sc || typeof sc !== "object" || Array.isArray(sc)) { fail(where, "host.schema must be an object {tables, functions?, adopts?}"); return null; }
-  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
+  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references", "labels"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
   const list = (v, what) => Array.isArray(v) && v.every((x) => typeof x === "string" && IDENT.test(x)) && new Set(v).size === v.length ? v : (fail(where, `host.schema.${what} must be a list of distinct lowercase names`), []);
   const tables = list(sc.tables, "tables");
   if (!tables.length) fail(where, "host.schema.tables names no table");
@@ -546,8 +551,22 @@ function hostSchemaOf(m, dirName, where) {
       else references[k] = v;
     }
   }
+  // Each table's label in the product's words (mold_v0-141: the Storage page's names for them, src/host-tables.ts
+  // hostTableLabel), apart from the schema: words, not storage.
+  const labels = {};
+  if (sc.labels !== undefined) {
+    if (!sc.labels || typeof sc.labels !== "object" || Array.isArray(sc.labels)) fail(where, "host.schema.labels must be an object of table -> label");
+    else for (const [k, v] of Object.entries(sc.labels)) {
+      if (!tables.includes(k)) fail(where, `host.schema.labels.${k}: not one of host.schema.tables`);
+      else if (typeof v !== "string" || !v.trim() || v.length > 60 || /[<>{}"`\\\r\n]/.test(v)) fail(where, `host.schema.labels.${k}: a label of 1 to 60 characters, no markup, braces, quotes or line breaks`);
+      else labels[k] = v.trim();
+    }
+  }
+  hostTableLabels.push(...Object.entries(labels));
   return { tables, functions, adopts, platform_read: platformRead, references };
 }
+/** The host packs' table labels (host.schema.labels, mold_v0-141), in pack order. */
+const hostTableLabels = [];
 
 function loadPack(dirName) {
   const dir = path.join(PACKS_DIR, dirName);
@@ -1395,7 +1414,10 @@ files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
   "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
-  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
+  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n` +
+  // Their tables' labels (mold_v0-141: host.schema.labels), only when one names any (a build without writes what it did).
+  (hostTableLabels.length ? "/** A host pack's tables' labels in its product's words (pack.json host.schema.labels): the Storage page's names for them (src/host-tables.ts). */\n" +
+    `export const HOST_TABLE_LABELS: Readonly<Record<string, string>> = ${json(Object.fromEntries(hostTableLabels))};\n` : ""));
 // What the admin console's shared pages show for this build (mold_v0-104): the host pack's own tables (the console's
 // copy of src/host-tables.ts reads them, so the session engine's sections show only in a build that has its tables)
 // and every job kind the packs declare, with its label (the pack's runs, in its words, where those sections were).
@@ -1418,6 +1440,8 @@ const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
 /** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
 let engineWords = null;
+/** The shell's console texts the packs write (mold_v0-141: pack.json texts), and which pack writes each text. */
+const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
@@ -1462,9 +1486,32 @@ const packConfig = [];
     if (j.account_stages && !ownsEngine) fail(at, "account_stages: the session engine's stages are the words of the host pack that owns its tables (host.schema: products, scenarios, simulations, agent_sessions)");
     else if (ownsEngine && !j.account_stages) fail(at, "account_stages: this pack owns the session engine's tables, so it names the engine's account stages (each stage's label, next step and funnel label, the next step after the first tool call, the attention messages)");
     else if (j.account_stages) { const { $comment: _c, ...rest } = j.account_stages; c.account_stages = rest; engineWords = rest; }
+    // The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): one pack's per text, placeholders the
+    // shell's; the server's go in its config, the console's in its build facts (consoleTexts, below).
+    if (j.texts) {
+      const server = {};
+      for (const [tid, text] of Object.entries(j.texts)) {
+        if (tid === "$comment") continue;
+        const def = SHELL_TEXTS[tid];
+        if (!def) { fail(at, `texts ${tid}: not one of the shell's texts (${Object.keys(SHELL_TEXTS).join(", ")})`); continue; }
+        if (textOwner.has(tid)) { fail(at, `texts ${tid}: pack ${textOwner.get(tid)} writes it too: one pack's words`); continue; }
+        textOwner.set(tid, p.id);
+        const unknown = unknownPlaceholders(text);
+        if (unknown.length) fail(at, `texts ${tid}: ${unknown.map((u) => `{${u}}`).join(", ")} is not a placeholder of the build's words (src/words.ts)`);
+        if (def.side === "server") server[tid] = text; else consoleTexts[tid] = text;
+      }
+      if (Object.keys(server).length) c.texts = server;
+    }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
   refuse();
+}
+// The shell's console texts in the packs' words (mold_v0-141: pack.json texts; web/src/lib/texts.ts fills them, else the
+// shell's own from src/shell-texts.ts), only when a pack writes one: a build without writes what it did.
+if (Object.keys(consoleTexts).length) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The shell's console texts the packs write in their product's words (mold_v0-141: pack.json texts), as templates of the build's words. */\n" +
+    `export const TEXTS: Readonly<Record<string, string>> = ${json(consoleTexts)};\n`);
 }
 // The session engine's account-stage words for the console's Accounts pages (mold_v0-121), only in a build with the engine.
 if (engineWords) {
@@ -1767,6 +1814,9 @@ files.set(path.join(OUT, "web", "src", "config", "vocabulary.generated.ts"), HEA
   `export const WORDS = ${json(buildWords)} as const;\n`);
 files.set(path.join(OUT, "web", "src", "lib", "words.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/words.ts (a copy, so the console runs the server's words engine)") + readFileSync(WORDS_ENGINE, "utf8"));
+// The shell's texts (mold_v0-141): the console's copy of their list and neutral words, as the words engine's.
+files.set(path.join(OUT, "web", "src", "lib", "shell-texts.generated.ts"),
+  HEADER.replace("from packs/*/pack.json and profile.json", "from src/shell-texts.ts (a copy, so the console has the shell's texts)") + readFileSync(path.join(HERE, "..", "src", "shell-texts.ts"), "utf8"));
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);

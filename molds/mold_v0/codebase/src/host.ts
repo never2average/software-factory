@@ -145,6 +145,7 @@ export interface WorkerHelpers {
  *               replaces one exact passage; the build is refused when a skill no longer reads `from`)
  *   setup       the Setup page's own steps and workflow (src/app.ts setup): `steps`, `shell_steps`, `viewer_note`, `workflow`
  *   error_hints pack.json mcp.error_hints: a plain-language fix for a tool error people hit, by a pattern of its text
+ *   texts       the shell's server-side texts in the product's words (mold_v0-141; src/shell-texts.ts, src/texts.ts)
  */
 export interface PackConfig {
   pack: string;
@@ -156,6 +157,7 @@ export interface PackConfig {
   setup?: SetupConfig;
   error_hints?: { match: string; text: string }[];
   account_stages?: AccountStagesConfig;
+  texts?: Partial<Record<import("./shell-texts.js").ShellTextId, string>>;
 }
 /**
  * The session engine's account stages in the product's words (mold_v0-121, mold_v0-140: pack.json account_stages, the

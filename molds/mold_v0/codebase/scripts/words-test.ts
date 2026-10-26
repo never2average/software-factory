@@ -21,6 +21,7 @@ import { setPacksForTest, type GeneratedPack } from "../src/packs.js";
 import { explain, parsePolicy, refusal, runsAtOnceError, LimitError } from "../src/limits.js";
 import { accountRefusal, accountRoleHelp, ACCOUNT_ROLES } from "../src/account-roles.js";
 import { roleHelp } from "../src/admin-roles.js";
+import { setPackConfigsForTest } from "../src/host.js";
 import { fill, vocabulary, word } from "../src/vocabulary.js";
 import { BASE_WORDS, fillWith, pluralWord, resolveWords, unknownPlaceholders } from "../src/words.js";
 import { checkConcepts, type Concepts } from "./lib/concepts.js";
@@ -95,7 +96,7 @@ try {
     try { parsePolicy(policy, p as any, 100); } catch (e) { assert.ok(e instanceof LimitError); return e.message; }
     throw new Error(`parsePolicy accepted ${JSON.stringify(p)}`);
   };
-  const messages = (products: boolean) => {
+  const messages = () => {
     const run = { max_sessions: 3, max_run_usd: null };
     return {
       explain_no_allowance: explain(picture({ cap: 0 }), "u1", run, NOW)[0]!,
@@ -111,9 +112,11 @@ try {
       policy_money: policyError({ max_run_usd: "lots" }),
       policy_min: policyError({ max_run_usd: 0.001 }),
       policy_cap: policyError({ max_run_usd: 500 }),
-      viewer_launch: accountRefusal("launch", products).message,
+      viewer_launch: accountRefusal("launch").message,
+      viewer_edit: accountRefusal("edit").message,
       ...Object.fromEntries(ACCOUNT_ROLES.map((r) => [`role_${r}`, accountRoleHelp(r)])),
       admin_operator: roleHelp("operator"),
+      admin_support: roleHelp("support"),
     } as Record<string, string>;
   };
   // A concept word in a message, the profile's name (the contact) aside: it is the build's own, whatever it is.
@@ -121,7 +124,7 @@ try {
   const concepts = (v: string) => CONCEPT.test(v.replaceAll(PROFILE.name, "<name>"));
 
   setPacksForTest([]);
-  const zero = messages(false);
+  const zero = messages();
   assert.deepEqual(Object.entries(zero).filter(([, v]) => concepts(v)), [], "zero packs: no message names a concept word");
   assert.equal(zero.explain_no_allowance, `Your account has no prepaid allowance this month, so nobody can launch runs. Contact ${PROFILE.name} to add one.`);
   assert.equal(zero.refusal_no_allowance, `Your account has no prepaid allowance this month, so runs can't run. Contact ${PROFILE.name}.`);
@@ -129,12 +132,14 @@ try {
   assert.equal(zero.runs_at_once_1!.split(";")[0], "You have 1 run running");
   assert.equal(zero.policy_cap, "A run can't spend more than your $100.00 allowance.");
   assert.equal(zero.viewer_launch, "Viewers can read reports, usage and transcripts but can't run runs. Ask an account owner to change your role on the Team page.",
-    "no host pack with products: no product onboarding in the refusal");
+    "no pack's texts: the shell's own refusal");
+  assert.equal(zero.viewer_edit, "Viewers can read but can't make changes. Ask an account owner to change your role on the Team page.");
+  assert.equal(zero.admin_support, "Viewer, plus access requests, new accounts and invitations.");
   ok(`zero packs: ${Object.keys(zero).length} messages say "run", none a concept word; the contact is the profile's ${PROFILE.name}`);
 
   setPacksForTest([pack("fixture_audit", { workspace: "company", run: "audit" })]);
   assert.equal(word("Runs"), "Audits");
-  const audit = messages(false);
+  const audit = messages();
   assert.deepEqual(Object.entries(audit).filter(([, v]) => concepts(v)), [], "run = audit: no message names a concept word");
   const pick = (m: Record<string, string>, keys: string[]) => Object.fromEntries(keys.map((k) => [k, m[k]]));
   const KEYS = ["explain_no_allowance", "explain_not_allowed", "explain_at_once_1", "explain_at_once_2", "explain_each_run", "refusal_no_allowance", "refusal_launch_access",
@@ -161,9 +166,15 @@ try {
 
   // The first product's host pack words: the literal sentences of src/limits.ts, src/account-roles.ts and
   // src/admin-roles.ts before mold_v0-100, its name being the host build's profile name.
+  // Its pack.json texts (mold_v0-141) write the refusals and the Support role's help in its words, as the shell did.
   setPacksForTest([pack("host_product", { run: "simulation" })]);
+  setPackConfigsForTest([{ pack: "host_product", texts: {
+    "refusal.viewer_launch": "Viewers can read reports, usage and transcripts but can't run {runs} or onboard products.",
+    "refusal.viewer_edit": "Viewers can read but can't change context, products, memory or use cases.",
+    "admin_roles.support": "Viewer, plus access requests, new accounts, invitations and journey tips.",
+  } }]);
   const NAME = PROFILE.name;
-  assert.deepEqual(messages(true), {
+  assert.deepEqual(messages(), {
     explain_no_allowance: `Your account has no prepaid allowance this month, so nobody can launch simulations. Contact ${NAME} to add one.`,
     explain_not_allowed: "You haven't been allowed to launch simulations yet. Reports and transcripts stay available.",
     explain_at_once_1: "You can have 1 simulation running at once.",
@@ -178,12 +189,15 @@ try {
     policy_min: "Most a simulation can spend must be at least $0.01, or empty for no limit.",
     policy_cap: "A simulation can't spend more than your $100.00 allowance.",
     viewer_launch: "Viewers can read reports, usage and transcripts but can't run simulations or onboard products. Ask an account owner to change your role on the Team page.",
+    viewer_edit: "Viewers can read but can't change context, products, memory or use cases. Ask an account owner to change your role on the Team page.",
     role_viewer: "Reads usage, adoption, reports and context. Can't run simulations or change anything.",
     role_member: "Runs simulations within Budget rules and keeps their own context and memory.",
     role_billing: "A member who also manages billing, the plan and Budget rules. Can't manage the team.",
     role_owner: "Everything, including the team: invite people, remove them and change roles.",
     admin_operator: "Support, plus compute, harnesses, agent configuration, the library, account edits and simulations.",
+    admin_support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
   }, "the host pack's words give back the shell's sentences unchanged");
+  setPackConfigsForTest([]);
   ok("run = \"simulation\" (the first product's host pack words): every message is the sentence from before, byte for byte");
 
   // ---------- 4. the concept-word ratchet ----------
