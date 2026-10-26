@@ -12,7 +12,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 # The run tools the packs' agent kinds declare (mold_v0-072; src/run-tools.generated.json, written by gen-packs): each
 # at its pinned version, its artifact checked against src/run-tools.ts's sha256 before it is unpacked into
 # /opt/app-tools (root's). A run never downloads a tool: the harness checks these and refuses a kind the image lacks.
-COPY src/run-tools.ts src/run-tools.generated.json ./src/
+# run-tools.ts reads its settings through the env names (src/env-names.ts, which re-exports orchestrator/core/env-names.ts).
+COPY src/run-tools.ts src/run-tools.generated.json src/env-names.ts ./src/
+COPY orchestrator/core/env-names.ts ./orchestrator/core/
 COPY scripts/install-run-tools.ts ./scripts/
 RUN apt-get update && apt-get install -y --no-install-recommends git nftables iptables ca-certificates unzip \
  && rm -rf /var/lib/apt/lists/* \
