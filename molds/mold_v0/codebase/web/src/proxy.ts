@@ -1,6 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest } from 'next/server';
 import { BUILTIN_SESSION_COOKIES, CLERK } from '@/lib/auth/provider';
+import { isConsoleAddress, notFoundPageFor } from '@/lib/console-routes';
 
 // The admin panel and the portal need a signed-in Clerk user; who may see /admin is checked by the API server
 // (platform admins), and the portal's account by the user's Clerk organization.
@@ -15,7 +16,25 @@ const isProtected = createRouteMatcher(['/admin', '/admin/((?!session$|mcp$).*)'
 function withPath(req: NextRequest) {
   const h = new Headers(req.headers);
   h.set('x-console-path', req.nextUrl.pathname + req.nextUrl.search);
+  const unknown = notFoundRewrite(req);
+  if (unknown) return NextResponse.rewrite(unknown, { status: 404, request: { headers: h } });
   return NextResponse.next({ request: { headers: h } });
+}
+
+/**
+ * An address that is no page of this build (mold_v0-155, src/lib/console-routes.ts): the area's not-found page, a page
+ * of its own drawn on the server, with status 404 (a page that throws notFound() is drawn in the browser only). Only a
+ * browser opening the page: a navigation inside the console (its RSC requests) meets the area's not-found.tsx as
+ * before. A page that refuses or redirects (the admin console for someone who is not staff: 403; signed out: sign-in)
+ * still answers with its own status.
+ */
+function notFoundRewrite(req: NextRequest): URL | null {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return null;
+  if (req.headers.has('rsc') || req.headers.has('next-router-prefetch') || req.nextUrl.searchParams.has('_rsc')) return null;
+  const path = req.nextUrl.pathname;
+  // The console's areas only (/__clerk is Clerk's).
+  if (!/^\/(app|admin|auth|console-status)(\/|$)/.test(path) || isConsoleAddress(path)) return null;
+  return new URL(notFoundPageFor(path), req.url);
 }
 
 /**
@@ -54,5 +73,6 @@ export default CLERK ? clerk : builtin;
 
 export const config = {
   // Only the web app's own pages; /mcp, /api and the rest go straight to the API server (next.config.ts).
-  matcher: ['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)', '/auth(.*)', '/__clerk/(.*)']
+  // And the console's own not-found page, which the API server relays (src/status-pages.ts): a 404 drawn on the server.
+  matcher: ['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)', '/auth(.*)', '/__clerk/(.*)', '/console-status/(.*)']
 };
