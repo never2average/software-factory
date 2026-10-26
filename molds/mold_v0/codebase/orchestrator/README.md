@@ -36,7 +36,7 @@ orchestrator/
 
 - **Host guard** (`core/host-guard.ts`). The orchestrator refuses to start unless all of the following hold:
   - `APP_HOST_ROLE=boat-orchestrator`;
-  - the launcher's root-owned marker `/etc/octillion/host-role` is present;
+  - the launcher's root-owned marker `/etc/app/host-role` is present;
   - boat's own indicators are present (`BOAT_ID`/`BOX_ID` and `/etc/ascii` + `/home/user/.ascii`, seen on live boat VMs);
   - `BOAT_ID` equals the marker's sandbox id;
   - `RUNNER=boat`.

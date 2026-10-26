@@ -140,7 +140,7 @@ The key needs to create and delete sandboxes and save named snapshots.
   CLIs use `#!/usr/bin/env node`.
 - Verifies the install the way the worker runs it: as an unprivileged user, under `env -i` with
   `PATH=/usr/local/bin:/usr/bin:/bin`, checking `--version` against the pin.
-- Writes `/etc/octillion/harnesses/<harness>.json` (harness, bin, path, version).
+- Writes `/etc/app/harnesses/<harness>.json` (harness, bin, path, version).
 - Cleans the npm caches.
 
 It writes no keys, config, rules or MCP servers.
@@ -156,7 +156,7 @@ The boat runner currently creates sandboxes without `from`. To use the snapshots
 - Create session VMs with `{"from": agent.image.boat_snapshot, "noEnv": true, ...}`.
 - Keep `snapshots:false` on *session* VMs only. The bake VM needs snapshots on.
 - Put `/usr/local/bin` first on the agent user's PATH.
-- Optionally assert that `/etc/octillion/harnesses/<harness>.json` matches the registry version before running.
+- Optionally assert that `/etc/app/harnesses/<harness>.json` matches the registry version before running.
 
 ## Adding a harness
 

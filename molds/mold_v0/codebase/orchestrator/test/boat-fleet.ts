@@ -36,7 +36,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const probe = (env: Record<string, string>, files: Record<string, string | true>): HostProbe => ({
   env, exists: (p) => p in files, read: (p) => (typeof files[p] === "string" ? (files[p] as string) : null),
 });
-const boatFiles = { "/etc/ascii": true as const, "/home/user/.ascii": true as const, "/etc/octillion/host-role": '{"role":"boat-orchestrator","sandbox_id":"bx_abcd2345"}' };
+const boatFiles = { "/etc/ascii": true as const, "/home/user/.ascii": true as const, "/etc/app/host-role": '{"role":"boat-orchestrator","sandbox_id":"bx_abcd2345"}' };
 const boatEnv = { APP_HOST_ROLE: "boat-orchestrator", BOAT_ID: "bx_abcd2345" };
 const g1 = checkHost("boat", probe({}, {}));
 const g2 = checkHost("local", probe(boatEnv, boatFiles));
