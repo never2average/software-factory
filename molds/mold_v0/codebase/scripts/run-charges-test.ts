@@ -322,7 +322,7 @@ try {
     assert.equal((await charge(dn.run.id)).delivery, "stripe", "then sent");
     assert.equal(stripe.meterEvents.filter((e: { identifier: string }) => e.identifier === `run_charge:${dn.run.id}`).length, 1, "once");
     // The function is a no-op for a run already charged; the backstop writes a missing charge once.
-    const [{ again }] = await w.db.query<{ again: string | null }>("SELECT octillion_run_charge($1)::text AS again", [flat.run.id]);
+    const [{ again }] = await w.db.query<{ again: string | null }>("SELECT app_run_charge($1)::text AS again", [flat.run.id]);
     assert.equal(again, null, "writing a run's charge again does nothing");
     await w.db.query("DELETE FROM run_charges WHERE run_id = $1 AND kind = 'charge'", [gr.run.id]);
     assert.equal(await rc.reconcileCharges(), 1, "the backstop writes the one missing charge");
@@ -341,7 +341,7 @@ try {
     const seenByB = await withTenant(B.orgId, async () => w.db.query<{ org_id: number }>("SELECT org_id FROM run_charges"));
     assert.ok(seenByB.length > 0 && seenByB.every((r) => r.org_id === B.orgId), "under row-level security B reads its own charges only");
     await assert.rejects(withTenant(B.orgId, async () => w.db.query("/* tenant: test */ UPDATE run_charges SET amount_minor = 0 WHERE org_id = $1", [B.orgId])), /permission denied/, "and changes none of them");
-    await assert.rejects(withTenant(A.orgId, async () => w.db.query("SELECT octillion_run_charge($1)", [flat.run.id])), /permission denied/, "nor writes one through the shell's function");
+    await assert.rejects(withTenant(A.orgId, async () => w.db.query("SELECT app_run_charge($1)", [flat.run.id])), /permission denied/, "nor writes one through the shell's function");
     const tb = await w.http.signIn(B, "owner"), ta = await w.http.signIn(A, "owner"), tm = await w.http.signIn(A, "member");
     const billA = await (await w.http.req("GET", "/api/app/billing", { authorization: `Bearer ${ta}` })).json() as any;
     const billB = await (await w.http.req("GET", "/api/app/billing", { authorization: `Bearer ${tb}` })).json() as any;
