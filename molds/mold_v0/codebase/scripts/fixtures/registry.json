@@ -19,8 +19,8 @@
       "enabled": true,
       "harness_version": "2.1.296",
       "image": {
-        "docker": "octillion/agent-claude-code:2.1.296",
-        "boat_snapshot": "octillion-claude-code-2.1.296"
+        "docker": "app/agent-claude-code:2.1.296",
+        "boat_snapshot": "app-claude-code-2.1.296"
       },
       "requires_env": [
         "SMOKE_LLM_API_KEY",

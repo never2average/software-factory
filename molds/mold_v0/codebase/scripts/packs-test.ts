@@ -83,7 +83,7 @@ try {
     refused("leaving the workspace's scope", tryPack("pk", { "index.ts": `import { definePack } from "$API";\nconst q = "RESET ROLE";\nexport default definePack({ id: "pk" });\n` }), /SET\/RESET ROLE/);
     refused("asPlatform", tryPack("pk", { "index.ts": `import { definePack } from "$API";\n// asPlatform(() => 1)\nexport default definePack({ id: "pk" });\n` }), /asPlatform/);
     // The review's exploit (mold_v0-038): a comment marker inside a string must not hide a statement from the checks.
-    refused("a statement hidden between quoted comment markers", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nCOMMENT ON TABLE pk_notes IS '/*';\nCREATE POLICY leak ON products FOR SELECT USING (org_id = octillion_tenant_org() OR org_id = 1);\nCOMMENT ON TABLE pk_notes IS '*/';\n` }), /policies/);
+    refused("a statement hidden between quoted comment markers", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nCOMMENT ON TABLE pk_notes IS '/*';\nCREATE POLICY leak ON products FOR SELECT USING (org_id = app_tenant_org() OR org_id = 1);\nCOMMENT ON TABLE pk_notes IS '*/';\n` }), /policies/);
     refused("a -- marker inside a string", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nINSERT INTO pk_notes (org_id, body) VALUES (1, '--'); GRANT ALL ON products TO PUBLIC;\n` }), /uses GRANT/);
     refused("ALTER TABLE … INHERIT a shell table", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nALTER TABLE pk_notes INHERIT schema_migrations;\n` }), /may only add, drop, alter or rename/);
     refused("an escape string", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nINSERT INTO pk_notes (org_id, body) VALUES (1, E'\\'');\n` }), /escape/);
@@ -109,7 +109,7 @@ try {
       refused("asPlatform in runner code", tryPack("pk", { "runner/run.mjs": `// asPlatform\n` }, R), /asPlatform/);
       refused("SET ROLE in runner code", tryPack("pk", { "runner/run.mjs": `import { spawnSync } from "node:child_process";\nspawnSync("psql", ["-c", "SET ROLE postgres"]);\n` }, R), /SET\/RESET ROLE/);
       refused("set_config in runner code", tryPack("pk", { "runner/run.mjs": `const q = "select set_config('x', '1', false)";\n` }, R), /set_config/);
-      refused("the tenant setting in runner code", tryPack("pk", { "runner/run.mjs": `const s = "octillion.org_id";\n` }, R), /the tenant setting/);
+      refused("the tenant setting in runner code", tryPack("pk", { "runner/run.mjs": `const s = "app.org_id";\n` }, R), /the tenant setting/);
       refused("createRequire in runner code", tryPack("pk", { "runner/run.mjs": `import { createRequire } from "node:module";\n` }, R), /module loader|imports node:module/);
       refused("a computed import in runner code", tryPack("pk", { "runner/run.mjs": `const m = await import("node:" + "child_process");\n` }, R), /dynamic import of anything but one string literal/);
       refused("TypeScript in the runner directory", tryPack("pk", { "runner/run.ts": `export const x = 1;\n` }, R), /a \.js or \.mjs file/);
@@ -156,8 +156,8 @@ export default defineHost({ id: "${HOST}" });
       };
       const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
         "CREATE INDEX IF NOT EXISTS widgets_org_idx ON widgets (org_id);\n";
-      const SEC = "DO $mig$\nDECLARE r TEXT := octillion_tenant_role();\nBEGIN\n  ALTER TABLE widgets ENABLE ROW LEVEL SECURITY;\n" +
-        "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = octillion_tenant_org())', r);\n" +
+      const SEC = "DO $mig$\nDECLARE r TEXT := app_tenant_role();\nBEGIN\n  ALTER TABLE widgets ENABLE ROW LEVEL SECURITY;\n" +
+        "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = app_tenant_org())', r);\n" +
         "  EXECUTE format('GRANT SELECT ON widgets TO %I', r);\nEND $mig$;\n";
       const FN = "CREATE OR REPLACE FUNCTION widget_score(n TEXT) RETURNS INT LANGUAGE sql IMMUTABLE AS $$ SELECT length(n) $$;\n";
       const S = { tables: ["widgets"], functions: ["widget_score"], adopts: { "0001_widgets": "0001_baseline" } };
@@ -169,7 +169,7 @@ export default defineHost({ id: "${HOST}" });
       refused("a table it does not declare", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE TABLE gadgets (id INT);\n" }, S), /table gadgets must be named hp_… or declared in pack.json host.schema.tables/);
       refused("a function it does not declare", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE FUNCTION other_fn() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n" }, S), /defines function other_fn, which pack.json host.schema.functions does not declare/);
       refused("a declared table that is the shell's", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE TABLE IF NOT EXISTS api_keys (id INT);\n" }, { ...S, tables: ["widgets", "api_keys"] }), /host.schema.tables: api_keys is a shell table/);
-      refused("a declared function that is the shell's", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE OR REPLACE FUNCTION octillion_tenant_org() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n" }, { ...S, functions: ["widget_score", "octillion_tenant_org"] }), /host.schema.functions: octillion_tenant_org is a shell function/);
+      refused("a declared function that is the shell's", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE OR REPLACE FUNCTION app_tenant_org() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n" }, { ...S, functions: ["widget_score", "app_tenant_org"] }), /host.schema.functions: app_tenant_org is a shell function/);
       refused("a declared table no migration creates", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, tables: ["widgets", "gizmos"] }), /names gizmos, which no migration here creates/);
       refused("SET ROLE inside a DO block", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "DO $$ BEGIN EXECUTE 'SET ROLE postgres'; END $$;\n" }, S), /SET\/RESET ROLE/);
       refused("SECURITY DEFINER", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN.replace("IMMUTABLE", "IMMUTABLE SECURITY DEFINER") }, S), /SECURITY DEFINER/);

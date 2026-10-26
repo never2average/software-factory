@@ -181,8 +181,8 @@
       "headless": "claude -p --output-format stream-json --verbose --model <model> --dangerously-skip-permissions --no-session-persistence  (prompt on stdin)",
       "event_format": "claude-stream-json",
       "image": {
-        "docker": "octillion/agent-claude-code:2.1.296",
-        "boat_snapshot": "octillion-claude-code-2-1-296"
+        "docker": "app/agent-claude-code:2.1.296",
+        "boat_snapshot": "app-claude-code-2-1-296"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -216,8 +216,8 @@
       "headless": "claude -p --output-format stream-json --verbose --model <model> --dangerously-skip-permissions --no-session-persistence  (prompt on stdin)",
       "event_format": "claude-stream-json",
       "image": {
-        "docker": "octillion/agent-claude-code:2.1.296",
-        "boat_snapshot": "octillion-claude-code-2-1-296"
+        "docker": "app/agent-claude-code:2.1.296",
+        "boat_snapshot": "app-claude-code-2-1-296"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -252,8 +252,8 @@
       "headless": "codex exec --json --model <model> --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral --color never -C <workdir> -  (prompt on stdin)",
       "event_format": "codex-exec-jsonl",
       "image": {
-        "docker": "octillion/agent-codex:0.162.1",
-        "boat_snapshot": "octillion-codex-0-162-1"
+        "docker": "app/agent-codex:0.162.1",
+        "boat_snapshot": "app-codex-0-162-1"
       },
       "requires_env": [
         "CODEX_API_KEY"
@@ -289,8 +289,8 @@
       "headless": "copilot --output-format json --allow-all-tools --no-auto-update --model <model>  (prompt on stdin)",
       "event_format": "copilot-jsonl",
       "image": {
-        "docker": "octillion/agent-copilot:1.0.95",
-        "boat_snapshot": "octillion-copilot-1-0-95"
+        "docker": "app/agent-copilot:1.0.95",
+        "boat_snapshot": "app-copilot-1-0-95"
       },
       "requires_env": [
         "COPILOT_GITHUB_TOKEN"
@@ -326,8 +326,8 @@
       "headless": "cursor-agent -p --output-format stream-json --force --trust --model <model> -- <prompt>",
       "event_format": "cursor-stream-json",
       "image": {
-        "docker": "octillion/agent-cursor:2026.10.01-e373342",
-        "boat_snapshot": "octillion-cursor-2026-10-01-e373342"
+        "docker": "app/agent-cursor:2026.10.01-e373342",
+        "boat_snapshot": "app-cursor-2026-10-01-e373342"
       },
       "requires_env": [
         "CURSOR_API_KEY"
@@ -363,8 +363,8 @@
       "headless": "opencode run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-opencode:1.18.35",
-        "boat_snapshot": "octillion-opencode-1-18-35"
+        "docker": "app/agent-opencode:1.18.35",
+        "boat_snapshot": "app-opencode-1-18-35"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -398,8 +398,8 @@
       "headless": "agy --output-format stream-json --dangerously-skip-permissions [--model <model>] -p <prompt>",
       "event_format": "antigravity-stream-json",
       "image": {
-        "docker": "octillion/agent-antigravity:1.3.4",
-        "boat_snapshot": "octillion-antigravity-1-3-4"
+        "docker": "app/agent-antigravity:1.3.4",
+        "boat_snapshot": "app-antigravity-1-3-4"
       },
       "requires_env": [
         "GEMINI_API_KEY"
@@ -432,8 +432,8 @@
       "headless": "gemini -o stream-json --approval-mode yolo --skip-trust [-m <model>]  (prompt on stdin)",
       "event_format": "gemini-stream-json",
       "image": {
-        "docker": "octillion/agent-gemini-cli:0.63.0",
-        "boat_snapshot": "octillion-gemini-cli-0-63-0"
+        "docker": "app/agent-gemini-cli:0.63.0",
+        "boat_snapshot": "app-gemini-cli-0-63-0"
       },
       "requires_env": [
         "GEMINI_API_KEY"
@@ -462,8 +462,8 @@
       "headless": "pi -p --mode json --model <provider/model>  (prompt on stdin)",
       "event_format": "pi-json",
       "image": {
-        "docker": "octillion/agent-pi:1.1.0",
-        "boat_snapshot": "octillion-pi-1-1-0"
+        "docker": "app/agent-pi:1.1.0",
+        "boat_snapshot": "app-pi-1-1-0"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -494,8 +494,8 @@
       "headless": "pi -p --mode json --model <provider/model>  (prompt on stdin)",
       "event_format": "pi-json",
       "image": {
-        "docker": "octillion/agent-pi:1.1.0",
-        "boat_snapshot": "octillion-pi-1-1-0"
+        "docker": "app/agent-pi:1.1.0",
+        "boat_snapshot": "app-pi-1-1-0"
       },
       "requires_env": [
         "OPENAI_API_KEY"
@@ -529,8 +529,8 @@
       "headless": "pi -p --mode json --model <provider/model>  (prompt on stdin)",
       "event_format": "pi-json",
       "image": {
-        "docker": "octillion/agent-pi:1.1.0",
-        "boat_snapshot": "octillion-pi-1-1-0"
+        "docker": "app/agent-pi:1.1.0",
+        "boat_snapshot": "app-pi-1-1-0"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"
@@ -557,8 +557,8 @@
       "headless": "cline --json --auto-approve true -P anthropic -m <model> -k $ANTHROPIC_API_KEY -- <prompt>",
       "event_format": "cline-json",
       "image": {
-        "docker": "octillion/agent-cline:3.0.70",
-        "boat_snapshot": "octillion-cline-3-0-70"
+        "docker": "app/agent-cline:3.0.70",
+        "boat_snapshot": "app-cline-3-0-70"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -589,8 +589,8 @@
       "headless": "cline --json --auto-approve true -P anthropic -m <model> -k $ANTHROPIC_API_KEY -- <prompt>",
       "event_format": "cline-json",
       "image": {
-        "docker": "octillion/agent-cline:3.0.70",
-        "boat_snapshot": "octillion-cline-3-0-70"
+        "docker": "app/agent-cline:3.0.70",
+        "boat_snapshot": "app-cline-3-0-70"
       },
       "requires_env": [
         "OPENAI_API_KEY"
@@ -623,8 +623,8 @@
       "headless": "cline --json --auto-approve true -P anthropic -m <model> -k $ANTHROPIC_API_KEY -- <prompt>",
       "event_format": "cline-json",
       "image": {
-        "docker": "octillion/agent-cline:3.0.70",
-        "boat_snapshot": "octillion-cline-3-0-70"
+        "docker": "app/agent-cline:3.0.70",
+        "boat_snapshot": "app-cline-3-0-70"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"
@@ -656,8 +656,8 @@
       "headless": "kilo run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-kilo:7.8.8",
-        "boat_snapshot": "octillion-kilo-7-8-8"
+        "docker": "app/agent-kilo:7.8.8",
+        "boat_snapshot": "app-kilo-7-8-8"
       },
       "requires_env": [
         "ANTHROPIC_API_KEY"
@@ -689,8 +689,8 @@
       "headless": "amp -x --stream-json [--mode <mode>]  (prompt on stdin; settings amp.dangerouslyAllowAll=true)",
       "event_format": "claude-stream-json",
       "image": {
-        "docker": "octillion/agent-amp:0.0.1791619249-g722a12",
-        "boat_snapshot": "octillion-amp-0-0-1791619249-g722a12"
+        "docker": "app/agent-amp:0.0.1791619249-g722a12",
+        "boat_snapshot": "app-amp-0-0-1791619249-g722a12"
       },
       "requires_env": [
         "AMP_API_KEY"
@@ -722,8 +722,8 @@
       "headless": "droid exec -o stream-json --skip-permissions-unsafe -m <model>  (prompt on stdin)",
       "event_format": "droid-stream-json",
       "image": {
-        "docker": "octillion/agent-droid:0.238.0",
-        "boat_snapshot": "octillion-droid-0-238-0"
+        "docker": "app/agent-droid:0.238.0",
+        "boat_snapshot": "app-droid-0-238-0"
       },
       "requires_env": [
         "FACTORY_API_KEY"
@@ -755,8 +755,8 @@
       "headless": "qwen -o stream-json --yolo --auth-type openai -m <model>  (prompt on stdin)",
       "event_format": "gemini-stream-json",
       "image": {
-        "docker": "octillion/agent-qwen-code:0.25.0",
-        "boat_snapshot": "octillion-qwen-code-0-25-0"
+        "docker": "app/agent-qwen-code:0.25.0",
+        "boat_snapshot": "app-qwen-code-0-25-0"
       },
       "requires_env": [
         "DASHSCOPE_API_KEY"
@@ -1005,8 +1005,8 @@
       "headless": "opencode run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-opencode:1.18.35",
-        "boat_snapshot": "octillion-opencode-1-18-35"
+        "docker": "app/agent-opencode:1.18.35",
+        "boat_snapshot": "app-opencode-1-18-35"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"
@@ -1028,8 +1028,8 @@
       "headless": "opencode run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-opencode:1.18.35",
-        "boat_snapshot": "octillion-opencode-1-18-35"
+        "docker": "app/agent-opencode:1.18.35",
+        "boat_snapshot": "app-opencode-1-18-35"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"
@@ -1051,8 +1051,8 @@
       "headless": "opencode run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-opencode:1.18.35",
-        "boat_snapshot": "octillion-opencode-1-18-35"
+        "docker": "app/agent-opencode:1.18.35",
+        "boat_snapshot": "app-opencode-1-18-35"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"
@@ -1074,8 +1074,8 @@
       "headless": "opencode run --format json --auto -m <model>  (prompt on stdin)",
       "event_format": "opencode-json",
       "image": {
-        "docker": "octillion/agent-opencode:1.18.35",
-        "boat_snapshot": "octillion-opencode-1-18-35"
+        "docker": "app/agent-opencode:1.18.35",
+        "boat_snapshot": "app-opencode-1-18-35"
       },
       "requires_env": [
         "CLOUDFLARE_API_TOKEN"

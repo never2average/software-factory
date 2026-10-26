@@ -59,7 +59,10 @@ NO_SMOKE=1 orchestrator/images/build.sh       # skip the warm-pod smoke test
 ```
 
 `build.sh` reads `registry.json` with `node -e`. It builds each distinct (harness, version) once and tags it
-exactly `image.docker` (`octillion/agent-<harness>:<harness_version>`), which is the tag `fleet/plan.ts` reads.
+exactly `image.docker` (`app/agent-<harness>:<harness_version>`), which is the tag `fleet/plan.ts` reads. Images built
+before mold_v0-097 carry the old name; the orchestrator runs one of those only where the new tag is not built yet
+(`core/runners.ts` `localImage`), never pulls an image (`--pull never`), and `deploy/cleanup.sh` removes the old tag
+once the same version is built under the new one.
 It then smoke-tests the image the way the fleet uses it:
 
 ```
@@ -93,7 +96,9 @@ Source: <https://docs.boat.dev/snapshots>,
   `error` is set). If the sandbox is running, Boat first takes a fresh capture, which can take minutes. The CLI
   equivalent is `boat snapshot <sandboxId> <name>`, or `boat snapshot current <name>` from inside the VM.
 - **Names** must match `^[a-z0-9][a-z0-9-]{0,62}$`, so no dots. The reserved names are `latest`, `tree`, `pull`,
-  `rm`, `save`, `current`, `self` and `new`. That is why the registry uses `octillion-claude-code-2-1-296`.
+  `rm`, `save`, `current`, `self` and `new`. That is why the registry uses `app-claude-code-2-1-296`. Snapshots baked
+  before mold_v0-097 keep their old names in the account (nothing here deletes them); nothing starts from them by name
+  either: the next bake saves them under the new names, and the old ones can be deleted after it.
   Saving under an existing name **replaces it only once the new save is ready**, so a failed re-bake leaves the
   old snapshot deploying.
 - **Lifetime.** Named snapshots belong to the account or org, never expire, and survive deletion of their source
@@ -135,7 +140,7 @@ The key needs to create and delete sandboxes and save named snapshots.
   CLIs use `#!/usr/bin/env node`.
 - Verifies the install the way the worker runs it: as an unprivileged user, under `env -i` with
   `PATH=/usr/local/bin:/usr/bin:/bin`, checking `--version` against the pin.
-- Writes `/etc/octillion/harnesses/<harness>.json` (harness, bin, path, version).
+- Writes `/etc/app/harnesses/<harness>.json` (harness, bin, path, version).
 - Cleans the npm caches.
 
 It writes no keys, config, rules or MCP servers.
@@ -151,7 +156,7 @@ The boat runner currently creates sandboxes without `from`. To use the snapshots
 - Create session VMs with `{"from": agent.image.boat_snapshot, "noEnv": true, ...}`.
 - Keep `snapshots:false` on *session* VMs only. The bake VM needs snapshots on.
 - Put `/usr/local/bin` first on the agent user's PATH.
-- Optionally assert that `/etc/octillion/harnesses/<harness>.json` matches the registry version before running.
+- Optionally assert that `/etc/app/harnesses/<harness>.json` matches the registry version before running.
 
 ## Adding a harness
 

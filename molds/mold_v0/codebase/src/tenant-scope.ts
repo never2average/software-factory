@@ -2,8 +2,8 @@
  * Tenant scope for database row-level security (sql/migrations/0003_row_level_security.sql, docs/security.md).
  *
  * Work done for one organization (every MCP tool call, every customer-portal request) runs inside withTenant(orgId):
- * src/db.ts then runs each of its queries in a short transaction as the tenant role (octillion_tenant_<hash>, see tenantRole below) with the setting
- * octillion.org_id, so Postgres itself refuses to show or change another organization's rows, whatever the query's
+ * src/db.ts then runs each of its queries in a short transaction as the tenant role (app_tenant_<hash>, see tenantRole below) with the setting
+ * app.org_id, so Postgres itself refuses to show or change another organization's rows, whatever the query's
  * own WHERE clause says. Everything else (the orchestrator worker API, the admin console, background jobs,
  * migrations) runs as the app's own role, which the policies do not restrict: those paths are cross-tenant by design.
  * asPlatform(fn) leaves the scope explicitly, for cross-tenant work a tenant request starts.
@@ -43,13 +43,14 @@ export function asPlatform<T>(fn: () => T): T {
 }
 
 /**
- * The tenant role of this database: octillion_tenant_<10 hex of md5(database name)> (roles are server-wide, so one per
- * database). Read at boot from octillion_tenant_role() (sql/migrations/0003_row_level_security.sql, src/db.ts).
+ * The tenant role of this database: app_tenant_<10 hex of md5(database name)> (roles are server-wide, so one per
+ * database). Read at boot from app_tenant_role() (sql/migrations/0003_row_level_security.sql, named since
+ * 0024_neutral_database_names; src/db.ts).
  */
 let role = "";
 export const tenantRole = () => role;
 export const setTenantRole = (name: string) => {
-  if (!/^octillion_tenant_[0-9a-f]{10}$/.test(name)) throw new Error(`unexpected tenant role name ${JSON.stringify(name)}`);
+  if (!/^app_tenant_[0-9a-f]{10}$/.test(name)) throw new Error(`unexpected tenant role name ${JSON.stringify(name)}`);
   role = name;
 };
 
@@ -59,5 +60,5 @@ export const setTenantRole = (name: string) => {
  */
 export const tenantPrelude = (orgId: number) => {
   if (!role) throw new Error("tenant role unknown: row-level security is not in place (migration 0003_row_level_security)");
-  return `SET LOCAL ROLE ${role}; SELECT set_config('octillion.org_id', '${checked(orgId)}', true)`;
+  return `SET LOCAL ROLE ${role}; SELECT set_config('app.org_id', '${checked(orgId)}', true)`;
 };

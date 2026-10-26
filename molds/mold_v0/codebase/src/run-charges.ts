@@ -129,7 +129,7 @@ export async function reconcileCharges(limit = 200): Promise<number> {
   let n = 0;
   for (const { id } of ids) {
     try {
-      const [r] = await asPlatform(async () => (await getDb()).query<{ id: string | null }>("SELECT octillion_run_charge($1)::text AS id", [id]));
+      const [r] = await asPlatform(async () => (await getDb()).query<{ id: string | null }>("SELECT app_run_charge($1)::text AS id", [id]));
       if (r?.id != null) n++;
     } catch (e) { console.error(`run charges: the charge of ${id} could not be written: ${(e as Error).message}`); }
   }
@@ -200,7 +200,7 @@ export async function deliverCharges(opts: { runId?: string; limit?: number } = 
   for (const cand of candidates) {
     // The claim, on this row alone, just before it is sent; a charge first takes in any usage metered since the run ended.
     const [r] = await asPlatform(async () => {
-      await db.query(`/* tenant: one pending charge of its own run, refreshed */ SELECT octillion_run_charge_refresh(c.run_id) FROM run_charges c
+      await db.query(`/* tenant: one pending charge of its own run, refreshed */ SELECT app_run_charge_refresh(c.run_id) FROM run_charges c
         WHERE c.id = $1 AND c.org_id = $2 AND c.kind = 'charge' AND c.delivery = 'pending'`, [cand.id, cand.org_id]);
       return db.query<ChargeRow & { stripe_customer_id: string | null }>(
         `UPDATE run_charges c SET claimed_until = now() + interval '2 minutes', delivery_attempts = c.delivery_attempts + 1

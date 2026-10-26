@@ -54,7 +54,7 @@ export function planFleet(size: number, agents: RegistryAgent[] = loadRegistry()
     .filter((x) => x.enabled !== false && x.weight > 0 && (x as { worker_adapter?: string }).worker_adapter !== "todo" && !(x as { paused?: boolean }).paused)
     .map((a) => ({
       agent_id: a.id, harness: a.harness, model: a.model, weight: a.weight, pods: 0, version: a.harness_version,
-      image: a.image?.docker ?? `octillion/agent-${a.harness}:${a.harness_version ?? "latest"}`,
+      image: a.image?.docker ?? `app/agent-${a.harness}:${a.harness_version ?? "latest"}`,
       requires_env: [...(a.requires_env ?? [])], agents: [a.id],
     }))
     .sort((a, b) => b.weight - a.weight || a.agent_id.localeCompare(b.agent_id));

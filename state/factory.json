@@ -117,7 +117,8 @@
     "onfinance_hfc",
     "onfinance_hfc_vm",
     "compliance_os",
-    "octillion"
+    "octillion",
+    "maxwell"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
@@ -146,5 +147,33 @@
     "secret_source_project": "live-web",
     "agent_cli_scope": "@onfinance",
     "notify_domain": "example.com"
+  },
+  "sweep": {
+    "max_builders": 3,
+    "builders_per_train": 1,
+    "trains": {},
+    "molds": [],
+    "gated_ids": [],
+    "gated_kinds": [
+      "dated_decision",
+      "operator_action",
+      "live_data_migration"
+    ],
+    "gated_owners": [
+      "sol"
+    ],
+    "auto_deploy": [],
+    "parity_deploy": [],
+    "migration_dirs": [
+      "molds/*/codebase/sql/migrations"
+    ],
+    "stale_wait_hours": 3,
+    "server_max_hours": 12,
+    "scratch_idle_hours": 24,
+    "disk_free_min_gb": 20,
+    "tmp_roots": [
+      "~/.claude/jobs/*/tmp"
+    ],
+    "base_branch": "main"
   }
 }

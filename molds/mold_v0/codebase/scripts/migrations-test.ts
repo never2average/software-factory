@@ -45,8 +45,9 @@ async function fresh(kind: "pglite" | "postgres"): Promise<Db & { drop: () => Pr
 
 /** Everything the schema defines: tables and columns (type, null, default), constraints, indexes, functions, policies. */
 async function catalog(db: Db) {
-  // The tenant role is named per database (0003_row_level_security): compare it by kind, not by name.
-  const q = async (sql: string) => (await db.query<Record<string, unknown>>(sql)).map((r) => JSON.stringify(r).replace(/octillion_tenant_[0-9a-f]{10}/g, "octillion_tenant_<db>"));
+  // The tenant role is named per database (0003_row_level_security; app_tenant_ since 0024, its old name an alias role):
+  // compare it by kind, not by name.
+  const q = async (sql: string) => (await db.query<Record<string, unknown>>(sql)).map((r) => JSON.stringify(r).replace(/\b([a-z]+)_tenant_[0-9a-f]{10}\b/g, "$1_tenant_<db>"));
   return {
     columns: await q(`SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default FROM information_schema.columns
                       WHERE table_schema = 'public' ORDER BY table_name, column_name`),
@@ -186,8 +187,14 @@ async function suite(kind: "pglite" | "postgres") {
     // (0003, 0009, 0017). Every table, column, default, constraint, index, policy and grant of the product is the same.
     const diff = (Object.keys(want) as (keyof typeof want)[]).flatMap((k) => [...want[k].filter((x) => !mainCatalog[k].includes(x)).map((x) => `+${k} ${x}`),
       ...mainCatalog[k].filter((x) => !want[k].includes(x)).map((x) => `-${k} ${x}`)]);
+    // The neutral names (0024_neutral_database_names): the same policy, grant or function under the new names, and the
+    // old names' aliases.
+    const renamed = (d: string) => d.slice(1).replace(/\b[a-z]+_(tenant_role|tenant_org|session_org|run_charge(?:_figures|_refresh|_on_end)?|tenant_<db>)/g, "app_$1");
+    const olds = new Set(diff.filter((d) => d.startsWith("-")).map(renamed));
     const why = (d: string) => /pack_schema_migrations|shell_pack_(tenant|private)_table/.test(d) ? "pack bookkeeping"
-      : /^[+-]policies .*"(gateway_tokens|gateway_usage)"|^\+functions .*octillion_session_org/.test(d) ? "gateway session rule" : null;
+      : /^[+-]policies .*"(gateway_tokens|gateway_usage)"|^\+functions .*_session_org/.test(d) ? "gateway session rule"
+      : (d.startsWith("+") && olds.has(renamed(d))) || (d.startsWith("-") && diff.some((x) => x.startsWith("+") && renamed(x) === renamed(d)))
+        || /^[+-]functions .*"[a-z]+_(tenant_role|tenant_org|session_org|run_charge(_figures|_refresh|_on_end)?)"/.test(d) ? "neutral names (0024)" : null;
     const unexplained = diff.filter((d) => !why(d));
     assert.deepEqual(unexplained, [], "a new database (shell + host pack) differs from the earlier schema only where expected");
     const counts = diff.reduce((m: Record<string, number>, d) => ({ ...m, [why(d)!]: (m[why(d)!] ?? 0) + 1 }), {});
@@ -263,6 +270,11 @@ async function suite(kind: "pglite" | "postgres") {
     const r = await runMigrations(db, { packDirs: hp(W + SEC + FN + MARK) });
     assert.deepEqual(r.applied, ["pack hp 0001_widgets"], "a new database runs the host pack's migration (nothing to adopt: its 0001 is today's)");
     assert.ok((await db.query<{ on: boolean }>("SELECT relrowsecurity AS on FROM pg_class WHERE relname = 'widgets'"))[0]!.on, "its table is under row-level security");
+    // Written with the shell's function names before 0024 (the aliases): granted to the tenant role, and its policy
+    // re-pointed at the function itself, so no policy names an alias.
+    assert.deepEqual(await db.query("SELECT qual, with_check FROM pg_policies WHERE tablename = 'widgets'"),
+      [{ qual: "(org_id = app_tenant_org())", with_check: "(org_id = app_tenant_org())" }], "a pack migration written with the old names: its policy names app_tenant_org()");
+    assert.ok((await db.query<{ ok: boolean }>("SELECT has_table_privilege(app_tenant_role(), 'widgets', 'INSERT') AS ok"))[0]!.ok, "and its grant is the tenant role's");
     const refusedBy = async (what: string, sql: string, re: RegExp, schema: Record<string, unknown> = {}) => {
       const d = await fresh(kind);
       await runMigrations(d);
@@ -276,7 +288,8 @@ async function suite(kind: "pglite" | "postgres") {
     await refusedBy("a constraint on a shell table", W + SEC + FN + "ALTER TABLE organizations ADD CONSTRAINT sneaky CHECK (id > 0);\n", /constraint sneaky on organizations/);
     await refusedBy("a function it does not declare", W + SEC + FN + "CREATE FUNCTION other_fn() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n", /function other_fn\(\)/);
     await refusedBy("its declared function as SECURITY DEFINER", W + SEC + FN.replace("IMMUTABLE", "IMMUTABLE SECURITY DEFINER"), /function widget_score\(text\)/);
-    await refusedBy("a shell function redefined", W + SEC + FN + "CREATE OR REPLACE FUNCTION octillion_tenant_org() RETURNS INT LANGUAGE sql STABLE AS $$ SELECT 1 $$;\n", /function octillion_tenant_org\(\)/);
+    await refusedBy("a shell function redefined", W + SEC + FN + "CREATE OR REPLACE FUNCTION app_tenant_org() RETURNS INT LANGUAGE sql STABLE AS $$ SELECT 1 $$;\n", /function app_tenant_org\(\)/);
+    await refusedBy("a shell function's old name (its alias) redefined", W + SEC + FN + "CREATE OR REPLACE FUNCTION octillion_tenant_org() RETURNS INT LANGUAGE sql STABLE AS $$ SELECT 1 $$;\n", /function octillion_tenant_org\(\)/);
     await refusedBy("its table without row-level security", W + FN, /without row-level security: widgets/);
     await refusedBy("a declared table it does not create", W + SEC + FN, /do not create: gizmos/, { tables: ["widgets", "gizmos"] });
     await refusedBy("a reference from a shell table it does not declare", W.replace("name TEXT", "name TEXT UNIQUE") + SEC + FN +
@@ -296,7 +309,8 @@ async function suite(kind: "pglite" | "postgres") {
     await refusedBy("a platform library with workspace rows", W + FN, /platform library widgets has an org_id/, { platform_read: ["widgets"] });
     await refusedBy("a platform library tenant work may write", LIB.replace("GRANT SELECT", "GRANT SELECT, INSERT") + FN, /platform library widgets is writable by tenant work/, { platform_read: ["widgets"] });
     await refusedBy("a platform library that is not its table", W + SEC + FN, /platform library gadgets is not one of its tables/, { platform_read: ["gadgets"] });
-    await refusedBy("a shell function as its own", W + SEC + FN, /function octillion_tenant_org is the shell's/, { functions: ["widget_score", "octillion_tenant_org"] });
+    await refusedBy("a shell function as its own", W + SEC + FN, /function app_tenant_org is the shell's/, { functions: ["widget_score", "app_tenant_org"] });
+    await refusedBy("a shell function's old name as its own", W + SEC + FN, /function octillion_tenant_org is the shell's/, { functions: ["widget_score", "octillion_tenant_org"] });
     await refusedBy("adopting a shell migration that was not split", W + SEC + FN, /0002_admin_tokens, which is not a split shell migration/, { adopts: { "0001_widgets": "0002_admin_tokens" } });
     // A reference from a shell table's column to its own table (the sessions' gateway tokens) is the one change allowed there.
     {
@@ -326,6 +340,84 @@ async function suite(kind: "pglite" | "postgres") {
     }
     await db.drop();
     console.log(`  ✓ ${kind}: a host pack's own schema: its tables, policies and declared function run; adopted on a pre-049 database (nothing run); policies, grants, columns, constraints and functions outside it refused`);
+  }
+
+  // The neutral names (0024_neutral_database_names, mold_v0-097): renamed in place, the old names kept as aliases for a
+  // release from before it, and the rollback file puts the database back exactly as 0023 left it.
+  {
+    const upTo = async (v: number) => {
+      const dir = path.join(tmp, `upto-${kind}-${v}`);
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true });
+      for (const m of (await loadMigrations()).filter((x) => x.version <= v)) writeFileSync(path.join(dir, `${String(m.version).padStart(4, "0")}_${m.name}.sql`), m.sql);
+      return dir;
+    };
+    const { rlsCatalogProblems, rlsProbe, legacyTenantRole } = await import("../src/rls.js");
+    const at23 = await fresh(kind);
+    await runMigrations(at23, { dir: await upTo(23), packDirs: [] });
+    const before = await catalog(at23);
+    const roleOf = async (d: Db) => (await d.query<{ r: string }>("SELECT app_tenant_role() AS r"))[0]!.r;
+    // The release before this one, serving while the migration runs: its tenant transaction, as it opens one.
+    const oldRole = (await at23.query<{ r: string }>("SELECT octillion_tenant_role() AS r"))[0]!.r;
+    await at23.exec("INSERT INTO organizations (slug, name) VALUES ('nn-a', 'A'), ('nn-b', 'B')");
+    const [oa, ob] = (await at23.query<{ id: number }>("SELECT id FROM organizations WHERE slug IN ('nn-a', 'nn-b') ORDER BY slug")).map((r) => r.id);
+    await at23.exec(`INSERT INTO mcp_events (org_id, method) VALUES (${oa}, 'a'), (${ob}, 'b')`);
+    const oldWay = async (d: Db, org: number | null) => (await d.transaction(async (tx) => {
+      await tx.query(`SET LOCAL ROLE ${oldRole}`);
+      await tx.query("SELECT set_config('octillion.org_id', $1, true)", [org === null ? "" : String(org)]);
+      return tx.query<{ org_id: number }>("SELECT org_id FROM mcp_events ORDER BY org_id");
+    })).map((r) => r.org_id);
+    assert.deepEqual(await oldWay(at23, oa!), [oa], "before: the old release's tenant transaction sees its own rows");
+    const t0 = Date.now();
+    assert.deepEqual((await runMigrations(at23)).applied.slice(0, 1), ["0024_neutral_database_names"]);
+    const ms = Date.now() - t0;
+    assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
+    assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
+    assert.equal((await at23.query<{ r: string }>("SELECT octillion_tenant_role() AS r"))[0]!.r, await roleOf(at23), "the old function names the new role (a pack migration grants to it)");
+    assert.deepEqual(await oldWay(at23, oa!), [oa], "after: the old release's tenant transaction, unchanged, still sees its own rows only");
+    assert.deepEqual(await oldWay(at23, null), [], "and none with no organization set");
+    const policies = await at23.query<{ q: string }>("SELECT coalesce(qual, '') || coalesce(with_check, '') AS q FROM pg_policies WHERE schemaname = 'public'");
+    assert.ok(policies.length > 20 && policies.every((p) => !p.q.includes("octillion_tenant_org") && !p.q.includes("octillion_session_org")), "every policy names the new functions (renamed in place, none rewritten)");
+    assert.deepEqual(await rlsCatalogProblems(at23), [], "check:rls catalog after the rename");
+    const probe = await rlsProbe(at23);
+    assert.deepEqual(probe.problems, [], "check:rls probe after the rename, the old names' path included");
+    // The alias role holds nothing of its own: a grant to it is a failure of the catalog check (fail closed).
+    await at23.exec(`GRANT SELECT ON vault_credentials TO ${oldRole}`);
+    assert.ok((await rlsCatalogProblems(at23)).some((p) => p.includes(`role ${oldRole}`) && p.includes("privilege")), "a grant to the old name fails the check");
+    await at23.exec(`REVOKE SELECT ON vault_credentials FROM ${oldRole}`);
+    assert.deepEqual(await rlsCatalogProblems(at23), []);
+    // Rolling back to a release from before 0024: the rollback file puts back the database 0023 left, exactly.
+    await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
+    const fresh23 = await fresh(kind);
+    await runMigrations(fresh23, { dir: await upTo(23), packDirs: [] });
+    sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
+    sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
+    assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
+    assert.deepEqual((await runMigrations(at23)).applied.slice(0, 1), ["0024_neutral_database_names"], "and 0024 applies again");
+    sameCatalog(await catalog(at23), want, `${kind}: 0024 again after the rollback`);
+    await fresh23.drop();
+    await at23.drop();
+    // Roles outlive databases (a real server): a database dropped and made again under the same name finds the roles
+    // the first one renamed and made; 0003 and 0024 run again over them.
+    if (kind === "postgres") {
+      process.env.DATABASE_URL = pgUrl!;
+      const admin = await openDb();
+      const name = `app_mig_${process.pid}_again`;
+      for (let i = 0; i < 2; i++) {
+        await admin.exec(`CREATE DATABASE ${name}`);
+        const url = new URL(pgUrl!); url.pathname = `/${name}`;
+        process.env.DATABASE_URL = url.toString();
+        const d = await openDb();
+        await runMigrations(d, { packDirs: [] });
+        assert.deepEqual(await rlsCatalogProblems(d), [], `database made ${i ? "again" : "once"} under one name: check:rls catalog`);
+        assert.deepEqual((await rlsProbe(d)).problems, [], `database made ${i ? "again" : "once"} under one name: check:rls probe`);
+        await d.close();
+        process.env.DATABASE_URL = pgUrl!;
+        await admin.exec(`DROP DATABASE ${name} WITH (FORCE)`);
+      }
+      await admin.close();
+    }
+    console.log(`  ✓ ${kind}: 0024 renames the functions, the tenant role and its setting in place (${ms} ms, every policy follows); the old release's tenant transaction keeps its own rows only; the rollback file restores 0023 exactly`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.
