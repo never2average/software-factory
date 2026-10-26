@@ -13,6 +13,8 @@
 import manifest from '../config/console-routes.generated.json';
 import packRoutesJson from '../config/pack-routes.generated.json';
 import { landing } from '../config/landing.generated';
+import { legal } from '../config/legal.generated';
+import { profile } from '../config/profile.generated';
 import { ADMIN_DOCS } from '../content/admin-docs.generated';
 import { guidePages } from '../content/customer-guide';
 import catalog from '../content/mcp-tools.generated.json';
@@ -45,6 +47,16 @@ export const RESOLVED: Readonly<Record<string, (p: Params) => boolean>> = {
   '/admin/host/[pack]/[...path]': host('/admin'),
   '/host/[pack]/[...path]': host(''),
   '/declared/[page]': (p) => first(p, 'page') === 'request' && !!landing?.request_page,
+};
+
+/**
+ * The page routes the build itself may switch off (the page's own test, from the same generated config): the member
+ * keys page when the profile turns member keys off (mold_v0-099), the legal pages without `legal` (mold_v0-109).
+ */
+export const SHOWN: Readonly<Record<string, () => boolean>> = {
+  '/app/keys': () => (profile as Readonly<Record<string, unknown>>).member_keys !== false,
+  '/privacy': () => !!legal,
+  '/terms': () => !!legal,
 };
 
 /**
@@ -100,7 +112,8 @@ export function isConsoleAddress(pathname: string): boolean {
   for (const r of [...SOURCES, ...PAGES]) {
     const m = match(r.segs, parts);
     if (!m) continue;
-    if (!r.dynamic || OPEN.includes(r.route)) return true;
+    if (!r.dynamic) { if (SHOWN[r.route]?.() === false) continue; return true; }
+    if (OPEN.includes(r.route)) return true;
     const known = RESOLVED[r.route];
     // A dynamic route nobody decided for here: left to its page, as before (status-pages-test fails on one).
     if (!known || known(m)) return true;

@@ -33,7 +33,7 @@ function notFoundRewrite(req: NextRequest): URL | null {
   if (req.headers.has('rsc') || req.headers.has('next-router-prefetch') || req.nextUrl.searchParams.has('_rsc')) return null;
   const path = req.nextUrl.pathname;
   // The console's areas only (/__clerk is Clerk's).
-  if (!/^\/(app|admin|auth|console-status)(\/|$)/.test(path) || isConsoleAddress(path)) return null;
+  if (!/^\/(app|admin|auth|console-status)(\/|$)|^\/(privacy|terms)$/.test(path) || isConsoleAddress(path)) return null;
   return new URL(notFoundPageFor(path), req.url);
 }
 
@@ -73,6 +73,7 @@ export default CLERK ? clerk : builtin;
 
 export const config = {
   // Only the web app's own pages; /mcp, /api and the rest go straight to the API server (next.config.ts).
-  // And the console's own not-found page, which the API server relays (src/status-pages.ts): a 404 drawn on the server.
-  matcher: ['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)', '/auth(.*)', '/__clerk/(.*)', '/console-status/(.*)']
+  // And the console's own not-found page, which the API server relays (src/status-pages.ts), and the legal pages a build
+  // may have none of (mold_v0-109): a 404 drawn on the server (mold_v0-155).
+  matcher: ['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)', '/auth(.*)', '/__clerk/(.*)', '/console-status/(.*)', '/privacy', '/terms']
 };

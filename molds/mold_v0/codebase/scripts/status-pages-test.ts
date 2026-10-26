@@ -76,7 +76,7 @@ try {
     const manifest = JSON.parse(readFileSync(path.join(ROOT, "web", "src", "config", "console-routes.generated.json"), "utf8")) as { routes: string[]; status_pages: string[] };
     const undecided = manifest.routes.filter((r) => r.includes("[") && !(r in routes.RESOLVED) && !routes.OPEN.includes(r));
     assert.deepEqual(undecided, [], "every dynamic page route is resolved from its registry (src/lib/console-routes.ts RESOLVED) or left OPEN to its page");
-    for (const r of [...Object.keys(routes.RESOLVED), ...routes.OPEN]) assert.ok(manifest.routes.includes(r), `${r}: a page route of the app directory`);
+    for (const r of [...Object.keys(routes.RESOLVED), ...routes.OPEN, ...Object.keys(routes.SHOWN)]) assert.ok(manifest.routes.includes(r), `${r}: a page route of the app directory`);
     assert.deepEqual([...manifest.status_pages].sort(), Object.values(routes.NOT_FOUND_PAGES).sort(), "each area's not-found page is a page of its own");
     const doc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "customer-guide.ts")).href)).guidePages(JSON.parse(readFileSync(path.join(ROOT, "web", "src", "content", "mcp-tools.generated.json"), "utf8")))[0].slug;
     const adminDoc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "admin-docs.generated.ts")).href)).ADMIN_DOCS[0]?.slug;
