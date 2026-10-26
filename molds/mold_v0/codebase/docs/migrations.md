@@ -60,8 +60,11 @@ must stay backward compatible for that. One exception, with its own way back: `0
 (mold_v0-097) renames the shell's database functions, the tenant role and the tenant setting to neutral names
 (`app_tenant_role()`, `app_tenant_org()`, `app_session_org()`, `app_run_charge*()`, `app_tenant_<hash>`, `app.org_id`).
 It renames in place: a policy, a trigger and a grant hold a function or a role by its id, so every policy follows with
-none rewritten, no table is locked and no row is touched (a catalog row per name; it ran in about 20 ms on a test
-database). The old names stay until a later cleanup, for the release still serving during a rolling deploy and for a
+none rewritten, no table is locked and no row is touched (a catalog row per name). Rehearsed on Postgres 17 as a
+non-superuser login with the right to create roles (as on a managed database), 520,000 rows, a long read open on the
+busiest table and a release from before 0024 serving tenant transactions the whole time: 47 ms, no lock on any of the
+app's tables (only catalog rows: functions, roles, memberships), no table or index rewritten, every row kept, no error
+and no row of another workspace for the release serving through it, `check:rls` clean after. The old names stay until a later cleanup, for the release still serving during a rolling deploy and for a
 pack migration written before: each old function is a one-line alias of the new one (the old role function names
 the new role, so a pack migration that grants through it grants to the role tenant work runs as; a policy a pack
 migration writes through an alias is re-pointed at the function by the runner, in the same transaction); the old role
