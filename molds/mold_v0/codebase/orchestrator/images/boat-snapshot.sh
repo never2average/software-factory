@@ -8,9 +8,9 @@
 # Per harness, over the REST API (https://docs.boat.dev/api/v1, curl + node only):
 #   1. POST /sandboxes {type, ttlSeconds, noEnv:true}         fresh VM, no account env/secrets  (Idempotency-Key)
 #   2. GET  /sandboxes/{id} until ready|idle|running
-#   3. PUT  /sandboxes/{id}/files  boat-setup/_common.sh + boat-setup/<harness>.sh  -> /tmp/octi-setup/
-#   4. POST /sandboxes/{id}/commands  bash /tmp/octi-setup/<harness>.sh <version>   (sync, <= 600s)
-#   5. remove /tmp/octi-setup, then POST /named-snapshots {sandboxId, name: image.boat_snapshot}
+#   3. PUT  /sandboxes/{id}/files  boat-setup/_common.sh + boat-setup/<harness>.sh  -> /tmp/app-setup/
+#   4. POST /sandboxes/{id}/commands  bash /tmp/app-setup/<harness>.sh <version>   (sync, <= 600s)
+#   5. remove /tmp/app-setup, then POST /named-snapshots {sandboxId, name: image.boat_snapshot}
 #   6. GET  /named-snapshots/{name} until status ready (or failed)
 #   7. DELETE /sandboxes/{id}  (X-Ascii-Confirm-Delete)  - the named snapshot survives deleting its source
 # Re-saving an existing name replaces it only once the new save is ready, so a failed re-bake never breaks
@@ -47,7 +47,7 @@ bake() {
   echo "==> $harness $version -> boat snapshot '$name'"
   if [ -n "${DRY_RUN:-}" ]; then echo "    would run boat-setup/$harness.sh $version in a fresh $SIZE VM and save '$name'"; return 0; fi
 
-  res="$(boat POST /sandboxes "{\"type\":\"$SIZE\",\"ttlSeconds\":3600,\"noEnv\":true}" -H "Idempotency-Key: octi-bake-$name-$(date +%s)")"
+  res="$(boat POST /sandboxes "{\"type\":\"$SIZE\",\"ttlSeconds\":3600,\"noEnv\":true}" -H "Idempotency-Key: app-bake-$name-$(date +%s)")"
   id="$(printf '%s' "$res" | json 'j.sandbox?.id ?? j.id')"
   [ -n "$id" ] || { echo "create failed: $res" >&2; return 1; }
   # Always delete the build VM, whatever happens below.
@@ -61,9 +61,9 @@ bake() {
   done
 
   for f in _common.sh "$harness.sh"; do
-    boat PUT "/sandboxes/$id/files" "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:"/tmp/octi-setup/"+process.argv[2],content:fs.readFileSync(process.argv[1],"utf8")}))' "$HERE/boat-setup/$f" "$f")" >/dev/null
+    boat PUT "/sandboxes/$id/files" "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:"/tmp/app-setup/"+process.argv[2],content:fs.readFileSync(process.argv[1],"utf8")}))' "$HERE/boat-setup/$f" "$f")" >/dev/null
   done
-  res="$(boat POST "/sandboxes/$id/commands" "{\"command\":\"bash /tmp/octi-setup/$harness.sh '$version' && rm -rf /tmp/octi-setup\",\"timeoutSeconds\":590}" -m 700)"
+  res="$(boat POST "/sandboxes/$id/commands" "{\"command\":\"bash /tmp/app-setup/$harness.sh '$version' && rm -rf /tmp/app-setup\",\"timeoutSeconds\":590}" -m 700)"
   echo "$res" | json '(j.stderr||"").split("\n").filter(l=>l.includes("[app-setup]")).join("\n")' | sed 's/^/    /'
   [ "$(echo "$res" | json 'String(j.exitCode)')" = "0" ] || { echo "setup failed: $(echo "$res" | json 'j.stderr?.slice(-2000)')" >&2; return 1; }
 

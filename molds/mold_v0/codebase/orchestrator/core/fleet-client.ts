@@ -96,7 +96,7 @@ export class FleetMembership {
   }
 }
 
-/** The OS user this orchestrator runs as (reported at check-in; production runs as the unprivileged "octi"). */
+/** The OS user this orchestrator runs as (reported at check-in; production runs as the unprivileged "appsvc", deploy/boat-lib.ts SERVICE_USER). */
 function serviceUser(): string {
   try { return userInfo().username; } catch { return "unknown"; }
 }

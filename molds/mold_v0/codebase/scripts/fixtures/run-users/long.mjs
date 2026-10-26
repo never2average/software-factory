@@ -2,7 +2,7 @@
 // of its own and leaves a file in /tmp (as a run's tools do), then, for a few seconds, checks both are still there.
 import { spawn } from "node:child_process";
 import { existsSync, statSync, writeFileSync } from "node:fs";
-const tag = `/tmp/octi-run-users-${process.env.RUN_ID}`;
+const tag = `/tmp/app-run-users-${process.env.RUN_ID}`;
 const kid = spawn("sleep", ["120"], { detached: true, stdio: "ignore" });
 kid.unref();
 writeFileSync(tag, "mine\n");

@@ -73,25 +73,29 @@ cleanup (the vocabulary check's `legacy-*` entries list where each old name is s
 | a host's local images (`harnesses/registry.json` `image.docker`, `SANDBOX_IMAGE`) | `app/agent-<harness>:<version>`, `app-sandbox:latest` | a tag the host does not have runs under its old name when only that is built (`orchestrator/core/runners.ts` `localImage`); images are never pulled (`--pull never`); `deploy/cleanup.sh` removes the old tag once the same version is built under the new one |
 | the boat account's named snapshots (`image.boat_snapshot`) | `app-<harness>-<version>` | nothing starts from a snapshot by name; the next bake (`orchestrator/images/boat-snapshot.sh`) saves the new names and the old snapshots can then be deleted |
 | an orchestrator sandbox (`orchestrator/deploy/boat-lib.ts`) | unit `app-orchestrator`, home `/home/user/app`, marker `/etc/app/host-role` | a sandbox set up before keeps running until the launcher configures it again (`update`, a relaunch), which stops, disables and removes the old unit and deletes its home (with its env file) and marker; `down` stops whichever unit runs; `status` and `logs` read it |
+| the boat account's sandboxes and snapshot images, a Docker host's run containers (mold_v0-156, `orchestrator/core/boat-namespace.ts`) | the default namespace `app` (`appv` on Vercel): `app-orch-*`, `app-w-<orchestrator>-<agent>`, `app-run-*`, `app-orch-img-*`, `app-img-build`, run containers labelled `app.<project>_runs` | with `APP_BOAT_NAMESPACE` unset, the old default of the same runtime is ours too: what was named under it (orchestrators launched before the update and their workers, a run sandbox or container mid-run or left over, the last snapshot image, an image builder) is listed, counted on the boat plan and the Compute page, and reaped as ours, never leaked or counted as another deployment's; nothing new is named under it. Orchestrators from before are retired on the deploy as always (old code), their workers with them. A deployment that sets `APP_BOAT_NAMESPACE` is unchanged |
+| an orchestrator sandbox's service user (mold_v0-156) | `appsvc` | configure makes it and the unit runs as it; a sandbox set up before keeps its old account (no sudo, no login, owns only its home), which nothing runs as once configured again, and goes with the sandbox |
+| a runner host's uid leases and checkout cache (mold_v0-156, `src/run-users.ts` `hostDir`) | `/run/app-run-uids`, `/var/cache/app-checkouts` | a host that has the old directory and not the new keeps using the old one, so a runner of the release before and one of this release never lease one uid from two directories during a rolling deploy; the leases move at the next boot (`/run` is cleared), the cache once its old directory is deleted |
+| what a release's own image or sandbox set-up makes and uses within that release (mold_v0-156) | run users `apprun`, `apprun-<uid>`; the egress proxy's user `appproxy`, unit `app-egress-proxy`, files `/opt/app-egress`, logs `/var/log/app-egress.*`, firewall table `app_egress`; the run tools `/opt/app-tools`; the runner unit `app-runner`; a worker sandbox's `/tmp/app`, `.app-env`, `.app-snap.git`; pods `app-pool-*`, `app-busy-*` | nothing to keep: the runner image (the app's own `Dockerfile`) is built again by every deploy, and run, worker and pod sandboxes live one run or session on the code that set them up. `fleet/status.ts` counts a pod renamed busy under any prefix as busy |
 
 Proof: `npm run test:migrations` (an 0023 database with rows upgraded, every row kept; the old release's tenant
 transaction before and after; the alias role held to nothing; the rollback leaving exactly what 0023 left; on a real
 Postgres also a database dropped and made again under one name), `npm run check:rls`, `npx tsx
 orchestrator/test/legacy-names.ts` (the image fallback over a stand-in docker; configure and stop run over a stand-in
-sandbox set up before).
+sandbox set up before; mold_v0-156: the namespace's old default as ours, a set one alone), `npm run
+test:run-sandboxes` (run sandboxes and run containers under the old default reaped as orphans, another deployment's
+kept; the Compute page's classification), `npm run test:run-users` (a host's old lease directory kept while it has only
+that one: a uid the release before holds there is never handed out), and the host pack's autoscaler test (orphan,
+stale and stuck orchestrators and workers under the old default reaped).
 
 **The vocabulary check** (`npm run check:vocabulary`, also run by the smoke test; `npm run test:vocabulary` proves it)
 fails when a product word (`scripts/vocabulary.json` `words`) is in a file of the shell, in its text or its path, outside
 the allow list, where each entry is an exact spelling, the files it may be in and what holds it; an entry that covers
 nothing fails too. The product word's short forms are words too (mold_v0-096: the abbreviation runtime identifiers
-used, and its Vercel twin): what still carries them is held outside the release and named by two entries,
-`boat-namespace` (the sandbox provider's namespace every autoscaler reaps orphans by; the orchestrator, worker, pool
-and run sandboxes and snapshot images under it; the service user baked into the snapshots) and `run-sandbox-runtime`
-(the run users and the egress proxy's user the runner image creates, its tools directory, the uid leases and checkout
-cache on a runner's host, the proxy's logs and set-up paths, and the tests that check those names); cosmetic uses (a
-shell's `$0`, a local container's name, a test's own mock server) were renamed, and a new one fails. Renaming the held
-ones is a rebuild of the snapshots and the runner image and a namespace migration, left for a follow-up of mold_v0-097
-(which renamed the long names, above). A pack's own files are not read. It also checks the table below, which it writes
+used, and its Vercel twin). mold_v0-156 renamed what carried them (above); two entries are left, each one file:
+`legacy-boat-namespace` (the namespace's old defaults, `orchestrator/core/boat-namespace.ts`) and
+`legacy-runner-host-dirs` (a runner host's old lease and cache directories, `src/run-users.ts`); a run user, tools
+directory or sandbox name with a short form fails anywhere. A pack's own files are not read. It also checks the table below, which it writes
 (`npm run check:vocabulary -- --write`) from every `APP_` name in the shell's code and deploy files.
 
 <!-- env-names:begin (generated by `npm run check:vocabulary -- --write` in the codebase; do not edit) -->
@@ -390,7 +394,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     the image's distribution package). `gen-packs` writes the union across the build's kinds
     (`src/run-tools.generated.json`, `check:packs` keeps it current; an unknown tool is refused at build); the Dockerfile
     installs exactly those (`scripts/install-run-tools.ts`: each artifact's sha256 checked before it is unpacked into
-    `/opt/octi-tools`, root's, with a manifest) and checks them last (`--verify`: an image that lacks a tool the build
+    `/opt/app-tools`, root's, with a manifest) and checks them last (`--verify`: an image that lacks a tool the build
     needs is refused at build); a boat run sandbox runs the same installer in its set-up, before its runner starts. At
     run time nothing is downloaded: the harness checks each tool the kind names (the pinned version and artifact, the
     installed program's own sha256, root's and writable by no one else, no link) and links exactly those first on the
@@ -421,7 +425,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     kind's egress), at a full commit id, fetched at exactly that commit as the agent repository is (outside the run's
     proxy, with the step's `credential`, which no step and not the command receive, through the same helper for that
     host only; the commit's size is counted from git's objects before anything is checked out) into the **checkout cache**: outside the workspace store,
-    per workspace (`<APP_RUN_CACHE_DIR or /var/cache/octi-checkouts>/ws-<id>`, root's, traversable by the run's
+    per workspace (`<APP_RUN_CACHE_DIR or /var/cache/app-checkouts>/ws-<id>`, root's, traversable by the run's
     user only during that workspace's run, closed again after), per repository and commit (an unguessable directory
     name), each checkout at most `max_bytes` (512 MB default) and the workspace's cache at most
     `APP_RUN_CACHE_MAX_BYTES` (2 GiB; least recently used entries go first, never one the run uses), entries unused
@@ -478,7 +482,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **Providers** (`APP_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
   small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
   imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
-  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `octirun-<uid>`); `docker` (a server of its own: the compose project's
+  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `apprun-<uid>`); `docker` (a server of its own: the compose project's
   `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
   which has git and nftables (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
   is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
@@ -846,7 +850,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and given back when it ends; the gid is the uid, with no supplementary groups. Before, every run of a host shared one
   uid (`APP_RUN_UID`, no longer read) and the end-of-run sweep (every process of that user killed, its files in
   the shared temporary directories removed) was host-wide: a concurrent run on the same host lost its steps (exit 128).
-  Leases are files in a root-only directory (`APP_RUN_UID_DIR`, default `/run/octi-run-uids`) naming the holding
+  Leases are files in a root-only directory (`APP_RUN_UID_DIR`, default `/run/app-run-uids`) naming the holding
   process (pid and start time, so a reused pid is not mistaken for it) and its run, taken and given back under a
   host-wide lock (flock on a file of that directory, held by a child process: the kernel frees it when its holder dies,
   and no run's user can reach it), round robin (a released uid comes
@@ -855,7 +859,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   processes will not die stays out of use ("quarantined") while its holder lives. A fixed `runAs` (tests, older setups)
   is leased the same way: a second run asking for it at once is refused (infrastructure, retried), never run beside the
   first. In a run sandbox (boat, docker: one run per sandbox) the runner leases the uid inside the sandbox, gives it an
-  account (`octirun-<uid>`), and the lockdown firewall matches it by number (`setupScript` `uid`); the unix sockets of
+  account (`apprun-<uid>`), and the lockdown firewall matches it by number (`setupScript` `uid`); the unix sockets of
   the local resolver and the system bus are denied to that uid (setfacl, best effort). Each run records its uid
   (`run_user` event; a program's own line claiming a harness or engine event type is a log line). A run's directories
   are 0700, its user's alone; the sweep also clears its user's kernel keyrings (`keyctl clear @u @us`, where keyctl

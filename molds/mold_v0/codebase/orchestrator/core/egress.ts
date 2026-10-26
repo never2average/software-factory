@@ -3,7 +3,7 @@
  * text steers the agent: the coding agent (uid `agent`) may only reach an allowlist of hosts, through a small HTTPS
  * proxy running inside the VM as its own user.
  *
- *   agent ──► 127.0.0.1:3128 (proxy, user octiproxy) ──► gateway, package registries, the task's git host
+ *   agent ──► 127.0.0.1:3128 (proxy, user appproxy) ──► gateway, package registries, the task's git host
  *   agent ──► anything else (internet, DNS, metadata IP, other machines): dropped by nftables/iptables (uid match)
  *
  * The proxy accepts CONNECT to port 443 only, refuses IP-literal targets and any host that resolves to a private,
@@ -17,7 +17,7 @@ export const EGRESS_PROXY_PORT = 3128;
 /** Transparent TLS (SNI) listener and DNS responder the firewall redirects the agent's 443 and 53 to. */
 export const EGRESS_TRANSPARENT_PORT = 3129;
 export const EGRESS_DNS_PORT = 15353;
-export const EGRESS_DIR = "/opt/octi-egress";
+export const EGRESS_DIR = "/opt/app-egress";
 
 /** Hosts agents need beyond the gateway: package registries (installing packages is part of the measured choice). */
 export const REGISTRY_HOSTS = [
@@ -198,11 +198,11 @@ udp.bind(Number(process.argv[6] || DPORT), "127.0.0.1");
 /** Facts about the lockdown, collected from the VM when its probe fails (the VM is destroyed right after). */
 export function diagnosticsScript(): string {
   return `echo "--- proxy processes"; ps -eo user:10,pid,args 2>/dev/null | grep -E "proxy.mjs" | grep -v grep | cut -c1-120 | head -3; echo "(end)"
-echo "--- service"; sudo -n systemctl is-active octi-egress-proxy 2>&1 | head -1; sudo -n journalctl -u octi-egress-proxy -n 6 --no-pager 2>/dev/null | cut -c1-160
+echo "--- service"; sudo -n systemctl is-active app-egress-proxy 2>&1 | head -1; sudo -n journalctl -u app-egress-proxy -n 6 --no-pager 2>/dev/null | cut -c1-160
 echo "--- listeners"; (sudo -n ss -lntu 2>/dev/null || ss -lntu 2>/dev/null) | head -10
-echo "--- proxy error output"; sudo -n head -c 500 /var/log/octi-egress.err 2>/dev/null | head -8
-echo "--- proxy log (last)"; sudo -n tail -n 12 /var/log/octi-egress.log 2>/dev/null | cut -c1-160
-echo "--- rules"; (sudo -n nft list table inet octi_egress 2>&1 | head -14) || true
+echo "--- proxy error output"; sudo -n head -c 500 /var/log/app-egress.err 2>/dev/null | head -8
+echo "--- proxy log (last)"; sudo -n tail -n 12 /var/log/app-egress.log 2>/dev/null | cut -c1-160
+echo "--- rules"; (sudo -n nft list table inet app_egress 2>&1 | head -14) || true
 (sudo -n iptables -t nat -S OUTPUT 2>/dev/null; sudo -n iptables -S OUTPUT 2>/dev/null) | grep -E "owner|REDIRECT|DROP" | head -8 || true
 echo "--- resolver"; grep -v '^#' /etc/resolv.conf 2>/dev/null | head -3`;
 }
@@ -252,7 +252,7 @@ process.exit(bad ? 1 : 0);
  * firewall test, which must not add a user or files to the machine it runs on).
  */
 export function setupScript(dir: string, opts: { user?: string; uid?: number; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean } = {}): string {
-  const user = opts.user ?? "agent", proxyUser = opts.proxyUser ?? "octiproxy";
+  const user = opts.user ?? "agent", proxyUser = opts.proxyUser ?? "appproxy";
   const name = /^[a-z_][a-z0-9_-]{0,31}$/, dirOk = /^\/[A-Za-z0-9._\/-]{1,200}$/;
   if (!name.test(user) || !name.test(proxyUser)) throw new Error(`egress: not a user name: ${user} / ${proxyUser}`);
   if ((opts.installDir && !dirOk.test(opts.installDir)) || (opts.logDir && !dirOk.test(opts.logDir))) throw new Error("egress: install and log directories are absolute plain paths");
@@ -263,8 +263,8 @@ export function setupScript(dir: string, opts: { user?: string; uid?: number; su
   if (opts.strict) body = strictRules(body);
   if (opts.systemd === false) body = body.replace("if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then", "if false; then");
   if (opts.installDir) body = body.replace(`D=${EGRESS_DIR};`, `D=${opts.installDir};`);
-  if (opts.logDir) body = body.replaceAll("/var/log/octi-egress.", `${opts.logDir}/octi-egress.`);
-  if (proxyUser !== "octiproxy") body = body.replaceAll("octiproxy", proxyUser);
+  if (opts.logDir) body = body.replaceAll("/var/log/app-egress.", `${opts.logDir}/app-egress.`);
+  if (proxyUser !== "appproxy") body = body.replaceAll("appproxy", proxyUser);
   // As root already, "sudo -n" is dropped (a container has no sudo); "-u <proxy user>" runs through runuser instead.
   return opts.sudo === false ? body.replaceAll(`sudo -n -u ${proxyUser} `, `runuser -u ${proxyUser} -- `).replaceAll("sudo -n ", "") : body;
 }
@@ -276,8 +276,8 @@ export function setupScript(dir: string, opts: { user?: string; uid?: number; su
  * fails closed when ip6tables is missing.
  */
 function strictRules(body: string): string {
-  const nftStart = body.indexOf("table inet octi_egress {"), nftEnd = body.indexOf("\nEOF\n", nftStart);
-  const nft = `table inet octi_egress {
+  const nftStart = body.indexOf("table inet app_egress {"), nftEnd = body.indexOf("\nEOF\n", nftStart);
+  const nft = `table inet app_egress {
   chain nat_out {
     type nat hook output priority -150; policy accept;
     meta skuid $AUID udp dport 53 redirect to :${EGRESS_DNS_PORT}
@@ -312,31 +312,31 @@ function setupBody(dir: string, user: string): string {
   return `set -eu
 D=${EGRESS_DIR}; O=${dir}
 NODE="$(command -v node || true)"; [ -n "$NODE" ] || { echo "egress: node not found" >&2; exit 20; }
-id octiproxy >/dev/null 2>&1 || sudo -n useradd -r -M -s /usr/sbin/nologin octiproxy
+id appproxy >/dev/null 2>&1 || sudo -n useradd -r -M -s /usr/sbin/nologin appproxy
 sudo -n install -d -m 755 -o root -g root "$D"
 sudo -n install -m 644 -o root -g root "$O/egress-proxy.mjs" "$D/proxy.mjs"
 sudo -n install -m 644 -o root -g root "$O/egress-allow.json" "$D/allow.json"
 sudo -n install -m 644 -o root -g root "$O/egress-probe.mjs" "$D/probe.mjs"
-sudo -n install -m 640 -o octiproxy -g root /dev/null /var/log/octi-egress.log
-sudo -n install -m 640 -o octiproxy -g root /dev/null /var/log/octi-egress.err
+sudo -n install -m 640 -o appproxy -g root /dev/null /var/log/app-egress.log
+sudo -n install -m 640 -o appproxy -g root /dev/null /var/log/app-egress.err
 # The proxy must outlive this command's session (a plain background child is killed when it ends): run it as its own
 # systemd service; where there is no systemd, as a detached session whose stderr is opened by the proxy user itself.
 if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  sudo -n systemd-run --quiet --unit=octi-egress-proxy --uid=octiproxy --property=Restart=on-failure --property=StandardOutput=null \\
-    --property=StandardError=append:/var/log/octi-egress.err "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/octi-egress.log
+  sudo -n systemd-run --quiet --unit=app-egress-proxy --uid=appproxy --property=Restart=on-failure --property=StandardOutput=null \\
+    --property=StandardError=append:/var/log/app-egress.err "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/app-egress.log
 else
-  sudo -n -u octiproxy setsid sh -c 'exec nohup "$0" "$@" >/dev/null 2>/var/log/octi-egress.err' "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/octi-egress.log </dev/null &
+  sudo -n -u appproxy setsid sh -c 'exec nohup "$0" "$@" >/dev/null 2>/var/log/app-egress.err' "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/app-egress.log </dev/null &
 fi
 up=0; for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/${EGRESS_PROXY_PORT}) 2>/dev/null && { up=1; break; }; sleep 0.25; done
 # All three listeners must be up: the proxy port, the transparent TLS port and the DNS responder.
 if [ "$up" = 1 ]; then
   up=0; for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/${EGRESS_TRANSPARENT_PORT}) 2>/dev/null && { up=1; break; }; sleep 0.25; done
 fi
-[ "$up" = 1 ] || { echo "egress: proxy did not start: $(sudo -n head -c 600 /var/log/octi-egress.err 2>/dev/null | tr '\\n' ' ')" >&2; exit 22; }
+[ "$up" = 1 ] || { echo "egress: proxy did not start: $(sudo -n head -c 600 /var/log/app-egress.err 2>/dev/null | tr '\\n' ' ')" >&2; exit 22; }
 AUID="$(id -u ${user})"
 if command -v nft >/dev/null 2>&1; then
   sudo -n nft -f - <<EOF
-table inet octi_egress {
+table inet app_egress {
   chain nat_out {
     type nat hook output priority -100; policy accept;
     meta skuid $AUID udp dport 53 redirect to :${EGRESS_DNS_PORT}

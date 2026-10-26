@@ -125,7 +125,7 @@ DRY_RUN=1 orchestrator/images/boat-snapshot.sh                         # plan on
 For each harness, `boat-snapshot.sh` does the following:
 
 1. Creates a fresh VM (`noEnv:true`, 1 h TTL).
-2. Uploads `boat-setup/_common.sh` and `boat-setup/<harness>.sh` to `/tmp/octi-setup/`.
+2. Uploads `boat-setup/_common.sh` and `boat-setup/<harness>.sh` to `/tmp/app-setup/`.
 3. Runs the setup script synchronously (it must finish within 600 s; all of ours take under a minute).
 4. Removes the scripts and saves the named snapshot `image.boat_snapshot`.
 5. Polls until `ready`, then deletes the build VM. The VM is deleted even when a step fails.

@@ -32,6 +32,7 @@ import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
 import { ENV } from "../src/env-names.js";
 import { NS } from "../src/namespace.js";
+import { legacyBoatNamespace } from "../orchestrator/core/boat-namespace.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RUNS_DIR = path.join(ROOT, "scripts", "fixtures", "runs");
@@ -112,7 +113,7 @@ const boat = http.createServer((req, res) => {
         symlinkSync(path.join(ROOT, "orchestrator", "node_modules"), path.join(sb.dir, "app", "orchestrator", "node_modules"));
         return json(res, 200, { ok: true, exitCode: 0, stdout: "", stderr: "" });
       }
-      if (cmd.includes("--unit=octi-runner")) {
+      if (cmd.includes("--unit=app-runner")) {
         const envText = [...sb.files].find(([k]) => k.endsWith("/runner.env.new"))?.[1] ?? "";
         const e = parseEnv(envText);
         envFiles[sb.id] = e;
@@ -263,7 +264,7 @@ try {
     const [row] = await rows(id);
     assert.equal(row!.state, "running", `launched: ${row!.launch_error}`);
     const sb = sbs.get(row!.sandbox_id!)!;
-    assert.ok(sb.name.startsWith(`octi-run-${row!.id}-`), sb.name);
+    assert.ok(sb.name.startsWith(`app-run-${row!.id}-`), sb.name);
     assert.ok(Number(sb.create.ttlSeconds) <= 10 * 60 + 2 * 3600 + 2 * 15 + 1800 && Number(sb.create.ttlSeconds) > 0, `TTL ${sb.create.ttlSeconds}`);
     const e = envFiles[sb.id]!;
     assert.equal(e.APP_RUN_LOCKDOWN, "on", "the launcher always asks for the lockdown");
@@ -276,7 +277,7 @@ try {
     for (const f of ["src/run-sandbox-runner.ts", "src/run-harness.ts", "orchestrator/core/egress.ts", "scripts/fixtures/runs/ok.mjs"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
     // mold_v0-072: the run tools' installer and the build's list go too, and the set-up runs it (as root, before the runner).
     for (const f of ["src/run-tools.ts", "scripts/install-run-tools.ts", "src/run-tools.generated.json"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
-    assert.ok(sb.commands.some((c) => /sudo -n env PATH=\S+ \S+\/tsx scripts\/install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/octi-tools/.test(c)), "the set-up installs the run tools");
+    assert.ok(sb.commands.some((c) => /sudo -n env PATH=\S+ \S+\/tsx scripts\/install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/app-tools/.test(c)), "the set-up installs the run tools");
     for (const f of ["src/db.ts", "src/runs.ts", "src/keyvault.ts", "src/http.ts", ".env"]) assert.ok(!uploaded.includes(f), `${f} not uploaded`);
     await waitFor("the run to end", ended(id));
     const r1 = await runRow(id);
@@ -389,12 +390,24 @@ try {
     failCreates = false;
     const evs = await db.query<{ kind: string }>("SELECT kind FROM compute_events WHERE job_id = $1", [c]);
     assert.equal(evs.filter((x) => x.kind === "launch_failed").length, 3);
-    // Orphans: ours (by name) without a row go; another deployment's stay.
+    // Orphans: ours (by name) without a row go, under the namespace's default before mold_v0-156 too (one launched by
+    // the release before, orchestrator/core/boat-namespace.ts); another deployment's stay.
     const mk = (name: string) => { const id = `bx_${randomBytes(4).toString("hex")}`; sbs.set(id, { id, name, state: "ready", createdAt: new Date().toISOString(), files: new Map(), dir: TMP, create: {}, commands: [] }); return id; };
-    const orphan = mk("octi-run-9999-abcdef"), other = mk("octv-run-1-abcdef");
+    const legacyNs = legacyBoatNamespace()!;
+    assert.ok(legacyNs && legacyNs !== "app", "APP_BOAT_NAMESPACE is unset here: the old default is ours too");
+    const orphan = mk("app-run-9999-abcdef"), legacyOrphan = mk(`${legacyNs}-run-9998-abcdef`), other = mk("appv-run-1-abcdef");
     await rs.tick();
-    assert.ok(!sbs.has(orphan) && sbs.has(other));
+    assert.ok(!sbs.has(orphan) && !sbs.has(legacyOrphan) && sbs.has(other), "ours (new and old default) reaped, another deployment's kept");
     sbs.delete(other);
+    // The Compute page counts what was named under the old default as ours, workers with their parents (src/compute.ts).
+    const { classifySandboxNames } = await import("../src/compute.js");
+    const kinds = classifySandboxNames([
+      { id: "a", name: "app-orch-a", state: "running" }, { id: "b", name: `${legacyNs}-orch-b`, state: "running" },
+      { id: "c", name: `${legacyNs}-w-orch-b-codex`, state: "running" }, { id: "d", name: `${legacyNs}-orch-img-x`, state: "ready" },
+      { id: "e", name: `${legacyNs}-img-build`, state: "running" }, { id: "f", name: "appv-orch-c", state: "running" },
+    ], undefined, ["orch-b"]).map((x) => [x.kind, x.parent_orchestrator_id, x.prefix]);
+    assert.deepEqual(kinds, [["orchestrator", null, null], ["orchestrator", null, null], ["worker", "orch-b", null], ["image", null, null],
+      ["image_builder", null, null], ["other", null, "appv"]], "ours under either name; another deployment's as other");
     console.log("✓ cost: at most APP_MAX_RUN_SANDBOXES; a sandbox that cannot start is tried 3 times, then the run fails; orphans of this deployment deleted, another's kept");
   }
 
@@ -411,7 +424,7 @@ try {
     const ct = cts.get(row!.sandbox_id!)!;
     const h = ct.body.HostConfig;
     assert.equal(ct.body.Image, "sha256:runimage");
-    assert.equal(ct.body.Labels[`org.${NS}.run-sandbox`], "octi.sf-test_runs", "labelled per project: another project's runner never lists it");
+    assert.equal(ct.body.Labels[`org.${NS}.run-sandbox`], "app.sf-test_runs", "labelled per project: another project's runner never lists it");
     assert.deepEqual(ct.body.Cmd.slice(0, 3), ["timeout", "-s", "KILL"], "the container has its own deadline");
     assert.equal(ct.body.User, "0");
     assert.deepEqual(h.CapDrop, ["ALL"]);
@@ -428,6 +441,13 @@ try {
     assert.equal((await runRow(id)).status, "succeeded");
     await rs.tick();
     assert.ok(!cts.has(ct.id), "the container is removed");
+    // A container the release before labelled under the namespace's old default (mold_v0-156) and left with no row is
+    // listed and removed too; one of another project's runs network, or another deployment's namespace, is never touched.
+    const legacyCt = (label: string) => { const cid = randomBytes(12).toString("hex"); cts.set(cid, { id: cid, name: `x-run-1-${cid.slice(0, 6)}`, state: "exited", body: { Labels: { [`org.${NS}.run-sandbox`]: label } } }); return cid; };
+    const oldOurs = legacyCt(`${legacyBoatNamespace()}.sf-test_runs`), otherProject = legacyCt(`${legacyBoatNamespace()}.other_runs`), otherNs = legacyCt("appv.sf-test_runs");
+    await rs.tick();
+    assert.ok(!cts.has(oldOurs) && cts.has(otherProject) && cts.has(otherNs), "an orphan under the old default removed; others' kept");
+    cts.delete(otherProject); cts.delete(otherNs);
     // A runner that dies before it claims: each such sandbox is a failed start; three, and the run fails (no relaunch loop).
     crashOnStart = true;
     const dead = await start(cb, "plain", { asset: "app-b" });

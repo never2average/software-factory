@@ -13,7 +13,7 @@
  *
  * Pods: `orchestrator/images/Dockerfile.<harness>` images idling on `sleep infinity` (user agent, workdir
  * /home/agent/work), docker-runner limits, labels app.pool=1, app.agent=<agent_id>,
- * app.harness=<h>, app.pool.owner=<ORCHESTRATOR_ID>. Busy pods are renamed octi-busy-*.
+ * app.harness=<h>, app.pool.owner=<ORCHESTRATOR_ID>. Busy pods are renamed app-busy-*.
  *
  * Jobs: each group claims with {agent_ids:[agent_id]} and limit = its idle pods, so an Opus pod only gets Opus
  * sessions; the job's model must equal the group's model (asserted). Every run is `docker exec -u agent` +
@@ -143,7 +143,7 @@ export class PodPool {
   private async spawnPod(t: Target): Promise<void> {
     if (this.draining) return;
     const id = randomUUID().slice(0, 8);
-    const pod: Pod = { id, name: `octi-pool-${slug(t.agent_id)}-${id}`, agentId: t.agent_id, harness: t.harness, model: t.model, image: t.image, state: "starting", baseEnv: [] };
+    const pod: Pod = { id, name: `app-pool-${slug(t.agent_id)}-${id}`, agentId: t.agent_id, harness: t.harness, model: t.model, image: t.image, state: "starting", baseEnv: [] };
     this.pods.set(id, pod);
     try {
       // The registry's tag, or its name before mold_v0-097 on a host that has only that (runners.ts localImage).
@@ -198,7 +198,7 @@ export class PodPool {
       throw new ModelMismatchError(`pod group ${pod.agentId} runs model ${pod.model}, but the job asks for ${model}`);
     }
     pod.state = "busy";
-    const busy = `octi-busy-${slug(pod.agentId)}-${pod.id}`;
+    const busy = `app-busy-${slug(pod.agentId)}-${pod.id}`;
     if ((await sh("docker", ["rename", pod.name, busy])).code === 0) pod.name = busy;
     return pod;
   }
@@ -281,7 +281,7 @@ export class PodPool {
             return { stdout: child.stdout!, stderr: child.stderr!, exited };
           },
           async diff() {
-            const r = await exec(["-e", `BASE=${base}`, "-e", `WORK=${AGENT_WORKDIR}`, "-e", "SNAP=/tmp/.octi-snap.git", "-e", `HOME=${AGENT_HOME}`, pod.name, "bash", "-c", DIFF_SCRIPT]);
+            const r = await exec(["-e", `BASE=${base}`, "-e", `WORK=${AGENT_WORKDIR}`, "-e", "SNAP=/tmp/.app-snap.git", "-e", `HOME=${AGENT_HOME}`, pod.name, "bash", "-c", DIFF_SCRIPT]);
             return r.code === 0 ? capDiff(r.out) : null;
           },
           async stopTurn() { await sh("docker", ["exec", pod.name, "bash", "-c", "pkill -TERM -u agent || true"]); },

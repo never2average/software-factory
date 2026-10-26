@@ -403,10 +403,11 @@ export async function orchestratorDetail(id: number) {
     `/* tenant: internal: admin Compute page, sessions by worker sandbox id */
      SELECT DISTINCT ON (sandbox_id) id, agent_id, status, heartbeat_at, sandbox_id FROM agent_sessions WHERE sandbox_id = ANY($1) ORDER BY sandbox_id, queued_at DESC`,
     [mine.map((s) => s.id)]) : []).map((x) => [x.sandbox_id, x]));
-  const prefix = r.orchestrator_id ? `${lib.workerPrefixOf(r.orchestrator_id)}-` : "";
+  const prefixes = r.orchestrator_id ? lib.workerPrefixesOf(r.orchestrator_id) : [];
   const workers = mine.map((s) => {
     const ses = bySandbox.get(s.id);
-    return { sandbox_id: s.id, name: s.name ?? null, agent_id: ses?.agent_id ?? (s.name?.startsWith(prefix) ? s.name.slice(prefix.length) : null), session_id: ses?.id ?? null,
+    const prefix = prefixes.find((p) => s.name?.startsWith(p));
+    return { sandbox_id: s.id, name: s.name ?? null, agent_id: ses?.agent_id ?? (prefix ? s.name!.slice(prefix.length) : null), session_id: ses?.id ?? null,
       status: ses?.status ?? null, heartbeat_age_s: ses?.heartbeat_at ? Math.round((now - new Date(ses.heartbeat_at).getTime()) / 1000) : null, boat_state: s.state };
   });
 

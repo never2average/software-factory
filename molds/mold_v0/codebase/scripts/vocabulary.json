@@ -1,5 +1,5 @@
 {
-  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, the old names a release still answers to for what was set up before it renamed them (mold_v0-097: the database's functions, tenant role and setting, kept as aliases; local agent images built under their old tags; an orchestrator sandbox's unit, home and marker, moved over at its next configure), until a later cleanup; and names on the sandbox provider and its runners that only a rebuild renames. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
+  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, the old names a release still answers to for what was set up before it renamed them (mold_v0-097: the database's functions, tenant role and setting, kept as aliases; local agent images built under their old tags; an orchestrator sandbox's unit, home and marker, moved over at its next configure), until a later cleanup; and (mold_v0-156) the sandbox namespace's old defaults, which a deployment that never set one still reaps its sandboxes under, and a runner host's old lease and cache directories, used while a host has them. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
   "words": [
     "octillion",
     "octi",
@@ -70,56 +70,20 @@
       "why": "test data, never shipped: the first product's landing page written word for word as a landing block (mold_v0-122), so its own screenshots can check that the shell's section library reproduces it"
     },
     {
-      "id": "boat-namespace",
-      "pattern": "\"oct[iv]\"|`octi`|\\bocti(?=-(?:orch-img|orch|w|pool|busy|bake|run)-)|\\boct[iv](?=-run-)|\\bocti(?=\\.sf-test_runs\\b)",
+      "id": "legacy-boat-namespace",
+      "pattern": "\"oct[iv]\"",
       "paths": [
-        "docs/security.md",
-        "orchestrator/README.md",
-        "orchestrator/core/fleet-client.ts",
-        "orchestrator/core/pool.ts",
-        "orchestrator/core/runners.ts",
-        "orchestrator/deploy/boat-lib.ts",
-        "orchestrator/deploy/in-sandbox.ts",
-        "orchestrator/fleet/status.ts",
-        "orchestrator/images/boat-snapshot.sh",
-        "scripts/run-sandboxes-test.ts",
-        "src/autoscaler.ts",
-        "src/compute.ts",
-        "src/docs-corpus.generated.json",
-        "src/run-sandboxes.ts",
-        "web/src/content/admin-docs.generated.ts"
+        "orchestrator/core/boat-namespace.ts"
       ],
-      "why": "names on the sandbox provider (boat) and its VMs that running fleets hold: the default namespace (\"octi\" on a server, \"octv\" on Vercel) every autoscaler reaps orphans by, the names of orchestrator, worker, pool and run sandboxes and snapshot images under it, and the unprivileged `octi` user baked into the snapshots. Renaming them is a rebuild of the snapshots and a namespace migration (a follow-up of mold_v0-097, which renamed the long names held outside a release), not a rename"
+      "why": "the sandbox namespace's defaults before mold_v0-156 (now \"app\" on a server, \"appv\" on Vercel): a deployment that leaves APP_BOAT_NAMESPACE unset still has, for a while after its update, orchestrators, their workers, run sandboxes and run containers, and the last snapshot image named under its old default, which it lists, counts and reaps as its own (autoscaler, Compute page, run sandboxes' scaler, launcher), so none leaks or is taken for another deployment's; proven by scripts/run-sandboxes-test.ts and orchestrator/test/legacy-names.ts. The one place the old defaults are spelled. Goes with a later cleanup, once no deployment has sandboxes under them"
     },
     {
-      "id": "run-sandbox-runtime",
-      "pattern": "\\bocti(?=run\\b|run-|proxy\\b|_egress\\b)|\\bocti(?=-(?:tools|checkouts|run-uids|run-users|run|runner|egress|setup|gocache|gopath)\\b)|\\.octi(?=-env\\b|-inputs/|-snap\\.git)|/tmp/octi(?![\\w-])|\\\\/tmp\\\\/octi\\\\/",
+      "id": "legacy-runner-host-dirs",
+      "pattern": "/run/octi-run-uids\\b|/var/cache/octi-checkouts\\b",
       "paths": [
-        "Dockerfile",
-        "orchestrator/README.md",
-        "orchestrator/core/egress.ts",
-        "orchestrator/core/environment.ts",
-        "orchestrator/core/pool.ts",
-        "orchestrator/core/runners.ts",
-        "orchestrator/images/README.md",
-        "orchestrator/images/boat-snapshot.sh",
-        "orchestrator/test/boat-fleet.ts",
-        "orchestrator/test/egress.ts",
-        "scripts/agent-steps-test.ts",
-        "scripts/fixtures/run-users/long.mjs",
-        "scripts/fixtures/run-users/short.mjs",
-        "scripts/install-run-tools.ts",
-        "scripts/run-firewall-test.ts",
-        "scripts/run-sandboxes-test.ts",
-        "scripts/run-tools-test.ts",
-        "scripts/run-users-test.ts",
-        "src/run-harness.ts",
-        "src/run-sandbox-runner.ts",
-        "src/run-sandboxes.ts",
-        "src/run-tools.ts",
         "src/run-users.ts"
       ],
-      "why": "users, groups, paths and units on run sandboxes, orchestrator pods and runner hosts that a built image or a host already holds: the run users (octirun-*) and the egress proxy's user (octiproxy) the runner image creates, its tools directory, the uid leases and checkout cache that outlive a release on a runner's host, the proxy's logs and set-up paths, and the tests that check those exact names. Renamed with the image rebuild (a follow-up of mold_v0-097, which renamed the long names held outside a release)"
+      "why": "a runner host's uid leases and checkout cache under their names before mold_v0-156 (now /run/app-run-uids, /var/cache/app-checkouts): a host that still has the old directory and not the new keeps using it (src/run-users.ts hostDir), so a runner of the release before and one of this release never lease one uid twice from two directories during a rolling deploy; proven by scripts/run-users-test.ts. The leases move at the host's next boot, the cache once its old directory is deleted. Goes with a later cleanup"
     }
   ],
   "concepts": {

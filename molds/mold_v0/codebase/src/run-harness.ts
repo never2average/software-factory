@@ -55,7 +55,7 @@ import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
 import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
-import { killUser, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
+import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { now as clockNow, REFRESH_MARGIN_MS } from "./clock.js";
 
@@ -175,7 +175,7 @@ export interface HarnessOptions {
   runUsers?: UidRange;
   /** A run user the caller already leased (a run sandbox's runner, which locks its uid down first); the caller releases it. */
   runUser?: RunUser;
-  /** Where the leases are kept (default APP_RUN_UID_DIR, else /run/octi-run-uids). Tests only. */
+  /** Where the leases are kept (default APP_RUN_UID_DIR, else /run/app-run-uids). Tests only. */
   runUidDir?: string;
   /**
    * Run the programs as the runner's own user, without the protection above (offline tests only). A program can then
@@ -215,18 +215,19 @@ export interface HarnessOptions {
    * minute by default. A variable is set when a program starts: a long program should take such a credential as a file.
    */
   credentialRefreshMs?: number;
-  /** The run tools (mold_v0-072): where the image installed them (APP_RUN_TOOLS_DIR, /opt/octi-tools) and, for the offline tests only, another catalogue. */
+  /** The run tools (mold_v0-072): where the image installed them (APP_RUN_TOOLS_DIR, /opt/app-tools) and, for the offline tests only, another catalogue. */
   runTools?: { dir?: string; catalog?: ToolCatalog };
   /**
-   * The checkout cache's directory (mold_v0-074): APP_RUN_CACHE_DIR, else /var/cache/octi-checkouts for a runner
-   * started as root, else one under the system's temp directory. Per workspace inside it, capped at
-   * APP_RUN_CACHE_MAX_BYTES (2 GiB) per workspace, entries unused for APP_RUN_CACHE_DAYS (7) removed.
+   * The checkout cache's directory (mold_v0-074): APP_RUN_CACHE_DIR, else /var/cache/app-checkouts for a runner
+   * started as root (or its name before mold_v0-156 on a host that still has only that: src/run-users.ts hostDir),
+   * else one under the system's temp directory. Per workspace inside it, capped at APP_RUN_CACHE_MAX_BYTES (2 GiB) per
+   * workspace, entries unused for APP_RUN_CACHE_DAYS (7) removed.
    */
   cacheDir?: string;
 }
 
 /** The checkout cache's settings (mold_v0-074). */
-const cacheBase = (o: HarnessOptions) => o.cacheDir ?? ENV.APP_RUN_CACHE_DIR ?? (process.getuid?.() === 0 ? "/var/cache/octi-checkouts" : path.join(tmpdir(), `octi-checkouts-${process.getuid?.() ?? 0}`));
+const cacheBase = (o: HarnessOptions) => o.cacheDir ?? ENV.APP_RUN_CACHE_DIR ?? (process.getuid?.() === 0 ? hostDir("/var/cache/app-checkouts", LEGACY_HOST_DIRS.cache) : path.join(tmpdir(), `app-checkouts-${process.getuid?.() ?? 0}`));
 const cacheMaxBytes = () => Math.max(1024 * 1024, Number(ENV.APP_RUN_CACHE_MAX_BYTES ?? 2 * 1024 ** 3) || 2 * 1024 ** 3);
 const cacheDays = () => Math.max(0, Number(ENV.APP_RUN_CACHE_DAYS ?? 7) || 7);
 
@@ -563,7 +564,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         if (spec.workspace) await client.checkout(run.id, lease, work);
       }
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"), claim.egress.exact ?? []);
-      else if (opts.egress === "system") proxy = { port: EGRESS_PROXY_PORT, env: proxyEnv(), log: path.join(EGRESS_LOG_DIR, "octi-egress.log"), stop: () => {} };
+      else if (opts.egress === "system") proxy = { port: EGRESS_PROXY_PORT, env: proxyEnv(), log: path.join(EGRESS_LOG_DIR, "app-egress.log"), stop: () => {} };
       if (as) {
         if (!agent) chownTree(pack, as.uid, as.gid);
         // 0700: the run's user only (on a runner that carries out several runs at once, never another run's user).

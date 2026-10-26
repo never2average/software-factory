@@ -95,27 +95,29 @@ export interface ClassifiedSandbox extends lib.Sb {
   live: boolean;
   /** Workers: the orchestrator the name says it belongs to (`${ns}-w-<orchId>-<agent>`). */
   parent_orchestrator_id: string | null;
-  /** Other deployments' sandboxes: the first part of the name ("octv"), or "(unnamed)". */
+  /** Other deployments' sandboxes: the first part of the name ("appv"), or "(unnamed)". */
   prefix: string | null;
 }
 
 /**
  * Sort boat's sandboxes by name: ours are `${ns}-orch-…` (orchestrators), `${ns}-orch-img-…` (snapshot images),
- * `${ns}-img-build` (the image builder) and `${ns}-w-<orchId>-<agent>` (workers); everything else belongs to another
- * deployment on the same boat account. A worker's parent is matched against the orchestrator ids we know first (ids
- * may hold dashes), then read from the name.
+ * `${ns}-img-build` (the image builder) and `${ns}-w-<orchId>-<agent>` (workers), for each of our namespaces (`ns`:
+ * one, or several: lib.NAMESPACES, which holds the namespace's old default until a later cleanup, mold_v0-156);
+ * everything else belongs to another deployment on the same boat account. A worker's parent is matched against the
+ * orchestrator ids we know first (ids may hold dashes), then read from the name.
  */
-export function classifySandboxNames(list: lib.Sb[], ns: string = lib.BOAT_NAMESPACE, orchestratorIds: string[] = []): ClassifiedSandbox[] {
-  const orchPrefix = `${ns}-orch-`, imagePrefix = `${ns}-orch-img-`, builder = `${ns}-img-build`, workerPrefix = `${ns}-w-`;
-  const workerOf = (id: string) => `${workerPrefix}${id}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-  const known = orchestratorIds.map((id) => ({ id, prefix: `${workerOf(id)}-` }));
+export function classifySandboxNames(list: lib.Sb[], ns: string | string[] = lib.NAMESPACES, orchestratorIds: string[] = []): ClassifiedSandbox[] {
+  const all = typeof ns === "string" ? [ns] : ns;
+  const starts = (name: string, part: string) => all.some((n) => name.startsWith(`${n}-${part}`));
+  const workerOf = (n: string, id: string) => `${n}-w-${id}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  const known = orchestratorIds.flatMap((id) => all.map((n) => ({ id, prefix: `${workerOf(n, id)}-` })));
   return list.map((s) => {
     const name = s.name ?? "";
     const base = { ...s, live: lib.isLive(s), parent_orchestrator_id: null, prefix: null };
-    if (name.startsWith(imagePrefix)) return { ...base, kind: "image" as const };
-    if (name.startsWith(orchPrefix)) return { ...base, kind: "orchestrator" as const };
-    if (name === builder) return { ...base, kind: "image_builder" as const };
-    if (name.startsWith(workerPrefix)) {
+    if (starts(name, "orch-img-")) return { ...base, kind: "image" as const };
+    if (starts(name, "orch-")) return { ...base, kind: "orchestrator" as const };
+    if (all.some((n) => name === `${n}-img-build`)) return { ...base, kind: "image_builder" as const };
+    if (starts(name, "w-")) {
       const parent = known.find((k) => name.startsWith(k.prefix))?.id ?? /^[^-]+-w-(orch-[a-z0-9]+)-/.exec(name)?.[1] ?? null;
       return { ...base, kind: "worker" as const, parent_orchestrator_id: parent };
     }
@@ -132,7 +134,7 @@ export async function classifiedSandboxes(opts: { force?: boolean } = {}): Promi
     getDb().then((db) => db.query<{ orchestrator_id: string }>("SELECT orchestrator_id FROM orchestrator_sandboxes WHERE state <> 'deleted' AND orchestrator_id IS NOT NULL")),
   ]);
   return { ok: r.ok, stale: r.stale, error: r.error, at: r.at,
-    sandboxes: classifySandboxNames(r.value ?? [], lib.BOAT_NAMESPACE, rows.map((x) => x.orchestrator_id)) };
+    sandboxes: classifySandboxNames(r.value ?? [], lib.NAMESPACES, rows.map((x) => x.orchestrator_id)) };
 }
 
 /** For tests: forget what boat said. */
@@ -314,7 +316,7 @@ export function computeKnobs(runtime: "vm" | "vercel") {
   return [
     ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
     { name: shownName("APP_BOAT_NAMESPACE"), value: lib.BOAT_NAMESPACE, source: set("APP_BOAT_NAMESPACE") ? "env" as const : "default" as const,
-      meaning: "Name prefix of this deployment's sandboxes; it only ever touches sandboxes named with it." },
+      meaning: `Name prefix of this deployment's sandboxes; it only ever touches sandboxes named with it${lib.NAMESPACES.length > 1 ? ` (and, until a later cleanup, with ${lib.NAMESPACES.slice(1).join(", ")}, its default before mold_v0-156)` : ""}.` },
     { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,
       meaning: runtime === "vercel" ? "Serverless: the autoscaler ticks on events and a cron every 5 minutes." : "A long-running server: the autoscaler ticks on a timer." },
     { name: "Kick configured", value: kickConfigured() ? "yes" : "no", source: "env" as const,

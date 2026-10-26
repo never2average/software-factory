@@ -67,7 +67,7 @@ export const ENV_TOOLS: EnvTool[] = [
     install: "uv_tool ruff==0.17.0",
     lsp: { command: ["ruff", "server"], extensions: PY_EXT } },
   { id: "lsp/gopls", kind: "server", label: "gopls", names: ["gopls"], bin: "gopls",
-    install: "ensure_go\n$SUDO env PATH=/usr/local/go/bin:$PATH GOBIN=/usr/local/bin GOPATH=/tmp/octi-gopath GOCACHE=/tmp/octi-gocache go install golang.org/x/tools/gopls@v0.23.0 >&2",
+    install: "ensure_go\n$SUDO env PATH=/usr/local/go/bin:$PATH GOBIN=/usr/local/bin GOPATH=/tmp/app-gopath GOCACHE=/tmp/app-gocache go install golang.org/x/tools/gopls@v0.23.0 >&2",
     lsp: { command: ["gopls", "serve"], extensions: { ".go": "go" }, claudePlugin: "gopls-lsp" } },
   { id: "lsp/rust-analyzer", kind: "server", label: "rust-analyzer", names: ["rust-analyzer"], bin: "rust-analyzer",
     install: "fetch https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz /tmp/ra.gz\ngunzip -f /tmp/ra.gz && $SUDO install -m 0755 /tmp/ra /usr/local/bin/rust-analyzer",

@@ -24,11 +24,11 @@ try { egressPolicy({ gatewayUrls: ["http://127.0.0.1:3000/gw/anthropic"] }); } c
 check("policy: a non-HTTPS gateway is refused (strict mode is production only)", refused);
 check("policy: a repo given as an IP literal is not allowlisted", !egressPolicy({ gatewayUrls: ["https://gw.x.example"], repoUrl: "https://10.0.0.5/app.git" }).hosts.includes("10.0.0.5"));
 check("proxy env routes HTTP clients through the proxy", proxyEnv().HTTPS_PROXY === `http://127.0.0.1:${EGRESS_PROXY_PORT}` && proxyEnv().NODE_USE_ENV_PROXY === "1");
-const setup = setupScript("/tmp/octi");
+const setup = setupScript("/tmp/app");
 check("setup runs the proxy as its own systemd service, with a detached-session fallback (it must outlive the setup command)",
-  /systemd-run --quiet --unit=octi-egress-proxy --uid=octiproxy/.test(setupScript("/tmp/octi")) && /octiproxy setsid sh -c 'exec nohup/.test(setupScript("/tmp/octi")));
+  /systemd-run --quiet --unit=app-egress-proxy --uid=appproxy/.test(setupScript("/tmp/app")) && /appproxy setsid sh -c 'exec nohup/.test(setupScript("/tmp/app")));
 check("setup shows the proxy's own error when it does not start (file opened by the proxy user, read with sudo)",
-  /-u octiproxy setsid sh -c 'exec nohup "\$0" "\$@" >\/dev\/null 2>\/var\/log\/octi-egress\.err'/.test(setupScript("/tmp/octi")) && /egress: proxy did not start: \$\(sudo -n head/.test(setupScript("/tmp/octi")));
+  /-u appproxy setsid sh -c 'exec nohup "\$0" "\$@" >\/dev\/null 2>\/var\/log\/app-egress\.err'/.test(setupScript("/tmp/app")) && /egress: proxy did not start: \$\(sudo -n head/.test(setupScript("/tmp/app")));
 check("setup fails closed without node, a firewall tool or a running proxy", /exit 20/.test(setup) && /exit 21/.test(setup) && /exit 22/.test(setup) && /meta skuid \$AUID counter drop/.test(setup));
 check("probe expects the gateway reachable (also without proxy settings) and everything else blocked",
   /gateway directly \(transparent/.test(probeSource("gw.x.example")) && /DNS for an unlisted host", false/.test(probeSource("gw.x.example")) &&
@@ -36,7 +36,7 @@ check("probe expects the gateway reachable (also without proxy settings) and eve
 check("setup redirects the agent's HTTPS and DNS to the proxy", /tcp dport 443 redirect/.test(setup) && /udp dport 53 redirect/.test(setup) && /REDIRECT --to-ports/.test(setup));
 
 // Run the generated proxy on a free port (rewritten from 3128) with a small allowlist.
-const dir = mkdtempSync(path.join(os.tmpdir(), "octi-egress-"));
+const dir = mkdtempSync(path.join(os.tmpdir(), "app-egress-"));
 const port = 31000 + Math.floor(Math.random() * 2000);
 writeFileSync(path.join(dir, "proxy.mjs"), proxySource());
 const tport = port + 1, dport = port + 2;

@@ -83,14 +83,20 @@ try {
       const r = checkVocabulary(tree(files), { ...vocab(), words: [W, ...ABBR] });
       assert.equal(r.findings.filter((f) => f.file === "src/x.ts").length, 3, `${a}: found in each runtime identifier (namespace, run user, tools directory)`);
     }
-    const real = REAL.allow.filter((e) => ["boat-namespace", "run-sandbox-runtime"].includes(e.id));
+    // mold_v0-156 renamed the runtime identifiers; what is left is the namespace's old default (one file) and a runner
+    // host's old lease and cache directories (one file), each allowed only where it is spelled.
+    const real = REAL.allow.filter((e) => ["legacy-boat-namespace", "legacy-runner-host-dirs"].includes(e.id));
     assert.equal(real.length, 2, "the abbreviations' allow entries");
-    const held = `const ns = env.NS || "${ABBR[0]}"; const run = "${ABBR[0]}run-"; const tools = "/opt/${ABBR[0]}-tools";\n`;
-    const covered = checkVocabulary(tree({ "src/run-sandboxes.ts": held }), { words: REAL.words, files: {}, allow: real.map((e) => ({ ...e, paths: ["src/run-sandboxes.ts"] })) });
-    assert.deepEqual(covered.findings, [], "the held names, in an allowed file, pass");
-    const fresh = checkVocabulary(tree({ "src/run-sandboxes.ts": `${held}const label = "${ABBR[0]}-dashboard";\n` }), { words: REAL.words, files: {}, allow: real.map((e) => ({ ...e, paths: ["src/run-sandboxes.ts"] })) });
-    assert.deepEqual(fresh.findings.map((f) => f.line), [2], "a new identifier with the abbreviation is found beside them");
-    ok("the abbreviations are product words: found in runtime identifiers, the held ones (namespace, run users, tools) allowed, a new one refused");
+    assert.ok(!REAL.allow.some((e) => ["boat-namespace", "run-sandbox-runtime"].includes(e.id)), "the broad entries before mold_v0-156 are gone");
+    const nsFile = "orchestrator/core/boat-namespace.ts", dirFile = "src/run-users.ts";
+    const held = { [nsFile]: `const legacy = vercel ? "${ABBR[1]}" : "${ABBR[0]}";\n`, [dirFile]: `const leases = "/run/${ABBR[0]}-run-uids", cache = "/var/cache/${ABBR[0]}-checkouts";\n` };
+    const covered = checkVocabulary(tree(held), { words: REAL.words, files: {}, allow: real });
+    assert.deepEqual(covered.findings, [], "the old defaults and the old host directories, in their own files, pass");
+    const fresh = checkVocabulary(tree({ ...held, [dirFile]: `${held[dirFile]}const user = "${ABBR[0]}run-7", tools = "/opt/${ABBR[0]}-tools";\n`,
+      "src/run-sandboxes.ts": `const ns = env.NS || "${ABBR[0]}";\n` }), { words: REAL.words, files: {}, allow: real });
+    assert.deepEqual(fresh.findings.map((f) => `${f.file}:${f.line}`).sort(), [`${dirFile}:2`, `${dirFile}:2`, "src/run-sandboxes.ts:1"].sort(),
+      "a run user or tools directory under the old name, or the old default outside its file, is refused");
+    ok("the abbreviations are product words: found in runtime identifiers; only the namespace's old default and the old host directories are allowed, each in its one file");
   }
 
   // ---------- the env-name table ----------

@@ -93,9 +93,9 @@ export async function sandboxProvider() {
     BOAT.apiKey = (await kv.useCredential("boat")).secret;
     const [limits, list] = await Promise.all([lib.boatLimits(), lib.listSandboxes()]);
     const live = list.filter((s) => lib.isLive(s));
-    const ours = live.filter((s) => s.name?.startsWith(lib.ORCH_PREFIX) || s.name?.startsWith(lib.WORKER_PREFIX));
+    const ours = live.filter((s) => lib.isOursName(s.name));
     return { ...base, ok: true, error: null, limits,
-      running: { total: live.length, ours: ours.length, orchestrators: ours.filter((s) => s.name?.startsWith(lib.ORCH_PREFIX)).length, others: live.length - ours.length } };
+      running: { total: live.length, ours: ours.length, orchestrators: ours.filter((s) => lib.isOrchName(s.name)).length, others: live.length - ours.length } };
   } catch (e) {
     return { ...base, ok: false, error: (e as Error).message.slice(0, 300), limits: null, running: null };
   }

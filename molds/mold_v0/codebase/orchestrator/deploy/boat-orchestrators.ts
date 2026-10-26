@@ -51,8 +51,8 @@ async function boatKey(): Promise<void> {
   BOAT.apiKey = r.boat.api_key;
 }
 
-const orchestrators = async () => (await lib.listSandboxes()).filter((s) => s.name?.startsWith(lib.ORCH_PREFIX) && lib.isLive(s));
-const workersOf = (all: lib.Sb[], orchId: string) => all.filter((s) => s.name?.startsWith(lib.workerPrefixOf(orchId)) && lib.isLive(s));
+const orchestrators = async () => (await lib.listSandboxes()).filter((s) => lib.isOrchName(s.name) && lib.isLive(s));
+const workersOf = (all: lib.Sb[], orchId: string) => all.filter((s) => lib.isWorkerOf(s.name, orchId) && lib.isLive(s));
 
 async function currentImage(): Promise<string | null> {
   const name = lib.imageName(lib.codeHash());
@@ -62,7 +62,7 @@ async function currentImage(): Promise<string | null> {
 async function cmdUp(n: number, skipPreflight: boolean) {
   const existing = await orchestrators();
   const all = await lib.listSandboxes();
-  const ours = all.filter((s) => (s.name?.startsWith(lib.ORCH_PREFIX) || s.name?.startsWith(lib.WORKER_PREFIX)) && lib.isLive(s)).length;
+  const ours = all.filter((s) => lib.isOursName(s.name) && lib.isLive(s)).length;
   const limits = await lib.boatLimits();
   const b = lib.computeBudget(limits, n, POD_CAPACITY, ours);
   printBudget(b, limits);
@@ -78,7 +78,7 @@ async function cmdUp(n: number, skipPreflight: boolean) {
 
 async function cmdStatus() {
   const all = await lib.listSandboxes();
-  const orchs = all.filter((s) => s.name?.startsWith(lib.ORCH_PREFIX) && lib.isLive(s));
+  const orchs = all.filter((s) => lib.isOrchName(s.name) && lib.isLive(s));
   const fleet = (await api("/api/worker/fleet", { method: "GET" }).catch(() => null)) as any;
   out(`fleet: ${fleet?.orchestrators ?? "?"} orchestrator(s) checked in, ${fleet?.total_pods ?? "?"} worker slots planned, queue ${JSON.stringify(fleet?.queue ?? {})}`);
   for (const s of orchs) {
@@ -157,7 +157,7 @@ async function cmdSelftest() {
     for (const id of created) await lib.deleteSandbox(id).catch((e) => out(`delete ${id}: ${String(e)}`));
     await sleep(5000);
     const after = await lib.listSandboxes();
-    const ours = after.filter((s) => lib.isLive(s) && (created.includes(s.id) || s.name?.startsWith(lib.ORCH_PREFIX) || s.name?.startsWith(lib.WORKER_PREFIX)));
+    const ours = after.filter((s) => lib.isLive(s) && (created.includes(s.id) || lib.isOursName(s.name)));
     evidence.final_listing = { total: after.length, ours: ours.map((s) => `${s.id}:${s.state}`) };
     out("final GET /sandboxes:", evidence.final_listing);
   }

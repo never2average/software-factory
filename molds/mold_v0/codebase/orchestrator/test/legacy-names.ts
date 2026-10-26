@@ -6,6 +6,9 @@
  *    removed, its home with its env file and its marker deleted, the new unit, home and marker in place), and
  *    stopService stops whichever unit a sandbox runs. The launcher's own commands run, through a mock boat API, in bash
  *    over a scratch directory standing for the sandbox's root, with stand-ins for sudo and systemctl.
+ *  - the sandbox namespace's old default (mold_v0-156, core/boat-namespace.ts): with APP_BOAT_NAMESPACE unset, what was
+ *    named under it is listed, counted and reaped as ours (boat-lib's name checks; the run sandboxes' scaler and the
+ *    Compute page's classification: scripts/run-sandboxes-test.ts); with it set, that namespace alone
  *
  *   npx tsx orchestrator/test/legacy-names.ts
  */
@@ -133,6 +136,43 @@ echo "Error: No such image: $tag" >&2; exit 1`);
   assert.equal(await lib.stopService("bx_test1234"), "inactive");
   assert.ok(readFileSync(log, "utf8").includes(`stop ${lib.UNIT}`));
   ok("then starts and stops the new unit");
+  assert.match(readFileSync(at(`etc/systemd/system/${lib.UNIT}.service`), "utf8"), new RegExp(`^User=${lib.SERVICE_USER}$`, "m"));
+  assert.equal(lib.SERVICE_USER, "appsvc");
+  ok("the unit runs as the service user under its new name (mold_v0-156)");
+
+  // ---------------------------------------------------------------- 3. the namespace's old default (mold_v0-156)
+  const ns = await import("../core/boat-namespace.js");
+  const saved = { n: process.env.APP_BOAT_NAMESPACE, v: process.env.VERCEL };
+  const restore = () => { for (const [k, v] of [["APP_BOAT_NAMESPACE", saved.n], ["VERCEL", saved.v]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  try {
+    delete process.env.APP_BOAT_NAMESPACE; delete process.env.VERCEL;
+    const old = ns.legacyBoatNamespace()!;
+    assert.equal(ns.boatNamespace(), "app");
+    assert.ok(old && old !== "app" && /^[a-z]{4}$/.test(old));
+    assert.deepEqual(ns.boatNamespaces(), ["app", old]);
+    process.env.VERCEL = "1";
+    const oldV = ns.legacyBoatNamespace()!;
+    assert.equal(ns.boatNamespace(), "appv");
+    assert.ok(oldV && oldV !== old && oldV !== "appv");
+    ok("unset: the new default (app; appv on Vercel), and the old one of the same runtime is ours too");
+    process.env.APP_BOAT_NAMESPACE = "Team-B!";
+    assert.equal(ns.boatNamespace(), "teamb");
+    assert.equal(ns.legacyBoatNamespace(), null);
+    assert.deepEqual(ns.boatNamespaces(), ["teamb"]);
+    ok("set: that namespace alone (its names did not change)");
+  } finally { restore(); }
+  // What the launcher, the autoscaler and the Compute page take as ours (boat-lib, loaded with the namespace unset).
+  const old = lib.NAMESPACES[1]!;
+  assert.deepEqual(lib.NAMESPACES, [lib.BOAT_NAMESPACE, old]);
+  assert.equal(lib.ORCH_PREFIX, "app-orch-");
+  for (const n of ["app-orch-abc", `${old}-orch-abc`]) assert.ok(lib.isOrchName(n) && lib.isOursName(n), n);
+  for (const n of ["app-w-orch-a-codex", `${old}-w-orch-a-codex`]) assert.ok(lib.isWorkerName(n) && lib.isWorkerOf(n, "orch-a") && !lib.isWorkerOf(n, "orch-ab"), n);
+  assert.ok(!lib.isWorkerOf("app-w-orch-ab-codex", "orch-a"), "an id is never another's prefix");
+  for (const n of ["app-run-1-abc", `${old}-run-1-abc`]) assert.ok(lib.isRunName(n), n);
+  for (const n of [`${old}-orch-img-0123`, "app-orch-img-0123"]) assert.ok(lib.isImageName(n), n);
+  for (const n of [`${old}-img-build`, "app-img-build"]) assert.ok(lib.isImageBuilderName(n), n);
+  for (const n of ["appv-orch-abc", "teamb-w-orch-a-codex", "apps-orch-x", undefined]) assert.ok(!lib.isOursName(n) && !lib.isRunName(n), String(n));
+  ok("boat-lib: sandboxes, workers, run sandboxes, images and the builder under the old default are ours; another deployment's never");
   boat.close();
   console.log(`✓ legacy names: ${passed} checks`);
 } finally {

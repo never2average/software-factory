@@ -26,7 +26,8 @@ import { BOAT, BOAT_PRICE_PER_HOUR, CFG } from "./config.js";
 import { HttpError, log, sh, shq, sleep, withRetry } from "./util.js";
 import { EGRESS_DIR, proxyEnv, proxySource, probeSource, diagnosticsScript as egressDiagnostics, setupScript as egressSetupScript, type EgressPolicy } from "./egress.js";
 import { boatApi, boatCommandRetry, boatCreate, boatExec, boatExecStream, boatSandboxPath, BoatError } from "./boat.js";
-import { ENV, isShellEnvName } from "./env-names.js";
+import { isShellEnvName } from "./env-names.js";
+import { boatNamespace } from "./boat-namespace.js";
 
 export interface RunExit { code: number | null; signal: string | null; error?: string }
 
@@ -259,7 +260,7 @@ export const dockerRunner: Runner = {
         return childTurn(child);
       },
       async diff() {
-        const r = await sh("docker", ["exec", "-e", `BASE=${base}`, "-e", `WORK=${AGENT_WORKDIR}`, "-e", "SNAP=/tmp/.octi-snap.git", name, "bash", "-c", DIFF_SCRIPT]);
+        const r = await sh("docker", ["exec", "-e", `BASE=${base}`, "-e", `WORK=${AGENT_WORKDIR}`, "-e", "SNAP=/tmp/.app-snap.git", name, "bash", "-c", DIFF_SCRIPT]);
         return r.code === 0 ? capDiff(r.out) : null;
       },
       async stopTurn() { await sh("docker", ["exec", name, "bash", "-c", "pkill -TERM -u agent || true"]); },
@@ -345,7 +346,7 @@ export const localRunner: Runner = {
 //
 // One fresh VM per session, driven over the REST API (https://docs.boat.dev/api/v1):
 //   POST /sandboxes {type, ttlSeconds, noEnv:true, snapshots:false} (Idempotency-Key); poll GET until ready
-//   PUT  /files: env + scripts + per-turn input -> /tmp/octi (mode 700, Boat's user; the agent user can't read it)
+//   PUT  /files: env + scripts + per-turn input -> /tmp/app (mode 700, Boat's user; the agent user can't read it)
 //   POST /commands: prepare (sync); per turn: launch (detached) + follow its JSONL (stream:true); diff (stream)
 //   GET  /commands/{processId}: is the turn still running?
 //   DELETE /sandboxes/{id} + X-Ascii-Confirm-Delete: force-stop + permanent delete (cleanup / kill)
@@ -354,7 +355,7 @@ export const localRunner: Runner = {
 // `computer` MCP server into managed harnesses (breaks blindness), and its events are a normalized format without
 // Claude's `result` usage/cost. We exec the stock preinstalled CLI as an isolated user under `env -i`.
 
-const BOAT_DIR = "/tmp/octi";
+const BOAT_DIR = "/tmp/app";
 const TAIL_SECONDS = 540; // each streamed tail call stays under the 600s command cap, then reconnects
 
 function boatRunAs(): string {
@@ -438,9 +439,9 @@ function boatLaunchScript(n: number, argv: string[]): string {
 O=${BOAT_DIR}; AH=${AGENT_HOME}
 U=${BOAT.agentUser === "agent" ? "agent" : "$(id -un)"}
 # This run's credentials: handed to the agent user (0600), sourced and deleted before the harness execs.
-sudo -n install -o "$(cat "$O/owner")" -m 600 "$O/env-${n}" "$AH/.octi-env-${n}" && rm -f "$O/env-${n}"
+sudo -n install -o "$(cat "$O/owner")" -m 600 "$O/env-${n}" "$AH/.app-env-${n}" && rm -f "$O/env-${n}"
 ${boatRunAs()} env -i HOME="$AH" USER="$U" LOGNAME="$U" SHELL=/bin/bash LANG=C.UTF-8 TERM=dumb PATH="$(cat "$O/path")" \\
-  bash -c 'set -a; . "$HOME/.octi-env-${n}"; set +a; rm -f "$HOME/.octi-env-${n}"; cd "$HOME/work" && exec timeout -k 30 ${hardLimit} "$@"' run ${argv.map(shq).join(" ")} \\
+  bash -c 'set -a; . "$HOME/.app-env-${n}"; set +a; rm -f "$HOME/.app-env-${n}"; cd "$HOME/work" && exec timeout -k 30 ${hardLimit} "$@"' run ${argv.map(shq).join(" ")} \\
   < "$O/in-${n}.txt" > "$O/out-${n}.jsonl" 2> "$O/err-${n}.log"
 c=$?
 echo "$c" > "$O/exit-${n}"
@@ -450,13 +451,13 @@ exit "$c"
 
 function boatDiffScript(): string {
   return `cd /
-${boatRunAs()} env -i HOME=${AGENT_HOME} PATH="$(cat ${BOAT_DIR}/path)" WORK=${AGENT_WORKDIR} SNAP=/tmp/.octi-snap.git BASE="$(cat ${BOAT_DIR}/base 2>/dev/null)" bash -c ${shq(DIFF_SCRIPT)} | head -c ${BOAT.diffMaxBytes + 1}
+${boatRunAs()} env -i HOME=${AGENT_HOME} PATH="$(cat ${BOAT_DIR}/path)" WORK=${AGENT_WORKDIR} SNAP=/tmp/.app-snap.git BASE="$(cat ${BOAT_DIR}/base 2>/dev/null)" bash -c ${shq(DIFF_SCRIPT)} | head -c ${BOAT.diffMaxBytes + 1}
 `;
 }
 
 /** Worker sandbox name: lets `boat-orchestrators status` attribute worker sandboxes to their orchestrator. */
 export function workerSandboxName(agentId: string): string {
-  return `${(ENV.APP_BOAT_NAMESPACE || "octi").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi"}-w-${CFG.orchestratorId}-${agentId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60);
+  return `${boatNamespace()}-w-${CFG.orchestratorId}-${agentId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60);
 }
 
 /** Pinned harness version from the registry (by agent id, else the first agent of that harness). */

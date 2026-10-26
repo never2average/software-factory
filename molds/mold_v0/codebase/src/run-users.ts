@@ -5,9 +5,9 @@
  * and the sweep was host-wide: a run that ended killed the steps of another still running (seen as exit 128).
  *
  *   range      APP_RUN_UIDS ("first-last", default 61000-64999): uids no account of the machine has (a uid
- *              /etc/passwd names is skipped, unless it is one this module registered, octirun-<uid>), never root, never
+ *              /etc/passwd names is skipped, unless it is one this module registered, apprun-<uid>), never root, never
  *              nobody (65534) or 65535. The gid of a run user is its uid. No supplementary groups (node drops them).
- *   lease      a file per uid in a directory only root can enter (APP_RUN_UID_DIR, default /run/octi-run-uids,
+ *   lease      a file per uid in a directory only root can enter (APP_RUN_UID_DIR, default /run/app-run-uids,
  *              cleared at boot with the processes it guards), naming the process that holds it (pid and start time,
  *              so a reused pid is not mistaken for it), a random token and the run. Taken and given back under a
  *              host-wide lock (flock on a file of that directory, held by a child process: released by the kernel
@@ -36,8 +36,8 @@ import path from "node:path";
 import { ENV } from "./env-names.js";
 
 export const DEFAULT_RUN_UIDS = "61000-64999";
-/** The prefix of the accounts this module may register for a run user inside a sandbox (octirun-<uid>). */
-export const RUN_USER_PREFIX = "octirun-";
+/** The prefix of the accounts this module may register for a run user inside a sandbox (apprun-<uid>). */
+export const RUN_USER_PREFIX = "apprun-";
 
 export class RunUserError extends Error {
   /** "config": a setting is wrong (nothing will work); "busy": no uid free now (retry later). */
@@ -56,9 +56,23 @@ export function runUidRange(spec = ENV.APP_RUN_UIDS || DEFAULT_RUN_UIDS): UidRan
   return { first, last };
 }
 
-/** The lease directory: APP_RUN_UID_DIR, else /run/octi-run-uids (root), else one under the temp directory. */
+/**
+ * A runner's directories on its host that outlive a release, under their names before mold_v0-156 (the first product's
+ * short name): the uid leases (cleared at boot with the processes they guard) and the checkout cache.
+ */
+export const LEGACY_HOST_DIRS = { leases: "/run/octi-run-uids", cache: "/var/cache/octi-checkouts" } as const;
+/**
+ * `dir`, or the same directory under its name before mold_v0-156 while a host still has that one and not this: a
+ * runner of the release before and one of this release, on one host during a rolling deploy, keep their uid leases in
+ * one directory (two directories would hand one uid to two runs at once) and share one checkout cache. The leases move
+ * to the new name at the host's next boot (/run is cleared); the cache, once the old directory is deleted (it is only
+ * a cache). Until a later cleanup.
+ */
+export const hostDir = (dir: string, legacy: string) => (!existsSync(dir) && existsSync(legacy) ? legacy : dir);
+
+/** The lease directory: APP_RUN_UID_DIR, else /run/app-run-uids (root; hostDir), else one under the temp directory. */
 export const runUidDir = () => ENV.APP_RUN_UID_DIR
-  || (process.getuid?.() === 0 && existsSync("/run") ? "/run/octi-run-uids" : path.join(tmpdir(), `octi-run-uids-${process.getuid?.() ?? 0}`));
+  || (process.getuid?.() === 0 && existsSync("/run") ? hostDir("/run/app-run-uids", LEGACY_HOST_DIRS.leases) : path.join(tmpdir(), `app-run-uids-${process.getuid?.() ?? 0}`));
 
 // ---------- processes and files of a uid ----------
 
@@ -148,7 +162,7 @@ const self = (() => { let s: { pid: number; start: string; boot: string } | null
 interface LeaseFile { pid?: number; start?: string; boot?: string; token?: string; run?: string; at?: string; quarantined?: boolean; released_at?: string; last_run?: string }
 const holderAlive = (l: LeaseFile) => typeof l.pid === "number" && l.boot === bootId() && startOf(l.pid) === l.start;
 
-/** The uids /etc/passwd names, but the run users this module registered (octirun-<uid>). */
+/** The uids /etc/passwd names, but the run users this module registered (apprun-<uid>). */
 function accountUids(): Set<number> {
   const out = new Set<number>();
   try {
@@ -294,7 +308,7 @@ export async function leaseRunUser(run: string, o: LeaseOptions = {}): Promise<R
 }
 
 /**
- * A run sandbox's own account for its run user (boat, docker: the sandbox lives one run): octirun-<uid> in its
+ * A run sandbox's own account for its run user (boat, docker: the sandbox lives one run): apprun-<uid> in its
  * /etc/passwd and /etc/group, so a tool that looks its user up finds one. Best effort; never on a shared host.
  */
 export function registerSandboxRunUser(uid: number): boolean {

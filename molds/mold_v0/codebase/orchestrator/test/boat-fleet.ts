@@ -141,7 +141,7 @@ const boat = http.createServer((req, res) => {
         res.writeHead(200, { "content-type": "application/x-ndjson" });
         const frame = (o: object) => res.write(JSON.stringify(o) + "\n");
         frame({ type: "started" });
-        const tail = /tail -n \+(\d+)(?: -F --pid=(\d+))? \/tmp\/octi\/out-\d+\.jsonl/.exec(cmd);
+        const tail = /tail -n \+(\d+)(?: -F --pid=(\d+))? \/tmp\/app\/out-\d+\.jsonl/.exec(cmd);
         // Network drop on the final drain (the run has exited, no -F): boat reports the reset as an error frame.
         if (tail && !tail[2] && drainFaults-- > 0)
           return void res.end(JSON.stringify({ type: "error", error: "stream_error", message: "ECONNRESET: The socket connection was closed unexpectedly." }) + "\n");
@@ -157,8 +157,8 @@ const boat = http.createServer((req, res) => {
         return;
       }
       // ...and a socket that dies while reading the exit status.
-      if (/cat \/tmp\/octi\/exit-/.test(cmd) && exitFaults-- > 0) return void req.socket.destroy();
-      if (/cat \/tmp\/octi\/exit-/.test(cmd)) return json(res, 200, { ok: true, exitCode: 0, stdout: "0\n", stderr: "" });
+      if (/cat \/tmp\/app\/exit-/.test(cmd) && exitFaults-- > 0) return void req.socket.destroy();
+      if (/cat \/tmp\/app\/exit-/.test(cmd)) return json(res, 200, { ok: true, exitCode: 0, stdout: "0\n", stderr: "" });
       return json(res, 200, { ok: true, exitCode: 0, stdout: /cur=/.test(cmd) ? "harness claude-code: preinstalled (2.1.296)" : "", stderr: "" });
     }
     const cm = /^\/commands\/(\d+)$/.exec(rest);

@@ -276,9 +276,8 @@ export class Autoscaler {
         await revokeSandboxWorkerTokens(row.id);
         if (row.orchestrator_id) {
           await db.query("DELETE FROM orchestrators WHERE id = $1", [row.orchestrator_id]);
-          // worker sandboxes a crashed/stale orchestrator could not clean up itself (octi-w-<orch>-<agent>)
-          const wp = `${lib.workerPrefixOf(row.orchestrator_id)}-`;
-          for (const w of listing.filter((s) => lib.isLive(s) && s.name?.startsWith(wp))) {
+          // worker sandboxes a crashed/stale orchestrator could not clean up itself (<ns>-w-<orch>-<agent>)
+          for (const w of listing.filter((s) => lib.isLive(s) && lib.isWorkerOf(s.name, row.orchestrator_id!))) {
             await lib.deleteSandbox(w.id).catch(() => {});
             reaped.push({ sandbox_id: w.id, reason: `worker of reaped ${row.orchestrator_id}` });
             await recordComputeEvent({ kind: "worker_deleted", sandbox_id: w.id, orchestrator_id: row.orchestrator_id, job_id: row.job_id, reason: `worker of reaped ${row.orchestrator_id} (${reason})` });
@@ -334,13 +333,14 @@ export class Autoscaler {
         const since = checkIn?.getTime() ?? (row.ready_at ? new Date(row.ready_at).getTime() : new Date(row.created_at).getTime());
         if (now - since > AUTOSCALE.staleMinutes() * min) await reap(row, `stale: no fleet check-in for ${AUTOSCALE.staleMinutes()} min`);
       }
-      // orphans: our name prefix on boat but no live row (e.g. a launch interrupted by a server restart)
+      // orphans: our name prefix on boat but no live row (e.g. a launch interrupted by a server restart); under the
+      // namespace's old default too (lib.NAMESPACES): one launched before mold_v0-156 that lost its row
       const known = new Set((await db.query<{ sandbox_id: string }>("SELECT sandbox_id FROM orchestrator_sandboxes WHERE state <> 'deleted' AND sandbox_id IS NOT NULL")).map((r) => r.sandbox_id));
       const reapedIds = new Set(reaped.map((r) => r.sandbox_id)); // the listing predates this tick's reaping
       for (const sb of listing) {
         if (!lib.isLive(sb) || known.has(sb.id) || reapedIds.has(sb.id)) continue;
-        const isOrch = sb.name?.startsWith(lib.ORCH_PREFIX);
-        const isStaleBuilder = sb.name === lib.IMAGE_BUILDER_NAME && !this.imageBuild && sb.createdAt && now - Date.parse(sb.createdAt) > 30 * min;
+        const isOrch = lib.isOrchName(sb.name);
+        const isStaleBuilder = lib.isImageBuilderName(sb.name) && (sb.name !== lib.IMAGE_BUILDER_NAME || !this.imageBuild) && sb.createdAt && now - Date.parse(sb.createdAt) > 30 * min;
         if (isOrch || isStaleBuilder) {
           await lib.deleteSandbox(sb.id).catch(() => {});
           const reason = isOrch ? "orphan orchestrator sandbox (no row)" : "stale image builder";
@@ -359,7 +359,7 @@ export class Autoscaler {
         // Retiring (pre-deploy) orchestrators claim nothing new, so they do not count as capacity for the demand.
         const active = (await db.query<Row>("SELECT * FROM orchestrator_sandboxes WHERE state IN ('booting', 'running')"))
           .filter((r) => !(r.orchestrator_id && staleIds.has(r.orchestrator_id))).length;
-        const oursActive = listing.filter((s) => lib.isLive(s) && (s.name?.startsWith(lib.ORCH_PREFIX) || s.name?.startsWith(lib.WORKER_PREFIX))).length;
+        const oursActive = listing.filter((s) => lib.isLive(s) && lib.isOursName(s.name)).length;
         const cap = await this.cap(oursActive);
         let desired = Math.min(desiredOrchestrators(demand, AUTOSCALE.podCapacity()), cap);
         // An orchestrator just idled out while sessions are still "queued": they are not claimable by it; don't relaunch
@@ -419,11 +419,11 @@ export class Autoscaler {
     const live = await db.query<Row>("SELECT * FROM orchestrator_sandboxes WHERE state IN ('booting', 'running')");
     const isRetiring = (r: Row) => !!(r.orchestrator_id && staleIds.has(r.orchestrator_id));
     const served = new Set(live.filter((r) => r.job_id && !isRetiring(r)).map((r) => r.job_id!));
-    const workersOf = (orchId: string) => listing.filter((s) => lib.isLive(s) && s.name?.startsWith(`${lib.workerPrefixOf(orchId)}-`)).length;
+    const workersOf = (orchId: string) => listing.filter((s) => lib.isLive(s) && lib.isWorkerOf(s.name, orchId)).length;
     // Boat plan: what others use, plus what each live orchestrator of ours holds or has reserved. A retiring one only
     // holds the workers it still runs (it claims nothing new); a shared one counts the workers it has.
     const limits = await this.boatLimits();
-    const oursActive = listing.filter((s) => lib.isLive(s) && (s.name?.startsWith(lib.ORCH_PREFIX) || s.name?.startsWith(lib.WORKER_PREFIX))).length;
+    const oursActive = listing.filter((s) => lib.isLive(s) && lib.isOursName(s.name)).length;
     const reserved = live.reduce((n, r) => n + 1 + (r.pods != null && !isRetiring(r) ? r.pods : r.orchestrator_id ? workersOf(r.orchestrator_id) : 0), 0);
     let free = limits.activeSandboxes - Math.max(0, limits.activeNow - oursActive) - reserved;
     let active = live.filter((r) => !isRetiring(r)).length;
