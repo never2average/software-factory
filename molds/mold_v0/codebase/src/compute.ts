@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
+import { fill } from "./vocabulary.js";
 import * as kv from "./keyvault.js";
 import { AUTOSCALE, computeDemand, kickConfigured, type TickState } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
@@ -285,7 +286,7 @@ export function sandboxUsage(sb: { ok: boolean; sandboxes: ClassifiedSandbox[] }
 
 const KNOBS: { name: string; def: string; meaning: string }[] = [
   { name: "APP_AUTOSCALE", def: "on", meaning: "Kill switch: off launches and deletes nothing; running orchestrators idle out." },
-  { name: "APP_ORCH_PER_JOB", def: "on", meaning: "One orchestrator per simulation or research job, instead of a shared fleet." },
+  { name: "APP_ORCH_PER_JOB", def: "on", meaning: "One orchestrator per {run} or research job, instead of a shared fleet." },
   { name: "APP_AUTOSCALE_TICK_SECONDS", def: "15", meaning: "How often the autoscaler ticks on a VM (Vercel ticks on events instead)." },
   { name: "APP_ORCH_LAUNCHES_PER_TICK", def: "2", meaning: "Most orchestrators launched in one tick." },
   { name: "APP_ORCH_IDLE_MINUTES", def: "10", meaning: "An orchestrator with nothing to claim this long drains and exits." },
@@ -311,7 +312,7 @@ const shownName = (n: string) => (sessionEngine() ? legacyEnvName(n) ?? n : n);
 export function computeKnobs(runtime: "vm" | "vercel") {
   const set = (k: string) => env[k] !== undefined && env[k] !== "";
   return [
-    ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: k.meaning })),
+    ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
     { name: shownName("APP_BOAT_NAMESPACE"), value: lib.BOAT_NAMESPACE, source: set("APP_BOAT_NAMESPACE") ? "env" as const : "default" as const,
       meaning: "Name prefix of this deployment's sandboxes; it only ever touches sandboxes named with it." },
     { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,

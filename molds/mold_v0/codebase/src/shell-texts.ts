@@ -1,0 +1,36 @@
+/**
+ * The shell's texts a pack may write in its product's words (mold_v0-141): pack.json `texts`, by id. Each is a sentence
+ * or label the shell shows where a product's own concept would stand (a refusal that names what a viewer may not do, a
+ * column the product's research fills, the score its runs get). The shell's own text is neutral; a pack replaces it,
+ * the first pack in pack order that names an id wins (scripts/gen-packs.mjs refuses an id two packs name). Word
+ * placeholders ({run}, {Runs}, {product}: src/words.ts) are filled where the text is shown.
+ *
+ * No imports, so scripts/gen-packs.mjs and src/pack-manifest.ts read the same list the server does. `side` says where
+ * the text is shown: "server" texts reach the server through src/hosts.generated.ts PACK_CONFIG (src/texts.ts
+ * shellText), "console" texts the console through web/src/config/build-facts.generated.ts TEXTS (web/src/lib/texts.ts).
+ */
+export const SHELL_TEXTS = {
+  "refusal.viewer_launch": { side: "server", text: "Viewers can read reports, usage and transcripts but can't run {runs}.",
+    where: "the refusal a viewer gets on launching (src/account-roles.ts accountRefusal); the shell adds who can change the role" },
+  "refusal.viewer_edit": { side: "server", text: "Viewers can read but can't make changes.",
+    where: "the refusal a viewer gets on changing anything (pack tools and routes, src/account-roles.ts accountRefusal); the shell adds who can change the role" },
+  "admin_roles.support": { side: "server", text: "Viewer, plus access requests, new accounts and invitations.",
+    where: "what the Support platform role may do (src/admin-roles.ts roleHelp: /admin Admins, the admin MCP)" },
+  "plans.example_description": { side: "console", text: "For teams using {product} every week",
+    where: "the description in New plan › JSON's starting point (/admin Spend › Plans)" },
+  "requests.research_alternatives": { side: "console", text: "Alternatives",
+    where: "the label of the products a request's research brief compares the company with (/admin/requests)" },
+  "tips.sequence_field": { side: "console", text: "Series",
+    where: "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts; a host pack's tips)" },
+  "journeys.one": { side: "console", text: "guide",
+    where: "what one of a host pack's step-by-step pipelines is called on /app Setup (its `journeys` component)" },
+  "journeys.many": { side: "console", text: "guides",
+    where: "the same, more than one" },
+  "usage.score": { side: "console", text: "Score",
+    where: "the score of the session engine's scored runs on /app/usage (its Recent runs chart)" },
+  "usage.score_description": { side: "console", text: "Score of the latest {runs} in this period.",
+    where: "that chart's description" },
+} as const;
+
+export type ShellTextId = keyof typeof SHELL_TEXTS;
+export const SHELL_TEXT_IDS = Object.keys(SHELL_TEXTS) as ShellTextId[];
