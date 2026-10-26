@@ -129,6 +129,17 @@
                 "type": "string",
                 "pattern": "^\\d{4}_[a-z0-9_]+$"
               }
+            },
+            "split": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^\\d{4}_[a-z0-9_]+$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
             }
           },
           "required": [

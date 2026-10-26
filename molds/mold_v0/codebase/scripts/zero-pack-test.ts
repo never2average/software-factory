@@ -49,11 +49,14 @@ const logged: string[] = [];
 const origError = console.error;
 console.error = (...a: unknown[]) => { logged.push(a.map((x) => (x instanceof Error ? `${x.message} ${(x as { code?: string }).code ?? ""}` : String(x))).join(" ")); origError(...a); };
 
-/** The product's tables: the 24 the pre-049 baseline created that the shell's migrations no longer do. */
-const PRODUCT_TABLES = ["account_context", "adoption_help", "agent_sessions", "context_memories", "developer_population_agents", "developer_populations",
+/**
+ * The product's tables: the 21 the pre-049 baseline created that the shell's migrations no longer do (its account
+ * context and memory tables are the shell's again since mold_v0-142: 0024_account_context_memory).
+ */
+const PRODUCT_TABLES = ["adoption_help", "agent_sessions", "developer_population_agents", "developer_populations",
   "developer_profiles", "journey_progress", "journey_seed", "journey_templates", "library_submissions", "library_tasks", "nudge_prefs", "nudges",
   "org_harnesses", "org_task_sets", "product_personas", "product_research", "products", "scenarios", "simulations", "transcript_events",
-  "user_context", "visibility_reports"];
+  "visibility_reports"];
 const MOVED = (() => {
   const names = (sql: string) => new Set([...sql.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z_][a-z0-9_]*)/gi)].map((m) => m[1]!.toLowerCase()));
   const before = names(readFileSync(path.join(ROOT, "scripts", "fixtures", "pre-049-migrations", "0001_baseline.sql"), "utf8"));

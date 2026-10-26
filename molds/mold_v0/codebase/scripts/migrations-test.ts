@@ -18,7 +18,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, ap
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openDb, type Db } from "../src/db.js";
-import { ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS } from "../src/migrate.js";
+import { ADOPTING_MIGRATIONS, ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS, tableShape } from "../src/migrate.js";
+import { catalogStamp, rowStats } from "../src/migration-rehearsal.js";
 
 const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
@@ -93,11 +94,16 @@ async function preDir(upTo: number) {
   }
   return dir;
 }
-/** The tables the product had in the shell's base schema before mold_v0-049: none of them in a shell with no packs. */
-const PRODUCT_TABLES = ["adoption_help", "account_context", "agent_sessions", "context_memories", "developer_population_agents", "developer_populations",
+/**
+ * The tables the product had in the shell's base schema before mold_v0-049: none of them in a shell with no packs. The
+ * account context and memory tables were among them and are the shell's again since mold_v0-142 (CONTEXT_TABLES).
+ */
+const PRODUCT_TABLES = ["adoption_help", "agent_sessions", "developer_population_agents", "developer_populations",
   "developer_profiles", "journey_progress", "journey_seed", "journey_templates", "library_submissions", "library_tasks", "nudge_prefs", "nudges",
   "org_harnesses", "org_task_sets", "product_personas", "product_research", "products", "scenarios", "simulations", "transcript_events",
-  "user_context", "visibility_reports"].sort();
+  "visibility_reports"].sort();
+/** The tables shell migration 0024 adopts where a database has them (mold_v0-142; src/migrate.ts ADOPTING_MIGRATIONS). */
+const CONTEXT_TABLES = [...ADOPTING_MIGRATIONS[24]!.tables];
 const tables = async (db: Db) => (await db.query<{ t: string }>(
   "SELECT relname AS t FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') ORDER BY 1")).map((r) => r.t);
 
@@ -111,7 +117,7 @@ async function fingerprint(db: Db, cols?: Map<string, string[]>) {
   if (!cols) for (const r of await db.query<{ t: string; c: string }>(
     `SELECT c.relname AS t, a.attname AS c FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
       WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
-        AND c.relname NOT IN ('schema_migrations', 'pack_schema_migrations') ORDER BY c.relname, a.attnum`))
+        AND c.relname NOT IN ('schema_migrations', 'pack_schema_migrations', 'schema_adoptions') ORDER BY c.relname, a.attnum`))
     have.set(r.t, [...(have.get(r.t) ?? []), r.c]);
   for (const [t, cs] of have) {
     const row = `row(${cs.map((c) => `"${c}"`).join(", ")})::text`;
@@ -132,7 +138,7 @@ async function sameRows(db: Db, before: Awaited<ReturnType<typeof fingerprint>>,
   let total = 0, added = 0;
   for (const [t, b] of before.rows) {
     const a = after.rows.get(t)!;
-    if (PRODUCT_TABLES.includes(t)) assert.deepEqual({ rows: a.rows, md5: a.md5 }, { rows: b.rows, md5: b.md5 }, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
+    if (PRODUCT_TABLES.includes(t) || CONTEXT_TABLES.includes(t)) assert.deepEqual({ rows: a.rows, md5: a.md5 }, { rows: b.rows, md5: b.md5 }, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
     const left = new Map<string, number>();
     for (const x of a.texts) left.set(x, (left.get(x) ?? 0) + 1);
     for (const x of b.texts) {
@@ -215,7 +221,16 @@ async function suite(kind: "pglite" | "postgres") {
     const old = await fresh(kind);
     const rows = await st.build(old);
     const lingering = PRODUCT_TABLES.filter((t) => rows.rows.has(t) && !hostTables.includes(t));
+    // The account context and memory tables this earlier database has (mold_v0-142): adopted by the shell's 0024. Where
+    // it had already secured them (0003 applied: every catalog row that defines them is final), no DDL reaches them; a
+    // database from before 0003 gets their row-level security from 0003, as it always did, and then adopts them.
+    const secured = /^pre-049 at 00(0[3-9]|1)/.test(st.name);
+    const stamps = new Map<string, string[]>();
+    for (const t of CONTEXT_TABLES) stamps.set(t, await catalogStamp(old, t));
     const applied = await runMigrations(old, { log: () => {} });
+    assert.ok(applied.applied.includes("0024_account_context_memory (adopted)"), `${st.name}: 0024 adopts the tables it has: ${applied.applied.join(", ")}`);
+    if (secured) for (const t of CONTEXT_TABLES) assert.deepEqual(await catalogStamp(old, t), stamps.get(t), `${st.name}: no DDL reached ${t}`);
+    assert.equal((await old.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_adoptions WHERE pack = '' AND version = 24"))[0]!.n, 1, `${st.name}: the adoption is in the ledger`);
     const s = await migrationStatus(old);
     assert.ok(!s.pending.length && !s.conflicts.length && s.packs.every((p) => !p.pending.length && !p.conflicts.length), `${st.name}: nothing pending, no conflict`);
     const kept = await sameRows(old, rows, `${kind}: ${st.name}`);
@@ -326,6 +341,74 @@ async function suite(kind: "pglite" | "postgres") {
     }
     await db.drop();
     console.log(`  ✓ ${kind}: a host pack's own schema: its tables, policies and declared function run; adopted on a pre-049 database (nothing run); policies, grants, columns, constraints and functions outside it refused`);
+  }
+
+  // Tables a host pack hands back to the shell (mold_v0-142): 0024 makes account_context, user_context and
+  // context_memories on a database without them, and adopts them, running nothing, where a host pack's migration made
+  // them (the live databases since mold_v0-049); that pack's migration, rewritten without them, keeps its earlier
+  // checksum (host.schema.split). Some of them, or another shape: refused, nothing changed.
+  {
+    const ADOPT = ADOPTING_MIGRATIONS[24]!;
+    assert.deepEqual(await tableShape(ref, CONTEXT_TABLES), [...ADOPT.shape].sort(), "a new database has the tables in exactly the shape 0024 declares");
+    const m24 = (await loadMigrations()).find((m) => m.version === 24)!;
+    const creates = m24.sql.slice(m24.sql.indexOf("CREATE TABLE IF NOT EXISTS account_context"), m24.sql.indexOf("-- Row-level security"));
+    const security = m24.sql.slice(m24.sql.indexOf("DO $mig$"));
+    /** The shell's migrations up to 0023: a release before this one. */
+    const upTo23 = async () => {
+      const dir = path.join(tmp, `upto23-${kind}-${++n}`);
+      mkdirSync(dir, { recursive: true });
+      for (const m of (await loadMigrations()).filter((x) => x.version <= 23)) writeFileSync(path.join(dir, `${String(m.version).padStart(4, "0")}_${m.name}.sql`), m.sql);
+      return dir;
+    };
+    // A host pack as the first product's was: its 0001 made its own table and these three (secured as its row-level security did).
+    const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
+      "DO $w$ DECLARE r TEXT := octillion_tenant_role(); BEGIN ALTER TABLE widgets ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS tenant_isolation ON widgets;\n" +
+      "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', r);\n" +
+      "  EXECUTE format('GRANT SELECT, INSERT ON widgets TO %I', r); END $w$;\n";
+    const before = W + creates + security, after = W;
+    const hostPack = (sql: string, schema: Record<string, unknown>) => {
+      const dir = path.join(tmp, `hp142-${kind}-${++n}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "0001_widgets.sql"), sql);
+      return [{ pack: "hp", dir, schema: { tables: ["widgets"], functions: [], adopts: {}, platform_read: [], references: {}, ...schema } }] as never;
+    };
+    const earlier = createHash("sha256").update(before).digest("hex");
+    const d = await fresh(kind);
+    await runMigrations(d, { dir: await upTo23(), packDirs: hostPack(before, { tables: ["widgets", ...CONTEXT_TABLES] }) });
+    await d.exec("INSERT INTO organizations (slug, name) VALUES ('ctx-org', 'Ctx');\n" +
+      "INSERT INTO account_context (org_id, about, competitors) SELECT id, 'as it was', '[\"a\"]' FROM organizations WHERE slug = 'ctx-org';\n" +
+      "INSERT INTO user_context (org_id, user_id, title) SELECT id, 'user_1', 'as it was' FROM organizations WHERE slug = 'ctx-org';\n" +
+      "INSERT INTO context_memories (org_id, scope, subject, kind, body) SELECT id, s, CASE s WHEN 'company' THEN '' ELSE 'x' END, 'fact', 'as it was ' || s FROM organizations, unnest(ARRAY['company', 'user', 'product']) s WHERE slug = 'ctx-org';\n");
+    const rowsBefore = new Map<string, unknown>(), stamps = new Map<string, string[]>();
+    for (const t of CONTEXT_TABLES) { rowsBefore.set(t, await rowStats(d, t)); stamps.set(t, await catalogStamp(d, t)); }
+    // Without host.schema.split the rewritten pack migration is an edit, refused as any edit is.
+    await assert.rejects(runMigrations(d, { packDirs: hostPack(after, {}) }), /0001_widgets\.sql changed after it was applied/, "an edited pack migration without its split is refused");
+    const r = await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) });
+    assert.deepEqual(r.applied, ["0024_account_context_memory (adopted)"], "0024 is adopted, nothing of the pack runs again");
+    for (const t of CONTEXT_TABLES) {
+      assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${t}: every row as it was`);
+      assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${t}: no DDL reached it`);
+    }
+    const st = await migrationStatus(d, undefined, hostPack(after, { split: { "0001_widgets": earlier } }));
+    assert.ok(!st.pending.length && !st.conflicts.length && st.packs.every((p) => !p.pending.length && !p.conflicts.length), "nothing pending, no conflict");
+    const [ledger] = await d.query<{ adopted_from: string; shape_sha256: string }>("SELECT adopted_from, shape_sha256 FROM schema_adoptions WHERE pack = '' AND version = 24");
+    assert.ok(ledger && /account_context, context_memories, user_context/.test(ledger.adopted_from) && /^[0-9a-f]{64}$/.test(ledger.shape_sha256), "the ledger says what was adopted and its shape");
+    assert.deepEqual(await tableShape(d, CONTEXT_TABLES), [...ADOPT.shape].sort(), "the adopted tables are exactly what a new database gets");
+    await d.drop();
+    // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
+    for (const [what, sql, re] of [["some of the tables", creates.slice(0, creates.indexOf("CREATE TABLE IF NOT EXISTS user_context")), /never some/],
+      ["another shape", creates, /in another shape than this migration gives them/]] as const) {
+      const e = await fresh(kind);
+      await runMigrations(e, { dir: await upTo23(), packDirs: [] });
+      await e.exec(sql);
+      const stampsE = new Map<string, string[]>();
+      for (const t of CONTEXT_TABLES) stampsE.set(t, await catalogStamp(e, t));
+      await assert.rejects(runMigrations(e), (x) => x instanceof MigrationError && re.test(x.message), `${what}: refused`);
+      for (const t of CONTEXT_TABLES) assert.deepEqual(await catalogStamp(e, t), stampsE.get(t), `${what}: ${t} untouched`);
+      assert.equal((await migrationStatus(e)).pending.some((m) => m.version === 24), true, `${what}: 0024 not recorded`);
+      await e.drop();
+    }
+    console.log(`  ✓ ${kind}: 0024 makes the account context and memory tables on a new database and adopts them where a host pack made them (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written); some of them or another shape refused`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.

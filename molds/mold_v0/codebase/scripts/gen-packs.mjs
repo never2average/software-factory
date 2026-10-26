@@ -522,7 +522,7 @@ function hostSchemaOf(m, dirName, where) {
   const IDENT = /^[a-z][a-z0-9_]{1,62}$/;
   if (!HOST_PACKS.has(dirName)) { fail(where, "host.schema: only a host pack of this build may declare its own tables"); return null; }
   if (!sc || typeof sc !== "object" || Array.isArray(sc)) { fail(where, "host.schema must be an object {tables, functions?, adopts?}"); return null; }
-  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
+  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references", "split"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
   const list = (v, what) => Array.isArray(v) && v.every((x) => typeof x === "string" && IDENT.test(x)) && new Set(v).size === v.length ? v : (fail(where, `host.schema.${what} must be a list of distinct lowercase names`), []);
   const tables = list(sc.tables, "tables");
   if (!tables.length) fail(where, "host.schema.tables names no table");
@@ -546,7 +546,16 @@ function hostSchemaOf(m, dirName, where) {
       else references[k] = v;
     }
   }
-  return { tables, functions, adopts, platform_read: platformRead, references };
+  // Its migrations rewritten once when tables they made became the shell's (mold_v0-142): file name -> earlier sha256.
+  const split = {};
+  if (sc.split !== undefined) {
+    if (!sc.split || typeof sc.split !== "object" || Array.isArray(sc.split)) fail(where, "host.schema.split must be an object of pack migration -> its earlier checksum (sha256)");
+    else for (const [k, v] of Object.entries(sc.split)) {
+      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) fail(where, `host.schema.split.${k}: NNNN_name -> the earlier file's sha256 (64 hex)`);
+      else split[k] = v;
+    }
+  }
+  return { tables, functions, adopts, platform_read: platformRead, references, ...(Object.keys(split).length ? { split } : {}) };
 }
 
 function loadPack(dirName) {
@@ -578,9 +587,13 @@ function loadPack(dirName) {
   }
   if (schema) {
     if (!migrations) fail(where, "host.schema needs the pack's migrations (pack.json migrations), which create those tables");
-    else for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
-      if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
-      else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
+    else {
+      for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
+        if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
+        else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
+      for (const mine of Object.keys(schema.split ?? {}))
+        if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.split names ${mine}, which is not one of its migrations`);
+    }
   }
   const pages = [];
   if (m.pages !== undefined && !Array.isArray(m.pages)) fail(where, "pages must be a list");
@@ -1393,7 +1406,7 @@ files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
 }) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
-  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
+  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
 // What the admin console's shared pages show for this build (mold_v0-104): the host pack's own tables (the console's

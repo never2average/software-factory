@@ -9,6 +9,7 @@
     "stack:down": "docker compose down",
     "db:reset": "tsx --env-file-if-exists=.env scripts/reset-db.ts",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
+    "db:rehearse": "tsx scripts/migration-rehearsal.ts",
     "test:migrations": "tsx scripts/migrations-test.ts",
     "test:zero-pack": "tsx scripts/zero-pack-test.ts",
     "check:tenant-sql": "tsx scripts/check-tenant-sql.ts",

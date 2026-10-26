@@ -57,8 +57,16 @@ export interface HostDefinition {
     register(server: McpServer, org: Org): void;
     /** Register prompts, after the packs' tools (and before the packs' declared ones, pack.json mcp.prompts: mold_v0-137). */
     registerPrompts?(server: McpServer, org: Org): void;
-    /** Text appended to the instructions for this caller (the account's and the person's context). */
+    /**
+     * Text appended to the instructions for this caller, after the shell's account context (src/account-context.ts,
+     * mold_v0-142: pack.json `memory`, which gives the account's and the person's context and the memory itself).
+     */
     context?(org: Org): Promise<string>;
+    /**
+     * The answer of one of the shell's own tools on this server (the memory tools, mold_v0-142), before it is sent: a
+     * host pack may add to it (a follow-up line in its text, a field in its structured content). Not called for errors.
+     */
+    decorate?(org: Org, tool: string, result: CallToolResult): Promise<CallToolResult>;
     /** One tool call outside MCP (the local widget preview, APP_PREVIEW=1). */
     runTool?(org: Org, name: string, args: Record<string, unknown>): Promise<CallToolResult>;
     /** The widget's HTML, for the local preview: its first <script> gets window.__<NAMESPACE>_PREVIEW__ (src/namespace.ts, upper case) with the call's result. */
@@ -91,6 +99,16 @@ export interface HostDefinition {
     onboardingErrors?: (new (...a: any[]) => Error)[];
     /** The orchestrators' /api/worker/* routes (src/http.ts), behind the worker token. */
     worker?(worker: Router, h: WorkerHelpers): void;
+  };
+  /**
+   * The account context and memory component (mold_v0-142; src/account-context.ts, pack.json `memory`): what its
+   * `product` scope names. `subjects` lists the account's own (each its key, its name and an id a person may use for
+   * it), in the order a person reads them: memory about one of them is kept under its key and shown with its name, a
+   * person's focus must be one of them, and the AI client's save names one by key, name or id. Without the hook any
+   * name is kept as written.
+   */
+  context?: {
+    subjects(orgId: number): Promise<{ id?: number | string; slug: string; name: string }[]>;
   };
   /** The session engine (src/worker.ts, the autoscaler): the shell's, over the host pack's own tables (mold_v0-049; src/host-tables.ts). */
   sessions?: {
@@ -156,7 +174,26 @@ export interface PackConfig {
   setup?: SetupConfig;
   error_hints?: { match: string; text: string }[];
   account_stages?: AccountStagesConfig;
+  memory?: MemoryConfig;
 }
+/**
+ * The account context and memory component (mold_v0-142; src/account-context.ts): pack.json `memory`, one pack's per
+ * build, which turns it on. `scopes`: whose memory there is (company, user, product), each a page of /app/context;
+ * `tools`: the names of its two MCP tools (save, search), none without; `tool_words` and `tool_meta`: their words and
+ * the _meta both carry; `words`: the texts it shows and tells the AI client (src/account-context.ts MEMORY_WORDS names
+ * each, with its default); `answer_styles`: what the AI client is told for each answer style; `pages`: each page's
+ * title and old addresses kept working (`aliases`).
+ */
+export interface MemoryConfig {
+  scopes: ("company" | "user" | "product")[];
+  tools?: { save: string; search: string };
+  tool_words?: { save?: MemoryToolWords; search?: MemoryToolWords };
+  tool_meta?: Record<string, unknown>;
+  words?: Record<string, string>;
+  answer_styles?: Partial<Record<"brief" | "detailed" | "executive", string>>;
+  pages?: { titles?: Partial<Record<"company" | "users" | "products", string>>; aliases?: Record<string, "company" | "users" | "products"> };
+}
+export interface MemoryToolWords { title?: string; description?: string; status?: [string, string]; args?: Record<string, string> }
 /**
  * The session engine's account stages in the product's words (mold_v0-121, mold_v0-140: pack.json account_stages, the
  * host pack's that owns the engine's tables; gen-packs requires it with the engine): each stage's label, the next step
@@ -236,6 +273,8 @@ export const packConfigs = (): readonly PackConfig[] => packConfigList;
 export const setupConfig = (): SetupConfig => packConfigs().find((c) => c.setup)?.setup ?? {};
 /** The Setup page's workflow groups (pack.json setup.workflow, mold_v0-140), in order: what using the product fully means. */
 export const setupWorkflow = (): readonly { id: string; label: string; tools: readonly string[]; prompt: string }[] => setupConfig().workflow ?? [];
+/** The account context and memory component's config (mold_v0-142: the one pack.json `memory` of the build), else null: off. */
+export const memoryConfig = (): MemoryConfig | null => packConfigs().find((c) => c.memory)?.memory ?? null;
 /** Every pack's pack.json mcp.error_hints (mold_v0-140), in pack order: the first whose pattern (any case) a tool error matches gives its fix. */
 export const errorHints = (): readonly { match: string; text: string }[] => packConfigs().flatMap((c) => c.error_hints ?? []);
 /** Tests only: the packs' server config as a build would carry it. */
@@ -244,3 +283,5 @@ export function setPackConfigsForTest(list: readonly PackConfig[]) { packConfigL
 export const hosts = (): readonly HostDefinition[] => registered;
 /** Every host tool name on the customer MCP server. */
 export const hostToolNames = (): string[] => registered.flatMap((h) => [...(h.mcp?.toolNames ?? [])]);
+/** The memory component's tool names (mold_v0-142: pack.json memory.tools), reserved like a host pack's; none when it is off. */
+export const memoryToolNames = (): string[] => { const t = memoryConfig()?.tools; return t ? [t.save, t.search] : []; };
