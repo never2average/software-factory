@@ -77,7 +77,7 @@ try {
     const undecided = manifest.routes.filter((r) => r.includes("[") && !(r in routes.RESOLVED) && !routes.OPEN.includes(r));
     assert.deepEqual(undecided, [], "every dynamic page route is resolved from its registry (src/lib/console-routes.ts RESOLVED) or left OPEN to its page");
     for (const r of [...Object.keys(routes.RESOLVED), ...routes.OPEN, ...Object.keys(routes.SHOWN)]) assert.ok(manifest.routes.includes(r), `${r}: a page route of the app directory`);
-    assert.deepEqual([...manifest.status_pages].sort(), Object.values(routes.NOT_FOUND_PAGES).sort(), "each area's not-found page is a page of its own");
+    assert.deepEqual(manifest.status_pages, ["/console-status/not-found"], "the console-status page the API relays: no page of the build either (a 404)");
     const doc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "customer-guide.ts")).href)).guidePages(JSON.parse(readFileSync(path.join(ROOT, "web", "src", "content", "mcp-tools.generated.json"), "utf8")))[0].slug;
     const adminDoc = (await import(pathToFileURL(path.join(ROOT, "web", "src", "content", "admin-docs.generated.ts")).href)).ADMIN_DOCS[0]?.slug;
     const known = ["/app", "/app/billing", "/app/usage", "/app/docs", `/app/docs/${doc}`, "/admin", "/admin/health", "/admin/accounts/any-account", "/auth/sign-in", "/auth/sign-in/factor-one", "/auth/sign-up", "/auth/consent", ...(adminDoc ? [`/admin/docs/${adminDoc}`] : [])];
@@ -85,9 +85,9 @@ try {
       "/admin/no-such-page", "/admin/docs/no-such-doc", "/admin/records/no-area", "/admin/packs/no-pack/no-page", "/auth/no-such-page", ...manifest.status_pages];
     for (const a of known) assert.equal(routes.isConsoleAddress(a), true, `${a}: a page of this build`);
     for (const a of unknown) assert.equal(routes.isConsoleAddress(a), false, `${a}: no page of this build`);
-    for (const [a, to] of [["/app/x", "/app/console-status/not-found"], ["/admin/x/y", "/admin/console-status/not-found"], ["/auth/x", "/auth/console-status/not-found"], ["/console-status/not-found", "/console-status/not-found"]])
-      assert.equal(routes.notFoundPageFor(a), to);
-    ok(`the console's addresses: ${manifest.routes.length} page routes (every dynamic one resolved from its registry or left to its page), the build's docs and pages known; unknown addresses in every area go to that area's not-found page`);
+    for (const [a, area] of [["/app/x", "app"], ["/admin/x/y", "admin"], ["/auth/x", "auth"], ["/console-status/not-found", "site"], ["/privacy", "site"]])
+      assert.equal(routes.notFoundAreaFor(a), area);
+    ok(`the console's addresses: ${manifest.routes.length} page routes (every dynamic one resolved from its registry or left to its page), the build's docs and pages known; unknown addresses in every area are drawn as that area's not-found page`);
   }
 
   const http = await startHttp();
@@ -327,7 +327,7 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
   // Drawn on the server (mold_v0-155): the page's HTML itself carries the status page and its links, no script needed.
   const cookieOf = async (who: Person | null) => (who ? (await who.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") : "");
   for (const [who, url] of [[null, "/no-such-page-anywhere"], [null, "/auth/no-such-page"], [w.owner, "/app/no-such-page"], [w.owner, "/app/docs/no-such-doc"], [w.owner, "/app/records/no-area"],
-    [w.owner, "/app/a/b/c"], [w.owner, "/app/console-status/not-found"], [w.staff, "/admin/no-such-page"], [w.staff, "/admin/docs/no-such-doc"]] as const) {
+    [w.owner, "/app/a/b/c"], [null, "/console-status/not-found"], [w.staff, "/admin/no-such-page"], [w.staff, "/admin/docs/no-such-doc"]] as const) {
     const r = await fetch(`${origin}${url}`, { headers: { accept: "text/html", cookie: await cookieOf(who) }, redirect: "manual" });
     const html = (await r.text()).replace(/<script[\s\S]*?<\/script>/g, "");
     assert.equal(r.status, 404, `${url}: HTTP ${r.status}`);

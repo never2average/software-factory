@@ -1,7 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest } from 'next/server';
 import { BUILTIN_SESSION_COOKIES, CLERK } from '@/lib/auth/provider';
-import { isConsoleAddress, notFoundPageFor } from '@/lib/console-routes';
+import { isConsoleAddress, NOT_FOUND_AREA_HEADER, NOT_FOUND_ROUTE, notFoundAreaFor } from '@/lib/console-routes';
 
 // The admin panel and the portal need a signed-in Clerk user; who may see /admin is checked by the API server
 // (platform admins), and the portal's account by the user's Clerk organization.
@@ -16,25 +16,32 @@ const isProtected = createRouteMatcher(['/admin', '/admin/((?!session$|mcp$).*)'
 function withPath(req: NextRequest) {
   const h = new Headers(req.headers);
   h.set('x-console-path', req.nextUrl.pathname + req.nextUrl.search);
+  h.delete(NOT_FOUND_AREA_HEADER);
   const unknown = notFoundRewrite(req);
-  if (unknown) return NextResponse.rewrite(unknown, { status: 404, request: { headers: h } });
-  return NextResponse.next({ request: { headers: h } });
+  if (!unknown) return NextResponse.next({ request: { headers: h } });
+  h.set(NOT_FOUND_AREA_HEADER, notFoundAreaFor(req.nextUrl.pathname));
+  return NextResponse.rewrite(unknown, { request: { headers: h } });
 }
 
 /**
- * An address that is no page of this build (mold_v0-155, src/lib/console-routes.ts): the area's not-found page, a page
- * of its own drawn on the server, with status 404 (a page that throws notFound() is drawn in the browser only). Only a
- * browser opening the page: a navigation inside the console (its RSC requests) meets the area's not-found.tsx as
- * before. A page that refuses or redirects (the admin console for someone who is not staff: 403; signed out: sign-in)
- * still answers with its own status.
+ * An address that is no page of this build (mold_v0-155, src/lib/console-routes.ts): the area's not-found page drawn on
+ * the server, a 404, through Next's own not-found route (app/not-found.tsx draws the area's page in the area's frame; a
+ * page that throws notFound() is drawn in the browser only). Only a browser opening the page: a navigation inside the
+ * console (its RSC requests) meets the area's not-found.tsx as before. The frame still refuses or redirects as the
+ * area's layout does (the admin console for someone who is not staff: 403; signed out: sign-in).
  */
 function notFoundRewrite(req: NextRequest): URL | null {
   if (req.method !== 'GET' && req.method !== 'HEAD') return null;
   if (req.headers.has('rsc') || req.headers.has('next-router-prefetch') || req.nextUrl.searchParams.has('_rsc')) return null;
   const path = req.nextUrl.pathname;
-  // The console's areas only (/__clerk is Clerk's).
+  // The console's areas only (/__clerk is Clerk's), and the legal pages a build may have none of (mold_v0-109).
   if (!/^\/(app|admin|auth|console-status)(\/|$)|^\/(privacy|terms)$/.test(path) || isConsoleAddress(path)) return null;
-  return new URL(notFoundPageFor(path), req.url);
+  // From nextUrl (its origin is the one Next serves): an address built from req.url can name another host (localhost for
+  // 127.0.0.1), and Next then proxies to it as an outside address instead of rewriting.
+  const to = req.nextUrl.clone();
+  to.pathname = NOT_FOUND_ROUTE;
+  to.search = '';
+  return to;
 }
 
 /**

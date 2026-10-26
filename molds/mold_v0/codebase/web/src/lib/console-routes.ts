@@ -1,7 +1,6 @@
 /**
  * Which addresses are pages of this build (mold_v0-155), for web/src/proxy.ts: an address under /app, /admin or /auth
- * that is none is answered with the area's not-found page, rewritten to it with status 404, so the page is drawn on the
- * server. (Next 16 draws a page that throws notFound() in the browser only: its HTML is an empty error shell until the
+ * that is none is answered with the area's not-found page, a 404 drawn on the server (NOT_FOUND_ROUTE below). (Next 16 draws a page that throws notFound() in the browser only: its HTML is an empty error shell until the
  * scripts run, a blank page on a slow phone or without JavaScript.)
  *
  * Nothing here is a second copy of the routing: the page routes are the app directory's (console-routes.generated.json,
@@ -121,11 +120,18 @@ export function isConsoleAddress(pathname: string): boolean {
   return false;
 }
 
-/** The page each area answers an unknown address with: a page of its own, drawn on the server (app/<area>/console-status). */
-export const NOT_FOUND_PAGES = { app: '/app/console-status/not-found', admin: '/admin/console-status/not-found', auth: '/auth/console-status/not-found', site: '/console-status/not-found' } as const;
+/**
+ * Where an unknown address is drawn (mold_v0-155): Next's own not-found route, the one route Next draws on the server
+ * with its 404 (a rewrite's own status is not kept), with the area it was in named in this request header; app/not-found.tsx
+ * draws that area's not-found page in the area's frame. web/src/proxy.ts sets the header, and drops one a browser sent.
+ */
+export const NOT_FOUND_ROUTE = '/_not-found';
+export const NOT_FOUND_AREA_HEADER = 'x-console-not-found';
+export type NotFoundArea = 'app' | 'admin' | 'auth' | 'site';
+/** The console-status pages (the API relays /console-status/not-found): no page of the build, so a 404 as well. */
 export const STATUS_PAGES: readonly string[] = manifest.status_pages as string[];
 
-export function notFoundPageFor(pathname: string): string {
+export function notFoundAreaFor(pathname: string): NotFoundArea {
   const area = split(pathname)[0];
-  return area === 'app' || area === 'admin' || area === 'auth' ? NOT_FOUND_PAGES[area] : NOT_FOUND_PAGES.site;
+  return area === 'app' || area === 'admin' || area === 'auth' ? area : 'site';
 }

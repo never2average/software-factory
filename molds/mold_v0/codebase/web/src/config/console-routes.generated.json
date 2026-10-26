@@ -56,9 +56,6 @@
     "/terms"
   ],
   "status_pages": [
-    "/admin/console-status/not-found",
-    "/app/console-status/not-found",
-    "/auth/console-status/not-found",
     "/console-status/not-found"
   ]
 }
