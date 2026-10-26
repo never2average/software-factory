@@ -3448,12 +3448,42 @@ def self_test():
     self_test_release(check)
     import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
     self_test_single(check)                              # a single-service mold (mold_v0-028): the hand-off and its own module
+    self_test_build_caches(check)                        # a typecheck's build cache never refuses an in-tree deploy (mold_v0-153)
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
           f"--json, exit codes, the deploy lock, --background and status, a piped secret refused; "
           f"release: the mold CI gate, rollback on a failed health check or smoke test, promote after a rollback, --rollback; "
           f"a single-service mold's hand-off and lib/single_service.py)")
+
+def self_test_build_caches(check):
+    """mold_v0-153: `npm run typecheck` writes web/tsconfig.tsbuildinfo inside an in-tree mold's codebase. That cache (and
+    the other build caches in intree.BUILD_CACHES), ignored or untracked, never makes the deploy gate say the codebase is
+    "not exactly commit X"; a real edit, an untracked source file and an ignored file the deploy would carry still do."""
+    import intree
+    t = tempfile.mkdtemp(prefix="provision-selftest-caches-")
+    try:
+        cb = os.path.join(t, "molds", "m0", "codebase"); os.makedirs(os.path.join(cb, "web"))
+        open(os.path.join(cb, "web", "a.ts"), "w").write("a\n"); open(os.path.join(cb, ".gitignore"), "w").write("node_modules/\ndist/\n")
+        open(os.path.join(cb, "web", ".gitignore"), "w").write("*.tsbuildinfo\n/.next/\n")
+        def g(*argv): return subprocess.run(["git", "-C", t, "-c", "user.name=t", "-c", "user.email=t@example.com", *argv], capture_output=True, text=True).returncode
+        if g("init", "-q") or g("add", "-A") or g("commit", "-qm", "base"): check("build caches: a scratch git repository", False); return
+        def dirty(): return intree.uncommitted("m0", t, ["node_modules"])
+        open(os.path.join(cb, "web", "tsconfig.tsbuildinfo"), "w").write("{}\n")               # ignored by web/.gitignore
+        open(os.path.join(cb, "tsconfig.tsbuildinfo"), "w").write("{}\n")                      # no rule covers it: untracked
+        os.makedirs(os.path.join(cb, "web", ".next", "cache")); open(os.path.join(cb, "web", ".next", "cache", "x"), "w").write("1\n")
+        os.makedirs(os.path.join(cb, "node_modules", "p")); open(os.path.join(cb, "node_modules", "p", "i.js"), "w").write("1\n")
+        check("build caches: tsconfig.tsbuildinfo (ignored or untracked) and .next do not make the codebase 'not exactly HEAD'", dirty() == [], dirty())
+        open(os.path.join(cb, "web", "a.ts"), "w").write("edited\n")
+        check("  ...an edit to a tracked file still counts", any(d.endswith("web/a.ts") for d in (dirty() or [])), dirty())
+        g("checkout", "--", "molds/m0/codebase/web/a.ts"); open(os.path.join(cb, "web", "b.ts"), "w").write("b\n")
+        check("  ...an untracked source file still counts", any(d.endswith("web/b.ts") for d in (dirty() or [])), dirty())
+        os.remove(os.path.join(cb, "web", "b.ts")); os.makedirs(os.path.join(cb, "dist")); open(os.path.join(cb, "dist", "x.js"), "w").write("1\n")
+        check("  ...an ignored file the deploy would carry (dist) still counts", any("dist" in d for d in (dirty() or [])), dirty())
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+    rule = subprocess.run(["git", "-C", ROOT, "check-ignore", "-q", "molds/mold_v0/codebase/tsconfig.tsbuildinfo"], capture_output=True)
+    check("this repository git-ignores *.tsbuildinfo inside a mold's codebase", rule.returncode in (0, 128), rule.returncode)
 
 def self_test_single(check):
     """mold_v0-028: a single-service app is handed to lib/single_service.py before any mold_v1 path, a compose_remote

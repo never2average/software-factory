@@ -9,6 +9,12 @@ molds/**/vercel.nocron.json
 __pycache__/
 *.pyc
 build/
+# build caches a typecheck or build writes inside a mold's codebase (tsc --incremental, Next.js, Turborepo, ESLint);
+# never committed, and lib/intree.py never counts them as uncommitted changes (mold_v0-153)
+*.tsbuildinfo
+.next/
+.turbo/
+.eslintcache
 
 # generated per-app database artifacts: the compose file and README are generated output and may be
 # committed, but the Postgres superuser password and the server TLS private key never are. These two
