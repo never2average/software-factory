@@ -520,6 +520,8 @@ async function securitySnapshot(q: Queryable, packIds: string[], host: { tables:
  */
 const LEGACY_FUNCTIONS = /\boctillion_(tenant_org|session_org)\(/g;
 async function repointLegacyPolicies(q: Execable) {
+  // Before 0024 (a database migrated by a release that has not reached it yet) the old names are the functions themselves.
+  if (!(await q.query<{ ok: boolean }>("SELECT to_regprocedure('app_tenant_org()') IS NOT NULL AS ok"))[0]?.ok) return;
   const rows = await q.query<{ tablename: string; policyname: string; qual: string | null; with_check: string | null }>(
     "SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND (qual ~ $1 OR with_check ~ $1) ORDER BY 1, 2",
     ["\\moctillion_(tenant_org|session_org)\\("]);
