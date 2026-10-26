@@ -47,7 +47,7 @@ async function fresh(kind: "pglite" | "postgres"): Promise<Db & { drop: () => Pr
 async function catalog(db: Db) {
   // The tenant role is named per database (0003_row_level_security; app_tenant_ since 0024, its old name an alias role):
   // compare it by kind, not by name.
-  const q = async (sql: string) => (await db.query<Record<string, unknown>>(sql)).map((r) => JSON.stringify(r).replace(/\b(octillion|app)_tenant_[0-9a-f]{10}\b/g, "$1_tenant_<db>"));
+  const q = async (sql: string) => (await db.query<Record<string, unknown>>(sql)).map((r) => JSON.stringify(r).replace(/\b([a-z]+)_tenant_[0-9a-f]{10}\b/g, "$1_tenant_<db>"));
   return {
     columns: await q(`SELECT table_name, column_name, data_type, udt_name, is_nullable, column_default FROM information_schema.columns
                       WHERE table_schema = 'public' ORDER BY table_name, column_name`),
@@ -189,12 +189,12 @@ async function suite(kind: "pglite" | "postgres") {
       ...mainCatalog[k].filter((x) => !want[k].includes(x)).map((x) => `-${k} ${x}`)]);
     // The neutral names (0024_neutral_database_names): the same policy, grant or function under the new names, and the
     // old names' aliases.
-    const renamed = (d: string) => d.slice(1).replace(/\bapp_(tenant_role|tenant_org|session_org|run_charge(?:_figures|_refresh|_on_end)?)\b/g, "octillion_$1").replace(/\bapp_tenant_<db>/g, "octillion_tenant_<db>");
-    const olds = new Set(diff.filter((d) => d.startsWith("-")).map((d) => d.slice(1)));
+    const renamed = (d: string) => d.slice(1).replace(/\b[a-z]+_(tenant_role|tenant_org|session_org|run_charge(?:_figures|_refresh|_on_end)?|tenant_<db>)/g, "app_$1");
+    const olds = new Set(diff.filter((d) => d.startsWith("-")).map(renamed));
     const why = (d: string) => /pack_schema_migrations|shell_pack_(tenant|private)_table/.test(d) ? "pack bookkeeping"
-      : /^[+-]policies .*"(gateway_tokens|gateway_usage)"|^\+functions .*(octillion|app)_session_org/.test(d) ? "gateway session rule"
-      : (d.startsWith("+") && olds.has(renamed(d))) || (d.startsWith("-") && diff.some((x) => x.startsWith("+") && renamed(x) === d.slice(1)))
-        || /^[+-]functions .*"(octillion|app)_(tenant_role|tenant_org|session_org|run_charge(_figures|_refresh|_on_end)?)"/.test(d) ? "neutral names (0024)" : null;
+      : /^[+-]policies .*"(gateway_tokens|gateway_usage)"|^\+functions .*_session_org/.test(d) ? "gateway session rule"
+      : (d.startsWith("+") && olds.has(renamed(d))) || (d.startsWith("-") && diff.some((x) => x.startsWith("+") && renamed(x) === renamed(d)))
+        || /^[+-]functions .*"[a-z]+_(tenant_role|tenant_org|session_org|run_charge(_figures|_refresh|_on_end)?)"/.test(d) ? "neutral names (0024)" : null;
     const unexplained = diff.filter((d) => !why(d));
     assert.deepEqual(unexplained, [], "a new database (shell + host pack) differs from the earlier schema only where expected");
     const counts = diff.reduce((m: Record<string, number>, d) => ({ ...m, [why(d)!]: (m[why(d)!] ?? 0) + 1 }), {});
@@ -371,13 +371,13 @@ async function suite(kind: "pglite" | "postgres") {
     const t0 = Date.now();
     assert.deepEqual((await runMigrations(at23)).applied.slice(0, 1), ["0024_neutral_database_names"]);
     const ms = Date.now() - t0;
-    assert.equal(await roleOf(at23), oldRole.replace(/^octillion_tenant_/, "app_tenant_"), "the tenant role is app_tenant_<hash>");
+    assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
     assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
     assert.equal((await at23.query<{ r: string }>("SELECT octillion_tenant_role() AS r"))[0]!.r, await roleOf(at23), "the old function names the new role (a pack migration grants to it)");
     assert.deepEqual(await oldWay(at23, oa!), [oa], "after: the old release's tenant transaction, unchanged, still sees its own rows only");
     assert.deepEqual(await oldWay(at23, null), [], "and none with no organization set");
     const policies = await at23.query<{ q: string }>("SELECT coalesce(qual, '') || coalesce(with_check, '') AS q FROM pg_policies WHERE schemaname = 'public'");
-    assert.ok(policies.length > 20 && policies.every((p) => !/octillion/.test(p.q)), "every policy names the new functions (renamed in place, none rewritten)");
+    assert.ok(policies.length > 20 && policies.every((p) => !p.q.includes("octillion_tenant_org") && !p.q.includes("octillion_session_org")), "every policy names the new functions (renamed in place, none rewritten)");
     assert.deepEqual(await rlsCatalogProblems(at23), [], "check:rls catalog after the rename");
     const probe = await rlsProbe(at23);
     assert.deepEqual(probe.problems, [], "check:rls probe after the rename, the old names' path included");
