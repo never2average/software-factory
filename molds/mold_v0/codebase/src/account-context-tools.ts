@@ -121,7 +121,9 @@ export async function searchFromAI(org: Org, a: { query?: string; scope?: ToolSc
       WHERE ${where.join(" AND ")} ORDER BY m.created_at DESC, m.id DESC LIMIT ${add(limit)}`, args);
   // A subject's name where the account has it; otherwise the scope's own label (as the search has always shown).
   const names = rows.some((r) => r.scope === "product") ? new Map((await subjectsOf(org.orgId) ?? []).map((s) => [s.slug, s.name])) : new Map<string, string>();
-  const items = rows.map((r) => ({ ...r, subject_name: (r.scope === "product" ? names.get(r.subject) : undefined) ?? (r.scope === "company" ? word("company_label") : word("you_label")) }));
+  // subject_name right after subject, as the answer has always been laid out.
+  const items = rows.map(({ id, scope, subject, ...rest }) => ({ id, scope, subject,
+    subject_name: (scope === "product" ? names.get(subject) : undefined) ?? (scope === "company" ? word("company_label") : word("you_label")), ...rest }));
   return { view: "memory", action: "search", query: String(a.query ?? ""), scope, saved: null, items };
 }
 
