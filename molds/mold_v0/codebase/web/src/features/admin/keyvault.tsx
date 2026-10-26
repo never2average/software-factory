@@ -19,6 +19,7 @@ import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, When } from './ui';
 import { AdminGithubApp } from './github-app';
+import { AdminOAuthProviders } from './oauth-providers';
 
 // ---------- key vault ----------
 
@@ -26,7 +27,8 @@ interface Provider { slug: string; mode: 'gateway' | 'direct'; backend: string; 
 /** Display names for the vault's provider ids. */
 const NAME: Record<string, string> = {
   anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google Gemini', cloudflare: 'Cloudflare Workers AI', dashscope: 'Alibaba DashScope',
-  vertex: 'Vertex AI (Google Cloud)', boat: 'boat.dev', exa: 'Exa', libraries_io: 'Libraries.io', resend: 'Resend', amp: 'Amp', cursor: 'Cursor', factory: 'Factory', github_copilot: 'GitHub Copilot'
+  vertex: 'Vertex AI (Google Cloud)', boat: 'boat.dev', exa: 'Exa', libraries_io: 'Libraries.io', resend: 'Resend', amp: 'Amp', cursor: 'Cursor', factory: 'Factory', github_copilot: 'GitHub Copilot',
+  oauth_clients: 'OAuth clients'
 };
 const nameOf = (slug: string) => NAME[slug] ?? slug;
 interface Credential { id: number; provider: string; label: string; hint: string; enabled: boolean; uses: number; last_used_at: string | null; project_id?: string | null; client_email?: string }
@@ -122,6 +124,7 @@ export function AdminKeyVault() {
         </AlertDialogContent>
       </AlertDialog>
       <AdminGithubApp />
+      <AdminOAuthProviders />
     </PageContainer>
   );
 }

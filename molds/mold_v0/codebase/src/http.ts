@@ -14,6 +14,7 @@ import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
+import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
@@ -228,6 +229,8 @@ export function createApp() {
   app.use("/api/credentials", credentialAppRouter());
   // A workspace's GitHub App installation (mold_v0-014): only when a pack's credential field asks for one.
   app.use("/api/github-app", githubAppRouter());
+  // Credential fields connected through an OAuth provider (mold_v0-014): only when a pack's field names one.
+  app.use("/api/credential-connections", oauthRouter());
   // Per-company egress hosts (mold_v0-075): only when a kind takes them.
   app.use("/api/egress-hosts", egressHostAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
@@ -714,6 +717,7 @@ export function createApp() {
   // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
   // declares a credential field that asks for one.
   githubAppAdminRoutes(ob, need, adminActor);
+  oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
   // The Connect page (/admin/connect): the admin MCP URL and which tools each role may call.

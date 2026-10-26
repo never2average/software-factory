@@ -20,7 +20,8 @@ export interface StandinRepo { id: number; full_name: string }
 export interface StandinInstallation { id: number; app_id: number; account: { login: string; type: string }; repository_selection: "all" | "selected"; repositories: StandinRepo[]; suspended_at?: string | null; uninstalled?: boolean }
 export interface MintedRecord { token: string; installation: number; repository_ids: number[] | null; permissions: Record<string, string>; expires_at: number; revoked: boolean }
 
-export async function startGithubStandin(opts: { appId: number; clientId: string; clientSecret: string; publicKeyPem: string }) {
+export async function startGithubStandin(opts: { appId: number; clientId: string; clientSecret: string; publicKeyPem: string; now?: () => number }) {
+  const clock = opts.now ?? Date.now;
   const pub: KeyObject = createPublicKey(opts.publicKeyPem);
   const installations = new Map<number, StandinInstallation>();
   /** code -> the installation ids that person can reach. */
@@ -41,13 +42,13 @@ export async function startGithubStandin(opts: { appId: number; clientId: string
     const ok = verify("RSA-SHA256", Buffer.from(`${m[1]}.${m[2]}`), pub, Buffer.from(m[3]!, "base64url"));
     if (!ok) return false;
     const p = JSON.parse(Buffer.from(m[2]!, "base64url").toString());
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(clock() / 1000);
     return String(p.iss) === String(opts.appId) && p.exp > now && p.iat <= now + 60 && p.exp - p.iat <= 600;
   };
   const tokenOf = (auth: string) => {
     const m = /^(?:token|Bearer) (\S+)$/.exec(auth);
     const t = m ? minted.find((x) => x.token === m[1]) : undefined;
-    return t && !t.revoked && t.expires_at > Date.now() && !installations.get(t.installation)?.uninstalled ? t : null;
+    return t && !t.revoked && t.expires_at > clock() && !installations.get(t.installation)?.uninstalled ? t : null;
   };
   const reposOf = (t: MintedRecord) => {
     const i = installations.get(t.installation)!;
@@ -100,7 +101,7 @@ export async function startGithubStandin(opts: { appId: number; clientId: string
       if (ids && ids.some((x) => !i.repositories.some((r) => r.id === x))) return send(res, 422, { message: "There is at least one repository that does not exist or is not accessible" });
       const asked: Record<string, string> = body.permissions ?? { contents: "write", metadata: "read", issues: "write" };
       const t: MintedRecord = { token: `ghs_${randomBytes(18).toString("hex")}`, installation: i.id, repository_ids: ids, permissions: { ...asked, metadata: "read" },
-        expires_at: Date.now() + state.ttlMs, revoked: false };
+        expires_at: clock() + state.ttlMs, revoked: false };
       minted.push(t);
       const perms = state.overgrant ? { ...t.permissions, ...state.overgrant } : t.permissions;
       return send(res, 201, { token: t.token, expires_at: new Date(t.expires_at).toISOString(), permissions: perms,

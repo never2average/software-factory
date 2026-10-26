@@ -210,7 +210,9 @@ try {
       const [payload, sig] = sA.split(".");
       const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload!, "base64url").toString()), o: B.orgId })).toString("base64url");
       assert.equal(await back(ownerB, { installation_id: "1001", setup_action: "install", state: `${forged}.${sig}`, code: code([1001]) }), "bad_state", "a payload changed under its signature");
-      const signed = (p: object) => { const x = Buffer.from(JSON.stringify(p)).toString("base64url"); return `${x}.${createHmac("sha256", CLIENT_SECRET).update(`github-app-state/v1.${x}`).digest("base64url")}`; };
+      // The shared signed state (src/oauth-state.ts): a payload signed with the server's own key, here for the test.
+      const { signState } = await import("../src/oauth-state.js");
+      const signed = (p: object) => { const x = Buffer.from(JSON.stringify({ p: "github_app", ...p })).toString("base64url"); return `${x}.${signState(x)}`; };
       assert.equal(await back(ownerA, { installation_id: "1001", state: signed({ v: 1, o: A.orgId, n: "x", e: Date.now() - 1000 }), code: code([1001]) }), "expired");
       assert.equal(await back(ownerA, { installation_id: "1001", state: signed({ v: 1, o: A.orgId, n: "never-issued", e: Date.now() + 60_000 }), code: code([1001]) }), "state_used", "a nonce never issued");
       // The person's reach on GitHub, the user-authorization code, the app.
@@ -403,7 +405,7 @@ try {
       assert.deepEqual(await rlsCatalogProblems(db), []);
       const probe = await rlsProbe(db);
       assert.deepEqual(probe.problems, []);
-      for (const t of ["workspace_github_installations", "github_app_states", "run_github_app_tokens"]) {
+      for (const t of ["workspace_github_installations", "oauth_states", "run_github_app_tokens"]) {
         const code = await withTenant(B.orgId, () => db.query(`/* tenant: test */ SELECT 1 FROM ${t}`).then(() => "read", (e) => e.code));
         assert.equal(code, "42501", `tenant work cannot read ${t}`);
       }
