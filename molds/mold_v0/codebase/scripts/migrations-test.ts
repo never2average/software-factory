@@ -401,7 +401,10 @@ async function suite(kind: "pglite" | "postgres") {
     assert.ok((await rlsCatalogProblems(at23)).some((p) => p.includes(`role ${oldRole}`) && p.includes("privilege")), "a grant to the old name fails the check");
     await at23.exec(`REVOKE SELECT ON vault_credentials FROM ${oldRole}`);
     assert.deepEqual(await rlsCatalogProblems(at23), []);
-    // Rolling back to a release from before 0024: the rollback file puts back the database 0023 left, exactly.
+    // Rolling back to a release from before 0024: the later migrations' rollback first (0025: its tables were made here
+    // and are empty, so they go), then 0024's rollback file puts back the database 0023 left, exactly.
+    await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8")), /not 0024: roll back the later migrations first/);
+    await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
     const fresh23 = await fresh(kind);
     await runMigrations(fresh23, { dir: await upTo(23), packDirs: [] });
@@ -495,6 +498,14 @@ async function suite(kind: "pglite" | "postgres") {
       const { rlsCatalogProblems, rlsProbe } = await import("../src/rls.js");
       assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
       assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
+      // Rolled back (sql/rollback/0025): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
+      for (const t of CONTEXT_TABLES) {
+        assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
+        assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
+      }
+      assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 25), `${path_}: rolled back: 0025 pending again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)"], `${path_}: and adopted again`);
       await d.drop();
     }
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
@@ -510,7 +521,16 @@ async function suite(kind: "pglite" | "postgres") {
       assert.equal((await migrationStatus(e)).pending.some((m) => m.version === 25), true, `${what}: 0025 not recorded`);
       await e.drop();
     }
-    console.log(`  ✓ ${kind}: 0025 makes the account context and memory tables on a new database and adopts them where a host pack made them, from 0023 (with 0024's renames in the same run) and from 0024 (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written, check:rls passes); some of them or another shape refused`);
+    // Rolling back a 0025 that made the tables, once this release wrote to them: refused, nothing changed.
+    {
+      const f = await fresh(kind);
+      await runMigrations(f, { packDirs: [] });
+      await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb-org', 'Rb'); INSERT INTO account_context (org_id, about) SELECT id, 'kept' FROM organizations WHERE slug = 'rb-org'");
+      await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
+      assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM account_context"))[0]!.n, 1, "rollback refused: the row is kept");
+      await f.drop();
+    }
+    console.log(`  ✓ ${kind}: 0025 makes the account context and memory tables on a new database and adopts them where a host pack made them, from 0023 (with 0024's renames in the same run) and from 0024 (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.

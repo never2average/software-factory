@@ -61,6 +61,11 @@ checksums are accepted for those files only (pack.json `host.schema.split`).
 |---|---|
 | `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |
 
+Rolling back to a release from before 0025: `sql/rollback/0025_account_context_memory.sql` (before 0024's, which
+refuses while 0025 is applied). Where 0025 was adopted it leaves the tables, rows, policies and grants exactly as they
+are (the host pack's again in that release) and removes only 0025's ledger rows; where 0025 made them it drops them only
+when all three are empty, and otherwise refuses and changes nothing.
+
 The factory runs it on a copy of a live database (`provision.py <app> --rehearse-migrations`: a Neon branch, deleted
 after). `npm run test:migrations` proves adoption on new, pre-049 and post-049 databases, with their rows and catalog
 rows untouched, and the refusals.
