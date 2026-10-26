@@ -2,6 +2,7 @@
 """Parity: does a build still show people, AI clients and the console the same thing? (mold_v0-136)
 
   parity.py snapshot <app_id|zero> --out DIR [--codebase DIR] [--no-copy] [--no-shots] [--no-smoke] [--only mcp,generated,api,pages]
+                    [--context-fixture [--memory-search TOOL]]
       A snapshot of one build (snapshot.mts, in the lane world of testing/console/: an embedded throwaway database, the
       offline Clerk, the console built from the copy and served on 127.0.0.1; nothing deployed is contacted).
         zero      the mold's own codebase, with no pack
@@ -60,7 +61,7 @@ def tsx(codebase):
 # ---------- snapshot ----------
 
 def snapshot(a):
-    if not a or a[0].startswith("--"): die("usage: parity.py snapshot <app_id|zero> --out DIR [--codebase DIR] [--no-copy] [--no-shots] [--no-smoke] [--only ...]")
+    if not a or a[0].startswith("--"): die("usage: parity.py snapshot <app_id|zero> --out DIR [--codebase DIR] [--no-copy] [--no-shots] [--no-smoke] [--only ...] [--context-fixture [--memory-search TOOL]]")
     target, out = a[0], opt(a, "--out")
     if not out: die("--out DIR is required")
     out = os.path.abspath(out)
@@ -75,7 +76,8 @@ def snapshot(a):
             if r.returncode: die(f"the lane copy of {target} could not be built: {(r.stdout + r.stderr).strip()[-600:]}", 1)
     if not os.path.isdir(codebase): die(f"no copy at {codebase}")
     console_id = "parity-zero" if target == "zero" else target
-    args = ["--out", out] + (["--no-shots"] if "--no-shots" in a else []) + (["--only", opt(a, "--only")] if opt(a, "--only") else [])
+    args = ["--out", out] + (["--no-shots"] if "--no-shots" in a else []) + (["--only", opt(a, "--only")] if opt(a, "--only") else []) \
+        + (["--context-fixture"] if "--context-fixture" in a else []) + (["--memory-search", opt(a, "--memory-search")] if opt(a, "--memory-search") else [])
     cmd = [sys.executable, os.path.join(TESTING, "console", "render.py"), console_id, "--codebase", codebase, "--deadline", str(WORLD_S),
            "--", os.path.join(HERE, "snapshot.mts"), *args]
     print(f"parity: snapshot of {os.path.relpath(codebase, ROOT)} into {out}", flush=True)

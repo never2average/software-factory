@@ -197,6 +197,11 @@ export function compare(A: string, B: string, opts: { allow?: AllowEntry[]; pixe
     add(g, ["resource_read"], a.resource_read, b.resource_read);
     if (a.skills || b.skills) add(g, ["skills"], a.skills, b.skills);
   }
+  // The memory search's answers over the context fixture (snapshot --context-fixture, mold_v0-142), when either has them.
+  {
+    const fa = path.join(A, "mcp", "memory-search.json"), fb = path.join(B, "mcp", "memory-search.json");
+    if (existsSync(fa) || existsSync(fb)) add("mcp.customer", ["memory_search"], existsSync(fa) ? readJson(fa) : null, existsSync(fb) ? readJson(fb) : null);
+  }
 
   // generated files: added, removed, or their lines.
   const ga = files(path.join(A, "generated")), gb = files(path.join(B, "generated"));
