@@ -237,7 +237,7 @@ async function suite(kind: "pglite" | "postgres") {
     const applied = await runMigrations(old, { log: () => {} });
     assert.ok(applied.applied.includes("0025_account_context_memory (adopted)"), `${st.name}: 0024 adopts the tables it has: ${applied.applied.join(", ")}`);
     if (secured) for (const t of CONTEXT_TABLES) assert.deepEqual(await catalogStamp(old, t), stamps.get(t), `${st.name}: no DDL reached ${t}`);
-    assert.equal((await old.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_adoptions WHERE pack = '' AND version = 24"))[0]!.n, 1, `${st.name}: the adoption is in the ledger`);
+    assert.equal((await old.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_adoptions WHERE pack = '' AND version = 25"))[0]!.n, 1, `${st.name}: the adoption is in the ledger`);
     const s = await migrationStatus(old);
     assert.ok(!s.pending.length && !s.conflicts.length && s.packs.every((p) => !p.pending.length && !p.conflicts.length), `${st.name}: nothing pending, no conflict`);
     const kept = await sameRows(old, rows, `${kind}: ${st.name}`);
