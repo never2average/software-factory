@@ -18,7 +18,8 @@
 //    on the server (mold_v0-155): the page's HTML carries it and its links.
 // 5. Denied: /admin and any address under it for someone who is not platform staff is a 403 that names them and leads
 //    to their account; staff see the admin console's 404 for an unknown address there.
-// 6. The data hooks: a portal page whose API answer is 401, 403 (a role, with the role it needs), 403 suspended,
+// 6. The data hooks (on /app/usage with the session engine, else /app/billing: the page this build serves, mold_v0-159):
+//    a portal page whose API answer is 401, 403 (a role, with the role it needs), 403 suspended,
 //    403 no_account, 404, 500 or no answer shows the status page for it (Try again where it helps), never a raw error
 //    card or nothing; a suspended member and (Clerk) someone in an organization that is not an account meet theirs for
 //    real; the admin console's account page for an account that is not there says not found.
@@ -349,12 +350,26 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
   ok("denied: /admin and every address under it is a 403 for someone who is not staff, naming them and leading to their account; /admin/session still reaches the API");
 
   // 6. the data hooks: the API's answer, as the status page.
-  const fake = (status: number, body: unknown) => async (p: any) => p.route("**/api/app/usage**", (route: any) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }));
-  await expect(w.owner, "/app/usage", 200, "denied", (r) => assert.match(r.shown!.text, /Billing manager role/), fake(403, { error: "This needs the Billing manager role.", code: "forbidden", needs: "billing" }));
-  await expect(w.owner, "/app/usage", 200, "not_found", undefined, fake(404, { error: "Not found" }));
-  await expect(w.owner, "/app/usage", 200, "error", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), fake(500, { error: "Internal error" }));
-  await expect(w.owner, "/app/usage", 200, "offline", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), async (p) => p.route("**/api/app/usage**", (route: any) => route.abort("failed")));
-  await expect(w.owner, "/app/usage", 200, "no_account", async (r) => assert.equal(await r.p.locator('[data-status-page] [data-testid="no-account-notice"] a[href="/app"]').count(), 1, "the portal's no-account notice, leading to its page"), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
+  // The portal page they are shown on is the one this build serves (mold_v0-159). With the session engine (a host pack
+  // owns its tables, src/host-tables.ts) that is /app/usage (features/portal/usage.tsx, GET /api/app/usage); without it
+  // /app/usage goes on to /app/activity (app/app/usage/page.tsx), which never asks /api/app/usage, so the rows use
+  // /app/billing (features/portal/billing.tsx, GET /api/app/billing), which every build serves through the same data
+  // hook (portal/shared.tsx ErrorState). The console's answer for /app/usage is measured against the build's own rule.
+  const engine = (await import("../src/host-tables.js")).sessionEngine();
+  const usageProbe = await fetch(`${origin}/app/usage`, { headers: { accept: "text/html", cookie: await cookieOf(w.owner) }, redirect: "manual" });
+  if (engine) assert.equal(usageProbe.status, 200, `/app/usage in a build with the session engine: the page (got HTTP ${usageProbe.status})`);
+  else {
+    assert.ok([302, 303, 307, 308].includes(usageProbe.status), `/app/usage in a build without the session engine: a redirect (got HTTP ${usageProbe.status})`);
+    assert.equal(new URL(usageProbe.headers.get("location")!, origin).pathname, "/app/activity", "/app/usage without the session engine: on to /app/activity");
+  }
+  const [dataPage, dataApi] = engine ? ["/app/usage", "**/api/app/usage**"] : ["/app/billing", "**/api/app/billing**"];
+  ok(`the data hooks' page: ${dataPage}${engine ? " (this build has the session engine)" : ` (no session engine: /app/usage is HTTP ${usageProbe.status} on to /app/activity, which never asks /api/app/usage)`}`);
+  const fake = (status: number, body: unknown) => async (p: any) => p.route(dataApi, (route: any) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }));
+  await expect(w.owner, dataPage, 200, "denied", (r) => assert.match(r.shown!.text, /Billing manager role/), fake(403, { error: "This needs the Billing manager role.", code: "forbidden", needs: "billing" }));
+  await expect(w.owner, dataPage, 200, "not_found", undefined, fake(404, { error: "Not found" }));
+  await expect(w.owner, dataPage, 200, "error", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), fake(500, { error: "Internal error" }));
+  await expect(w.owner, dataPage, 200, "offline", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), async (p) => p.route(dataApi, (route: any) => route.abort("failed")));
+  await expect(w.owner, dataPage, 200, "no_account", async (r) => assert.equal(await r.p.locator('[data-status-page] [data-testid="no-account-notice"] a[href="/app"]').count(), 1, "the portal's no-account notice, leading to its page"), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
   {
     // 401 from a page's own fetch: on to sign-in, back after.
     const r = await open(w.owner, "/app/files", async (p) => p.route("**/api/workspace-files**", (route: any) => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"Sign in"}' })));
@@ -364,13 +379,13 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
       await r.p.waitForURL(/\/auth\/sign-in\?redirect_url=%2Fapp%2Ffiles/, { timeout: 10000 });
     } finally { await r.c.close(); }
   }
-  await expect(w.suspended, "/app/usage", 200, "suspended", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1));
+  await expect(w.suspended, dataPage, 200, "suspended", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1));
   if (w.outsider) {
     // In no account for real: the portal's layout shows its own page for that (mold_v0-098) on every route.
-    const r = await open(w.outsider, "/app/usage");
+    const r = await open(w.outsider, dataPage);
     try {
       await r.p.locator('[data-testid="no-account"]').waitFor({ timeout: 20000 });
-      assert.ok(r.status < 400, `/app/usage in no account: HTTP ${r.status}`);
+      assert.ok(r.status < 400, `${dataPage} in no account: HTTP ${r.status}`);
       assert.doesNotMatch(await r.p.locator("body").innerText(), /Could not load this page/);
     } finally { await r.c.close(); }
   }
@@ -422,10 +437,10 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     ...(await grade(w.owner, "/app/no-such-page", "not found (portal)")),
     ...(await grade(w.staff, "/admin/no-such-page", "not found (admin)")),
     ...(await grade(w.owner, "/admin", "staff only")),
-    ...(await grade(w.owner, "/app/usage", "denied (portal)", fake(403, { error: "x", code: "forbidden", needs: "owner" }))),
-    ...(await grade(w.owner, "/app/usage", "error (portal)", fake(500, { error: "Internal error" }))),
-    ...(await grade(w.suspended, "/app/usage", "suspended")),
-    ...(await grade(w.owner, "/app/usage", "no account", fake(403, { error: "x", code: "no_account" }))),
+    ...(await grade(w.owner, dataPage, "denied (portal)", fake(403, { error: "x", code: "forbidden", needs: "owner" }))),
+    ...(await grade(w.owner, dataPage, "error (portal)", fake(500, { error: "Internal error" }))),
+    ...(await grade(w.suspended, dataPage, "suspended")),
+    ...(await grade(w.owner, dataPage, "no account", fake(403, { error: "x", code: "no_account" }))),
   ];
   for (const x of notes) console.log(`  ${x}`);
   ok(`axe: no serious or critical violation, dark and light; nothing scrolls sideways at 390, 820 and 1440 px; every action at least 24 px${SHOTS ? ` (screenshots: ${SHOTS})` : ""}`);
