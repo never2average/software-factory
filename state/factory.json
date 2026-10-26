@@ -117,7 +117,8 @@
     "redacted",
     "redacted",
     "redacted",
-    "octillion"
+    "octillion",
+    "maxwell"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
