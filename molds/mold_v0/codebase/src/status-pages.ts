@@ -15,7 +15,7 @@ import type { NextFunction, Request, Response } from "express";
 import { consoleUrl } from "./console-url.js";
 import { PROFILE } from "./profile.js";
 
-/** The console's page that is always a 404 (web/src/app/console-status/not-found/page.tsx). */
+/** The console's page that is always a 404, drawn on the server (web/src/app/console-status/not-found/page.tsx; web/src/proxy.ts gives it its 404, mold_v0-155). */
 export const NOT_FOUND_PAGE = "/console-status/not-found";
 const RELAY_HEADER = "x-status-relay";
 const KEEP_MS = 60_000;

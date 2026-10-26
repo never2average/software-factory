@@ -1,5 +1,5 @@
 // The console tabs packs declare (mold_v0-058), from the generated web/src/config/pack-nav.generated.ts (scripts/gen-packs.mjs).
-import { packCharts, packTabs, type PackChartSpec, type PackTabSpec } from '@/config/pack-nav.generated';
+import { packCharts, packTabs, type PackChartSpec, type PackTabSpec } from '../../config/pack-nav.generated';
 
 /** The kinds of tab drawn by the tab page itself; the others open a shell page (/app/billing...) or a pack page. */
 const OWN_PAGE = new Set<PackTabSpec['kind']>(['overview', 'area', 'runs', 'reports']);
