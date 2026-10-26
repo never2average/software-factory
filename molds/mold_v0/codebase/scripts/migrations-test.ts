@@ -84,15 +84,36 @@ const oldBoot = (db: Db, sql: string) => db.migrate((tx) => tx.exec(sql));
 const PRE = path.join(import.meta.dirname, "fixtures", "pre-049-migrations");
 /** The last shell migration released before mold_v0-049 (0016_run_approvals_egress, mold_v0-078); 0017 is the split's own. */
 const LAST_PRE = 16;
-async function preDir(upTo: number) {
-  const dir = path.join(tmp, `pre049-${upTo}`);
+async function preDir(upTo: number, asToday = false) {
+  const dir = path.join(tmp, `${asToday ? "shell" : "pre049"}-${upTo}`);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   for (const m of (await loadMigrations()).filter((x) => x.version <= upTo)) {
     const f = `${String(m.version).padStart(4, "0")}_${m.name}.sql`;
-    writeFileSync(path.join(dir, f), SPLIT_MIGRATIONS[m.version] ? readFileSync(path.join(PRE, f), "utf8") : m.sql);
+    writeFileSync(path.join(dir, f), SPLIT_MIGRATIONS[m.version] && !asToday ? readFileSync(path.join(PRE, f), "utf8") : m.sql);
   }
   return dir;
+}
+type Catalog = Awaited<ReturnType<typeof catalog>>;
+/** Each catalog line in `a` and not in `b`, as `+kind line`, and in `b` and not in `a`, as `-kind line`. */
+const catalogDiff = (a: Catalog, b: Catalog) => (Object.keys(a) as (keyof Catalog)[]).flatMap((k) => [
+  ...a[k].filter((x) => !b[k].includes(x)).map((x) => `+${k} ${x}`), ...b[k].filter((x) => !a[k].includes(x)).map((x) => `-${k} ${x}`)]);
+/**
+ * What the shell's own migrations after the split's release changed (0017 onwards, whatever lands next), measured, not
+ * listed: a database with no packs from today's shell migrations up to LAST_PRE against one from all of them. Every
+ * table, column, index, policy or function a later shell migration adds, changes or drops is in it, and nothing of a
+ * host pack's (mold_v0-158: a hand-kept list had drifted by 289 lines, the tables of 0018 to 0024).
+ */
+/** The catalog of a new database from the shell's migrations alone (no packs), up to `upTo` (all by default). */
+async function shellCatalog(kind: "pglite" | "postgres", upTo?: number) {
+  const db = await fresh(kind);
+  await runMigrations(db, { ...(upTo === undefined ? {} : { dir: await preDir(upTo, true) }), packDirs: [] });
+  const c = await catalog(db);
+  await db.drop();
+  return c;
+}
+async function laterShellChanges(kind: "pglite" | "postgres") {
+  return new Set(catalogDiff(await shellCatalog(kind), await shellCatalog(kind, LAST_PRE)));
 }
 /** The tables the product had in the shell's base schema before mold_v0-049: none of them in a shell with no packs. */
 const PRODUCT_TABLES = ["adoption_help", "account_context", "agent_sessions", "context_memories", "developer_population_agents", "developer_populations",
@@ -184,9 +205,11 @@ async function suite(kind: "pglite" | "postgres") {
   if (ownsAll) {
     // From scratch, the differences from the earlier schema are only: the runner's own record of pack migrations and
     // its two helpers (every build with pack migrations has them), and the gateway's session rule through a function
-    // (0003, 0009, 0017). Every table, column, default, constraint, index, policy and grant of the product is the same.
-    const diff = (Object.keys(want) as (keyof typeof want)[]).flatMap((k) => [...want[k].filter((x) => !mainCatalog[k].includes(x)).map((x) => `+${k} ${x}`),
-      ...mainCatalog[k].filter((x) => !want[k].includes(x)).map((x) => `-${k} ${x}`)]);
+    // (0003, 0009, 0017), the neutral names (0024), and whatever the shell's own later migrations changed (measured by
+    // laterShellChanges, never listed here). Every table, column, default, constraint, index, policy and grant of the
+    // product is the same.
+    const diff = catalogDiff(want, mainCatalog);
+    const later = await laterShellChanges(kind);
     // The neutral names (0024_neutral_database_names): the same policy, grant or function under the new names, and the
     // old names' aliases.
     const renamed = (d: string) => d.slice(1).replace(/\b[a-z]+_(tenant_role|tenant_org|session_org|run_charge(?:_figures|_refresh|_on_end)?|tenant_<db>)/g, "app_$1");
@@ -194,7 +217,8 @@ async function suite(kind: "pglite" | "postgres") {
     const why = (d: string) => /pack_schema_migrations|shell_pack_(tenant|private)_table/.test(d) ? "pack bookkeeping"
       : /^[+-]policies .*"(gateway_tokens|gateway_usage)"|^\+functions .*_session_org/.test(d) ? "gateway session rule"
       : (d.startsWith("+") && olds.has(renamed(d))) || (d.startsWith("-") && diff.some((x) => x.startsWith("+") && renamed(x) === renamed(d)))
-        || /^[+-]functions .*"[a-z]+_(tenant_role|tenant_org|session_org|run_charge(_figures|_refresh|_on_end)?)"/.test(d) ? "neutral names (0024)" : null;
+        || /^[+-]functions .*"[a-z]+_(tenant_role|tenant_org|session_org|run_charge(_figures|_refresh|_on_end)?)"/.test(d) ? "neutral names (0024)"
+      : later.has(d) ? `later shell migrations (${String(LAST_PRE + 1).padStart(4, "0")} on)` : null;
     const unexplained = diff.filter((d) => !why(d));
     assert.deepEqual(unexplained, [], "a new database (shell + host pack) differs from the earlier schema only where expected");
     const counts = diff.reduce((m: Record<string, number>, d) => ({ ...m, [why(d)!]: (m[why(d)!] ?? 0) + 1 }), {});
@@ -353,6 +377,11 @@ async function suite(kind: "pglite" | "postgres") {
       return dir;
     };
     const { rlsCatalogProblems, rlsProbe, legacyTenantRole } = await import("../src/rls.js");
+    // The shell's own migrations only, throughout (packDirs: []): this runner re-points a pack's policies at 0024's
+    // names, so it cannot make a database with packs as it stood at 0023. Every run below names no packs either
+    // (mold_v0-158: the runs after 0023 took the build's host packs by default, so in a host-pack build the rolled-back
+    // database had the product's tables and the database 0023 left had none). The host pack's own policies through
+    // 0024 are graded above: every older database, migrated with the host pack, equals a new one.
     const at23 = await fresh(kind);
     await runMigrations(at23, { dir: await upTo(23), packDirs: [] });
     const before = await catalog(at23);
@@ -369,7 +398,7 @@ async function suite(kind: "pglite" | "postgres") {
     })).map((r) => r.org_id);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "before: the old release's tenant transaction sees its own rows");
     const t0 = Date.now();
-    assert.deepEqual((await runMigrations(at23)).applied.slice(0, 1), ["0024_neutral_database_names"]);
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names"]);
     const ms = Date.now() - t0;
     assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
     assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
@@ -393,8 +422,8 @@ async function suite(kind: "pglite" | "postgres") {
     sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
     sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
-    assert.deepEqual((await runMigrations(at23)).applied.slice(0, 1), ["0024_neutral_database_names"], "and 0024 applies again");
-    sameCatalog(await catalog(at23), want, `${kind}: 0024 again after the rollback`);
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names"], "and 0024 applies again");
+    sameCatalog(await catalog(at23), packSets.length ? await shellCatalog(kind) : want, `${kind}: 0024 again after the rollback`);
     await fresh23.drop();
     await at23.drop();
     // Roles outlive databases (a real server): a database dropped and made again under the same name finds the roles
