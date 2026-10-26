@@ -117,7 +117,10 @@ try {
       // onboards_products is not run billing's: mold_v0-100 added it (whether the build's host pack onboards products) and
       // mold_v0-141 stopped the console reading it (the no-plan notice is the shell text billing.needs_plan); the answer
       // keeps it for one release, for a console of the release before while a deploy rolls out.
-      assert.deepEqual(Object.keys(bill).sort(), ["budget_source", "budget_usd", "can_manage", "customer", "enabled", "month_spend_usd", "onboards_products", "permissions", "plans", "prepaid_allowed", "subscription"],
+      // A host pack's own fields (its routes.billingExtras: Octillion's contributions) are the host pack's, not run billing's.
+      const { hosts } = await import("../src/host.js");
+      const extras = (await Promise.all(hosts().map(async (h) => Object.keys(await h.routes?.billingExtras?.(A.orgId) ?? {})))).flat();
+      assert.deepEqual(Object.keys(bill).sort(), ["budget_source", "budget_usd", "can_manage", "customer", "enabled", "month_spend_usd", "onboards_products", "permissions", "plans", "prepaid_allowed", "subscription", ...extras].sort(),
         "off: the Billing page's answer has exactly its fields from before");
       const { hostTable } = await import("../src/host-tables.js");
       assert.equal(bill.onboards_products, hostTable("products"), "off: onboards_products still says whether the build's host pack onboards products");
