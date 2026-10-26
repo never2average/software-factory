@@ -373,10 +373,14 @@ def plan_hygiene(root, cfg, extra_roots=None):
     procs = PROCS(); keep = protected(procs); roots = tmp_roots(cfg, extra_roots); now = NOW()
     waits, servers = [], []
     srx = [re.compile(r) for r in cfg["server_patterns"]]
+    # A wait loop is ours only when it runs in, or names, the factory or a tmp root (or the factory's agent task folder,
+    # "-root-software-factory" for /root/software-factory): other projects on the machine keep their own loops.
+    rr = os.path.realpath(root); marks = [rr + "/", rr.replace("/", "-") + "/"] + [r + "/" for r in roots]
+    ours = lambda p: under(p["cwd"], rr) or any(under(p["cwd"], r) for r in roots) or any(m in p["args"] for m in marks)
     for p in procs:
         if p["pid"] in keep or "sweep.py" in p["args"]: continue
         fw = first_word(p["args"])
-        if fw in SHELLS and WAIT_RX.search(p["args"]) and p["etimes"] >= cfg["stale_wait_hours"] * 3600:
+        if fw in SHELLS and WAIT_RX.search(p["args"]) and p["etimes"] >= cfg["stale_wait_hours"] * 3600 and ours(p):
             waits.append({"pid": p["pid"], "hours": round(p["etimes"] / 3600, 1), "args": p["args"][:300]}); continue
         if fw in SHELLS or fw in ("pgrep", "grep", "ps"): continue
         if not any(r.search(p["args"]) for r in srx): continue
@@ -660,7 +664,8 @@ def self_test():
         PS = [{"pid": 1, "ppid": 0, "etimes": 99 * H_, "args": "/sbin/init", "cwd": "/"},
               {"pid": 900, "ppid": 1, "etimes": 20 * H_, "args": "bash -c until ! pgrep -f 'lanes.py app'; do sleep 60; done; echo ok", "cwd": "/"},   # its own agent shell: an ancestor
               {"pid": 1000, "ppid": 900, "etimes": 20 * H_, "args": "python3 .claude/scripts/sweep.py plan", "cwd": R},
-              {"pid": 1101, "ppid": 1, "etimes": 10 * H_, "args": "bash -c while pgrep -f provision.py >/dev/null; do sleep 30; done", "cwd": "/"},
+              {"pid": 1101, "ppid": 1, "etimes": 10 * H_, "args": "bash -c while pgrep -f provision.py >/dev/null; do sleep 30; done", "cwd": R},
+              {"pid": 1107, "ppid": 1, "etimes": 10 * H_, "args": "bash -c while pgrep -f 'next build' >/dev/null; do sleep 5; done; cat /tmp/c/-srv-other/tasks/x.output", "cwd": "/srv/other"},   # another project's
               {"pid": 1102, "ppid": 1, "etimes": 1 * H_, "args": "bash -c until pgrep node; do sleep 5; done", "cwd": "/"},          # young
               {"pid": 1103, "ppid": 1, "etimes": 30 * H_, "args": "bash", "cwd": "/root"},                                            # idle shell
               {"pid": 1104, "ppid": 1, "etimes": 30 * H_, "args": "bash -c pgrep -f next", "cwd": "/"},                              # no loop
@@ -676,7 +681,7 @@ def self_test():
             return fake_run(cmd, cwd)
         RUN = git_dirty
         H = plan_hygiene(R, cfg)
-        ok([w["pid"] for w in H["stale_waits"]] == [1101], f"only the old wait loop is stale; never itself or its parent, a young loop, a plain shell, pgrep or an editor ({[w['pid'] for w in H['stale_waits']]})")
+        ok([w["pid"] for w in H["stale_waits"]] == [1101], f"only the old wait loop is stale; never itself or its parent, a young loop, another project's loop, a plain shell, pgrep or an editor ({[w['pid'] for w in H['stale_waits']]})")
         ok([s["pid"] for s in H["stale_servers"]] == [1201], f"only the orphaned server under a tmp root is listed ({[s['pid'] for s in H['stale_servers']]})")
         ok(H["disk_low"], "10 GB free is below the 20 GB threshold")
         sc = {os.path.basename(s["path"]): s for s in H["scratch"]}
