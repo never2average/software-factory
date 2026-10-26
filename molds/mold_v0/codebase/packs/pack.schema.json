@@ -129,6 +129,19 @@
                 "type": "string",
                 "pattern": "^\\d{4}_[a-z0-9_]+$"
               }
+            },
+            "labels": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              }
             }
           },
           "required": [
@@ -9037,6 +9050,93 @@
         "stages",
         "attention"
       ],
+      "additionalProperties": false
+    },
+    "texts": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "refusal.viewer_launch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the refusal a viewer gets on launching (src/account-roles.ts accountRefusal); the shell adds who can change the role. The shell's own: Viewers can read reports, usage and transcripts but can't run {runs}."
+        },
+        "refusal.viewer_edit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the refusal a viewer gets on changing anything (pack tools and routes, src/account-roles.ts accountRefusal); the shell adds who can change the role. The shell's own: Viewers can read but can't make changes."
+        },
+        "admin_roles.support": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "what the Support platform role may do (src/admin-roles.ts roleHelp: /admin Admins, the admin MCP). The shell's own: Viewer, plus access requests, new accounts and invitations."
+        },
+        "billing.needs_plan": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "/app/billing with no plan and no allowance: what is off until the account has a plan. The shell's own: Running {runs} needs a prepaid plan. Plans are invite-only for now: reply to your {product} contact, or write to us, and we'll set one up for your team."
+        },
+        "plans.example_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the description in New plan › JSON's starting point (/admin Spend › Plans). The shell's own: For teams using {product} every week"
+        },
+        "requests.research_alternatives": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the label of the products a request's research brief compares the company with (/admin/requests). The shell's own: Alternatives"
+        },
+        "tips.sequence_field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts; a host pack's tips). The shell's own: Series"
+        },
+        "journeys.one": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "what one of a host pack's step-by-step pipelines is called on /app Setup (its `journeys` component). The shell's own: guide"
+        },
+        "journeys.many": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the same, more than one. The shell's own: guides"
+        },
+        "usage.score": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "the score of the session engine's scored runs on /app/usage (its Recent runs chart). The shell's own: Score"
+        },
+        "usage.score_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
+          "description": "that chart's description. The shell's own: Score of the latest {runs} in this period."
+        }
+      },
       "additionalProperties": false
     },
     "setup": {

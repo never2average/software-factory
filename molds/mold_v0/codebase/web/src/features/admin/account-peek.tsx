@@ -29,6 +29,7 @@ import { Gate, useAdminRole, type AdminPermission } from './role';
 import { profile } from '@/config/profile.generated';
 import { hostFeature } from '@/features/packs/host-nav';
 import { KEY_PREFIX } from '@/lib/namespace';
+import { text } from '@/lib/texts';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
 export type Org = OrgRow & {
@@ -264,7 +265,7 @@ export function TipDock({ orgs, onClose }: { orgs: Org[]; onClose: () => void })
     <Dock title={orgs.length === 1 ? `Send a tip to ${orgs[0].name}` : `Send a tip to ${orgs.length} accounts`} onClose={onClose}>
       <form className='flex flex-col gap-3 p-4' onSubmit={(e) => { e.preventDefault(); void send(); }}>
         <div className='grid gap-2 sm:grid-cols-2'>
-          <Input aria-label='Journey' placeholder='Journey' value={f.journey} onChange={(e) => setF({ ...f, journey: e.target.value })} />
+          <Input aria-label={text('tips.sequence_field')} placeholder={text('tips.sequence_field')} value={f.journey} onChange={(e) => setF({ ...f, journey: e.target.value })} />
           <Input aria-label='Step' placeholder='Step' value={f.step} onChange={(e) => setF({ ...f, step: e.target.value })} />
         </div>
         <Textarea aria-label='Message' required autoFocus maxLength={280} rows={3} placeholder='The tip, up to 280 characters' value={f.message} onChange={(e) => setF({ ...f, message: e.target.value })} className='resize-none' />

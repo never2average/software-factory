@@ -34,6 +34,8 @@ const RANGES: Record<string, number> = { "1h": 1, "24h": 24, "7d": 168 };
 
 export type JobState = "waiting" | "queued" | "booting" | "running" | "draining" | "failed" | "finished";
 export const JOB_STATES: readonly JobState[] = ["waiting", "queued", "booting", "running", "draining", "failed", "finished"];
+/** The session engine's job kinds, as stored (the `kind` filter's values; the console shows each in the build's words). */
+const JOB_KINDS = ["simulation", "research", "prospect"] as const;
 
 export interface JobFacts {
   /** The job row says it failed (research only: a simulation has no failed status). */
@@ -91,7 +93,7 @@ export function whyWaiting(job: { id: string; kind: "simulation" | "research"; u
 // ---------------------------------------------------------------- the rows
 
 interface JobDb {
-  id: string; kind: "simulation" | "research" | "prospect"; status: string; name: string | null; created_at: Date; started_at: Date | null;
+  id: string; kind: (typeof JOB_KINDS)[number]; status: string; name: string | null; created_at: Date; started_at: Date | null;
   heartbeat_at: Date | null; finished_at: Date | null; org_slug: string | null; org_name: string | null; product_id: number | null; product_name: string | null;
   company: string | null; stage: string | null; note: string | null; error: string | null; attempts: number | null; searches: number | null;
 }
@@ -238,7 +240,7 @@ export async function listJobs(q: Record<string, unknown>) {
   const state = str(q.state) ?? "all";
   if (!["all", "active", ...JOB_STATES].includes(state)) throw badRequest(`state must be all, active or one of ${JOB_STATES.join(", ")}`);
   const kind = str(q.kind);
-  if (kind && !["simulation", "research", "prospect"].includes(kind)) throw badRequest("kind must be simulation, research or prospect");
+  if (kind && !(JOB_KINDS as readonly string[]).includes(kind)) throw badRequest(`kind must be ${JOB_KINDS.slice(0, -1).join(", ")} or ${JOB_KINDS.at(-1)}`);
   const include = str(q.include);
   const hours = RANGES[since];
   const recent = (t: string) => `(${t}.status IN ('queued', 'running') OR coalesce(${t}.finished_at, ${t}.created_at) > now() - make_interval(hours => $1) OR ${t}.id = $2)`;

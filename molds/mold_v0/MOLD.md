@@ -548,9 +548,19 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
   values are contracts and are not counted; since mold_v0-113 the staff docs (`docs/*.md`, which `/admin/docs` and the
-  docs answers serve) are read too, every line outside a fenced block, and say the engine's units in neutral words; each file that still carries one has a ceiling in a group that says why
-  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, /app/usage, email copy for
-  mold_v0-101). `npm run test:words`.
+  docs answers serve) are read too, every line outside a fenced block, and say the engine's units in neutral words.
+  Since mold_v0-141 no file carries one (`concepts.ceilings` is empty; a ceiling is only for a stored identifier that
+  cannot be written otherwise, with its migration). Where a product's own concept would stand and no word says it, the
+  shell writes a **shell text** (`src/shell-texts.ts`, no imports): an id, where it is shown, and the shell's neutral
+  text, which any pack's pack.json `texts` replaces in its product's words (the first pack wins; gen-packs refuses an
+  unknown id, a text two packs write and a placeholder that is not the build's). Server texts reach the server in
+  `src/hosts.generated.ts` `PACK_CONFIG` (`src/texts.ts` `shellText`), console texts the console in
+  `build-facts.generated.ts` `TEXTS` (`web/src/lib/texts.ts` `text`, over gen-packs' copy of the list,
+  `web/src/lib/shell-texts.generated.ts`). Today: the viewer refusals (`refusal.viewer_launch`, `refusal.viewer_edit`),
+  the Support role's help, Billing's no-plan notice, New plan's example description, the research brief's comparison label, the tip dock's
+  sequence field, a host pack's journeys' nouns on Setup and the session engine's score on /app/usage. A host pack's
+  tables are named on the Storage page by its `host.schema.labels` (else the table's name, capitalised). The session
+  engine's plan metric, compute knob and settings help say `{run}`. `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
   non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.
@@ -1433,8 +1443,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   edited; with zero packs admin-added harnesses cannot be managed in the console (their routes
   add to the product's developer population, so they are the host pack's);
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
-  console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
-  contribution credits on Billing), the default icons and Open Graph image are the
+  pages name the engine's work in the build's words and its own concepts in its host pack's (`texts`,
+  `host.schema.labels`, mold_v0-141), but still carry its structure (the research brief's fields, the engine's
+  onboarding-research sections, the library contribution credits on Billing); the default icons and Open Graph image are the
   first product's; the shell components a host
   pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its pack.json
   `console.components` names them; a dropped host pack's console and orchestrator folders are not
@@ -1680,6 +1691,8 @@ declares one, so a build without writes what it did:
   label, next step and Analytics funnel label, the next step after the first tool call, and the needs-attention messages
   ("Product onboarding failed" and the rest were the shell's words), filled with the build's words; the console reads them
   from `build-facts.generated.ts` `ENGINE_WORDS`.
+- `texts` (mold_v0-141; any pack): the shell's texts in the product's words, by id (`src/shell-texts.ts`; see "The
+  vocabulary"), and a host pack's `host.schema.labels` (table -> its Storage page label).
 `npm run test:host-config`; `npm run test:admin-sections` in a build with the engine.
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the

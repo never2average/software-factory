@@ -161,7 +161,7 @@
     }
   ],
   "concepts": {
-    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources, and since mold_v0-113 every line of the staff docs, docs/*.md, outside a fenced block): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Each file that still carries one has a ceiling, the exact count today, in a group that says why it remains and how it goes; more fails, fewer fails with the number to lower it to.",
+    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources, and since mold_v0-113 every line of the staff docs, docs/*.md, outside a fenced block): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Since mold_v0-141 no file carries one: `ceilings` is empty, so any concept word as prose fails. Where a product's concept would stand, base text writes a placeholder or a shell text a pack writes in its words (pack.json `texts`, src/shell-texts.ts; a host pack's table labels: host.schema.labels). A ceiling (a group with `why`, `migration` and each file's exact count) is only for a stored identifier that cannot be written otherwise, with the migration that renames it.",
     "words": [
       "simulation",
       "scenario",
@@ -191,45 +191,6 @@
       "src/words.ts": "the words engine: its comments' examples name the words a pack may choose",
       "web/src/packs/**": "a host pack's own console code (its files in a build), never the shell's"
     },
-    "ceilings": {
-      "host_gated": {
-        "why": "Text shown only where the build's host pack has the feature or the tables (hostFeature('journeys'), hostFeature('research'), hostTable('products'), the session engine's tables): a declarative app never reaches it.",
-        "migration": "Moves into the host pack when the hook it sits behind gets a pack field (HostWeb/HostDefinition copy hooks; audit rows 7, 8 and 17).",
-        "files": {
-          "web/src/features/portal/setup.tsx": 6,
-          "src/account-roles.ts": 1,
-          "src/admin-roles.ts": 1,
-          "web/src/hooks/use-breadcrumbs.tsx": 1,
-          "web/src/features/admin/requests.tsx": 1
-        }
-      },
-      "host_tables": {
-        "why": "Labels and checks of the host pack's own tables (the storage page's table list, the row-level security probes), each guarded by hostTable(): stored names, read only in a build that has them.",
-        "migration": "Each table's label comes from the host pack's pack.json host.schema when it gets labels (follow-up of mold_v0-049).",
-        "files": {
-          "src/spend-usage.ts": 7,
-          "src/rls.ts": 5
-        }
-      },
-      "admin_sections": {
-        "why": "Staff-only admin text that only the session engine's builds show and no build word can say (its account stages' words are its pack.json account_stages since mold_v0-121): its tip dialog, its plan template's example, its compute knobs and job kinds, its billing metric (audit row 8).",
-        "migration": "Done on the console's pages (mold_v0-104): the engine's sections show only when sessionEngine() (web/src/features/admin/engine.ts), the packs' runs per job kind in their words otherwise. What is left goes with host pack hooks for its own texts.",
-        "files": {
-          "web/src/features/admin/account-peek.tsx": 2,
-          "web/src/features/admin/spend.tsx": 1,
-          "src/plan-config.ts": 2,
-          "src/compute-jobs.ts": 1,
-          "src/compute.ts": 1,
-          "src/settings.ts": 1
-        }
-      },
-      "usage_page": {
-        "why": "/app/usage is the first product's usage page (simulations run, hit rate), reachable by URL only in a declarative app, whose tabs send usage to /app/activity (audit row 14).",
-        "migration": "Redirect /app/usage to /app/activity when sessionEngine() is false, the page moving to the host pack (audit row 14 ticket).",
-        "files": {
-          "web/src/features/portal/usage.tsx": 12
-        }
-      }
-    }
+    "ceilings": {}
   }
 }

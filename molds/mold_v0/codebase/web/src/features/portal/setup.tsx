@@ -26,6 +26,8 @@ import { profile } from '@/config/profile.generated';
 import { hostFeature } from '@/features/packs/host-nav';
 import { onboardingAnchor } from '@/features/tabs/empty';
 import { mergeSetupSteps, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
+import { text } from '@/lib/texts';
+import { capWord } from '@/lib/words.generated';
 
 interface Setup {
   steps: ShellSetupStep[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
@@ -283,15 +285,15 @@ function JourneyPicker({ setup, journeys, selected, onSelect }: { setup: { done:
   const shown = needle || all || matches.length <= SEARCH_FROM ? matches
     : [...matches.slice(0, SEARCH_FROM - 1), ...matches.slice(SEARCH_FROM - 1).filter((j) => j.id === selected)];
   return (
-    <FloatPanel title='Journeys' icon={<Icons.route />} description='Real use cases as step-by-step pipelines. Pick one to replicate it.' >
+    <FloatPanel title={capWord(text('journeys.many'))} icon={<Icons.route />} description='Real use cases as step-by-step pipelines. Pick one to replicate it.' >
       {items.length > SEARCH_FROM && (
         <div className='relative'>
           <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
-          <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${items.length} journeys`} aria-label='Search journeys' className='h-8 pl-8 text-sm' />
+          <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${items.length} ${text('journeys.many')}`} aria-label={`Search ${text('journeys.many')}`} className='h-8 pl-8 text-sm' />
         </div>
       )}
-      <div role='radiogroup' aria-label='Journey' className='flex flex-col gap-0.5'>
-        {shown.length === 0 && <p className='text-muted-foreground px-2 py-3 text-sm'>No journey matches “{q}”.</p>}
+      <div role='radiogroup' aria-label={capWord(text('journeys.one'))} className='flex flex-col gap-0.5'>
+        {shown.length === 0 && <p className='text-muted-foreground px-2 py-3 text-sm'>No {text('journeys.one')} matches “{q}”.</p>}
         {shown.map((j) => {
           const on = j.id === selected, complete = j.total > 0 && j.done >= j.total;
           return (
@@ -310,7 +312,7 @@ function JourneyPicker({ setup, journeys, selected, onSelect }: { setup: { done:
       </div>
       {!needle && matches.length > shown.length && (
         <button type='button' onClick={() => setAll(true)} className='text-primary self-start px-3 text-xs font-medium hover:underline'>
-          Show all {matches.length} journeys
+          Show all {matches.length} {text('journeys.many')}
         </button>
       )}
       {!needle && all && matches.length > SEARCH_FROM && (
@@ -354,7 +356,7 @@ function JourneyView({ j, onChanged, note }: { j: Journey; onChanged: () => void
           </>
         ) };
       })}
-      footer={done >= j.total ? 'Pipeline complete. Run it again after your next change, or pick another journey.' : <>Worked example: <span className='text-foreground'>{j.example.title}</span>. {j.example.result}</>} />
+      footer={done >= j.total ? `Pipeline complete. Run it again after your next change, or pick another ${text('journeys.one')}.` : <>Worked example: <span className='text-foreground'>{j.example.title}</span>. {j.example.result}</>} />
   );
 }
 
@@ -487,7 +489,7 @@ function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored 
     <TimelineSection title={title} titleId={titleId} done={done} total={steps.length} noun='steps' compact={compact} items={items} extra={hide}
       footer={ticks || hostFeature('journeys') ? <>
         {ticks && 'These steps tick themselves as you go. '}
-        {hostFeature('journeys') && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>Journeys</a>.</>}
+        {hostFeature('journeys') && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}
       </> : null} />
   );
 }

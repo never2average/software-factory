@@ -15,6 +15,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";
 import * as clerk from "./clerk.js";
 import { people } from "./people.js";
+import { shellText } from "./texts.js";
 import { fill } from "./vocabulary.js";
 
 export const PLATFORM_ROLES = ["viewer", "support", "operator", "owner"] as const;
@@ -24,7 +25,7 @@ export const ROLE_LABELS: Record<PlatformRole, string> = { viewer: "Viewer", sup
 export function roleHelp(r: PlatformRole): string {
   return {
     viewer: "Reads every admin page. Changes nothing.",
-    support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
+    support: shellText("admin_roles.support"),
     operator: fill("Support, plus compute, harnesses, agent configuration, the library, account edits and {runs}."),
     owner: "Everything, including the key vault, admins and deleting things.",
   }[r];
