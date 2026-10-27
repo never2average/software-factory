@@ -32,6 +32,14 @@
  * other database it runs. A host pack's migrations are held to the same rule as every pack's: every table of its own
  * under row-level security, nothing else in the database changed (securitySnapshot), its declared tables and
  * functions counting as its own.
+ *
+ * Tables a host pack hands back to the shell (mold_v0-142): the account context and memory tables were a host pack's
+ * (and the pre-049 shell's) and are the shell's again, created by a shell migration whose statements are exactly the
+ * ones that made them (ADOPTING_MIGRATIONS). A database that already has all of them, in the shape that migration
+ * gives, records it as adopted without running it (no statement touches those tables or their rows; the ledger
+ * schema_adoptions says what was adopted and the shape it had); one with none of them runs it; anything in between, or
+ * another shape, is refused. The host pack's own migration that used to make them is rewritten without them once, its
+ * earlier checksum accepted (pack.json host.schema.split), as the shell's split files are (SPLIT_MIGRATIONS).
  */
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
@@ -99,6 +107,149 @@ export const SPLIT_MIGRATIONS: Readonly<Record<number, { name: string; before: s
 const splitBefore = (r: { version: number; name: string; checksum: string }) =>
   SPLIT_MIGRATIONS[r.version]?.name === r.name && SPLIT_MIGRATIONS[r.version]?.before === r.checksum;
 
+/**
+ * Shell migrations that adopt tables a database may already have (mold_v0-142): the account context and memory tables,
+ * a host pack's before (and the pre-049 shell's own). Each lists its tables and the shape its statements give them
+ * (tableShape, below: columns, constraints, indexes, row-level security, policies and grants, the tenant role's name
+ * and the schema left out). Where all of them are there in exactly that shape the migration is recorded as adopted
+ * without running: no statement of it reaches those tables or their rows. Where none is, it runs. Anything else (some
+ * of them, or another shape) is refused with what differs, and nothing changes.
+ */
+export const ADOPTING_MIGRATIONS: Readonly<Record<number, { name: string; tables: readonly string[]; shape: readonly string[] }>> = {
+  25: {
+    name: "account_context_memory",
+    tables: ["account_context", "user_context", "context_memories"],
+    shape: [
+      "column account_context.about text",
+      "column account_context.audience text",
+      "column account_context.competitors jsonb not null default '[]'::jsonb",
+      "column account_context.notes_for_ai text",
+      "column account_context.org_id integer not null",
+      "column account_context.terms text",
+      "column account_context.updated_at timestamp with time zone",
+      "column account_context.updated_by text",
+      "column context_memories.body text not null",
+      "column context_memories.created_at timestamp with time zone not null default now()",
+      "column context_memories.created_by text",
+      "column context_memories.id bigint not null default nextval('context_memories_id_seq'::regclass)",
+      "column context_memories.kind text not null default 'note'::text",
+      "column context_memories.org_id integer not null",
+      "column context_memories.scope text not null",
+      "column context_memories.subject text not null default ''::text",
+      "column user_context.answer_style text",
+      "column user_context.focus_product text",
+      "column user_context.interests text",
+      "column user_context.notes text",
+      "column user_context.org_id integer not null",
+      "column user_context.title text",
+      "column user_context.updated_at timestamp with time zone",
+      "column user_context.user_id text not null",
+      "constraint account_context.account_context_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint account_context.account_context_pkey p PRIMARY KEY (org_id)",
+      "constraint context_memories.context_memories_kind_check c CHECK ((kind = ANY (ARRAY['fact'::text, 'decision'::text, 'preference'::text, 'note'::text])))",
+      "constraint context_memories.context_memories_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint context_memories.context_memories_pkey p PRIMARY KEY (id)",
+      "constraint context_memories.context_memories_scope_check c CHECK ((scope = ANY (ARRAY['company'::text, 'user'::text, 'product'::text])))",
+      "constraint user_context.user_context_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint user_context.user_context_pkey p PRIMARY KEY (org_id, user_id)",
+      "grant account_context DELETE to <tenant>",
+      "grant account_context INSERT to <tenant>",
+      "grant account_context SELECT to <tenant>",
+      "grant account_context UPDATE to <tenant>",
+      "grant context_memories DELETE to <tenant>",
+      "grant context_memories INSERT to <tenant>",
+      "grant context_memories SELECT to <tenant>",
+      "grant context_memories UPDATE to <tenant>",
+      "grant context_memories_id_seq USAGE to <tenant>",
+      "grant user_context DELETE to <tenant>",
+      "grant user_context INSERT to <tenant>",
+      "grant user_context SELECT to <tenant>",
+      "grant user_context UPDATE to <tenant>",
+      "index account_context.account_context_pkey CREATE UNIQUE INDEX account_context_pkey ON account_context USING btree (org_id)",
+      "index context_memories.context_memories_pkey CREATE UNIQUE INDEX context_memories_pkey ON context_memories USING btree (id)",
+      "index context_memories.context_memories_scope CREATE INDEX context_memories_scope ON context_memories USING btree (org_id, scope, subject, created_at DESC)",
+      "index user_context.user_context_pkey CREATE UNIQUE INDEX user_context_pkey ON user_context USING btree (org_id, user_id)",
+      "policy account_context.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy context_memories.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy user_context.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "row-level security account_context on",
+      "row-level security context_memories on",
+      "row-level security user_context on",
+    ],
+  },
+};
+
+/** The ledger of adoptions (mold_v0-142): what a database had and recorded without running, and the shape it had. */
+const ADOPTIONS_TABLE = `CREATE TABLE IF NOT EXISTS schema_adoptions (
+  pack          TEXT NOT NULL DEFAULT '',
+  version       INT NOT NULL,
+  name          TEXT NOT NULL,
+  adopted_from  TEXT NOT NULL,
+  shape_sha256  TEXT,
+  adopted_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (pack, version)
+)`;
+
+/**
+ * What a set of tables is, as plain lines that do not depend on the database they are in or its server's version: each
+ * column (type, null, default), constraint (not-null ones are the columns' own: Postgres 18 lists them as constraints,
+ * earlier versions do not), index, row-level security switch, policy, grant to the tenant role or to everyone (on the
+ * tables and the sequences they own; what the owner and a provider's own roles hold is the platform's, not the
+ * migration's) and trigger. The tenant role (named per database) reads as <tenant>, the schema is left out.
+ */
+export async function tableShape(q: Queryable, tables: readonly string[]): Promise<string[]> {
+  const t = [...tables];
+  const [{ r: role } = { r: "" }] = await q.query<{ r: string }>("SELECT CASE WHEN to_regproc('public.app_tenant_role') IS NULL THEN '' ELSE app_tenant_role() END AS r");
+  const norm = (v: unknown) => { let x = String(v ?? "").replace(/\s+/g, " ").replace(/\bpublic\./g, "").trim(); if (role) x = x.split(role).join("<tenant>"); return x; };
+  const out: string[] = [];
+  for (const r of await q.query<{ t: string; a: string; type: string; nn: boolean; def: string | null }>(
+    `SELECT c.relname AS t, a.attname AS a, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS nn, pg_get_expr(d.adbin, d.adrelid) AS def
+       FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY ($1::text[]) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY 1, a.attnum`, [t]))
+    out.push(`column ${r.t}.${r.a} ${r.type}${r.nn ? " not null" : ""}${r.def ? ` default ${norm(r.def)}` : ""}`);
+  for (const r of await q.query<{ t: string; n: string; k: string; def: string }>(
+    `SELECT c.relname AS t, k.conname AS n, k.contype::text AS k, pg_get_constraintdef(k.oid) AS def FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+      WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY ($1::text[]) AND k.contype <> 'n'`, [t]))
+    out.push(`constraint ${r.t}.${r.n} ${r.k} ${norm(r.def)}`);
+  for (const r of await q.query<{ t: string; n: string; def: string }>(
+    "SELECT tablename AS t, indexname AS n, indexdef AS def FROM pg_indexes WHERE schemaname = 'public' AND tablename = ANY ($1::text[])", [t]))
+    out.push(`index ${r.t}.${r.n} ${norm(r.def)}`);
+  for (const r of await q.query<{ t: string; on: boolean; force: boolean }>(
+    "SELECT relname AS t, relrowsecurity AS on, relforcerowsecurity AS force FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname = ANY ($1::text[])", [t]))
+    out.push(`row-level security ${r.t} ${r.on ? "on" : "off"}${r.force ? " forced" : ""}`);
+  for (const r of await q.query<{ t: string; n: string; p: string; roles: string; cmd: string; qual: string | null; wc: string | null }>(
+    "SELECT tablename AS t, policyname AS n, permissive AS p, roles::text AS roles, cmd, qual, with_check AS wc FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY ($1::text[])", [t]))
+    out.push(`policy ${r.t}.${r.n} ${r.p} ${r.cmd} to ${norm(r.roles)} using ${norm(r.qual)} check ${norm(r.wc)}`);
+  for (const r of await q.query<{ t: string; who: string; priv: string; g: boolean }>(
+    `SELECT c.relname AS t, CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END AS who, x.privilege_type AS priv, x.is_grantable AS g
+       FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) x
+      WHERE c.relnamespace = 'public'::regnamespace AND (x.grantee = 0 OR x.grantee::regrole::text = $2) AND (c.relname = ANY ($1::text[])
+         OR (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d JOIN pg_class o ON o.oid = d.refobjid WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
+               AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') AND o.relnamespace = 'public'::regnamespace AND o.relname = ANY ($1::text[]))))`, [t, role]))
+    out.push(`grant ${r.t} ${r.priv} to ${norm(r.who)}${r.g ? " with grant option" : ""}`);
+  for (const r of await q.query<{ t: string; n: string }>(
+    "SELECT c.relname AS t, g.tgname AS n FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid WHERE NOT g.tgisinternal AND c.relnamespace = 'public'::regnamespace AND c.relname = ANY ($1::text[])", [t]))
+    out.push(`trigger ${r.t}.${r.n}`);
+  return [...new Set(out)].sort();
+}
+
+/** Whether a pending shell migration adopts (all its tables there, in its shape), runs (none there) or is refused. */
+async function adoption(q: Queryable, m: Migration): Promise<{ adopt: false } | { adopt: true; tables: string[]; sha: string }> {
+  const a = ADOPTING_MIGRATIONS[m.version];
+  if (!a || a.name !== m.name) return { adopt: false };
+  const present = (await q.query<{ t: string }>("SELECT t FROM unnest($1::text[]) t WHERE to_regclass('public.' || quote_ident(t)) IS NOT NULL ORDER BY 1", [[...a.tables]])).map((r) => r.t);
+  if (!present.length) return { adopt: false };
+  const what = label(m.version, m.name);
+  if (present.length !== a.tables.length)
+    throw new MigrationError(`${what}: this database has ${present.join(", ")} but not ${a.tables.filter((t) => !present.includes(t)).join(", ")}: it adopts all of its tables or makes them all, never some (refused, nothing changed)`);
+  const have = await tableShape(q, a.tables), want = [...a.shape];
+  const extra = have.filter((x) => !want.includes(x)), missing = want.filter((x) => !have.includes(x));
+  if (extra.length || missing.length)
+    throw new MigrationError(`${what}: this database has ${a.tables.join(", ")} in another shape than this migration gives them, so it is not adopted (refused, nothing changed): ` +
+      `${[...missing.map((x) => `expected ${x}`), ...extra.map((x) => `found ${x}`)].slice(0, 12).join("; ")}`);
+  return { adopt: true, tables: present, sha: createHash("sha256").update(have.join("\n")).digest("hex") };
+}
+
 export interface MigrationStatus {
   applied: AppliedRow[]; pending: Migration[]; legacy: boolean;
   /** Applied here but not in these files: this release is older than the database (a rollback). */
@@ -113,7 +264,8 @@ const label = (v: number, name: string) => `${String(v).padStart(4, "0")}_${name
  * Compare the database with the files. Never throws: callers decide what a conflict means (src/migrate.ts below).
  * `split`: the shell's own list, where a split migration's earlier checksum is not a conflict (SPLIT_MIGRATIONS).
  */
-export function compare(rows: AppliedRow[] | null, migrations: Migration[], where = "sql/migrations", split = where === "sql/migrations"): MigrationStatus {
+export function compare(rows: AppliedRow[] | null, migrations: Migration[], where = "sql/migrations", split: boolean | ((r: AppliedRow) => boolean) = where === "sql/migrations"): MigrationStatus {
+  const earlier = typeof split === "function" ? split : split ? splitBefore : () => false;
   const applied = rows ?? [];
   const byVersion = new Map(migrations.map((m) => [m.version, m]));
   const newer: AppliedRow[] = [], conflicts: string[] = [];
@@ -121,7 +273,7 @@ export function compare(rows: AppliedRow[] | null, migrations: Migration[], wher
     const m = byVersion.get(r.version);
     if (!m) newer.push(r);
     else if (m.name !== r.name) conflicts.push(`version ${r.version} is ${label(r.version, r.name)} in the database but ${label(m.version, m.name)} here: the migration history has diverged`);
-    else if (m.checksum !== r.checksum && !(split && splitBefore(r))) conflicts.push(`${where}/${label(m.version, m.name)}.sql changed after it was applied (checksum ${r.checksum.slice(0, 12)} → ${m.checksum.slice(0, 12)}): never edit a merged migration, add a new one`);
+    else if (m.checksum !== r.checksum && !earlier(r)) conflicts.push(`${where}/${label(m.version, m.name)}.sql changed after it was applied (checksum ${r.checksum.slice(0, 12)} → ${m.checksum.slice(0, 12)}): never edit a merged migration, add a new one`);
   }
   const done = new Set(applied.map((r) => r.version));
   const pending = migrations.filter((m) => !done.has(m.version));
@@ -164,6 +316,9 @@ function refuseShellPrefixes(migrations: Migration[], sets: PackMigrationSet[]) 
       if (!s.schema!.tables.includes(t)) throw new MigrationError(`pack ${s.pack}: platform library ${t} is not one of its tables`);
     for (const f of s.schema?.functions ?? [])
       if (!IDENT.test(f) || fns.has(f)) throw new MigrationError(`pack ${s.pack}: function ${f} is ${fns.has(f) ? "the shell's" : "not a function name"}`);
+    for (const [mine, before] of Object.entries(s.schema?.split ?? {}))
+      if (!s.migrations.some((m) => label(m.version, m.name) === mine) || !/^[0-9a-f]{64}$/.test(before))
+        throw new MigrationError(`pack ${s.pack}: split names ${mine} -> ${before.slice(0, 16)}, which is not one of its migrations and an earlier sha256`);
     for (const [mine, theirs] of Object.entries(s.schema?.adopts ?? {})) {
       const v = Number(theirs.slice(0, 4)), sp = SPLIT_MIGRATIONS[v];
       if (!sp || theirs !== label(v, sp.name)) throw new MigrationError(`pack ${s.pack}: ${mine} adopts ${theirs}, which is not a split shell migration (SPLIT_MIGRATIONS)`);
@@ -257,9 +412,17 @@ async function appliedPackRows(q: Queryable): Promise<Map<string, AppliedRow[]> 
   return by;
 }
 
+/**
+ * A host pack's migration rewritten once when tables it made became the shell's (mold_v0-142; pack.json
+ * host.schema.split: its file name -> the earlier file's checksum): a database that ran the earlier file keeps that
+ * checksum, which is accepted for that file only.
+ */
+const packSplitBefore = (s: PackMigrationSet) => (r: { version: number; name: string; checksum: string }) =>
+  s.schema?.split?.[label(r.version, r.name)] === r.checksum;
+
 function comparePacks(rows: Map<string, AppliedRow[]> | null, sets: PackMigrationSet[]): PackStatus[] {
   return sets.map((s) => {
-    const c = compare(rows?.get(s.pack) ?? [], s.migrations, s.dir);
+    const c = compare(rows?.get(s.pack) ?? [], s.migrations, s.dir, packSplitBefore(s));
     return { pack: s.pack, applied: c.applied, pending: c.pending, newer: c.newer, conflicts: c.conflicts.map((x) => `pack ${s.pack}: ${x}`) };
   });
 }
@@ -357,6 +520,8 @@ async function securitySnapshot(q: Queryable, packIds: string[], host: { tables:
  */
 const LEGACY_FUNCTIONS = /\boctillion_(tenant_org|session_org)\(/g;
 async function repointLegacyPolicies(q: Execable) {
+  // Before 0024 (a database migrated by a release that has not reached it yet) the old names are the functions themselves.
+  if (!(await q.query<{ ok: boolean }>("SELECT to_regprocedure('app_tenant_org()') IS NOT NULL AS ok"))[0]?.ok) return;
   const rows = await q.query<{ tablename: string; policyname: string; qual: string | null; with_check: string | null }>(
     "SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND (qual ~ $1 OR with_check ~ $1) ORDER BY 1, 2",
     ["\\moctillion_(tenant_org|session_org)\\("]);
@@ -384,15 +549,27 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
   refuseShellPrefixes(migrations, sets);
   return db.migrate(async (tx) => {
     await tx.exec(TABLE);
+    await tx.exec(ADOPTIONS_TABLE);
     const { pending, conflicts } = compare(await appliedRows(tx), migrations);
     if (conflicts.length) throw new MigrationError(conflicts.join("; "));
+    const applied: string[] = [];
     for (const m of pending) {
       const t0 = Date.now();
+      // Tables this database already has, in the shape this migration gives them (mold_v0-142): recorded, never run.
+      const a = await adoption(tx, m);
+      if (a.adopt) {
+        await tx.query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)", [m.version, m.name, m.checksum]);
+        await tx.query("INSERT INTO schema_adoptions (pack, version, name, adopted_from, shape_sha256) VALUES ('', $1, $2, $3, $4)",
+          [m.version, m.name, `tables already here: ${a.tables.join(", ")}`, a.sha]);
+        opts.log?.(`migration ${label(m.version, m.name)} adopted: this database has ${a.tables.join(", ")} in its shape (nothing run)`);
+        applied.push(`${label(m.version, m.name)} (adopted)`);
+        continue;
+      }
       await tx.exec(m.sql);
       await tx.query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)", [m.version, m.name, m.checksum]);
       opts.log?.(`migration ${String(m.version).padStart(4, "0")}_${m.name} applied (${Date.now() - t0} ms)`);
+      applied.push(label(m.version, m.name));
     }
-    const applied = pending.map((m) => `${String(m.version).padStart(4, "0")}_${m.name}`);
     if (!sets.length) return { applied };
     // Packs, after the shell: only when this build has pack migrations (with none, nothing below touches the database).
     const status = comparePacks(await appliedPackRows(tx), sets);
@@ -414,6 +591,8 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
         const adopted = sets.find((x) => x.pack === s.pack)?.schema?.adopts?.[label(m.version, m.name)];
         if (adopted && ranBefore.has(adopted)) {
           await tx.query("INSERT INTO pack_schema_migrations (pack, version, name, checksum) VALUES ($1, $2, $3, $4)", [s.pack, m.version, m.name, m.checksum]);
+          await tx.query("INSERT INTO schema_adoptions (pack, version, name, adopted_from, shape_sha256) VALUES ($1, $2, $3, $4, NULL)",
+            [s.pack, m.version, m.name, `shell ${adopted} before it was split`]);
           opts.log?.(`migration ${plabel(s.pack, m)} adopted: this database ran ${adopted} before it was split (nothing run)`);
           applied.push(`${plabel(s.pack, m)} (adopted)`);
           continue;

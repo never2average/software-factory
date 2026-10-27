@@ -1415,7 +1415,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the scripts that need the product), so no shell module's own imports reach pack code.
   *Its schema* (mold_v0-049). The product's 24 tables (`products`, `scenarios`, `simulations`, `agent_sessions`,
   `transcript_events`, personas and tasks, populations, research, context and memory, journeys, nudges, task sets,
-  private harnesses, contributions, reports, product personas) left the shell's base schema for the host pack's own
+  private harnesses, contributions, reports, product personas; the three context and memory tables are the shell's
+  again since mold_v0-142, "Account context and memory" below, so 21 today) left the shell's base schema for the host pack's own
   migrations (`packs/octillion/migrations/`: `0001_tables`, every statement of the earlier `0001_baseline` about them, in
   order; `0002_row_level_security`, the earlier `0003`'s policies, grants, reference checks and sequence grants for
   them), so a database built with no packs has none of them (`npm run test:zero-pack`). They keep
@@ -1719,6 +1720,48 @@ declares one, so a build without writes what it did:
 - `texts` (mold_v0-141; any pack): the shell's texts in the product's words, by id (`src/shell-texts.ts`; see "The
   vocabulary"), and a host pack's `host.schema.labels` (table -> its Storage page label).
 `npm run test:host-config`; `npm run test:admin-sections` in a build with the engine.
+
+**Account context and memory (mold_v0-142).** A component of the shell any app turns on from its pack.json `memory` (one
+pack's per build; `src/account-context.ts`, `src/account-context-tools.ts`, `src/account-context-words.ts`); off, nothing
+of it is served and the MCP surface is exactly the shell's. What it keeps, in the shell's own tables
+(`sql/migrations/0025_account_context_memory.sql`): the company's context (`account_context`: what it does, who it
+serves, names it tracks, its terms, notes for the AI client; the account's owners edit it), each person's own
+(`user_context`: role, focus, interests, answer style, notes; the person, or an owner) and memory (`context_memories`:
+short items, a fact, decision, preference or note, about the company, one person, or one subject, scope `product`).
+- `scopes` (`company`, `user`, `product`: whose memory there is), each a page of `/app/context` (`company`, `users`,
+  `products`; `web/src/app/app/context/[[...section]]`, `web/src/features/context`), with `/app/context` leading to the
+  page its `?tab=` names (a page, an old name, a scope or `me`), else the first; `pages.titles` and `pages.aliases` (old
+  page names kept working: Octillion's `you`). The pages show the memory list, add, edit and remove (by role: viewers
+  read, members add company and subject items and their own, owners anyone's), search, import (CSV or JSON, beyond the
+  portal's 16 kB body limit) and export. With no pack placing them in its `console.nav`, a Context sidebar group.
+- At connect time `/mcp` appends to the server's instructions the company's and the person's context, the answer style's
+  hint and the latest memory (company 20, the person's 10, their focus subject's 10): `connectContext` in `src/http.ts`,
+  then a host pack's own `mcp.context` hook. Every line is a word of `memory.words` (`MEMORY_WORDS`: neutral defaults;
+  `{value}`, `{account}` filled once), the hints `memory.answer_styles`.
+- `tools` `{save, search}` names its two MCP tools, registered right after the host packs' tools and before every pack's
+  (reserved like a host pack's names): save one item (`edit` permission; scope `company`, `me` or `product`, a subject by
+  key, name or id, else the person's focus, else the only one, else asked), and search (the company's, the person's own,
+  the subjects'; never another person's; every word must appear). Their titles, descriptions, status lines and argument
+  texts are `tool_words`, the `_meta` both carry `tool_meta` (Octillion's: its dashboard widget; the MCP Apps legacy key
+  beside `ui.resourceUri` is added). Answers: a summary line, then the structured result `{view: "memory", ...}`.
+- Host hooks (`src/host.ts`): `context.subjects(orgId)` lists what the `product` scope names (Octillion: the account's
+  products, by name), which keys a subject's memory, names it in lists, checks a person's focus and resolves the save
+  tool's subject; without it any name is kept as written. `mcp.decorate(org, tool, result)` adds to the shell tools'
+  answers (Octillion: its in-chat tip). `src/pack-host.ts` `accountContext` gives a host pack the company's context (its
+  research prompt starts from it).
+- **The tables, adopted.** They were a host pack's (Octillion's 0001, and before mold_v0-049 the shell's base schema).
+  0025 makes them with exactly those statements and the same row-level security; `src/migrate.ts`
+  `ADOPTING_MIGRATIONS` records it as adopted, running nothing, on a database that has all three in the shape it gives
+  (`tableShape`: columns, constraints, indexes, RLS, policies, the tenant role's grants; independent of the server's
+  version and the tenant role's name), with a row in the ledger `schema_adoptions` (what, from what, the shape's sha256);
+  runs it where none is; refuses some of them or another shape, changing nothing. The host pack's migrations that made
+  them are rewritten without them and keep their earlier checksums (pack.json `host.schema.split`).
+  `src/migration-rehearsal.ts` and `npm run db:rehearse` say what applying the pending migrations does to a database copy:
+  catalog rows by object id and the transaction that wrote them (no DDL reached a table whose stamps are equal), rows,
+  every relation created, changed or dropped, and check:rls. The factory's `provision.py <app> --rehearse-migrations`
+  runs it on a Neon branch of the live database and deletes the branch.
+`npm run test:context-memory` (the declarative fixture `scripts/fixtures/packs/fixture_memory`: on, off, refusals),
+`npm run test:migrations` (fresh, pre-049 and post-049 host-pack databases adopt, rows and catalog rows untouched).
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
 operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by

@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { hostTable, hostTableLabel, researchJobs, sessionEngine } from "./host-tables.js";
+import { memoryConfig } from "./host.js";
 import { spendRange, SHARED, SHARED_NAME } from "./spend.js";
 import { transcripts } from "./transcripts.js";
 import { NS } from "./namespace.js";
@@ -24,7 +25,7 @@ import { NS } from "./namespace.js";
  * Data & storage
  *   - Database size: pg_database_size(current_database()); table sizes: pg_total_relation_size (table, indexes, TOAST).
  *     Both guarded: a database that lacks them reports null, never an error.
- *   - Rows per table: exact count(*) over the app's tables (TABLES); new rows: rows whose created timestamp is in the
+ *   - Rows per table: exact count(*) over the app's tables (TABLES_NOW); new rows: rows whose created timestamp is in the
  *     range; last write: the latest created or updated timestamp. Per account: the tables with an org_id (scenarios
  *     through their product).
  *   - Transcripts: the transcript store (src/transcripts.ts). Postgres: the transcript_events table. ClickHouse: rows and
@@ -283,15 +284,22 @@ const ALL_TABLES: TableDef[] = [
  * tables are its host pack's, created by its migrations; listed here so the Storage page names them when present).
  */
 const HOST_TABLE_NAMES = new Set(["products", "scenarios", "simulations", "agent_sessions", "transcript_events", "developer_profiles", "library_tasks",
-  "developer_populations", "developer_population_agents", "product_research", "nudges", "nudge_prefs", "account_context", "user_context",
-  "journey_templates", "journey_progress", "journey_seed", "context_memories", "adoption_help", "org_task_sets", "org_harnesses"]);
-const TABLES = ALL_TABLES.filter((t) => !HOST_TABLE_NAMES.has(t.table) || hostTable(t.table)
+  "developer_populations", "developer_population_agents", "product_research", "nudges", "nudge_prefs",
+  "journey_templates", "journey_progress", "journey_seed", "adoption_help", "org_task_sets", "org_harnesses"]);
+/**
+ * The account context and memory component's tables (mold_v0-142, src/account-context.ts): the shell's in every build,
+ * named on the Storage page only where the component is on (pack.json memory), the only builds that write them.
+ */
+const CONTEXT_TABLE_NAMES = new Set(["account_context", "user_context", "context_memories"]);
+let tableList: TableDef[] | null = null;
+/** Read on first use, once the build's packs are registered (the component's config is theirs). */
+const TABLES_NOW = (): TableDef[] => (tableList ??= ALL_TABLES.filter((t) => (!HOST_TABLE_NAMES.has(t.table) || hostTable(t.table)
   // scenarios is read through products (its account): both must be there
-  && (t.table !== "scenarios" || hostTable("products")))
-  .map((t) => ({ ...t, label: t.label ?? hostTableLabel(t.table) }));
+  && (t.table !== "scenarios" || hostTable("products"))) && (!CONTEXT_TABLE_NAMES.has(t.table) || memoryConfig() !== null))
+  .map((t) => ({ ...t, label: t.label ?? hostTableLabel(t.table) })));
 
 /** One scan per table: rows per (account, created day in the range, or null outside it), and the latest write. */
-const COUNTS = TABLES.map((t) => {
+const COUNTS_NOW = () => TABLES_NOW().map((t) => {
   const c = t.created, w = t.written ?? c;
   const day = c ? `CASE WHEN ${c} >= $1 AND ${c} < $2 THEN to_char(${c} AT TIME ZONE 'UTC', 'YYYY-MM-DD') END` : "NULL::text";
   return `SELECT '${t.table}'::text AS t, ${t.org ?? "NULL::int"} AS org_id, ${day} AS day, count(*)::float AS n, ${w ? `max(${w})` : "NULL::timestamptz"} AS last
@@ -306,7 +314,7 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
   const span = [R.start, R.end];
   const store = transcripts();
   const [counts, dbSize, sizes, events, gateway, archive, idx, storeStats] = await Promise.all([
-    db.query<{ t: string; org_id: number | null; day: string | null; n: number; last: Date | null }>(`${TENANT} ${COUNTS}`, span),
+    db.query<{ t: string; org_id: number | null; day: string | null; n: number; last: Date | null }>(`${TENANT} ${COUNTS_NOW()}`, span),
     safe(db.query<{ bytes: number }>("SELECT pg_database_size(current_database())::float AS bytes").then((r) => n(r[0]?.bytes) || null), null),
     safe(db.query<{ t: string; bytes: number }>(`SELECT c.relname AS t, pg_total_relation_size(c.oid)::float AS bytes
         FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = current_schema() AND c.relkind IN ('r', 'p')`), null),
@@ -342,11 +350,11 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
   const zeros = () => R.days.map(() => 0);
   const sizeOf = sizes ? new Map(sizes.map((s) => [s.t, n(s.bytes)])) : null;
   const nameOf = new Map<string, string>([...idx.orgs.map((o) => [o.slug, o.name] as [string, string]), [SHARED, SHARED_NAME]]);
-  const defOf = new Map(TABLES.map((t) => [t.table, t]));
+  const defOf = new Map(TABLES_NOW().map((t) => [t.table, t]));
 
   // ---------- per table ----------
   type T = { rows: number; new_rows: number; last: string | null; daily: number[] };
-  const tab = new Map<string, T>(TABLES.map((t) => [t.table, { rows: 0, new_rows: 0, last: null, daily: zeros() }]));
+  const tab = new Map<string, T>(TABLES_NOW().map((t) => [t.table, { rows: 0, new_rows: 0, last: null, daily: zeros() }]));
   type AccT = { rows: number; new_rows: number; last: string | null; daily: number[]; tables: Map<string, { rows: number; new_rows: number }>;
     events: number; new_events: number; daily_events: number[]; gw_bytes: number; gw_requests: number; daily_gw: number[]; gw_last: string | null;
     gw_providers: Map<string, number> };
@@ -367,7 +375,7 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     const x = a.tables.get(r.t) ?? { rows: 0, new_rows: 0 }; a.tables.set(r.t, x); x.rows += k;
     if (i != null) { a.new_rows += k; a.daily[i] += k; x.new_rows += k; }
   }
-  const tables = TABLES.map((d) => {
+  const tables = TABLES_NOW().map((d) => {
     const t = tab.get(d.table)!;
     return { name: d.table, label: d.label, bytes: sizeOf?.get(d.table) ?? null, rows: t.rows, new_rows: t.new_rows, last_write: t.last, daily_new: t.daily };
   });

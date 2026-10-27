@@ -21,7 +21,11 @@ python3 molds/mold_v0/testing/parity/parity.py --self-test                      
 ```
 
 `snapshot` options: `--codebase <copy>` (any other copy, such as a branch's lane copy), `--no-copy` (use
-`build/<app_id>.lane/` as it is), `--no-shots`, `--no-smoke`, `--only mcp,generated,api,pages`. The output folder must be
+`build/<app_id>.lane/` as it is), `--no-shots`, `--no-smoke`, `--only mcp,generated,api,pages`, `--pages /a,/b` (only
+those pages, and the landing page and admin home, as render.py selects them: a phase that changes a few pages),
+`--context-fixture` (mold_v0-142: company and person context and six memory items for the lane workspace and its owner,
+the customer MCP connected as that owner, and the memory search's answers in `mcp/memory-search.json`; `--memory-search
+<tool>` names that tool, default `search_memory`). The output folder must be
 empty. A snapshot is a heavy step: on the factory VM run it through the heavy-step queue.
 
 ## What a snapshot holds
