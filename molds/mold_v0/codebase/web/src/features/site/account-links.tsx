@@ -7,6 +7,10 @@
  *                  signed out until loaded (and without script).
  *   AccountButton  one button: sign in, or open the console when signed in, with an arrow. Until the sign-in has loaded
  *                  it holds its place without a label instead of saying "Sign in" and flipping.
+ *   StartButton    the first screen's one button (mold_v0-165): one label for everyone ("Get started" unless the block
+ *                  names its own); it leads to the start (sign-up, or the request form under invite-only accounts) for
+ *                  someone signed out, until the sign-in has loaded and without script, and into the console for someone
+ *                  signed in. The label never flips, so nothing shifts.
  */
 import Link from 'next/link';
 import { IconArrowRight } from '@tabler/icons-react';
@@ -35,6 +39,11 @@ export function AccountLinks({ start, signIn, open, compact }: { start?: Landing
       {start ? <Go link={start} className={cn(buttonVariants(), 'h-10 px-4')} /> : null}
     </>
   );
+}
+
+export function StartButton({ start, open, className }: { start: LandingLink; open: LandingLink; className: string }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  return <Go link={{ label: start.label, href: isLoaded && isSignedIn ? open.href : start.href }} className={className} />;
 }
 
 export function AccountButton({ signIn, open, size, className }: { signIn: LandingLink; open: LandingLink; size?: 'default' | 'lg'; className?: string }) {
