@@ -7,7 +7,10 @@
 //    unknown keys and section types are refused, and a link is a path of this site, an https:// address or a mailto:
 //    address (javascript:, data:, vbscript:, http:, //host, a backslash, a user name or a password refused; the
 //    console's own second check agrees). Pick and place: at most 10 sections, each type once but a cta up to 3 times,
-//    the hero first, each anchor its own and none the page's own; old-style keys beside sections refused.
+//    the hero first, each anchor its own and none the page's own; old-style keys beside sections refused. The first
+//    screen (mold_v0-164): the header and the hero ask for at most two things (sign in and one other), a repeat counting
+//    once; a hero's second call or a header link that adds a third is refused, in an old block too and after merging. A
+//    logos row's files and an open_source repository are well formed, and the repository is not a hero link as well.
 // 2. The old block converted, section for section (coverage the hero's strip, value points the concept's cards,
 //    features proof's items, closing a cta), and merging: a profile's sections replace a pack's, its footer and seo one
 //    by one; an old profile block replaces a pack's sections of the same kind; two old blocks merge as before.
@@ -19,10 +22,17 @@
 // 4. The page, rendered on the server (react-dom/server, the console's own components bundled with esbuild): the neutral
 //    page is the whole wireframe in order, in the build's words, with the header's navigation from its sections; a
 //    pack's page shows only what it picked, in its order; an old block renders converted; text that looks like HTML or
-//    script is text, a link that got past gen-packs is never a link; the footer carries the source offer.
+//    script is text, a link that got past gen-packs is never a link; the footer carries the source offer. The header
+//    has "Sign in" and no start call beside a hero that carries it, and no install link (mold_v0-164); an open-source app
+//    has a GitHub button in the header and a footer link, others neither; a logos row draws each image with its name as
+//    its text and its size reserved, a name with no image as text.
+// 5. gen-packs and the logos (mold_v0-164): a logo file of the declaring pack is checked (a PNG by its signature, an
+//    SVG with no script, handler, foreign object, entity or outside link, a size it can reserve, at most 30 KB), copied
+//    under its hash to web/public/landing/ and named there; a stale one is removed (--check: stale); a declarative
+//    pack may carry its assets/ images and nothing else beside pack.json.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,7 +53,7 @@ const pitchOf = (out: string) => JSON.parse(/export const GENERATED_EMAIL_PITCH:
 const GOOD = {
   $comment: "a fixture",
   sections: [
-    { type: "hero", eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, secondary_cta: { label: "Install", href: "/install" }, note: "A note.", links: [{ label: "Open source on GitHub", href: "https://github.com/example-org/app" }], headline_highlight: "every day.", visual: { type: "decision_graph", label: "One ask, two answers.", root: "> ask", branches: [{ logo: "cursor", label: "cursor", outcome: "yes", tone: "good" }, { label: "other", outcome: "no", tone: "bad" }] }, strip: { title: "Covered", items: ["SEBI CSCRF 2024", "DPDP Rules 2025"], note: "Two catalogs." } },
+    { type: "hero", eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, note: "A note.", links: [{ label: "Open source on GitHub", href: "https://github.com/example-org/app" }], headline_highlight: "every day.", visual: { type: "decision_graph", label: "One ask, two answers.", root: "> ask", branches: [{ logo: "cursor", label: "cursor", outcome: "yes", tone: "good" }, { label: "other", outcome: "no", tone: "bad" }] }, strip: { title: "Covered", items: ["SEBI CSCRF 2024", "DPDP Rules 2025"], note: "Two catalogs." } },
     { type: "how_it_works", eyebrow: "Steps", title: "Four steps", visual: { type: "paths", count_label: "{n} steps to done", done_label: "Done at once", measure_label: "You track", items: [{ icon: "search", title: "Old", value: "slow", path: ["a", "b", "goal"], measure: "clicks" }, { icon: "bolt", title: "New", value: "fast", path: ["goal"], highlight: true, measure: "results" }] }, steps: [{ title: "Sign up", body: "Make an account." }, { title: "Connect", body: "Add a client." }], layout: "loop", loop_label: "Again" },
     { type: "problem", title: "The problem", lead: "Why.", points: [{ title: "One", body: "First.", icon: "eye-off" }, { title: "Two", body: "Second." }], visual: { type: "transcript", title: "a chat", lines: [{ text: "> ask", tone: "prompt" }, { text: "answer" }], highlight: "# so?", aside: { title: "Weighed", items: [{ label: "A", note: "picked", tone: "pick" }, { label: "B", tone: "alert" }] } } },
     { type: "concept", id: "idea", nav_label: "The idea", title: "The idea", visual: { type: "loop", label: "Try, check, fix.", steps: [{ label: "Try", sub: "a first go" }, { label: "Check", sub: "did it work" }], question: "Worked?", yes: { label: "Keep it", sub: "watch it" }, no: { label: "Fix", sub: "and try again" }, again: "again" }, items: [{ title: "Old way", chips: ["a", "b"] }, { title: "New way", chips: ["a"], highlight: true }], note: "A note." },
@@ -59,7 +69,7 @@ const GOOD = {
 /** The old block (mold_v0-091), every section. */
 const LEGACY = {
   $comment: "the old shape",
-  hero: { eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, secondary_cta: { label: "Install", href: "/install" }, note: "A note." },
+  hero: { eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, note: "A note." },
   coverage: { title: "Covered", items: ["SEBI CSCRF 2024", "DPDP Rules 2025"], note: "Two catalogs." },
   value_points: { title: "Why", items: [{ title: "One", body: "First." }, { title: "Two", body: "Second." }] },
   how_it_works: { steps: [{ title: "Sign up", body: "Make an account." }, { title: "Connect", body: "Add a client." }] },
@@ -96,7 +106,7 @@ try {
     assert.deepEqual(landingProblems(LEGACY), [], "an old-style block passes");
     assert.deepEqual(landingProblems({}), [], "an empty block passes (the whole wireframe, neutral)");
     assert.deepEqual(landingProblems({ seo: { title: "Only search" } }), [], "a block with no sections passes");
-    for (const t of SECTION_TYPES) assert.deepEqual(landingProblems(sec(t === "how_it_works" ? { type: t, steps: [{ title: "a", body: "b" }] } : t === "faq" ? { type: t, items: [{ question: "q", answer: "a" }] } : t === "proof" ? { type: t, items: [{ title: "a", body: "b" }] } : { type: t })), [], `${t} alone, with its neutral defaults, passes`);
+    for (const t of SECTION_TYPES) assert.deepEqual(landingProblems(sec(t === "how_it_works" ? { type: t, steps: [{ title: "a", body: "b" }] } : t === "faq" ? { type: t, items: [{ question: "q", answer: "a" }] } : t === "proof" ? { type: t, items: [{ title: "a", body: "b" }] } : t === "logos" ? { type: t, items: [{ name: "A" }] } : { type: t })), [], `${t} alone, with its neutral defaults, passes`);
     const bad = (what: string, block: unknown, re: RegExp) => {
       const p = landingProblems(block);
       assert.ok(p.some((x) => re.test(x)), `${what}: refused with ${re} (got ${JSON.stringify(p)})`);
@@ -141,7 +151,7 @@ try {
     bad("an unknown tone", sec({ type: "problem", visual: { type: "transcript", title: "t", lines: [{ text: "x" }], aside: { items: [{ label: "a", tone: "neon" }] } } }), /visual\.aside\.items\[0\]\.tone: /);
     bad("a client id that is not one", sec({ type: "where_you_work", clients: ["Claude Desktop"] }), /clients\[0\]: a client id/);
     bad("a client twice", sec({ type: "where_you_work", clients: ["claude", "claude"] }), /clients: each client once/);
-    bad("an unknown section type", sec({ type: "testimonials", quotes: ["best ever"] }), /landing\.sections\[0\]\.type: one of hero, problem, concept/);
+    bad("an unknown section type", sec({ type: "testimonials", quotes: ["best ever"] }), /landing\.sections\[0\]\.type: one of hero, logos, problem, concept/);
     bad("a section with no type", { sections: [{ title: "x" }] }, /landing\.sections\[0\]\.type: one of/);
     bad("an unknown field", sec({ type: "hero", headline: "x", html: "<b>x</b>" }), /landing\.sections\[0\]: .*html/i);
     bad("a nav label on the hero", sec({ type: "hero", nav_label: "Top" }), /landing\.sections\[0\]: .*nav_label/i);
@@ -164,6 +174,35 @@ try {
     bad("old: too many value points", { value_points: { items: Array.from({ length: 7 }, () => ({ title: "t", body: "b" })) } }, /landing\.value_points\.items: /);
     bad("old: an unknown field", { hero: { headline: "x", html: "<b>x</b>" } }, /landing\.hero: .*html/i);
     bad("old: no coverage items", { coverage: { items: [] } }, /landing\.coverage\.items: /);
+    // The first screen (mold_v0-164): at most two things, sign in and one other; a repeat counts once.
+    const hero = (h: object) => sec({ type: "hero", ...h });
+    bad("a hero's second call to a third place", hero({ secondary_cta: { label: "Install", href: "/install" } }),
+      /landing\.sections\[0\]\.secondary_cta: the first screen \(the header and the hero\) asks for at most 2 things, signing in and one other \(sign in, the start\); the hero's second call "Install" adds another \(\/install\)\. Keep one call to action in the hero/);
+    bad("a header link to a third place", { header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "hero" }] }, /landing\.sections\[0\]\.primary_cta: the first screen .* the hero's call to action adds another \(the start\)/);
+    bad("two header links", { header: { links: [{ label: "A", href: "/a" }, { label: "B", href: "/b" }] } }, /landing\.header\.links: at most 1 link/);
+    bad("the neutral page's hero with a header link", { header: { links: [{ label: "Docs", href: "https://example.org/docs" }] } }, /landing\.header\.links: the first screen .* the hero's call to action adds another/);
+    bad("an old block's second call", { hero: { secondary_cta: { label: "Install", href: "/install" } } }, /landing\.hero\.secondary_cta: the first screen/);
+    assert.deepEqual(landingProblems(hero({ primary_cta: { label: "Get started", href: "/request-access" } })), [], "sign in and one start: passes");
+    assert.deepEqual(landingProblems(hero({ secondary_cta: { label: "Sign in", href: "/app" } })), [], "a hero's second call that is the sign-in again: passes (a repeat counts once)");
+    assert.deepEqual(landingProblems({ header: { links: [{ label: "Early access", href: "/early-access" }], account: "account" }, sections: [{ type: "hero", primary_cta: "account", secondary_cta: { label: "Early access", href: "/early-access" } }] }), [],
+      "the first product's page: the account button and one other, each shown twice, passes");
+    assert.deepEqual(landingProblems({ header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "faq", items: [{ question: "q", answer: "a" }] }] }), [], "no hero: the header's sign-in and its link");
+    assert.deepEqual(landingProblems({ header: { sign_in: { label: "Log in", href: "/login" } }, sections: [{ type: "hero", secondary_cta: { label: "Log in", href: "/login" } }] }), [], "the header's own sign-in address is the sign-in");
+    // open_source (mold_v0-164).
+    assert.deepEqual(landingProblems({ open_source: { repo: "https://github.com/example-org/app" } }), [], "an open-source repository passes");
+    assert.deepEqual(landingProblems({ open_source: { repo: "https://github.com/example-org/app.js", label: "Source on GitHub" } }), [], "with its footer label");
+    for (const repo of ["https://gitlab.com/a/b", "http://github.com/a/b", "https://github.com/a", "https://github.com/a/b/tree/main", "https://github.com/-a/b", "javascript:alert(1)"])
+      bad(`the repository ${repo}`, { open_source: { repo } }, /landing\.open_source\.repo: a GitHub repository's address/);
+    bad("an unknown open_source key", { open_source: { repo: "https://github.com/a/b", stars: true } }, /landing\.open_source: .*stars/i);
+    bad("the repository as a hero link too", { open_source: { repo: "https://github.com/example-org/app" }, sections: [{ type: "hero", links: [{ label: "Code", href: "https://github.com/Example-Org/app/" }] }] },
+      /landing\.sections\[0\]\.links\[0\]: https:\/\/github\.com\/Example-Org\/app\/ is open_source\.repo, which the header's GitHub button links/);
+    // logos (mold_v0-164).
+    assert.deepEqual(landingProblems(sec({ type: "logos", title: "Covers", items: [{ name: "A", logo: "assets/a.svg", href: "https://example.org" }, { name: "B", logo: "assets/regulators/b-2.png" }, { name: "C" }] })), [], "a logos row passes");
+    for (const logo of ["a.svg", "assets/a.gif", "assets/../a.svg", "/assets/a.svg", "assets/A.svg", "assets/a/b/c.svg", "https://example.org/a.svg"])
+      bad(`the logo file ${logo}`, sec({ type: "logos", items: [{ name: "A", logo }] }), /landing\.sections\[0\]\.items\[0\]\.logo: an image file of the pack's own/);
+    bad("a name twice", sec({ type: "logos", items: [{ name: "A" }, { name: "A" }] }), /landing\.sections\[0\]\.items: each name once/);
+    bad("no logos", sec({ type: "logos", items: [] }), /landing\.sections\[0\]\.items: /);
+    bad("a logo's script address", sec({ type: "logos", items: [{ name: "A", href: "javascript:alert(1)" }] }), /items\[0\]\.href: /);
     // Anchors: the page's (web) and the build's agree.
     assert.deepEqual(web.DEFAULT_IDS, DEFAULT_IDS, "the console's default anchors are the build's");
     const many = [{ type: "hero" }, { type: "cta" }, { type: "problem", id: "why" }, { type: "cta" }, { type: "faq" }] as const;
@@ -207,12 +246,17 @@ try {
   }
 
   // ---------- 3. gen-packs ----------
-  const packsDir = (name: string, packs: Record<string, object>) => {
+  /** Packs in a folder of their own; `files`: more files, by path under the folder (<pack>/assets/a.svg). */
+  const packsDir = (name: string, packs: Record<string, object>, files: Record<string, string | Buffer> = {}) => {
     const d = path.join(TMP, name);
     for (const [id, extra] of Object.entries(packs)) { mkdirSync(path.join(d, id), { recursive: true }); writeFileSync(path.join(d, id, "pack.json"), JSON.stringify({ id, name: id.toUpperCase(), version: "1.0.0", ...extra })); }
+    for (const [f, body] of Object.entries(files)) { mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); writeFileSync(path.join(d, f), body); }
     mkdirSync(d, { recursive: true });
     return d;
   };
+  /** A small PNG of w x h (a valid signature and IHDR; the rest is not read). */
+  const png = (w: number, h: number) => { const b = Buffer.alloc(33); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b); b.writeUInt32BE(13, 8); b.write("IHDR", 12, "latin1"); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 120 40"><defs><linearGradient id="g"><stop offset="0"/></linearGradient></defs><rect width="120" height="40" fill="url(#g)"/><use xlink:href="#g"/></svg>';
   const profile = (name: string, v: object) => { const f = path.join(TMP, `${name}.json`); writeFileSync(f, JSON.stringify(v)); return f; };
   const up = { repo: "https://github.com/example-org/agent", commit: "0123456789abcdef0123456789abcdef01234567", license: "AGPL-3.0-only" };
   {
@@ -270,8 +314,56 @@ try {
       /packs\/lp\/pack\.json: landing\.sections\[0\]\.headline: plain text on one line/);
     refused("a client the install pages do not offer", gen(["--packs", packsDir("cl", { lp: { landing: sec({ type: "where_you_work", clients: ["claude", "zed"] }) } }), "--profile", profile("e4", { install_clients: ["claude", "cursor"] }), "--out", path.join(TMP, "x")]),
       /landing: sections\[0\] \(where_you_work\)\.clients: zed is not offered by this build's install pages \(claude, cursor;/);
+    refused("a profile header link that makes a third call", gen(["--packs", one, "--profile", profile("third", { landing: { header: { links: [{ label: "Docs", href: "/docs" }] } } }), "--out", path.join(TMP, "x")]),
+      /\.json: landing\.header\.links: the first screen \(the header and the hero\) asks for at most 2 things/);
+    // Each block passes alone; the page they make together has three calls (checked after merging).
+    const early = { label: "Early access", href: "/early-access" };
+    assert.deepEqual(landingProblems({ header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }] }), []);
+    assert.deepEqual(landingProblems({ sections: [{ type: "hero", primary_cta: { label: "Docs", href: "/docs" } }] }), []);
+    refused("a profile hero that makes a third call with the pack's header", gen(["--packs", packsDir("early", { le: { landing: { header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }] } } }), "--profile", profile("third2", { landing: { sections: [{ type: "hero", primary_cta: { label: "Docs", href: "/docs" } }] } }), "--out", path.join(TMP, "x")]),
+      /\.json: landing\.sections\[0\]\.primary_cta: the first screen \(the header and the hero\) asks for at most 2 things, signing in and one other \(sign in, \/early-access\)/);
     refused("a client that does not exist", gen(["--packs", packsDir("cl2", { lp: { landing: sec({ type: "where_you_work", clients: ["netscape"] }) } }), "--profile", profile("e5", {}), "--out", path.join(TMP, "x")]), /netscape is not offered/);
     assert.ok(!existsSync(path.join(TMP, "x", "web", "src", "config", "landing.generated.ts")), "a refused build writes nothing");
+
+    // ---------- 5. the logos' files (mold_v0-164) ----------
+    {
+      const row = (items: object[]) => ({ landing: { sections: [{ type: "hero" }, { type: "logos", items }] } });
+      const lg = packsDir("logos", { lg: row([{ name: "A", logo: "assets/a.svg" }, { name: "B", logo: "assets/sub/b.png" }, { name: "C" }]) }, { "lg/assets/a.svg": SVG, "lg/assets/sub/b.png": png(200, 50), "lg/assets/sources.json": "{}" });
+      const out = path.join(TMP, "lg");
+      const r = gen(["--packs", lg, "--profile", profile("lg", {}), "--out", out]);
+      assert.equal(r.status, 0, r.stderr);
+      const items = landingOf(out).sections[1].items as { name: string; image?: { src: string; width: number; height: number } }[];
+      assert.deepEqual(items.map((i) => [i.name, i.image?.width, i.image?.height]), [["A", 120, 40], ["B", 200, 50], ["C", undefined, undefined]], "each image measured (an SVG's viewBox, a PNG's header); a name alone stays a name");
+      assert.ok(items.every((i) => !("logo" in i)), "the file's path in the pack is not written: its address is");
+      const pub = path.join(out, "web", "public", "landing");
+      assert.deepEqual(readdirSync(pub).sort(), items.flatMap((i) => (i.image ? [i.image.src.replace("/landing/", "")] : [])).sort(), "copied under their hashes, nothing else");
+      assert.equal(readFileSync(path.join(pub, items[0]!.image!.src.replace("/landing/", "")), "utf8"), SVG, "byte for byte");
+      assert.equal(gen(["--packs", lg, "--profile", profile("lg", {}), "--out", out, "--check"]).status, 0, "--check: current");
+      writeFileSync(path.join(pub, "0000000000000000.svg"), SVG);
+      const st = gen(["--packs", lg, "--profile", profile("lg", {}), "--out", out, "--check"]);
+      assert.ok(st.status !== 0 && /stale: web\/public\/landing\/0000000000000000\.svg \(no logo names it\)/.test(st.stderr), `--check: a file no logo names is stale (${st.stderr})`);
+      assert.equal(gen(["--packs", lg, "--profile", profile("lg", {}), "--out", out]).status, 0);
+      assert.ok(!existsSync(path.join(pub, "0000000000000000.svg")), "and gen-packs removes it");
+      const z2 = path.join(TMP, "lg-none");
+      assert.equal(gen(["--packs", none, "--profile", profile("lgn", {}), "--out", z2]).status, 0);
+      assert.ok(!existsSync(path.join(z2, "web", "public", "landing")), "no logos: no folder");
+      const no = (what: string, files: Record<string, string | Buffer>, logo: string, re: RegExp, prof: object = {}) =>
+        refused(what, gen(["--packs", packsDir(`lg-${what.replace(/\W+/g, "-")}`, { lg: row([{ name: "A", logo }]) }, files), "--profile", profile(`lgp-${what.replace(/\W+/g, "-")}`, prof), "--out", path.join(TMP, "x")]), re);
+      no("a missing file", {}, "assets/a.svg", /landing: sections\[1\] \(logos\)\.items\[0\]\.logo: packs\/lg\/assets\/a\.svg is not a file of the pack/);
+      no("a script in an SVG", { "lg/assets/a.svg": SVG.replace("<rect", "<script>alert(1)</script><rect") }, "assets/a.svg", /an SVG with a script/);
+      no("an event handler", { "lg/assets/a.svg": SVG.replace("<rect", '<rect onload="alert(1)"') }, "assets/a.svg", /an event handler/);
+      no("a foreign object", { "lg/assets/a.svg": SVG.replace("<rect", "<foreignObject></foreignObject><rect") }, "assets/a.svg", /a foreign object/);
+      no("an outside link", { "lg/assets/a.svg": SVG.replace('xlink:href="#g"', 'xlink:href="https://evil.example/x.svg"') }, "assets/a.svg", /links or loads anything but its own parts/);
+      no("an embedded image", { "lg/assets/a.svg": SVG.replace('<use xlink:href="#g"/>', '<image href="data:image/png;base64,AAAA"/>') }, "assets/a.svg", /links or loads anything but its own parts/);
+      no("an outside url()", { "lg/assets/a.svg": SVG.replace('fill="url(#g)"', 'style="fill:url(https://evil.example/f)"') }, "assets/a.svg", /links or loads anything but its own parts/);
+      no("no size", { "lg/assets/a.svg": '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>' }, "assets/a.svg", /needs a viewBox/);
+      no("too big", { "lg/assets/a.svg": SVG.replace("</svg>", `<g>${" ".repeat(31 * 1024)}</g></svg>`) }, "assets/a.svg", /is 32 KB: at most 30 KB/);
+      no("a PNG that is not one", { "lg/assets/a.png": "not a png" }, "assets/a.png", /packs\/lg\/assets\/a\.png is not a PNG/);
+      refused("a logo with no pack declaring the block", gen(["--packs", none, "--profile", profile("lgprof", row([{ name: "A", logo: "assets/a.svg" }])), "--out", path.join(TMP, "x")]), /a logo is a file of the pack that declares the landing block/);
+      refused("another file in a declarative pack", gen(["--packs", packsDir("lg-txt", { lg: row([{ name: "A" }]) }, { "lg/assets/notes.txt": "x" }), "--profile", profile("lgtxt", {}), "--out", path.join(TMP, "x")]),
+        /assets\/notes\.txt: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone \(and its landing page's images/);
+      console.log("✓ the logos' files: measured, copied under their hashes and named there, a stale one removed (--check: stale), none without logos; a missing file, a script, a handler, a foreign object, an outside link or load, no size, too big or a false PNG refused; a declarative pack carries its assets/ images and nothing else");
+    }
 
     // The source offer: written when something is offered (the app's own, or a pack's copyleft upstream).
     const d2 = gen(["--packs", none, "--profile", profile("own", { source_offer: { app: { url: "https://git.example.org/acme/desk", license: "AGPL-3.0-or-later" } } }), "--out", path.join(TMP, "d2")]);
@@ -306,9 +398,9 @@ try {
       assert.equal(r.status, 0, `render: ${r.stderr.slice(0, 2000)}`);
       return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
     };
-    const render = async (label: string, prof: object, packs: Record<string, object> = {}) => {
+    const render = async (label: string, prof: object, packs: Record<string, object> = {}, files: Record<string, string | Buffer> = {}) => {
       rmSync(path.join(copy, "packs"), { recursive: true, force: true });
-      cpSync(packsDir(`render-${label}`, packs), path.join(copy, "packs"), { recursive: true });
+      cpSync(packsDir(`render-${label}`, packs, files), path.join(copy, "packs"), { recursive: true });
       writeFileSync(path.join(copy, "profile.json"), JSON.stringify(prof));
       const g = gen([], copy);
       assert.equal(g.status, 0, `gen-packs (${label}): ${g.stderr}`);
@@ -339,6 +431,13 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.match(n.html, /href="\/auth\/sign-up"/, "a call to sign up");
     assert.match(n.html, /href="\/install"/, "a call to connect a client");
     assert.match(n.html, /href="\/app"[^>]*>Sign in</, "a way to sign in");
+    // The first screen (mold_v0-164): the header's "Sign in" and the hero's start, nothing else; no GitHub button.
+    const header = n.html.slice(0, n.html.indexOf("</header>"));
+    assert.ok(!header.includes('href="/auth/sign-up"') && !header.includes('href="/install"'), "the header: no start call beside the hero's, no install link");
+    const heroHtml = n.html.slice(n.html.indexOf('<section id="intro"'), n.html.indexOf('<section id="problem"'));
+    assert.equal(count(heroHtml, /<a [^>]*href="\/(auth\/sign-up|install|app)"/g), 1, "the hero: one call to action (sign up)");
+    assert.ok(!/on GitHub/.test(n.html), "no open_source: no GitHub button and no footer link");
+    assert.ok(n.html.split("<footer")[1]!.includes('href="/install"'), "the install pages: still in the footer");
     const words = text(n.html);
     assert.ok(words.includes("Acme") && /\bcompany\b/.test(words) && /\baudits?\b/.test(words) && /\banalysts\b/.test(words), "in the build's words (company, audit, analyst)");
     assert.ok(!/\{(product|workspace|runs?|members?|account|keys?)\}/i.test(words), "no placeholder left");
@@ -385,6 +484,24 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.equal(p.meta.title.absolute, "Ship audits");
     assert.equal(p.meta.openGraph.description, "Search description.");
     assert.match(p.invite, /href="\/request-access"[^>]*>Start</, "invite-only: a block's sign-up call keeps its label and leads to the request form");
+
+    // An open-source app with a logos row (mold_v0-164).
+    const LOGOS = { type: "logos", title: "Covers the rules of", items: [{ name: "Alpha Board", logo: "assets/alpha.svg", href: "https://example.org/alpha" }, { name: "Beta Council", logo: "assets/beta.png" }, { name: "Gamma Group" }] };
+    const os = await render("oss", { name: "Acme" }, { lp: { landing: { open_source: { repo: "https://github.com/example-org/app" }, sections: [{ type: "hero", primary_cta: { label: "Get started", href: "/request-access" } }, LOGOS, { type: "faq", items: [{ question: "q", answer: "a" }] }], footer: { shell_links: false } } } },
+      { "lp/assets/alpha.svg": SVG, "lp/assets/beta.png": png(300, 96) });
+    const osHeader = os.html.slice(0, os.html.indexOf("</header>"));
+    assert.match(osHeader, /<a href="https:\/\/github\.com\/example-org\/app" aria-label="Acme on GitHub" title="Acme on GitHub" rel="noopener noreferrer" class="[^"]*size-11[^"]*"><svg aria-hidden="true" viewBox="0 0 16 16"/, "the header: a GitHub button, named, 44 px, its mark drawn inline");
+    assert.ok(!/hidden sm:inline-flex[^"]*"[^>]*aria-label="Acme on GitHub"|aria-label="Acme on GitHub"[^>]*class="[^"]*\bhidden\b/.test(osHeader), "on every width");
+    assert.match(osHeader, /href="\/app"[^>]*>Sign in</, "and the quiet sign-in");
+    assert.ok(!osHeader.includes('href="/request-access"'), "the start is the hero's alone");
+    assert.match(os.html.split("<footer")[1]!, /href="https:\/\/github\.com\/example-org\/app"[^>]*>Open source on GitHub</, "the footer links the repository");
+    const row = os.html.slice(os.html.indexOf('<section id="logos"'), os.html.indexOf('<section id="faq"'));
+    assert.match(row, /^<section id="logos" aria-labelledby="logos-title"/, "the logos row: a labelled region");
+    assert.match(row, /<a href="https:\/\/example\.org\/alpha" title="Alpha Board"[^>]*rel="noopener noreferrer"[^>]*><img src="\/landing\/[0-9a-f]{16}\.svg" alt="Alpha Board" width="120" height="40"/, "an image with its name as its text and its size, linked");
+    assert.match(row, /<img src="\/landing\/[0-9a-f]{16}\.png" alt="Beta Council" width="300" height="96"/, "a PNG measured from its header");
+    assert.match(row, /<span[^>]*>Gamma Group<\/span>/, "a name with no image: its name");
+    assert.ok(!/href="\/#logos"/.test(os.html), "the logos row is not in the navigation");
+    for (const f of readdirSync(path.join(webDir, "public", "landing"))) assert.ok(row.includes(`/landing/${f}`), `${f}: every file copied is one the row shows`);
 
     // An old block, rendered converted.
     const o = await render("old", { name: "Acme" }, { lo: { landing: LEGACY } });

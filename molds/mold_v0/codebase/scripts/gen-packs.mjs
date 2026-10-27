@@ -237,8 +237,13 @@ function declarativeOnly(rel) {
     : /\.md$/i.test(rel) ? "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
     : /\.sql$/i.test(rel) ? "rows live in the shell's tables: declare record_areas in pack.json"
     : "everything a declarative pack says is in its pack.json";
-  return `a declarative pack (no entry, migrations or runner) is its pack.json alone, so this file is never read; ${say} (MOLD.md "Declared row maps")`;
+  return `a declarative pack (no entry, migrations or runner) is its pack.json alone (and its landing page's images, assets/<name>.svg or .png), so this file is never read; ${say} (MOLD.md "Declared row maps")`;
 }
+/**
+ * A declarative pack's images (mold_v0-164): the landing page's logos (src/landing.ts `logos`), under assets/, with the
+ * sources.json that says where each came from. Data a loader never runs; gen-packs checks each one a page names.
+ */
+const PACK_ASSET = /^assets\/(?:[a-z0-9][a-z0-9-]{0,39}\/)?(?:[a-z0-9][a-z0-9-]{0,59}\.(?:svg|png)|sources\.json)$/;
 const DATA_FILE = /\.(json|sql|md|txt|csv|ya?ml|html|css|svg|png|jpe?g|gif|webp|pdf)$/i;
 
 // ---------- code: the import boundary ----------
@@ -718,7 +723,7 @@ function loadPack(dirName) {
   if (entry === null && !host) for (const e of walk(dir)) {
     if (e.dir) continue;
     const rel = posix(path.relative(dir, e.p));
-    if (declarative) { if (rel !== "pack.json") fail(where, `${rel}: ${declarativeOnly(rel)}`); }
+    if (declarative) { if (rel !== "pack.json" && !PACK_ASSET.test(rel)) fail(where, `${rel}: ${declarativeOnly(rel)}`); }
     else if (!e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
       fail(where, `${rel} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
   }
@@ -1429,11 +1434,13 @@ function readLanding() {
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 const [landingApi, offerApi, input] = JSON.parse(readFileSync(process.argv[2], "utf8"));
-const { landingProblems, mergeLanding } = await import(pathToFileURL(landingApi).href);
+const { landingProblems, mergeLanding, firstScreenProblems } = await import(pathToFileURL(landingApi).href);
 const { sourceOffer, offerFooterItems } = await import(pathToFileURL(offerApi).href);
 const packBad = input.pack !== null && landingProblems(input.pack).length > 0;
 const profileProblems = input.profile === null ? [] : landingProblems(input.profile);
 const landing = packBad || profileProblems.length ? null : mergeLanding(input.pack, input.profile);
+// The page the build shows, the pack's block with the profile's over it, is held to the first screen's rule too (mold_v0-164).
+if (input.profile !== null) profileProblems.push(...firstScreenProblems(landing));
 const offer = offerFooterItems(sourceOffer(input.packs, input.setting ?? undefined));
 process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer }) + "\\n");
 `);
@@ -1481,6 +1488,65 @@ const landingClients = [...readFileSync(path.join(ROOT, "src", "connect-catalog.
 for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
   const off = (s.type === "where_you_work" ? s.clients ?? [] : []).filter((c) => !landingClients.some((k) => k.id === c));
   if (off.length) fail("landing", `sections[${i}] (where_you_work).clients: ${off.join(", ")} ${off.length > 1 ? "are" : "is"} not offered by this build's install pages (${landingClients.map((k) => k.id).join(", ")}; profile.json install_clients narrows them)`);
+}
+/**
+ * The landing page's logos (mold_v0-164, src/landing.ts `logos`): each item's `logo` is an image file of the pack that
+ * declares the block (packs/<id>/assets/...), an SVG or a PNG of at most LOGO_MAX_BYTES. It is checked (a PNG by its
+ * signature; an SVG holds no script, event handler, foreign object, entity, or link to anything but itself, so it is a
+ * picture and nothing else, even opened on its own), measured (the page reserves its box, so the row never shifts) and
+ * copied to the console's public files under its content's hash (web/public/landing/<sha>.<ext>); the generated block
+ * names it there as `image` {src, width, height}. Files there that no logo names are removed (--check: stale).
+ */
+const LOGO_DIR = path.join(OUT, "web", "public", "landing");
+const LOGO_MAX = 30 * 1024;
+const logoFiles = new Map();
+function svgProblem(text) {
+  if (/<script\b|<foreignObject\b|<!ENTITY|<!DOCTYPE|<\?xml-stylesheet/i.test(text)) return "an SVG with a script, a foreign object, a doctype or an entity is not a picture: save it as a plain SVG";
+  if (/\son[a-z]+\s*=/i.test(text)) return "an SVG with an event handler (on...=) is not a picture";
+  if (/(?:xlink:)?href\s*=\s*["']\s*(?!#)/i.test(text) || /url\(\s*["']?\s*(?!#)/i.test(text)) return "an SVG that links or loads anything but its own parts (href, url()) is refused: embed nothing, link nothing";
+  if (!/<svg\b/i.test(text)) return "not an SVG";
+  return null;
+}
+function svgSize(text) {
+  const root = /<svg\b[^>]*>/i.exec(text)?.[0] ?? "";
+  const attr = (k) => new RegExp(`\\s${k}\\s*=\\s*["']([^"']*)["']`, "i").exec(root)?.[1];
+  const vb = attr("viewBox")?.trim().split(/[\s,]+/).map(Number);
+  if (vb && vb.length === 4 && vb[2] > 0 && vb[3] > 0) return { width: vb[2], height: vb[3] };
+  const num = (v) => (v && /^\d+(\.\d+)?(px)?$/.test(v.trim()) ? parseFloat(v) : NaN);
+  const w = num(attr("width")), h = num(attr("height"));
+  return w > 0 && h > 0 ? { width: w, height: h } : null;
+}
+{
+  const declaringPack = packs.find((p) => p.json && p.json.landing !== undefined) ?? null;
+  for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
+    if (s.type !== "logos") continue;
+    s.items = s.items.map((it, k) => {
+      const { logo, ...rest } = it;
+      if (!logo) return rest;
+      const at = `sections[${i}] (logos).items[${k}].logo`;
+      if (!declaringPack) { fail("landing", `${at}: a logo is a file of the pack that declares the landing block (packs/<id>/assets/), and no pack of this build declares one`); return rest; }
+      const file = path.join(declaringPack.dir, logo), where = `packs/${declaringPack.id}/${logo}`;
+      const st = lstatOr(file);
+      if (!st || !st.isFile()) { fail("landing", `${at}: ${where} is not a file of the pack`); return rest; }
+      if (st.size > LOGO_MAX) { fail("landing", `${at}: ${where} is ${Math.ceil(st.size / 1024)} KB: at most ${LOGO_MAX / 1024} KB (optimise it, or save a PNG about 96 px high)`); return rest; }
+      const buf = readFileSync(file);
+      let size = null;
+      if (logo.endsWith(".png")) {
+        const ok = buf.length > 24 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) && buf.subarray(12, 16).toString("latin1") === "IHDR";
+        if (!ok) { fail("landing", `${at}: ${where} is not a PNG`); return rest; }
+        size = { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+      } else {
+        const text = buf.toString("utf8");
+        const bad = svgProblem(text);
+        if (bad) { fail("landing", `${at}: ${where}: ${bad}`); return rest; }
+        size = svgSize(text);
+        if (!size) { fail("landing", `${at}: ${where}: its <svg> needs a viewBox (or a width and a height in px), so the page can reserve its box`); return rest; }
+      }
+      const name = `${createHash("sha256").update(buf).digest("hex").slice(0, 16)}${path.extname(logo)}`;
+      logoFiles.set(name, buf);
+      return { ...rest, image: { src: `/landing/${name}`, width: Math.round(size.width * 100) / 100, height: Math.round(size.height * 100) / 100 } };
+    });
+  }
 }
 /** The hero section of the build's block, if it picks one (the welcome email's pitch is its subheadline). */
 const landingHero = (landingPage.landing?.sections ?? []).find((s) => s.type === "hero") ?? null;
@@ -2304,10 +2370,18 @@ function viewsModule() {
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;
 }
 
+// The landing page's logos (above): written beside the text files, byte for byte; any other file there is stale.
+for (const [name, buf] of logoFiles) files.set(path.join(LOGO_DIR, name), buf);
 let stale = 0;
+for (const name of existsSync(LOGO_DIR) ? readdirSync(LOGO_DIR) : []) {
+  if (logoFiles.has(name)) continue;
+  if (CHECK) { stale++; console.error(`stale: ${posix(path.relative(OUT, path.join(LOGO_DIR, name)))} (no logo names it)`); continue; }
+  rmSync(path.join(LOGO_DIR, name), { recursive: true, force: true });
+  console.log(`removed ${posix(path.relative(OUT, path.join(LOGO_DIR, name)))}`);
+}
 for (const [file, text] of files) {
-  const now = existsSync(file) ? readFileSync(file, "utf8") : null;
-  if (now === text) continue;
+  const now = existsSync(file) ? (Buffer.isBuffer(text) ? readFileSync(file) : readFileSync(file, "utf8")) : null;
+  if (Buffer.isBuffer(text) ? now !== null && text.equals(now) : now === text) continue;
   if (CHECK) { stale++; console.error(`stale: ${posix(path.relative(OUT, file))}`); continue; }
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text);
