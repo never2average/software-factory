@@ -9,6 +9,8 @@
 // has none of the product's tables, and an older one keeps them with their rows (its shell schema equal to a new
 // one's). In a build whose host pack owns them (pack.json host.schema), a new database has them again, and every older
 // one comes out identical to it, schema and rows.
+// On PGlite each starting database (a new one, one at an older version, one with this build's migrations) is built once
+// and copied for every row that starts from it (mold_v0-160: from()); each row still migrates, checks and drops its own.
 //   npm run test:migrations                                  embedded Postgres (PGlite), temporary directories
 //   MIGRATIONS_PG_URL=postgres://u:p@host/db npm run test:migrations   also on a real Postgres (creates and drops
 //                                                            its own databases there; never touches the one named)
