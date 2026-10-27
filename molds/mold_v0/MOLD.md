@@ -8,7 +8,7 @@
 
 **Edited in place (mold_v0-040).** AGENTS.md says a mold's codebase is never edited in place and base-code changes go to the mold's source by pull request. mold_v0 is the one exception: its source is this repository. A change to the shell is a pull request here that touches `molds/mold_v0/codebase`; the deploy gate then reads this repository's checks for the commit being deployed (below). mold_v1 keeps the rule unchanged: its snapshot is only ever written by `mold.py fetch|refresh` from its own source, and nothing in this exception reads or writes it.
 
-**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. Since mold_v0-049 its tables are the pack's own migrations too: a shell with no packs has none of them. What still carries the product in the shell: the session engine that reads those tables in a build that has them (the job queue, the autoscaler's jobs, the Compute and Accounts pages; dormant without them). Its name left the shell's words and environment names in mold_v0-045 ("Neutral words and environment names" below): what is left of it is listed, with what holds each, in the vocabulary check's allow list.
+**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below; since mold_v0-145 the **engine pack `apo`**, run by Octillion's config pack: "Engine packs and config packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. Since mold_v0-049 its tables are the pack's own migrations too: a shell with no packs has none of them. What still carries the product in the shell: the session engine that reads those tables in a build that has them (the job queue, the autoscaler's jobs, the Compute and Accounts pages; dormant without them). Its name left the shell's words and environment names in mold_v0-045 ("Neutral words and environment names" below): what is left of it is listed, with what holds each, in the vocabulary check's allow list.
 
 ## What is in it today
 
@@ -1571,6 +1571,42 @@ A pack that wraps an upstream project (the second app's audit-agent pack, for on
 and runs it at a process boundary inside the run's sandbox; it is never vendored into the pack or the shell, and never
 patched locally (changes go upstream by pull request).
 
+**Engine packs and config packs (mold_v0-145; the operator's rule: an app pack is config only).** A host pack whose
+code carries no product's words is an **engine**: code and migrations an app runs through a **config pack** of its own,
+an ordinary declarative pack (its `pack.json` alone) whose `engine.pack` names the engine. The app names both in its state
+(`application.json` `packs`); `mold.json` `packs.host_packs` lists engines only (`apo`, the Agentic Preference
+Optimization engine, the factory's `packs/apo`), so every app pack that is not an engine is config only, and `packs.py`
+refuses an app that names a config pack without its engine, or a config pack whose engine is not a host pack of the
+mold (each before anything is copied, naming the line to add). `scripts/gen-packs.mjs` folds the config pack into its
+engine before anything reads the packs: the build has one pack, under the engine's id, exactly as if the engine's
+`pack.json` said everything (proved file for file by `npm run test:engine-packs`):
+- the config pack's `engine.config` is the engine's (its host entry's schema checks it when the server starts),
+  `engine.profile` its `host.profile`, `engine.labels` its `host.schema.labels`, and every other declaration (`mcp`,
+  `landing`, `access_request`, `guide`, `staff_docs`, `settings`, `admin_mcp`, `setup`, `console`, `account_stages`,
+  `memory`, `journeys`, `tips`, `client_skill`, `texts`, `pages`, `words`) the engine's; its `name`, `version` and
+  `description` are the build's pack's;
+- the engine's own `pack.json` says its code only (`host.entry`, `host.scripts`, `migrations`, `host.schema` without
+  labels): a declaration, `host.profile` or table labels there are refused while a config pack configures it, as are
+  two config packs for one engine, a config pack with code, migrations or any other file, and the config pack's keys
+  (`engine.profile`, `labels`, `migrations_recorded_as`) in a pack that names no engine;
+- the engine's code reads the product's name from the build's profile wherever a person reads it, and the ids a client
+  or a stored row carries from its config (Octillion's: the widget's `ui://octillion/dashboard-v2.html`, the transcript
+  format `octillion-jsonl`, the spans' `octillion.*` attributes); it reads the shell's environment names (`APP_*`, the
+  spelling before mold_v0-045 as the fallback: `src/pack-host.ts` `env`) and persisted setting keys (`persistedKey`).
+*Its migrations' earlier id* (`engine.migrations_recorded_as`). When a product's host pack split into an engine and
+its config pack, the engine's migrations are the files the product's pack had, and a database that ran them recorded
+them in `pack_schema_migrations` under the product's id. The config pack names that id; gen-packs writes it as the
+engine's `formerly` in `src/pack-migrations.generated.ts`, and `src/migrate.ts` reads the rows under it as the engine's
+(`packRows`): same names, same checksums (`host.schema.split` included), so nothing is pending and nothing runs, no DDL,
+and the ledger is only read: the release from before the split (a rollback, or the one still serving during a rolling
+deploy) still finds its rows under the id it knows, and a migration the engine adds later is recorded under the engine's
+own id. No shell migration is needed. An earlier id that is the engine's own, or another pack's of the build with
+migrations of its own, is refused (gen-packs, and the runner again). `npm run test:migrations` proves it on PGlite and
+Postgres; `npm run db:rehearse` on a copy of a live database shows it (nothing pending, nothing applied).
+Octillion is the first: `packs/octillion` is its `pack.json` alone (`engine.pack: "apo"`, `migrations_recorded_as:
+"octillion"`), and `packs/apo` carries what its host pack carried (server, console pages, orchestrator extension,
+operator scripts, the curated library under `vault/`, the two migrations byte for byte).
+
 **Source offer and data map (mold_v0-050).** A pack's `upstream` pin (`{repo, commit, license}`, the licence an SPDX id)
 is offered when its licence is copyleft (AGPL, GPL, LGPL, MPL, EUPL, ...): the customer MCP server adds a "Source code:"
 paragraph to its instructions, and the root page and every install page end with a footer, each naming the project, its
@@ -1980,8 +2016,8 @@ run in its unbranded lane copy `build/<app_id>.lane/` (`packs.py lane-copy`), as
 - **Zero packs is a neutral shell.** A build with `packs: []` signs in, has workspaces, keys, the console, the vaults
   and the run engine, passes the smoke test and the tenant-SQL check, and has none of the product's tools, pages or
   tables (mold_v0-038, 039, 049; `npm run test:zero-pack`); the vocabulary check finds no product word in it (mold_v0-045).
-- **`["octillion"]` reproduces today's product.** A build of the new shell plus `packs/octillion` has the same surface as
-  the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
+- **`["octillion", "apo"]` reproduces today's product.** A build of the new shell plus `packs/octillion` (since mold_v0-145
+  its config pack, with the engine pack `packs/apo`: "Engine packs and config packs") has the same surface as the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
   routes, the same console pages and navigation, and the same tables. The surface diff between the two must be empty,
   and the re-mint (mold_v0-029) must still pass smoke, `mcp:check` and the isolation sweep (mold_v0-039).
 

@@ -66,6 +66,15 @@ workspace table its own way in the same run (`ADOPTING_MIGRATIONS` `secured_afte
 0026's, and its statements, idempotent, give them their own rules. The host pack's files rewritten a second time keep
 both earlier checksums: `host.schema.split` takes a list.
 
+**A pack's migrations under an earlier id (mold_v0-145).** When a product's host pack split into an engine pack (its
+code and these migrations) and the product's config pack, the migrations kept their files, byte for byte, but moved to
+the engine's id, while a database that ran them recorded them in `pack_schema_migrations` under the product's. The
+config pack says so (pack.json `engine.migrations_recorded_as`), the generator writes it beside the engine's directory
+(`formerly`), and the runner reads those rows as the engine's: nothing pending, nothing run, no DDL. The ledger is only
+read, never rewritten, so a release from before the split still finds its rows under the id it knows (rolling back
+needs nothing), and a migration the engine adds later is recorded under the engine's id. An edited file is refused under
+either id, as always.
+
 | Command | What it does |
 |---|---|
 | `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |

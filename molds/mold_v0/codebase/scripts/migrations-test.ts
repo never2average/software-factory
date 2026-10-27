@@ -452,6 +452,67 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: a host pack's own schema: its tables, policies and declared function run; adopted on a pre-049 database (nothing run); policies, grants, columns, constraints and functions outside it refused`);
   }
 
+  // Migrations recorded under a pack's earlier id (mold_v0-145): a product's host pack split into an engine pack (its
+  // code and these migrations) and the product's config pack. A database that ran them recorded them under the product's
+  // id; the engine reads those rows as its own (`formerly`): nothing pending, nothing run, the ledger untouched, rows and
+  // catalog rows as they were. A migration the engine adds later is recorded under its own id; the release from before
+  // the split still finds its rows under the id it knows.
+  {
+    const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
+      "DO $mig$ DECLARE r TEXT := app_tenant_role(); BEGIN ALTER TABLE widgets ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS tenant_isolation ON widgets;\n" +
+      "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = app_tenant_org()) WITH CHECK (org_id = app_tenant_org())', r);\n" +
+      "  EXECUTE format('GRANT SELECT, INSERT ON widgets TO %I', r); END $mig$;\n";
+    const W2 = "CREATE TABLE IF NOT EXISTS widget_notes (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, body TEXT);\n" +
+      "DO $mig$ DECLARE r TEXT := app_tenant_role(); BEGIN ALTER TABLE widget_notes ENABLE ROW LEVEL SECURITY;\n" +
+      "  EXECUTE format('CREATE POLICY tenant_isolation ON widget_notes TO %I USING (org_id = app_tenant_org()) WITH CHECK (org_id = app_tenant_org())', r); END $mig$;\n";
+    const dirOf = (files: Record<string, string>) => {
+      const dir = path.join(tmp, `alias-${kind}-${++n}`);
+      mkdirSync(dir, { recursive: true });
+      for (const [f, text] of Object.entries(files)) writeFileSync(path.join(dir, f), text);
+      return dir;
+    };
+    const set = (pack: string, dir: string, extra: Record<string, unknown> = {}, tables = ["widgets"]) =>
+      [{ pack, dir, schema: { tables, functions: [], adopts: {}, platform_read: [], references: {} }, ...extra }] as never;
+    const v1 = dirOf({ "0001_widgets.sql": W });
+    // The product's release: its host pack "product" ran 0001 and recorded it under its own id, then rows were written.
+    const d = await builtAt(kind);
+    assert.deepEqual((await runMigrations(d, { packDirs: set("product", v1) })).applied, ["pack product 0001_widgets"]);
+    await d.exec("INSERT INTO organizations (slug, name) VALUES ('alias-org', 'Alias');\nINSERT INTO widgets (org_id, name) SELECT id, 'kept' FROM organizations WHERE slug = 'alias-org';");
+    const rows = await rowStats(d, "widgets"), stamp = await catalogStamp(d, "widgets");
+    const ledger = async () => d.query<{ pack: string; version: number; checksum: string }>("SELECT pack, version, checksum FROM pack_schema_migrations WHERE pack IN ('product', 'engine') ORDER BY pack, version");
+    const before = await ledger();
+    // Without the earlier id the engine would find its 0001 pending (and run it again over the product's table).
+    assert.equal((await migrationStatus(d, undefined, set("engine", v1))).packs[0]!.pending.length, 1, "without formerly: pending again");
+    // With it: nothing pending, nothing run, the ledger untouched.
+    const st = await migrationStatus(d, undefined, set("engine", v1, { formerly: ["product"] }));
+    assert.ok(!st.packs[0]!.pending.length && !st.packs[0]!.conflicts.length && st.packs[0]!.applied.length === 1, "formerly: the product's row is the engine's");
+    assert.deepEqual((await runMigrations(d, { packDirs: set("engine", v1, { formerly: ["product"] }) })).applied, [], "nothing runs");
+    assert.deepEqual(await ledger(), before, "the ledger is only read: the row stays under the product's id");
+    assert.deepEqual(await rowStats(d, "widgets"), rows, "every row as it was");
+    assert.deepEqual(await catalogStamp(d, "widgets"), stamp, "no DDL reached the table");
+    // A migration the engine adds later runs once and is recorded under the engine's own id.
+    const v2 = dirOf({ "0001_widgets.sql": W, "0002_widget_notes.sql": W2 });
+    assert.deepEqual((await runMigrations(d, { packDirs: set("engine", v2, { formerly: ["product"] }, ["widgets", "widget_notes"]) })).applied, ["pack engine 0002_widget_notes"], "the engine's next migration runs");
+    assert.deepEqual((await ledger()).map((r) => `${r.pack} ${r.version}`), ["engine 2", "product 1"], "recorded under the engine's id; the earlier row stays");
+    assert.deepEqual((await runMigrations(d, { packDirs: set("engine", v2, { formerly: ["product"] }, ["widgets", "widget_notes"]) })).applied, [], "a second run applies nothing");
+    assert.deepEqual(await catalogStamp(d, "widgets"), stamp, "and never touched the earlier table");
+    // The release from before the split (a rollback, or the one still serving in a rolling deploy) finds its rows.
+    const old = await migrationStatus(d, undefined, set("product", v1));
+    assert.ok(!old.packs[0]!.pending.length && !old.packs[0]!.conflicts.length, "the release before the split: nothing pending under its own id");
+    // An edit is an edit under either id; an earlier checksum the engine declares (host.schema.split) is accepted under either.
+    const edited = dirOf({ "0001_widgets.sql": W + "-- edited\n" });
+    assert.match((await migrationStatus(d, undefined, set("engine", edited, { formerly: ["product"] }))).packs[0]!.conflicts.join(" "), /0001_widgets\.sql changed after it was applied/, "an edited file under the earlier id is a conflict");
+    const sum = createHash("sha256").update(W).digest("hex");
+    const splitSet = [{ pack: "engine", dir: edited, schema: { tables: ["widgets"], functions: [], adopts: {}, platform_read: [], references: {}, split: { "0001_widgets": sum } }, formerly: ["product"] }] as never;
+    assert.deepEqual((await migrationStatus(d, undefined, splitSet)).packs[0]!.conflicts, [], "a declared earlier checksum is accepted under the earlier id");
+    // Refused: its own id as the earlier one, or another pack's.
+    await assert.rejects(runMigrations(d, { packDirs: set("engine", v1, { formerly: ["engine"] }) }), /not an earlier pack id of it/, "its own id");
+    await assert.rejects(runMigrations(d, { packDirs: [...set("engine", v1, { formerly: ["product"] }), { pack: "product", dir: dirOf({ "0001_other.sql": "SELECT 1;\n" }) }] as never }),
+      /its migrations' earlier id product is pack product's own/, "another pack's id");
+    await d.drop();
+    log(`  ✓ ${kind}: migrations recorded under a pack's earlier id (formerly): nothing pending or run, the ledger only read, rows and catalog rows untouched; the engine's next migration under its own id; the release before the split unchanged; edits still refused, declared earlier checksums accepted; its own or another pack's id refused`);
+  }
+
   // The neutral names (0024_neutral_database_names, mold_v0-097): renamed in place, the old names kept as aliases for a
   // release from before it, and the rollback file puts the database back exactly as 0023 left it.
   {

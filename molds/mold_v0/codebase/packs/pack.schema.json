@@ -192,11 +192,49 @@
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "pack": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,30}$"
+        },
+        "profile": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        },
+        "migrations_recorded_as": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,30}$"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,30}$"
+              }
+            }
+          ]
         }
       },
-      "required": [
-        "config"
-      ],
       "additionalProperties": false
     },
     "pages": {
