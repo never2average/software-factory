@@ -57,9 +57,18 @@ export interface HowItWorksSection extends Head { type: 'how_it_works'; visual?:
 export interface ProofSection extends Head { type: 'proof'; visual?: LandingVisual; metrics?: { value: string; label: string; note?: string }[]; items?: LandingItem[]; note?: string }
 export interface WhereYouWorkSection extends Head { type: 'where_you_work'; visual?: LandingVisual; clients?: string[]; note?: string }
 export interface FaqSection extends Head { type: 'faq'; items: { question: string; answer: string }[] }
+/**
+ * A row of organisations' logos (mold_v0-164; src/landing.ts logos). gen-packs checked each image file and copied it to
+ * the console's public files: `image` is its address and its size (the box the page reserves). With no image the name is
+ * drawn instead.
+ */
+export interface LogosSection {
+  type: 'logos'; id?: string; title?: string; label?: string; note?: string;
+  items: { name: string; href?: string; image?: { src: string; width: number; height: number } }[];
+}
 export interface CtaSection { type: 'cta'; id?: string; title?: string; body?: string; primary_cta?: LandingLink; secondary_cta?: LandingLink }
 
-export type LandingSection = HeroSection | ProblemSection | ConceptSection | HowItWorksSection | ProofSection | WhereYouWorkSection | FaqSection | CtaSection;
+export type LandingSection = HeroSection | LogosSection | ProblemSection | ConceptSection | HowItWorksSection | ProofSection | WhereYouWorkSection | FaqSection | CtaSection;
 export type SectionType = LandingSection['type'];
 
 export interface LandingBlock {
@@ -70,7 +79,12 @@ export interface LandingBlock {
   footer?: { note?: string; links?: LandingLink[]; tagline?: string; copyright?: string; shell_links?: boolean };
   seo?: { title?: string; description?: string; card?: 'summary' | 'summary_large_image' };
   request_page?: RequestPage;
+  /** An open-source app's repository (mold_v0-164): the header's GitHub button and a footer link (`label`). */
+  open_source?: OpenSource;
 }
+
+/** The components only an open-source app has (mold_v0-164), configured in one place. */
+export interface OpenSource { repo: string; label?: string }
 
 /**
  * The request page (mold_v0-138; src/landing.ts request_page): a public page asking for access at its own path, with the
@@ -108,7 +122,7 @@ export function linkable(href: string): boolean {
 
 /** Each section's anchor when it names none (the same as src/landing.ts DEFAULT_IDS; scripts/landing-test.ts checks). */
 export const DEFAULT_IDS: Record<SectionType, string> = {
-  hero: 'intro', problem: 'problem', concept: 'overview', how_it_works: 'how-it-works', proof: 'what-you-get',
+  hero: 'intro', logos: 'logos', problem: 'problem', concept: 'overview', how_it_works: 'how-it-works', proof: 'what-you-get',
   where_you_work: 'where-you-work', faq: 'faq', cta: 'get-started'
 };
 

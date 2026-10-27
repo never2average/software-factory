@@ -147,9 +147,10 @@
       "apo"
     ],
     "declarative": {
-      "$comment": "mold_v0-124 (operator rule: an app pack is config only). A pack the app names that is not one of host_packs adds its pack.json and nothing else: the shell reads every declaration from it (record areas, repositories and their row maps, job kinds, guide.markdown ...), and gen-packs refuses any other file in a pack with no entry, migrations or runner. Its pack.json may not name entry, migrations or runner (code). Each refusal names the declaration to write instead (MOLD.md \"Declared row maps\"). A host pack keeps its code.",
+      "$comment": "mold_v0-124 (operator rule: an app pack is config only). A pack the app names that is not one of host_packs adds its pack.json and nothing else: the shell reads every declaration from it (record areas, repositories and their row maps, job kinds, guide.markdown ...), and gen-packs refuses any other file in a pack with no entry, migrations or runner. Its pack.json may not name entry, migrations or runner (code). Each refusal names the declaration to write instead (MOLD.md \"Declared row maps\"). A host pack keeps its code. mold_v0-164: and its landing page's images, assets/<name>.svg or .png (one folder deep), with a sources.json saying where each came from: data a loader never runs, each one a page names checked by gen-packs (a PNG by its signature; an SVG with no script, handler, foreign object, entity or outside link; at most 30 KB).",
       "files": [
-        "^packs/{pack}/pack\\.json$"
+        "^packs/{pack}/pack\\.json$",
+        "^packs/{pack}/assets/(?:[a-z0-9][a-z0-9-]{0,39}/)?(?:[a-z0-9][a-z0-9-]{0,59}\\.(?:svg|png)|sources\\.json)$"
       ],
       "manifest": "packs/{pack}/pack.json",
       "refused_keys": [

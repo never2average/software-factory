@@ -4764,6 +4764,57 @@
                     "properties": {
                       "type": {
                         "type": "string",
+                        "const": "logos"
+                      },
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,39}$"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "items": {
+                        "minItems": 1,
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "logo": {
+                              "type": "string",
+                              "pattern": "^assets\\/(?:[a-z0-9][a-z0-9-]{0,39}\\/)?[a-z0-9][a-z0-9-]{0,59}\\.(?:svg|png)$"
+                            },
+                            "href": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "items"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
                         "const": "problem"
                       },
                       "id": {
@@ -8096,7 +8147,7 @@
               "type": "object",
               "properties": {
                 "links": {
-                  "maxItems": 2,
+                  "maxItems": 1,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -8363,6 +8414,22 @@
               "required": [
                 "path",
                 "title"
+              ],
+              "additionalProperties": false
+            },
+            "open_source": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string",
+                  "pattern": "^https:\\/\\/github\\.com\\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\\/[A-Za-z0-9._-]{1,100}$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "repo"
               ],
               "additionalProperties": false
             }

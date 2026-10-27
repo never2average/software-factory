@@ -17,9 +17,15 @@
  *
  *   hero            eyebrow, headline (default: the profile's tagline) and headline_highlight (in the primary colour),
  *                   subheadline, primary_cta (a link, or "account": sign in or open the console, with an arrow; default:
- *                   start, which is sign-up or a request for access), secondary_cta (default: connect an AI client), up
- *                   to 3 more `links` {label, href} (the app's own: its repository, its docs), note, a `visual` beside it,
- *                   and a strip under it: text names in the logos' type (`items`), named `logos`, or the logos of the AI clients offered
+ *                   start, which is sign-up or a request for access), secondary_cta (none by default; only a call the
+ *                   first screen already makes: FIRST SCREEN below), up to 3 more `links` {label, href} (the app's own:
+ *                   its docs), note, a `visual` beside it, and a strip under it: text names in the logos' type
+ *                   (`items`), named `logos`, or the logos of the AI clients offered
+ *   logos           a row of organisations' logos (mold_v0-164): a title and 1 to 40 items {name, logo, href}, where
+ *                   `logo` is an image file of the pack's own (assets/<name>.svg or .png, at most 30 KB: gen-packs checks
+ *                   it, copies it to the console's public files and writes its size, so the row never shifts) and the
+ *                   name is its text alternative; an item with no logo is drawn as its name. Grey until pointed at.
+ *                   Never in the wireframe: a page has one only when it picks one
  *   problem         points {title, body, icon} under a visual
  *   concept         cards {title, subtitle, body, chips (a path drawn as chips), highlight} under a visual, a note
  *   how_it_works    steps {title, body} drawn as numbered cards (`layout: steps`), a flow (`flow`, the default) or a
@@ -31,9 +37,13 @@
  * Every section but hero and cta may carry `id` (its anchor, a slug), `nav_label` or `nav: false` (its entry in the
  * header's navigation, which lists the picked sections in order), `eyebrow`, `title`, `lead` and a `visual`, one of the
  * templates below (VISUALS: decision_graph, transcript, loop, paths, scorecard, chat). Beside `sections`:
- *   header          up to 2 links beside the ways in (default: the install pages) and which ways in ("sign_in_and_start",
- *                   the default, or "account": one account button); `sign_in` and `open` relabel or re-address the account
- *                   button's two states (signed out: sign in; signed in: into the console) wherever the page shows it
+ *   header          a link beside the ways in (none by default) and which ways in ("sign_in_and_start", the default:
+ *                   "Sign in", and the start call only when the hero has no call of its own; or "account": one account
+ *                   button); `sign_in` and `open` relabel or re-address the account button's two states (signed out: sign
+ *                   in; signed in: into the console) wherever the page shows it
+ *   open_source     (mold_v0-164) the app's open-source repository, {repo: https://github.com/<owner>/<repo>, label}: a
+ *                   GitHub button in the header on every width, and a footer link (`label`, default "Open source on
+ *                   GitHub"). The components only an open-source app has are grouped here; an app without it has none
  *   footer          a tagline, a note, up to 8 links, a copyright line, and `shell_links: false` to leave out the shell's
  *                   own ways in (the sections, the legal pages and the source offer are always there)
  *   seo             title and description for search results and link previews (Open Graph; `card`: the X card's size,
@@ -45,6 +55,12 @@
  *                   submit label, the message's label, the fields it asks above the fold by key, a fold {label, fields}
  *                   that also holds the name and the message, and what it says once sent, where {company} and {email}
  *                   are the sender's)
+ *
+ * THE FIRST SCREEN (mold_v0-164): the header and the hero ask for at most FIRST_SCREEN_CALLS (2) things: signing in
+ * and one other (sign-up or a request for access, or the app's own). A call is where it leads, so the same one in the
+ * header and in the hero counts once (an app may repeat it, as the first product's page does); the shell never repeats one
+ * itself. A hero's second call or a header link that would add a third is refused with what to do instead (firstScreenProblems,
+ * also run on the merged block by gen-packs). Other ways in (the install pages, docs) go in the footer or a later section.
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
  * still read, and converted to sections (toSections) when gen-packs writes the build: hero (coverage becomes its strip),
@@ -94,13 +110,22 @@ const Footer = z.object({
   tagline: text(200).optional(), copyright: text(120).optional(), shell_links: z.boolean().optional(),
 }).strict();
 /**
- * The header (mold_v0-122): up to 2 links beside the ways in (default: the install pages), and which ways in:
+ * The header (mold_v0-122; mold_v0-164: at most 1 link, none by default, as the first screen allows): which ways in:
  * "sign_in_and_start" (default: sign in, and the start call) or "account" (one account button: sign in, or open the
  * console when signed in, with an arrow).
  */
 const Header = z.object({
-  links: z.array(Cta).max(2).optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
+  links: z.array(Cta).max(1, "at most 1 link: the first screen asks for at most two things (sign in and one other)").optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
   sign_in: Cta.optional(), open: Cta.optional(),
+}).strict();
+/**
+ * An open-source app's repository (mold_v0-164): the header's GitHub button and a footer link. Every component that only
+ * an open-source app has is configured under this key (a later one, such as a star count, joins it).
+ */
+export const GITHUB_REPO = /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+const OpenSource = z.object({
+  repo: z.string().regex(GITHUB_REPO, "a GitHub repository's address: https://github.com/<owner>/<repo>"),
+  label: text(40).optional(),
 }).strict();
 /** Search results and link previews: a title, a description, and the X card's size (default the large image card). */
 const Seo = z.object({ title: text(70).optional(), description: text(320).optional(), card: z.enum(["summary", "summary_large_image"]).optional() }).strict();
@@ -135,8 +160,8 @@ const LEGACY_PAGE_KEYS = ["hero", "coverage", "value_points", "how_it_works", "f
 
 // ---------- the section library (mold_v0-122) ----------
 
-/** The section types, in the wireframe's order: with no `sections`, the page shows every one of them in this order. */
-export const SECTION_TYPES = ["hero", "problem", "concept", "how_it_works", "proof", "where_you_work", "faq", "cta"] as const;
+/** The section types, in the wireframe's order (with no `sections`, the page shows each but `logos` in this order). */
+export const SECTION_TYPES = ["hero", "logos", "problem", "concept", "how_it_works", "proof", "where_you_work", "faq", "cta"] as const;
 export type SectionType = (typeof SECTION_TYPES)[number];
 /** At most this many sections on a page; each type at most once, but a call to action up to MAX_CTAS times. */
 export const MAX_SECTIONS = 10;
@@ -258,6 +283,11 @@ const RequestPage = z.object({
   }).strict().refine((f) => { const k = [...(f.fields ?? []), ...(f.more?.fields ?? [])]; return new Set(k).size === k.length; }, "each field once, above the fold or in it").optional(),
 }).strict();
 
+/** A logo file of the pack that declares the block (mold_v0-164): gen-packs reads it from packs/<id>/assets/. */
+export const LOGO_FILE = /^assets\/(?:[a-z0-9][a-z0-9-]{0,39}\/)?[a-z0-9][a-z0-9-]{0,59}\.(?:svg|png)$/;
+/** A logo file's ceiling in bytes: a row of 40 stays light. */
+export const LOGO_MAX_BYTES = 30 * 1024;
+
 const SECTION_SCHEMAS = {
   hero: z.object({
     type: z.literal("hero"), id: Id.optional(),
@@ -271,6 +301,15 @@ const SECTION_SCHEMAS = {
       logos: z.array(z.object({ logo: LogoId, label: text(30) }).strict()).min(1).max(12).optional(),
       note: text(300).optional(),
     }).strict().refine((s) => !(s.items && s.logos), "a strip shows text badges (items) or logos, not both").optional(),
+  }).strict(),
+  logos: z.object({
+    type: z.literal("logos"), id: Id.optional(), title: text(80).optional(), label: text(60).optional(),
+    items: z.array(z.object({
+      name: text(60),
+      logo: z.string().regex(LOGO_FILE, "an image file of the pack's own: assets/<name>.svg or assets/<name>.png (lower-case letters, digits and dashes)").optional(),
+      href: Href.optional(),
+    }).strict()).min(1).max(40).refine((a) => new Set(a.map((x) => x.name)).size === a.length, "each name once"),
+    note: text(300).optional(),
   }).strict(),
   problem: z.object({
     type: z.literal("problem"), ...head,
@@ -316,12 +355,12 @@ export type SectionOf<K extends SectionType> = z.infer<(typeof SECTION_SCHEMAS)[
 /** The block a build shows (what gen-packs writes): sections (absent: the whole wireframe, neutral), footer, seo. */
 export interface Landing {
   sections?: Section[]; header?: z.infer<typeof Header>; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo>;
-  request_page?: z.infer<typeof RequestPage>;
+  request_page?: z.infer<typeof RequestPage>; open_source?: z.infer<typeof OpenSource>;
 }
 
 /** Each section's anchor when it names none (a second call to action gets -2, a third -3). */
 export const DEFAULT_IDS: Record<SectionType, string> = {
-  hero: "intro", problem: "problem", concept: "overview", how_it_works: "how-it-works", proof: "what-you-get",
+  hero: "intro", logos: "logos", problem: "problem", concept: "overview", how_it_works: "how-it-works", proof: "what-you-get",
   where_you_work: "where-you-work", faq: "faq", cta: "get-started",
 };
 
@@ -343,6 +382,7 @@ const NewSchema = z.object({
   footer: Footer.optional(),
   seo: Seo.optional(),
   request_page: RequestPage.optional(),
+  open_source: OpenSource.optional(),
 }).strict();
 
 interface Issue { path: (string | number)[]; message: string }
@@ -360,9 +400,14 @@ function landingIssues(json: unknown): Issue[] {
     const mixed = LEGACY_PAGE_KEYS.filter((k) => k in o);
     if (mixed.length) return [{ path: [], message: `${mixed.join(", ")} beside sections: an old-style block (mold_v0-091) and sections cannot be mixed; put each into sections as {"type": ...} (coverage is the hero's strip, value_points a concept's items, features proof's items, closing a cta)` }];
   }
-  if (isLegacy(o)) return issuesOf(LegacySchema.safeParse(o));
+  if (isLegacy(o)) {
+    const old = issuesOf(LegacySchema.safeParse(o));
+    // The old block's page has the same first screen (its hero, the shell's header): held to the same rule, at its old keys.
+    return old.length ? old : firstScreenIssues(toSections(strip(o) as LegacyLanding)).map((i) => ({ ...i, path: i.path[0] === "sections" ? ["hero", ...i.path.slice(2)] : i.path }));
+  }
   const top = issuesOf(NewSchema.safeParse(o));
-  if (top.length || !Array.isArray(o.sections)) return top;
+  if (top.length) return top;
+  if (!Array.isArray(o.sections)) return firstScreenIssues(o as Landing);
   const out: Issue[] = [];
   const count: Record<string, number> = {};
   o.sections.forEach((s, i) => {
@@ -380,7 +425,51 @@ function landingIssues(json: unknown): Issue[] {
     const ids = sectionIds(o.sections as { type: string; id?: string }[]);
     ids.forEach((id, i) => { if (ids.indexOf(id) !== i) out.push({ path: ["sections", i, "id"], message: `the anchor ${id} is another section's: give each its own id` }); });
   }
+  return out.length ? out : firstScreenIssues(o as Landing);
+}
+
+// ---------- the first screen (mold_v0-164) ----------
+
+/** The first screen (the header and the hero) asks for at most this many things: signing in and one other. */
+export const FIRST_SCREEN_CALLS = 2;
+/** Where the shell's own ways in lead (web/src/features/site/site-ctas.ts): signing in, and the start (sign-up, or the request form under invite-only accounts). */
+const SIGN_IN_PATHS = ["/app", "/auth/sign-in"];
+const START_PATHS = ["/auth/sign-up", "/request-access"];
+
+function firstScreenIssues(l: Landing): Issue[] {
+  const signIn = new Set([...SIGN_IN_PATHS, ...(l.header?.sign_in ? [l.header.sign_in.href] : [])]);
+  const callOf = (href: string) => (signIn.has(href) ? "sign in" : START_PATHS.includes(href) ? "the start" : href);
+  const sections = l.sections;
+  const hero = sections === undefined ? ({ type: "hero" } as SectionOf<"hero">) : sections[0]?.type === "hero" ? (sections[0] as SectionOf<"hero">) : null;
+  const at = sections === undefined ? [] : ["sections", 0];
+  // In the order a visitor reads them: the header's sign-in, its link, then the hero's calls. The shell's header shows
+  // the start itself only when the page has no hero call (landing.tsx SiteHeader).
+  const shown: { call: string; path: (string | number)[]; what: string }[] = [{ call: "sign in", path: ["header"], what: "the header's sign-in" }];
+  (l.header?.links ?? []).forEach((k, i) => shown.push({ call: callOf(k.href), path: ["header", "links", i], what: `the header link "${k.label}"` }));
+  if (hero) {
+    const p = hero.primary_cta;
+    // The wireframe's hero (no sections) is the shell's: what pushes it over is the header's link.
+    shown.push({ call: p === "account" ? "sign in" : p ? callOf(p.href) : "the start", path: sections === undefined ? ["header", "links"] : [...at, "primary_cta"], what: "the hero's call to action" });
+    if (hero.secondary_cta) shown.push({ call: callOf(hero.secondary_cta.href), path: [...at, "secondary_cta"], what: `the hero's second call "${hero.secondary_cta.label}"` });
+  } else if (l.header?.account !== "account" && !(l.header?.links ?? []).length) shown.push({ call: "the start", path: ["header"], what: "the header's start" });
+  const out: Issue[] = [];
+  const seen: string[] = [];
+  for (const s of shown) {
+    if (seen.includes(s.call)) continue;
+    seen.push(s.call);
+    if (seen.length > FIRST_SCREEN_CALLS) out.push({ path: s.path, message: `the first screen (the header and the hero) asks for at most ${FIRST_SCREEN_CALLS} things, signing in and one other (${seen.slice(0, FIRST_SCREEN_CALLS).join(", ")}); ${s.what} adds another (${s.call}). Keep one call to action in the hero (primary_cta), and put other ways in (an install page, docs) in the footer's links or a later section` });
+  }
+  // An open-source app's repository is the header's GitHub button (and a footer link): not a hero link as well.
+  const repo = l.open_source?.repo.replace(/(\.git)?\/?$/, "").toLowerCase();
+  if (repo && hero?.links) hero.links.forEach((k, i) => {
+    if (k.href.replace(/(\.git)?\/?$/, "").toLowerCase() === repo) out.push({ path: [...at, "links", i], message: `${k.href} is open_source.repo, which the header's GitHub button links on every page (and the footer): take it out of the hero's links` });
+  });
   return out;
+}
+
+/** The first screen's problems of a block a build shows (a merged one: gen-packs), as "landing.path: message". */
+export function firstScreenProblems(l: Landing | null): string[] {
+  return l ? firstScreenIssues(l).map((i) => `landing${i.path.length ? "." : ""}${where(i.path)}: ${i.message}`) : [];
 }
 
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -456,6 +545,6 @@ export function mergeLanding(fromPack: object | null | undefined, fromProfile: o
     sections = next;
   } else if (prof?.sections) sections = prof.sections;
   const header = prof?.header ?? pack?.header, footer = prof?.footer ?? pack?.footer, seo = prof?.seo ?? pack?.seo;
-  const request_page = prof?.request_page ?? pack?.request_page;
-  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}), ...(request_page ? { request_page } : {}) };
+  const request_page = prof?.request_page ?? pack?.request_page, open_source = prof?.open_source ?? pack?.open_source;
+  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}), ...(request_page ? { request_page } : {}), ...(open_source ? { open_source } : {}) };
 }
