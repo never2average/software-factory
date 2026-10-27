@@ -10138,6 +10138,64 @@
       },
       "additionalProperties": false
     },
+    "client_skill": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 30000
+        },
+        "files": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 30000
+          }
+        },
+        "words": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "description",
+              "instructions_heading",
+              "tools_heading",
+              "tool_column",
+              "does_column",
+              "no_tools",
+              "connect_heading",
+              "connect_text",
+              "tools_link",
+              "tools_title",
+              "tools_intro",
+              "reads_only",
+              "changes"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 600
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "console": {
       "type": "object",
       "properties": {

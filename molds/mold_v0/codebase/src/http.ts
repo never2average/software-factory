@@ -88,7 +88,7 @@ import { NS } from "./namespace.js";
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://${HOST}:${PORT}`).replace(/\/$/, "");
-/** Where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118): the app's own domain when APP_MCP_URL names it, else PUBLIC_URL. */
+/** Where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118, 144): APP_MCP_URL, else the console's own address, else PUBLIC_URL. */
 const MCP_URL = () => mcpUrlSetting() ?? PUBLIC_URL;
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 /** The admin panel (/admin) and customer portal (/app): the Next.js app in web/, built to static files (npm run web:build). */

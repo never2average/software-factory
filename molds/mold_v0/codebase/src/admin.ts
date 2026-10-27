@@ -72,7 +72,7 @@ export function integrations() {
  * never goes in the URL: URLs end up in logs, browser history and screenshots.
  */
 export function connectInfo(key?: string) {
-  const base = mcpUrlSetting() ?? publicUrl(); // the app's own domain once it has one (APP_MCP_URL, mold_v0-118)
+  const base = mcpUrlSetting() ?? publicUrl(); // the front door: the app's own domain (APP_MCP_URL, mold_v0-118), else the console's address (mold_v0-144)
   const url = `${base}/mcp`;
   // Every client the app supports, with its exact way in (src/connect-catalog.ts).
   const signInAvailable = Boolean(clerk.clerkEnabled() && clerk.frontendApi());
