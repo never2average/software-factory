@@ -131,6 +131,76 @@ function fieldInput(f: Field, labelOf: (area: string) => string): z.ZodType {
   return f.required ? described : described.optional();
 }
 
+/** The JSON Schema subset an agent run's input takes (src/agent-workspace-config.ts InputSchemaSchema). */
+type InputJsonSchema = {
+  type?: string | string[]; properties?: Record<string, InputJsonSchema>; required?: string[]; additionalProperties?: boolean | InputJsonSchema;
+  items?: InputJsonSchema; enum?: unknown[]; const?: unknown; pattern?: string; minLength?: number; maxLength?: number;
+  minimum?: number; maximum?: number; minItems?: number; maxItems?: number; description?: string;
+};
+
+/**
+ * mold_v0-166: an argument a run writes to an input file (agent `inputs`, from `scope.<argument>`) is typed in its start
+ * tool by that input's schema, so a client sees the object it must give (its properties, which are required, their
+ * patterns and choices) rather than "any JSON value". The run's harness checks the value against the same schema again.
+ */
+function schemaInput(s: InputJsonSchema, depth = 0): z.ZodType {
+  if (depth > 12) return z.unknown();
+  const types = s.type === undefined ? [] : Array.isArray(s.type) ? s.type : [s.type];
+  const one = (t: string): z.ZodType => {
+    switch (t) {
+      case "string": {
+        let v = z.string();
+        if (s.minLength !== undefined) v = v.min(s.minLength);
+        if (s.maxLength !== undefined) v = v.max(s.maxLength);
+        if (s.pattern !== undefined) v = v.regex(new RegExp(s.pattern, "u"));
+        return v;
+      }
+      case "number": case "integer": {
+        let v = t === "integer" ? z.number().int() : z.number();
+        if (s.minimum !== undefined) v = v.min(s.minimum);
+        if (s.maximum !== undefined) v = v.max(s.maximum);
+        return v;
+      }
+      case "boolean": return z.boolean();
+      case "null": return z.null();
+      case "array": {
+        let v = z.array(s.items ? schemaInput(s.items, depth + 1) : z.unknown());
+        if (s.minItems !== undefined) v = v.min(s.minItems);
+        if (s.maxItems !== undefined) v = v.max(s.maxItems);
+        return v;
+      }
+      case "object": {
+        const req = new Set(s.required ?? []);
+        const shape = Object.fromEntries(Object.entries(s.properties ?? {}).map(([k, sub]) => {
+          const v = schemaInput(sub, depth + 1);
+          return [k, req.has(k) ? v : v.optional()];
+        }));
+        const ap = s.additionalProperties;
+        return ap === false ? z.strictObject(shape) : ap && typeof ap === "object" ? z.object(shape).catchall(schemaInput(ap, depth + 1)) : z.looseObject(shape);
+      }
+      default: return z.unknown();
+    }
+  };
+  let v: z.ZodType;
+  if (s.enum) v = s.enum.every((e) => typeof e === "string") ? z.enum(s.enum as [string, ...string[]]) : z.union(s.enum.map((e) => z.literal(e as string | number | boolean | null)) as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]);
+  else if (s.const !== undefined) v = z.literal(s.const as string | number | boolean | null);
+  else if (types.length === 1) v = one(types[0]!);
+  else if (types.length > 1) v = z.union(types.map(one) as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]);
+  else v = z.unknown();
+  return s.description ? v.describe(plain(s.description, 300)) : v;
+}
+
+/** The input schema each of an agent kind's arguments is written to a file with, by argument name (mold_v0-166). */
+function argInputSchemas(k: Kind): Map<string, InputJsonSchema> {
+  const inputs = (k as { agent?: { inputs?: Record<string, { from: string; schema: InputJsonSchema }> } }).agent?.inputs ?? {};
+  const out = new Map<string, InputJsonSchema>();
+  for (const inp of Object.values(inputs)) {
+    const m = /^scope\.([A-Za-z0-9_-]{1,64})$/.exec(inp.from);
+    if (m && !out.has(m[1]!)) out.set(m[1]!, inp.schema);
+  }
+  return out;
+}
+
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE = (destructive: boolean, idempotent: boolean, openWorld = false) => ({ readOnlyHint: false, destructiveHint: destructive, idempotentHint: idempotent, openWorldHint: openWorld });
 
@@ -265,7 +335,13 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
     for (const k of kinds) {
       const label = plain(k.label ?? k.name, 80), about = k.description ? ` ${plain(k.description, 300)}` : "";
       const args = (k.args ?? []).map((x) => RecordFieldSchema.parse(x));
-      const shape: Record<string, z.ZodType> = Object.fromEntries(args.map((f) => [f.name, fieldInput(f, labelOf)]));
+      const typed = argInputSchemas(k);
+      const shape: Record<string, z.ZodType> = Object.fromEntries(args.map((f) => {
+        const sch = typed.get(f.name);
+        if (!sch) return [f.name, fieldInput(f, labelOf)];
+        const v = schemaInput(sch).describe(`${plain(f.label, 80)}.${f.help ? ` ${plain(f.help, 300)}` : ""}`);
+        return [f.name, f.required ? v : v.optional()];
+      }));
       if (assetAreas.length) {
         if ("target_asset" in shape) problems.push(at(`job kind ${k.name} has an argument named target_asset, which its start tool uses for the target`));
         shape.target_asset = z.strictObject({ area: z.enum(assetAreas as [string, ...string[]]), key: recordKey("The record's key") }).optional()

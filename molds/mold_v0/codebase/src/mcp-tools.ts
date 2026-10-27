@@ -254,7 +254,7 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
   const list = await onboardingFor(ws.id, t.pack);
   const steps = list.steps.map((s) => {
     const d = declared.get(s.id);
-    return { id: s.id, label: plain(s.label, 120), done: s.done, at: s.at, ...(s.help ? { help: plain(s.help, 500) } : {}), ...(s.done ? {} : { how: howTo(d?.done_when ?? "") }) };
+    return { id: s.id, label: plain(s.label, 120), done: s.done, at: s.at, ...(s.help ? { help: plain(s.help, 500) } : {}), ...(s.done ? {} : { how: howTo(d?.how ?? d?.done_when ?? "") }) };
   });
   const nextStep = steps.find((s) => !s.done);
   const app = plain(fill("{product}"), 80), about = firstSentence(pack.definition.mcp?.instructions ?? PROFILE.short_description);

@@ -78,6 +78,34 @@ export function upstreamProtocol(url: string, o: FetchOptions = {}): "https" | "
 }
 
 /**
+ * (mold_v0-166) The current commit of `branch` of the repository at `url`, or, with no branch, its default branch and
+ * that branch's commit: `git ls-remote` with the same hygiene as fetchPinned (no machine configuration, no prompt, no
+ * credential, only the repository's protocol, no redirect). Throws AgentRunError when it cannot be read or has no such
+ * branch.
+ */
+export async function headCommit(url: string, branch: string | undefined, o: FetchOptions & { home: string }): Promise<{ commit: string; branch: string }> {
+  const proto = upstreamProtocol(url, o);
+  if (branch !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}$/.test(branch) || branch.includes("..") || branch.endsWith(".lock") || branch.endsWith("/")))
+    throw new AgentRunError(`branch ${branch.slice(0, 60)} is not a plain branch name`);
+  mkdirSync(o.home, { recursive: true });
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: o.home, LANG: "C.UTF-8",
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "/bin/false", SSH_ASKPASS: "/bin/false", GIT_ALLOW_PROTOCOL: proto,
+  };
+  const cfg = ["-c", "protocol.allow=never", "-c", `protocol.${proto}.allow=always`, "-c", "http.followRedirects=false", "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null"];
+  const r = await git([...cfg, "ls-remote", ...(branch === undefined ? ["--symref", url, "HEAD"] : [url, `refs/heads/${branch}`])], { env, cwd: o.home, timeoutMs: o.timeoutMs ?? 60_000 });
+  if (r.code !== 0) {
+    const network = /could not resolve|timed out|failed to connect|early EOF|RPC failed/i.test(r.err);
+    throw new AgentRunError(`${url} could not be read without a credential${network ? " (the network failed)" : " (a private repository? then give its commit)"}: ${r.err.trim().split("\n").slice(-1)[0]?.slice(0, 200) ?? ""}`, network ? "infrastructure" : "run");
+  }
+  const lines = r.out.split("\n");
+  const name = branch ?? /^ref: refs\/heads\/(\S+)\tHEAD$/.exec(lines.find((l) => l.startsWith("ref: ")) ?? "")?.[1];
+  const commit = lines.map((l) => /^([0-9a-f]{40}|[0-9a-f]{64})\t(\S+)$/.exec(l)).find((m) => m && m[2] === (branch === undefined ? "HEAD" : `refs/heads/${branch}`))?.[1];
+  if (!name || !commit) throw new AgentRunError(`${url} has no ${branch === undefined ? "default branch" : `branch ${branch}`}`);
+  return { commit, branch: name };
+}
+
+/**
  * Fetch `commit` of `url` into the empty directory `dest` (its tree only, no .git). Throws AgentRunError when the
  * repository is refused, the fetch fails, or what arrived is not exactly that commit.
  */

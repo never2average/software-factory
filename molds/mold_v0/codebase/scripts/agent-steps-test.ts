@@ -23,6 +23,9 @@
 //     links them read-only, never writes them back; a second run uses the cache; another workspace has its own cache and
 //     cannot read this one's; refused: a host off the list, a short commit, a repository over its size; the cache is
 //     capped (least recently used go) and cleaned (old entries, unfinished fetches); a failing or slow step fails the run.
+//  6. 166 pin: an input's repositories without a commit pinned to their branch's head (git ls-remote, the default
+//     branch when none is named), a given commit kept, a host off the pin's list or an address that is not https
+//     refused, a missing branch refused; definePack refuses a pin host outside the egress.
 //  5. 072 tools: a kind's pinned tool (a stand-in installed through installTools with its checksum) is first on the
 //     run's PATH; a kind whose tool the image lacks, or whose installed file changed, is refused before anything runs.
 import assert from "node:assert/strict";
@@ -189,8 +192,54 @@ try {
     assert.throws(() => bad({ credentials: ["agent_token"], steps: [{ name: "s", checkout: { ...checkout, credential: "agent_token" } }] }), /a checkout's credential \(the runner's own\): the command does not receive it/);
     assert.throws(() => bad({ inputs: { spec: { ...inputs.spec, path: ".git/config" } } }), /a tool's own settings or code/);
     assert.throws(() => bad({ inputs: { spec: { ...inputs.spec, schema: { type: "string", pattern: "^\\:x$" } } } }), /regular expression/);
+    // mold_v0-166: a pin's hosts are reached by git (each in the egress); a pin is for a json input.
+    assert.throws(() => bad({ inputs: { spec: { ...inputs.spec, pin: { list: "/repos", hosts: ["evil.example"] } } } }), /evil\.example is not in the kind's egress/);
+    assert.throws(() => bad({ inputs: { spec: { ...inputs.spec, format: "text", pin: { list: "/repos", hosts: ["git.allowed.example"] } } } }), /pin is for a json input/);
+    assert.throws(() => bad({ inputs: { spec: { ...inputs.spec, pin: { list: "repos", hosts: ["git.allowed.example"] } } } }), /JSON pointer/);
+    assert.doesNotThrow(() => bad({ inputs: { spec: { ...inputs.spec, pin: { list: "/repos", hosts: ["git.allowed.example"] } } } }));
     assert.doesNotThrow(() => bad({ results_from: resultsFrom, tools: ["sops"], inputs, steps: [{ name: "s", command: ["true"], credentials: ["agent_token"] }] }));
     console.log("✓ definePack refuses results_from beside results, undeclared {$args}, a status outside the five, a tool outside the catalogue, an input under the write-back or from an undeclared argument, a schema keyword outside the subset, credentials and hosts the kind does not have, steps past the deadline, a mount without {name}");
+  }
+
+  // ---------- 6. 166 pin (plain functions: no run needed) ----------
+  if (want("166")) {
+    const aw = await import("../src/agent-workspace.js");
+    const steps = await import("../src/agent-workspace-steps.js");
+    const r = repo("pinned", { "README.md": "pinned\n" });
+    const home = path.join(TMP, "pin-home");
+    assert.deepEqual(await aw.headCommit(r.url, "main", { allowFile: true, home }), { commit: r.commit, branch: "main" });
+    assert.deepEqual(await aw.headCommit(r.url, undefined, { allowFile: true, home }), { commit: r.commit, branch: "main" }, "no branch: the default branch");
+    await assert.rejects(aw.headCommit(r.url, "nope", { allowFile: true, home }), /has no branch nope/);
+    await assert.rejects(aw.headCommit(r.url, "../x", { allowFile: true, home }), /not a plain branch name/);
+    await assert.rejects(aw.headCommit(r.url, "main", { home }), /must be fetched over https/, "file:// only when the runner is told");
+    const pin = { list: "/repos", url: "url", branch: "defaultBranch", commit: "pinnedCommit", hosts: ["git.example.com"], max_items: 3 };
+    const asked: string[] = [];
+    const fake = async (u: string, b: string | undefined) => { asked.push(`${u}#${b ?? ""}`); return { commit: "c".repeat(40), branch: b ?? "trunk" }; };
+    const value = { appId: "x", repos: [{ url: "https://git.example.com/a/b", defaultBranch: "dev" }, { url: "https://git.example.com/a/c" }, { url: "https://git.example.com/a/d", pinnedCommit: "d".repeat(40) }] };
+    const out = await steps.pinCommits(value, pin, fake) as typeof value & { repos: Record<string, string>[] };
+    assert.deepEqual(out.repos.map((x) => [x.defaultBranch, x.pinnedCommit]), [["dev", "c".repeat(40)], ["trunk", "c".repeat(40)], [undefined, "d".repeat(40)]]);
+    assert.deepEqual(asked, ["https://git.example.com/a/b#dev", "https://git.example.com/a/c#"], "a given commit is never asked for");
+    assert.equal((value.repos[1] as Record<string, unknown>).pinnedCommit, undefined, "the run's own value is not changed");
+    await assert.rejects(steps.pinCommits({ repos: [{ url: "https://other.example.com/a/b" }] }, pin, fake), /not one of the pin's hosts/);
+    await assert.rejects(steps.pinCommits({ repos: [{ url: "http://git.example.com/a/b" }] }, pin, fake), /must be an https:\/\/ address/);
+    await assert.rejects(steps.pinCommits({ repos: [{}, {}, {}, {}] }, pin, fake), /more than 3/);
+    await assert.rejects(steps.pinCommits({ repos: "x" }, pin, fake), /is not a list/);
+    // The start tool types an argument written to an input file by that input's schema (not "any JSON value").
+    const { generateCatalog } = await import("../src/mcp-catalog.js");
+    const { z } = await import("zod");
+    const pk = { id: "pin_pack", name: "Pin pack", definition: definePack({ id: "pin_pack", agentJobKinds: [{ ...kind("pin_add", { inputs: { spec: { ...inputs.spec, pin: { list: "/repos", hosts: ["git.allowed.example"] } } } }),
+      credentials: [], args: [{ name: "spec", label: "Spec", type: "json", required: true, help: "The spec." }] } as never] }) };
+    const cat = generateCatalog([pk]);
+    assert.deepEqual(cat.problems, []);
+    const st = cat.tools.find((t) => t.op === "start" && t.kind === "pin_add")!;
+    const shape = z.object(st.input);
+    assert.ok(shape.safeParse({ spec: { appId: "web", repos: [{ repoId: "web", url: "https://git.allowed.example/a/web", pinnedCommit: "a".repeat(40) }] } }).success);
+    assert.ok(!shape.safeParse({ spec: { appId: "Web!", repos: [] } }).success, "the schema's pattern holds in the tool");
+    assert.ok(!shape.safeParse({ spec: { appId: "web", repos: [], extra: 1 } }).success, "additionalProperties false holds in the tool");
+    assert.ok(!shape.safeParse({}).success, "a required argument stays required");
+    const js = JSON.stringify(z.toJSONSchema(shape));
+    assert.ok(js.includes('"appId"') && js.includes('"pinnedCommit"') && js.includes("The spec."), js.slice(0, 300));
+    console.log("✓ 166 pin: repositories without a commit are pinned to their branch's head (the default branch when none is named); a given commit is kept; a host off the list, a non-https address, a missing branch refused");
   }
 
   // ---------- the fixture pack ----------
