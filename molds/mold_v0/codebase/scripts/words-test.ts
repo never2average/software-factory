@@ -210,6 +210,7 @@ try {
     'export const a = "You can\'t launch simulations yet";',                       // prose: counts
     'export const b = { kind: "simulation", id: "simulation_id" };',               // one-token values and keys: no
     'export const c = "SELECT id FROM simulations WHERE org_id = $1";',            // SQL: no
+    'export const g = "constraint x.x_key u UNIQUE (org_id, scenario, step)";',     // a catalog definition (mold_v0-143): no
     'export const d = `run ${x} of simulationId and run_simulation`; const x = 1;', // identifiers: no
     'export const e = "Launch a {run} from `simulations.created_by`";',            // a placeholder and a code span: no
     "export const f = 'Simulations';",                                              // a capitalised label: counts
@@ -224,7 +225,7 @@ try {
   assert.match(checkConcepts(tree, c({ "src/a.ts": 3, "web/src/b.tsx": 1 })).problems.join("\n"), /lower the ceiling .* to 2/);
   assert.match(checkConcepts(tree, c({ "src/a.ts": 2, "web/src/b.tsx": 1, "src/gone.ts": 1 })).problems.join("\n"), /src\/gone\.ts: carries no concept word any more/);
   assert.match(checkConcepts(tree, c({})).problems.join("\n"), /web\/src\/b\.tsx: 1 concept word\(s\) as prose, ceiling 0/);
-  ok("the concept ratchet: prose and labels count; identifiers, SQL, placeholders, code spans, keys and comments do not; over, under and stale ceilings fail");
+  ok("the concept ratchet: prose and labels count; identifiers, SQL (catalog definitions too), placeholders, code spans, keys and comments do not; over, under and stale ceilings fail");
   // mold_v0-113: the staff docs (docs/*.md) are prose outside fenced blocks: a sentence counts, a code span, an
   // identifier, a path and a fenced block do not.
   put("docs/a.md", ["# Limits", "", "New simulations need a subscription.", "The `simulations` table and `run_simulation`; see docs/scenarios.md.", "```", "simulations running: 3", "```", "| Personas | x |"].join("\n"));

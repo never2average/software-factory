@@ -137,8 +137,21 @@
                 "pattern": "^\\d{4}_[a-z0-9_]+$"
               },
               "additionalProperties": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                ]
               }
             },
             "labels": {
@@ -9125,14 +9138,14 @@
           "minLength": 1,
           "maxLength": 400,
           "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
-          "description": "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts; a host pack's tips). The shell's own: Series"
+          "description": "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts, /admin/journeys; the tips component, src/tips.ts). The shell's own: Series"
         },
         "journeys.one": {
           "type": "string",
           "minLength": 1,
           "maxLength": 400,
           "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
-          "description": "what one of a host pack's step-by-step pipelines is called on /app Setup (its `journeys` component). The shell's own: guide"
+          "description": "what one of the step-by-step pipelines of the `journeys` component is called (/app Setup, `/app/journeys`, `/admin/journeys` and their refusals; src/journeys.ts). The shell's own: guide"
         },
         "journeys.many": {
           "type": "string",
@@ -9660,6 +9673,404 @@
       ],
       "additionalProperties": false
     },
+    "journeys": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "templates": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,47}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              },
+              "outcome": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              },
+              "who": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "time": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "example": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "result": {
+                    "type": "string",
+                    "maxLength": 600
+                  }
+                },
+                "required": [
+                  "title",
+                  "result"
+                ],
+                "additionalProperties": false
+              },
+              "stages": {
+                "minItems": 1,
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,47}$"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "why": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "prompt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 600,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "tools": {
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                      }
+                    },
+                    "expect": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "manual": {
+                      "type": "boolean"
+                    },
+                    "link": {
+                      "type": "object",
+                      "properties": {
+                        "href": {
+                          "type": "string",
+                          "pattern": "^\\/app(\\/[a-z0-9/-]*)?$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                        }
+                      },
+                      "required": [
+                        "href",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "why",
+                    "prompt",
+                    "tools",
+                    "expect"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "outcome",
+              "who",
+              "time",
+              "example",
+              "stages"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "seeded_before_ledger": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,47}$"
+          }
+        },
+        "launch": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              }
+            },
+            "groups": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,30}$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "words": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "stages_count",
+              "stage_twice",
+              "not_a_tool",
+              "needs_name",
+              "exists",
+              "no_such",
+              "reorder_ids",
+              "no_such_stage",
+              "stage_by_tools",
+              "no_own_use_case",
+              "remove_own_only",
+              "import_list",
+              "import_max",
+              "no_use_case",
+              "no_help",
+              "own_request",
+              "picked_already",
+              "closed",
+              "withdraw_own",
+              "release_helper",
+              "close_who",
+              "ask_signed_in",
+              "help_signed_in",
+              "help_action",
+              "default_expect",
+              "export_prefix",
+              "use_case_name_placeholder",
+              "stage_prompt_placeholder",
+              "stage_expect_placeholder"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "journey_templates",
+              "journey_progress",
+              "journey_seed",
+              "adoption_help"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "tips": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "always_after": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "interval_hours": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 720
+        },
+        "recipes": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,47}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              },
+              "goal": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              },
+              "trigger": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+              },
+              "steps": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,47}$"
+                    },
+                    "when": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "channels": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "chat",
+                          "app",
+                          "email",
+                          "slack"
+                        ]
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 280,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "prompt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    "link": {
+                      "type": "string",
+                      "pattern": "^(https:\\/\\/|\\/app)\\S{0,490}$"
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "when",
+                    "channels",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "goal",
+              "trigger",
+              "steps"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "words": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "chat_line",
+              "chat_try",
+              "chat_off",
+              "no_account",
+              "message_required",
+              "bad_link",
+              "no_tip",
+              "no_nudge",
+              "bad_id",
+              "bad_secret",
+              "prompt_placeholder"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "nudges",
+              "nudge_prefs"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "admin_mcp": {
       "type": "object",
       "properties": {
@@ -10011,13 +10422,11 @@
           "additionalProperties": false
         },
         "components": {
-          "maxItems": 3,
+          "maxItems": 1,
           "type": "array",
           "items": {
             "type": "string",
             "enum": [
-              "tips",
-              "journeys",
               "research"
             ]
           }

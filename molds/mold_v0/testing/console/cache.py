@@ -36,7 +36,7 @@ own copy; when the routes manifest does not carry the built address exactly once
 afresh), so a Next.js that stores it elsewhere can never serve a stale address. The world's /healthz probe goes through
 that rewrite, so a wrong port fails the run loudly.
 """
-import contextlib, fcntl, hashlib, json, os, shutil, subprocess, tempfile, time
+import contextlib, fcntl, hashlib, json, os, re, shutil, subprocess, tempfile, time
 
 RECIPE = "next build --webpack; clerk stand-in; NEXT_PUBLIC_AUTH_PROVIDER=clerk; v1"
 SKIP = {"node_modules", ".next", ".turbo"}
@@ -226,15 +226,17 @@ def evict(rootdir, keep, protect=(), say=print):
 
 
 def patch_port(next_dir, old, new):
-    """Points a built console's API rewrite at 127.0.0.1:<new> instead of :<old>. False (nothing written) when the routes
-    manifest does not carry the old address exactly once."""
+    """Points a built console's API rewrites at 127.0.0.1:<new> instead of :<old>. False (nothing written) when the routes
+    manifest does not carry the old address, or carries it anywhere but as a whole rewrite destination (followed by "/" or
+    a closing quote): the console proxies several API paths (/:path*, /admin/mcp, /admin/session), so several are expected."""
     a, b = f"http://127.0.0.1:{old}", f"http://127.0.0.1:{new}"
     texts = {}
     for f in PORT_FILES:
         p = os.path.join(next_dir, f)
         if os.path.exists(p): texts[p] = open(p).read()
     rm = os.path.join(next_dir, "routes-manifest.json")
-    if texts.get(rm, "").count(a) != 1: return False
+    m = texts.get(rm, "")
+    if not m.count(a) or len(re.findall(re.escape(a) + r'(?=[/"])', m)) != m.count(a): return False
     for p, t in texts.items():
         if a in t:
             os.remove(p)   # a new file, never one written in place

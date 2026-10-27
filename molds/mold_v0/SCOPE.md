@@ -202,6 +202,17 @@ status, finding fingerprint, evidence reference).
   connect time and saved and searched by two MCP tools the pack names, every word the pack's or a neutral default. Its
   tables are the shell's (`0025_account_context_memory`), adopted where a host pack made them. Off with zero packs.
 
+### Journeys and in-chat tips
+
+- **Today.** The first product's onboarding journeys (use-case pipelines with real progress, adoption person by person,
+  help requests) and its in-chat tips (a workflow tool's webhook, the tip at the end of the next tool answer, Setup and
+  admin views) were its host pack's code (`server/playbooks.ts`, `server/journeys.ts`) and pages until mold_v0-143.
+- **Generalised by.** mold_v0-143, **built**: two shell components turned on by one pack's pack.json `journeys` and
+  `tips` (`src/journeys.ts`, `src/tips.ts`, `web/src/features/journeys`): built-in templates seeded once, progress from
+  real tool calls, `/app/journeys` and `/admin/journeys`, the webhook and the tip on every tool answer of the build, every
+  word the pack's or a neutral default. Their tables are the shell's (`0026_journeys_and_tips`), adopted where a host
+  pack made them. Off with zero packs.
+
 ### Billing and email (optional)
 
 - **Today.** Stripe is the system of record (`src/billing.ts`, `src/plan-config.ts`, `src/experiments.ts`,
@@ -256,16 +267,17 @@ at the same paths and with the same MCP surface. Paths below are where each now 
 - **Record areas.** Personas and tasks (`server/library.ts`, `server/private.ts`, `server/vault.ts`, the curated vault
   `packs/octillion/vault/`) and their pages, over the product's own tables (not the shell's record store): declaring them
   as record areas would add MCP tools and empty pages, so the surface would not be the product's.
-- **Tables** (mold_v0-049). The product's 21 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
+- **Tables** (mold_v0-049). The product's 15 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
   verdicts, `transcript_events`, `product_research`, `developer_profiles`, `library_tasks`, `product_personas`,
-  `developer_populations` and their agents, `library_submissions`, `visibility_reports`, journeys, nudges, task sets and
-  private harnesses; its context and memory tables are the shell's since mold_v0-142, adopted by the shell's 0025) are the pack's own migrations (`packs/octillion/migrations/`), under the names
+  `developer_populations` and their agents, `library_submissions`, `visibility_reports`, task sets and private
+  harnesses; its context and memory tables are the shell's since mold_v0-142, adopted by the shell's 0025, its journeys
+  and tips tables since mold_v0-143, adopted by 0026) are the pack's own migrations (`packs/octillion/migrations/`), under the names
   they had, by the host-pack schema allowance (MOLD.md "Host packs": `host.schema`); a database built before keeps
   them and its rows (the pack adopts what the earlier base schema made). The admin MCP's job tools named for them
   (`list_simulations`, `get_simulation`, `cancel_simulation`) are the pack's (`server/admin-tools.ts`).
-- **Console pages.** Pick rate (with its report), journeys, developer personas and
-  programming tasks on /app; personas, tasks, journeys and the harness mix on /admin (agent configuration, every
-  global setting, stays the shell's page):
+- **Console pages.** Pick rate (with its report), developer personas and programming tasks on /app; personas, tasks
+  and the harness mix on /admin (agent configuration, every global setting, stays the shell's page; its journeys pages
+  are the shell's journeys and tips components' since mold_v0-143, pack.json `journeys` and `tips`):
   `web/src/packs/octillion/` (pages, features, `routes.json`), at their old URLs; its sidebar entries, redirects, Setup
   page (steps, workflow, error hints), admin MCP words and account-stage words are pack.json config since mold_v0-140
   and mold_v0-121 (`console`, `setup`, `mcp.error_hints`, `admin_mcp`, `account_stages`); the shell's texts that named

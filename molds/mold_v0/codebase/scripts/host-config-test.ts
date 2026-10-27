@@ -117,7 +117,7 @@ try {
   assert.doesNotMatch(read(plain.dir, "src/hosts.generated.ts"), /PACK_CONFIG/, "and no PACK_CONFIG");
   const base = consoleOf(plain.dir);
 
-  const full = world({ hosty: hostPack({ console: { nav: NAV, components: ["tips", "research"], redirects: [{ source: "/app/old", destination: "/app/alpha", permanent: true }, { source: "/app/older/:path*", destination: "/app/beta/:path*" }] }, ...CONFIG }) }, HOST_PROFILE, HOST_WEB);
+  const full = world({ hosty: hostPack({ console: { nav: NAV, components: ["research"], redirects: [{ source: "/app/old", destination: "/app/alpha", permanent: true }, { source: "/app/older/:path*", destination: "/app/beta/:path*" }] }, ...CONFIG }) }, HOST_PROFILE, HOST_WEB);
   assert.equal(full.status, 0, full.out);
   const c = consoleOf(full.dir);
   const labels = (g: { label: string }[]) => g.map((x) => x.label);
@@ -129,7 +129,7 @@ try {
   assert.deepEqual(c.portalNav.find((g) => g.label === "Hosted")!.items.map((i) => [i.title, i.icon, i.shortcut ?? null]), [["Beta", "userPen", ["g", "y"]], ["Deep", "kanban", null]]);
   assert.deepEqual(labels(c.adminNav).slice(0, 2), ["Onboarding", "Engagement"], "a new admin group after Onboarding");
   assert.deepEqual(urls(c.adminNav.find((g) => g.label === "Operations")!).slice(0, 3), ["/admin/compute", "/admin/delta", "/admin/finops"], "an entry before FinOps");
-  assert.deepEqual(c.features, ["tips", "research"], "the components the pack names");
+  assert.deepEqual(c.features, ["research"], "the components the pack names (tips and journeys are the shell's own since mold_v0-143: pack.json tips, journeys)");
   assert.deepEqual(base.features, [], "none without");
   assert.equal(c.profile.sign_up_subtitle, "Host things well", "the sign-up subtitle from the host's profile");
   const routes = JSON.parse(read(full.dir, "web/src/config/pack-routes.generated.json"));
@@ -194,7 +194,8 @@ try {
   assert.equal(worded.status, 0, worded.out);
   const wh = read(worded.dir, "src/hosts.generated.ts");
   const wpc = JSON.parse(wh.slice(wh.indexOf("PACK_CONFIG: readonly unknown[] = ") + "PACK_CONFIG: readonly unknown[] = ".length, wh.lastIndexOf(";")));
-  assert.deepEqual(wpc, [{ pack: "hosty", texts: { "refusal.viewer_edit": TEXTS["refusal.viewer_edit"], "admin_roles.support": TEXTS["admin_roles.support"] } }], "the server's texts in PACK_CONFIG, no $comment");
+  assert.deepEqual(wpc, [{ pack: "hosty", texts: { "refusal.viewer_edit": TEXTS["refusal.viewer_edit"], "admin_roles.support": TEXTS["admin_roles.support"], "journeys.one": TEXTS["journeys.one"] } }],
+    "the server's texts in PACK_CONFIG (and the journeys' nouns, which both sides use since mold_v0-143), no $comment");
   const facts = read(worded.dir, "web/src/config/build-facts.generated.ts");
   assert.match(facts, /export const TEXTS: Readonly<Record<string, string>> = \{\n  "usage\.score": "Hits",\n  "journeys\.one": "tour"\n\};/, "the console's texts in its build facts");
   assert.equal(read(plain.dir, "web/src/config/build-facts.generated.ts"), read(zero.dir, "web/src/config/build-facts.generated.ts"), "no texts: the build facts as before");

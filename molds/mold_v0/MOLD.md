@@ -1461,7 +1461,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   *Its schema* (mold_v0-049). The product's 24 tables (`products`, `scenarios`, `simulations`, `agent_sessions`,
   `transcript_events`, personas and tasks, populations, research, context and memory, journeys, nudges, task sets,
   private harnesses, contributions, reports, product personas; the three context and memory tables are the shell's
-  again since mold_v0-142, "Account context and memory" below, so 21 today) left the shell's base schema for the host pack's own
+  again since mold_v0-142, "Account context and memory" below, and the six journeys and tips tables since mold_v0-143,
+  "Journeys and tips" below, so 15 today) left the shell's base schema for the host pack's own
   migrations (`packs/octillion/migrations/`: `0001_tables`, every statement of the earlier `0001_baseline` about them, in
   order; `0002_row_level_security`, the earlier `0003`'s policies, grants, reference checks and sequence grants for
   them), so a database built with no packs has none of them (`npm run test:zero-pack`). They keep
@@ -1792,7 +1793,7 @@ short items, a fact, decision, preference or note, about the company, one person
 - Host hooks (`src/host.ts`): `context.subjects(orgId)` lists what the `product` scope names (Octillion: the account's
   products, by name), which keys a subject's memory, names it in lists, checks a person's focus and resolves the save
   tool's subject; without it any name is kept as written. `mcp.decorate(org, tool, result)` adds to the shell tools'
-  answers (Octillion: its in-chat tip). `src/pack-host.ts` `accountContext` gives a host pack the company's context (its
+  answers (Octillion's in-chat tip until mold_v0-143, now the shell's tips component's own). `src/pack-host.ts` `accountContext` gives a host pack the company's context (its
   research prompt starts from it).
 - **The tables, adopted.** They were a host pack's (Octillion's 0001, and before mold_v0-049 the shell's base schema).
   0025 makes them with exactly those statements and the same row-level security; `src/migrate.ts`
@@ -1807,6 +1808,48 @@ short items, a fact, decision, preference or note, about the company, one person
   runs it on a Neon branch of the live database and deletes the branch.
 `npm run test:context-memory` (the declarative fixture `scripts/fixtures/packs/fixture_memory`: on, off, refusals),
 `npm run test:migrations` (fresh, pre-049 and post-049 host-pack databases adopt, rows and catalog rows untouched).
+
+**Journeys and tips (mold_v0-143).** Two more components of the shell, each turned on from one pack's pack.json
+(`journeys`, `tips`; `src/journeys.ts`, `src/tips.ts`, `src/journeys-words.ts`, `web/src/features/journeys`); off, nothing
+of them is served (no route, no page, no tip on an answer) and the MCP surface is exactly the shell's. They were the first
+product's host pack's (`server/playbooks.ts`, `server/journeys.ts`, its /app/journeys and /admin/journeys pages); its
+pack keeps only their config. Every text is a word: the journeys' nouns are the shell texts `journeys.one` and
+`journeys.many` (side `both` since this ticket: the server's refusals use them too), the rest `journeys.words` and
+`tips.words` over neutral defaults, with `{guide}`, `{guides}`, `{Guide}`, `{Guides}` and `{product}` filled.
+- **Journeys** (`journeys`): step-by-step pipelines a customer replicates in their AI client, one prompt at a time. The
+  pack's built-in ones (`templates`) are seeded once each through a ledger (`journey_seed`: one an admin deleted stays
+  deleted, one untouched follows the pack when its stages change, one edited is left alone; `seeded_before_ledger` for a
+  database seeded before the ledger) and promoted; admins write more on `/admin/journeys` (`library` permission; delete:
+  `delete`), promote and order them, and see each one's adoption across accounts (started, finished, median time, where
+  most stop). A stage is done when one of its tools (the build's own: the host packs' and the memory component's) ran
+  successfully for the account after the previous stage was done, or an /app page's action that does the same
+  (`recordPageAction`); a stage with no tool is marked by hand. Progress is kept once (`journey_progress`) and sent as
+  events once each. Placeholders in a stage (`{product}`, `{competitor}`: whatever the templates use) are filled per
+  account by the host hook `journeys.values(orgId)`; without it they read as written. Customers see them on /app Setup
+  (the picker, the shell's) and on `/app/journeys`: each use case person by person (how far, calls, errors, where stuck,
+  who can help), help requests between teammates (ask, pick up, hand back, close), their own use cases (add, import JSON
+  or CSV beyond the 16 kB body limit, export, remove). `launch` names the tools and Setup workflow groups that start work:
+  a viewer sees the Setup page's viewer note instead of their prompts. Routes: `/api/app/journeys`, `/api/app/adoption`,
+  `/api/admin/onboarding/playbooks`.
+- **Tips** (`tips`): a workflow tool's webhook (`/api/journeys/nudges`, `APP_JOURNEY_SECRET` as a Bearer header or in the
+  path) or an admin (`journeys` permission, on `/admin/journeys` and from `/admin/accounts`) queues a tip for an account
+  or one person; it is appended to the next tool answer of the build (the memory tools here, a host pack's own through
+  `src/pack-host.ts` `withTip`) at most once per `APP_NUDGE_INTERVAL_HOURS` (or `tips.interval_hours`, default 20) and
+  three times in all, always after the tools `always_after` names, and listed on /app Setup with dismiss and a mute;
+  `recipes` are the sequences to build in the workflow tool, shown with ready-to-paste webhook bodies. Routes:
+  `/api/app/nudges`, `/api/admin/onboarding/journeys`.
+- `labels` names their tables on the Storage page (listed only where each is on). The pages' sidebar entries are the
+  pack's `console.nav` (`/app/journeys`, `/admin/journeys` count as its own pages where it turns them on), else an
+  Engagement group; `console.components` no longer names `tips` or `journeys` (refused: they are config now), and
+  `/app/journeys` and `/admin/journeys` are the shell's pages (a host pack's route there is refused).
+- **The tables, adopted.** `0026_journeys_and_tips` makes the six with the host pack's statements and rules and is
+  adopted, running nothing, where a database has them in its shape, from any release (before 0024, at 0024 or at 0025);
+  `secured_after: 3` runs it on a database whose 0003 secured them in the same run (it never had row-level security
+  before); the host pack's migrations rewritten again keep both earlier checksums (`host.schema.split` as a list).
+  `sql/rollback/0026_journeys_and_tips.sql` keeps adopted tables as they are. `npm run db:rehearse` and the factory's
+  `--rehearse-migrations` cover it with the rest of `ADOPTING_MIGRATIONS`.
+`npm run test:journeys-tips` (the declarative fixture `scripts/fixtures/packs/fixture_journeys`: on, off, refusals),
+`npm run test:migrations` (0026 adopted from 0023, 0024 and 0025, from every pre-049 start, refusals, rollbacks).
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
 operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by

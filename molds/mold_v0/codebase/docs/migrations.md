@@ -57,6 +57,15 @@ above are written there too). Where none is, it runs. Some of them, or another s
 message lists what differs. The host pack's migrations that made them are rewritten without them once, and their earlier
 checksums are accepted for those files only (pack.json `host.schema.split`).
 
+**And again (mold_v0-143).** `0026_journeys_and_tips` does the same for the six tables of the `journeys` and `tips`
+components (`nudges`, `nudge_prefs`, `journey_templates`, `journey_progress`, `adoption_help`, `journey_seed`), with
+their own rules (the templates' table shared: the platform's rows, `org_id` NULL, readable by every workspace; the seed
+ledger read-only). One more case runs it on a database that has them: one that never had row-level security before
+this run (the schema-on-boot path, or one recorded only up to 0001), where `0003_row_level_security` secures every
+workspace table its own way in the same run (`ADOPTING_MIGRATIONS` `secured_after`); their structure must be exactly
+0026's, and its statements, idempotent, give them their own rules. The host pack's files rewritten a second time keep
+both earlier checksums: `host.schema.split` takes a list.
+
 | Command | What it does |
 |---|---|
 | `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |
@@ -66,8 +75,10 @@ first. It refuses, changing nothing, while a workspace has a runner that is not 
 has not ended (revoke them and switch the workspaces back to hosted); otherwise it drops the two tables and two columns
 0027 added. `npm run test:migrations` rolls back every migration after 0025 with its own file before 0025's.
 
-Rolling back to a release from before 0025: `sql/rollback/0025_account_context_memory.sql` (before 0024's, which
-refuses while 0025 is applied). Where 0025 was adopted it leaves the tables, rows, policies and grants exactly as they
+Rolling back to a release from before 0026: `sql/rollback/0026_journeys_and_tips.sql` first, the same way (adopted:
+only its ledger rows go; made: dropped only when all six are empty). Rolling back to a release from before 0025:
+`sql/rollback/0025_account_context_memory.sql` (before 0024's, which refuses while 0025 is applied; it refuses while
+0026 is). Where 0025 was adopted it leaves the tables, rows, policies and grants exactly as they
 are (the host pack's again in that release) and removes only 0025's ledger rows; where 0025 made them it drops them only
 when all three are empty, and otherwise refuses and changes nothing.
 

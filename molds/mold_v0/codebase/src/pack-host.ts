@@ -26,6 +26,14 @@ export { getCompany as accountContext, type CompanyContext } from "./account-con
 // Its MCP tools' names (pack.json memory.tools), for a host pack's own lists of the product's tools (none when it is off).
 export { memoryToolNames } from "./host.js";
 
+// ---------- the journeys and in-chat tips components (mold_v0-143; src/journeys.ts, src/tips.ts) ----------
+// A tool answer with the waiting tip at its end (pack.json tips; unchanged when the component is off or none waits), for
+// a host pack's own tools, as the shell's carry it.
+export { withTip } from "./tips.js";
+// The journeys this account sees (pack.json journeys: the platform's templates and its own use cases), for a host pack's
+// own reports by use case (none when the component is off).
+export { listTemplates as journeyTemplates } from "./journeys.js";
+
 // ---------- database, tenancy, sign-in ----------
 export { getDb, type Queryable } from "./db.js";
 export { asPlatform, withTenant } from "./tenant-scope.js";

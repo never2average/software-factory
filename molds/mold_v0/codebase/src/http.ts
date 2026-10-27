@@ -45,6 +45,8 @@ import { createServer } from "./server.js";
 import { hosts, hostToolNames, memoryToolNames } from "./host.js";
 import { connectContext } from "./account-context.js";
 import { runMemoryTool } from "./account-context-tools.js";
+import { JourneyError, journeyAdminRoutes } from "./journeys.js";
+import { TipError, tipAdminRoutes, tipPublicRoutes } from "./tips.js";
 import { memberKeysOn, PROFILE } from "./profile.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
@@ -255,8 +257,9 @@ export function createApp() {
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
 
-  // ---------- a host pack's public routes (src/host.ts; the product's journeys webhook) ----------
+  // ---------- a host pack's public routes (src/host.ts), then the in-chat tips component's webhook (mold_v0-143, src/tips.ts: only when it is on) ----------
   for (const h of hosts()) h.routes?.public?.(app);
+  tipPublicRoutes(app);
 
   // ---------- OAuth discovery (Clerk is the authorization server, src/clerk.ts; under built-in sign-in this server is,
   // src/mcp-oauth.ts) ----------
@@ -651,6 +654,9 @@ export function createApp() {
   // A host pack's console routes (src/host.ts; the product's journeys, libraries, agent mix and settings, loss reasons),
   // behind the same guard, log and permission check (roles.assertGuarded below covers them).
   for (const h of hosts()) h.routes?.onboarding?.(ob, { need, actor: adminActor });
+  // The journeys and in-chat tips components' console routes (mold_v0-143, src/journeys.ts, src/tips.ts): each only when it is on.
+  journeyAdminRoutes(ob, { need, actor: adminActor });
+  tipAdminRoutes(ob, { need, actor: adminActor });
   // Agent configuration and the Compute page's Limits table read and save global settings here; a host pack's own routes
   // (above: the product adds its agent mix to the answer) answer first when it has them.
   ob.get("/compute", async (_req, res) => void res.json({ groups: settingGroups(), settings: await listSettings() }));
@@ -763,7 +769,7 @@ export function createApp() {
   // Clerk / Stripe failures are the admin's to see (a bad key, a rate limit), not a generic 500.
   ob.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
     const hostError = hosts().some((h) => (h.routes?.onboardingErrors ?? []).some((C) => err instanceof C));
-    if (!(err instanceof onboarding.AdminError || err instanceof roles.AdminRoleError || hostError || err instanceof SettingError || err instanceof ClerkError || err instanceof StripeError)) return next(err);
+    if (!(err instanceof onboarding.AdminError || err instanceof roles.AdminRoleError || hostError || err instanceof JourneyError || err instanceof TipError || err instanceof SettingError || err instanceof ClerkError || err instanceof StripeError)) return next(err);
     // A plan config's problems come as a list too (by path), for the JSON editor.
     const problems = (err as { problems?: string[] }).problems;
     res.status(err.status ?? 400).json({ error: err.message, ...(problems ? { problems } : {}) });

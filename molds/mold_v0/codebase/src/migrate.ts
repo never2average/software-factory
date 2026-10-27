@@ -115,7 +115,14 @@ const splitBefore = (r: { version: number; name: string; checksum: string }) =>
  * without running: no statement of it reaches those tables or their rows. Where none is, it runs. Anything else (some
  * of them, or another shape) is refused with what differs, and nothing changes.
  */
-export const ADOPTING_MIGRATIONS: Readonly<Record<number, { name: string; tables: readonly string[]; shape: readonly string[] }>> = {
+/**
+ * `secured_after` (mold_v0-143): the shell migration that, run in the same pass on a database from before it, secures
+ * every workspace table its own way (0003_row_level_security). A database that never had row-level security before
+ * this run (the schema-on-boot path, one recorded only up to 0001) gets the tables' structure exactly as this migration
+ * gives it but their security from that migration, not yet as this one secures them: there it runs (its statements are
+ * idempotent and give the tables their own rules, as the host pack's security migration did), and only there.
+ */
+export const ADOPTING_MIGRATIONS: Readonly<Record<number, { name: string; tables: readonly string[]; shape: readonly string[]; secured_after?: number }>> = {
   25: {
     name: "account_context_memory",
     tables: ["account_context", "user_context", "context_memories"],
@@ -177,6 +184,123 @@ export const ADOPTING_MIGRATIONS: Readonly<Record<number, { name: string; tables
       "row-level security user_context on",
     ],
   },
+  26: {
+    name: "journeys_and_tips",
+    tables: ["nudges", "nudge_prefs", "journey_templates", "journey_progress", "adoption_help", "journey_seed"],
+    secured_after: 3,
+    shape: [
+      "column adoption_help.closed_at timestamp with time zone",
+      "column adoption_help.created_at timestamp with time zone not null default now()",
+      "column adoption_help.helper text",
+      "column adoption_help.id bigint not null default nextval('adoption_help_id_seq'::regclass)",
+      "column adoption_help.journey_id text not null",
+      "column adoption_help.note text not null default ''::text",
+      "column adoption_help.org_id integer not null",
+      "column adoption_help.picked_at timestamp with time zone",
+      "column adoption_help.requester text not null",
+      "column adoption_help.status text not null default 'open'::text",
+      "column journey_progress.done_at timestamp with time zone not null default now()",
+      "column journey_progress.journey_id text not null",
+      "column journey_progress.org_id integer not null",
+      "column journey_progress.source text not null",
+      "column journey_progress.stage_id text not null",
+      "column journey_progress.user_id text",
+      "column journey_seed.id text not null",
+      "column journey_seed.seeded_at timestamp with time zone not null default now()",
+      "column journey_templates.created_at timestamp with time zone not null default now()",
+      "column journey_templates.example_result text not null default ''::text",
+      "column journey_templates.example_title text not null default ''::text",
+      "column journey_templates.id text not null",
+      "column journey_templates.name text not null",
+      "column journey_templates.org_id integer",
+      "column journey_templates.outcome text not null",
+      "column journey_templates.position integer not null default 0",
+      "column journey_templates.promoted boolean not null default false",
+      "column journey_templates.stages jsonb not null",
+      "column journey_templates.time text not null default ''::text",
+      "column journey_templates.updated_at timestamp with time zone not null default now()",
+      "column journey_templates.updated_by text",
+      "column journey_templates.who text not null default ''::text",
+      "column nudge_prefs.last_shown_at timestamp with time zone",
+      "column nudge_prefs.muted boolean not null default false",
+      "column nudge_prefs.org_id integer not null",
+      "column nudge_prefs.user_id text not null default ''::text",
+      "column nudges.created_at timestamp with time zone not null default now()",
+      "column nudges.dismissed_at timestamp with time zone",
+      "column nudges.expires_at timestamp with time zone not null",
+      "column nudges.first_shown_at timestamp with time zone",
+      "column nudges.id bigint not null default nextval('nudges_id_seq'::regclass)",
+      "column nudges.journey text not null",
+      "column nudges.last_shown_at timestamp with time zone",
+      "column nudges.link text",
+      "column nudges.message text not null",
+      "column nudges.org_id integer not null",
+      "column nudges.prompt text",
+      "column nudges.shown_count integer not null default 0",
+      "column nudges.source text not null default 'posthog'::text",
+      "column nudges.step text not null",
+      "column nudges.user_id text not null default ''::text",
+      "constraint adoption_help.adoption_help_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint adoption_help.adoption_help_pkey p PRIMARY KEY (id)",
+      "constraint adoption_help.adoption_help_status_check c CHECK ((status = ANY (ARRAY['open'::text, 'picked'::text, 'done'::text])))",
+      "constraint journey_progress.journey_progress_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint journey_progress.journey_progress_pkey p PRIMARY KEY (org_id, journey_id, stage_id)",
+      "constraint journey_progress.journey_progress_source_check c CHECK ((source = ANY (ARRAY['tool'::text, 'manual'::text])))",
+      "constraint journey_seed.journey_seed_pkey p PRIMARY KEY (id)",
+      "constraint journey_templates.journey_templates_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint journey_templates.journey_templates_pkey p PRIMARY KEY (id)",
+      "constraint nudge_prefs.nudge_prefs_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint nudge_prefs.nudge_prefs_pkey p PRIMARY KEY (org_id, user_id)",
+      "constraint nudges.nudges_org_id_fkey f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE",
+      "constraint nudges.nudges_org_id_user_id_journey_step_key u UNIQUE (org_id, user_id, journey, step)",
+      "constraint nudges.nudges_pkey p PRIMARY KEY (id)",
+      "constraint nudges.nudges_source_check c CHECK ((source = ANY (ARRAY['posthog'::text, 'admin'::text])))",
+      "grant adoption_help DELETE to <tenant>",
+      "grant adoption_help INSERT to <tenant>",
+      "grant adoption_help SELECT to <tenant>",
+      "grant adoption_help UPDATE to <tenant>",
+      "grant adoption_help_id_seq USAGE to <tenant>",
+      "grant journey_progress DELETE to <tenant>",
+      "grant journey_progress INSERT to <tenant>",
+      "grant journey_progress SELECT to <tenant>",
+      "grant journey_progress UPDATE to <tenant>",
+      "grant journey_seed SELECT to <tenant>",
+      "grant journey_templates DELETE to <tenant>",
+      "grant journey_templates INSERT to <tenant>",
+      "grant journey_templates SELECT to <tenant>",
+      "grant journey_templates UPDATE to <tenant>",
+      "grant nudge_prefs DELETE to <tenant>",
+      "grant nudge_prefs INSERT to <tenant>",
+      "grant nudge_prefs SELECT to <tenant>",
+      "grant nudge_prefs UPDATE to <tenant>",
+      "grant nudges DELETE to <tenant>",
+      "grant nudges INSERT to <tenant>",
+      "grant nudges SELECT to <tenant>",
+      "grant nudges UPDATE to <tenant>",
+      "grant nudges_id_seq USAGE to <tenant>",
+      "index adoption_help.adoption_help_org CREATE INDEX adoption_help_org ON adoption_help USING btree (org_id, status, created_at DESC)",
+      "index adoption_help.adoption_help_pkey CREATE UNIQUE INDEX adoption_help_pkey ON adoption_help USING btree (id)",
+      "index journey_progress.journey_progress_pkey CREATE UNIQUE INDEX journey_progress_pkey ON journey_progress USING btree (org_id, journey_id, stage_id)",
+      "index journey_seed.journey_seed_pkey CREATE UNIQUE INDEX journey_seed_pkey ON journey_seed USING btree (id)",
+      "index journey_templates.journey_templates_pkey CREATE UNIQUE INDEX journey_templates_pkey ON journey_templates USING btree (id)",
+      "index nudge_prefs.nudge_prefs_pkey CREATE UNIQUE INDEX nudge_prefs_pkey ON nudge_prefs USING btree (org_id, user_id)",
+      "index nudges.nudges_active_idx CREATE INDEX nudges_active_idx ON nudges USING btree (org_id, user_id, created_at DESC) WHERE (dismissed_at IS NULL)",
+      "index nudges.nudges_org_id_user_id_journey_step_key CREATE UNIQUE INDEX nudges_org_id_user_id_journey_step_key ON nudges USING btree (org_id, user_id, journey, step)",
+      "index nudges.nudges_pkey CREATE UNIQUE INDEX nudges_pkey ON nudges USING btree (id)",
+      "policy adoption_help.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy journey_progress.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy journey_templates.tenant_read PERMISSIVE SELECT to {<tenant>} using ((org_id IS NULL) OR (org_id = app_tenant_org())) check ",
+      "policy journey_templates.tenant_write PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy nudge_prefs.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "policy nudges.tenant_isolation PERMISSIVE ALL to {<tenant>} using (org_id = app_tenant_org()) check (org_id = app_tenant_org())",
+      "row-level security adoption_help on",
+      "row-level security journey_progress on",
+      "row-level security journey_seed off",
+      "row-level security journey_templates on",
+      "row-level security nudge_prefs on",
+      "row-level security nudges on",
+    ],
+  },
 };
 
 /** The ledger of adoptions (mold_v0-142): what a database had and recorded without running, and the shape it had. */
@@ -233,8 +357,14 @@ export async function tableShape(q: Queryable, tables: readonly string[]): Promi
   return [...new Set(out)].sort();
 }
 
-/** Whether a pending shell migration adopts (all its tables there, in its shape), runs (none there) or is refused. */
-async function adoption(q: Queryable, m: Migration): Promise<{ adopt: false } | { adopt: true; tables: string[]; sha: string }> {
+/** A shape line about a table's structure (not its security: row-level security, policies, grants). */
+const STRUCTURE = /^(column|constraint|index|trigger) /;
+/**
+ * Whether a pending shell migration adopts (all its tables there, in its shape), runs (none there; or, mold_v0-143,
+ * all there in its structure on a database its `secured_after` migration secured in this same run) or is refused.
+ * `ranNow`: the shell migrations applied earlier in this run.
+ */
+async function adoption(q: Queryable, m: Migration, ranNow: ReadonlySet<number> = new Set()): Promise<{ adopt: false; completes?: string[] } | { adopt: true; tables: string[]; sha: string }> {
   const a = ADOPTING_MIGRATIONS[m.version];
   if (!a || a.name !== m.name) return { adopt: false };
   const present = (await q.query<{ t: string }>("SELECT t FROM unnest($1::text[]) t WHERE to_regclass('public.' || quote_ident(t)) IS NOT NULL ORDER BY 1", [[...a.tables]])).map((r) => r.t);
@@ -244,6 +374,8 @@ async function adoption(q: Queryable, m: Migration): Promise<{ adopt: false } | 
     throw new MigrationError(`${what}: this database has ${present.join(", ")} but not ${a.tables.filter((t) => !present.includes(t)).join(", ")}: it adopts all of its tables or makes them all, never some (refused, nothing changed)`);
   const have = await tableShape(q, a.tables), want = [...a.shape];
   const extra = have.filter((x) => !want.includes(x)), missing = want.filter((x) => !have.includes(x));
+  if ((extra.length || missing.length) && a.secured_after !== undefined && ranNow.has(a.secured_after)
+    && ![...extra, ...missing].some((x) => STRUCTURE.test(x))) return { adopt: false, completes: present };
   if (extra.length || missing.length)
     throw new MigrationError(`${what}: this database has ${a.tables.join(", ")} in another shape than this migration gives them, so it is not adopted (refused, nothing changed): ` +
       `${[...missing.map((x) => `expected ${x}`), ...extra.map((x) => `found ${x}`)].slice(0, 12).join("; ")}`);
@@ -259,6 +391,8 @@ export interface MigrationStatus {
 }
 
 const label = (v: number, name: string) => `${String(v).padStart(4, "0")}_${name}`;
+/** A split's earlier checksums (pack.json host.schema.split: one, or a list since mold_v0-143). */
+const earlierSums = (v: string | readonly string[] | undefined): readonly string[] => (v === undefined ? [] : typeof v === "string" ? [v] : v);
 
 /**
  * Compare the database with the files. Never throws: callers decide what a conflict means (src/migrate.ts below).
@@ -317,8 +451,9 @@ function refuseShellPrefixes(migrations: Migration[], sets: PackMigrationSet[]) 
     for (const f of s.schema?.functions ?? [])
       if (!IDENT.test(f) || fns.has(f)) throw new MigrationError(`pack ${s.pack}: function ${f} is ${fns.has(f) ? "the shell's" : "not a function name"}`);
     for (const [mine, before] of Object.entries(s.schema?.split ?? {}))
-      if (!s.migrations.some((m) => label(m.version, m.name) === mine) || !/^[0-9a-f]{64}$/.test(before))
-        throw new MigrationError(`pack ${s.pack}: split names ${mine} -> ${before.slice(0, 16)}, which is not one of its migrations and an earlier sha256`);
+      for (const b of earlierSums(before))
+        if (!s.migrations.some((m) => label(m.version, m.name) === mine) || !/^[0-9a-f]{64}$/.test(b))
+          throw new MigrationError(`pack ${s.pack}: split names ${mine} -> ${b.slice(0, 16)}, which is not one of its migrations and an earlier sha256`);
     for (const [mine, theirs] of Object.entries(s.schema?.adopts ?? {})) {
       const v = Number(theirs.slice(0, 4)), sp = SPLIT_MIGRATIONS[v];
       if (!sp || theirs !== label(v, sp.name)) throw new MigrationError(`pack ${s.pack}: ${mine} adopts ${theirs}, which is not a split shell migration (SPLIT_MIGRATIONS)`);
@@ -413,12 +548,12 @@ async function appliedPackRows(q: Queryable): Promise<Map<string, AppliedRow[]> 
 }
 
 /**
- * A host pack's migration rewritten once when tables it made became the shell's (mold_v0-142; pack.json
- * host.schema.split: its file name -> the earlier file's checksum): a database that ran the earlier file keeps that
- * checksum, which is accepted for that file only.
+ * A host pack's migration rewritten when tables it made became the shell's (mold_v0-142, again in mold_v0-143; pack.json
+ * host.schema.split: its file name -> the earlier file's checksum, or each earlier version's): a database that ran an
+ * earlier file keeps that checksum, which is accepted for that file only.
  */
 const packSplitBefore = (s: PackMigrationSet) => (r: { version: number; name: string; checksum: string }) =>
-  s.schema?.split?.[label(r.version, r.name)] === r.checksum;
+  earlierSums(s.schema?.split?.[label(r.version, r.name)]).includes(r.checksum);
 
 function comparePacks(rows: Map<string, AppliedRow[]> | null, sets: PackMigrationSet[]): PackStatus[] {
   return sets.map((s) => {
@@ -553,10 +688,11 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
     const { pending, conflicts } = compare(await appliedRows(tx), migrations);
     if (conflicts.length) throw new MigrationError(conflicts.join("; "));
     const applied: string[] = [];
+    const ranNow = new Set<number>();
     for (const m of pending) {
       const t0 = Date.now();
       // Tables this database already has, in the shape this migration gives them (mold_v0-142): recorded, never run.
-      const a = await adoption(tx, m);
+      const a = await adoption(tx, m, ranNow);
       if (a.adopt) {
         await tx.query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)", [m.version, m.name, m.checksum]);
         await tx.query("INSERT INTO schema_adoptions (pack, version, name, adopted_from, shape_sha256) VALUES ('', $1, $2, $3, $4)",
@@ -567,8 +703,10 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
       }
       await tx.exec(m.sql);
       await tx.query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)", [m.version, m.name, m.checksum]);
+      if (a.completes) opts.log?.(`migration ${label(m.version, m.name)} secures ${a.completes.join(", ")}, which this database had unsecured until this run`);
       opts.log?.(`migration ${String(m.version).padStart(4, "0")}_${m.name} applied (${Date.now() - t0} ms)`);
       applied.push(label(m.version, m.name));
+      ranNow.add(m.version);
     }
     if (!sets.length) return { applied };
     // Packs, after the shell: only when this build has pack migrations (with none, nothing below touches the database).

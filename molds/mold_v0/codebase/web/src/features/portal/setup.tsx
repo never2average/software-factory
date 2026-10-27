@@ -23,11 +23,11 @@ import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from './
 import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
-import { hostFeature } from '@/features/packs/host-nav';
 import { onboardingAnchor } from '@/features/tabs/empty';
 import { mergeSetupSteps, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
 import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
+import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
 
 interface Setup {
   steps: ShellSetupStep[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
@@ -52,9 +52,9 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
 export function SetupPage() {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
-  // Journeys and in-chat tips are a host pack's (mold_v0-039): asked for only when the build has one that offers them.
-  const journeysOn = hostFeature('journeys');
-  const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (journeysOn ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
+  // Journeys and in-chat tips are the shell's components (mold_v0-143: pack.json journeys and tips): asked for only when on.
+  const showJourneys = journeysOn();
+  const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (showJourneys ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
   const [selected, setSelected] = useQueryState('journey', { defaultValue: 'setup' });
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
@@ -69,12 +69,12 @@ export function SetupPage() {
               <Checklist s={s} steps={steps} title='Get set up' anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
-            {hostFeature('tips') && <TipsSection />}
+            {tipsOn() && <TipsSection />}
           </div>
           {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            {journeysOn && <JourneyPicker setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+            {showJourneys && <JourneyPicker setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
               void setSelected(id === 'setup' ? null : id);
               if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
             }} />}
@@ -337,7 +337,8 @@ function JourneyView({ j, onChanged, note }: { j: Journey; onChanged: () => void
     <TimelineSection title={j.name} done={done} total={j.total} noun='stages'
       items={j.stages.map((x) => {
         const ok = isDone(x);
-        const gated = !!note && x.tools.some((t) => t === 'run_simulation' || t === 'onboard_product');
+        // A stage whose tool starts work (pack.json journeys.launch): a viewer gets the note, not the prompt.
+        const gated = !!note && x.tools.some(launchesWork);
         const help = `${x.why} You'll see: ${x.expect}`;
         return { id: x.id, label: x.title, done: ok, body: (
           <>
@@ -487,9 +488,9 @@ function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored 
   const ticks = steps.some((x) => x.pack);
   return (
     <TimelineSection title={title} titleId={titleId} done={done} total={steps.length} noun='steps' compact={compact} items={items} extra={hide}
-      footer={ticks || hostFeature('journeys') ? <>
+      footer={ticks || journeysOn() ? <>
         {ticks && 'These steps tick themselves as you go. '}
-        {hostFeature('journeys') && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}
+        {journeysOn() && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}
       </> : null} />
   );
 }
