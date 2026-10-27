@@ -8,8 +8,9 @@
 //    address (javascript:, data:, vbscript:, http:, //host, a backslash, a user name or a password refused; the
 //    console's own second check agrees). Pick and place: at most 10 sections, each type once but a cta up to 3 times,
 //    the hero first, each anchor its own and none the page's own; old-style keys beside sections refused. The first
-//    screen (mold_v0-164): the header and the hero ask for at most two things (sign in and one other), a repeat counting
-//    once; a hero's second call or a header link that adds a third is refused, in an old block too and after merging. A
+//    screen (mold_v0-165): the header and the hero ask for one thing, the hero's button; a header link, the header's
+//    account button, a hero's second call or a hero link is refused, in an old block too and after merging. With
+//    first_screen.calls 2 (the mold_v0-164 page) at most two things, sign in and one other, a repeat counting once. A
 //    logos row's files and an open_source repository are well formed, and the repository is not a hero link as well.
 // 2. The old block converted, section for section (coverage the hero's strip, value points the concept's cards,
 //    features proof's items, closing a cta), and merging: a profile's sections replace a pack's, its footer and seo one
@@ -65,6 +66,8 @@ const GOOD = {
   ],
   footer: { note: "Footer note.", links: [{ label: "Docs", href: "https://example.org/docs" }] },
   seo: { title: "Ship audits", description: "Search description." },
+  // The hero's own links need the two-call page (mold_v0-165).
+  first_screen: { calls: 2 },
 };
 /** The old block (mold_v0-091), every section. */
 const LEGACY = {
@@ -174,20 +177,45 @@ try {
     bad("old: too many value points", { value_points: { items: Array.from({ length: 7 }, () => ({ title: "t", body: "b" })) } }, /landing\.value_points\.items: /);
     bad("old: an unknown field", { hero: { headline: "x", html: "<b>x</b>" } }, /landing\.hero: .*html/i);
     bad("old: no coverage items", { coverage: { items: [] } }, /landing\.coverage\.items: /);
-    // The first screen (mold_v0-164): at most two things, sign in and one other; a repeat counts once.
-    const hero = (h: object) => sec({ type: "hero", ...h });
-    bad("a hero's second call to a third place", hero({ secondary_cta: { label: "Install", href: "/install" } }),
-      /landing\.sections\[0\]\.secondary_cta: the first screen \(the header and the hero\) asks for at most 2 things, signing in and one other \(sign in, the start\); the hero's second call "Install" adds another \(\/install\)\. Keep one call to action in the hero/);
-    bad("a header link to a third place", { header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "hero" }] }, /landing\.sections\[0\]\.primary_cta: the first screen .* the hero's call to action adds another \(the start\)/);
-    bad("two header links", { header: { links: [{ label: "A", href: "/a" }, { label: "B", href: "/b" }] } }, /landing\.header\.links: at most 1 link/);
-    bad("the neutral page's hero with a header link", { header: { links: [{ label: "Docs", href: "https://example.org/docs" }] } }, /landing\.header\.links: the first screen .* the hero's call to action adds another/);
-    bad("an old block's second call", { hero: { secondary_cta: { label: "Install", href: "/install" } } }, /landing\.hero\.secondary_cta: the first screen/);
-    assert.deepEqual(landingProblems(hero({ primary_cta: { label: "Get started", href: "/request-access" } })), [], "sign in and one start: passes");
-    assert.deepEqual(landingProblems(hero({ secondary_cta: { label: "Sign in", href: "/app" } })), [], "a hero's second call that is the sign-in again: passes (a repeat counts once)");
-    assert.deepEqual(landingProblems({ header: { links: [{ label: "Early access", href: "/early-access" }], account: "account" }, sections: [{ type: "hero", primary_cta: "account", secondary_cta: { label: "Early access", href: "/early-access" } }] }), [],
-      "the first product's page: the account button and one other, each shown twice, passes");
-    assert.deepEqual(landingProblems({ header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "faq", items: [{ question: "q", answer: "a" }] }] }), [], "no hero: the header's sign-in and its link");
-    assert.deepEqual(landingProblems({ header: { sign_in: { label: "Log in", href: "/login" } }, sections: [{ type: "hero", secondary_cta: { label: "Log in", href: "/login" } }] }), [], "the header's own sign-in address is the sign-in");
+    // The first screen (mold_v0-165): one thing, the hero's button; nothing in the header asks for anything.
+    const hero = (h: object, more: object = {}) => ({ sections: [{ type: "hero", ...h }], ...more });
+    const two = { first_screen: { calls: 2 } };
+    const ONE = /the first screen \(the header and the hero\) asks for one thing, the hero's button \(primary_cta, "Get started" by default\)/;
+    const OPT = /landing\.first_screen: \{"calls": 2\}/;
+    assert.deepEqual(landingProblems(hero({})), [], "a hero with the default button passes");
+    assert.deepEqual(landingProblems(hero({ primary_cta: { label: "Get started", href: "/request-access" } })), [], "one start: passes");
+    assert.deepEqual(landingProblems(hero({ primary_cta: "account" })), [], "the account button as the one call: passes");
+    assert.deepEqual(landingProblems({ header: { sign_in: { label: "Log in", href: "/login" }, open: { label: "Console", href: "/app" } }, sections: [{ type: "hero" }] }), [], "the account's words (sign_in, open) are not calls");
+    for (const [what, block, at, said] of [
+      ["a hero's second call", hero({ secondary_cta: { label: "Install", href: "/install" } }), "sections\\[0\\]\\.secondary_cta", `the hero's second call "Install"`],
+      ["a hero's second call that is the sign-in", hero({ secondary_cta: { label: "Sign in", href: "/app" } }), "sections\\[0\\]\\.secondary_cta", `the hero's second call "Sign in"`],
+      ["a hero link", hero({ links: [{ label: "Docs", href: "/docs" }] }), "sections\\[0\\]\\.links\\[0\\]", `the hero link "Docs"`],
+      ["a header link", { header: { links: [{ label: "Request access", href: "/request-access" }] }, sections: [{ type: "hero" }] }, "header\\.links\\[0\\]", `the header link "Request access"`],
+      ["a header link on the neutral page", { header: { links: [{ label: "Docs", href: "https://example.org/docs" }] } }, "header\\.links\\[0\\]", `the header link "Docs"`],
+      ["a header link on a page with no hero", { header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "faq", items: [{ question: "q", answer: "a" }] }] }, "header\\.links\\[0\\]", `the header link "Docs"`],
+      ["the header's account button", { header: { account: "account" }, sections: [{ type: "hero" }] }, "header\\.account", "the header's account button"],
+      ["an old block's second call", { hero: { secondary_cta: { label: "Install", href: "/install" } } }, "hero\\.secondary_cta", `the hero's second call "Install"`],
+    ] as const) {
+      const got = landingProblems(block);
+      const re = new RegExp(`^landing\\.${at}: ${ONE.source}; ${said.replace(/"/g, '"')} adds another\\. .*${OPT.source}`);
+      assert.ok(got.some((x: string) => re.test(x)), `${what}: refused with ${re} (got ${JSON.stringify(got)})`);
+    }
+    assert.ok(landingProblems({ header: { links: [{ label: "A", href: "/a" }, { label: "B", href: "/b" }] } }).some((x: string) => /landing\.header\.links: at most 1 link/.test(x)), "two header links: at most 1");
+    // first_screen.calls 2: the mold_v0-164 page, at most two things, sign in and one other; a repeat counts once.
+    bad("a bad first_screen", { first_screen: { calls: 3 } }, /landing\.first_screen\.calls/);
+    bad("an unknown first_screen key", { first_screen: { calls: 2, header: true } }, /landing\.first_screen: .*header/i);
+    bad("two calls: a hero's second call to a third place", hero({ secondary_cta: { label: "Install", href: "/install" } }, two),
+      /landing\.sections\[0\]\.secondary_cta: the first screen \(the header and the hero\) asks for at most 2 things with first_screen\.calls 2, signing in and one other \(sign in, the start\); the hero's second call "Install" adds another \(\/install\)\. Keep one call to action in the hero/);
+    bad("two calls: a header link to a third place", { header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "hero" }], ...two }, /landing\.sections\[0\]\.primary_cta: the first screen .* the hero's call to action adds another \(the start\)/);
+    bad("two calls: the neutral page's hero with a header link", { header: { links: [{ label: "Docs", href: "https://example.org/docs" }] }, ...two }, /landing\.header\.links: the first screen .* the hero's call to action adds another/);
+    bad("two calls: an old block's second call", { hero: { secondary_cta: { label: "Install", href: "/install" } }, ...two }, /landing\.hero\.secondary_cta: the first screen .* at most 2 things/);
+    assert.deepEqual(landingProblems(hero({ secondary_cta: { label: "Sign in", href: "/app" } }, two)), [], "two calls: a hero's second call that is the sign-in again passes (a repeat counts once)");
+    assert.deepEqual(landingProblems({ header: { links: [{ label: "Early access", href: "/early-access" }], account: "account" }, sections: [{ type: "hero", primary_cta: "account", secondary_cta: { label: "Early access", href: "/early-access" } }], ...two }), [],
+      "two calls: the first product's page (the account button and one other, each shown twice) passes");
+    assert.deepEqual(landingProblems({ header: { links: [{ label: "Docs", href: "/docs" }] }, sections: [{ type: "faq", items: [{ question: "q", answer: "a" }] }], ...two }), [], "two calls, no hero: the header's sign-in and its link");
+    assert.deepEqual(landingProblems({ header: { sign_in: { label: "Log in", href: "/login" } }, sections: [{ type: "hero", secondary_cta: { label: "Log in", href: "/login" } }], ...two }), [], "two calls: the header's own sign-in address is the sign-in");
+    assert.deepEqual(mergeLanding({ ...two, sections: [{ type: "hero" }] }, { seo: { title: "S" } })?.first_screen, { calls: 2 }, "first_screen: the pack's, unless the profile names its own");
+    assert.deepEqual(mergeLanding(two, { first_screen: { calls: 1 } })?.first_screen, { calls: 1 }, "and the profile's over it");
     // open_source (mold_v0-164).
     assert.deepEqual(landingProblems({ open_source: { repo: "https://github.com/example-org/app" } }), [], "an open-source repository passes");
     assert.deepEqual(landingProblems({ open_source: { repo: "https://github.com/example-org/app.js", label: "Source on GitHub" } }), [], "with its footer label");
@@ -208,7 +236,7 @@ try {
     const many = [{ type: "hero" }, { type: "cta" }, { type: "problem", id: "why" }, { type: "cta" }, { type: "faq" }] as const;
     assert.deepEqual(web.sectionIds(many), sectionIds(many), "the console numbers anchors as the build does");
     assert.deepEqual(sectionIds(many), ["intro", "get-started", "why", "get-started-2", "faq"]);
-    console.log("✓ the schema: sections or the old block, plain text, ceilings, known keys and types only, links to this site, https: or mailto: only; at most 10 sections, each type once (cta thrice), hero first, own anchors; the first screen at most two calls (a repeat once), in an old block too; open_source a GitHub repository, not a hero link as well; logos' files of the pack's assets/");
+    console.log("✓ the schema: sections or the old block, plain text, ceilings, known keys and types only, links to this site, https: or mailto: only; at most 10 sections, each type once (cta thrice), hero first, own anchors; the first screen one call, the hero's (header links, the header's account button, a hero's second call or links refused, with first_screen.calls 2 to keep two: sign in and one other, a repeat once), in an old block too; open_source a GitHub repository, not a hero link as well; logos' files of the pack's assets/");
   }
 
   // ---------- 2. conversion and merging ----------
@@ -222,7 +250,7 @@ try {
     assert.equal(mergeLanding(null, null), null, "neither: null");
     // A profile's sections replace the pack's; footer and seo one by one.
     const mine = { sections: [{ type: "faq", items: [{ question: "Mine?", answer: "Yes." }] }], seo: { title: "Mine" } };
-    assert.deepEqual(mergeLanding(GOOD, mine), { sections: mine.sections, footer: GOOD.footer, seo: mine.seo }, "the profile's sections and seo; the pack's footer");
+    assert.deepEqual(mergeLanding(GOOD, mine), { sections: mine.sections, footer: GOOD.footer, seo: mine.seo, first_screen: GOOD.first_screen }, "the profile's sections and seo; the pack's footer and first_screen");
     assert.deepEqual(mergeLanding(GOOD, { seo: { title: "Mine" } })!.sections, good.sections, "a profile with no sections keeps the pack's");
     assert.deepEqual(mergeLanding(LEGACY, mine)!.sections, mine.sections, "new over old: the profile's sections");
     // An old profile block over a pack's sections: each of its sections replaces the pack's of its kind, in place.
@@ -315,13 +343,16 @@ try {
     refused("a client the install pages do not offer", gen(["--packs", packsDir("cl", { lp: { landing: sec({ type: "where_you_work", clients: ["claude", "zed"] }) } }), "--profile", profile("e4", { install_clients: ["claude", "cursor"] }), "--out", path.join(TMP, "x")]),
       /landing: sections\[0\] \(where_you_work\)\.clients: zed is not offered by this build's install pages \(claude, cursor;/);
     refused("a profile header link that makes a third call", gen(["--packs", one, "--profile", profile("third", { landing: { header: { links: [{ label: "Docs", href: "/docs" }] } } }), "--out", path.join(TMP, "x")]),
-      /\.json: landing\.header\.links: the first screen \(the header and the hero\) asks for at most 2 things/);
+      /\.json: landing\.header\.links\[0\]: the first screen \(the header and the hero\) asks for one thing, the hero's button/);
     // Each block passes alone; the page they make together has three calls (checked after merging).
     const early = { label: "Early access", href: "/early-access" };
-    assert.deepEqual(landingProblems({ header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }] }), []);
+    assert.deepEqual(landingProblems({ header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }], first_screen: { calls: 2 } }), []);
     assert.deepEqual(landingProblems({ sections: [{ type: "hero", primary_cta: { label: "Docs", href: "/docs" } }] }), []);
-    refused("a profile hero that makes a third call with the pack's header", gen(["--packs", packsDir("early", { le: { landing: { header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }] } } }), "--profile", profile("third2", { landing: { sections: [{ type: "hero", primary_cta: { label: "Docs", href: "/docs" } }] } }), "--out", path.join(TMP, "x")]),
-      /\.json: landing\.sections\[0\]\.primary_cta: the first screen \(the header and the hero\) asks for at most 2 things, signing in and one other \(sign in, \/early-access\)/);
+    refused("a profile hero that makes a third call with the pack's header", gen(["--packs", packsDir("early", { le: { landing: { header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }], first_screen: { calls: 2 } } } }), "--profile", profile("third2", { landing: { sections: [{ type: "hero", primary_cta: { label: "Docs", href: "/docs" } }] } }), "--out", path.join(TMP, "x")]),
+      /\.json: landing\.sections\[0\]\.primary_cta: the first screen \(the header and the hero\) asks for at most 2 things with first_screen\.calls 2, signing in and one other \(sign in, \/early-access\)/);
+    // A profile that turns the pack's two-call page back to one: the pack's header link is then refused on the merged page.
+    refused("a profile that sets one call under the pack's header link", gen(["--packs", packsDir("early2", { le: { landing: { header: { links: [early] }, sections: [{ type: "hero", primary_cta: early }], first_screen: { calls: 2 } } } }), "--profile", profile("one", { landing: { first_screen: { calls: 1 } } }), "--out", path.join(TMP, "x")]),
+      /\.json: landing\.header\.links\[0\]: the first screen \(the header and the hero\) asks for one thing/);
     refused("a client that does not exist", gen(["--packs", packsDir("cl2", { lp: { landing: sec({ type: "where_you_work", clients: ["netscape"] }) } }), "--profile", profile("e5", {}), "--out", path.join(TMP, "x")]), /netscape is not offered/);
     assert.ok(!existsSync(path.join(TMP, "x", "web", "src", "config", "landing.generated.ts")), "a refused build writes nothing");
 
@@ -415,6 +446,21 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     const order = (html: string, ids: string[]) => ids.map((id) => html.indexOf(`<section id="${id}"`));
     const inOrder = (at: number[]) => at.every((i, k) => i > 0 && (k === 0 || i > at[k - 1]!));
     const text = (html: string) => html.replace(/<[^>]*>/g, " ");
+    /**
+     * The calls to action of the first screen (mold_v0-165): every link or button in the header and the hero (up to the
+     * section `until`) but the ways around (the home link, the sections' anchors, the menu, an open-source app's GitHub
+     * icon) and the hero's foot (a logos row: names, not calls), as "label -> href".
+     */
+    const calls = (html: string, until: string) => {
+      const top = html.slice(0, html.indexOf(`<section id="${until}"`)).replace(/<ul aria-label="[^"]*" class="flex flex-wrap gap-3">[\s\S]*?<\/ul>/g, "");
+      const out: string[] = [];
+      for (const m of top.matchAll(/<(a|button)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
+        const attrs = m[2]!, label = text(m[3]!).replace(/\s+/g, " ").trim(), href = /href="([^"]*)"/.exec(attrs)?.[1] ?? "";
+        if (/aria-label="[^"]* home"/.test(attrs) || href.startsWith("/#") || /aria-label="Open menu"/.test(attrs) || /aria-label="[^"]* on GitHub"/.test(attrs)) continue;
+        out.push(`${label} -> ${href}`);
+      }
+      return out;
+    };
 
     // The neutral page: the whole wireframe, in order, in the build's words.
     const n = await render("neutral", { name: "Acme", words: { workspace: "company", run: "audit", member: "analyst" } });
@@ -431,11 +477,13 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.match(n.html, /href="\/auth\/sign-up"/, "a call to sign up");
     assert.match(n.html, /href="\/install"/, "a call to connect a client");
     assert.match(n.html, /href="\/app"[^>]*>Sign in</, "a way to sign in");
-    // The first screen (mold_v0-164): the header's "Sign in" and the hero's start, nothing else; no GitHub button.
+    // The first screen (mold_v0-165): one call to action, the hero's "Get started"; the header asks for nothing.
     const header = n.html.slice(0, n.html.indexOf("</header>"));
-    assert.ok(!header.includes('href="/auth/sign-up"') && !header.includes('href="/install"'), "the header: no start call beside the hero's, no install link");
+    assert.ok(!/href="\/(auth\/sign-up|request-access|install|app)"/.test(header) && !/>Sign in</.test(header), "the header: no sign-in, no start, no install link");
     const heroHtml = n.html.slice(n.html.indexOf('<section id="intro"'), n.html.indexOf('<section id="problem"'));
+    assert.deepEqual(calls(n.html, "problem"), ["Get started -> /auth/sign-up"], "the first screen asks for one thing: the hero's Get started");
     assert.equal(count(heroHtml, /<a [^>]*href="\/(auth\/sign-up|install|app)"/g), 1, "the hero: one call to action (sign up)");
+    assert.deepEqual(calls(n.invite, "problem"), ["Get started -> /request-access"], "invite-only: the same one button, its label kept, to the request form");
     assert.ok(!/on GitHub/.test(n.html), "no open_source: no GitHub button and no footer link");
     assert.ok(n.html.split("<footer")[1]!.includes('href="/install"'), "the install pages: still in the footer");
     const words = text(n.html);
@@ -492,8 +540,9 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     const osHeader = os.html.slice(0, os.html.indexOf("</header>"));
     assert.match(osHeader, /<a href="https:\/\/github\.com\/example-org\/app" aria-label="Acme on GitHub" title="Acme on GitHub" rel="noopener noreferrer" class="[^"]*size-11[^"]*"><svg aria-hidden="true" viewBox="0 0 16 16"/, "the header: a GitHub button, named, 44 px, its mark drawn inline");
     assert.ok(!/hidden sm:inline-flex[^"]*"[^>]*aria-label="Acme on GitHub"|aria-label="Acme on GitHub"[^>]*class="[^"]*\bhidden\b/.test(osHeader), "on every width");
-    assert.match(osHeader, /href="\/app"[^>]*>Sign in</, "and the quiet sign-in");
-    assert.ok(!osHeader.includes('href="/request-access"'), "the start is the hero's alone");
+    assert.ok(!/>Sign in</.test(osHeader) && !osHeader.includes('href="/request-access"'), "and no call: the start is the hero's alone (mold_v0-165)");
+    assert.deepEqual(calls(os.html, "logos"), ["Get started -> /request-access"], "the first screen: the GitHub icon is not a call; one call, the hero's");
+    assert.match(os.html.split("<footer")[1]!, /href="\/app"[^>]*>Sign in</, "signing in: in the footer, even with shell_links false");
     assert.match(os.html.split("<footer")[1]!, /href="https:\/\/github\.com\/example-org\/app"[^>]*>Open source on GitHub</, "the footer links the repository");
     const row = os.html.slice(os.html.indexOf('<section id="logos"'), os.html.indexOf('<section id="faq"'));
     assert.match(row, /^<section id="logos" aria-labelledby="logos-title"/, "the logos row: a labelled region");
@@ -502,6 +551,21 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.match(row, /<span[^>]*>Gamma Group<\/span>/, "a name with no image: its name");
     assert.ok(!/href="\/#logos"/.test(os.html), "the logos row is not in the navigation");
     for (const f of readdirSync(path.join(webDir, "public", "landing"))) assert.ok(row.includes(`/landing/${f}`), `${f}: every file copied is one the row shows`);
+
+    // A logos row with no title right under the hero (mold_v0-165): the hero's foot, labelled for a screen reader, no band of its own.
+    const { title: _t, ...untitled } = LOGOS;
+    const ft = await render("foot", { name: "Acme" }, { lp: { landing: { sections: [{ type: "hero", primary_cta: { label: "Start now", href: "/auth/sign-up" } }, { ...untitled, label: "Bodies covered" }, { type: "faq", items: [{ question: "q", answer: "a" }] }] } } },
+      { "lp/assets/alpha.svg": SVG, "lp/assets/beta.png": png(300, 96) });
+    const ftHero = ft.html.slice(ft.html.indexOf('<section id="intro"'), ft.html.indexOf('<section id="faq"'));
+    assert.ok(!ft.html.includes('<section id="logos"'), "the row is not a section of its own");
+    assert.match(ftHero, /<div id="logos" class="[^"]*"><ul aria-label="Bodies covered" class="flex flex-wrap gap-3">[\s\S]*alt="Alpha Board"[\s\S]*Gamma Group/, "it is inside the hero, its list named for a screen reader");
+    assert.ok(!/<h2|Covers the rules of|border-t/.test(ftHero.slice(ftHero.indexOf('id="logos"'))), "with no heading line and no divider");
+    assert.deepEqual(calls(ft.html, "faq"), ["Start now -> /auth/sign-up"], "the first screen: the block's label on the one button; the logos are not calls");
+    assert.deepEqual(calls(ft.invite, "faq"), ["Start now -> /request-access"], "invite-only: the same label, to the request form");
+    // first_screen.calls 2 (mold_v0-164): the header's sign-in and the block's link stay, as before.
+    const tw = await render("two", { name: "Acme" }, { lp: { landing: { first_screen: { calls: 2 }, header: { links: [{ label: "Early access", href: "/early-access" }], account: "account", sign_in: { label: "Sign in", href: "/auth/sign-in" } }, sections: [{ type: "hero", primary_cta: "account", secondary_cta: { label: "Early access", href: "/early-access" } }, { type: "faq", items: [{ question: "q", answer: "a" }] }] } } });
+    assert.deepEqual(calls(tw.html, "faq"), ["Early access -> /early-access", "Sign in -> /auth/sign-in", "Sign in -> /auth/sign-in", "Early access -> /early-access"],
+      "two calls: the header's link and account button, the hero's account button and second call, as before");
 
     // An old block, rendered converted.
     const o = await render("old", { name: "Acme" }, { lo: { landing: LEGACY } });
@@ -526,7 +590,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
 `, path.join(TMP, "render-js.cjs")) as { html: string };
     assert.ok(js.html.includes("alert(3)") === false || !/href="javascript:/i.test(js.html), "a script address is never a link, even past gen-packs");
     assert.ok(!/javascript:/i.test(js.html), "and never in the markup");
-    console.log("✓ the page: the neutral one is the whole wireframe in the build's words, with navigation from its sections; a pack's shows what it picked, in its order; an old block renders converted; text is text, a bad link never a link; invite-only leads to the request form; the footer's source offer; the header's sign-in alone beside the hero's start, no install link; an open-source app's GitHub button (named, 44 px, every width) and footer link; a logos row with its images' names and sizes");
+    console.log("✓ the page: the neutral one is the whole wireframe in the build's words, with navigation from its sections; a pack's shows what it picked, in its order; an old block renders converted; text is text, a bad link never a link; invite-only leads to the request form; the footer's source offer; the first screen's one call, the hero's Get started (the block's label, the request form under invite-only), the header asking for nothing and signing in in the footer; a title-less logos row as the hero's foot; the two-call page kept with first_screen.calls 2; an open-source app's GitHub button (named, 44 px, every width) and footer link; a logos row with its images' names and sizes");
 
     // ---------- 5. the request page (mold_v0-138) and the account button's words ----------
     const RP = {
@@ -563,7 +627,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
       { key: "legacy", label: "Old question", type: "text" },
     ] };
     rmSync(path.join(copy, "packs"), { recursive: true, force: true });
-    cpSync(packsDir("render-rp", { rp: { landing: { header: { account: "account", sign_in: { label: "Log in", href: "/auth/sign-in" }, open: { label: "Go to the console", href: "/app" } }, seo: { title: "Acme asks", card: "summary" }, request_page: RP }, access_request: FIELDS } }), path.join(copy, "packs"), { recursive: true });
+    cpSync(packsDir("render-rp", { rp: { landing: { first_screen: { calls: 2 }, header: { account: "account", sign_in: { label: "Log in", href: "/auth/sign-in" }, open: { label: "Go to the console", href: "/app" } }, seo: { title: "Acme asks", card: "summary" }, request_page: RP }, access_request: FIELDS } }), path.join(copy, "packs"), { recursive: true });
     writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ name: "Acme" }));
     const g = gen([], copy);
     assert.equal(g.status, 0, `gen-packs (request page): ${g.stderr}`);
