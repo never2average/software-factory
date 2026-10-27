@@ -23,6 +23,8 @@ import { openDb, type Db } from "../src/db.js";
 import { ADOPTING_MIGRATIONS, ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS, tableShape } from "../src/migrate.js";
 import { catalogStamp, rowStats } from "../src/migration-rehearsal.js";
 import { PACK_MIGRATION_DIRS } from "../src/pack-migrations.generated.js";
+/** The shell's migrations after 0023, in order (0024, 0025, and every later one: mold_v0-036 added 0027). */
+const AFTER_23 = (await loadMigrations()).filter((m) => m.version > 23).map((m) => `${String(m.version).padStart(4, "0")}_${m.name}`);
 
 const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
@@ -457,7 +459,7 @@ async function suite(kind: "pglite" | "postgres") {
     })).map((r) => r.org_id);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "before: the old release's tenant transaction sees its own rows");
     const t0 = Date.now();
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory"]);
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, AFTER_23);
     const ms = Date.now() - t0;
     assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
     assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
@@ -483,7 +485,7 @@ async function suite(kind: "pglite" | "postgres") {
     sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
     sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory"], "and 0024 (and 0025) apply again");
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, AFTER_23, "and 0024 (and every later one) apply again");
     sameCatalog(await catalog(at23), packSets.length ? await shellCatalog(kind) : want, `${kind}: 0024 again after the rollback`);
     await fresh23.drop();
     await at23.drop();
