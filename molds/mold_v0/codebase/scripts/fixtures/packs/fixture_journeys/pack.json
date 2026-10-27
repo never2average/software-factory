@@ -1,0 +1,49 @@
+{
+  "id": "fixture_journeys",
+  "name": "Fixture journeys",
+  "version": "0.1.0",
+  "description": "A test fixture for the journeys and in-chat tips components (mold_v0-143; scripts/journeys-tips-test.ts): a pack.json that turns them on (with the memory component, whose two tools its stages name), nothing else. Never shipped.",
+  "memory": {
+    "$comment": "The memory component's two tools are the build's only tools: the journeys' stages and the tips' always_after name them.",
+    "scopes": ["company", "user"],
+    "tools": { "save": "remember", "search": "recall" }
+  },
+  "journeys": {
+    "$comment": "One built-in pipeline, a placeholder the account fills ({client}: no host hook here, so it stays as written), a stage that starts work, and a few words of its own.",
+    "templates": [
+      {
+        "id": "first-steps",
+        "name": "First steps",
+        "outcome": "The team remembers what matters about {client}.",
+        "who": "Anyone new",
+        "time": "five minutes",
+        "example": { "title": "A help desk", "result": "Three facts saved in a minute." },
+        "stages": [
+          { "id": "save", "title": "Save a fact", "why": "So nobody has to repeat it.", "prompt": "Remember that {client} prefers email.", "tools": ["remember"], "expect": "A saved item." },
+          { "id": "share", "title": "Tell the team", "why": "", "prompt": "Mention it at stand-up.", "tools": [], "manual": true, "expect": "Everyone knows." }
+        ]
+      }
+    ],
+    "seeded_before_ledger": ["first-steps"],
+    "launch": { "tools": ["remember"], "groups": [] },
+    "words": { "export_prefix": "fixture-use-cases", "not_a_tool": "Stage {n}: {tool} is not one of {product}'s tools" },
+    "labels": { "journey_templates": "Pipelines" }
+  },
+  "tips": {
+    "$comment": "Search always carries the waiting tip; the chat line in its own words.",
+    "always_after": ["recall"],
+    "interval_hours": 20,
+    "recipes": [
+      {
+        "id": "welcome",
+        "name": "Welcome",
+        "goal": "a first save within a day",
+        "trigger": "app_signed_in (first time)",
+        "steps": [{ "step": "save", "when": "1 day, unless tool_called: remember", "channels": ["chat", "email"], "message": "Save one fact the team should not repeat.", "prompt": "Remember that we answer within a day." }]
+      }
+    ],
+    "words": { "chat_line": "A tip for the user from {product}: {message}" },
+    "labels": { "nudges": "Tip queue" }
+  },
+  "texts": { "journeys.one": "pipeline", "journeys.many": "pipelines" }
+}

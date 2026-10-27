@@ -101,6 +101,8 @@ const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
 // The account context and memory component's lists and words (mold_v0-142): plain TypeScript with no imports.
 const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "account-context-words.ts")).href);
+// The journeys and tips components' words (mold_v0-143): plain TypeScript with no imports.
+const { JOURNEY_WEB_WORDS, TIP_WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "journeys-words.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -148,6 +150,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "account_stages",
   // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
   "memory",
+  // the journeys and in-chat tips components, turned on (mold_v0-143, src/journeys.ts, src/tips.ts; PACK_CONFIG, JOURNEYS and TIPS)
+  "journeys", "tips",
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
   "texts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
@@ -555,12 +559,15 @@ function hostSchemaOf(m, dirName, where) {
       else references[k] = v;
     }
   }
-  // Its migrations rewritten once when tables they made became the shell's (mold_v0-142): file name -> earlier sha256.
+  // Its migrations rewritten when tables they made became the shell's (mold_v0-142, mold_v0-143): file name -> the
+  // earlier file's sha256, or each earlier version's (a list).
   const split = {};
   if (sc.split !== undefined) {
-    if (!sc.split || typeof sc.split !== "object" || Array.isArray(sc.split)) fail(where, "host.schema.split must be an object of pack migration -> its earlier checksum (sha256)");
+    if (!sc.split || typeof sc.split !== "object" || Array.isArray(sc.split)) fail(where, "host.schema.split must be an object of pack migration -> its earlier checksum (sha256), or a list of them");
     else for (const [k, v] of Object.entries(sc.split)) {
-      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) fail(where, `host.schema.split.${k}: NNNN_name -> the earlier file's sha256 (64 hex)`);
+      const sums = typeof v === "string" ? [v] : v;
+      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || !Array.isArray(sums) || !sums.length || !sums.every((x) => typeof x === "string" && /^[0-9a-f]{64}$/.test(x)) || new Set(sums).size !== sums.length)
+        fail(where, `host.schema.split.${k}: NNNN_name -> the earlier file's sha256 (64 hex), or a list of distinct ones`);
       else split[k] = v;
     }
   }
@@ -1429,7 +1436,7 @@ files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
 }) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
-  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string>> }\n" +
+  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string | readonly string[]>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n` +
   // Their tables' labels (mold_v0-141: host.schema.labels), only when one names any (a build without writes what it did).
@@ -1459,6 +1466,8 @@ let setupOwner = null;
 let engineWords = null;
 /** The account context and memory component's pages and words for the console (mold_v0-142); null when it is off. */
 let memoryFacts = null;
+/** The journeys and tips components' facts for the console (mold_v0-143); each null when it is off. */
+let journeyFacts = null, tipFacts = null;
 /** The shell's console texts the packs write (mold_v0-141: pack.json texts), and which pack writes each text. */
 const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
@@ -1522,6 +1531,29 @@ const packConfig = [];
           words: Object.fromEntries(WEB_WORDS.map((k) => [k, rest.words?.[k] ?? MEMORY_WORDS[k]])) };
       }
     }
+    // The journeys and in-chat tips components (mold_v0-143): each one pack's per build. The server reads its config
+    // (PACK_CONFIG); the console its pages' facts (JOURNEYS, TIPS): the built-in templates' ids, the tools and Setup
+    // groups that start work, and the few words a product says in its own terms.
+    if (j.journeys) {
+      if (journeyFacts) fail(at, `journeys: pack ${journeyFacts.pack} turns the journeys component on too: one pack's`);
+      else {
+        const { $comment: _c, ...rest } = j.journeys;
+        c.journeys = rest;
+        // The placeholders its templates' stages use, in order of first use: the editor offers them.
+        const tokens = [...new Set((rest.templates ?? []).flatMap((t) => t.stages.flatMap((st) => [st.prompt, st.why, st.expect]))
+          .flatMap((x) => [...String(x ?? "").matchAll(/\{([a-z_]+)\}/g)].map((m) => `{${m[1]}}`)))];
+        journeyFacts = { pack: p.id, built_in: (rest.templates ?? []).map((t) => t.id), launch: { tools: rest.launch?.tools ?? [], groups: rest.launch?.groups ?? [] }, tokens,
+          words: Object.fromEntries(Object.keys(JOURNEY_WEB_WORDS).map((k) => [k, rest.words?.[k] ?? JOURNEY_WEB_WORDS[k]])) };
+      }
+    }
+    if (j.tips) {
+      if (tipFacts) fail(at, `tips: pack ${tipFacts.pack} turns the in-chat tips component on too: one pack's`);
+      else {
+        const { $comment: _c, ...rest } = j.tips;
+        c.tips = rest;
+        tipFacts = { pack: p.id, words: Object.fromEntries(Object.keys(TIP_WEB_WORDS).map((k) => [k, rest.words?.[k] ?? TIP_WEB_WORDS[k]])) };
+      }
+    }
     // The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): one pack's per text, placeholders the
     // shell's; the server's go in its config, the console's in its build facts (consoleTexts, below).
     if (j.texts) {
@@ -1534,7 +1566,8 @@ const packConfig = [];
         textOwner.set(tid, p.id);
         const unknown = unknownPlaceholders(text);
         if (unknown.length) fail(at, `texts ${tid}: ${unknown.map((u) => `{${u}}`).join(", ")} is not a placeholder of the build's words (src/words.ts)`);
-        if (def.side === "server") server[tid] = text; else consoleTexts[tid] = text;
+        if (def.side !== "console") server[tid] = text;
+        if (def.side !== "server") consoleTexts[tid] = text;
       }
       if (Object.keys(server).length) c.texts = server;
     }
@@ -1547,6 +1580,13 @@ if (memoryFacts) {
   const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
   files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
     `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
+}
+// The journeys and tips components' facts for the console (mold_v0-143), only when each is on.
+if (journeyFacts || tipFacts) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + (journeyFacts ? "/** The journeys component (mold_v0-143: pack.json journeys): its built-in templates' ids, what starts work and its words. */\n" +
+    `export const JOURNEYS = ${json(journeyFacts)};\n` : "") + (tipFacts ? "/** The in-chat tips component (mold_v0-143: pack.json tips): its words. */\n" +
+    `export const TIPS = ${json(tipFacts)};\n` : ""));
 }
 // The shell's console texts in the packs' words (mold_v0-141: pack.json texts; web/src/lib/texts.ts fills them, else the
 // shell's own from src/shell-texts.ts), only when a pack writes one: a build without writes what it did.
@@ -1639,9 +1679,11 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     for (const area of ["app", "admin"]) {
       const placements = c.nav?.[area];
       if (placements === undefined) continue;
-      // Its own pages, and the account context pages where it turns that component on (mold_v0-142).
+      // Its own pages, the account context pages where it turns that component on (mold_v0-142), and the journeys pages
+      // where it turns journeys (/app and /admin) or tips (/admin) on (mold_v0-143).
       const own = new Set([...(Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`),
-        ...(area === "app" && memoryFacts?.pack === p.id ? memoryFacts.sections.map((x) => x.path) : [])]);
+        ...(area === "app" && memoryFacts?.pack === p.id ? memoryFacts.sections.map((x) => x.path) : []),
+        ...(journeyFacts?.pack === p.id || (area === "admin" && tipFacts?.pack === p.id) ? [`/${area}/journeys`] : [])]);
       const keys = new Map();
       for (const [i, pl] of placements.entries()) for (const [j, it] of pl.items.entries()) {
         const w = `${at} console.nav.${area}[${i}].items[${j}]`;
@@ -1653,9 +1695,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
       // As the sidebar's own entries are written: {title, url, icon, shortcut?, items: []} (web/src/features/packs/host-nav.ts).
       entry[area] = placements.map(({ $comment: _c, ...pl }) => pl);
     }
+    for (const f of ["tips", "journeys"]) if (c.components?.includes(f))
+      fail(at, `console.components ${f}: the ${f === "tips" ? "in-chat tips" : "journeys"} component is the shell's since mold_v0-143, turned on by pack.json ${f}`);
     if (c.components?.length) entry.components = c.components;
     navs.push(entry);
   }
+  // The journeys pages in the sidebar (mold_v0-143): where no pack's console.nav places them, an Engagement group of their own.
+  const placed = (area) => navs.some((n) => (n[area] ?? []).some((pl) => pl.items.some((it) => it.url === `/${area}/journeys`)));
+  const journeyNoun = (() => { const t = consoleTexts["journeys.many"] ?? SHELL_TEXTS["journeys.many"].text; return t.charAt(0).toUpperCase() + t.slice(1); })();
+  if (journeyFacts && !placed("app")) navs.push({ pack: journeyFacts.pack, app: [{ label: "Engagement", items: [{ title: journeyNoun, url: "/app/journeys", icon: "route" }] }] });
+  if ((journeyFacts || tipFacts) && !placed("admin")) navs.push({ pack: (journeyFacts ?? tipFacts).pack, admin: [{ label: "Engagement", items: [{ title: journeyFacts ? journeyNoun : "Tips", url: "/admin/journeys", icon: "route" }] }] });
   // The account context pages in the sidebar (mold_v0-142): where no pack's console.nav places them, a Context group of
   // their own, after the shell's groups.
   if (memoryFacts && !navs.some((n) => (n.app ?? []).some((pl) => pl.items.some((it) => it.url.startsWith("/app/context/")))))
@@ -1711,6 +1760,10 @@ const SHELL_APP_SEGMENTS = new Set(existsSync(SHELL_APP_DIR) ? readdirSync(SHELL
   .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name)).map((e) => e.name) : []);
 // The nested addresses of before (they redirect) and the host page route stay the shell's.
 for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
+/** The shell's own /admin pages (mold_v0-143: /admin/journeys is the journeys and tips components'): a pack's route never claims one. */
+const SHELL_ADMIN_DIR = path.join(ROOT, "web", "src", "app", "admin");
+const SHELL_ADMIN_SEGMENTS = new Set(existsSync(SHELL_ADMIN_DIR) ? readdirSync(SHELL_ADMIN_DIR, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name) && e.name !== "host").map((e) => e.name) : []);
 /** The flat address of a pack's customer page or tab page: /app/<id>. */
 const appPageUrl = (id) => `/app/${id}`;
 /** Every flat customer page of the build: the packs' app pages, then the shown tabs with a page of their own. */
@@ -1805,7 +1858,8 @@ const profileSidebar = (() => {
       for (const p of Array.isArray(r[area]) ? r[area] : []) {
         if (typeof p !== "string" || !ROUTE_PATH.test(p) || p.startsWith("host/") || p === "host") { fail(`web/src/packs/${id}/routes.json`, `${area}: ${JSON.stringify(p)} is not a page path`); continue; }
       // The shell's own pages win over a rewrite (mold_v0-142: /app/context is the account context component's).
-      if (area === "app" && SHELL_APP_SEGMENTS.has(p.split("/")[0])) { fail(`web/src/packs/${id}/routes.json`, `app: ${p} is under the shell's own /app/${p.split("/")[0]}${p.split("/")[0] === "context" ? " (the account context and memory pages: pack.json memory turns them on, mold_v0-142)" : ""}`); continue; }
+      if (area === "app" && SHELL_APP_SEGMENTS.has(p.split("/")[0])) { fail(`web/src/packs/${id}/routes.json`, `app: ${p} is under the shell's own /app/${p.split("/")[0]}${p.split("/")[0] === "context" ? " (the account context and memory pages: pack.json memory turns them on, mold_v0-142)" : p.split("/")[0] === "journeys" ? " (the journeys component's page: pack.json journeys turns it on, mold_v0-143)" : ""}`); continue; }
+      if (area === "admin" && SHELL_ADMIN_SEGMENTS.has(p.split("/")[0])) { fail(`web/src/packs/${id}/routes.json`, `admin: ${p} is under the shell's own /admin/${p.split("/")[0]}${p.split("/")[0] === "journeys" ? " (the journeys and tips components' page: pack.json journeys and tips turn it on, mold_v0-143)" : ""}`); continue; }
         const source = prefix + p;
         if (seenUrl.has(source)) fail(`web/src/packs/${id}/routes.json`, `${source} is claimed twice`);
         seenUrl.add(source);

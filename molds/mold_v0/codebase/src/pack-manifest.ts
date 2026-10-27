@@ -21,6 +21,7 @@
  */
 import { CONSOLE_COMPONENTS, CONSOLE_PAGES } from "./console-pages.js";
 import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./account-context-words.js";
+import { JOURNEY_TABLES, JOURNEY_WEB_WORDS, JOURNEY_WORDS, MAX_STAGES, TIP_TABLES, TIP_WEB_WORDS, TIP_WORDS } from "./journeys-words.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
@@ -156,6 +157,54 @@ const MemorySchema = z.object({
 }).strict();
 
 /**
+ * The journeys component (mold_v0-143; src/journeys.ts, src/host.ts JourneysConfig): on in a build where one pack
+ * declares it. `templates` (the built-in journeys, seeded once each: their stages' tools must be the product's, which
+ * scripts/gen-packs.mjs cannot see, so src/journeys.ts checks them as an admin's edit is), `seeded_before_ledger`,
+ * `launch` (the tools and Setup workflow groups that start work), `words` (JOURNEY_WORDS and JOURNEY_WEB_WORDS), `labels`
+ * (its tables' names on the Storage page).
+ */
+const toolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's name: lowercase letters, digits and _");
+const journeyId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/, "a slug: lowercase letters, digits and -, at most 48");
+const JourneyStageSchema = z.object({
+  id: journeyId, title: plain(120), why: z.string().trim().max(500), prompt: plain(600), tools: z.array(toolName).max(20), expect: plain(500),
+  manual: z.boolean().optional(),
+  link: z.object({ href: z.string().regex(/^\/app(\/[a-z0-9/-]*)?$/, "an /app page"), label: plain(60) }).strict().optional(),
+}).strict().refine((st) => st.manual === true || st.tools.length > 0, "a stage with no tool is marked by hand: manual true");
+const JourneyTemplateSchema = z.object({
+  id: journeyId, name: plain(80), outcome: plain(300), who: z.string().trim().max(200), time: z.string().trim().max(80),
+  example: z.object({ title: z.string().trim().max(120), result: z.string().trim().max(600) }).strict(),
+  stages: z.array(JourneyStageSchema).min(1).max(MAX_STAGES).refine((xs) => new Set(xs.map((x) => x.id)).size === xs.length, "each stage id once"),
+}).strict();
+const wordText = z.string().trim().min(1).max(600).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line");
+const JourneysSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  templates: z.array(JourneyTemplateSchema).max(50).refine((xs) => new Set(xs.map((x) => x.id)).size === xs.length, "each template id once").optional(),
+  seeded_before_ledger: z.array(journeyId).max(50).optional(),
+  launch: z.object({ tools: z.array(toolName).max(20).optional(), groups: z.array(stepId).max(20).optional() }).strict().optional(),
+  words: z.partialRecord(z.enum([...Object.keys(JOURNEY_WORDS), ...Object.keys(JOURNEY_WEB_WORDS)] as [string, ...string[]]), wordText).optional(),
+  labels: z.partialRecord(z.enum(JOURNEY_TABLES), plain(60)).optional(),
+}).strict();
+/**
+ * The in-chat tips component (mold_v0-143; src/tips.ts, src/host.ts TipsConfig): on in a build where one pack declares
+ * it. `always_after` (tools whose answer always carries the waiting tip), `interval_hours`, `recipes` (the sequences to
+ * build in the workflow tool, with the steps it sends here), `words` (TIP_WORDS and TIP_WEB_WORDS), `labels`.
+ */
+const TipsSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  always_after: z.array(toolName).max(20).optional(),
+  interval_hours: z.number().min(0).max(24 * 30).optional(),
+  recipes: z.array(z.object({
+    id: journeyId, name: plain(80), goal: plain(200), trigger: plain(300),
+    steps: z.array(z.object({
+      step: journeyId, when: plain(300), channels: z.array(z.enum(["chat", "app", "email", "slack"])).min(1).max(4),
+      message: plain(280), prompt: plain(300).optional(), link: z.string().regex(/^(https:\/\/|\/app)\S{0,490}$/, "https:// or an /app path").optional(),
+    }).strict()).min(1).max(10),
+  }).strict()).max(30).optional(),
+  words: z.partialRecord(z.enum([...Object.keys(TIP_WORDS), ...Object.keys(TIP_WEB_WORDS)] as [string, ...string[]]), wordText).optional(),
+  labels: z.partialRecord(z.enum(TIP_TABLES), plain(60)).optional(),
+}).strict();
+
+/**
  * The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): by id, each one sentence or label on one
  * line, its word placeholders the shell's (scripts/gen-packs.mjs checks those, and that one pack writes each text).
  */
@@ -207,6 +256,8 @@ const AccessRequestSchema = z.object({
 const JobKindJson = z.discriminatedUnion("runner", [JobKindSchema, AgentJobKindSchema]);
 
 /** pack.json, whole: the manifest (mold_v0-038) and the declarations (mold_v0-057). */
+/** An earlier migration file's checksum (host.schema.split). */
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/, "the earlier file's sha256 (64 hex)");
 export const PackJsonSchema = z.object({
   $schema: z.string().optional(),
   $comment: z.string().max(2000).optional(),
@@ -252,11 +303,13 @@ export const PackJsonSchema = z.object({
       functions: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a function name")).max(50).optional(),
       adopts: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a shell migration (NNNN_name)")).optional(),
       /**
-       * Its migrations rewritten once because tables they made became the shell's (mold_v0-142: the account context and
-       * memory tables, src/account-context.ts): each file name -> the sha256 of the file as it was, which a database that
-       * ran it keeps and src/migrate.ts accepts for that file only (the shell's own migration adopts the tables there).
+       * Its migrations rewritten because tables they made became the shell's (mold_v0-142: the account context and
+       * memory tables, src/account-context.ts; mold_v0-143: the journeys and tips tables): each file name -> the sha256
+       * of the file as it was, or of each earlier version (a list), which a database that ran it keeps and
+       * src/migrate.ts accepts for that file only (the shell's own migration adopts the tables there).
        */
-      split: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^[0-9a-f]{64}$/, "the earlier file's sha256 (64 hex)")).optional(),
+      split: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.union([sha256, z.array(sha256).min(1).max(20)
+        .refine((xs) => new Set(xs).size === xs.length, "each checksum once")])).optional(),
       /** Each table's label in the product's words (mold_v0-141): the Storage page's name for it (src/host-tables.ts hostTableLabel); else its name, capitalised. */
       labels: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name"), plain(60)).optional(),
     }).strict().optional(),
@@ -332,6 +385,10 @@ export const PackJsonSchema = z.object({
   setup: SetupSchema.optional(),
   /** The account context and memory component, turned on (mold_v0-142; src/account-context.ts): MemorySchema above. */
   memory: MemorySchema.optional(),
+  /** The journeys component, turned on (mold_v0-143; src/journeys.ts): JourneysSchema above. */
+  journeys: JourneysSchema.optional(),
+  /** The in-chat tips component, turned on (mold_v0-143; src/tips.ts): TipsSchema above. */
+  tips: TipsSchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
   admin_mcp: AdminMcpSchema.optional(),
   console: z.object({

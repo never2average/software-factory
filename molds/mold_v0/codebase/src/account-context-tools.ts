@@ -20,6 +20,7 @@ import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { hosts, type MemoryToolWords } from "./host.js";
 import { withTenant } from "./tenant-scope.js";
+import { withTip } from "./tips.js";
 import { addMemory, contextConfig, ContextError, fillWord, getPerson, MEMORY_KINDS, scopesOn, subjectsOf, word, type MemoryScope } from "./account-context.js";
 
 /** "me" in the tools is the signed-in person; the table stores it as the user scope. */
@@ -152,6 +153,8 @@ export async function runMemoryTool(org: Org, which: "save" | "search", args: Re
       : "";
     let result: CallToolResult = { content: [{ type: "text", text: `${summarize(structured as unknown as MemoryView)}${note}\n\n${JSON.stringify(structured)}` }], structuredContent: structured };
     for (const h of hosts()) if (h.mcp?.decorate) result = await h.mcp.decorate(org, name, result).catch((e) => { console.error(`memory tool ${name}: ${h.id} decorate: ${(e as Error).message}`); return result; });
+    // The in-chat tips component's waiting tip (mold_v0-143, src/tips.ts), as every tool of the build carries it.
+    result = await withTip(org, name, result);
     return capResult(org, name, result, t0, args);
   } catch (err) {
     // A database error can echo other rows' values: the caller gets its code, never its text.

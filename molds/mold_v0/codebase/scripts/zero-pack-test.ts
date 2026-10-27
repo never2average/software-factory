@@ -50,11 +50,12 @@ const origError = console.error;
 console.error = (...a: unknown[]) => { logged.push(a.map((x) => (x instanceof Error ? `${x.message} ${(x as { code?: string }).code ?? ""}` : String(x))).join(" ")); origError(...a); };
 
 /**
- * The product's tables: the 21 the pre-049 baseline created that the shell's migrations no longer do (its account
- * context and memory tables are the shell's again since mold_v0-142: 0025_account_context_memory).
+ * The product's tables: the 15 the pre-049 baseline created that the shell's migrations no longer do (its account
+ * context and memory tables are the shell's again since mold_v0-142: 0025_account_context_memory; its journeys and tips
+ * tables since mold_v0-143: 0026_journeys_and_tips).
  */
-const PRODUCT_TABLES = ["adoption_help", "agent_sessions", "developer_population_agents", "developer_populations",
-  "developer_profiles", "journey_progress", "journey_seed", "journey_templates", "library_submissions", "library_tasks", "nudge_prefs", "nudges",
+const PRODUCT_TABLES = ["agent_sessions", "developer_population_agents", "developer_populations",
+  "developer_profiles", "library_submissions", "library_tasks",
   "org_harnesses", "org_task_sets", "product_personas", "product_research", "products", "scenarios", "simulations", "transcript_events",
   "visibility_reports"];
 const MOVED = (() => {

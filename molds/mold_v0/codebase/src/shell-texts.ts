@@ -7,7 +7,8 @@
  *
  * No imports, so scripts/gen-packs.mjs and src/pack-manifest.ts read the same list the server does. `side` says where
  * the text is shown: "server" texts reach the server through src/hosts.generated.ts PACK_CONFIG (src/texts.ts
- * shellText), "console" texts the console through web/src/config/build-facts.generated.ts TEXTS (web/src/lib/texts.ts).
+ * shellText), "console" texts the console through web/src/config/build-facts.generated.ts TEXTS (web/src/lib/texts.ts),
+ * "both" texts both (mold_v0-143: the journeys' nouns, which the journeys and tips components' refusals use too).
  */
 export const SHELL_TEXTS = {
   "refusal.viewer_launch": { side: "server", text: "Viewers can read reports, usage and transcripts but can't run {runs}.",
@@ -23,10 +24,10 @@ export const SHELL_TEXTS = {
   "requests.research_alternatives": { side: "console", text: "Alternatives",
     where: "the label of the products a request's research brief compares the company with (/admin/requests)" },
   "tips.sequence_field": { side: "console", text: "Series",
-    where: "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts; a host pack's tips)" },
-  "journeys.one": { side: "console", text: "guide",
-    where: "what one of a host pack's step-by-step pipelines is called on /app Setup (its `journeys` component)" },
-  "journeys.many": { side: "console", text: "guides",
+    where: "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts, /admin/journeys; the tips component, src/tips.ts)" },
+  "journeys.one": { side: "both", text: "guide",
+    where: "what one of the step-by-step pipelines of the `journeys` component is called (/app Setup, `/app/journeys`, `/admin/journeys` and their refusals; src/journeys.ts)" },
+  "journeys.many": { side: "both", text: "guides",
     where: "the same, more than one" },
   "usage.score": { side: "console", text: "Score",
     where: "the score of the session engine's scored runs on /app/usage (its Recent runs chart)" },

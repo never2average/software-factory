@@ -25,7 +25,10 @@ python3 molds/mold_v0/testing/parity/parity.py --self-test                      
 those pages, and the landing page and admin home, as render.py selects them: a phase that changes a few pages),
 `--context-fixture` (mold_v0-142: company and person context and six memory items for the lane workspace and its owner,
 the customer MCP connected as that owner, and the memory search's answers in `mcp/memory-search.json`; `--memory-search
-<tool>` names that tool, default `search_memory`). The output folder must be
+<tool>` names that tool, default `search_memory`), `--journeys-fixture` (mold_v0-143: an account-wide tip from the
+workflow tool and the owner's own sent by hand, an own use case with a stage marked by hand and an open help request,
+so the journeys and tips routes and pages show them, and one answer of the tool that always carries the waiting tip in
+`mcp/tip-answer.json`; `--tip-tool <tool>` names it, default `get_started`). The output folder must be
 empty. A snapshot is a heavy step: on the factory VM run it through the heavy-step queue.
 
 ## What a snapshot holds

@@ -2,6 +2,7 @@
 // be compared field by field (diff.mts). A harness of the lane world (testing/console/world.mts), started by parity.py:
 //   python3 molds/mold_v0/testing/console/render.py <id> --codebase <lane copy> -- molds/mold_v0/testing/parity/snapshot.mts
 //       --out <dir> [--no-shots] [--only mcp,generated,api,pages] [--context-fixture [--memory-search <tool>]]
+//       [--journeys-fixture [--tip-tool <tool>]]
 // Everything runs on this machine, inside the lane world (an embedded throwaway database, the offline Clerk, the console
 // served on 127.0.0.1); nothing deployed is contacted. What it writes under <dir>:
 //   meta.json                 the build (lane copy, packs) and how long each part took (diff.mts reads only `packs`)
@@ -13,6 +14,9 @@
 //   mcp/memory-search.json    with --context-fixture (mold_v0-142): the account context and memory rows seeded for the
 //                             workspace and its owner (who the customer server then connects as), and the memory search
 //                             tool's answers over them
+//   mcp/tip-answer.json       with --journeys-fixture (mold_v0-143): journeys and tips rows seeded for the workspace and
+//                             its owner, and one answer of the tool that always carries the waiting tip (--tip-tool,
+//                             default get_started), when the build has it
 //   generated/<path>          every *.generated.* file of the lane copy (mcp-tools, docs corpus, pack guides, landing, pack
 //                             nav and routes, admin docs, ...), byte for byte
 //   api/routes.json           every route the API mounts (method and path), read from a second createApp() that never listens
@@ -73,7 +77,10 @@ export async function run(ctx: Ctx): Promise<number> {
   // Account context and memory rows for the lane workspace and its owner (mold_v0-142), the same in every build that has
   // the tables: the MCP instructions, the context pages and their API then show them, and memory searches are recorded.
   const fixture = ctx.argv.includes("--context-fixture") ? await seedContextFixture(lane, imp, await token(ctx.session)) : null;
-  if (only.has("mcp")) await timed("mcp", () => snapMcp(out, lane, imp, fixture, opt(ctx.argv, "--memory-search") ?? "search_memory"));
+  // Journeys and tips rows for the lane workspace and its owner (mold_v0-143), the same in every build that has the tables.
+  const journeys = ctx.argv.includes("--journeys-fixture") ? await seedJourneysFixture(imp, await token(ctx.session)) : null;
+  if (only.has("mcp")) await timed("mcp", () => snapMcp(out, lane, imp, fixture ?? journeys, fixture ? opt(ctx.argv, "--memory-search") ?? "search_memory" : null,
+    journeys ? opt(ctx.argv, "--tip-tool") ?? "get_started" : null));
   if (only.has("generated")) await timed("generated", async () => snapGenerated(out, lane));
   if (only.has("api")) await timed("api", () => snapApi(out, ctx, imp, token));
   if (only.has("pages")) await timed("pages", () => snapPages(out, ctx, shots));
@@ -155,7 +162,31 @@ async function seedContextFixture(lane: string, imp: (rel: string) => Promise<an
   return { userId };
 }
 
-async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<any>, fixture: { userId: string } | null = null, memorySearch = "search_memory") {
+/**
+ * --journeys-fixture (mold_v0-143): rows in the journeys and tips tables for the lane workspace and its owner, with fixed
+ * times (an account-wide tip from the workflow tool and a person's own sent by hand, an own use case, a stage marked by
+ * hand, an open help request), written straight into the tables (the same statements in any build that has them).
+ */
+async function seedJourneysFixture(imp: (rel: string) => Promise<any>, session: string): Promise<{ userId: string }> {
+  const userId = JSON.parse(Buffer.from(session.split(".")[1]!, "base64url").toString()).sub as string;
+  const { getDb } = await imp("src/db.ts");
+  const db = await getDb();
+  const [org] = (await db.query("SELECT id FROM organizations WHERE slug = 'lane-workspace'")) as { id: number }[];
+  if (!org) throw new Error("the lane world's workspace (lane-workspace) is not in the database");
+  if (((await db.query("SELECT 1 FROM nudges WHERE org_id = $1 LIMIT 1", [org.id])) as unknown[]).length) return { userId };
+  await db.query(`INSERT INTO nudges (org_id, user_id, journey, step, message, prompt, link, source, created_at, expires_at) VALUES
+    ($1, '', 'first-report', 'run', 'Your profile and tasks are ready: run the agents on them.', 'Run it now.', NULL, 'posthog', '2026-10-07T09:00:00Z', '2099-01-01T00:00:00Z'),
+    ($1, $2, 'connect', 'guide', 'Connect your AI client in a minute.', NULL, '/app#setup', 'admin', '2026-10-08T09:00:00Z', '2099-01-01T00:00:00Z')`, [org.id, userId]);
+  await db.query(`INSERT INTO journey_templates (id, name, outcome, who, time, example_title, example_result, stages, promoted, position, created_at, updated_at, updated_by, org_id)
+    VALUES ('lane-workspace-weekly-check', 'Weekly check', 'Know what changed this week', '', '', '', '', '[{"id": "ask", "title": "Ask", "why": "", "prompt": "What changed this week?", "tools": [], "expect": "A summary.", "manual": true}]',
+      false, 0, '2026-10-09T09:00:00Z', '2026-10-09T09:00:00Z', $2, $1) ON CONFLICT (id) DO NOTHING`, [org.id, `customer:lane.owner@example.org`]);
+  await db.query(`INSERT INTO journey_progress (org_id, journey_id, stage_id, done_at, source, user_id) VALUES ($1, 'lane-workspace-weekly-check', 'ask', '2026-10-10T09:00:00Z', 'manual', $2)
+    ON CONFLICT DO NOTHING`, [org.id, userId]);
+  await db.query(`INSERT INTO adoption_help (org_id, journey_id, requester, note, status, created_at) VALUES ($1, 'lane-workspace-weekly-check', $2, 'Where do I start?', 'open', '2026-10-11T09:00:00Z')`, [org.id, userId]);
+  return { userId };
+}
+
+async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<any>, fixture: { userId: string } | null = null, memorySearch: string | null = "search_memory", tipTool: string | null = null) {
   const req = createRequire(path.join(lane, "package.json"));
   const { Client } = await import(pathToFileURL(req.resolve("@modelcontextprotocol/sdk/client/index.js")).href);
   const { InMemoryTransport } = await import(pathToFileURL(req.resolve("@modelcontextprotocol/sdk/inMemory.js")).href);
@@ -182,12 +213,17 @@ async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<
   const customer = await connect(createServer(org, context));
   write(path.join(out, "mcp", "customer.json"), stable(await describe(customer)));
   // The memory search's answers over the fixture (its whole answer: text and structured content), when the server has it.
-  if (fixture && ((await customer.listTools()).tools as { name: string }[]).some((t) => t.name === memorySearch)) {
+  if (fixture && memorySearch && ((await customer.listTools()).tools as { name: string }[]).some((t) => t.name === memorySearch)) {
     const calls: Record<string, unknown> = {};
     for (const args of [{}, { scope: "company" }, { scope: "me" }, { scope: "product" }, { query: "BullMQ price" }, { scope: "product", product: "acme-queue" }, { query: "nothing matches this" }])
       calls[JSON.stringify(args)] = maskJson(await (customer as unknown as { callTool(p: unknown): Promise<unknown> }).callTool({ name: memorySearch, arguments: args }));
     write(path.join(out, "mcp", "memory-search.json"), stable({ tool: memorySearch, calls }));
   }
+  // With the journeys fixture: one answer of the tool that always carries the waiting tip (its whole answer), when the
+  // server has it.
+  if (tipTool && ((await customer.listTools()).tools as { name: string }[]).some((t) => t.name === tipTool))
+    write(path.join(out, "mcp", "tip-answer.json"), stable({ tool: tipTool,
+      answer: maskJson(await (customer as unknown as { callTool(p: unknown): Promise<unknown> }).callTool({ name: tipTool, arguments: {} })) }));
   await customer.close();
 
   const { createAdminServer, adminSkillList } = await imp("src/admin-mcp.ts");

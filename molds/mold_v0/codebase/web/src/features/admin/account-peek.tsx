@@ -27,9 +27,9 @@ import { fill, W } from '@/lib/vocabulary';
 import { copyText, ErrorBox, Mono, When, type Tone } from './ui';
 import { Gate, useAdminRole, type AdminPermission } from './role';
 import { profile } from '@/config/profile.generated';
-import { hostFeature } from '@/features/packs/host-nav';
 import { KEY_PREFIX } from '@/lib/namespace';
 import { text } from '@/lib/texts';
+import { tipsOn } from '@/features/journeys/config';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
 export type Org = OrgRow & {
@@ -135,7 +135,7 @@ export function accountActions(o: Org, ctl: AccountCtl, d: OrgDetail | undefined
     : [issue, ...(ctl.clerkOn ? [lock({ label: 'Link to Clerk', icon: <Icons.shield />, onSelect: x.linkClerk }, 'accounts')] : [])];
   const groups: RowAction[][] = [
     // In-chat tips go through a host pack's journeys (mold_v0-039): offered only when the build has one that sends them.
-    [...people, ...(hostFeature('tips') ? [lock({ label: 'Send a tip…', icon: <Icons.chat />, onSelect: x.tip }, 'journeys')] : [])],
+    [...people, ...(tipsOn() ? [lock({ label: 'Send a tip…', icon: <Icons.chat />, onSelect: x.tip }, 'journeys')] : [])],
     [
       { label: 'Copy connector URL', icon: <Icons.plug />, onSelect: x.connector },
       { label: 'Copy welcome email', icon: <Icons.post />, onSelect: x.welcome }
@@ -374,7 +374,7 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
   if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Copy welcome email', onSelect: x.welcome };
   // The session engine's messages (mold_v0-121: its pack's pack.json account_stages attention): a tip for a stuck account, its usage for a failed onboarding.
   const ew = engineWords()?.attention;
-  if (hostFeature('tips') && ew && [ew.first_call, ew.onboarded, ew.simulated].some((m) => a.startsWith(fill(m)))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
+  if (tipsOn() && ew && [ew.first_call, ew.onboarded, ew.simulated].some((m) => a.startsWith(fill(m)))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
   if (a.startsWith('Stripe subscription is') || a.startsWith('Subscription cancels')) return { label: 'Copy portal link', onSelect: x.portal, need: 'accounts' };
   if ((ew && a.startsWith(fill(ew.failed))) || a.includes('tool errors')) return { label: 'View', onSelect: () => view('usage') };
   return null;

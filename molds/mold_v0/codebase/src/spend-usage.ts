@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { hostTable, hostTableLabel, researchJobs, sessionEngine } from "./host-tables.js";
-import { memoryConfig } from "./host.js";
+import { journeysConfig, memoryConfig, tipsConfig } from "./host.js";
+import { JOURNEY_TABLES, TIP_TABLES } from "./journeys-words.js";
 import { spendRange, SHARED, SHARED_NAME } from "./spend.js";
 import { transcripts } from "./transcripts.js";
 import { NS } from "./namespace.js";
@@ -284,19 +285,26 @@ const ALL_TABLES: TableDef[] = [
  * tables are its host pack's, created by its migrations; listed here so the Storage page names them when present).
  */
 const HOST_TABLE_NAMES = new Set(["products", "scenarios", "simulations", "agent_sessions", "transcript_events", "developer_profiles", "library_tasks",
-  "developer_populations", "developer_population_agents", "product_research", "nudges", "nudge_prefs",
-  "journey_templates", "journey_progress", "journey_seed", "adoption_help", "org_task_sets", "org_harnesses"]);
+  "developer_populations", "developer_population_agents", "product_research", "org_task_sets", "org_harnesses"]);
 /**
  * The account context and memory component's tables (mold_v0-142, src/account-context.ts): the shell's in every build,
  * named on the Storage page only where the component is on (pack.json memory), the only builds that write them.
  */
 const CONTEXT_TABLE_NAMES = new Set(["account_context", "user_context", "context_memories"]);
+/**
+ * The journeys and in-chat tips components' tables (mold_v0-143, src/journeys.ts, src/tips.ts): the shell's in every
+ * build, named on the Storage page only where each component is on, by its pack.json `labels` (else the stored name).
+ */
+const JOURNEY_TABLE_NAMES = new Set<string>(JOURNEY_TABLES), TIP_TABLE_NAMES = new Set<string>(TIP_TABLES);
+const componentLabel = (t: string): string | undefined =>
+  (journeysConfig()?.labels as Record<string, string> | undefined)?.[t] ?? (tipsConfig()?.labels as Record<string, string> | undefined)?.[t];
 let tableList: TableDef[] | null = null;
-/** Read on first use, once the build's packs are registered (the component's config is theirs). */
+/** Read on first use, once the build's packs are registered (the components' config is theirs). */
 const TABLES_NOW = (): TableDef[] => (tableList ??= ALL_TABLES.filter((t) => (!HOST_TABLE_NAMES.has(t.table) || hostTable(t.table)
   // scenarios is read through products (its account): both must be there
-  && (t.table !== "scenarios" || hostTable("products"))) && (!CONTEXT_TABLE_NAMES.has(t.table) || memoryConfig() !== null))
-  .map((t) => ({ ...t, label: t.label ?? hostTableLabel(t.table) })));
+  && (t.table !== "scenarios" || hostTable("products"))) && (!CONTEXT_TABLE_NAMES.has(t.table) || memoryConfig() !== null)
+  && (!JOURNEY_TABLE_NAMES.has(t.table) || journeysConfig() !== null) && (!TIP_TABLE_NAMES.has(t.table) || tipsConfig() !== null))
+  .map((t) => ({ ...t, label: t.label ?? componentLabel(t.table) ?? hostTableLabel(t.table) })));
 
 /** One scan per table: rows per (account, created day in the range, or null outside it), and the latest write. */
 const COUNTS_NOW = () => TABLES_NOW().map((t) => {

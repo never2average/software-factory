@@ -178,14 +178,17 @@ async function laterShellChanges(kind: "pglite" | "postgres") {
 }
 /**
  * The tables the product had in the shell's base schema before mold_v0-049: none of them in a shell with no packs. The
- * account context and memory tables were among them and are the shell's again since mold_v0-142 (CONTEXT_TABLES).
+ * account context and memory tables were among them and are the shell's again since mold_v0-142 (CONTEXT_TABLES), the
+ * journeys and tips tables since mold_v0-143 (JOURNEY_TABLES).
  */
-const PRODUCT_TABLES = ["adoption_help", "agent_sessions", "developer_population_agents", "developer_populations",
-  "developer_profiles", "journey_progress", "journey_seed", "journey_templates", "library_submissions", "library_tasks", "nudge_prefs", "nudges",
+const PRODUCT_TABLES = ["agent_sessions", "developer_population_agents", "developer_populations",
+  "developer_profiles", "library_submissions", "library_tasks",
   "org_harnesses", "org_task_sets", "product_personas", "product_research", "products", "scenarios", "simulations", "transcript_events",
   "visibility_reports"].sort();
 /** The tables shell migration 0025 adopts where a database has them (mold_v0-142; src/migrate.ts ADOPTING_MIGRATIONS). */
 const CONTEXT_TABLES = [...ADOPTING_MIGRATIONS[25]!.tables];
+/** The tables shell migration 0026 adopts where a database has them (mold_v0-143; src/migrate.ts ADOPTING_MIGRATIONS). */
+const JOURNEY_TABLES = [...ADOPTING_MIGRATIONS[26]!.tables];
 const tables = async (db: Db) => (await db.query<{ t: string }>(
   "SELECT relname AS t FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') ORDER BY 1")).map((r) => r.t);
 
@@ -220,7 +223,7 @@ async function sameRows(db: Db, before: Awaited<ReturnType<typeof fingerprint>>,
   let total = 0, added = 0;
   for (const [t, b] of before.rows) {
     const a = after.rows.get(t)!;
-    if (PRODUCT_TABLES.includes(t) || CONTEXT_TABLES.includes(t)) assert.deepEqual({ rows: a.rows, md5: a.md5 }, { rows: b.rows, md5: b.md5 }, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
+    if (PRODUCT_TABLES.includes(t) || CONTEXT_TABLES.includes(t) || JOURNEY_TABLES.includes(t)) assert.deepEqual({ rows: a.rows, md5: a.md5 }, { rows: b.rows, md5: b.md5 }, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
     const left = new Map<string, number>();
     for (const x of a.texts) left.set(x, (left.get(x) ?? 0) + 1);
     for (const x of b.texts) {
@@ -315,11 +318,18 @@ async function suite(kind: "pglite" | "postgres") {
     // database from before 0003 gets their row-level security from 0003, as it always did, and then adopts them.
     const secured = /^pre-049 at 00(0[3-9]|1)/.test(st.name);
     const stamps = new Map<string, string[]>();
-    for (const t of CONTEXT_TABLES) stamps.set(t, await catalogStamp(old, t));
+    for (const t of [...CONTEXT_TABLES, ...JOURNEY_TABLES]) stamps.set(t, await catalogStamp(old, t));
     const applied = await runMigrations(old, { log: () => {} });
     assert.ok(applied.applied.includes("0025_account_context_memory (adopted)"), `${st.name}: 0024 adopts the tables it has: ${applied.applied.join(", ")}`);
     if (secured) for (const t of CONTEXT_TABLES) assert.deepEqual(await catalogStamp(old, t), stamps.get(t), `${st.name}: no DDL reached ${t}`);
     assert.equal((await old.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_adoptions WHERE pack = '' AND version = 25"))[0]!.n, 1, `${st.name}: the adoption is in the ledger`);
+    // The journeys and tips tables (mold_v0-143): adopted by 0026 where the database had secured them (a host pack's
+    // shared rule on the templates, read-only seed ledger), running nothing; secured by 0026 where 0003 secured them as
+    // plain workspace tables in this same run (secured_after), their structure and rows untouched.
+    assert.ok(applied.applied.includes(secured ? "0026_journeys_and_tips (adopted)" : "0026_journeys_and_tips"), `${st.name}: 0026 ${secured ? "adopts" : "secures"} the tables it has: ${applied.applied.join(", ")}`);
+    if (secured) for (const t of JOURNEY_TABLES) assert.deepEqual(await catalogStamp(old, t), stamps.get(t), `${st.name}: no DDL reached ${t}`);
+    assert.equal((await old.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_adoptions WHERE pack = '' AND version = 26"))[0]!.n, secured ? 1 : 0, `${st.name}: the ledger has 0026 only where adopted`);
+    assert.deepEqual(await tableShape(old, JOURNEY_TABLES), [...ADOPTING_MIGRATIONS[26]!.shape].sort(), `${st.name}: the journeys and tips tables have 0026's shape`);
     const s = await migrationStatus(old);
     assert.ok(!s.pending.length && !s.conflicts.length && s.packs.every((p) => !p.pending.length && !p.conflicts.length), `${st.name}: nothing pending, no conflict`);
     const kept = await sameRows(old, rows, `${kind}: ${st.name}`);
@@ -457,7 +467,7 @@ async function suite(kind: "pglite" | "postgres") {
     })).map((r) => r.org_id);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "before: the old release's tenant transaction sees its own rows");
     const t0 = Date.now();
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory"]);
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory", "0026_journeys_and_tips"]);
     const ms = Date.now() - t0;
     assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
     assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
@@ -474,16 +484,18 @@ async function suite(kind: "pglite" | "postgres") {
     assert.ok((await rlsCatalogProblems(at23)).some((p) => p.includes(`role ${oldRole}`) && p.includes("privilege")), "a grant to the old name fails the check");
     await at23.exec(`REVOKE SELECT ON vault_credentials FROM ${oldRole}`);
     assert.deepEqual(await rlsCatalogProblems(at23), []);
-    // Rolling back to a release from before 0024: the later migrations' rollback first (0025: its tables were made here
-    // and are empty, so they go), then 0024's rollback file puts back the database 0023 left, exactly.
+    // Rolling back to a release from before 0024: the later migrations' rollback first (0026, 0025: their tables were
+    // made here and are empty, so they go), then 0024's rollback file puts back the database 0023 left, exactly.
     await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8")), /not 0024: roll back the later migrations first/);
+    await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /not 0025: roll back the later migrations first/);
+    await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
     const fresh23 = await shellAt(kind, 23);
     sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
     sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory"], "and 0024 (and 0025) apply again");
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory", "0026_journeys_and_tips"], "and 0024 (and 0025, 0026) apply again");
     sameCatalog(await catalog(at23), packSets.length ? await shellCatalog(kind) : want, `${kind}: 0024 again after the rollback`);
     await fresh23.drop();
     await at23.drop();
@@ -544,8 +556,9 @@ async function suite(kind: "pglite" | "postgres") {
     const earlier = createHash("sha256").update(before).digest("hex");
     // Two live paths: a database at 0023 that takes 0024 and 0025 in one release, and one that took 0024 in a release
     // before (renamed in place), then 0025.
-    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)"]],
-      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)"]]] as const) {
+    // (0026 makes the journeys and tips tables in the same run: this host pack never had them.)
+    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips"]],
+      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips"]]] as const) {
       const d = await fresh(kind);
       await runMigrations(d, { dir: await upToV(firstAt), packDirs: hostPack(before, { tables: ["widgets", ...CONTEXT_TABLES] }) });
       await d.exec("INSERT INTO organizations (slug, name) VALUES ('ctx-org', 'Ctx');\n" +
@@ -570,14 +583,16 @@ async function suite(kind: "pglite" | "postgres") {
       const { rlsCatalogProblems, rlsProbe } = await import("../src/rls.js");
       assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
       assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
-      // Rolled back (sql/rollback/0025): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      // Rolled back (sql/rollback/0025, after 0026's: it made its tables here, empty, so they go): adopted, so the tables
+      // stay as they are, rows and catalog rows; only its ledger rows go.
+      await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
       await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
       for (const t of CONTEXT_TABLES) {
         assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
         assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
       }
       assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 25), `${path_}: rolled back: 0025 pending again`);
-      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)"], `${path_}: and adopted again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips"], `${path_}: and adopted again`);
       await d.drop();
     }
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
@@ -596,11 +611,122 @@ async function suite(kind: "pglite" | "postgres") {
     {
       const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb-org', 'Rb'); INSERT INTO account_context (org_id, about) SELECT id, 'kept' FROM organizations WHERE slug = 'rb-org'");
+      await f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM account_context"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();
     }
     log(`  ✓ ${kind}: 0025 makes the account context and memory tables on a new database and adopts them where a host pack made them, from 0023 (with 0024's renames in the same run) and from 0024 (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
+  }
+
+  // The journeys and tips tables a host pack hands back to the shell (mold_v0-143): 0026 makes nudges, nudge_prefs,
+  // journey_templates, journey_progress, adoption_help and journey_seed on a database without them, and adopts them,
+  // running nothing, where a host pack's migration made them (the live databases), whichever release the database is
+  // at: before 0024 (0024, 0025 and 0026 in one run), at 0024, or at 0025 (the previous release: the pack already
+  // rewritten once, for 0025). The pack's migration, rewritten again, keeps both earlier checksums (host.schema.split
+  // as a list). Some of them, or another shape: refused, nothing changed. Its rollback keeps adopted tables as they are.
+  {
+    const A26 = ADOPTING_MIGRATIONS[26]!;
+    assert.deepEqual(await tableShape(ref, JOURNEY_TABLES), [...A26.shape].sort(), "a new database has the tables in exactly the shape 0026 declares");
+    const all = await loadMigrations();
+    const part = (v: number, from: string) => { const m = all.find((x) => x.version === v)!; return m.sql.slice(m.sql.indexOf(from), m.sql.indexOf("-- Row-level security")); };
+    // The host pack secured them as its row-level security migration did, through the names of before 0024.
+    const secured = (v: number) => { const m = all.find((x) => x.version === v)!; return m.sql.slice(m.sql.indexOf("DO $mig$")).replaceAll("app_tenant_role()", "octillion_tenant_role()").replaceAll("app_tenant_org()", "octillion_tenant_org()"); };
+    const creates26 = part(26, "CREATE TABLE IF NOT EXISTS nudges");
+    const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
+      "DO $w$ DECLARE r TEXT := octillion_tenant_role(); BEGIN ALTER TABLE widgets ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS tenant_isolation ON widgets;\n" +
+      "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', r);\n" +
+      "  EXECUTE format('GRANT SELECT, INSERT ON widgets TO %I', r); END $w$;\n";
+    // The first product's pack as it was (its 0001 made the context tables and these six), as 0025 left it (rewritten
+    // without the context tables), and as it is now (without these six too).
+    const first = W + part(25, "CREATE TABLE IF NOT EXISTS account_context") + secured(25) + creates26 + secured(26);
+    const p6a = W + creates26 + secured(26), now = W;
+    const sha = (x: string) => createHash("sha256").update(x).digest("hex");
+    const hostPack = (sql: string, schema: Record<string, unknown>) => {
+      const dir = path.join(tmp, `hp143-${kind}-${++n}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "0001_widgets.sql"), sql);
+      return [{ pack: "hp", dir, schema: { tables: ["widgets"], functions: [], adopts: {}, platform_read: [], references: {}, ...schema } }] as never;
+    };
+    const split = { split: { "0001_widgets": [sha(first), sha(p6a)] } };
+    const rows = "INSERT INTO organizations (slug, name) VALUES ('jt-org', 'Jt');\n" +
+      "INSERT INTO journey_templates (id, name, outcome, stages, promoted, position, updated_by) VALUES ('shared-one', 'Shared', 'An outcome', '[{\"id\": \"s1\", \"tools\": [\"a\"]}]', true, 0, 'built-in');\n" +
+      "INSERT INTO journey_templates (id, name, outcome, stages, org_id) SELECT 'jt-own', 'Own', 'Ours', '[]', id FROM organizations WHERE slug = 'jt-org';\n" +
+      "INSERT INTO journey_seed (id) VALUES ('shared-one');\n" +
+      "INSERT INTO journey_progress (org_id, journey_id, stage_id, source) SELECT id, 'shared-one', 's1', 'tool' FROM organizations WHERE slug = 'jt-org';\n" +
+      "INSERT INTO adoption_help (org_id, journey_id, requester, note) SELECT id, 'shared-one', 'user_a', 'stuck' FROM organizations WHERE slug = 'jt-org';\n" +
+      "INSERT INTO nudges (org_id, user_id, journey, step, message, expires_at, shown_count) SELECT id, '', 'first-report', 'run', 'as it was', now() + interval '7 days', 1 FROM organizations WHERE slug = 'jt-org';\n" +
+      "INSERT INTO nudge_prefs (org_id, user_id, muted) SELECT id, 'user_a', true FROM organizations WHERE slug = 'jt-org';\n";
+    // Three live paths: at 0023 (0024, 0025, 0026 in one run), at 0024 (0025 and 0026), at 0025 (the previous release,
+    // with the pack as 0025 left it: 0026 alone).
+    for (const [path_, firstAt, pack, expect] of [
+      ["at 0023, then 0024, 0025 and 0026", 23, first, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
+      ["at 0024, then 0025 and 0026", 24, first, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
+      ["at 0025 (the previous release), then 0026", 25, p6a, ["0026_journeys_and_tips (adopted)"]]] as const) {
+      const before = hostPack(pack, { tables: ["widgets", ...JOURNEY_TABLES, ...(pack === first ? CONTEXT_TABLES : [])], platform_read: ["journey_seed"] });
+      // The release's database with the host pack and its rows, built once (from()).
+      const d = await from(kind, `p6b-${firstAt}`, async (db) => {
+        if (firstAt > 23) await runMigrations(db, { dir: await preDir(firstAt, true), packDirs: before });
+        else {
+          // At 0023 the tenant functions have their names of before 0024, which this runner's platform-library check
+          // does not read: the pack's migration is applied and recorded as that release's runner did.
+          await runMigrations(db, { dir: await preDir(firstAt, true), packDirs: [] });
+          await db.exec(pack);
+          await db.exec("CREATE TABLE IF NOT EXISTS pack_schema_migrations (pack TEXT NOT NULL, version INT NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (pack, version))");
+          await db.query("INSERT INTO pack_schema_migrations (pack, version, name, checksum) VALUES ('hp', 1, 'widgets', $1)", [sha(pack)]);
+        }
+        await db.exec(rows);
+      });
+      const rowsBefore = new Map<string, unknown>(), stamps = new Map<string, string[]>();
+      for (const t of JOURNEY_TABLES) { rowsBefore.set(t, await rowStats(d, t)); stamps.set(t, await catalogStamp(d, t)); }
+      // Without the new earlier checksum the rewritten pack migration is an edit, refused as any edit is.
+      await assert.rejects(runMigrations(d, { packDirs: hostPack(now, { split: { "0001_widgets": sha(pack === first ? p6a : first) } }) }), /0001_widgets\.sql changed after it was applied/, `${path_}: the rewritten pack migration without this database's earlier checksum is refused`);
+      const r = await runMigrations(d, { packDirs: hostPack(now, split) });
+      assert.deepEqual(r.applied, expect, `${path_}: 0026 is adopted, nothing of the pack runs again`);
+      for (const t of JOURNEY_TABLES) {
+        assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: ${t}: every row as it was`);
+        assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: ${t}: no DDL reached it`);
+      }
+      const st = await migrationStatus(d, undefined, hostPack(now, split));
+      assert.ok(!st.pending.length && !st.conflicts.length && st.packs.every((p) => !p.pending.length && !p.conflicts.length), `${path_}: nothing pending, no conflict`);
+      const [ledger] = await d.query<{ adopted_from: string; shape_sha256: string }>("SELECT adopted_from, shape_sha256 FROM schema_adoptions WHERE pack = '' AND version = 26");
+      assert.ok(ledger && /adoption_help, journey_progress, journey_seed, journey_templates, nudge_prefs, nudges/.test(ledger.adopted_from) && /^[0-9a-f]{64}$/.test(ledger.shape_sha256), `${path_}: the ledger says what was adopted and its shape`);
+      assert.deepEqual(await tableShape(d, JOURNEY_TABLES), [...A26.shape].sort(), `${path_}: the adopted tables are exactly what a new database gets`);
+      const { rlsCatalogProblems, rlsProbe } = await import("../src/rls.js");
+      assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
+      assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
+      // Rolled back (sql/rollback/0026): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
+      for (const t of JOURNEY_TABLES) {
+        assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
+        assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
+      }
+      assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 26), `${path_}: rolled back: 0026 pending again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(now, split) })).applied, ["0026_journeys_and_tips (adopted)"], `${path_}: and adopted again`);
+      await d.drop();
+    }
+    // Refused, nothing changed: some of the tables, or all of them in another shape (here: never secured, on a database
+    // whose 0003 ran in an earlier release, so secured_after does not hold).
+    for (const [what, sql, re] of [["some of the tables", creates26.slice(0, creates26.indexOf("CREATE TABLE IF NOT EXISTS journey_templates")), /never some/],
+      ["another shape", creates26, /in another shape than this migration gives them/]] as const) {
+      const e = await shellAt(kind, 25);
+      await e.exec(sql);
+      const stampsE = new Map<string, string[]>();
+      for (const t of JOURNEY_TABLES) stampsE.set(t, await catalogStamp(e, t));
+      await assert.rejects(runMigrations(e, { packDirs: [] }), (x) => x instanceof MigrationError && re.test(x.message), `${what}: refused`);
+      for (const t of JOURNEY_TABLES) assert.deepEqual(await catalogStamp(e, t), stampsE.get(t), `${what}: ${t} untouched`);
+      assert.equal((await migrationStatus(e)).pending.some((m) => m.version === 26), true, `${what}: 0026 not recorded`);
+      await e.drop();
+    }
+    // Rolling back a 0026 that made the tables, once this release wrote to them: refused, nothing changed.
+    {
+      const f = await shellAt(kind);
+      await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb26', 'Rb'); INSERT INTO nudge_prefs (org_id, user_id, muted) SELECT id, 'u', true FROM organizations WHERE slug = 'rb26'");
+      await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
+      assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM nudge_prefs"))[0]!.n, 1, "rollback refused: the row is kept");
+      await f.drop();
+    }
+    log(`  ✓ ${kind}: 0026 makes the journeys and tips tables on a new database and adopts them where a host pack made them, from 0023, 0024 and 0025 (rows identical, catalog rows untouched, the pack's twice-rewritten 0001 accepted at either earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.

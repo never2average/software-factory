@@ -55,11 +55,11 @@ export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
 export const PACK_CONSOLE_KEYS = ["nav", "components", "redirects"] as const;
 /**
  * The shell's console components that read a host pack's own routes (mold_v0-140; they were its nav.ts `features`):
- *   tips      in-chat tips: the Setup page's tips section and "Send a tip" on /admin accounts (its /api/app/nudges and admin tips routes)
- *   journeys  the Setup page's journeys: their picker and each journey's stages (its /api/app/journeys)
  *   research  a requester's company research on /admin access requests (its research routes and verdict)
+ * The in-chat tips and the journeys were two more until they became the shell's own components (mold_v0-143: pack.json
+ * `tips` and `journeys` turn them on; src/tips.ts, src/journeys.ts, web/src/features/journeys).
  */
-export const CONSOLE_COMPONENTS = ["tips", "journeys", "research"] as const;
+export const CONSOLE_COMPONENTS = ["research"] as const;
 /** The shell pages a sidebar may name by kind (mold_v0-133; a tab of that kind opens the same page). */
 export const SIDEBAR_SHELL_PAGES = ["setup", "usage", "billing", "profile", "team", "keys", "credentials", "schedules", "notices", "connected-apps"] as const;
 
