@@ -43,6 +43,7 @@
     "test:mcp-tools": "tsx scripts/mcp-tools-test.ts",
     "test:mcp-followups": "tsx scripts/mcp-followups-test.ts",
     "test:install-docs": "tsx scripts/install-docs-test.ts",
+    "test:client-skill": "tsx scripts/client-skill-test.ts",
     "test:source-offer": "tsx scripts/source-offer-test.ts",
     "test:landing": "tsx scripts/landing-test.ts",
     "test:access-request": "tsx scripts/access-request-test.ts",

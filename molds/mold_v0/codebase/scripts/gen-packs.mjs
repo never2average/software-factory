@@ -1363,6 +1363,11 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+// The client skill (mold_v0-144, src/client-skill-config.ts): at most one pack declares one; checked here, written below.
+const skillPacks = packs.filter((p) => p.json?.client_skill !== undefined);
+if (skillPacks.length > 1) fail("packs", `packs ${skillPacks.map((p) => p.id).join(" and ")} both declare a client_skill: at most one pack of a build declares one (the app's profile.json client_skill changes it)`);
+for (const p of skillPacks) for (const b of clientSkillProblems(p.json.client_skill)) fail(`packs/${p.id}/pack.json`, b);
+const clientSkill = mergeClientSkill(skillPacks.length === 1 ? skillPacks[0].json.client_skill : null, profileSkill);
 // The request page's form (mold_v0-138, src/landing.ts request_page.form) asks the build's access_request fields by key:
 // each a declared one, and every required one asked (else no request it sends could be stored).
 {
@@ -2055,10 +2060,6 @@ files.set(path.join(OUT, "web", "src", "lib", "access-request.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/access-request.ts (a copy, so the console runs the server's rules)") + readFileSync(ACCESS_REQUEST, "utf8"));
 // The client skill (mold_v0-144, src/client-skill-config.ts): at most one pack's pack.json `client_skill`, the app's
 // profile.json one over it; null: the skill is generated from the profile and the server alone.
-const skillPacks = packs.filter((p) => p.json?.client_skill !== undefined);
-if (skillPacks.length > 1) fail("packs", `packs ${skillPacks.map((p) => p.id).join(" and ")} both declare a client_skill: at most one pack of a build declares one (the app's profile.json client_skill changes it)`);
-for (const p of skillPacks) for (const b of clientSkillProblems(p.json.client_skill)) fail(`packs/${p.id}/pack.json`, b);
-const clientSkill = mergeClientSkill(skillPacks.length === 1 ? skillPacks[0].json.client_skill : null, profileSkill);
 files.set(path.join(OUT, "src", "client-skill.generated.ts"), HEADER +
   "import type { ClientSkillConfig } from \"./client-skill-config.js\";\n\n" +
   "/** The client skill's config (mold_v0-144, src/client-skill-config.ts): a pack's pack.json client_skill with the app's profile.json one over it; null: generated from the profile and the server alone. */\n" +
