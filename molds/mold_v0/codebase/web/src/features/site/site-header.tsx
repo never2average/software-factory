@@ -50,7 +50,7 @@ export function SiteHeaderView({ name, mark, nav, links, account, ctas, start = 
             ))}
           </nav>
         ) : null}
-        <div className='ml-auto flex shrink-0 items-center gap-1 sm:gap-2'>
+        <div className='ml-auto flex shrink-0 items-center gap-2'>
           {links.map((l) => <Link key={l.href} href={l.href} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden sm:inline-flex')}>{l.label}</Link>)}
           {account === 'account' ? <AccountButton signIn={ctas.signIn} open={ctas.open} />
             : <AccountLinks start={start ? ctas.start : undefined} signIn={ctas.signIn} open={ctas.open} compact={nav.length > 0 && start} />}
