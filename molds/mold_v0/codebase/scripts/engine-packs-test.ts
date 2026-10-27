@@ -23,11 +23,13 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const TMP = mkdtempSync(path.join(tmpdir(), "engine-packs-"));
 let n = 0;
 
+/** A host pack's console or orchestrator folder of the copy this runs in (a lane copy has the app's): never carried over. */
+const packFolder = (f: string) => /(^|\/)(web\/src\/packs|orchestrator\/packs)\/[^/]+(\/|$)/.test(path.relative(ROOT, f).split(path.sep).join("/"));
 /** A throwaway copy of this codebase (its node_modules linked) with these packs, console files and profile; gen-packs run in it. */
 function world(packs: Record<string, Record<string, string>>, profile: Record<string, unknown>, web: Record<string, string> = {}) {
   const dir = path.join(TMP, `w${++n}`);
   for (const p of ["src", "scripts", "web/src", "web/scripts", "docs", "sql", "orchestrator", "package.json", "tsconfig.json", "web/package.json", "web/tsconfig.json"])
-    cpSync(path.join(ROOT, p), path.join(dir, p), { recursive: true, filter: (f) => !f.split(path.sep).includes("node_modules") });
+    cpSync(path.join(ROOT, p), path.join(dir, p), { recursive: true, filter: (f) => !f.split(path.sep).includes("node_modules") && !packFolder(f) });
   symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
   symlinkSync(path.join(ROOT, "web", "node_modules"), path.join(dir, "web", "node_modules"));
   for (const [id, files] of Object.entries(packs)) for (const [f, text] of Object.entries(files)) {
