@@ -16,7 +16,7 @@
 //                                                            its own databases there; never touches the one named)
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openDb, type Db } from "../src/db.js";
@@ -24,7 +24,14 @@ import { ADOPTING_MIGRATIONS, ensureMigrated, loadMigrations, loadPackMigrations
 import { catalogStamp, rowStats } from "../src/migration-rehearsal.js";
 import { PACK_MIGRATION_DIRS } from "../src/pack-migrations.generated.js";
 /** The shell's migrations after 0023, in order (0024, 0025, and every later one: mold_v0-036 added 0027). */
-const AFTER_23 = (await loadMigrations()).filter((m) => m.version > 23).map((m) => `${String(m.version).padStart(4, "0")}_${m.name}`);
+const after = async (v: number) => (await loadMigrations()).filter((m) => m.version > v).map((m) => `${String(m.version).padStart(4, "0")}_${m.name}`);
+const AFTER_23 = await after(23), AFTER_25 = await after(25);
+/** Roll back every shell migration after `version` with its own rollback file, the latest first (each refuses unless it is the latest). */
+async function rollBackAfter(d: Db, version: number) {
+  const dir = path.join(MIGRATIONS_DIR, "..", "rollback");
+  for (const f of readdirSync(dir).filter((x) => /^\d{4}_.*\.sql$/.test(x) && Number(x.slice(0, 4)) > version).sort().reverse())
+    await d.exec(readFileSync(path.join(dir, f), "utf8"));
+}
 
 const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
@@ -479,6 +486,7 @@ async function suite(kind: "pglite" | "postgres") {
     // Rolling back to a release from before 0024: the later migrations' rollback first (0025: its tables were made here
     // and are empty, so they go), then 0024's rollback file puts back the database 0023 left, exactly.
     await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8")), /not 0024: roll back the later migrations first/);
+    await rollBackAfter(at23, 25);
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
     const fresh23 = await shellAt(kind, 23);
@@ -546,8 +554,9 @@ async function suite(kind: "pglite" | "postgres") {
     const earlier = createHash("sha256").update(before).digest("hex");
     // Two live paths: a database at 0023 that takes 0024 and 0025 in one release, and one that took 0024 in a release
     // before (renamed in place), then 0025.
-    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)"]],
-      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)"]]] as const) {
+    // (Every later migration runs in the same run: AFTER_25.)
+    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", ...AFTER_25]],
+      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)", ...AFTER_25]]] as const) {
       const d = await fresh(kind);
       await runMigrations(d, { dir: await upToV(firstAt), packDirs: hostPack(before, { tables: ["widgets", ...CONTEXT_TABLES] }) });
       await d.exec("INSERT INTO organizations (slug, name) VALUES ('ctx-org', 'Ctx');\n" +
@@ -573,13 +582,14 @@ async function suite(kind: "pglite" | "postgres") {
       assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
       assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
       // Rolled back (sql/rollback/0025): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      await rollBackAfter(d, 25);
       await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
       for (const t of CONTEXT_TABLES) {
         assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
         assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
       }
       assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 25), `${path_}: rolled back: 0025 pending again`);
-      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)"], `${path_}: and adopted again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)", ...AFTER_25], `${path_}: and adopted again`);
       await d.drop();
     }
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
@@ -598,6 +608,7 @@ async function suite(kind: "pglite" | "postgres") {
     {
       const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb-org', 'Rb'); INSERT INTO account_context (org_id, about) SELECT id, 'kept' FROM organizations WHERE slug = 'rb-org'");
+      await rollBackAfter(f, 25);
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM account_context"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();

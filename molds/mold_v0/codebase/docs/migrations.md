@@ -61,6 +61,11 @@ checksums are accepted for those files only (pack.json `host.schema.split`).
 |---|---|
 | `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |
 
+Rolling back to a release from before 0027 (on-premises runners, mold_v0-036): `sql/rollback/0027_on_premises_runners.sql`
+first. It refuses, changing nothing, while a workspace has a runner that is not revoked or a run routed on premises that
+has not ended (revoke them and switch the workspaces back to hosted); otherwise it drops the two tables and two columns
+0027 added. `npm run test:migrations` rolls back every migration after 0025 with its own file before 0025's.
+
 Rolling back to a release from before 0025: `sql/rollback/0025_account_context_memory.sql` (before 0024's, which
 refuses while 0025 is applied). Where 0025 was adopted it leaves the tables, rows, policies and grants exactly as they
 are (the host pack's again in that release) and removes only 0025's ledger rows; where 0025 made them it drops them only
