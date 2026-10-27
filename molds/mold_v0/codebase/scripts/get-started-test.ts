@@ -13,6 +13,7 @@
 //    once every step is; another workspace's progress never shows.
 // 4. The pack's mcp settings apply to it (rename, exclude: no tool and no "FIRST" line); a pack without onboarding
 //    steps gets none.
+// 4b. (mold_v0-166) a step's `how` sends get_started to the action that does it, its done_when still ticks it.
 // 5. gen-packs builds a pack.json with mcp.instructions and an onboarding prompt, and refuses either when it is not
 //    plain text.
 import assert from "node:assert/strict";
@@ -170,6 +171,24 @@ try {
     assert.ok(!(d.client.getInstructions() ?? "").includes("FIRST: when"), "excluded: no FIRST line");
     await d.close();
     console.log("✓ rename and exclude apply to get_started (the FIRST line follows)");
+  }
+
+  // ---------- 4b. a step's `how` (mold_v0-166) ----------
+  {
+    // A step done when a record exists, whose records a run writes: get_started points to the run, not to adding one.
+    const h = fixture(); h.onboarding[0].how = "run:tracker_scan";
+    setPacksForTest([declared(h)]);
+    const C = (await createOrg(`Get started C ${STAMP}`)).org;
+    const c = await connect(C);
+    const r = (await c.call("fixture_tracker_get_started")).structuredContent as { next: { id: string; how: string } };
+    assert.equal(r.next.id, "first_app", "the step's own condition still decides when it is done");
+    assert.match(r.next.how, /^start a run of Scan an application with fixture_tracker_start_tracker_scan, then follow it with fixture_tracker_run_status/, r.next.how);
+    await c.close();
+    const { definePack, PackDefinitionError } = await import("../src/pack-api.js");
+    assert.throws(() => definePack({ id: "how_bad", name: "How bad", version: "1", onboarding: [{ id: "one", label: "One", done_when: "workspace", how: "run:nothing_here" }] } as never),
+      (e: unknown) => e instanceof PackDefinitionError && /names job kind nothing_here/.test((e as Error).message), "a how naming no kind of the pack is refused");
+    assert.throws(() => definePack({ id: "how_bad", name: "How bad", version: "1", onboarding: [{ id: "one", label: "One", done_when: "workspace", how: "connected" }] } as never), "how is an action, never a shell stage");
+    console.log("✓ a step's how points get_started to the action that does it (checked as done_when is)");
   }
 
   // ---------- 5. gen-packs ----------

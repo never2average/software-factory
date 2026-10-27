@@ -39,7 +39,8 @@
  *   inputs       (mold_v0-073) run arguments written to files in the checkout before the first step: each from the
  *                run's scope or targets, checked against its JSON schema (a fixed subset) and its size cap, refused
  *                when it holds the value of a credential, written to a new file (never over a file of the pinned tree,
- *                never through a link, never under a write-back path)
+ *                never through a link, never under a write-back path); `pin` (mold_v0-166) fills in the current
+ *                commit (and default branch) of each repository the input lists without one
  *   steps        (mold_v0-074) commands run before `command`, in order, each with its own time limit and only the
  *                credentials it names; `git_credentials` hand a credential to git through a credential helper that
  *                reads a file on tmpfs (never an argument, a variable or a URL); a `checkout` step is the runner's own:
@@ -147,6 +148,23 @@ export const InputSchemaSchema: z.ZodType<InputSchema> = z.lazy(() => z.object({
   maxProperties: z.number().int().min(0).optional(),
   title: z.string().max(200).optional(), description: z.string().max(1000).optional(), $comment: z.string().max(1000).optional(),
 }).strict());
+/**
+ * (mold_v0-166) Repositories named in an input, each pinned to the current commit of its branch before the input is
+ * written: the list at `list` (a JSON pointer into the value), each item's `url`, `branch` and `commit` fields. An item
+ * that gives its commit keeps it; else the runner asks the repository (git ls-remote, outside the run's proxy as for the
+ * agent repository, no credential: a private repository's item gives its commit) for the branch's head, or for its
+ * default branch and head when the item names no branch, and fills both in. The url must be https on one of `hosts`
+ * exactly (each in the kind's egress). The value is checked against the schema before and after.
+ */
+const fieldKey = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/, "a field name");
+export const InputPinSchema = z.object({
+  list: z.string().regex(/^(\/[A-Za-z0-9_-]{1,64}){1,4}$/, "a JSON pointer to a list (/repos)"),
+  url: fieldKey.default("url"),
+  branch: fieldKey.default("branch"),
+  commit: fieldKey.default("commit"),
+  hosts: z.array(gitHost).min(1).max(10),
+  max_items: z.number().int().min(1).max(50).default(20),
+}).strict();
 export const AgentInputSchema = z.object({
   /** The run's scope or targets (a dotted path), as an argument's `from`: an object, a list or a value. */
   from: z.string().regex(/^(scope|targets)(\.[A-Za-z0-9_-]{1,64}){1,4}$/, "scope.<key> or targets.<key>[.<key>...]"),
@@ -155,7 +173,8 @@ export const AgentInputSchema = z.object({
   schema: InputSchemaSchema,
   format: z.enum(["json", "text"]).default("json"),
   max_bytes: z.number().int().min(1).max(1024 * 1024).default(64 * 1024),
-}).strict();
+  pin: InputPinSchema.optional(),
+}).strict().refine((i) => !i.pin || i.format === "json", "pin is for a json input");
 
 /** The runner's own checkout of repositories named by manifest files of the checkout (mold_v0-074). */
 export const CheckoutStepSchema = z.object({

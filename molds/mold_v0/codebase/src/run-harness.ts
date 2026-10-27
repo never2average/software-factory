@@ -52,8 +52,8 @@ import type { Claim, Completion } from "./runs.js";
 import type { RunCredentials } from "./credentials.js";
 import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
-import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
-import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
+import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
+import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, pinCommits, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
@@ -692,8 +692,18 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         const written: Record<string, unknown>[] = [];
         for (const [name, inp] of Object.entries(agent.inputs)) {
           const [root, ...rest] = inp.from.split(".");
-          const v = rest.reduce<unknown>((o, k) => (o && typeof o === "object" && !Array.isArray(o) && Object.hasOwn(o, k) ? (o as Record<string, unknown>)[k] : undefined), root === "scope" ? run.scope : run.targets);
+          let v = rest.reduce<unknown>((o, k) => (o && typeof o === "object" && !Array.isArray(o) && Object.hasOwn(o, k) ? (o as Record<string, unknown>)[k] : undefined), root === "scope" ? run.scope : run.targets);
           if (v === undefined) throw new AgentRunError(`input ${name}: the run gives no ${inp.from}`);
+          // mold_v0-166: repositories it lists without a commit are pinned to their branch's head, the value checked
+          // against the schema first (nothing is asked of a repository for a value the schema refuses) and again below.
+          if (inp.pin) {
+            const first = checkInput(v, inp.schema as InputSchema);
+            if (first.length) throw new AgentRunError(`input ${name} does not match its schema: ${first.slice(0, 5).join("; ").slice(0, 600)}`);
+            const kindHosts = (spec.egress ?? []).map((h: string) => h.replace(/^\*\./, "").toLowerCase());
+            const local = (u: string) => (!!opts.allowFileUpstream && u.startsWith("file:///"));
+            v = await pinCommits(v, { ...inp.pin, hosts: inp.pin.hosts.filter((h) => kindHosts.some((x: string) => h === x || h.endsWith(`.${x}`))) }, (u, b) =>
+              headCommit(u, b, { allowFile: opts.allowFileUpstream, home: path.join(scratch, "git-home-pin") }), local);
+          }
           if (inp.format === "text" && typeof v !== "string") throw new AgentRunError(`input ${name}: a text input takes a string`);
           const body = Buffer.from(inp.format === "text" ? (v as string) : `${JSON.stringify(v, null, 2)}\n`, "utf8");
           // The size first: the schema's patterns never see more than the cap allows.

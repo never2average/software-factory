@@ -94,8 +94,8 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const generated = new Set(catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => t.name));
   // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, a pack's (mold_v0-011),
   // or one generated for the customer MCP (mold_v0-060).
-  for (const p of out) for (const st of p.definition.onboarding ?? []) {
-    const [what, arg] = st.done_when.split(":", 2);
+  for (const p of out) for (const st of p.definition.onboarding ?? []) for (const cond of [st.done_when, st.how ?? ""]) {
+    const [what, arg] = cond.split(":", 2);
     if (what === "tool" && arg && !toolOwner.has(arg) && !generated.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
   }
   // A link or reference names an area some pack in this build declares; a shared (platform) area's rows are every
