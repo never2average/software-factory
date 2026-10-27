@@ -20,7 +20,7 @@ import { checkViews, viewsOf } from "./metric-spec.js";
 import { upstreamProblems, type UpstreamPin } from "./source-offer.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
-import { hostToolNames } from "./host.js";
+import { hostToolNames, memoryToolNames } from "./host.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
 
 /** What gen-packs copies from a pack's pack.json into the registry. */
@@ -135,8 +135,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let installed: InstalledPack[] | null = null;
 let reserved: readonly string[] = [];
 let reservedAdminOf: () => readonly string[] = () => [];
-/** The shell's own customer tool names: those reserved by name and every host pack's (src/host.ts, mold_v0-039). */
-const shellTools = () => [...reserved, ...hostToolNames()];
+/** The shell's own customer tool names: those reserved by name, every host pack's (src/host.ts, mold_v0-039) and the memory component's (mold_v0-142). */
+const shellTools = () => [...reserved, ...hostToolNames(), ...memoryToolNames()];
 /** A test's packs stay installed when a server module loads later and reserves its names: checked again against them. */
 let testList: readonly GeneratedPack[] | null = null;
 const reinstall = () => { installed = testList ? installPacks(testList, shellTools(), reservedAdminOf()) : null; };

@@ -1,0 +1,12 @@
+{
+  "phase": "P6a (mold_v0-142): the account context and memory become the shell's component, turned on by the host pack's pack.json memory; its tables adopted by the shell's 0025; the connect-time instructions, the memory tools' place and bytes in tools/list, their answers, the /app/context pages and every other answer unchanged",
+  "allow": [
+    { "key": "generated::src/hosts.generated.ts", "reason": "the host pack's pack.json memory reaches the server here (PACK_CONFIG memory: scopes, tool names, tool words, tool _meta, words, answer styles, page aliases)" },
+    { "key": "generated::web/src/config/build-facts.generated.ts", "reason": "the account context pages, their old names and their words reach the console here (CONTEXT_MEMORY); a build without memory writes the file as before" },
+    { "key": "generated::src/pack-migrations.generated.ts", "reason": "the host pack's own tables lose account_context, user_context and context_memories (the shell's 0025 has them) and gain host.schema.split, the earlier checksums of its two rewritten migrations" },
+    { "key": "generated::web/src/config/pack-routes.generated.json::**", "reason": "the five /app/context addresses are no longer rewritten to the host pack's pages: the shell serves them (web/src/app/app/context); the rewrites after them shift up" },
+    { "key": "generated::src/docs-corpus.generated.json::**", "reason": "docs/migrations.md says how 0025 adopts the tables, db:rehearse and 0025's rollback (the staff docs corpus is built from it)" },
+    { "key": "generated::web/src/content/admin-docs.generated.ts", "reason": "the same docs/migrations.md text in the console's staff docs" },
+    { "key": "api::/api/admin/onboarding/spend/storage::**", "reason": "the database is a few kB larger: the shell's schema_adoptions ledger (one row for 0025's adoption)" }
+  ]
+}

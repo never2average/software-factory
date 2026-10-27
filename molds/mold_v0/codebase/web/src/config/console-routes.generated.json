@@ -31,6 +31,7 @@
     "/app/billing",
     "/app/billing/limits",
     "/app/connected-apps",
+    "/app/context/[[...section]]",
     "/app/credentials",
     "/app/docs",
     "/app/docs/[slug]",

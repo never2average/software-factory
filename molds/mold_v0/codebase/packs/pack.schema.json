@@ -130,6 +130,17 @@
                 "pattern": "^\\d{4}_[a-z0-9_]+$"
               }
             },
+            "split": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^\\d{4}_[a-z0-9_]+$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
             "labels": {
               "type": "object",
               "propertyNames": {
@@ -9358,6 +9369,287 @@
           }
         }
       },
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "scopes": {
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "company",
+              "user",
+              "product"
+            ]
+          }
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "save": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "search": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            }
+          },
+          "required": [
+            "save",
+            "search"
+          ],
+          "additionalProperties": false
+        },
+        "tool_words": {
+          "type": "object",
+          "properties": {
+            "save": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "status": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "args": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "enum": [
+                      "body",
+                      "kind",
+                      "scope",
+                      "product",
+                      "query",
+                      "limit"
+                    ]
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 600
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "search": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "status": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "args": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "enum": [
+                      "body",
+                      "kind",
+                      "scope",
+                      "product",
+                      "query",
+                      "limit"
+                    ]
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 600
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "tool_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "words": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "context_header",
+              "context_about",
+              "context_audience",
+              "context_competitors",
+              "context_terms",
+              "context_notes_for_ai",
+              "person",
+              "person_title",
+              "person_focus",
+              "person_interests",
+              "person_notes",
+              "memory_company",
+              "memory_user",
+              "memory_product",
+              "saved_note",
+              "company_label",
+              "you_label",
+              "ask_subject",
+              "ask_subject_none",
+              "personal_needs_person",
+              "subject_required",
+              "focus_unknown",
+              "hint_fact",
+              "hint_decision",
+              "hint_preference",
+              "hint_note",
+              "subject_label",
+              "subject_placeholder",
+              "export_prefix"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+          }
+        },
+        "answer_styles": {
+          "type": "object",
+          "properties": {
+            "brief": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400,
+              "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+            },
+            "detailed": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400,
+              "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+            },
+            "executive": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400,
+              "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "pages": {
+          "type": "object",
+          "properties": {
+            "titles": {
+              "type": "object",
+              "properties": {
+                "company": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                },
+                "users": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                },
+                "products": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 60,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
+                }
+              },
+              "additionalProperties": false
+            },
+            "aliases": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,40}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "company",
+                  "users",
+                  "products"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "scopes"
+      ],
       "additionalProperties": false
     },
     "admin_mcp": {

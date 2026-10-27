@@ -2,9 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Org } from "./auth.js";
 import { jsonBytes, recordMcpEvent } from "./analytics.js";
-import { hostToolNames, hosts, type HostDefinition } from "./host.js";
+import { hostToolNames, hosts, memoryToolNames, type HostDefinition } from "./host.js";
 import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
+import { registerMemoryTools } from "./account-context-tools.js";
 import { generatedInstructions, packInstructions } from "./mcp-tools.js";
 import { registerPackPrompts } from "./mcp-prompts.js";
 import { PROFILE } from "./profile.js";
@@ -87,8 +88,8 @@ export function capResult(org: Org, name: string, result: CallToolResult, t0: nu
   return result;
 }
 
-/** The customer MCP server's own tools: the host packs' (src/host.ts, mold_v0-039); none with zero packs. */
-export const ownToolNames = (): string[] => hostToolNames();
+/** The customer MCP server's own tools: the host packs' (src/host.ts, mold_v0-039) and the memory component's (mold_v0-142); none with zero packs. */
+export const ownToolNames = (): string[] => [...hostToolNames(), ...memoryToolNames()];
 
 // The shell has no customer tool of its own (mold_v0-039): src/shell-tools.ts SHELL_TOOL_NAMES is empty, and the
 // compiler holds it so. A host pack's tools are reserved when the packs are installed (src/packs.ts hostToolNames).
@@ -105,7 +106,7 @@ export function leadInstructions(profile: Pick<typeof PROFILE, "mcp_instructions
   return profile.mcp_instructions ?? hostList.find((h) => h.mcp?.instructions)?.mcp?.instructions ?? packInstructions(hostIds, true) ?? packInstructions(hostIds) ?? SHELL_INSTRUCTIONS;
 }
 
-/** `context`: the account's and the person's context (a host pack's, src/host.ts), appended to the instructions. */
+/** `context`: the account's and the person's context (src/account-context.ts connectContext), appended to the instructions. */
 export function createServer(org: Org, context = ""): McpServer {
   const server = new McpServer(
     // The server's name and version are the profile's (src/profile.ts), never a word in the code (mold_v0-038, 060).
@@ -121,8 +122,10 @@ export function createServer(org: Org, context = ""): McpServer {
   // tools/list answers even when the build has no tool at all (zero packs): a tool registered and removed at once installs
   // the tools capability and its handlers and leaves nothing listed.
   server.registerTool("_shell_capability", { description: "-" }, () => ({ content: [] })).remove();
-  // A host pack's own resources and tools first (the order clients list them in), then every pack's (mold_v0-038).
+  // A host pack's own resources and tools first (the order clients list them in), then the memory component's two
+  // (mold_v0-142, pack.json memory.tools: none when it is off), then every pack's (mold_v0-038).
   for (const h of hosts()) h.mcp?.register(server, org);
+  registerMemoryTools(server, org);
   registerPackTools(server, org);
   // Slash commands after every tool: the host packs' own, then the ones the packs declare (mold_v0-137, pack.json mcp.prompts).
   for (const h of hosts()) h.mcp?.registerPrompts?.(server, org);

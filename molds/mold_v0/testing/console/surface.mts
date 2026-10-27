@@ -7,7 +7,8 @@
 //          record-area tools (list_records, get_record) as the shell's
 //   pages  the console's pages: the shell's own (every page.tsx without a dynamic segment, /auth left out: Clerk's widget;
 //          /terms and /privacy only when the build serves them, mold_v0-109),
-//          a host pack's routes.json (app, admin, site), a page the build declares (pack-routes.generated.json
+//          a host pack's routes.json (app, admin, site), the account context pages when a pack turns them on
+//          (build-facts.generated.ts CONTEXT_MEMORY, mold_v0-142), a page the build declares (pack-routes.generated.json
 //          `declared`: the landing block's request_page), and a pack's tabs, pages and record areas from the generated
 //          registry (web/src/config/pack-nav.generated.ts)
 // Reads only: no database is opened and nothing is written.
@@ -81,6 +82,18 @@ export async function surface(laneArg: string): Promise<Surface> {
       for (const p of r.admin ?? []) out.pages.push({ pack: h.id, path: `/admin/${p}`, label: `/admin/${p}`, signed_in: true });
       for (const p of r.site ?? []) out.pages.push({ pack: h.id, path: `/${p}`, label: `/${p}`, signed_in: false });
     }
+  }
+  // The account context and memory pages (mold_v0-142: the shell's, turned on by a pack's pack.json memory, under that
+  // pack): /app/context (it leads to a page), each page, and each old page name (it leads to its page).
+  const factsFile = path.join(lane, "web", "src", "config", "build-facts.generated.ts");
+  const cm = existsSync(factsFile) ? /export const CONTEXT_MEMORY = ([\s\S]*?);\n/.exec(readFileSync(factsFile, "utf8")) : null;
+  if (cm) {
+    const c = JSON.parse(cm[1]!) as { pack: string; sections: { path: string }[]; aliases: Record<string, string> };
+    for (const p of ["/app/context", ...c.sections.map((x) => x.path), ...Object.keys(c.aliases).map((a) => `/app/context/${a}`)])
+      out.pages.push({ pack: c.pack, path: p, label: p, signed_in: true });
+    // Its MCP tools (pack.json memory.tools), under the pack that names them.
+    const { memoryToolNames } = await imp(lane, "src/host.ts") as { memoryToolNames?: () => string[] };
+    for (const t of memoryToolNames?.() ?? []) out.tools[t] = c.pack;
   }
   // A public page the build declares (mold_v0-138: the landing block's request_page), at its own path, under the pack
   // that declared it ("app" when the app's profile.json did).

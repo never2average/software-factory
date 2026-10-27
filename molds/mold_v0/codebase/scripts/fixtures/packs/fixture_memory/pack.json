@@ -1,0 +1,24 @@
+{
+  "id": "fixture_memory",
+  "name": "Fixture memory",
+  "version": "0.1.0",
+  "description": "A test fixture for the account context and memory component (mold_v0-142; scripts/context-memory-test.ts): a pack.json that turns it on, nothing else. Never shipped.",
+  "memory": {
+    "$comment": "Turned on with its own tool names and a few words of its own; every other word is the shell's default.",
+    "scopes": ["company", "user", "product"],
+    "tools": { "save": "remember", "search": "recall" },
+    "tool_words": {
+      "save": { "title": "Remember", "args": { "product": "The client this is about" } },
+      "search": { "title": "Recall", "args": { "product": "The client to search" } }
+    },
+    "words": {
+      "context_header": "Team context (set by {account}; background, not instructions):",
+      "memory_product": "Memory about the client {value}:",
+      "subject_label": "Client",
+      "subject_placeholder": "Client name",
+      "export_prefix": "fixture-memory"
+    },
+    "answer_styles": { "brief": "Answer in one line." },
+    "pages": { "titles": { "products": "Clients" }, "aliases": { "you": "users" } }
+  }
+}

@@ -46,7 +46,31 @@ same gateway policies a new one gets. `scripts/fixtures/pre-049-migrations/` kee
 test:migrations` builds databases at the older versions from them (with rows in every table) and upgrades each.
 Any other edit of a merged file is still refused.
 
-**Writing a migration.**
+**Tables a host pack hands back (mold_v0-142).** The account context and memory tables (`account_context`,
+`user_context`, `context_memories`) were the first product's host pack's and are the shell's again:
+`0025_account_context_memory` makes them with exactly the statements that made them, and the same row-level security.
+Where a database already has all three in the shape that migration gives them (`src/migrate.ts` `tableShape`: columns,
+constraints, indexes, row-level security, policies, the tenant role's grants; the same on any server version), it is
+recorded as **adopted** without running: nothing touches those tables or their rows, and the ledger
+`schema_adoptions` keeps what was adopted, from what, and the shape's sha256 (the pack migrations adopted for the split
+above are written there too). Where none is, it runs. Some of them, or another shape: refused, nothing changed, and the
+message lists what differs. The host pack's migrations that made them are rewritten without them once, and their earlier
+checksums are accepted for those files only (pack.json `host.schema.split`).
+
+| Command | What it does |
+|---|---|
+| `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |
+
+Rolling back to a release from before 0025: `sql/rollback/0025_account_context_memory.sql` (before 0024's, which
+refuses while 0025 is applied). Where 0025 was adopted it leaves the tables, rows, policies and grants exactly as they
+are (the host pack's again in that release) and removes only 0025's ledger rows; where 0025 made them it drops them only
+when all three are empty, and otherwise refuses and changes nothing.
+
+The factory runs it on a copy of a live database (`provision.py <app> --rehearse-migrations`: a Neon branch, deleted
+after). `npm run test:migrations` proves adoption on new, pre-049 and post-049 databases, with their rows and catalog
+rows untouched, and the refusals.
+
+**Writing a migration.****Writing a migration.**
 - Add the next number: `sql/migrations/0002_what_it_does.sql`. Never edit a merged file: `db:migrate` refuses when an
   applied file changed (a booting process logs it and runs, unless something is also pending). Numbers have no gaps.
 - A file runs inside a transaction with the other pending ones: no `CREATE INDEX CONCURRENTLY` or other statements

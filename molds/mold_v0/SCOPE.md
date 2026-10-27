@@ -192,6 +192,16 @@ status, finding fingerprint, evidence reference).
   workspace from its own events and rows, shown on the Setup page; zero packs leave the page unchanged;
   `src/onboarding.ts`).
 
+### Account context and memory
+
+- **Today.** The first product's company, person and product context and its memory, with `save_to_memory` and
+  `search_memory`, were its host pack's code (`server/context.ts`) and pages until mold_v0-142.
+- **Generalised by.** mold_v0-142, **built**: a shell component turned on by one pack's pack.json `memory`
+  (`src/account-context.ts`, `src/account-context-tools.ts`, `web/src/features/context`): the company's and each person's
+  context and the account's memory (company, a person, a subject), shown on `/app/context`, given to the AI client at
+  connect time and saved and searched by two MCP tools the pack names, every word the pack's or a neutral default. Its
+  tables are the shell's (`0025_account_context_memory`), adopted where a host pack made them. Off with zero packs.
+
 ### Billing and email (optional)
 
 - **Today.** Stripe is the system of record (`src/billing.ts`, `src/plan-config.ts`, `src/experiments.ts`,
@@ -225,8 +235,9 @@ status, finding fingerprint, evidence reference).
 like every pack; MOLD.md "Host packs"). A build with no packs has none of it; a build with `["octillion"]` has all of it,
 at the same paths and with the same MCP surface. Paths below are where each now lives in a build copy.
 
-- **Tools.** The 31 tools (`get_started`, `onboard_product`, `run_simulation`, `get_visibility_report`,
-  `search_transcripts`, `save_personas`, `browse_task_library`, `save_to_memory` and the rest), their slash commands, the
+- **Tools.** The 29 tools (`get_started`, `onboard_product`, `run_simulation`, `get_visibility_report`,
+  `search_transcripts`, `save_personas`, `browse_task_library` and the rest; `save_to_memory` and `search_memory` are the
+  shell's account context and memory component since mold_v0-142, in its words, pack.json `memory`), their slash commands, the
   dashboard widget and the server's instructions: `packs/octillion/server/tools.ts`, `server/ui/widget.html`; their
   queries `server/queries.ts`; the admin MCP's `library_stats`: `server/admin-tools.ts`.
 - **Domain code.** Scoring and its hooks (`server/scoring.ts`, `server/sessions.ts`, `server/reasons.ts`,
@@ -234,7 +245,7 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   `server/websearch.ts`, `server/registry-meta.ts`), task adaptation and platforms (`server/adapt.ts`,
   `server/platform.ts`), developer populations and the agent mix weighted by real-world use (`server/populations.ts`; the
   harness registry itself, `harnesses/registry.json` with `src/agents.ts`, stays in the shell, and with no host pack the
-  engine schedules by it: `src/agent-mix.ts`), context and memory (`server/context.ts`), library contributions
+  engine schedules by it: `src/agent-mix.ts`), library contributions
   (`server/contributions.ts`), playbooks and journeys (`server/playbooks.ts`, `server/journeys.ts`), the product's
   settings (pack.json `settings` since mold_v0-140), its portal, admin, worker and public routes (`server/portal.ts`,
   `server/http-routes.ts`), all wired by `packs/octillion/host.ts`. The generic one-model call it used moved to the shell
@@ -245,14 +256,14 @@ at the same paths and with the same MCP surface. Paths below are where each now 
 - **Record areas.** Personas and tasks (`server/library.ts`, `server/private.ts`, `server/vault.ts`, the curated vault
   `packs/octillion/vault/`) and their pages, over the product's own tables (not the shell's record store): declaring them
   as record areas would add MCP tools and empty pages, so the surface would not be the product's.
-- **Tables** (mold_v0-049). The product's 24 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
+- **Tables** (mold_v0-049). The product's 21 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
   verdicts, `transcript_events`, `product_research`, `developer_profiles`, `library_tasks`, `product_personas`,
-  `developer_populations` and their agents, `library_submissions`, `visibility_reports`, context and memory, journeys,
-  nudges, task sets and private harnesses) are the pack's own migrations (`packs/octillion/migrations/`), under the names
+  `developer_populations` and their agents, `library_submissions`, `visibility_reports`, journeys, nudges, task sets and
+  private harnesses; its context and memory tables are the shell's since mold_v0-142, adopted by the shell's 0025) are the pack's own migrations (`packs/octillion/migrations/`), under the names
   they had, by the host-pack schema allowance (MOLD.md "Host packs": `host.schema`); a database built before keeps
   them and its rows (the pack adopts what the earlier base schema made). The admin MCP's job tools named for them
   (`list_simulations`, `get_simulation`, `cancel_simulation`) are the pack's (`server/admin-tools.ts`).
-- **Console pages.** Pick rate (with its report), context (company, users, products), journeys, developer personas and
+- **Console pages.** Pick rate (with its report), journeys, developer personas and
   programming tasks on /app; personas, tasks, journeys and the harness mix on /admin (agent configuration, every
   global setting, stays the shell's page):
   `web/src/packs/octillion/` (pages, features, `routes.json`), at their old URLs; its sidebar entries, redirects, Setup

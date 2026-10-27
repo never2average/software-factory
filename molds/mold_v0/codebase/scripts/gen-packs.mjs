@@ -99,6 +99,8 @@ const { templateNames, templateProblems } = await import(pathToFileURL(path.join
 // The access-request form's own fields (mold_v0-102): plain TypeScript with no imports, as the words engine.
 const ACCESS_REQUEST = path.join(HERE, "..", "src", "access-request.ts");
 const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
+// The account context and memory component's lists and words (mold_v0-142): plain TypeScript with no imports.
+const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "account-context-words.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -144,6 +146,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "settings", "admin_mcp", "setup",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
   "account_stages",
+  // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
+  "memory",
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
   "texts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
@@ -527,7 +531,7 @@ function hostSchemaOf(m, dirName, where) {
   const IDENT = /^[a-z][a-z0-9_]{1,62}$/;
   if (!HOST_PACKS.has(dirName)) { fail(where, "host.schema: only a host pack of this build may declare its own tables"); return null; }
   if (!sc || typeof sc !== "object" || Array.isArray(sc)) { fail(where, "host.schema must be an object {tables, functions?, adopts?}"); return null; }
-  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references", "labels"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
+  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references", "labels", "split"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
   const list = (v, what) => Array.isArray(v) && v.every((x) => typeof x === "string" && IDENT.test(x)) && new Set(v).size === v.length ? v : (fail(where, `host.schema.${what} must be a list of distinct lowercase names`), []);
   const tables = list(sc.tables, "tables");
   if (!tables.length) fail(where, "host.schema.tables names no table");
@@ -551,6 +555,15 @@ function hostSchemaOf(m, dirName, where) {
       else references[k] = v;
     }
   }
+  // Its migrations rewritten once when tables they made became the shell's (mold_v0-142): file name -> earlier sha256.
+  const split = {};
+  if (sc.split !== undefined) {
+    if (!sc.split || typeof sc.split !== "object" || Array.isArray(sc.split)) fail(where, "host.schema.split must be an object of pack migration -> its earlier checksum (sha256)");
+    else for (const [k, v] of Object.entries(sc.split)) {
+      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) fail(where, `host.schema.split.${k}: NNNN_name -> the earlier file's sha256 (64 hex)`);
+      else split[k] = v;
+    }
+  }
   // Each table's label in the product's words (mold_v0-141: the Storage page's names for them, src/host-tables.ts
   // hostTableLabel), apart from the schema: words, not storage.
   const labels = {};
@@ -563,7 +576,7 @@ function hostSchemaOf(m, dirName, where) {
     }
   }
   hostTableLabels.push(...Object.entries(labels));
-  return { tables, functions, adopts, platform_read: platformRead, references };
+  return { tables, functions, adopts, platform_read: platformRead, references, ...(Object.keys(split).length ? { split } : {}) };
 }
 /** The host packs' table labels (host.schema.labels, mold_v0-141), in pack order. */
 const hostTableLabels = [];
@@ -597,9 +610,13 @@ function loadPack(dirName) {
   }
   if (schema) {
     if (!migrations) fail(where, "host.schema needs the pack's migrations (pack.json migrations), which create those tables");
-    else for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
-      if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
-      else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
+    else {
+      for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
+        if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
+        else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
+      for (const mine of Object.keys(schema.split ?? {}))
+        if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.split names ${mine}, which is not one of its migrations`);
+    }
   }
   const pages = [];
   if (m.pages !== undefined && !Array.isArray(m.pages)) fail(where, "pages must be a list");
@@ -1412,7 +1429,7 @@ files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
 }) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
-  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
+  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n` +
   // Their tables' labels (mold_v0-141: host.schema.labels), only when one names any (a build without writes what it did).
@@ -1440,6 +1457,8 @@ const ENGINE_STAGE_IDS = ["onboarded", "simulated", "reported"];
 let setupOwner = null;
 /** The session engine's account-stage words (mold_v0-121), for the console's build facts; null without the engine. */
 let engineWords = null;
+/** The account context and memory component's pages and words for the console (mold_v0-142); null when it is off. */
+let memoryFacts = null;
 /** The shell's console texts the packs write (mold_v0-141: pack.json texts), and which pack writes each text. */
 const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
@@ -1486,6 +1505,23 @@ const packConfig = [];
     if (j.account_stages && !ownsEngine) fail(at, "account_stages: the session engine's stages are the words of the host pack that owns its tables (host.schema: products, scenarios, simulations, agent_sessions)");
     else if (ownsEngine && !j.account_stages) fail(at, "account_stages: this pack owns the session engine's tables, so it names the engine's account stages (each stage's label, next step and funnel label, the next step after the first tool call, the attention messages)");
     else if (j.account_stages) { const { $comment: _c, ...rest } = j.account_stages; c.account_stages = rest; engineWords = rest; }
+    // The account context and memory component (mold_v0-142): one pack's per build; its pages' aliases are not its pages.
+    if (j.memory) {
+      if (memoryFacts) fail(at, `memory: pack ${memoryFacts.pack} turns the account context and memory component on too: one pack's`);
+      else {
+        const { $comment: _c, ...rest } = j.memory;
+        const sections = rest.scopes.map((sc) => ({ scope: sc, section: CONTEXT_SECTIONS[sc].section, path: `/app/context/${CONTEXT_SECTIONS[sc].section}`,
+          title: rest.pages?.titles?.[CONTEXT_SECTIONS[sc].section] ?? CONTEXT_SECTIONS[sc].title, icon: CONTEXT_SECTIONS[sc].icon }));
+        for (const [alias, to] of Object.entries(rest.pages?.aliases ?? {})) {
+          if (sections.some((x) => x.section === alias)) fail(at, `memory.pages.aliases ${alias}: it is one of the pages`);
+          if (!sections.some((x) => x.section === to)) fail(at, `memory.pages.aliases ${alias}: ${to} is not one of the pages (memory.scopes: ${rest.scopes.join(", ")})`);
+        }
+        if (rest.tool_words && !rest.tools) fail(at, "memory.tool_words: name the tools (memory.tools {save, search}) they are the words of");
+        c.memory = rest;
+        memoryFacts = { pack: p.id, sections, aliases: rest.pages?.aliases ?? {},
+          words: Object.fromEntries(WEB_WORDS.map((k) => [k, rest.words?.[k] ?? MEMORY_WORDS[k]])) };
+      }
+    }
     // The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): one pack's per text, placeholders the
     // shell's; the server's go in its config, the console's in its build facts (consoleTexts, below).
     if (j.texts) {
@@ -1505,6 +1541,12 @@ const packConfig = [];
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
   refuse();
+}
+// The account context and memory component's pages, old addresses and words for the console (mold_v0-142), only when it is on.
+if (memoryFacts) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
+    `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
 }
 // The shell's console texts in the packs' words (mold_v0-141: pack.json texts; web/src/lib/texts.ts fills them, else the
 // shell's own from src/shell-texts.ts), only when a pack writes one: a build without writes what it did.
@@ -1597,7 +1639,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     for (const area of ["app", "admin"]) {
       const placements = c.nav?.[area];
       if (placements === undefined) continue;
-      const own = new Set((Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`));
+      // Its own pages, and the account context pages where it turns that component on (mold_v0-142).
+      const own = new Set([...(Array.isArray(r?.[area]) ? r[area] : []).map((x) => `/${area}/${x}`),
+        ...(area === "app" && memoryFacts?.pack === p.id ? memoryFacts.sections.map((x) => x.path) : [])]);
       const keys = new Map();
       for (const [i, pl] of placements.entries()) for (const [j, it] of pl.items.entries()) {
         const w = `${at} console.nav.${area}[${i}].items[${j}]`;
@@ -1612,6 +1656,10 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     if (c.components?.length) entry.components = c.components;
     navs.push(entry);
   }
+  // The account context pages in the sidebar (mold_v0-142): where no pack's console.nav places them, a Context group of
+  // their own, after the shell's groups.
+  if (memoryFacts && !navs.some((n) => (n.app ?? []).some((pl) => pl.items.some((it) => it.url.startsWith("/app/context/")))))
+    navs.push({ pack: memoryFacts.pack, app: [{ label: "Context", items: memoryFacts.sections.map((x) => ({ title: x.title.split(" · ")[0], url: x.path, icon: x.icon })) }] });
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
@@ -1756,6 +1804,8 @@ const profileSidebar = (() => {
     for (const [area, prefix, to] of [["app", "/app/", `/app/host/${id}/`], ["admin", "/admin/", `/admin/host/${id}/`], ["site", "/", `/host/${id}/`]]) {
       for (const p of Array.isArray(r[area]) ? r[area] : []) {
         if (typeof p !== "string" || !ROUTE_PATH.test(p) || p.startsWith("host/") || p === "host") { fail(`web/src/packs/${id}/routes.json`, `${area}: ${JSON.stringify(p)} is not a page path`); continue; }
+      // The shell's own pages win over a rewrite (mold_v0-142: /app/context is the account context component's).
+      if (area === "app" && SHELL_APP_SEGMENTS.has(p.split("/")[0])) { fail(`web/src/packs/${id}/routes.json`, `app: ${p} is under the shell's own /app/${p.split("/")[0]}${p.split("/")[0] === "context" ? " (the account context and memory pages: pack.json memory turns them on, mold_v0-142)" : ""}`); continue; }
         const source = prefix + p;
         if (seenUrl.has(source)) fail(`web/src/packs/${id}/routes.json`, `${source} is claimed twice`);
         seenUrl.add(source);

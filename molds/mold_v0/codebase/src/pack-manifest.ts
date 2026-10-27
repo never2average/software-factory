@@ -20,6 +20,7 @@
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
 import { CONSOLE_COMPONENTS, CONSOLE_PAGES } from "./console-pages.js";
+import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./account-context-words.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
 import { GuideSchema } from "./pack-guide.js";
@@ -125,6 +126,36 @@ const AccountStagesSchema = z.object({
 }).strict();
 
 /**
+ * The account context and memory component (mold_v0-142; src/account-context.ts, src/host.ts MemoryConfig): on in a
+ * build where one pack declares it. `scopes` (company, user, product: whose memory there is, each a page of
+ * /app/context), `tools` (the names of its save and search MCP tools; none without), `tool_words` (their title,
+ * description, status lines and argument descriptions), `tool_meta` (the _meta both carry: a widget that shows them),
+ * `words` (MEMORY_WORDS: what it shows and tells the AI client), `answer_styles` (what the AI client is told for each),
+ * `pages` (each page's title, and old page addresses under /app/context kept working: `aliases`).
+ */
+const memoryTool = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "an MCP tool's name: lowercase letters, digits and _");
+const MemoryToolWordsSchema = z.object({
+  title: plain(80).optional(), description: z.string().trim().min(1).max(2000).optional(),
+  status: z.tuple([plain(64), plain(64)]).optional(),
+  args: z.partialRecord(z.enum(["body", "kind", "scope", "product", "query", "limit"]), z.string().trim().min(1).max(600)).optional(),
+}).strict();
+const SECTION = z.enum(["company", "users", "products"]);
+const MemorySchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  scopes: z.array(z.enum(MEMORY_SCOPES)).min(1).max(MEMORY_SCOPES.length).refine((s) => new Set(s).size === s.length, "each scope once"),
+  tools: z.object({ save: memoryTool, search: memoryTool }).strict().refine((t) => t.save !== t.search, "two names").optional(),
+  tool_words: z.object({ save: MemoryToolWordsSchema.optional(), search: MemoryToolWordsSchema.optional() }).strict().optional(),
+  tool_meta: z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= 8 * 1024, "at most 8 kB of JSON").optional(),
+  words: z.partialRecord(z.enum(Object.keys(MEMORY_WORDS) as [MemoryWord, ...MemoryWord[]]), z.string().trim().min(1).max(600)
+    .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text on one line")).optional(),
+  answer_styles: z.object(Object.fromEntries(ANSWER_STYLES.map((k) => [k, plain(400).optional()])) as Record<(typeof ANSWER_STYLES)[number], z.ZodOptional<z.ZodString>>).strict().optional(),
+  pages: z.object({
+    titles: z.object({ company: plain(60).optional(), users: plain(60).optional(), products: plain(60).optional() }).strict().optional(),
+    aliases: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a page name under /app/context"), SECTION).optional(),
+  }).strict().optional(),
+}).strict();
+
+/**
  * The shell's texts in the product's words (mold_v0-141; src/shell-texts.ts): by id, each one sentence or label on one
  * line, its word placeholders the shell's (scripts/gen-packs.mjs checks those, and that one pack writes each text).
  */
@@ -220,6 +251,12 @@ export const PackJsonSchema = z.object({
       references: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}\.[a-z][a-z0-9_]{1,62}$/, "table.column"), z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name")).optional(),
       functions: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a function name")).max(50).optional(),
       adopts: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a shell migration (NNNN_name)")).optional(),
+      /**
+       * Its migrations rewritten once because tables they made became the shell's (mold_v0-142: the account context and
+       * memory tables, src/account-context.ts): each file name -> the sha256 of the file as it was, which a database that
+       * ran it keeps and src/migrate.ts accepts for that file only (the shell's own migration adopts the tables there).
+       */
+      split: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^[0-9a-f]{64}$/, "the earlier file's sha256 (64 hex)")).optional(),
       /** Each table's label in the product's words (mold_v0-141): the Storage page's name for it (src/host-tables.ts hostTableLabel); else its name, capitalised. */
       labels: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name"), plain(60)).optional(),
     }).strict().optional(),
@@ -293,6 +330,8 @@ export const PackJsonSchema = z.object({
   texts: TextsSchema.optional(),
   /** A host pack's Setup page: its steps, the shell's steps in its words, its viewer note and workflow (mold_v0-140; SetupSchema above). */
   setup: SetupSchema.optional(),
+  /** The account context and memory component, turned on (mold_v0-142; src/account-context.ts): MemorySchema above. */
+  memory: MemorySchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
   admin_mcp: AdminMcpSchema.optional(),
   console: z.object({

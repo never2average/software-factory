@@ -1,7 +1,7 @@
 // A parity snapshot of one build: everything a person, an AI client or the console sees of it, recorded so two builds can
 // be compared field by field (diff.mts). A harness of the lane world (testing/console/world.mts), started by parity.py:
 //   python3 molds/mold_v0/testing/console/render.py <id> --codebase <lane copy> -- molds/mold_v0/testing/parity/snapshot.mts
-//       --out <dir> [--no-shots] [--only mcp,generated,api,pages]
+//       --out <dir> [--no-shots] [--only mcp,generated,api,pages] [--context-fixture [--memory-search <tool>]]
 // Everything runs on this machine, inside the lane world (an embedded throwaway database, the offline Clerk, the console
 // served on 127.0.0.1); nothing deployed is contacted. What it writes under <dir>:
 //   meta.json                 the build (lane copy, packs) and how long each part took (diff.mts reads only `packs`)
@@ -10,6 +10,9 @@
 //                             for every prompt over an argument matrix (none, each argument alone, all of them),
 //                             resources/list, resource templates and resources/read of every resource (the widgets)
 //   mcp/admin.json            the admin MCP server (platform staff, Owner role): the same; prompts/get is every skill's text
+//   mcp/memory-search.json    with --context-fixture (mold_v0-142): the account context and memory rows seeded for the
+//                             workspace and its owner (who the customer server then connects as), and the memory search
+//                             tool's answers over them
 //   generated/<path>          every *.generated.* file of the lane copy (mcp-tools, docs corpus, pack guides, landing, pack
 //                             nav and routes, admin docs, ...), byte for byte
 //   api/routes.json           every route the API mounts (method and path), read from a second createApp() that never listens
@@ -67,7 +70,10 @@ export async function run(ctx: Ctx): Promise<number> {
   const timed = async <T,>(k: string, f: () => Promise<T>) => { const t = Date.now(); try { return await f(); } finally { timings[k] = Math.round((Date.now() - t) / 100) / 10; } };
   const token = async (c: () => Promise<Cookie[]>) => (await c()).find((x) => x.name === "__session")!.value;
 
-  if (only.has("mcp")) await timed("mcp", () => snapMcp(out, lane, imp));
+  // Account context and memory rows for the lane workspace and its owner (mold_v0-142), the same in every build that has
+  // the tables: the MCP instructions, the context pages and their API then show them, and memory searches are recorded.
+  const fixture = ctx.argv.includes("--context-fixture") ? await seedContextFixture(lane, imp, await token(ctx.session)) : null;
+  if (only.has("mcp")) await timed("mcp", () => snapMcp(out, lane, imp, fixture, opt(ctx.argv, "--memory-search") ?? "search_memory"));
   if (only.has("generated")) await timed("generated", async () => snapGenerated(out, lane));
   if (only.has("api")) await timed("api", () => snapApi(out, ctx, imp, token));
   if (only.has("pages")) await timed("pages", () => snapPages(out, ctx, shots));
@@ -118,7 +124,38 @@ async function describe(c: McpClient) {
   });
 }
 
-async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<any>) {
+/**
+ * --context-fixture (mold_v0-142): the lane workspace's company context, its owner's own and six memory items (company,
+ * the owner's, two subjects), with fixed times, written straight into the tables (the same statements in any build that
+ * has them). Returns the owner's user id, which the MCP part then connects as.
+ */
+async function seedContextFixture(lane: string, imp: (rel: string) => Promise<any>, session: string): Promise<{ userId: string }> {
+  const userId = JSON.parse(Buffer.from(session.split(".")[1]!, "base64url").toString()).sub as string;
+  const { getDb } = await imp("src/db.ts");
+  const db = await getDb();
+  const [org] = (await db.query("SELECT id FROM organizations WHERE slug = 'lane-workspace'")) as { id: number }[];
+  if (!org) throw new Error("the lane world's workspace (lane-workspace) is not in the database");
+  await db.query(`INSERT INTO account_context (org_id, about, audience, competitors, terms, notes_for_ai, updated_at, updated_by)
+    VALUES ($1, 'Acme builds a job queue for Node teams.', 'Backend engineers at SaaS startups', '["BullMQ", "Inngest"]', 'A run is a job; a lane is a queue.', 'Keep it short.', '2026-10-01T09:00:00Z', 'customer:lane.owner@example.org')
+    ON CONFLICT (org_id) DO NOTHING`, [org.id]);
+  await db.query(`INSERT INTO user_context (org_id, user_id, title, focus_product, interests, answer_style, notes, updated_at)
+    VALUES ($1, $2, 'Head of DevRel', 'acme-queue', 'why we lose to BullMQ', 'detailed', 'Prefers tables.', '2026-10-01T09:05:00Z') ON CONFLICT (org_id, user_id) DO NOTHING`, [org.id, userId]);
+  const items: [string, string, string, string, string][] = [
+    ["company", "", "fact", "Acme Queue 3 ships exactly-once delivery.", "2026-10-01T10:00:00Z"],
+    ["company", "", "decision", "We stopped competing on price with BullMQ.", "2026-10-02T10:00:00Z"],
+    ["company", "", "note", "The pricing page moves in November.", "2026-10-03T10:00:00Z"],
+    ["user", userId, "preference", "Lead with the Python numbers.", "2026-10-04T10:00:00Z"],
+    ["product", "acme-queue", "fact", "Docs moved to /v3 in October.", "2026-10-05T10:00:00Z"],
+    ["product", "Acme Edge", "note", "Edge runtime support is pre-launch.", "2026-10-06T10:00:00Z"],
+  ];
+  if (!((await db.query("SELECT 1 FROM context_memories WHERE org_id = $1 LIMIT 1", [org.id])) as unknown[]).length)
+    for (const [scope, subject, kind, body, at] of items)
+      await db.query("INSERT INTO context_memories (org_id, scope, subject, kind, body, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [org.id, scope, subject, kind, body, scope === "user" ? `ai:${userId}` : "customer:lane.owner@example.org", at]);
+  return { userId };
+}
+
+async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<any>, fixture: { userId: string } | null = null, memorySearch = "search_memory") {
   const req = createRequire(path.join(lane, "package.json"));
   const { Client } = await import(pathToFileURL(req.resolve("@modelcontextprotocol/sdk/client/index.js")).href);
   const { InMemoryTransport } = await import(pathToFileURL(req.resolve("@modelcontextprotocol/sdk/inMemory.js")).href);
@@ -133,12 +170,24 @@ async function snapMcp(out: string, lane: string, imp: (rel: string) => Promise<
   // The lane world's workspace (world.mts: "Lane workspace", its owner), as /mcp would build its server for that person.
   const row = ((await db.query("SELECT id, slug, name FROM organizations WHERE slug = $1", ["lane-workspace"])) as { id: number; slug: string; name: string }[])[0];
   if (!row) throw new Error("the lane world's workspace (lane-workspace) is not in the database");
-  const org = { orgId: row.id, slug: row.slug, name: row.name, role: "owner" };
+  // With the context fixture, as its owner signed in (their own context and memory are part of what they are told).
+  const org = { orgId: row.id, slug: row.slug, name: row.name, role: "owner", ...(fixture ? { userId: fixture.userId } : {}) };
+  // What /mcp appends to the instructions for this caller: the shell's account context and the host packs' own
+  // (src/account-context.ts connectContext, mold_v0-142), else (a build from before) the host packs' context hooks.
+  const ac = await imp("src/account-context.ts").catch(() => null) as { connectContext?: (o: unknown) => Promise<string> } | null;
   const { hosts } = await imp("src/host.ts");
-  const context = (await Promise.all((hosts() as { mcp?: { context?: (o: unknown) => Promise<string> } }[]).map((h) => h.mcp?.context?.(org).catch(() => "") ?? ""))).join("");
+  const context = ac?.connectContext ? await ac.connectContext(org)
+    : (await Promise.all((hosts() as { mcp?: { context?: (o: unknown) => Promise<string> } }[]).map((h) => h.mcp?.context?.(org).catch(() => "") ?? ""))).join("");
   const { createServer } = await imp("src/server.ts");
   const customer = await connect(createServer(org, context));
   write(path.join(out, "mcp", "customer.json"), stable(await describe(customer)));
+  // The memory search's answers over the fixture (its whole answer: text and structured content), when the server has it.
+  if (fixture && ((await customer.listTools()).tools as { name: string }[]).some((t) => t.name === memorySearch)) {
+    const calls: Record<string, unknown> = {};
+    for (const args of [{}, { scope: "company" }, { scope: "me" }, { scope: "product" }, { query: "BullMQ price" }, { scope: "product", product: "acme-queue" }, { query: "nothing matches this" }])
+      calls[JSON.stringify(args)] = maskJson(await (customer as unknown as { callTool(p: unknown): Promise<unknown> }).callTool({ name: memorySearch, arguments: args }));
+    write(path.join(out, "mcp", "memory-search.json"), stable({ tool: memorySearch, calls }));
+  }
   await customer.close();
 
   const { createAdminServer, adminSkillList } = await imp("src/admin-mcp.ts");
