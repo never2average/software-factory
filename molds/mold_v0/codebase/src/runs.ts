@@ -36,6 +36,7 @@ import { runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
 import { ENV } from "./env-names.js";
+import { noteOnPremisesStart, onPremAvailable, runLocationFor } from "./onprem-runners.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -123,6 +124,7 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   // the run ends (0014_run_charges.sql).
   const price = run_charges === "included" ? null : priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
   const id = `run_${randomBytes(12).toString("base64url")}`;
+  let location: "hosted" | "on_premises" = "hosted";
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
   // ticks, many tool calls at once) cannot pass it together (mold_v0-018).
@@ -133,16 +135,22 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
       throw new PackError(`this workspace already has ${live} runs queued or running (at most ${live_per_workspace}): wait for some to finish`, 429);
     // The approval is taken in this transaction (used once): a refusal below undoes it with the run.
     const approval = gated ? await takeApproval(tx, { id: input.approval, orgId, pack, kind, runId: id, scope, targets }) : null;
+    // mold_v0-036: a run that may need the workspace's private network goes to its own on-premises runner when the
+    // workspace chose that (src/onprem-runners.ts); every other run, and every run of a build without such a kind, is hosted.
+    location = k.private_network ? await runLocationFor(tx, orgId) : "hosted";
     const rows = await tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING ${COLS}`,
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id, runner_location)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null]);
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null, location]);
     if (approval) await event(id, orgId, 0, "approval_used", { approval: approval.id, preview_run_id: approval.preview_run_id, sha256: approval.output_sha256,
       approved_by: approval.approved_by, role: approval.approver_role }, tx);
     return rows;
   }));
-  await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
+  // Set inside the transaction above (TypeScript does not follow an assignment in a callback).
+  const routed = location as "hosted" | "on_premises";
+  await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy, ...(routed === "on_premises" ? { location: routed } : {}) });
+  if (routed === "on_premises") await noteOnPremisesStart(id, orgId);
   // On Vercel nothing ticks between crons: the run's sandbox is launched now (mold_v0-055; a server's loop ticks itself).
   if (process.env.VERCEL) void import("./autoscaler.js").then((a) => import("./telemetry.js").then((t) => t.keepAlive(a.kickAutoscaler().catch(() => null)))).catch(() => {});
   return view(r!);
@@ -290,6 +298,9 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
       `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
               coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds, (spec->>'concurrency_per_workspace')::int AS concurrency FROM runs
         WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND ($3::text IS NULL OR id = $3)
+          -- A run routed to its workspace's on-premises runner (mold_v0-036) is claimed by its own sandbox only, by id.
+          -- With on-premises runners off in this build (APP_ONPREM_RUNNERS=off), every run is hosted again.
+          AND (runner_location = 'hosted' OR $3::text IS NOT NULL OR $4::boolean)
           -- One writer per workspace store: a run whose store another live run holds is not even a candidate, so a
           -- workspace with many queued runs never hides other workspaces' runs behind its own.
           AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
@@ -297,7 +308,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
           -- Nor one whose workspace already runs its kind's concurrency (mold_v0-018; rechecked under a lock below).
           AND (SELECT count(*) FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running')
               < LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2)
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency(), only]);
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency(), only, !onPremAvailable()]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
       // The kind's concurrency in this workspace (mold_v0-018): over it, the run waits in the queue.
@@ -355,9 +366,11 @@ export interface ClaimableRun { id: string; org_id: number; pack: string; kind: 
  * whose workspace store no other live run holds, and under the kind's concurrency in its workspace and the platform's
  * ceiling (mold_v0-018), as claimRun's own candidates. Counts and ids only; nothing is locked or changed.
  */
-export async function claimableRuns(limit = 200): Promise<ClaimableRun[]> {
+export async function claimableRuns(limit = 200, where: { location?: "hosted" | "on_premises"; orgId?: number } = {}): Promise<ClaimableRun[]> {
   const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
   if (!known.length) return [];
+  // The hosted run scaler's (the default), or one workspace's runs for its on-premises runners (mold_v0-036).
+  const location = where.location ?? "hosted", org = where.orgId ?? null;
   const rows = await asPlatform(async () => (await getDb()).query<ClaimableRun & { workspace: boolean; running: number; cap: number }>(
     `/* tenant: internal: the autoscaler's run demand across workspaces, ids go to the run's own sandbox only */
      SELECT id, org_id, pack, kind, attempt, token_lifetime_seconds, lease_seconds, created_at,
@@ -366,9 +379,12 @@ export async function claimableRuns(limit = 200): Promise<ClaimableRun[]> {
             LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2) AS cap
        FROM runs
       WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND cancel_requested_at IS NULL
+        AND (runner_location = $4 OR $6::boolean) AND ($5::int IS NULL OR org_id = $5)
         AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
                  WHERE l.org_id = runs.org_id AND l.store = runs.pack AND l.expires_at > now() AND l.run_id <> runs.id))
-      ORDER BY created_at, id LIMIT $3`, [known, maxRunConcurrency(), Math.max(1, Math.min(limit, 1000))]));
+      ORDER BY created_at, id LIMIT $3`, [known, maxRunConcurrency(), Math.max(1, Math.min(limit, 1000)), location, org,
+        // With on-premises runners off in this build (APP_ONPREM_RUNNERS=off), the hosted scaler takes every run again.
+        location === "hosted" && !onPremAvailable()]));
   // As a claim would see them one after another: no more of a workspace's queued runs of a kind than it may still run
   // at once, and one run per workspace store (mold_v0-018, 033). A sandbox launched past that would only wait.
   const taken = new Map<string, number>(), stores = new Set<string>();
@@ -388,7 +404,7 @@ export async function claimableRuns(limit = 200): Promise<ClaimableRun[]> {
 /** Queued runs per kind ("pack/kind"), claimable or not (the autoscaler's demand, reported per kind). */
 export async function queuedRunsByKind(): Promise<Record<string, number>> {
   const rows = await asPlatform(async () => (await getDb()).query<{ k: string; n: number }>(
-    "/* tenant: internal: counts per kind across workspaces, counts only */ SELECT pack || '/' || kind AS k, count(*)::int AS n FROM runs WHERE status = 'queued' GROUP BY 1 ORDER BY 1"));
+    "/* tenant: internal: counts per kind across workspaces, counts only */ SELECT pack || '/' || kind AS k, count(*)::int AS n FROM runs WHERE status = 'queued' AND runner_location = 'hosted' GROUP BY 1 ORDER BY 1"));
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }
 
@@ -411,7 +427,7 @@ export async function failUnlaunchedRun(runId: string, reason: string): Promise<
 export async function noteRunsWaiting(reason: string, limit = 200): Promise<number> {
   const rows = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; attempt: number }>(
     `/* tenant: internal: the autoscaler notes why queued runs wait, on each run's own row */
-     SELECT r.id, r.org_id, r.attempt FROM runs r WHERE r.status = 'queued'
+     SELECT r.id, r.org_id, r.attempt FROM runs r WHERE r.status = 'queued' AND r.runner_location = 'hosted'
         AND coalesce((SELECT e.data->>'reason' FROM run_events e WHERE e.run_id = r.id AND e.type = 'waiting' ORDER BY e.id DESC LIMIT 1), '') <> $1
       ORDER BY r.created_at LIMIT $2`, [reason, limit]));
   for (const r of rows) await event(r.id, r.org_id, r.attempt, "waiting", { reason });

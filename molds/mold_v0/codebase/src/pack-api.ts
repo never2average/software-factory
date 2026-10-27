@@ -451,6 +451,14 @@ const jobKindBase = {
    */
   company_egress: z.boolean().default(false),
   /**
+   * The run may need the workspace's own private network (mold_v0-036; src/onprem-runners.ts): when the workspace chose
+   * to run such runs on premises and has enrolled a runner there, a run of this kind is routed to one of that
+   * workspace's own runners (never another workspace's), which carries it out in a run sandbox with the same lockdown,
+   * plus the private hosts and networks the runner's owner allows. Otherwise (the default, and with no runner) it runs
+   * hosted, as any other kind. Off by default.
+   */
+  private_network: z.boolean().default(false),
+  /**
    * An approval gate (mold_v0-079): a run of this kind (a write) starts only with an approval of a run of its `preview`
    * kind (a dry run of the same pack) that succeeded, for the same scope and targets, given by the workspace's `owner`
    * (default) or the platform's `operator` for exactly that run's output (its sha256), within `expires_minutes`

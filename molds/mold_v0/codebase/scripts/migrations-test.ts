@@ -16,13 +16,22 @@
 //                                                            its own databases there; never touches the one named)
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openDb, type Db } from "../src/db.js";
 import { ADOPTING_MIGRATIONS, ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS, tableShape } from "../src/migrate.js";
 import { catalogStamp, rowStats } from "../src/migration-rehearsal.js";
 import { PACK_MIGRATION_DIRS } from "../src/pack-migrations.generated.js";
+/** The shell's migrations after 0023, in order (0024, 0025, and every later one: mold_v0-036 added 0027). */
+const after = async (v: number) => (await loadMigrations()).filter((m) => m.version > v).map((m) => `${String(m.version).padStart(4, "0")}_${m.name}`);
+const AFTER_23 = await after(23), AFTER_25 = await after(25), AFTER_26 = await after(26);
+/** Roll back every shell migration after `version` with its own rollback file, the latest first (each refuses unless it is the latest). */
+async function rollBackAfter(d: Db, version: number) {
+  const dir = path.join(MIGRATIONS_DIR, "..", "rollback");
+  for (const f of readdirSync(dir).filter((x) => /^\d{4}_.*\.sql$/.test(x) && Number(x.slice(0, 4)) > version).sort().reverse())
+    await d.exec(readFileSync(path.join(dir, f), "utf8"));
+}
 
 const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
@@ -467,7 +476,7 @@ async function suite(kind: "pglite" | "postgres") {
     })).map((r) => r.org_id);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "before: the old release's tenant transaction sees its own rows");
     const t0 = Date.now();
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory", "0026_journeys_and_tips"]);
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, AFTER_23);
     const ms = Date.now() - t0;
     assert.match(await roleOf(at23), /^app_tenant_[0-9a-f]{10}$/, "the tenant role is app_tenant_<hash>");
     assert.equal(legacyTenantRole(await roleOf(at23)), oldRole);
@@ -488,14 +497,14 @@ async function suite(kind: "pglite" | "postgres") {
     // made here and are empty, so they go), then 0024's rollback file puts back the database 0023 left, exactly.
     await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8")), /not 0024: roll back the later migrations first/);
     await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /not 0025: roll back the later migrations first/);
-    await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
+    await rollBackAfter(at23, 25);
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
     const fresh23 = await shellAt(kind, 23);
     sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
     sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
-    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, ["0024_neutral_database_names", "0025_account_context_memory", "0026_journeys_and_tips"], "and 0024 (and 0025, 0026) apply again");
+    assert.deepEqual((await runMigrations(at23, { packDirs: [] })).applied, AFTER_23, "and 0024 (and every later one) apply again");
     sameCatalog(await catalog(at23), packSets.length ? await shellCatalog(kind) : want, `${kind}: 0024 again after the rollback`);
     await fresh23.drop();
     await at23.drop();
@@ -556,9 +565,9 @@ async function suite(kind: "pglite" | "postgres") {
     const earlier = createHash("sha256").update(before).digest("hex");
     // Two live paths: a database at 0023 that takes 0024 and 0025 in one release, and one that took 0024 in a release
     // before (renamed in place), then 0025.
-    // (0026 makes the journeys and tips tables in the same run: this host pack never had them.)
-    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips"]],
-      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips"]]] as const) {
+    // (0026 makes the journeys and tips tables in the same run: this host pack never had them; AFTER_25 is 0026 and every later one.)
+    for (const [path_, firstAt, expect] of [["at 0023, then 0024 and 0025", 23, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", ...AFTER_25]],
+      ["at 0024, then 0025", 24, ["0025_account_context_memory (adopted)", ...AFTER_25]]] as const) {
       const d = await fresh(kind);
       await runMigrations(d, { dir: await upToV(firstAt), packDirs: hostPack(before, { tables: ["widgets", ...CONTEXT_TABLES] }) });
       await d.exec("INSERT INTO organizations (slug, name) VALUES ('ctx-org', 'Ctx');\n" +
@@ -583,16 +592,16 @@ async function suite(kind: "pglite" | "postgres") {
       const { rlsCatalogProblems, rlsProbe } = await import("../src/rls.js");
       assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
       assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
-      // Rolled back (sql/rollback/0025, after 0026's: it made its tables here, empty, so they go): adopted, so the tables
-      // stay as they are, rows and catalog rows; only its ledger rows go.
-      await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
+      // Rolled back (every later migration's rollback first, 0026's and 0027's: they made their tables here, empty, so they go;
+      // then sql/rollback/0025): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      await rollBackAfter(d, 25);
       await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
       for (const t of CONTEXT_TABLES) {
         assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
         assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
       }
       assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 25), `${path_}: rolled back: 0025 pending again`);
-      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips"], `${path_}: and adopted again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(after, { split: { "0001_widgets": earlier } }) })).applied, ["0025_account_context_memory (adopted)", ...AFTER_25], `${path_}: and adopted again`);
       await d.drop();
     }
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
@@ -611,7 +620,7 @@ async function suite(kind: "pglite" | "postgres") {
     {
       const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb-org', 'Rb'); INSERT INTO account_context (org_id, about) SELECT id, 'kept' FROM organizations WHERE slug = 'rb-org'");
-      await f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
+      await rollBackAfter(f, 25);
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM account_context"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();
@@ -660,9 +669,9 @@ async function suite(kind: "pglite" | "postgres") {
     // Three live paths: at 0023 (0024, 0025, 0026 in one run), at 0024 (0025 and 0026), at 0025 (the previous release,
     // with the pack as 0025 left it: 0026 alone).
     for (const [path_, firstAt, pack, expect] of [
-      ["at 0023, then 0024, 0025 and 0026", 23, first, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
-      ["at 0024, then 0025 and 0026", 24, first, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
-      ["at 0025 (the previous release), then 0026", 25, p6a, ["0026_journeys_and_tips (adopted)"]]] as const) {
+      ["at 0023, then 0024, 0025 and 0026", 23, first, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)", ...AFTER_26]],
+      ["at 0024, then 0025 and 0026", 24, first, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)", ...AFTER_26]],
+      ["at 0025 (the previous release), then 0026", 25, p6a, ["0026_journeys_and_tips (adopted)", ...AFTER_26]]] as const) {
       const before = hostPack(pack, { tables: ["widgets", ...JOURNEY_TABLES, ...(pack === first ? CONTEXT_TABLES : [])], platform_read: ["journey_seed"] });
       // The release's database with the host pack and its rows, built once (from()).
       const d = await from(kind, `p6b-${firstAt}`, async (db) => {
@@ -696,13 +705,14 @@ async function suite(kind: "pglite" | "postgres") {
       assert.deepEqual(await rlsCatalogProblems(d), [], `${path_}: check:rls catalog`);
       assert.deepEqual((await rlsProbe(d)).problems, [], `${path_}: check:rls probe`);
       // Rolled back (sql/rollback/0026): adopted, so the tables stay as they are, rows and catalog rows; only its ledger rows go.
+      await rollBackAfter(d, 26);
       await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8"));
       for (const t of JOURNEY_TABLES) {
         assert.deepEqual(await rowStats(d, t), rowsBefore.get(t), `${path_}: rolled back: ${t}: every row as it was`);
         assert.deepEqual(await catalogStamp(d, t), stamps.get(t), `${path_}: rolled back: ${t}: no DDL reached it`);
       }
       assert.ok((await migrationStatus(d)).pending.some((m) => m.version === 26), `${path_}: rolled back: 0026 pending again`);
-      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(now, split) })).applied, ["0026_journeys_and_tips (adopted)"], `${path_}: and adopted again`);
+      assert.deepEqual((await runMigrations(d, { packDirs: hostPack(now, split) })).applied, ["0026_journeys_and_tips (adopted)", ...AFTER_26], `${path_}: and adopted again`);
       await d.drop();
     }
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: never secured, on a database
@@ -722,6 +732,7 @@ async function suite(kind: "pglite" | "postgres") {
     {
       const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb26', 'Rb'); INSERT INTO nudge_prefs (org_id, user_id, muted) SELECT id, 'u', true FROM organizations WHERE slug = 'rb26'");
+      await rollBackAfter(f, 26);
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM nudge_prefs"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();

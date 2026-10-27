@@ -22,6 +22,10 @@
  *   APP_RUN_PACK_DIR                  the pack's directory, relative to the code (programs of the pack's own)
  *   APP_RUN_LOCKDOWN                  "on" (the autoscaler always writes it). "off" runs with no firewall and is
  *                                           refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes (test stand-ins only)
+ *   APP_RUN_PRIVATE_ALLOW             only from an on-premises runner (mold_v0-036, src/onprem-runner.ts): the private
+ *                                           hosts and networks its owner lets runs reach (orchestrator/core/egress.ts
+ *                                           parsePrivateAllow), added to the proxy's allowlist for a run of a kind
+ *                                           with private_network only. The hosted app never writes it.
  *
  * It imports only node's own modules and these files (the sandbox gets them and the orchestrator's tsx; nothing else):
  * keep it that way (orchestrator/deploy/boat-lib.ts runnerCodeFiles walks the imports; npm run test:run-sandboxes runs
@@ -32,7 +36,7 @@ import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeSource, proxySource, setupScript } from "../orchestrator/core/egress.js";
+import { parsePrivateAllow, privateAllowText, probeSource, proxySource, setupScript, type PrivateAllow } from "../orchestrator/core/egress.js";
 import { httpRunnerClient, runWorkspaceHarness, type HarnessOptions } from "./run-harness.js";
 import { leaseRunUser, registerSandboxRunUser, RUN_USER_PREFIX, type RunUser } from "./run-users.js";
 import { ENV } from "./env-names.js";
@@ -53,8 +57,9 @@ function namedRunUser(): { uid: number; gid: number; name: string } | null {
 }
 
 /** The firewall and proxy for the run's user, with the run's hosts; then the probe as that user. Throws when anything fails. */
-export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
-  const allow = Array.isArray(hosts) ? { hosts } : { hosts: hosts.hosts, exact: hosts.exact ?? [] };
+export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
+  const allow: { hosts: string[]; exact?: string[]; private?: PrivateAllow[] } = Array.isArray(hosts) ? { hosts }
+    : { hosts: hosts.hosts, exact: hosts.exact ?? [], ...(hosts.private?.length ? { private: hosts.private } : {}) };
   if (process.getuid?.() !== 0) throw new Error("the lockdown needs the runner to be root in the sandbox");
   const gatewayHost = (() => { try { return new URL(gatewayUrl).hostname.toLowerCase(); } catch { return ""; } })();
   if (!gatewayHost) throw new Error("the lockdown needs the gateway's host for its probe");
@@ -76,7 +81,8 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[] }
     // The probe reads its program from the proxy's install directory (root-owned, world-readable), as the run's user.
     const probe = spawnSync(process.execPath, ["/opt/app-egress/probe.mjs"], { encoding: "utf8", timeout: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
     if (probe.status !== 0) throw new Error(`egress probe failed, the run is not started: ${(probe.stdout || probe.stderr).slice(-800)}`);
-    log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts, probe ok`);
+    const priv = allow.private ?? [];
+    log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts${priv.length ? `, private: ${privateAllowText(priv).join(" ")}` : ""}, probe ok`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -89,6 +95,11 @@ async function main(): Promise<number> {
   if (!lockdown && !unsandboxed) { log("APP_RUN_LOCKDOWN=off is refused (no firewall): only test stand-ins set it, with APP_ALLOW_UNSANDBOXED_RUNS=yes"); return 2; }
   const named = namedRunUser();
   const root = process.getuid?.() === 0;
+  // An on-premises runner's private allow list (mold_v0-036): checked before anything is claimed, so a bad one never
+  // takes a run.
+  let privateAllow: PrivateAllow[] = [];
+  try { privateAllow = parsePrivateAllow(env.APP_RUN_PRIVATE_ALLOW); }
+  catch (e) { log(`APP_RUN_PRIVATE_ALLOW: ${(e as Error).message}`); return 2; }
   if (lockdown && !root) { log("the lockdown needs the runner to be root in the sandbox"); return 2; }
   const client = httpRunnerClient(url, token, `sbx-${hostname()}`.replace(/[^A-Za-z0-9._:-]/g, "-").slice(0, 100));
   const claim = await client.claim();
@@ -109,7 +120,9 @@ async function main(): Promise<number> {
     if (lockdown) {
       // The sandbox lives one run: its run user gets an account (tools that look their user up find one).
       const name = named?.name ?? (registerSandboxRunUser(leased!.uid) ? `${RUN_USER_PREFIX}${leased!.uid}` : "apprun");
-      try { lockDown(claim.egress, claim.gateway.gateway_url, name.length <= 32 ? name : "apprun", leased!.uid, leased!.gid); }
+      // The private allow list only for a run that needs the private network; every other run gets exactly the hosted one.
+      const priv = (claim.run.spec as { private_network?: boolean }).private_network ? privateAllow : [];
+      try { lockDown({ ...claim.egress, private: priv }, claim.gateway.gateway_url, name.length <= 32 ? name : "apprun", leased!.uid, leased!.gid); }
       catch (e) {
         // Nothing of the run has started: an infrastructure failure, retried in a new sandbox while attempts remain.
         await client.complete(claim.run.id, claim.lease_token, { outcome: "failed", error_kind: "infrastructure", error: String((e as Error).message).slice(0, 2000) }).catch(() => {});
