@@ -15,7 +15,7 @@ import { AccountButton, AccountLinks, useAccountLink } from './account-links';
 import type { LandingLink } from './landing-types';
 import type { SiteCtas } from './site-ctas';
 
-/** GitHub's mark (its Octicon, mark-github), drawn in the text colour. */
+/** GitHub's mark (its mark-github icon), drawn in the text colour. */
 function GitHubMark({ className }: { className?: string }) {
   return (
     <svg aria-hidden='true' viewBox='0 0 16 16' className={className} fill='currentColor'>

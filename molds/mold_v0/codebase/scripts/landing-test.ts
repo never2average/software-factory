@@ -208,7 +208,7 @@ try {
     const many = [{ type: "hero" }, { type: "cta" }, { type: "problem", id: "why" }, { type: "cta" }, { type: "faq" }] as const;
     assert.deepEqual(web.sectionIds(many), sectionIds(many), "the console numbers anchors as the build does");
     assert.deepEqual(sectionIds(many), ["intro", "get-started", "why", "get-started-2", "faq"]);
-    console.log("✓ the schema: sections or the old block, plain text, ceilings, known keys and types only, links to this site, https: or mailto: only; at most 10 sections, each type once (cta thrice), hero first, own anchors");
+    console.log("✓ the schema: sections or the old block, plain text, ceilings, known keys and types only, links to this site, https: or mailto: only; at most 10 sections, each type once (cta thrice), hero first, own anchors; the first screen at most two calls (a repeat once), in an old block too; open_source a GitHub repository, not a hero link as well; logos' files of the pack's assets/");
   }
 
   // ---------- 2. conversion and merging ----------
@@ -526,7 +526,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
 `, path.join(TMP, "render-js.cjs")) as { html: string };
     assert.ok(js.html.includes("alert(3)") === false || !/href="javascript:/i.test(js.html), "a script address is never a link, even past gen-packs");
     assert.ok(!/javascript:/i.test(js.html), "and never in the markup");
-    console.log("✓ the page: the neutral one is the whole wireframe in the build's words, with navigation from its sections; a pack's shows what it picked, in its order; an old block renders converted; text is text, a bad link never a link; invite-only leads to the request form; the footer's source offer");
+    console.log("✓ the page: the neutral one is the whole wireframe in the build's words, with navigation from its sections; a pack's shows what it picked, in its order; an old block renders converted; text is text, a bad link never a link; invite-only leads to the request form; the footer's source offer; the header's sign-in alone beside the hero's start, no install link; an open-source app's GitHub button (named, 44 px, every width) and footer link; a logos row with its images' names and sizes");
 
     // ---------- 5. the request page (mold_v0-138) and the account button's words ----------
     const RP = {
