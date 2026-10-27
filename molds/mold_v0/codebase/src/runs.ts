@@ -147,8 +147,10 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
       approved_by: approval.approved_by, role: approval.approver_role }, tx);
     return rows;
   }));
-  await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy, ...(location === "on_premises" ? { location } : {}) });
-  if (location === "on_premises") await noteOnPremisesStart(id, orgId);
+  // Set inside the transaction above (TypeScript does not follow an assignment in a callback).
+  const routed = location as "hosted" | "on_premises";
+  await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy, ...(routed === "on_premises" ? { location: routed } : {}) });
+  if (routed === "on_premises") await noteOnPremisesStart(id, orgId);
   // On Vercel nothing ticks between crons: the run's sandbox is launched now (mold_v0-055; a server's loop ticks itself).
   if (process.env.VERCEL) void import("./autoscaler.js").then((a) => import("./telemetry.js").then((t) => t.keepAlive(a.kickAutoscaler().catch(() => null)))).catch(() => {});
   return view(r!);

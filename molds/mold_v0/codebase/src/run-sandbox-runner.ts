@@ -58,7 +58,8 @@ function namedRunUser(): { uid: number; gid: number; name: string } | null {
 
 /** The firewall and proxy for the run's user, with the run's hosts; then the probe as that user. Throws when anything fails. */
 export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
-  const allow = Array.isArray(hosts) ? { hosts } : { hosts: hosts.hosts, exact: hosts.exact ?? [], ...(hosts.private?.length ? { private: hosts.private } : {}) };
+  const allow: { hosts: string[]; exact?: string[]; private?: PrivateAllow[] } = Array.isArray(hosts) ? { hosts }
+    : { hosts: hosts.hosts, exact: hosts.exact ?? [], ...(hosts.private?.length ? { private: hosts.private } : {}) };
   if (process.getuid?.() !== 0) throw new Error("the lockdown needs the runner to be root in the sandbox");
   const gatewayHost = (() => { try { return new URL(gatewayUrl).hostname.toLowerCase(); } catch { return ""; } })();
   if (!gatewayHost) throw new Error("the lockdown needs the gateway's host for its probe");
@@ -80,7 +81,7 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; 
     // The probe reads its program from the proxy's install directory (root-owned, world-readable), as the run's user.
     const probe = spawnSync(process.execPath, ["/opt/app-egress/probe.mjs"], { encoding: "utf8", timeout: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
     if (probe.status !== 0) throw new Error(`egress probe failed, the run is not started: ${(probe.stdout || probe.stderr).slice(-800)}`);
-    const priv = "private" in allow && allow.private ? allow.private : [];
+    const priv = allow.private ?? [];
     log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts${priv.length ? `, private: ${privateAllowText(priv).join(" ")}` : ""}, probe ok`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }

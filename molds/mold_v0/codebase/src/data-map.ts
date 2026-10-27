@@ -65,8 +65,9 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   const sections: DataMapSection[] = [];
   const agentKinds = list_.flatMap((p) => (p.definition.agentJobKinds ?? []).map((k) => ({ pack: p, k })));
   const harnessKinds = list_.flatMap((p) => (p.definition.jobKinds ?? []).map((k) => ({ pack: p, k })));
-  const kinds = [...agentKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [] })),
-    ...harnessKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [] }))];
+  const priv = (k: unknown) => (k as { private_network?: boolean }).private_network === true;
+  const kinds = [...agentKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [], private_network: priv(k) })),
+    ...harnessKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [], private_network: priv(k) }))];
 
   // ---------- where the code runs ----------
   {
@@ -83,6 +84,8 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
       rows.push({ item: "Region", detail: s.region ? code(s.region) : "the server's region is not recorded in the factory's state (it is wherever the server was rented)" });
     }
     if (kinds.length) rows.push({ item: "Runs", detail: "each run of a job kind runs in a sandbox of its own (src/run-sandboxes.ts: the sandbox provider whose key is in the key vault, else a container on the server's own Docker; never without a sandbox unless the operator allows that for tests), as an unprivileged user whose network is limited to the hosts listed under Egress" });
+    // mold_v0-036: only in a build with a kind that may need a workspace's private network.
+    if (kinds.some((k) => k.private_network)) rows.push({ item: "Runs on premises", detail: `a run of ${kinds.filter((k) => k.private_network).map((k) => code(k.name)).join(", ")} runs on the workspace's own on-premises runner, inside the workspace's own network, when the workspace chose that and enrolled one (src/onprem-runners.ts): in a sandbox of its own there with the same limits, reaching this service over HTTPS (outbound only) for its inputs, credentials and results; otherwise it runs as every other run` });
     for (const { pack, k } of agentKinds) {
       const strip = k.agent.strip?.length ?? 0;
       rows.push({ item: `Job kind ${code(k.name)} (${pack.manifest.name})`, detail: `runs ${k.agent.repository} at commit ${code(k.agent.commit)}, fetched at exactly that commit for each run (never vendored), the workspace's own files laid over the paths it writes back (${(k.agent.write_back ?? []).join(", ") || "none"})${strip ? `, with ${strip} path${strip === 1 ? "" : "s"} it declares left out of the checkout before it runs` : ""}` });
@@ -147,7 +150,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   // ---------- egress ----------
   {
     const rows: DataMapRow[] = [];
-    for (const k of kinds) rows.push({ item: `Job kind ${code(k.name)} (${k.pack.manifest.name})`, detail: `HTTPS (port 443) to ${list(k.egress)} and their subdomains, and this service's own gateway host; nothing else (an egress proxy and the sandbox's firewall)` });
+    for (const k of kinds) rows.push({ item: `Job kind ${code(k.name)} (${k.pack.manifest.name})`, detail: `HTTPS (port 443) to ${list(k.egress)} and their subdomains, and this service's own gateway host; nothing else (an egress proxy and the sandbox's firewall)${k.private_network ? "; on the workspace's on-premises runner, also the private hosts and networks that runner's owner allows (the workspace's choice, never this service's)" : ""}` });
     for (const p of list_) for (const [n, r] of Object.entries(p.definition.repositories ?? {})) {
       const rr = r as { kind: string; base_url?: string; egress?: string[]; upstream?: { repo: string; commit: string } | string; index?: string };
       if (rr.kind === "http_api") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server reads ${hostOf(rr.base_url ?? "")} live (allowed hosts: ${list(rr.egress ?? [])})` });
