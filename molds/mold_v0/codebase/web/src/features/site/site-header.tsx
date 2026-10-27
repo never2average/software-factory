@@ -2,8 +2,10 @@
 /**
  * The public pages' header (mold_v0-122, after the first product's): sticky, the build's mark and name, the picked
  * sections as navigation on wide screens and in a side sheet on small ones, the block's header link, and the ways in
- * (siteCtas: "Sign in", with the start call only when the page has no hero to carry it, or one account button: the first
- * screen asks for at most two things, mold_v0-164). An open-source app's repository is a GitHub button here on every width.
+ * (siteCtas: "Sign in", with the start call only when the page has no hero to carry it, or one account button) only on a
+ * page that opted into two calls (mold_v0-164); by default the header asks for nothing (`ways` false, mold_v0-165: the
+ * first screen's one call is the hero's button). An open-source app's repository is a GitHub button here on every width:
+ * an icon, not a call.
  */
 import Link from 'next/link';
 import { useState } from 'react';
@@ -24,16 +26,18 @@ function GitHubMark({ className }: { className?: string }) {
   );
 }
 
-export function SiteHeaderView({ name, mark, nav, links, account, ctas, start = true, repo }: {
+export function SiteHeaderView({ name, mark, nav, links, account, ctas, start = true, ways = true, repo }: {
   name: string; mark: React.ReactNode; nav: LandingLink[]; links: LandingLink[]; account: 'sign_in_and_start' | 'account'; ctas: SiteCtas;
   /** Whether the header shows the start call beside "Sign in" (only when the page's hero does not). */
   start?: boolean;
+  /** Whether the header shows the ways in at all (mold_v0-165: not when the first screen asks for one thing, the hero's). */
+  ways?: boolean;
   /** An open-source app's repository (landing block open_source): a GitHub button, `label` its accessible name. */
   repo?: LandingLink;
 }) {
   const acct = useAccountLink(ctas.signIn, ctas.open);
   const [open, setOpen] = useState(false);
-  const menu = [...nav, ...links, ...(account === 'account' ? (acct.ready ? [acct] : []) : [ctas.signIn, ...(start ? [ctas.start] : [])])];
+  const menu = [...nav, ...links, ...(!ways ? [] : account === 'account' ? (acct.ready ? [acct] : []) : [ctas.signIn, ...(start ? [ctas.start] : [])])];
   return (
     <header className='bg-background/80 supports-backdrop-filter:bg-background/60 sticky top-0 z-40 border-b backdrop-blur'>
       <div className='mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6'>
@@ -52,7 +56,7 @@ export function SiteHeaderView({ name, mark, nav, links, account, ctas, start = 
         ) : null}
         <div className='ml-auto flex shrink-0 items-center gap-2'>
           {links.map((l) => <Link key={l.href} href={l.href} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden sm:inline-flex')}>{l.label}</Link>)}
-          {account === 'account' ? <AccountButton signIn={ctas.signIn} open={ctas.open} />
+          {!ways ? null : account === 'account' ? <AccountButton signIn={ctas.signIn} open={ctas.open} />
             : <AccountLinks start={start ? ctas.start : undefined} signIn={ctas.signIn} open={ctas.open} compact={nav.length > 0 && start} />}
           {repo ? (
             <a href={repo.href} aria-label={repo.label} title={repo.label} rel='noopener noreferrer'
