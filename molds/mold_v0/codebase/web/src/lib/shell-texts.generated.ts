@@ -27,7 +27,7 @@ export const SHELL_TEXTS = {
   "tips.sequence_field": { side: "console", text: "Series",
     where: "the field naming which sequence a tip belongs to, in the Send a tip dock (/admin/accounts, /admin/journeys; the tips component, src/tips.ts)" },
   "journeys.one": { side: "both", text: "guide",
-    where: "what one of the step-by-step pipelines of the journeys component is called (/app Setup, /app/journeys, /admin/journeys and their refusals; src/journeys.ts)" },
+    where: "what one of the step-by-step pipelines of the `journeys` component is called (/app Setup, `/app/journeys`, `/admin/journeys` and their refusals; src/journeys.ts)" },
   "journeys.many": { side: "both", text: "guides",
     where: "the same, more than one" },
   "usage.score": { side: "console", text: "Score",
