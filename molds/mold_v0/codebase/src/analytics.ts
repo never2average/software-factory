@@ -5,7 +5,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
-import { hosts } from "./host.js";
+import { hosts, journeysConfig } from "./host.js";
 import { capture, identifyOrg, identifyPerson, posthogEnabled } from "./telemetry.js";
 import { ENV } from "./env-names.js";
 
@@ -61,6 +61,12 @@ const PRODUCT_EVENTS: Record<string, string> = { initialize: "mcp_connected", "t
 const STAFF_KEY = createHash("sha256").update(`staff-pseudonym:${ENV.APP_VAULT_KEY ?? ENV.APP_WORKER_TOKEN ?? randomBytes(32).toString("hex")}`).digest();
 export const staffId = (actor: string, orgId: number) => `staff:${createHmac("sha256", STAFF_KEY).update(`${orgId}:${actor}`).digest("hex").slice(0, 12)}`;
 
+/** After a successful tool call or a page's equivalent action: the host packs' hook, then the journeys component's progress. */
+function toolCalled(org: Org) {
+  for (const h of hosts()) { try { h.background?.onToolCall?.(org); } catch (err) { console.error(`host ${h.id} onToolCall:`, (err as Error).message); } }
+  if (journeysConfig()) void import("./journeys.js").then((j) => j.scheduleSync({ orgId: org.orgId, slug: org.slug }, org.userId)).catch((err) => console.error("progress sync:", (err as Error).message));
+}
+
 export function recordMcpEvent(org: Org, e: McpEvent): void {
   getDb()
     .then((db) => db.query(
@@ -75,8 +81,9 @@ export function recordMcpEvent(org: Org, e: McpEvent): void {
     .catch((err) => console.error("mcp event record failed:", (err as Error).message));
   // A staff call is in the workspace's own log only: it completes none of its people's journeys and is not product usage.
   if (org.staff) return;
-  // A successful tool call may complete a step a host pack tracks (src/host.ts, its journeys): it is told shortly after.
-  if (e.method === "tools/call" && e.ok !== false) for (const h of hosts()) { try { h.background?.onToolCall?.(org); } catch (err) { console.error(`host ${h.id} onToolCall:`, (err as Error).message); } }
+  // A successful tool call may complete a step a host pack tracks (src/host.ts) or a journey's stage (mold_v0-143,
+  // src/journeys.ts: when that component is on): each is told shortly after.
+  if (e.method === "tools/call" && e.ok !== false) toolCalled(org);
   const event = e.method === "tools/call" ? "tool_called" : PRODUCT_EVENTS[e.method];
   if (!event) return;
   const actor = { distinctId: org.userId ?? `org:${org.slug}`, orgSlug: org.slug };
@@ -120,7 +127,7 @@ export async function recordPageAction(org: Org, name: string, opts: { every?: n
       if (r) return;
     }
     await db.query("INSERT INTO mcp_events (org_id, method, name, client, ok, user_id) VALUES ($1, 'page/action', $2, 'portal', true, $3)", [org.orgId, name.slice(0, 200), org.userId ?? null]);
-    for (const h of hosts()) { try { h.background?.onToolCall?.(org); } catch (err) { console.error(`host ${h.id} onToolCall:`, (err as Error).message); } }
+    toolCalled(org);
     capture({ distinctId: org.userId ?? `org:${org.slug}`, orgSlug: org.slug }, "portal_action", { tool: name });
   } catch (e) { console.error("page action record failed:", (e as Error).message); }
 }
