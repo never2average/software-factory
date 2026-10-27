@@ -323,8 +323,25 @@ export const PackJsonSchema = z.object({
    */
   engine: z.object({
     $comment: z.string().max(2000).optional(),
-    config: z.record(z.string(), z.unknown()).refine((c) => JSON.stringify(c).length <= 256 * 1024, "at most 256 kB of JSON"),
-  }).strict().optional(),
+    config: z.record(z.string(), z.unknown()).refine((c) => JSON.stringify(c).length <= 256 * 1024, "at most 256 kB of JSON").optional(),
+    /**
+     * A config pack's engine (mold_v0-145; MOLD.md "Engine packs"): the id of the engine pack (a host pack of this build,
+     * code and migrations only) this pack.json configures. Such a pack is a pack.json alone: scripts/gen-packs.mjs folds
+     * it into the engine, its `config` the engine's engine.config, `profile` its host.profile, `labels` its
+     * host.schema.labels, every other declaration the engine's, its name, version and description the build's pack's.
+     */
+    pack: id.optional(),
+    profile: z.record(z.string(), z.unknown()).optional(),
+    labels: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name"), plain(60)).optional(),
+    /** The pack id (or ids) a database recorded the engine's migrations under before (the product's own host pack, whose files they were): read as the engine's (src/migrate.ts). */
+    migrations_recorded_as: z.union([id, z.array(id).min(1).max(5)]).optional(),
+  }).strict().superRefine((e, ctx) => {
+    if (e.pack === undefined) {
+      if (e.config === undefined) ctx.addIssue({ code: "custom", path: ["config"], message: "a host pack's engine.config (or engine.pack: the engine a config pack configures)" });
+      for (const k of ["profile", "labels", "migrations_recorded_as"] as const)
+        if (e[k] !== undefined) ctx.addIssue({ code: "custom", path: [k], message: "only a config pack (engine.pack) says it" });
+    }
+  }).optional(),
   pages: z.array(PageSchema).optional(),
   words: z.record(z.string().regex(/^[a-z][a-z_]{1,30}$/, "a lowercase shell word"), z.string().trim().min(1).max(40)).optional(),
   record_areas: z.array(RecordAreaSchema).max(100).optional(),

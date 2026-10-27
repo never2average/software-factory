@@ -40,6 +40,15 @@
  * schema_adoptions says what was adopted and the shape it had); one with none of them runs it; anything in between, or
  * another shape, is refused. The host pack's own migration that used to make them is rewritten without them once, its
  * earlier checksum accepted (pack.json host.schema.split), as the shell's split files are (SPLIT_MIGRATIONS).
+ *
+ * Migrations recorded under a pack's earlier id (mold_v0-145): when a product's host pack split into an engine pack (its
+ * code and migrations) and the product's config pack, the engine's migrations are the files the product's pack had, and
+ * a database that ran them recorded them under the product's pack id. The config pack names that id
+ * (pack.json engine.migrations_recorded_as; scripts/gen-packs.mjs writes it as the engine's `formerly`), and the rows
+ * under it count as the engine's: same names, same checksums (the split rule included), nothing pending, nothing run.
+ * The ledger itself is only read: a release from before the split (a rollback, the release still serving during a
+ * rolling deploy) still finds its rows under the id it knows, and a migration the engine adds later is recorded under
+ * the engine's own id.
  */
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
@@ -418,7 +427,9 @@ export function compare(rows: AppliedRow[] | null, migrations: Migration[], wher
 
 // ---------- packs ----------
 
-export interface PackMigrationSet { pack: string; dir: string; migrations: Migration[]; schema?: HostSchema }
+/** A pack directory as src/pack-migrations.generated.ts lists it: `formerly`, the ids its migrations were recorded under before (mold_v0-145). */
+export interface PackMigrationDir { pack: string; dir: string; schema?: HostSchema; formerly?: readonly string[] }
+export interface PackMigrationSet { pack: string; dir: string; migrations: Migration[]; schema?: HostSchema; formerly?: readonly string[] }
 export interface PackStatus { pack: string; applied: AppliedRow[]; pending: Migration[]; newer: AppliedRow[]; conflicts: string[] }
 
 /** The tables the shell's own migrations create: no pack's `<id>_` prefix may cover one (scripts/gen-packs.mjs checks it too). */
@@ -433,6 +444,13 @@ function refuseShellPrefixes(migrations: Migration[], sets: PackMigrationSet[]) 
   const fns = shellFunctions(migrations);
   const owner = new Map<string, string>();
   for (const s of sets) {
+    // The ids its migrations were recorded under before (mold_v0-145): never its own, never another set's (whose rows they
+    // would take), each a pack id.
+    for (const f of s.formerly ?? []) {
+      if (!/^[a-z][a-z0-9_]{1,30}$/.test(f) || f === s.pack) throw new MigrationError(`pack ${s.pack}: formerly ${JSON.stringify(f)} is not an earlier pack id of it`);
+      const other = sets.find((o) => o !== s && (o.pack === f || (o.formerly ?? []).includes(f)));
+      if (other) throw new MigrationError(`pack ${s.pack}: its migrations' earlier id ${f} is ${other.pack === f ? "pack" : "also the earlier id of pack"} ${other.pack}${other.pack === f ? "'s own" : ""}: one id records one pack's migrations`);
+    }
     const clash = shell.filter((t) => t.startsWith(`${s.pack}_`));
     if (clash.length) throw new MigrationError(`pack ${s.pack}: its table prefix ${s.pack}_ is taken by the shell's ${clash.join(", ")}`);
     // A host pack's own schema (mold_v0-049): never a shell table or function, another pack's, or a name in a pack prefix.
@@ -463,11 +481,12 @@ function refuseShellPrefixes(migrations: Migration[], sets: PackMigrationSet[]) 
 }
 
 /** Each pack's migrations, in pack order (the generated list by default; a test passes its own). */
-export async function loadPackMigrations(dirs: readonly { pack: string; dir: string; schema?: HostSchema }[] = PACK_MIGRATION_DIRS, root = ROOT): Promise<PackMigrationSet[]> {
+export async function loadPackMigrations(dirs: readonly PackMigrationDir[] = PACK_MIGRATION_DIRS, root = ROOT): Promise<PackMigrationSet[]> {
   const out: PackMigrationSet[] = [];
   for (const d of dirs) {
     if (!/^[a-z][a-z0-9_]{1,30}$/.test(d.pack)) throw new MigrationError(`pack id ${JSON.stringify(d.pack)} is not a pack id`);
-    out.push({ pack: d.pack, dir: d.dir, migrations: await loadMigrations(path.resolve(root, d.dir), d.dir), ...(d.schema ? { schema: d.schema } : {}) });
+    out.push({ pack: d.pack, dir: d.dir, migrations: await loadMigrations(path.resolve(root, d.dir), d.dir), ...(d.schema ? { schema: d.schema } : {}),
+      ...(d.formerly?.length ? { formerly: [...d.formerly] } : {}) });
   }
   return out;
 }
@@ -555,9 +574,21 @@ async function appliedPackRows(q: Queryable): Promise<Map<string, AppliedRow[]> 
 const packSplitBefore = (s: PackMigrationSet) => (r: { version: number; name: string; checksum: string }) =>
   earlierSums(s.schema?.split?.[label(r.version, r.name)]).includes(r.checksum);
 
+/**
+ * A pack's applied rows (mold_v0-145): those under its own id, and for each version it has none of, the row under the id
+ * its migrations were recorded under before (`formerly`, in its order). Read only: nothing in the ledger is rewritten.
+ */
+export function packRows(rows: Map<string, AppliedRow[]> | null, s: Pick<PackMigrationSet, "pack" | "formerly">): AppliedRow[] {
+  const own = rows?.get(s.pack) ?? [];
+  if (!s.formerly?.length) return own;
+  const out = [...own], have = new Set(own.map((r) => r.version));
+  for (const f of s.formerly) for (const r of rows?.get(f) ?? []) if (!have.has(r.version)) { out.push(r); have.add(r.version); }
+  return out.sort((a, b) => a.version - b.version);
+}
+
 function comparePacks(rows: Map<string, AppliedRow[]> | null, sets: PackMigrationSet[]): PackStatus[] {
   return sets.map((s) => {
-    const c = compare(rows?.get(s.pack) ?? [], s.migrations, s.dir, packSplitBefore(s));
+    const c = compare(packRows(rows, s), s.migrations, s.dir, packSplitBefore(s));
     return { pack: s.pack, applied: c.applied, pending: c.pending, newer: c.newer, conflicts: c.conflicts.map((x) => `pack ${s.pack}: ${x}`) };
   });
 }
@@ -571,7 +602,7 @@ async function unsecuredPackTables(q: Queryable, packIds: string[], hostTables: 
   return rows.map((r) => r.relname);
 }
 
-export async function migrationStatus(db: Queryable, dir?: string, packDirs?: readonly { pack: string; dir: string; schema?: HostSchema }[]): Promise<MigrationStatus & { packs: PackStatus[] }> {
+export async function migrationStatus(db: Queryable, dir?: string, packDirs?: readonly PackMigrationDir[]): Promise<MigrationStatus & { packs: PackStatus[] }> {
   const shell = compare(await appliedRows(db), await loadMigrations(dir));
   const sets = await loadPackMigrations(packDirs);
   return { ...shell, packs: sets.length ? comparePacks(await appliedPackRows(db), sets) : [] };
@@ -678,7 +709,7 @@ const plabel = (pack: string, m: Migration) => `pack ${pack} ${String(m.version)
  * record each: the shell's first, then each pack's. What is applied is re-read after the lock is taken, so a replica
  * that waited finds nothing to do.
  */
-export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: readonly { pack: string; dir: string; schema?: HostSchema }[]; log?: (line: string) => void } = {}): Promise<{ applied: string[] }> {
+export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: readonly PackMigrationDir[]; log?: (line: string) => void } = {}): Promise<{ applied: string[] }> {
   const migrations = await loadMigrations(opts.dir);
   const sets = await loadPackMigrations(opts.packDirs);
   refuseShellPrefixes(migrations, sets);
