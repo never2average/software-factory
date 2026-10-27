@@ -426,7 +426,15 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     enum, const, pattern, min/maxLength, minimum/maximum, min/maxItems, maxProperties; any other keyword, `$ref`
     included, is refused at build), at most `max_bytes` (64 KB by default, 1 MB at most), `json` or `text`. Refused
     when it holds the value of one of the run's credentials or its gateway token. Written to a new file (never over a
-    file of the pinned tree, never through a link, never under a write-back path, so never written back).
+    file of the pinned tree, never through a link, never under a write-back path, so never written back). **`pin`**
+    (mold_v0-166; `{list, url, branch, commit, hosts, max_items}`, a json input only): the repositories the value lists
+    at the JSON pointer `list` that give no `commit` are pinned to their branch's current commit, and those that name no
+    `branch` get their default branch, before the file is written (`src/agent-workspace.ts` headCommit: `git ls-remote`
+    by the runner, outside the run's proxy as the agent repository is, with fetchPinned's hygiene and no credential, so
+    a private repository's item gives its commit); each url https on one of `hosts` exactly (each in the kind's egress,
+    checked at build); the value is checked against the schema before (nothing is asked for a refused value) and after.
+    The start tool types an argument written to an input file (`from: scope.<argument>`) by that input's schema
+    (properties, required, patterns, choices; `src/mcp-catalog.ts` schemaInput), so a client sees the object it must give.
   - `steps` (074): commands run before `command`, in order, each with its own `timeout_seconds` (the steps and the
     command together within the kind's token lifetime), the run's own variables (the kind's `env`, and so a gateway
     token, only with `env: true`) and only the `credentials` it names (none by default; the command gets
@@ -979,7 +987,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   shell's. `npm run test:onboarding` proves
   it with two workspaces (everything B does ticks none of A's steps). The same steps reach AI clients (mold_v0-105): a
   pack with steps gets a generated `<prefix>_get_started` MCP tool (below) and a step may carry `prompt`, the words a
-  person types to do it (plain text, one line). **Not covered:** the end-to-end browser walk of
+  person types to do it (plain text, one line), and `how` (mold_v0-166: `tool:`, `credential:`, `record:` or `run:`,
+  checked as `done_when` is), the action get_started points to when it is not what `done_when` measures (an area whose
+  rows a run writes as files of the workspace is done by that run, not by adding a record). **Not covered:** the end-to-end browser walk of
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
   shell yet. The product's own setup steps and tool groups are its host pack's Setup route (mold_v0-039, below); the
   shell's own Setup page asks for joining, a connection, the tools and a first call, in the profile's words.

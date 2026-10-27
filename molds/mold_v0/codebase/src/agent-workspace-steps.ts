@@ -8,6 +8,7 @@
  *                     fields (own properties only), checked as the engine will check them; an item that does not map
  *                     is reported, and the kind's unresolved_references decides (reject: the run fails)
  *   checkInput        (mold_v0-073) a value against an input's JSON schema (the fixed subset the config accepts)
+ *   pinCommits        (mold_v0-166) the repositories an input lists, each without a commit pinned to its branch's head
  *   writeInputFile    a new file in the checkout: never through a link, never over an existing file
  *   gitCredentialFiles (mold_v0-074) git's credential helper for one step: a config file and a helper script that
  *                     answers only its declared hosts, reading each token from a file on tmpfs (never an argument, a
@@ -176,6 +177,39 @@ export function checkInput(v: unknown, s: InputSchema, at = "$", out: string[] =
     }
   }
   return out;
+}
+
+/** (mold_v0-166) An input's `pin` (src/agent-workspace-config.ts InputPinSchema). */
+export interface InputPin { list: string; url: string; branch: string; commit: string; hosts: string[]; max_items: number }
+
+/**
+ * A copy of the input `value` with every repository of its `pin.list` that gives no commit pinned to its branch's
+ * current commit (and its default branch filled in when it names none), by `resolve` (src/agent-workspace.ts
+ * headCommit). Each url must be https on one of `pin.hosts` exactly; `local` lets the offline tests use a file:// one.
+ */
+export async function pinCommits(value: unknown, pin: InputPin, resolve: (url: string, branch: string | undefined) => Promise<{ commit: string; branch: string }>,
+  local: (url: string) => boolean = () => false): Promise<unknown> {
+  const doc = structuredClone(value);
+  const list = atPointer(doc, pin.list);
+  if (!Array.isArray(list)) throw new AgentRunError(`pin: ${pin.list} is not a list`);
+  if (list.length > pin.max_items) throw new AgentRunError(`pin: ${pin.list} lists ${list.length} repositories, more than ${pin.max_items}`);
+  for (const [i, item] of list.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new AgentRunError(`pin: ${pin.list}/${i} is not an object`);
+    const o = item as Record<string, unknown>;
+    if (own(o, pin.commit) !== undefined) continue;
+    const url = own(o, pin.url), branch = own(o, pin.branch);
+    if (typeof url !== "string") throw new AgentRunError(`pin: ${pin.list}/${i} has no ${pin.url}`);
+    if (branch !== undefined && typeof branch !== "string") throw new AgentRunError(`pin: ${pin.list}/${i}: ${pin.branch} is not text`);
+    if (!local(url)) {
+      if (!/^https:\/\/[A-Za-z0-9.-]+(:443)?\/[A-Za-z0-9._~\/-]+$/.test(url)) throw new AgentRunError(`pin: ${pin.list}/${i}: ${pin.url} must be an https:// address with no user, query or fragment`);
+      const h = new URL(url).hostname.toLowerCase();
+      if (!pin.hosts.includes(h)) throw new AgentRunError(`pin: ${pin.list}/${i}: ${h} is not one of the pin's hosts (${pin.hosts.join(", ")})`);
+    }
+    const got = await resolve(url, branch as string | undefined);
+    o[pin.commit] = got.commit;
+    if (branch === undefined) o[pin.branch] = got.branch;
+  }
+  return doc;
 }
 
 /**

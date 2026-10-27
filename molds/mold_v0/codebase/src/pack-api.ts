@@ -560,6 +560,8 @@ export const AgentJobKindSchema = z.object({
     for (const h of st.checkout?.hosts ?? []) if (!onEgress(h)) issue(`${h} is not in the kind's egress`, "steps", i, "checkout", "hosts");
   }
   if (total > k.token_lifetime_seconds) issue(`the steps and the command may take ${total} s, longer than token_lifetime_seconds (the run's deadline)`, "steps");
+  // mold_v0-166: the hosts an input's repositories are pinned on are reached by git: each in the kind's egress.
+  for (const [name, inp] of Object.entries(k.agent.inputs)) for (const h of inp.pin?.hosts ?? []) if (!onEgress(h)) issue(`${h} is not in the kind's egress (git could not reach it)`, "inputs", name, "pin", "hosts");
   // mold_v0-073: an input from the run's scope is one of the kind's declared arguments when it declares them.
   if (k.args) for (const [name, inp] of Object.entries(k.agent.inputs)) {
     const [root, key] = inp.from.split(".");
@@ -1233,6 +1235,8 @@ export const ScheduleSchema = z.object({
  * exists), "run:<kind>" (a run of this pack's job kind succeeded).
  */
 export const ONBOARDING_CONDITION = /^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$/;
+/** An onboarding step's `how` (mold_v0-166): an action, never one of the shell's own stages. */
+export const ONBOARDING_HOW = /^(tool|credential|record|run):[a-z][a-z0-9_]{0,63}$/;
 /**
  * An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events,
  * and the pack's generated `<prefix>_get_started` MCP tool (mold_v0-105, src/mcp-tools.ts): the next step not done,
@@ -1242,6 +1246,12 @@ export const OnboardingStepSchema = z.object({
   id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
   prompt: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>`]*$/, "plain text: one line, no control or direction characters, no < > or `").optional(),
   done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
+  /**
+   * (mold_v0-166) How the step is done, when that is not what `done_when` measures: a record area whose rows a run
+   * writes (files of the workspace) is done by that run, not by adding a record. `tool:<name>`, `credential:<name>`,
+   * `record:<area>` or `run:<kind>`, checked as `done_when` is; the get_started tool's "how" follows it.
+   */
+  how: z.string().regex(ONBOARDING_HOW, "how: tool:<name>, credential:<name>, record:<area> or run:<kind>").optional(),
 }).strict();
 
 /**
@@ -1529,8 +1539,8 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     problems.push(at(`schedule ${s.name} starts ${s.job_kind}, which waits for an approval of its preview: a schedule cannot start it`));
   // Onboarding (mold_v0-011): a step's condition names this pack's own kind, credential or workspace-scope area. (A tool
   // may be any pack's or the shell's: src/packs.ts installPacks checks it against the whole build.)
-  for (const st of p.onboarding ?? []) {
-    const [what, arg] = String(st?.done_when ?? "").split(":", 2);
+  for (const st of p.onboarding ?? []) for (const cond of [st?.done_when, st?.how]) {
+    const [what, arg] = String(cond ?? "").split(":", 2);
     if (!arg) continue;
     if (what === "run" && !kinds.has(arg)) problems.push(at(`onboarding step ${st.id} names job kind ${arg}, which this pack does not declare`));
     if (what === "credential" && !creds.has(arg)) problems.push(at(`onboarding step ${st.id} names credential ${arg}, which this pack does not declare`));
