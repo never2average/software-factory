@@ -9,6 +9,8 @@
 // has none of the product's tables, and an older one keeps them with their rows (its shell schema equal to a new
 // one's). In a build whose host pack owns them (pack.json host.schema), a new database has them again, and every older
 // one comes out identical to it, schema and rows.
+// On PGlite each starting database (a new one, one at an older version, one with this build's migrations) is built once
+// and copied for every row that starts from it (mold_v0-160: from()); each row still migrates, checks and drops its own.
 //   npm run test:migrations                                  embedded Postgres (PGlite), temporary directories
 //   MIGRATIONS_PG_URL=postgres://u:p@host/db npm run test:migrations   also on a real Postgres (creates and drops
 //                                                            its own databases there; never touches the one named)
@@ -20,20 +22,43 @@ import path from "node:path";
 import { openDb, type Db } from "../src/db.js";
 import { ADOPTING_MIGRATIONS, ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS, tableShape } from "../src/migrate.js";
 import { catalogStamp, rowStats } from "../src/migration-rehearsal.js";
+import { PACK_MIGRATION_DIRS } from "../src/pack-migrations.generated.js";
 
 const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
 let n = 0;
+const t0 = Date.now();
+/** Each line it prints, with the seconds since the test started (mold_v0-160: the lane gives the whole test 900 s). */
+const log = (line: string) => console.log(`${line} [${((Date.now() - t0) / 1000).toFixed(1)} s]`);
+
+/**
+ * A PGlite directory, closed, opened as a database of its own: a copy of the directory is the same database, every
+ * byte of it (one cluster per directory: the tenant role's name, md5 of current_database(), is the same in a copy).
+ */
+async function openDir(dir: string, from?: string): Promise<Db & { drop: () => Promise<void> }> {
+  if (from) cpSync(from, dir, { recursive: true });
+  delete process.env.DATABASE_URL;
+  process.env.PGLITE_DIR = dir;
+  const db = await openDb();
+  return Object.assign(db, { drop: async () => { await db.close(); rmSync(dir, { recursive: true, force: true }); } });
+}
+
+/**
+ * The empty PGlite directory every new database here starts from (mold_v0-160): initdb, compiled to WASM, takes
+ * seconds per database on a loaded machine, and a new database is that same empty cluster every time. Made once by
+ * opening a new directory (exactly what fresh() did per database before), closed, and copied for each.
+ */
+let emptyDir: Promise<string> | undefined;
+const emptyPglite = () => emptyDir ??= (async () => {
+  const dir = path.join(tmp, "empty-template");
+  await (await openDir(dir)).close();
+  return dir;
+})();
 
 /** A new, empty database: a PGlite directory, or a fresh database on the real Postgres. */
 async function fresh(kind: "pglite" | "postgres"): Promise<Db & { drop: () => Promise<void> }> {
   const id = `app_mig_${process.pid}_${++n}`;
-  if (kind === "pglite") {
-    delete process.env.DATABASE_URL;
-    process.env.PGLITE_DIR = path.join(tmp, id);
-    const db = await openDb();
-    return Object.assign(db, { drop: async () => { await db.close(); rmSync(process.env.PGLITE_DIR!, { recursive: true, force: true }); } });
-  }
+  if (kind === "pglite") return openDir(path.join(tmp, id), await emptyPglite());
   const admin = new URL(pgUrl!);
   process.env.DATABASE_URL = admin.toString();
   const root = await openDb();
@@ -72,6 +97,29 @@ const sameCatalog = (a: Awaited<ReturnType<typeof catalog>>, b: Awaited<ReturnTy
   }
 };
 
+/**
+ * A database in a state several rows start from (mold_v0-160): built once, by `build` on a new database, and each
+ * caller gets a copy of its own to change and drop, exactly the database `build` leaves (on PGlite: its directory,
+ * closed and copied). On the real Postgres every caller builds it again: CREATE DATABASE ... TEMPLATE would give the
+ * copy another current_database() than the one its tenant role was named for (0003_row_level_security).
+ */
+const baselines = new Map<string, Promise<string>>();
+async function from(kind: "pglite" | "postgres", key: string, build: (db: Db) => Promise<unknown>): Promise<Db & { drop: () => Promise<void> }> {
+  if (kind === "postgres") { const db = await fresh(kind); await build(db); return db; }
+  let dir = baselines.get(key);
+  if (!dir) {
+    dir = (async () => {
+      const d = path.join(tmp, `baseline-${key}`);
+      const db = await openDir(d, await emptyPglite());
+      await build(db);
+      await db.close();
+      return d;
+    })();
+    baselines.set(key, dir);
+  }
+  return openDir(path.join(tmp, `app_mig_${process.pid}_${++n}`), await dir);
+}
+
 /** What the old boot did: the whole schema file, under the lock, in one transaction (src/db.ts before migrations). */
 const oldBoot = (db: Db, sql: string) => db.migrate((tx) => tx.exec(sql));
 
@@ -105,13 +153,25 @@ const catalogDiff = (a: Catalog, b: Catalog) => (Object.keys(a) as (keyof Catalo
  * table, column, index, policy or function a later shell migration adds, changes or drops is in it, and nothing of a
  * host pack's (mold_v0-158: a hand-kept list had drifted by 289 lines, the tables of 0018 to 0024).
  */
-/** The catalog of a new database from the shell's migrations alone (no packs), up to `upTo` (all by default). */
-async function shellCatalog(kind: "pglite" | "postgres", upTo?: number) {
-  const db = await fresh(kind);
-  await runMigrations(db, { ...(upTo === undefined ? {} : { dir: await preDir(upTo, true) }), packDirs: [] });
-  const c = await catalog(db);
-  await db.drop();
-  return c;
+/** A new database from the shell's migrations alone (no packs), up to `upTo` (all by default), built once (from()). */
+const shellAt = (kind: "pglite" | "postgres", upTo?: number) => from(kind, `shell-${upTo ?? "all"}`, async (db) =>
+  runMigrations(db, { ...(upTo === undefined ? {} : { dir: await preDir(upTo, true) }), packDirs: [] }));
+/** A database a release before mold_v0-049 built, up to `upTo` (preDir), built once (from()). */
+const preAt = (kind: "pglite" | "postgres", upTo: number) => from(kind, `pre049-${upTo}`, async (db) =>
+  runMigrations(db, { dir: await preDir(upTo), packDirs: [] }));
+/** A new database with every migration of this build, the shell's and its packs' (runMigrations' defaults), built once. */
+const builtAt = (kind: "pglite" | "postgres") => from(kind, PACK_MIGRATION_DIRS.length ? "build" : "shell-all", (db) => runMigrations(db));
+/** The catalog of a new database from the shell's migrations alone (no packs), up to `upTo` (all by default); read once. */
+const shellCatalogs = new Map<string, Promise<Catalog>>();
+function shellCatalog(kind: "pglite" | "postgres", upTo?: number) {
+  const key = `${kind}-${upTo ?? "all"}`;
+  if (!shellCatalogs.has(key)) shellCatalogs.set(key, (async () => {
+    const db = await shellAt(kind, upTo);
+    const c = await catalog(db);
+    await db.drop();
+    return c;
+  })());
+  return shellCatalogs.get(key)!;
 }
 async function laterShellChanges(kind: "pglite" | "postgres") {
   return new Set(catalogDiff(await shellCatalog(kind), await shellCatalog(kind, LAST_PRE)));
@@ -202,11 +262,10 @@ async function suite(kind: "pglite" | "postgres") {
   const freshTables = await tables(ref);
   if (ownsAll) assert.deepEqual(PRODUCT_TABLES.filter((t) => !freshTables.includes(t)), [], "with the host pack a new database has every product table");
   else assert.deepEqual(PRODUCT_TABLES.filter((t) => freshTables.includes(t) && !hostTables.includes(t)), [], "a new database has none of the product's tables (mold_v0-049)");
-  console.log(`  ✓ ${kind}: a new database has ${ownsAll ? "the host pack's" : "none of the"} ${PRODUCT_TABLES.length} product tables (${freshTables.length} tables in all)`);
+  log(`  ✓ ${kind}: a new database has ${ownsAll ? "the host pack's" : "none of the"} ${PRODUCT_TABLES.length} product tables (${freshTables.length} tables in all)`);
 
   // Re-mint parity (mold_v0-049): the database a release before the split built, migrated by this one, is the new one.
-  const main = await fresh(kind);
-  await runMigrations(main, { dir: await preDir(LAST_PRE), packDirs: [] });
+  const main = await preAt(kind, LAST_PRE);
   const mainCatalog = await catalog(main);
   if (ownsAll) {
     // From scratch, the differences from the earlier schema are only: the runner's own record of pack migrations and
@@ -228,13 +287,15 @@ async function suite(kind: "pglite" | "postgres") {
     const unexplained = diff.filter((d) => !why(d));
     assert.deepEqual(unexplained, [], "a new database (shell + host pack) differs from the earlier schema only where expected");
     const counts = diff.reduce((m: Record<string, number>, d) => ({ ...m, [why(d)!]: (m[why(d)!] ?? 0) + 1 }), {});
-    console.log(`  ✓ ${kind}: from scratch, shell + host pack = the earlier schema (every table, column, constraint and index), but ${JSON.stringify(counts)}`);
+    log(`  ✓ ${kind}: from scratch, shell + host pack = the earlier schema (every table, column, constraint and index), but ${JSON.stringify(counts)}`);
   }
   await main.drop();
 
   // Databases at the shell's older versions, with rows in every table: the legacy schema-on-boot path (the earlier
   // baseline booted twice, as every deploy did), and the pre-049 migrations recorded up to 1, 3, 8, 13 and 14.
-  const starts: { name: string; build: (db: Db) => Promise<Awaited<ReturnType<typeof fingerprint>>> }[] = [
+  // Each pre-049 start is the database preAt() built at its version (built once: the one at 0016 is also the re-mint
+  // parity's above and the adoption's below), its rows seeded here.
+  const starts: { name: string; at?: number; build: (db: Db) => Promise<Awaited<ReturnType<typeof fingerprint>>> }[] = [
     { name: "schema-on-boot", build: async (db) => {
       const old = readFileSync(path.join(PRE, "0001_baseline.sql"), "utf8");
       await oldBoot(db, old);
@@ -243,13 +304,10 @@ async function suite(kind: "pglite" | "postgres") {
       assert.equal((await migrationStatus(db)).legacy, true, "the old way leaves no schema_migrations table");
       return fingerprint(db);
     } },
-    ...[1, 3, 8, 13, LAST_PRE].map((v) => ({ name: `pre-049 at ${String(v).padStart(4, "0")}`, build: async (db: Db) => {
-      await runMigrations(db, { dir: await preDir(v), packDirs: [] });
-      return seed(db);
-    } })),
+    ...[1, 3, 8, 13, LAST_PRE].map((v) => ({ name: `pre-049 at ${String(v).padStart(4, "0")}`, at: v, build: seed })),
   ];
   for (const st of starts) {
-    const old = await fresh(kind);
+    const old = st.at === undefined ? await fresh(kind) : await preAt(kind, st.at);
     const rows = await st.build(old);
     const lingering = PRODUCT_TABLES.filter((t) => rows.rows.has(t) && !hostTables.includes(t));
     // The account context and memory tables this earlier database has (mold_v0-142): adopted by the shell's 0024. Where
@@ -282,10 +340,10 @@ async function suite(kind: "pglite" | "postgres") {
       }).catch((e) => { if (!(e instanceof Undo)) throw e; });
       assert.ok(changed.length > 0, "running the adopted migration again would have changed rows (so adopting it is what keeps them)");
       assert.equal((await sameRows(old, rows, `${kind}: after the rolled-back rerun`)).rows, kept.rows);
-      console.log(`  ✓ ${kind}: running the adopted ${set.pack} migration instead would change rows of ${changed.join(", ")}; adopting it changes none`);
+      log(`  ✓ ${kind}: running the adopted ${set.pack} migration instead would change rows of ${changed.join(", ")}; adopting it changes none`);
     }
     assert.deepEqual((await runMigrations(old)).applied, [], `${st.name}: migrating again applies nothing`);
-    console.log(`  ✓ ${kind}: ${st.name} → ${applied.applied.length} applied${adopted.length ? ` (${adopted.join(", ")})` : ""}; ${kept.rows} rows in ${kept.tables} tables identical${kept.added ? ` (+${kept.added} seed row(s) a later shell migration adds)` : ""}` +
+    log(`  ✓ ${kind}: ${st.name} → ${applied.applied.length} applied${adopted.length ? ` (${adopted.join(", ")})` : ""}; ${kept.rows} rows in ${kept.tables} tables identical${kept.added ? ` (+${kept.added} seed row(s) a later shell migration adds)` : ""}` +
       (ownsAll ? "; schema identical to a new database" : `; shell schema identical, ${lingering.length} earlier product tables kept with their rows`));
     await old.drop();
   }
@@ -304,8 +362,7 @@ async function suite(kind: "pglite" | "postgres") {
       "  EXECUTE format('GRANT SELECT, INSERT ON widgets TO %I', r); END $mig$;\n";
     const FN = "CREATE OR REPLACE FUNCTION widget_score(n TEXT) RETURNS INT LANGUAGE sql IMMUTABLE AS $$ SELECT length(n) $$;\n";
     const MARK = "UPDATE widgets SET name = 'the adopted migration ran';\n";
-    const db = await fresh(kind);
-    await runMigrations(db);
+    const db = await builtAt(kind);
     const r = await runMigrations(db, { packDirs: hp(W + SEC + FN + MARK) });
     assert.deepEqual(r.applied, ["pack hp 0001_widgets"], "a new database runs the host pack's migration (nothing to adopt: its 0001 is today's)");
     assert.ok((await db.query<{ on: boolean }>("SELECT relrowsecurity AS on FROM pg_class WHERE relname = 'widgets'"))[0]!.on, "its table is under row-level security");
@@ -315,8 +372,7 @@ async function suite(kind: "pglite" | "postgres") {
       [{ qual: "(org_id = app_tenant_org())", with_check: "(org_id = app_tenant_org())" }], "a pack migration written with the old names: its policy names app_tenant_org()");
     assert.ok((await db.query<{ ok: boolean }>("SELECT has_table_privilege(app_tenant_role(), 'widgets', 'INSERT') AS ok"))[0]!.ok, "and its grant is the tenant role's");
     const refusedBy = async (what: string, sql: string, re: RegExp, schema: Record<string, unknown> = {}) => {
-      const d = await fresh(kind);
-      await runMigrations(d);
+      const d = await builtAt(kind);
       await assert.rejects(runMigrations(d, { packDirs: hp(sql, schema) }), (e) => e instanceof MigrationError && re.test(e.message), what);
       assert.equal((await d.query<{ t: string | null }>("SELECT to_regclass('widgets')::text AS t"))[0]!.t, null, `${what}: rolled back whole`);
       await d.drop();
@@ -338,8 +394,7 @@ async function suite(kind: "pglite" | "postgres") {
     // rows (no org_id) and never written by tenant work.
     const LIB = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, name TEXT);\nDO $$ BEGIN EXECUTE format('GRANT SELECT ON widgets TO %I', octillion_tenant_role()); END $$;\n";
     {
-      const d = await fresh(kind);
-      await runMigrations(d);
+      const d = await builtAt(kind);
       await runMigrations(d, { packDirs: hp(LIB + FN, { platform_read: ["widgets"] }) });
       assert.equal((await d.query<{ on: boolean }>("SELECT relrowsecurity AS on FROM pg_class WHERE relname = 'widgets'"))[0]!.on, false, "a platform library stays without row-level security, read only");
       await d.drop();
@@ -353,8 +408,7 @@ async function suite(kind: "pglite" | "postgres") {
     await refusedBy("adopting a shell migration that was not split", W + SEC + FN, /0002_admin_tokens, which is not a split shell migration/, { adopts: { "0001_widgets": "0002_admin_tokens" } });
     // A reference from a shell table's column to its own table (the sessions' gateway tokens) is the one change allowed there.
     {
-      const d = await fresh(kind);
-      await runMigrations(d);
+      const d = await builtAt(kind);
       await runMigrations(d, { packDirs: hp(W.replace("name TEXT", "name TEXT UNIQUE") + SEC + FN +
         "ALTER TABLE gateway_tokens ADD CONSTRAINT gateway_tokens_widget_fkey FOREIGN KEY (orchestrator_id) REFERENCES widgets (name);\n", { references: { "gateway_tokens.orchestrator_id": "widgets" } }) });
       assert.equal((await d.query("SELECT 1 FROM pg_constraint WHERE conname = 'gateway_tokens_widget_fkey'")).length, 1, "a reference it declares, from a shell table to its own table, is allowed");
@@ -363,42 +417,32 @@ async function suite(kind: "pglite" | "postgres") {
     // Adoption: a database that ran the earlier baseline has the host pack's tables (here, made by hand as that file
     // would have): the migration that adopts it is recorded and not run, so the rows stay as they were.
     {
-      const d = await fresh(kind);
-      await runMigrations(d, { dir: await preDir(LAST_PRE), packDirs: [] });
+      const d = await preAt(kind, LAST_PRE);
       await d.exec(W + SEC + "INSERT INTO organizations (slug, name) VALUES ('hp-org', 'HP');\nINSERT INTO widgets (org_id, name) SELECT id, 'as it was' FROM organizations WHERE slug = 'hp-org';\n");
       const r2 = await runMigrations(d, { packDirs: hp(W + SEC + FN + MARK) });
       assert.ok(r2.applied.includes("pack hp 0001_widgets (adopted)"), `the database that ran the earlier baseline adopts it: ${r2.applied.join(", ")}`);
       assert.deepEqual((await d.query<{ name: string }>("SELECT name FROM widgets")).map((x) => x.name), ["as it was"], "and nothing of it ran");
       assert.equal((await d.query<{ n: number }>("SELECT count(*)::int AS n FROM pack_schema_migrations WHERE pack = 'hp'"))[0]!.n, 1, "recorded once");
       // Without its table there, adoption is refused: a database that never had the product's tables cannot pretend to.
-      const e = await fresh(kind);
-      await runMigrations(e, { dir: await preDir(LAST_PRE), packDirs: [] });
+      const e = await preAt(kind, LAST_PRE);
       await e.exec("DROP TABLE IF EXISTS widgets");
       await assert.rejects(runMigrations(e, { packDirs: hp(W + SEC + FN + MARK) }), /do not create: widgets/, "an adopted migration whose tables are missing is refused");
       await d.drop(); await e.drop();
     }
     await db.drop();
-    console.log(`  ✓ ${kind}: a host pack's own schema: its tables, policies and declared function run; adopted on a pre-049 database (nothing run); policies, grants, columns, constraints and functions outside it refused`);
+    log(`  ✓ ${kind}: a host pack's own schema: its tables, policies and declared function run; adopted on a pre-049 database (nothing run); policies, grants, columns, constraints and functions outside it refused`);
   }
 
   // The neutral names (0024_neutral_database_names, mold_v0-097): renamed in place, the old names kept as aliases for a
   // release from before it, and the rollback file puts the database back exactly as 0023 left it.
   {
-    const upTo = async (v: number) => {
-      const dir = path.join(tmp, `upto-${kind}-${v}`);
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true });
-      for (const m of (await loadMigrations()).filter((x) => x.version <= v)) writeFileSync(path.join(dir, `${String(m.version).padStart(4, "0")}_${m.name}.sql`), m.sql);
-      return dir;
-    };
     const { rlsCatalogProblems, rlsProbe, legacyTenantRole } = await import("../src/rls.js");
     // The shell's own migrations only, throughout (packDirs: []): this runner re-points a pack's policies at 0024's
     // names, so it cannot make a database with packs as it stood at 0023. Every run below names no packs either
     // (mold_v0-158: the runs after 0023 took the build's host packs by default, so in a host-pack build the rolled-back
     // database had the product's tables and the database 0023 left had none). The host pack's own policies through
     // 0024 are graded above: every older database, migrated with the host pack, equals a new one.
-    const at23 = await fresh(kind);
-    await runMigrations(at23, { dir: await upTo(23), packDirs: [] });
+    const at23 = await shellAt(kind, 23);
     const before = await catalog(at23);
     const roleOf = async (d: Db) => (await d.query<{ r: string }>("SELECT app_tenant_role() AS r"))[0]!.r;
     // The release before this one, serving while the migration runs: its tenant transaction, as it opens one.
@@ -435,8 +479,7 @@ async function suite(kind: "pglite" | "postgres") {
     await assert.rejects(at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8")), /not 0024: roll back the later migrations first/);
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8"));
     await at23.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0024_neutral_database_names.sql"), "utf8"));
-    const fresh23 = await fresh(kind);
-    await runMigrations(fresh23, { dir: await upTo(23), packDirs: [] });
+    const fresh23 = await shellAt(kind, 23);
     sameCatalog(await catalog(at23), await catalog(fresh23), `${kind}: rolled back from 0024`);
     sameCatalog(before, await catalog(fresh23), `${kind}: at 0023`);
     assert.deepEqual(await oldWay(at23, oa!), [oa], "rolled back: the old release's tenant transaction sees its own rows");
@@ -464,7 +507,7 @@ async function suite(kind: "pglite" | "postgres") {
       }
       await admin.close();
     }
-    console.log(`  ✓ ${kind}: 0024 renames the functions, the tenant role and its setting in place (${ms} ms, every policy follows); the old release's tenant transaction keeps its own rows only; the rollback file restores 0023 exactly`);
+    log(`  ✓ ${kind}: 0024 renames the functions, the tenant role and its setting in place (${ms} ms, every policy follows); the old release's tenant transaction keeps its own rows only; the rollback file restores 0023 exactly`);
   }
 
   // Tables a host pack hands back to the shell (mold_v0-142): 0025 makes account_context, user_context and
@@ -540,8 +583,7 @@ async function suite(kind: "pglite" | "postgres") {
     // Refused, nothing changed: some of the tables, or all of them in another shape (here: no row-level security).
     for (const [what, sql, re] of [["some of the tables", creates.slice(0, creates.indexOf("CREATE TABLE IF NOT EXISTS user_context")), /never some/],
       ["another shape", creates, /in another shape than this migration gives them/]] as const) {
-      const e = await fresh(kind);
-      await runMigrations(e, { dir: await upToV(24), packDirs: [] });
+      const e = await shellAt(kind, 24);
       await e.exec(sql);
       const stampsE = new Map<string, string[]>();
       for (const t of CONTEXT_TABLES) stampsE.set(t, await catalogStamp(e, t));
@@ -552,14 +594,13 @@ async function suite(kind: "pglite" | "postgres") {
     }
     // Rolling back a 0025 that made the tables, once this release wrote to them: refused, nothing changed.
     {
-      const f = await fresh(kind);
-      await runMigrations(f, { packDirs: [] });
+      const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb-org', 'Rb'); INSERT INTO account_context (org_id, about) SELECT id, 'kept' FROM organizations WHERE slug = 'rb-org'");
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0025_account_context_memory.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM account_context"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();
     }
-    console.log(`  ✓ ${kind}: 0025 makes the account context and memory tables on a new database and adopts them where a host pack made them, from 0023 (with 0024's renames in the same run) and from 0024 (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
+    log(`  ✓ ${kind}: 0025 makes the account context and memory tables on a new database and adopts them where a host pack made them, from 0023 (with 0024's renames in the same run) and from 0024 (rows identical, catalog rows untouched, the pack's rewritten 0001 accepted at its earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.
@@ -641,7 +682,7 @@ async function suite(kind: "pglite" | "postgres") {
     await db.drop();
   }
   await ref.drop();
-  console.log(`✓ migrations on ${kind}: schema-on-boot databases upgrade to the same schema with their rows; each migration once; edits, gaps and failures refused or rolled back`);
+  log(`✓ migrations on ${kind}: schema-on-boot databases upgrade to the same schema with their rows; each migration once; edits, gaps and failures refused or rolled back`);
 }
 
 try {
