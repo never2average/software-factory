@@ -67,6 +67,17 @@
 //     functions and run DO blocks, GRANT, REVOKE and policies, which only the database can check: src/migrate.ts
 //     refuses any change outside the pack's own tables and functions, and any of its tables without row-level security.
 //
+// Engine packs and their config packs (mold_v0-145): a host pack may be an engine, reusable code and migrations with no
+// product's words, that an app runs through a config pack of its own: a pack.json alone (a declarative pack) whose
+// `engine.pack` names the engine. Its `engine.config` is the engine's config (engine.config, read by the engine's code),
+// `engine.profile` and `engine.labels` are the engine's host.profile and host.schema.labels, every other declaration is
+// the engine's (mcp, landing, guide, settings, console ...), and its name, version and description are the build's
+// pack's. It is folded into the engine here, before anything else reads the packs: the build has one pack, under the
+// engine's id, exactly as if the engine's pack.json said all of it, and the engine's own pack.json says only its code
+// (host entry, scripts, migrations, host.schema). `engine.migrations_recorded_as` names the pack id a database recorded
+// the engine's migrations under before the split (the product's own host pack, whose files they were): written as the
+// engine's `formerly` in src/pack-migrations.generated.ts, where src/migrate.ts reads those rows as the engine's.
+//
 // Record areas are declared in code (definePack({ recordAreas })), so once every check above passes, each pack's entry
 // is loaded once (through tsx, as the server loads it) to read them; with no packs nothing is loaded.
 //
@@ -160,6 +171,10 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "journeys", "tips",
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
   "texts"]);
+/** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
+const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
+/** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
+const ENGINE_OWN_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "migrations", "host"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -713,7 +728,18 @@ function loadPack(dirName) {
   // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): inline in pack.json (guide.markdown; guide.dir is gone,
   // mold_v0-124), checked below. A host pack's is the whole guide (mold_v0-139; it was its code, web/src/packs/<id>/guide.ts):
   // nothing is generated beside it, so `generated` says nothing there.
-  if (host && m.guide && typeof m.guide === "object" && m.guide.generated !== undefined)
+  // A config pack (mold_v0-145): pack.json engine.pack names its engine, a host pack of this build whose code runs it.
+  const eng = m.engine !== undefined && m.engine && typeof m.engine === "object" && !Array.isArray(m.engine) ? m.engine : null;
+  if (m.engine !== undefined && !eng) fail(where, "engine must be an object");
+  for (const k of Object.keys(eng ?? {})) if (!ENGINE_KEYS.has(k)) fail(where, `engine: unknown field ${k} (known: ${[...ENGINE_KEYS].join(", ")})`);
+  const engineOf = eng && eng.pack !== undefined ? eng.pack : null;
+  if (engineOf !== null) {
+    if (typeof engineOf !== "string" || !ID.test(engineOf) || engineOf === dirName) fail(where, "engine.pack: the id of the engine pack this pack configures (another pack of this build, a host pack)");
+    if (host || entry !== null || m.migrations !== undefined || m.runner !== undefined)
+      fail(where, "engine.pack: a pack that names its engine is config only (no host, entry, migrations or runner): the engine pack carries the code");
+  } else for (const k of ["profile", "labels", "migrations_recorded_as"])
+    if (eng?.[k] !== undefined) fail(where, `engine.${k}: only a config pack (engine.pack) says it; a host pack says it in ${k === "profile" ? "host.profile" : k === "labels" ? "host.schema.labels" : "nothing (its migrations are recorded under its own id)"}`);
+  if ((host || engineOf !== null) && m.guide && typeof m.guide === "object" && m.guide.generated !== undefined)
     fail(where, "guide.generated: a host pack's guide is the whole guide (its pages, its MCP tools page): nothing is generated beside it");
   // Its staff docs are pack.json staff_docs (mold_v0-139), not files: packs/<id>/docs/*.md is no longer read.
   if (host && existsSync(path.join(dir, "docs"))) for (const e of walk(path.join(dir, "docs")))
@@ -721,9 +747,10 @@ function loadPack(dirName) {
   // A host pack's engine settings (mold_v0-137): read by its own code only (src/pack-host.ts engineConfig), so only a
   // host pack may have them; their shape is checked below (src/pack-manifest.ts) and against the host entry's schema when
   // the server starts (src/host.ts registerHosts).
-  if (m.engine !== undefined && !host) fail(where, "engine: only a host pack's own code reads engine.config (a declarative pack says everything in its declarations)");
-  const engineConfig = host && m.engine && typeof m.engine === "object" && !Array.isArray(m.engine) && m.engine.config && typeof m.engine.config === "object" && !Array.isArray(m.engine.config) ? m.engine.config : null;
-  return { id, dir, json: m, host, schema, engineConfig, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  if (eng && !host && engineOf === null) fail(where, "engine: only a host pack's own code reads engine.config (a declarative pack says everything in its declarations, or names the engine pack it configures: engine.pack)");
+  const engineConfig = (host || engineOf !== null) && eng?.config && typeof eng.config === "object" && !Array.isArray(eng.config) ? eng.config : null;
+  if (eng && eng.config !== undefined && !engineConfig) fail(where, "engine.config must be an object");
+  return { id, dir, json: m, host, schema, engineConfig, engineOf: typeof engineOf === "string" ? engineOf : null, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -785,6 +812,67 @@ for (const d of packDirs) {
   if (!existsSync(path.join(PACKS_DIR, d, "pack.json"))) { fail(`packs/${d}`, "a pack directory needs a pack.json"); continue; }
   const p = loadPack(d);
   if (p) packs.push(p);
+}
+// ---------- config packs, folded into their engine (mold_v0-145) ----------
+for (const c of packs.filter((p) => p.engineOf)) {
+  const at = `packs/${c.id}/pack.json`;
+  const e = packs.find((p) => p.id === c.engineOf);
+  if (!e || !e.host) { fail(at, `engine.pack: ${c.engineOf} is not a host pack of this build${e ? "" : " (the app names its engine pack too, and its mold lets it be a host pack)"}`); continue; }
+  const others = packs.filter((p) => p.engineOf === e.id && p !== c);
+  if (others.length) { fail(at, `engine.pack: ${e.id} is configured by ${[c, ...others].map((p) => p.id).join(" and ")}: one config pack per engine`); continue; }
+  const ew = `packs/${e.id}/pack.json`;
+  // The engine's own pack.json says its code; every word, page and declaration is its config pack's.
+  const own = Object.keys(e.json).filter((k) => !ENGINE_OWN_KEYS.has(k));
+  if (own.length) fail(ew, `${own.join(", ")}: an engine pack (configured by ${c.id}) declares nothing of a product's: its config pack says it (engine.config, mcp, landing, ...)`);
+  if (e.host.profile) fail(ew, `host.profile: an engine pack's profile is its config pack's engine.profile (${c.id})`);
+  if (e.json.host?.schema?.labels !== undefined) fail(ew, `host.schema.labels: an engine pack's table labels are its config pack's engine.labels (${c.id})`);
+  const eng = c.json.engine;
+  if (eng.profile !== undefined && (!eng.profile || typeof eng.profile !== "object" || Array.isArray(eng.profile))) fail(at, "engine.profile must be an object of profile fields");
+  // Its tables' labels, in the product's words (as host.schema.labels: hostSchemaOf).
+  const labels = {};
+  if (eng.labels !== undefined) {
+    if (!eng.labels || typeof eng.labels !== "object" || Array.isArray(eng.labels)) fail(at, "engine.labels must be an object of table -> label");
+    else for (const [k, v] of Object.entries(eng.labels)) {
+      if (!(e.schema?.tables ?? []).includes(k)) fail(at, `engine.labels.${k}: not one of engine ${e.id}'s tables (host.schema.tables)`);
+      else if (typeof v !== "string" || !v.trim() || v.length > 60 || /[<>{}"`\\\r\n]/.test(v)) fail(at, `engine.labels.${k}: a label of 1 to 60 characters, no markup, braces, quotes or line breaks`);
+      else labels[k] = v.trim();
+    }
+  }
+  hostTableLabels.push(...Object.entries(labels));
+  // The id a database recorded the engine's migrations under before (its product's own host pack, whose files they were).
+  let formerly = [];
+  if (eng.migrations_recorded_as !== undefined) {
+    const v = typeof eng.migrations_recorded_as === "string" ? [eng.migrations_recorded_as] : eng.migrations_recorded_as;
+    if (!Array.isArray(v) || !v.length || !v.every((x) => typeof x === "string" && ID.test(x)) || new Set(v).size !== v.length)
+      fail(at, "engine.migrations_recorded_as: the pack id (or a list of them) a database recorded the engine's migrations under before");
+    else if (!e.migrationsDir) fail(at, `engine.migrations_recorded_as: engine ${e.id} has no migrations`);
+    else for (const x of v) {
+      if (x === e.id) fail(at, `engine.migrations_recorded_as: ${x} is the engine's own id`);
+      else if (packs.some((p) => p.id === x && p !== c && p.migrationsDir)) fail(at, `engine.migrations_recorded_as: ${x} is a pack of this build with migrations of its own`);
+      else formerly.push(x);
+    }
+  }
+  // Folded: the engine's code (its host entry, scripts, migrations, schema) with everything its config pack says, in
+  // the config pack's order (the engine's migrations and host where its description ends), under the engine's id.
+  const folded = {};
+  for (const [k, v] of Object.entries(c.json)) {
+    if (k === "id") folded.id = e.id;
+    else if (k === "engine") { if (c.engineConfig) folded.engine = { config: c.engineConfig }; }
+    else folded[k] = v;
+    if (k === "description" || (k === "version" && c.json.description === undefined)) {
+      if (e.json.migrations !== undefined) folded.migrations = e.json.migrations;
+      folded.host = { ...e.json.host, ...(eng.profile ? { profile: eng.profile } : {}),
+        ...(e.json.host.schema ? { schema: { ...e.json.host.schema, ...(Object.keys(labels).length ? { labels } : {}) } } : {}) };
+    }
+  }
+  e.json = folded;
+  e.host = { ...e.host, profile: eng.profile && typeof eng.profile === "object" && !Array.isArray(eng.profile) ? eng.profile : null };
+  e.engineConfig = c.engineConfig;
+  e.formerly = formerly;
+  e.configPack = c.id;
+  e.manifest = { ...e.manifest, name: c.manifest.name, version: c.manifest.version, words: c.manifest.words };
+  e.pages = c.pages.map((pg) => ({ ...pg, pack: e.id }));
+  packs.splice(packs.indexOf(c), 1);
 }
 const hostIds = new Set(packs.filter((p) => p.host).map((p) => p.id));
 const webPacks = !opt("--packs") ? checkSideCode(WEB_PACKS, "web", hostIds) : [];
@@ -1457,7 +1545,8 @@ files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
   "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string | readonly string[]>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
-  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n` +
+  "/** `formerly` (mold_v0-145): the pack ids a database recorded a pack's migrations under before (its config pack's engine.migrations_recorded_as). */\n" +
+  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema; readonly formerly?: readonly string[] }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}), ...(p.formerly?.length ? { formerly: p.formerly } : {}) })))};\n` +
   // Their tables' labels (mold_v0-141: host.schema.labels), only when one names any (a build without writes what it did).
   (hostTableLabels.length ? "/** A host pack's tables' labels in its product's words (pack.json host.schema.labels): the Storage page's names for them (src/host-tables.ts). */\n" +
     `export const HOST_TABLE_LABELS: Readonly<Record<string, string>> = ${json(Object.fromEntries(hostTableLabels))};\n` : ""));

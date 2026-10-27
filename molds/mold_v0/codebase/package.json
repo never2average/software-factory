@@ -21,6 +21,7 @@
     "test:console-hide": "tsx scripts/console-hide-test.ts",
     "test:console-sidebar": "tsx scripts/console-sidebar-test.ts",
     "test:host-config": "tsx scripts/host-config-test.ts",
+    "test:engine-packs": "tsx scripts/engine-packs-test.ts",
     "gen:packs": "node scripts/gen-packs.mjs",
     "check:packs": "node scripts/gen-packs.mjs --check",
     "check:vocabulary": "tsx scripts/check-vocabulary.ts",

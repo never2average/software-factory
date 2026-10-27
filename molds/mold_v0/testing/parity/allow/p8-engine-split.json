@@ -1,0 +1,22 @@
+{
+  "phase": "P8 (mold_v0-145): the Octillion host pack splits into the engine pack apo (its code, console pages, orchestrator extension, operator scripts, curated library and migrations, with no product's words) and Octillion's config pack (its pack.json alone, engine.pack apo), which gen-packs folds into the engine: the build has one host pack, under the engine's id. Its migrations' ledger rows under octillion are read as the engine's (formerly): nothing runs. tools/list, instructions, prompts, resources, every /api answer, the pages' text and links, and the engine's smoke (the product's own, now reading its words from the build's profile) are unchanged",
+  "allow": [
+    { "key": "meta::packs::octillion", "reason": "Octillion: the build's host pack is the engine, under its id apo (the config pack is folded into it; its name, version and description stay Octillion's in the registry)" },
+    { "key": "meta::packs::apo", "reason": "the same pack, under the engine's id" },
+    { "key": "smoke::octillion", "reason": "the pack's own smoke test runs under the host pack's id: it is the engine's now (packs/apo/scripts/smoke.ts, the product's checks with its words read from the build's profile). It passes on both sides (exit 0): smoke::apo below is the same run" },
+    { "key": "smoke::apo", "reason": "the same smoke test under the engine's id; it passes (exit 0)" },
+    { "key": "pages::/app/journeys::pack", "reason": "the surface lists the journeys page under the pack that turns the component on: the engine's id now (the config pack's journeys, folded into it); the page's text, links and status are identical" },
+    { "key": "pages::/admin/journeys::pack", "reason": "as /app/journeys" },
+    { "key": "generated::orchestrator/packs.generated.ts", "reason": "the orchestrator's entry is the engine's: ./packs/apo/main.ts (was ./packs/octillion/main.ts)" },
+    { "key": "generated::src/hosts.generated.ts", "reason": "the host entry is the engine's (../packs/apo/host.js), its engine.config keyed by the engine's id with the config's names block (the widget's address, the native transcript format and the spans' prefix, as the code had them: ui://octillion/dashboard-v2.html, octillion-jsonl, octillion), and PACK_CONFIG names the engine's id" },
+    { "key": "generated::src/pack-migrations.generated.ts", "reason": "the migrations are the engine's (pack apo, dir packs/apo/migrations), with formerly [\"octillion\"]: the ledger's rows under octillion are read as the engine's; in every build the dirs' type names formerly" },
+    { "key": "generated::src/packs.generated.ts", "reason": "the registry's one host pack under the engine's id and directory (name Octillion, version 2.0.0, the same declarations)" },
+    { "key": "generated::web/src/config/build-facts.generated.ts", "reason": "the build facts name the engine's id as the pack that declares the memory, journeys and tips components" },
+    { "key": "generated::web/src/config/pack-guides.generated.ts", "reason": "the customer guide is the engine's id's (the config pack's guide, folded)" },
+    { "key": "generated::web/src/config/pack-host-nav.generated.ts", "reason": "the sidebar entries name the engine's id (the config pack's console.nav, folded)" },
+    { "key": "generated::web/src/config/pack-routes.generated.json::**", "reason": "each host page URL is rewritten to the engine's host route (/app/host/apo/pick-rate, was /app/host/octillion/pick-rate): the URLs people use are the same" },
+    { "key": "generated::web/src/config/pack-web.generated.ts", "reason": "the console code is the engine's (@/packs/apo)" },
+    { "key": "generated::src/docs-corpus.generated.json::**", "reason": "docs/migrations.md says how a pack's migrations are read under an earlier id (mold_v0-145); the docs answers' corpus is built from it (the chunks after it shift)" },
+    { "key": "generated::web/src/content/admin-docs.generated.ts", "reason": "the same docs text in the console's staff docs" }
+  ]
+}

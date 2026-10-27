@@ -37,6 +37,13 @@ pack.json may name its mold (`"mold_id"`), and is then refused for an app on ano
 an app pack that is not one of the mold's `host_packs` is config only: it may add only `files` (mold_v0: its pack.json)
 and its `manifest` may name none of `refused_keys` (entry, migrations, runner: code); each refusal names the
 declaration to write instead. A host pack keeps its code.
+ENGINE PACKS (mold_v0-145). A host pack may be an engine: reusable code and migrations with no product's words (mold_v0's
+apo). An app runs it through a config pack of its own, an ordinary pack whose pack.json names it (engine.pack) and says
+every word; the mold's generator folds the one into the other. `check` refuses a config pack whose engine is not one of
+the mold's host_packs or not a pack here; `apply` (and lane-copy) refuses an app that names a config pack without its
+engine pack, before anything is copied. The engine's migrations a database recorded under the config pack's id while
+they were that pack's own (pack.json engine.migrations_recorded_as) are read as the engine's by the mold (src/migrate.ts):
+no factory step rewrites a ledger.
   check <pack> [--mold <mold_id>]   the rules of that mold (default: the pack's own mold_id, else mold_v1's)
 
 DEPLOY FACTS (mold_v0-050). A mold whose rules name `deploy_facts` (a file at the codebase root: mold_v0's
@@ -196,6 +203,28 @@ def _declarative_problems(pack_id, files, rules):
             errs.append(f"{pack_id}: {dec['manifest'].replace('{pack}', pack_id)} names `{k}`, which points at code: {head}. Take `{k}` out and declare what it did (MOLD.md \"Declared row maps\")")
     return errs
 
+def _engine_of(pack_id, rules):
+    """mold_v0-145: the engine pack a config pack runs on (its pack.json `engine.pack`, in the mold's manifest path), or None."""
+    dec = rules.get("declarative") or {}
+    mp = os.path.join(PACKS, pack_id, "files", (dec.get("manifest") or "packs/{pack}/pack.json").replace("{pack}", pack_id))
+    try: e = load(mp).get("engine") if os.path.isfile(mp) else None
+    except (ValueError, OSError, AttributeError): return None
+    return e.get("pack") if isinstance(e, dict) and isinstance(e.get("pack"), str) else None
+
+def _engine_problems(pack_id, rules, app_packs=None):
+    """mold_v0-145: a config pack names its engine (pack.json engine.pack): one of the mold's host packs, a pack here, and
+    (for an app, app_packs) one the app names too. -> problems, each naming what to do."""
+    e = _engine_of(pack_id, rules)
+    if e is None: return []
+    hosts = rules.get("host_packs") or []
+    if e not in hosts:
+        return [f"{pack_id}: its pack.json runs on engine pack {e!r} (engine.pack), which is not one of {rules['mold_id']}'s host packs ({', '.join(hosts) or 'none'}): an engine is a host pack"]
+    if not os.path.isfile(os.path.join(PACKS, e, "pack.json")):
+        return [f"{pack_id}: its engine pack {e} (pack.json engine.pack) is not here (no packs/{e}/pack.json)"]
+    if app_packs is not None and e not in app_packs:
+        return [f"{pack_id}: it is the config of engine pack {e} (pack.json engine.pack): name {e} in the app's packs too (application.json \"packs\": [..., \"{e}\"])"]
+    return []
+
 def _check_by_rules(pack_id, files, manifest, rules):
     """check_pack for a mold that declares its own rules (mold.json packs)."""
     errs = []
@@ -225,7 +254,7 @@ def _check_by_rules(pack_id, files, manifest, rules):
     for r in rules.get("required") or []:
         want = r.replace("{pack}", pack_id)
         if want not in files: errs.append(f"{pack_id}: files/{want} is missing (every {rules['mold_id']} pack adds it)")
-    return errs + _declarative_problems(pack_id, files, rules)
+    return errs + _declarative_problems(pack_id, files, rules) + _engine_problems(pack_id, rules)
 
 def pack_files(pack_id):
     base = os.path.join(PACKS, pack_id, "files"); out = []
@@ -390,6 +419,8 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
               + ("; the deploy facts and source offer written into its build copy and the generators run" if facts else "")
               + (f"; the app's profile settings ({_profile_said(app)}) written into its build copy and the generators run" if prof else "")); return 0
     errs = [e for p in packs for e in check_pack(p, rules=rules)]
+    # mold_v0-145: a config pack's engine is named by the app too (else the build has its words and none of its code).
+    errs += [e for p in packs if not check_pack(p, rules=rules) for e in _engine_problems(p, rules, packs)]
     if not supports_packs(mold_dir, rules):
         errs.append(f"{app['mold_id']} does not discover packs ({rules['supports']['file']} with {rules['supports']['contains']!r} is not in its codebase), "
                     f"so a pack's files would be registered nowhere.")
@@ -596,8 +627,10 @@ def rules_self_test():
         ok(len(e) == 1 and "config only" in e[0] and hint in e[0] and f in e[0], f"refused in a non-host pack, naming {hint}: {f} ({e})")
     code = good + ["packs/notes/index.ts", "packs/notes/migrations/0001_notes.sql"]
     ok(check_pack("notes", code, m, {k: v for k, v in R.items() if k != "declarative"}) == [], "a mold with no declarative rule keeps code packs")
-    host = ["packs/octillion/pack.json", "packs/octillion/host.ts", "web/src/packs/octillion/index.ts", "orchestrator/packs/octillion/main.ts"]
-    ok(check_pack("octillion", host, dict(m, pack_id="octillion"), R) == [], "a host pack (mold.json host_packs) keeps its code")
+    host = ["packs/apo/pack.json", "packs/apo/host.ts", "web/src/packs/apo/index.ts", "orchestrator/packs/apo/main.ts"]
+    ok(check_pack("apo", host, dict(m, pack_id="apo"), R) == [], "a host pack (mold.json host_packs) keeps its code")
+    ok(any("config only" in e for e in check_pack("octillion", ["packs/octillion/pack.json", "packs/octillion/host.ts"], dict(m, pack_id="octillion"), R)),
+       "mold_v0-145: a product whose engine is a host pack of its own is config only (its pack.json alone)")
     for bad, why in ((["packs/other/index.ts"], "another pack's directory"), (["src/server.ts"], "a shell file"), (["packs/notes_x/a.ts"], "a pack whose id starts with its own"),
                      (["packs/notes/../server.ts"], "a path that climbs out"), (["web/src/app/app/page.tsx"], "a console page of the shell"), (["packs/notes"], "the directory itself, no file")):
         ok(any("outside what a pack may add" in e for e in check_pack("notes", good + bad, m, R)), f"refused: {why}")
@@ -734,6 +767,28 @@ def rules_self_test():
             shutil.rmtree(os.path.join(b, "packs")); os.symlink(os.path.join(t, "elsewhere"), os.path.join(b, "packs")); os.makedirs(os.path.join(t, "elsewhere", "keep"))
             ok(quiet(apply, "zz") and os.listdir(os.path.join(t, "elsewhere")) == ["keep"], "a link in the build copy cannot carry a pack's files out of it, nor prune outside it")
             os.remove(os.path.join(b, "packs")); shutil.rmtree(b)
+            # mold_v0-145: an engine pack (one of the mold's host packs) and a config pack naming it (engine.pack).
+            eng = R["host_packs"][0]
+            ef = os.path.join(t, "packs", eng, "files", "packs", eng); os.makedirs(ef)
+            json.dump({"pack_id": eng, "name": "Engine", "description": "d", "mold_id": "mold_t"}, open(os.path.join(t, "packs", eng, "pack.json"), "w"))
+            open(os.path.join(ef, "pack.json"), "w").write("{}\n"); open(os.path.join(ef, "host.ts"), "w").write("export default {};\n")
+            cf = os.path.join(t, "packs", "brand", "files", "packs", "brand"); os.makedirs(cf)
+            json.dump({"pack_id": "brand", "name": "Brand", "description": "d", "mold_id": "mold_t"}, open(os.path.join(t, "packs", "brand", "pack.json"), "w"))
+            json.dump({"id": "brand", "engine": {"pack": eng, "migrations_recorded_as": "brand", "config": {}}}, open(os.path.join(cf, "pack.json"), "w"))
+            ok(check_pack("brand", rules=rules_for("mold_t")) == [] and check_pack(eng, rules=rules_for("mold_t")) == [], "a config pack naming the engine, and the engine with its code: each checks")
+            app(["brand"]); e_ = []
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                try: apply("zz")
+                except SystemExit as x: e_ = [x.code, err.getvalue()]
+            ok(e_ and e_[0] not in (0, None) and f"name {eng} in the app's packs too" in e_[1] and not os.path.exists(b), f"an app naming the config pack alone: refused before anything is copied ({e_})")
+            app(["brand", eng]); ok(quiet(apply, "zz") == 0 and reg() == json.dumps(sorted(["brand", eng])).replace(" ", "") and pj().get("host_packs") == [eng],
+                                    "both named: both applied, the engine the build's host pack")
+            json.dump({"id": "brand", "engine": {"pack": "notes", "config": {}}}, open(os.path.join(cf, "pack.json"), "w"))
+            ok(any("not one of mold_t's host packs" in e for e in check_pack("brand", rules=rules_for("mold_t"))), "a config pack whose engine is not a host pack of the mold: refused")
+            json.dump({"id": "brand", "engine": {"pack": "ghost", "config": {}}}, open(os.path.join(cf, "pack.json"), "w"))
+            ok(any("not one of mold_t's host packs" in e for e in check_pack("brand", rules=dict(rules_for("mold_t"), host_packs=["ghost"])) ) is False
+               and any("no packs/ghost/pack.json" in e for e in check_pack("brand", rules=dict(rules_for("mold_t"), host_packs=["ghost"]))), "an engine that is not here: refused")
+            shutil.rmtree(os.path.join(t, "packs", "brand")); shutil.rmtree(os.path.join(t, "packs", eng)); shutil.rmtree(b); app(["notes"])
             ok(quiet(lane_copies, "zz") == 0 and reg(os.path.join(t, "build", "zz.lane")) == '["notes"]' and reg(os.path.join(t, "build", "zz.lane-default")) == '["notes"]',
                "lane-copy: both lane copies carry the packs (a mold with no deployment profiles has no other default)")
             ok(sorted(os.listdir(os.path.join(cb, "packs"))) == ["README.md"] and sorted(os.listdir(cb)) == [".env", "node_modules", "orchestrator", "packs", "scripts", "web"],

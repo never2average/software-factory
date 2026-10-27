@@ -34,6 +34,12 @@ export { withTip } from "./tips.js";
 // own reports by use case (none when the component is off).
 export { listTemplates as journeyTemplates } from "./journeys.js";
 
+// ---------- the environment and persisted setting keys (src/env-names.ts; mold_v0-145) ----------
+// The shell's environment names (APP_X), each read with its spelling before mold_v0-045 as the fallback, and a setting's
+// persisted key (that spelling, as the shell's own settings keep theirs): an engine pack names its settings this way,
+// never with a product's word.
+export { ENV as env, persistedKey } from "./env-names.js";
+
 // ---------- database, tenancy, sign-in ----------
 export { getDb, type Queryable } from "./db.js";
 export { asPlatform, withTenant } from "./tenant-scope.js";
@@ -56,7 +62,8 @@ export { freshSettings, listSettings, setSettings, settingGroups, settingNumber,
 export { capture, keepAlive, orgEvent, span } from "./telemetry.js";
 export { errorClass, jsonBytes, recordMcpEvent, recordPageAction } from "./analytics.js";
 export { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
-export { PROFILE } from "./profile.js";
+// The build's namespace (the MCP server name as a key: src/namespace.ts), for a host pack's own ids in it (mold_v0-145).
+export { PROFILE, profileNamespace } from "./profile.js";
 export { limitsFor } from "./rate-limits.js";
 
 // ---------- the customer MCP server's shared result shaping (src/server.ts) ----------
