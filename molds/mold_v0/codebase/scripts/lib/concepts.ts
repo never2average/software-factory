@@ -37,7 +37,8 @@ function loadTs(root: string): Ts {
   throw new Error("the concept check parses with the TypeScript compiler API: run npm --prefix web ci");
 }
 
-const SQL = /\b(SELECT|INSERT INTO|UPDATE|DELETE FROM|WITH|FROM|JOIN|WHERE|GROUP BY|ORDER BY|RETURNING|CASE|WHEN|THEN)\b|\/\* tenant:/;
+// A catalog definition is SQL too (mold_v0-143: src/migrate.ts ADOPTING_MIGRATIONS' shapes, pg_get_constraintdef and pg_indexes text).
+const SQL = /\b(SELECT|INSERT INTO|UPDATE|DELETE FROM|WITH|FROM|JOIN|WHERE|GROUP BY|ORDER BY|RETURNING|CASE|WHEN|THEN|UNIQUE|PRIMARY KEY|FOREIGN KEY|CREATE (UNIQUE )?INDEX)\b|\/\* tenant:/;
 const ONE_TOKEN = /^[A-Za-z0-9_\-./:$#@[\]{}<>*]+$/;
 
 /** The concept words found as prose in one piece of text. */

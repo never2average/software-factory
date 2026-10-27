@@ -21,6 +21,7 @@ import { findAppPage, findPackPage } from '../features/packs/registry';
 import { findRecordArea } from '../features/records/registry';
 import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
+import { journeysOn, tipsOn } from '../features/journeys/config';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -59,6 +60,9 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   '/app/keys': () => (profile as Readonly<Record<string, unknown>>).member_keys !== false,
   '/privacy': () => !!legal,
   '/terms': () => !!legal,
+  // The journeys and in-chat tips components' pages (mold_v0-143): only where a pack turns them on.
+  '/app/journeys': () => journeysOn(),
+  '/admin/journeys': () => journeysOn() || tipsOn(),
 };
 
 /**

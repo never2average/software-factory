@@ -110,6 +110,14 @@ export interface HostDefinition {
   context?: {
     subjects(orgId: number): Promise<{ id?: number | string; slug: string; name: string }[]>;
   };
+  /**
+   * The journeys component (mold_v0-143; src/journeys.ts, pack.json `journeys`): the values a stage's placeholders read
+   * for one account (`{product}`, `{competitor}`: whatever names the pack's templates use), filled into each stage's
+   * prompt, why and expected result when a customer sees it. Without the hook placeholders are shown as written.
+   */
+  journeys?: {
+    values(orgId: number): Promise<Record<string, string>>;
+  };
   /** The session engine (src/worker.ts, the autoscaler): the shell's, over the host pack's own tables (mold_v0-049; src/host-tables.ts). */
   sessions?: {
     /** After a session completes: score it (a verdict for the product's reports). */
@@ -176,7 +184,49 @@ export interface PackConfig {
   error_hints?: { match: string; text: string }[];
   account_stages?: AccountStagesConfig;
   memory?: MemoryConfig;
+  journeys?: JourneysConfig;
+  tips?: TipsConfig;
   texts?: Partial<Record<import("./shell-texts.js").ShellTextId, string>>;
+}
+/**
+ * The journeys component (mold_v0-143; src/journeys.ts): pack.json `journeys`, one pack's per build, which turns it on.
+ * `templates`: the built-in journeys, seeded once each (through the journey_seed ledger) and promoted; `seeded_before_ledger`:
+ * the ids a database that has templates but no ledger had seeded already (an admin may have deleted them since);
+ * `launch`: the tools (and Setup workflow groups) that start work, whose prompts a viewer sees the Setup page's viewer
+ * note in place of; `words`: its texts (src/journeys-words.ts JOURNEY_WORDS, JOURNEY_WEB_WORDS); `labels`: its tables'
+ * names on the Storage page.
+ */
+export interface JourneysConfig {
+  templates?: JourneyTemplate[];
+  seeded_before_ledger?: string[];
+  launch?: { tools?: string[]; groups?: string[] };
+  words?: Partial<Record<import("./journeys-words.js").JourneyWord | import("./journeys-words.js").JourneyWebWord, string>>;
+  labels?: Partial<Record<(typeof import("./journeys-words.js").JOURNEY_TABLES)[number], string>>;
+}
+/** One stage of a journey: the prompt to type, the tools that complete it (none: marked by hand), what the person sees. */
+export interface JourneyStage {
+  id: string; title: string; why: string; prompt: string; tools: string[]; expect: string; manual?: boolean;
+  /** The /app page that does the same as the stage's tools (its actions count the same; src/analytics.ts recordPageAction). */
+  link?: { href: string; label: string };
+}
+export interface JourneyTemplate { id: string; name: string; outcome: string; who: string; time: string; example: { title: string; result: string }; stages: JourneyStage[] }
+/**
+ * The in-chat tips component (mold_v0-143; src/tips.ts): pack.json `tips`, one pack's per build, which turns it on.
+ * `always_after`: the tools whose answer always carries the waiting tip (the one-a-day interval does not hold them back);
+ * `interval_hours`: hours between two in-chat tips for one person (APP_NUDGE_INTERVAL_HOURS wins); `recipes`: the
+ * sequences to build in the workflow tool, shown on /admin with ready-to-paste webhook bodies; `words` (src/journeys-words.ts
+ * TIP_WORDS, TIP_WEB_WORDS) and `labels` as for journeys.
+ */
+export interface TipsConfig {
+  always_after?: string[];
+  interval_hours?: number;
+  recipes?: TipRecipe[];
+  words?: Partial<Record<import("./journeys-words.js").TipWord | import("./journeys-words.js").TipWebWord, string>>;
+  labels?: Partial<Record<(typeof import("./journeys-words.js").TIP_TABLES)[number], string>>;
+}
+export interface TipRecipe {
+  id: string; name: string; goal: string; trigger: string;
+  steps: { step: string; when: string; channels: string[]; message: string; prompt?: string; link?: string }[];
 }
 /**
  * The account context and memory component (mold_v0-142; src/account-context.ts): pack.json `memory`, one pack's per
@@ -277,6 +327,10 @@ export const setupConfig = (): SetupConfig => packConfigs().find((c) => c.setup)
 export const setupWorkflow = (): readonly { id: string; label: string; tools: readonly string[]; prompt: string }[] => setupConfig().workflow ?? [];
 /** The account context and memory component's config (mold_v0-142: the one pack.json `memory` of the build), else null: off. */
 export const memoryConfig = (): MemoryConfig | null => packConfigs().find((c) => c.memory)?.memory ?? null;
+/** The journeys component's config (mold_v0-143: the one pack.json `journeys` of the build), else null: off. */
+export const journeysConfig = (): JourneysConfig | null => packConfigs().find((c) => c.journeys)?.journeys ?? null;
+/** The in-chat tips component's config (mold_v0-143: the one pack.json `tips` of the build), else null: off. */
+export const tipsConfig = (): TipsConfig | null => packConfigs().find((c) => c.tips)?.tips ?? null;
 /** Every pack's pack.json mcp.error_hints (mold_v0-140), in pack order: the first whose pattern (any case) a tool error matches gives its fix. */
 export const errorHints = (): readonly { match: string; text: string }[] => packConfigs().flatMap((c) => c.error_hints ?? []);
 /** Tests only: the packs' server config as a build would carry it. */
