@@ -241,7 +241,7 @@ try {
   await mc.close();
   // The Storage page names the tables by the fixture's labels (and the rest by their stored names).
   const { storageReport } = await import("../src/spend-usage.js");
-  const labels = Object.fromEntries((await storageReport({})).tables.map((x: { name: string; label: string }) => [x.name, x.label]));
+  const labels = Object.fromEntries((await storageReport({})).tables.map((x: { name: string; label?: string }) => [x.name, x.label]));
   assert.equal(labels.journey_templates, "Pipelines");
   assert.equal(labels.nudges, "Tip queue");
   assert.equal(labels.nudge_prefs, "Nudge prefs");
