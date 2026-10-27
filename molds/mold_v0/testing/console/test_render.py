@@ -133,6 +133,17 @@ class CacheStore(unittest.TestCase):
         w = self.built()
         write(os.path.join(w, ".next", "routes-manifest.json"), "http://127.0.0.1:41000 http://127.0.0.1:41000")
         self.assertFalse(cache.patch_port(os.path.join(w, ".next"), 41000, 2))
+        write(os.path.join(w, ".next", "routes-manifest.json"), '"http://127.0.0.1:41000/:path*" "http://127.0.0.1:410001/x"')
+        self.assertFalse(cache.patch_port(os.path.join(w, ".next"), 41000, 2), "another port that starts with the same digits")
+
+    def test_patch_takes_every_api_rewrite(self):
+        w = self.built()
+        write(os.path.join(w, ".next", "routes-manifest.json"),
+              '{"r":["http://127.0.0.1:41000/:path*","http://127.0.0.1:41000/admin/mcp","http://127.0.0.1:41000/admin/session"]}')
+        nd = os.path.join(w, ".next")
+        self.assertTrue(cache.patch_port(nd, 41000, 43210))
+        m = open(os.path.join(nd, "routes-manifest.json")).read()
+        self.assertEqual((m.count("127.0.0.1:43210/"), m.count("41000")), (3, 0))
 
     def test_an_unfinished_entry_is_no_entry(self):
         os.makedirs(os.path.join(cache.entry(self.root, "k2"), "web"))
