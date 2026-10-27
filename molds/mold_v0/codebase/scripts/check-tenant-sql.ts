@@ -30,7 +30,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-014 a workspace's GitHub App installation, installs in flight, the tokens minted for its runs
   "workspace_github_installations", "run_github_app_tokens",
   // Sign-ins in flight (any kind), OAuth connections and the access tokens runs received (mold_v0-014, 0023).
-  "oauth_states", "workspace_oauth_connections", "run_oauth_tokens"];
+  "oauth_states", "workspace_oauth_connections", "run_oauth_tokens",
+  // mold_v0-036 on-premises runners and a workspace's runner location
+  "onprem_runners", "workspace_runner_settings"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

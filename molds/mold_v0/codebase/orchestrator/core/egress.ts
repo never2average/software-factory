@@ -52,6 +52,71 @@ export function egressPolicy(opts: { gatewayUrls: string[]; repoUrl?: string | n
 
 const isIpLiteral = (h: string) => /^[\d.]+$/.test(h) || h.includes(":");
 
+/**
+ * A private host or network an on-premises runner's owner lets its runs reach (mold_v0-036; src/onprem-runner.ts
+ * APP_RUNNER_ALLOW). Only a run of a kind that needs the private network, carried out by that runner, gets these: the
+ * hosted app never sends one (it is read from the runner's own environment), so the customer alone decides what their
+ * network exposes.
+ *   name    a host name, exactly (`vault.corp.example`), or with every subdomain (`*.corp.example`): reached by name
+ *           through the proxy (CONNECT, or the transparent path on 443) and answered by the run's DNS responder, at
+ *           whatever private address it resolves to on the customer's network
+ *   cidr    an IPv4 network (`10.20.0.0/16`, or one address): reached by address through the proxy (CONNECT) only
+ *   ports   the ports allowed (443 when none is given)
+ * Never, whatever is listed: loopback, link-local (the cloud metadata address), unspecified, multicast or broadcast.
+ */
+export interface PrivateAllow { name?: string; suffix?: boolean; cidr?: string; ports: number[] }
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+const NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const ipNum = (ip: string) => ip.split(".").reduce((n, x) => n * 256 + Number(x), 0);
+/** An address no allow list ever opens (as the proxy's never()). */
+export function neverReached(ip: string): boolean {
+  if (!IPV4.test(ip)) return true;
+  const [a, b] = ip.split(".").map(Number) as [number, number];
+  return a === 0 || a === 127 || (a === 169 && b === 254) || a >= 224;
+}
+
+/**
+ * Parse an allow list as an operator writes it: entries separated by commas or white space, each `<name or network>`
+ * with an optional `:<port>[|<port>...]`. Throws, naming the entry, on anything it does not take.
+ *   vault.corp.example   *.corp.example:443|8443   10.20.0.0/16:6443   192.168.1.10
+ */
+export function parsePrivateAllow(text: string | undefined | null): PrivateAllow[] {
+  const out: PrivateAllow[] = [];
+  for (const raw of String(text ?? "").split(/[\s,]+/).filter(Boolean)) {
+    const bad = (why: string) => new Error(`allow list entry ${JSON.stringify(raw.slice(0, 80))}: ${why}`);
+    const at = raw.lastIndexOf(":");
+    const target = (at > 0 ? raw.slice(0, at) : raw).toLowerCase();
+    const portText = at > 0 ? raw.slice(at + 1) : "";
+    const ports = portText ? portText.split("|").map((p) => (/^\d{1,5}$/.test(p) ? Number(p) : NaN)) : [443];
+    if (!ports.length || ports.some((p) => !(p >= 1 && p <= 65535))) throw bad("ports are numbers from 1 to 65535, separated by |");
+    const m = /^(\d+\.\d+\.\d+\.\d+)(?:\/(\d{1,2}))?$/.exec(target);
+    if (m) {
+      const ip = m[1]!, bits = m[2] === undefined ? 32 : Number(m[2]);
+      if (!IPV4.test(ip) || bits > 32) throw bad("not an IPv4 address or network");
+      if (bits < 8) throw bad("a network is at most a /8");
+      const size = 2 ** (32 - bits), first = ipNum(ip) - (ipNum(ip) % size);
+      const firstIp = [24, 16, 8, 0].map((s) => Math.floor(first / 2 ** s) % 256).join(".");
+      const lastIp = [24, 16, 8, 0].map((s) => Math.floor((first + size - 1) / 2 ** s) % 256).join(".");
+      if (neverReached(firstIp) || neverReached(lastIp)) throw bad("loopback, link-local (metadata), multicast and reserved addresses are never reached");
+      out.push({ cidr: `${firstIp}/${bits}`, ports: [...new Set(ports)].sort((x, y) => x - y) });
+      continue;
+    }
+    if (target.includes(":") || target.includes("[")) throw bad("IPv6 is not supported (IPv4 networks and host names only)");
+    const suffix = target.startsWith("*.");
+    const name = suffix ? target.slice(2) : target;
+    if (!NAME.test(name) || /^[\d.]+$/.test(name)) throw bad("not a host name, an IPv4 address or an IPv4 network");
+    if (name === "localhost" || name.endsWith(".localhost")) throw bad("loopback is never reached");
+    if (suffix && !name.includes(".")) throw bad("a wildcard needs a domain of at least two labels (*.corp.example)");
+    out.push({ name, ...(suffix ? { suffix: true } : {}), ports: [...new Set(ports)].sort((x, y) => x - y) });
+  }
+  if (out.length > 100) throw new Error("an allow list has at most 100 entries");
+  return out;
+}
+/** An allow list as one line per entry, for logs and the console. */
+export const privateAllowText = (list: PrivateAllow[]) =>
+  list.map((e) => `${e.cidr ?? (e.suffix ? `*.${e.name}` : e.name)}${e.ports.length === 1 && e.ports[0] === 443 ? "" : `:${e.ports.join("|")}`}`);
+
 /** Environment for the agent's processes so HTTP clients use the proxy (Node needs NODE_USE_ENV_PROXY for fetch). */
 export function proxyEnv(): Record<string, string> {
   const p = `http://127.0.0.1:${EGRESS_PROXY_PORT}`;
@@ -90,18 +155,39 @@ function blocked(ip) {
   return true;
 }
 const listed = (h) => exact.has(h) || allow.some((b) => h === b || h.endsWith("." + b));
+// An on-premises runner's private hosts and networks (mold_v0-036, parsePrivateAllow): names at any private address but
+// those never() allows, networks by address through CONNECT only, each on its own ports. None on a hosted run.
+const priv = Array.isArray(cfg.private) ? cfg.private : [];
+function never(ip) {
+  if (!net.isIPv4(ip)) return true;
+  const [a, b] = ip.split(".").map(Number);
+  return a === 0 || a === 127 || (a === 169 && b === 254) || a >= 224;
+}
+const ipNum = (ip) => ip.split(".").reduce((n, x) => n * 256 + Number(x), 0);
+const inCidr = (ip, cidr) => { const [base, bits] = cidr.split("/"); const size = 2 ** (32 - Number(bits)); return Math.floor(ipNum(ip) / size) === Math.floor(ipNum(base) / size); };
+const privNamed = (h) => priv.filter((e) => e.name && (h === e.name || (e.suffix && h.endsWith("." + e.name))));
+const privName = (h, port) => privNamed(h).some((e) => e.ports.includes(port));
+const privIp = (ip, port) => net.isIPv4(ip) && !never(ip) && priv.some((e) => e.cidr && inCidr(ip, e.cidr) && e.ports.includes(port));
+/** The addresses a connection to host may go to: public ones for a listed host on 443, private ones for a private name. */
+const usable = (addrs, pub, pn) => addrs.filter((a) => (pub && !blocked(a.address)) || (pn && !never(a.address)));
 const srv = http.createServer((req, res) => { log({ deny: String(req.url).slice(0, 200), why: "plain http" }); res.writeHead(403); res.end("egress: HTTPS via CONNECT only\\n"); });
 srv.on("connect", async (req, sock, head) => {
   const deny = (why) => { log({ deny: String(req.url).slice(0, 200), why }); sock.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n"); };
   const m = /^([A-Za-z0-9.-]+):(\\d+)$/.exec(req.url || "");
   if (!m) return deny("bad or IP-literal target");
   const host = m[1].toLowerCase(), port = Number(m[2]);
-  if (port !== 443) return deny("port " + port);
-  if (/^[\\d.]+$/.test(host)) return deny("IP literal");
-  if (!listed(host)) return deny("host not allowed");
-  let addrs;
-  try { addrs = await dns.lookup(host, { all: true }); } catch { return deny("dns"); }
-  const good = addrs.filter((a) => !blocked(a.address));
+  let good;
+  if (/^[\\d.]+$/.test(host)) {
+    // An address only inside one of an on-premises runner's private networks, on one of its ports.
+    if (!privIp(host, port)) return deny("IP literal");
+    good = [{ address: host }];
+  } else {
+    const pub = port === 443 && listed(host), pn = privName(host, port);
+    if (!pub && !pn) return deny(port !== 443 && !privNamed(host).length ? "port " + port : "host not allowed");
+    let addrs;
+    try { addrs = await dns.lookup(host, { all: true }); } catch { return deny("dns"); }
+    good = usable(addrs, pub, pn);
+  }
   if (!good.length) return deny("private or reserved address");
   const up = net.connect(port, good[0].address, () => {
     sock.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
@@ -152,9 +238,10 @@ const tsrv = net.createServer((sock) => {
     const deny = (why) => { log({ deny: host || "transparent", why }); sock.destroy(); };
     if (!host) return deny("no SNI");
     if (/^[\\d.]+$/.test(host) || host.includes(":")) return deny("IP literal");
-    if (!listed(host)) return deny("host not allowed");
+    const pub = listed(host), pn = privName(host, 443);
+    if (!pub && !pn) return deny("host not allowed");
     let addrs; try { addrs = await dns.lookup(host, { all: true }); } catch { return deny("dns"); }
-    const good = addrs.filter((a) => !blocked(a.address));
+    const good = usable(addrs, pub, pn);
     if (!good.length) return deny("private or reserved address");
     const up = net.connect(443, good[0].address, () => { up.write(buf); up.pipe(sock); sock.pipe(up); sock.resume(); log({ allow: host, mode: "transparent" }); });
     up.on("error", () => sock.destroy()); sock.on("error", () => up.destroy());
@@ -178,10 +265,11 @@ udp.on("message", async (q, rinfo) => {
   const question = q.slice(12, qEnd);
   let answers = [];
   let rcode = 3;
-  if (listed(name)) {
+  const pubName = listed(name), privateName = privNamed(name).length > 0;
+  if (pubName || privateName) {
     rcode = 0;
     if (qtype === 1) {
-      try { answers = (await dns.lookup(name, { all: true, family: 4 })).map((a) => a.address).filter((a) => !blocked(a)); } catch {}
+      try { answers = usable(await dns.lookup(name, { all: true, family: 4 }), pubName, privateName).map((a) => a.address); } catch {}
       if (!answers.length) rcode = 2;
     }
   }

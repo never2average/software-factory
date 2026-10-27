@@ -16,6 +16,8 @@ import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/por
 import { httpError } from '@/features/status/from-error';
 import { GithubAppSection } from './github-app-section';
 import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
+import { RunnersSection } from './runners-section';
+import { onPremRunners } from '@/config/pack-nav.generated';
 
 interface Field {
   pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
@@ -49,8 +51,10 @@ export function CredentialsPage() {
   useOAuthOutcome();
   return (
     <PageContainer pageTitle='Credentials' pageDescription='Keys and tokens your runs use to reach your own systems. Stored encrypted; only the last 4 characters are ever shown again.'>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : !data.fields.length ? (
-        <p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>
+      {/* mold_v0-036: where runs that need the workspace's own network go (null when no kind needs it). */}
+      {onPremRunners && <div className='mb-10'><RunnersSection /></div>}
+      {error && !(onPremRunners && (error as { status?: number }).status === 404) ? <ErrorState error={error} /> : !data ? (error ? null : <LoadingCards count={2} />) : !data.fields.length ? (
+        onPremRunners ? null : <p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>
       ) : (
         <div className='flex flex-col gap-10'>
           <GithubAppSection />

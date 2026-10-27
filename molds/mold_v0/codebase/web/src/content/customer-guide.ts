@@ -7,7 +7,7 @@
 // (scripts/sync-docs-corpus.ts -> src/docs-corpus.generated.json) reads the same text. The tool catalog
 // (mcp-tools.generated.json) and the profile's name are passed in, so neither side needs a JSON import here.
 import { slugify } from './docs-text';
-import { HOST_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
+import { HOST_GUIDE, ONPREM_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
 import { packGuide, PROMPTS_INTRO, type PackGuideData } from './pack-guide';
 import { profile } from '../config/profile.generated';
 import { fill } from '../lib/vocabulary';
@@ -110,9 +110,43 @@ const packGroups = packs ? packGuide(packs, { tools: [], prompts: [] }, { connec
 /** The left navigation's groups, by section title. A section no group names lands in "More". */
 export const PAGE_GROUPS: [string, string[]][] = host ? hostPages(host, { tools: [], prompts: [] }).groups : packGroups ?? SHELL_GROUPS;
 
+/**
+ * The on-premises runner (mold_v0-036; docs/on-premises-runner.md for the whole of it): a page of its own, in "More",
+ * when a kind of the build may need a workspace's private network. Every other build's guide is as it was.
+ */
+const ONPREM_PAGE: GuidePage = {
+  slug: 'on-premises-runner', title: 'On-premises runner', group: 'More',
+  body: `Some runs need to reach systems inside your own network: hosts that are not on the internet. For those, install a
+small runner inside your network. It connects out to this ${fill('{workspace}')}'s app over HTTPS and asks for work: nothing
+connects in to your network, and you open no port.
+
+## What it does
+
+- It takes only this ${fill('{workspace}')}'s runs, and only the runs that need your network. Every other run stays hosted.
+- Each run gets a sandbox of its own on your machine, locked down as a hosted run is: it reaches the app, the hosts its
+  kind needs, and only the private hosts and networks you allow.
+- Its credential is kept on your machine; you can revoke the runner at any time from **Credentials**, and it stops at once.
+
+## Install it
+
+1. On **Credentials**, under **On-premises runner**, type a name and press **Add a runner**. Copy the command it shows:
+   its token works once and is not shown again.
+2. On a Linux machine inside your network with Docker, paste the command. Replace the example in \`APP_RUNNER_ALLOW\`
+   with what runs may reach, separated by spaces: a host (\`vault.corp.example\`), every host under a domain
+   (\`*.corp.example\`), or a network (\`10.20.0.0/16\`), each with \`:port\` when it is not 443 (\`:443|6443\` for two).
+3. Within a minute the runner shows **Online**. Press **Run them on premises**.
+
+## Health and revoking
+
+**Credentials** shows each runner's status, when it was last seen, how many runs it is carrying out and the private
+hosts it allows. **Revoke** stops it at once: the runs it was carrying out go back to the queue, and the runner removes
+its sandboxes and stops. **Run them hosted** sends these runs back to the hosted runners.`,
+};
+
 /** The guide cut at its `## ` headings, one page each; a page's `### ` subsections become its `## ` sections. */
 export function guidePages(catalog: ToolCatalog): GuidePage[] {
-  if (host) return hostPages(host, catalog).pages;
-  if (packs) return packGuide(packs, catalog, { connect: connectText, account: ACCOUNT_TEXT }).pages;
-  return pagesOf(shellMarkdown(catalog), SHELL_GROUPS);
+  const extra = ONPREM_GUIDE ? [ONPREM_PAGE] : [];
+  if (host) return [...hostPages(host, catalog).pages, ...extra];
+  if (packs) return [...packGuide(packs, catalog, { connect: connectText, account: ACCOUNT_TEXT }).pages, ...extra];
+  return [...pagesOf(shellMarkdown(catalog), SHELL_GROUPS), ...extra];
 }

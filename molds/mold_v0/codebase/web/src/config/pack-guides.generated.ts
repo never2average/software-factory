@@ -10,3 +10,6 @@ export const HOST_GUIDE: unknown = null;
  * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.
  */
 export const PACK_GUIDE: unknown = null;
+
+/** Whether a kind may need a workspace's private network (mold_v0-036): the guide then has its On-premises runner page. */
+export const ONPREM_GUIDE = false;

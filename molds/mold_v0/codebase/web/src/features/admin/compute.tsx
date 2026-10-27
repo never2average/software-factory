@@ -37,6 +37,8 @@ import { ComputeOrchestrators } from './compute-orchestrators';
 import { ComputeFailures, type Failures } from './compute-failures';
 import { AdminEmails } from './emails';
 import { ComputeDecisions, type Tick } from './compute-decisions';
+import { ComputeRunners } from './compute-runners';
+import { onPremRunners } from '@/config/pack-nav.generated';
 
 interface Setting {
   key: string; group: string; label: string; help: string; kind: 'text' | 'int' | 'number' | 'choice'; default: string | number;
@@ -147,12 +149,15 @@ function ComputePage() {
         {tab === 'limits' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && <Limits s={s} onEditing={setEdit} />)}
         {tab === 'environment' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && <Environment s={s} onTest={() => void refresh()} testing={refreshing} />)}
         {tab === 'emails' && <AdminEmails embedded />}
+        {tab === 'runners' && onPremRunners && <ComputeRunners />}
       </div>
     </PageContainer>
   );
 }
 
-const TABS = [['orchestrators', 'Orchestrators'], ['failures', 'Failures'], ['decisions', 'Autoscaler decisions'], ['limits', 'Limits'], ['environment', 'Environment'], ['emails', 'Emails']] as const;
+// On-premises runners (mold_v0-036): a tab only in a build where a kind may need a workspace's private network.
+const TABS: readonly (readonly [string, string])[] = [['orchestrators', 'Orchestrators'], ['failures', 'Failures'], ['decisions', 'Autoscaler decisions'], ['limits', 'Limits'], ['environment', 'Environment'], ['emails', 'Emails'],
+  ...(onPremRunners ? [['runners', 'On-premises runners'] as const] : [])];
 
 /** Tells the page whether a record peek is open (?session, ?orch, ?job or ?tick), so the summary stops refreshing. */
 function PeekWatch({ onChange }: { onChange: (open: boolean) => void }) {

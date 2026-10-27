@@ -76,6 +76,10 @@ export const packOnboardingSteps = 0;
 /** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */
 export const repositoryCount = 0;
 
+/** Whether a kind of this build may need a workspace's private network (mold_v0-036): the Credentials page and the guide
+ * then show the on-premises runner. */
+export const onPremRunners = false;
+
 /** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */
 export const hiddenConsoleUrls: string[] = [];
 
