@@ -8,7 +8,8 @@
 //   pages  the console's pages: the shell's own (every page.tsx without a dynamic segment, /auth left out: Clerk's widget;
 //          /terms and /privacy only when the build serves them, mold_v0-109),
 //          a host pack's routes.json (app, admin, site), the account context pages when a pack turns them on
-//          (build-facts.generated.ts CONTEXT_MEMORY, mold_v0-142), a page the build declares (pack-routes.generated.json
+//          (build-facts.generated.ts CONTEXT_MEMORY, mold_v0-142), the journeys pages when a pack turns journeys or tips on
+//          (JOURNEYS, TIPS, mold_v0-143), a page the build declares (pack-routes.generated.json
 //          `declared`: the landing block's request_page), and a pack's tabs, pages and record areas from the generated
 //          registry (web/src/config/pack-nav.generated.ts)
 // Reads only: no database is opened and nothing is written.
@@ -48,6 +49,7 @@ function shellPages(lane: string): Page[] {
         if (route === "/auth" || route.startsWith("/auth/")) continue;  // Clerk's own widget: not rendered in the lane console
         if (route.startsWith("/console-status/")) continue;             // always a 404: graded as a status page below (mold_v0-131)
         if (!legalShown(lane, route)) continue;                          // a legal page the build does not serve itself (mold_v0-109)
+        if (route === "/app/journeys" || route === "/admin/journeys") continue; // the journeys and tips components' (below), only where on
         const signedIn = route === "/app" || route.startsWith("/app/") || route === "/admin" || route.startsWith("/admin/");
         out.push({ pack: "shell", path: route, label: route, signed_in: signedIn });
       }
@@ -95,6 +97,13 @@ export async function surface(laneArg: string): Promise<Surface> {
     const { memoryToolNames } = await imp(lane, "src/host.ts") as { memoryToolNames?: () => string[] };
     for (const t of memoryToolNames?.() ?? []) out.tools[t] = c.pack;
   }
+  // The journeys and tips components' pages (mold_v0-143: the shell's, turned on by a pack's pack.json journeys or tips,
+  // under that pack): /app/journeys with journeys, /admin/journeys with either.
+  const facts = existsSync(factsFile) ? readFileSync(factsFile, "utf8") : "";
+  const jf = /export const JOURNEYS = ([\s\S]*?);\n/.exec(facts), tf = /export const TIPS = ([\s\S]*?);\n/.exec(facts);
+  const jPack = jf ? (JSON.parse(jf[1]!) as { pack: string }).pack : null, tPack = tf ? (JSON.parse(tf[1]!) as { pack: string }).pack : null;
+  if (jPack) out.pages.push({ pack: jPack, path: "/app/journeys", label: "/app/journeys", signed_in: true });
+  if (jPack || tPack) out.pages.push({ pack: (jPack ?? tPack)!, path: "/admin/journeys", label: "/admin/journeys", signed_in: true });
   // A public page the build declares (mold_v0-138: the landing block's request_page), at its own path, under the pack
   // that declared it ("app" when the app's profile.json did).
   const routesFile = path.join(lane, "web", "src", "config", "pack-routes.generated.json");
