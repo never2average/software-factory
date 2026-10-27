@@ -14,6 +14,7 @@ import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
+import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
@@ -235,6 +236,10 @@ export function createApp() {
   app.use("/api/credential-connections", oauthRouter());
   // Per-company egress hosts (mold_v0-075): only when a kind takes them.
   app.use("/api/egress-hosts", egressHostAppRouter());
+  // On-premises runners (mold_v0-036): a workspace's own runners and its runner location, and the runners' own outbound
+  // protocol; only when a kind needs a workspace's private network.
+  app.use("/api/runners", onPremAppRouter());
+  app.use("/api/runner", onPremRunnerRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
@@ -720,6 +725,7 @@ export function createApp() {
   // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
   // declares a credential field that asks for one.
   githubAppAdminRoutes(ob, need, adminActor);
+  onPremAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });

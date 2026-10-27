@@ -27,7 +27,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import http from "node:http";
 import { hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +39,8 @@ import { keepAlive } from "./telemetry.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
+import { dockerApi, runContainerBody } from "./run-container.js";
+import { reapSilentRunners } from "./onprem-runners.js";
 import { boatNamespace, boatNamespaces } from "../orchestrator/core/boat-namespace.js";
 
 const env = ENV;
@@ -168,22 +169,6 @@ sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_
   };
 }
 
-/** The Docker Engine API over its unix socket (no client library). */
-function dockerApi(socketPath: string, method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
-  return new Promise((resolve, reject) => {
-    const data = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
-    const req = http.request({ socketPath, method, path: p, timeout: 60_000, headers: { host: "docker", ...(data ? { "content-type": "application/json", "content-length": String(data.length) } : {}) } }, (res) => {
-      let raw = "";
-      res.setEncoding("utf8").on("data", (c) => (raw += c)).on("end", () => {
-        let json: any = null; try { json = raw ? JSON.parse(raw) : null; } catch { json = { message: raw.slice(0, 300) }; }
-        resolve({ status: res.statusCode ?? 0, json });
-      });
-    });
-    req.on("timeout", () => req.destroy(new Error(`docker ${method} ${p}: timed out`)));
-    req.on("error", reject);
-    req.end(data);
-  });
-}
 const DOCKER_LABEL = `org.${NS}.run-sandbox`;
 /** This deployment's namespace (orchestrator/core/boat-namespace.ts), as the orchestrators' sandboxes are named. */
 const namespace = boatNamespace;
@@ -225,20 +210,10 @@ export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider
     async launch(spec, onCreated) {
       let step = "create", id = "";
       try {
-        const c = await call("POST", `/containers/create?name=${encodeURIComponent(spec.name)}`, {
-          Image: image, User: "0", WorkingDir: "/app",
-          // The container's own deadline (it has no provider TTL): killed past it, whatever the scaler does.
-          Cmd: ["timeout", "-s", "KILL", String(Math.max(60, Math.round(spec.ttlSeconds))), "node", "--import", "tsx", "src/run-sandbox-runner.ts"],
-          Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
-          Labels: { [DOCKER_LABEL]: ns, [`org.${NS}.run-id`]: spec.runId, [`org.${NS}.run-sandbox-row`]: String(spec.rowId) },
-          HostConfig: {
-            NetworkMode: network, Init: true, AutoRemove: false, RestartPolicy: { Name: "no" },
-            CapDrop: ["ALL"], CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL"],
-            SecurityOpt: ["no-new-privileges"], Binds: [], Privileged: false,
-            Memory: Math.round(num(env.APP_RUN_MEMORY_MB, 2048) * 1024 * 1024), NanoCpus: Math.round(num(env.APP_RUN_CPUS, 1) * 1e9),
-            PidsLimit: num(env.APP_RUN_PIDS, 1024), LogConfig: { Type: "json-file", Config: { "max-size": "10m", "max-file": "2" } },
-          },
-        });
+        const c = await call("POST", `/containers/create?name=${encodeURIComponent(spec.name)}`, runContainerBody({
+          image, network, env: spec.env, ttlSeconds: spec.ttlSeconds,
+          labels: { [DOCKER_LABEL]: ns, [`org.${NS}.run-id`]: spec.runId, [`org.${NS}.run-sandbox-row`]: String(spec.rowId) },
+        }));
         if (c.status !== 201) throw new Error(`docker create: ${c.status} ${c.json?.message ?? ""}`);
         id = String(c.json.Id);
         step = "name";
@@ -357,9 +332,16 @@ export async function resolveRunProvider(): Promise<{ provider: RunSandboxProvid
 /** A run sandbox's claim: its own run, once, as "sbx-<row>". Null (and the sandbox torn down) when it cannot be claimed. */
 export async function claimForSandbox(runId: string, rowId: number): Promise<Claim | null> {
   const db = await getDb();
-  const [row] = await db.query<{ id: number }>(
-    "UPDATE run_sandboxes SET claimed_at = now() WHERE id = $1 AND run_id = $2 AND claimed_at IS NULL AND state IN ('booting', 'running') RETURNING id", [rowId, runId]);
+  const [row] = await db.query<{ id: number; provider: string }>(
+    "UPDATE run_sandboxes SET claimed_at = now() WHERE id = $1 AND run_id = $2 AND claimed_at IS NULL AND state IN ('booting', 'running') RETURNING id, provider", [rowId, runId]);
   if (!row) throw Object.assign(new Error("this sandbox has already claimed its run, or was torn down"), { status: 409 });
+  // mold_v0-036: an on-premises runner's sandbox carries out only a run routed on premises, a hosted one only a hosted
+  // run (a run moved between the two after its sandbox was launched is left to a sandbox of its new place).
+  const [loc] = await db.query<{ runner_location: string }>("/* tenant: internal, the sandbox's own run by id */ SELECT runner_location FROM runs WHERE id = $1", [runId]);
+  if ((row.provider === "onprem") !== (loc?.runner_location === "on_premises")) {
+    await sandboxDone(rowId, "its run is routed to another runner location");
+    return null;
+  }
   const c = await claimRun(sandboxWorkerId(rowId), { runId });
   if (!c) await sandboxDone(rowId, "its run could not be claimed (taken, ended or not claimable now)");
   return c;
@@ -415,6 +397,8 @@ export class RunScaler {
     const st: RunTick = { provider: chosen.provider?.name ?? null, leader: false };
     // The autoscaler's kill switch stops run launches and deletes too, wherever this ticks (the runner service included).
     if ((env.APP_AUTOSCALE ?? "on").toLowerCase() === "off") { st.note = "APP_AUTOSCALE=off"; return st; }
+    // On-premises runners gone silent (mold_v0-036): their sandboxes' tokens go, wherever this ticks.
+    await reapSilentRunners().catch((e) => this.log(`on-premises runners: ${(e as Error).message}`));
     if (!chosen.provider) {
       // No sandbox here: nothing is launched and nothing runs unsandboxed. Unless another process (the runner service)
       // launches runs, each queued run says why it waits.
@@ -495,7 +479,8 @@ export class RunScaler {
       const queued = await queuedRunsByKind();
       const claimable = await claimableRuns();
       st.demand = { queued, claimable: claimable.length };
-      const live = await db.query<{ run_id: string }>("SELECT run_id FROM run_sandboxes WHERE state <> 'deleted'");
+      // On-premises runners' sandboxes (mold_v0-036, provider "onprem") are on customers' machines: not counted here.
+      const live = await db.query<{ run_id: string }>("SELECT run_id FROM run_sandboxes WHERE state <> 'deleted' AND provider <> 'onprem'");
       const served = new Set(live.map((r) => r.run_id));
       const free = await p.free().catch(() => 0);
       const cap = Math.max(0, Math.min(RUN_SANDBOXES.maxSandboxes(), live.length + (free ?? Infinity)));
