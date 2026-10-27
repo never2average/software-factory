@@ -16,11 +16,14 @@
  * With no `sections` the page is the whole wireframe, in that order, in the shell's neutral words.
  *
  *   hero            eyebrow, headline (default: the profile's tagline) and headline_highlight (in the primary colour),
- *                   subheadline, primary_cta (a link, or "account": sign in or open the console, with an arrow; default:
- *                   start, which is sign-up or a request for access), secondary_cta (none by default; only a call the
- *                   first screen already makes: FIRST SCREEN below), up to 3 more `links` {label, href} (the app's own:
- *                   its docs), note, a `visual` beside it, and a strip under it: text names in the logos' type
- *                   (`items`), named `logos`, or the logos of the AI clients offered
+ *                   subheadline, primary_cta (the page's one button: a link, or "account": sign in or open the console,
+ *                   with an arrow; default: "Get started" to the start, which is sign-up or a request for access, and
+ *                   into the console for someone signed in), note, a `visual` beside it, and a strip under it: text
+ *                   names in the logos' type (`items`), named `logos`, or the logos of the AI clients offered. Only
+ *                   with first_screen.calls 2 (FIRST SCREEN below): secondary_cta (a call the first screen already
+ *                   makes) and up to 3 more `links` {label, href}
+ *                   A logos section with no title right after it is drawn as its foot (mold_v0-165: no divider, no
+ *                   band of its own; the logos' `label` names the list for a screen reader)
  *   logos           a row of organisations' logos (mold_v0-164): a title and 1 to 40 items {name, logo, href}, where
  *                   `logo` is an image file of the pack's own (assets/<name>.svg or .png, at most 30 KB: gen-packs checks
  *                   it, copies it to the console's public files and writes its size, so the row never shifts) and the
@@ -37,10 +40,13 @@
  * Every section but hero and cta may carry `id` (its anchor, a slug), `nav_label` or `nav: false` (its entry in the
  * header's navigation, which lists the picked sections in order), `eyebrow`, `title`, `lead` and a `visual`, one of the
  * templates below (VISUALS: decision_graph, transcript, loop, paths, scorecard, chat). Beside `sections`:
- *   header          a link beside the ways in (none by default) and which ways in ("sign_in_and_start", the default:
- *                   "Sign in", and the start call only when the hero has no call of its own; or "account": one account
- *                   button); `sign_in` and `open` relabel or re-address the account button's two states (signed out: sign
- *                   in; signed in: into the console) wherever the page shows it
+ *   header          `sign_in` and `open` relabel or re-address the account's two states (signed out: sign in; signed
+ *                   in: into the console) wherever the page shows them. Only on a page that opted into two calls
+ *                   (first_screen below): a link beside the ways in, and which ways in ("sign_in_and_start", the
+ *                   default: "Sign in", and the start call only when the hero has no call of its own; or "account": one
+ *                   account button)
+ *   first_screen    (mold_v0-165) {calls: 1 | 2}: how many things the first screen asks for. 1, the default: the hero's
+ *                   one button and nothing else. 2: the mold_v0-164 page (the header's sign-in and one other)
  *   open_source     (mold_v0-164) the app's open-source repository, {repo: https://github.com/<owner>/<repo>, label}: a
  *                   GitHub button in the header on every width, and a footer link (`label`, default "Open source on
  *                   GitHub"). The components only an open-source app has are grouped here; an app without it has none
@@ -56,11 +62,16 @@
  *                   that also holds the name and the message, and what it says once sent, where {company} and {email}
  *                   are the sender's)
  *
- * THE FIRST SCREEN (mold_v0-164): the header and the hero ask for at most FIRST_SCREEN_CALLS (2) things: signing in
- * and one other (sign-up or a request for access, or the app's own). A call is where it leads, so the same one in the
- * header and in the hero counts once (an app may repeat it, as the first product's page does); the shell never repeats one
- * itself. A hero's second call or a header link that would add a third is refused with what to do instead (firstScreenProblems,
- * also run on the merged block by gen-packs). Other ways in (the install pages, docs) go in the footer or a later section.
+ * THE FIRST SCREEN (mold_v0-165): the header and the hero ask for FIRST_SCREEN_CALLS (1) thing: the hero's one button,
+ * "Get started" unless the block's primary_cta labels it, leading to the start (sign-up, or the request form while
+ * accounts are invite-only) and, for someone already signed in, into the console under the same label. The header asks
+ * for nothing: no sign-in, no start, no link (an open-source app's GitHub icon is not a call); signing in is in the
+ * footer and on the request form. A header link, the header's account button, a hero's second call or a hero link is
+ * refused with what to do instead (firstScreenProblems, also run on the merged block by gen-packs). A block may opt into
+ * the mold_v0-164 page with `first_screen: {calls: 2}`: at most two things, signing in and one other, where a call is
+ * where it leads, so the same one in the header and in the hero counts once (the first product's page repeats its two).
+ * Other ways in (the install pages, docs) go in the footer or a later section. A logos row with no title right under the
+ * hero is drawn as the hero's foot, not as a section of its own.
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
  * still read, and converted to sections (toSections) when gen-packs writes the build: hero (coverage becomes its strip),
@@ -115,7 +126,7 @@ const Footer = z.object({
  * console when signed in, with an arrow).
  */
 const Header = z.object({
-  links: z.array(Cta).max(1, "at most 1 link: the first screen asks for at most two things (sign in and one other)").optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
+  links: z.array(Cta).max(1, "at most 1 link: the first screen asks for at most two things (sign in and one other), and only with first_screen.calls 2").optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
   sign_in: Cta.optional(), open: Cta.optional(),
 }).strict();
 /**
@@ -127,6 +138,8 @@ const OpenSource = z.object({
   repo: z.string().regex(GITHUB_REPO, "a GitHub repository's address: https://github.com/<owner>/<repo>"),
   label: text(40).optional(),
 }).strict();
+/** How many things the first screen asks for (mold_v0-165): 1 (the default) or 2 (the mold_v0-164 page). */
+const FirstScreen = z.object({ calls: z.union([z.literal(1), z.literal(2)]) }).strict();
 /** Search results and link previews: a title, a description, and the X card's size (default the large image card). */
 const Seo = z.object({ title: text(70).optional(), description: text(320).optional(), card: z.enum(["summary", "summary_large_image"]).optional() }).strict();
 
@@ -150,11 +163,12 @@ const LegacySchema = z.object({
   closing: z.object({ title: text(120), body: text(300).optional(), primary_cta: Cta.optional(), secondary_cta: Cta.optional() }).strict().optional(),
   footer: Footer.optional(),
   seo: Seo.optional(),
+  first_screen: FirstScreen.optional(),
 }).strict();
 export type LegacyLanding = z.infer<typeof LegacySchema>;
 
 /** The old block's sections, in its page order (also the keys an old profile block replaced one by one). */
-export const LEGACY_SECTIONS = ["hero", "coverage", "value_points", "how_it_works", "features", "faq", "closing", "footer", "seo"] as const;
+export const LEGACY_SECTIONS = ["hero", "coverage", "value_points", "how_it_works", "features", "faq", "closing", "footer", "seo", "first_screen"] as const;
 /** The old block's keys that are sections (footer and seo stay beside `sections`). */
 const LEGACY_PAGE_KEYS = ["hero", "coverage", "value_points", "how_it_works", "features", "faq", "closing"] as const;
 
@@ -355,7 +369,7 @@ export type SectionOf<K extends SectionType> = z.infer<(typeof SECTION_SCHEMAS)[
 /** The block a build shows (what gen-packs writes): sections (absent: the whole wireframe, neutral), footer, seo. */
 export interface Landing {
   sections?: Section[]; header?: z.infer<typeof Header>; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo>;
-  request_page?: z.infer<typeof RequestPage>; open_source?: z.infer<typeof OpenSource>;
+  request_page?: z.infer<typeof RequestPage>; open_source?: z.infer<typeof OpenSource>; first_screen?: z.infer<typeof FirstScreen>;
 }
 
 /** Each section's anchor when it names none (a second call to action gets -2, a third -3). */
@@ -383,6 +397,7 @@ const NewSchema = z.object({
   seo: Seo.optional(),
   request_page: RequestPage.optional(),
   open_source: OpenSource.optional(),
+  first_screen: FirstScreen.optional(),
 }).strict();
 
 interface Issue { path: (string | number)[]; message: string }
@@ -428,20 +443,50 @@ function landingIssues(json: unknown): Issue[] {
   return out.length ? out : firstScreenIssues(o as Landing);
 }
 
-// ---------- the first screen (mold_v0-164) ----------
+// ---------- the first screen (mold_v0-164, mold_v0-165) ----------
 
-/** The first screen (the header and the hero) asks for at most this many things: signing in and one other. */
-export const FIRST_SCREEN_CALLS = 2;
+/** The first screen (the header and the hero) asks for this many things: the hero's one button (mold_v0-165). */
+export const FIRST_SCREEN_CALLS = 1;
+/** What a block may opt into with first_screen.calls (the mold_v0-164 page): signing in and one other. */
+export const FIRST_SCREEN_CALLS_MAX = 2;
+/** The hero's button's words when the block gives none (mold_v0-165). */
+export const START_LABEL = "Get started";
 /** Where the shell's own ways in lead (web/src/features/site/site-ctas.ts): signing in, and the start (sign-up, or the request form under invite-only accounts). */
 const SIGN_IN_PATHS = ["/app", "/auth/sign-in"];
-const START_PATHS = ["/auth/sign-up", "/request-access"];
+export const START_PATHS = ["/auth/sign-up", "/request-access"];
+
+/** How many things a block's first screen asks for: first_screen.calls, else FIRST_SCREEN_CALLS. */
+export const firstScreenCalls = (l: { first_screen?: { calls: number } } | null | undefined): number => l?.first_screen?.calls ?? FIRST_SCREEN_CALLS;
 
 function firstScreenIssues(l: Landing): Issue[] {
-  const signIn = new Set([...SIGN_IN_PATHS, ...(l.header?.sign_in ? [l.header.sign_in.href] : [])]);
-  const callOf = (href: string) => (signIn.has(href) ? "sign in" : START_PATHS.includes(href) ? "the start" : href);
   const sections = l.sections;
   const hero = sections === undefined ? ({ type: "hero" } as SectionOf<"hero">) : sections[0]?.type === "hero" ? (sections[0] as SectionOf<"hero">) : null;
   const at = sections === undefined ? [] : ["sections", 0];
+  const out: Issue[] = firstScreenCalls(l) === 1 ? singleCallIssues(l, hero, at) : twoCallIssues(l, hero, at, sections === undefined);
+  // An open-source app's repository is the header's GitHub button (and a footer link): not a hero link as well.
+  const repo = l.open_source?.repo.replace(/(\.git)?\/?$/, "").toLowerCase();
+  if (repo && hero?.links) hero.links.forEach((k, i) => {
+    if (k.href.replace(/(\.git)?\/?$/, "").toLowerCase() === repo) out.push({ path: [...at, "links", i], message: `${k.href} is open_source.repo, which the header's GitHub button links on every page (and the footer): take it out of the hero's links` });
+  });
+  return out;
+}
+
+/** The rule (mold_v0-165): one call to action on the first screen, the hero's button; nothing in the header asks for anything. */
+function singleCallIssues(l: Landing, hero: SectionOf<"hero"> | null, at: (string | number)[]): Issue[] {
+  const why = (what: string) => `the first screen (the header and the hero) asks for one thing, the hero's button (primary_cta, "${START_LABEL}" by default); ${what} adds another`;
+  const fix = "Put other ways in (signing in, an install page, docs) in the footer's links or a later section, or keep the two-call page (signing in and one other) with landing.first_screen: {\"calls\": 2}";
+  const out: Issue[] = [];
+  (l.header?.links ?? []).forEach((k, i) => out.push({ path: ["header", "links", i], message: `${why(`the header link "${k.label}"`)}. ${fix}` }));
+  if (l.header?.account === "account") out.push({ path: ["header", "account"], message: `${why("the header's account button")}. Leave header.account out (signing in is in the footer and on the request form). ${fix}` });
+  if (hero?.secondary_cta) out.push({ path: [...at, "secondary_cta"], message: `${why(`the hero's second call "${hero.secondary_cta.label}"`)}. ${fix}` });
+  (hero?.links ?? []).forEach((k, i) => out.push({ path: [...at, "links", i], message: `${why(`the hero link "${k.label}"`)}. ${fix}` }));
+  return out;
+}
+
+/** The mold_v0-164 page (first_screen.calls 2): at most two things, signing in and one other; a repeat counts once. */
+function twoCallIssues(l: Landing, hero: SectionOf<"hero"> | null, at: (string | number)[], wireframe: boolean): Issue[] {
+  const signIn = new Set([...SIGN_IN_PATHS, ...(l.header?.sign_in ? [l.header.sign_in.href] : [])]);
+  const callOf = (href: string) => (signIn.has(href) ? "sign in" : START_PATHS.includes(href) ? "the start" : href);
   // In the order a visitor reads them: the header's sign-in, its link, then the hero's calls. The shell's header shows
   // the start itself only when the page has no hero call (landing.tsx SiteHeader).
   const shown: { call: string; path: (string | number)[]; what: string }[] = [{ call: "sign in", path: ["header"], what: "the header's sign-in" }];
@@ -449,7 +494,7 @@ function firstScreenIssues(l: Landing): Issue[] {
   if (hero) {
     const p = hero.primary_cta;
     // The wireframe's hero (no sections) is the shell's: what pushes it over is the header's link.
-    shown.push({ call: p === "account" ? "sign in" : p ? callOf(p.href) : "the start", path: sections === undefined ? ["header", "links"] : [...at, "primary_cta"], what: "the hero's call to action" });
+    shown.push({ call: p === "account" ? "sign in" : p ? callOf(p.href) : "the start", path: wireframe ? ["header", "links"] : [...at, "primary_cta"], what: "the hero's call to action" });
     if (hero.secondary_cta) shown.push({ call: callOf(hero.secondary_cta.href), path: [...at, "secondary_cta"], what: `the hero's second call "${hero.secondary_cta.label}"` });
   } else if (l.header?.account !== "account" && !(l.header?.links ?? []).length) shown.push({ call: "the start", path: ["header"], what: "the header's start" });
   const out: Issue[] = [];
@@ -457,13 +502,8 @@ function firstScreenIssues(l: Landing): Issue[] {
   for (const s of shown) {
     if (seen.includes(s.call)) continue;
     seen.push(s.call);
-    if (seen.length > FIRST_SCREEN_CALLS) out.push({ path: s.path, message: `the first screen (the header and the hero) asks for at most ${FIRST_SCREEN_CALLS} things, signing in and one other (${seen.slice(0, FIRST_SCREEN_CALLS).join(", ")}); ${s.what} adds another (${s.call}). Keep one call to action in the hero (primary_cta), and put other ways in (an install page, docs) in the footer's links or a later section` });
+    if (seen.length > FIRST_SCREEN_CALLS_MAX) out.push({ path: s.path, message: `the first screen (the header and the hero) asks for at most ${FIRST_SCREEN_CALLS_MAX} things with first_screen.calls 2, signing in and one other (${seen.slice(0, FIRST_SCREEN_CALLS_MAX).join(", ")}); ${s.what} adds another (${s.call}). Keep one call to action in the hero (primary_cta), and put other ways in (an install page, docs) in the footer's links or a later section` });
   }
-  // An open-source app's repository is the header's GitHub button (and a footer link): not a hero link as well.
-  const repo = l.open_source?.repo.replace(/(\.git)?\/?$/, "").toLowerCase();
-  if (repo && hero?.links) hero.links.forEach((k, i) => {
-    if (k.href.replace(/(\.git)?\/?$/, "").toLowerCase() === repo) out.push({ path: [...at, "links", i], message: `${k.href} is open_source.repo, which the header's GitHub button links on every page (and the footer): take it out of the hero's links` });
-  });
   return out;
 }
 
@@ -504,7 +544,7 @@ export function toSections(old: LegacyLanding, opts: { hero?: "always" | "named"
   if (old.features) s.push({ type: "proof", ...(old.features.title ? { title: old.features.title } : {}), ...(old.features.intro ? { lead: old.features.intro } : {}), items: old.features.items });
   if (old.faq) s.push({ type: "faq", ...old.faq });
   if (old.closing) s.push({ type: "cta", ...old.closing });
-  return { sections: s, ...(old.footer ? { footer: old.footer } : {}), ...(old.seo ? { seo: old.seo } : {}) };
+  return { sections: s, ...(old.footer ? { footer: old.footer } : {}), ...(old.seo ? { seo: old.seo } : {}), ...(old.first_screen ? { first_screen: old.first_screen } : {}) };
 }
 
 const strip = (b: object): Record<string, unknown> => { const { $comment: _c, ...rest } = b as Record<string, unknown>; return rest; };
@@ -546,5 +586,6 @@ export function mergeLanding(fromPack: object | null | undefined, fromProfile: o
   } else if (prof?.sections) sections = prof.sections;
   const header = prof?.header ?? pack?.header, footer = prof?.footer ?? pack?.footer, seo = prof?.seo ?? pack?.seo;
   const request_page = prof?.request_page ?? pack?.request_page, open_source = prof?.open_source ?? pack?.open_source;
-  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}), ...(request_page ? { request_page } : {}), ...(open_source ? { open_source } : {}) };
+  const first_screen = prof?.first_screen ?? pack?.first_screen;
+  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}), ...(request_page ? { request_page } : {}), ...(open_source ? { open_source } : {}), ...(first_screen ? { first_screen } : {}) };
 }

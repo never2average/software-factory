@@ -81,6 +81,8 @@ export interface LandingBlock {
   request_page?: RequestPage;
   /** An open-source app's repository (mold_v0-164): the header's GitHub button and a footer link (`label`). */
   open_source?: OpenSource;
+  /** How many things the first screen asks for (mold_v0-165): 1, the default (the hero's one button), or 2 (the mold_v0-164 page). */
+  first_screen?: { calls: 1 | 2 };
 }
 
 /** The components only an open-source app has (mold_v0-164), configured in one place. */
