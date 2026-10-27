@@ -244,7 +244,11 @@ status, finding fingerprint, evidence reference).
 
 **Moved by mold_v0-039** into the factory's host pack `octillion` (`packs/octillion/` at the factory root, git-ignored
 like every pack; MOLD.md "Host packs"). A build with no packs has none of it; a build with `["octillion"]` has all of it,
-at the same paths and with the same MCP surface. Paths below are where each now lives in a build copy.
+at the same paths and with the same MCP surface. Paths below are where each now lives in a build copy. **Split by
+mold_v0-145** (MOLD.md "Engine packs and config packs"): the code, migrations, console pages, orchestrator extension,
+operator scripts and curated library below are the engine pack `apo`'s (`packs/apo/`, `web/src/packs/apo/`,
+`orchestrator/packs/apo/`, with no product's words), and `packs/octillion` is Octillion's config alone (its `pack.json`,
+which names its engine); an app names both, `["octillion", "apo"]`.
 
 - **Tools.** The 29 tools (`get_started`, `onboard_product`, `run_simulation`, `get_visibility_report`,
   `search_transcripts`, `save_personas`, `browse_task_library` and the rest; `save_to_memory` and `search_memory` are the

@@ -2,4 +2,5 @@
 /** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */
 export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>>; readonly split?: Readonly<Record<string, string | readonly string[]>> }
 /** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */
-export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = [];
+/** `formerly` (mold_v0-145): the pack ids a database recorded a pack's migrations under before (its config pack's engine.migrations_recorded_as). */
+export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema; readonly formerly?: readonly string[] }[] = [];
