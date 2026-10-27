@@ -129,14 +129,16 @@ try {
       assert.equal(connectInfo().connector_url, `${DOMAIN}/mcp`);
       assert.ok(allowedMcpOrigins().has(DOMAIN) && allowedMcpOrigins().has(API), "the console's address is an MCP Origin");
     }
-    // Nor a console address of its own (none set, an unusable one, or the API's own origin): exactly as before.
+    // Nor a console address of its own (none set, an unusable one, or the API's own origin): exactly as before. Under both
+    // spellings: a build with a host pack also holds the old one (src/host-env.ts), which is read when the new one is unset.
+    const { legacyEnvName } = await import("../src/env-names.js");
     for (const c of [undefined, "not an address", `${API}/`]) {
-      if (c === undefined) delete process.env.APP_CONSOLE_URL; else process.env.APP_CONSOLE_URL = c;
+      for (const k of ["APP_CONSOLE_URL", legacyEnvName("APP_CONSOLE_URL")!]) { if (c === undefined) delete process.env[k]; else process.env[k] = c; }
       assert.deepEqual(mcpAudiences(), [`${API}/mcp`], `APP_CONSOLE_URL=${c}`);
       assert.equal(connectInfo().connector_url, `${API}/mcp`);
       assert.ok(!allowedMcpOrigins().has(DOMAIN) && allowedMcpOrigins().has(API), "the domain is no MCP Origin of its own");
     }
-    process.env.APP_CONSOLE_URL = DOMAIN;
+    for (const k of ["APP_CONSOLE_URL", legacyEnvName("APP_CONSOLE_URL")!]) process.env[k] = DOMAIN;
     // With CLERK_MCP_AUDIENCE set the domain still comes first, and the list is kept after it, once each.
     process.env.APP_MCP_URL = DOMAIN;
     process.env.CLERK_MCP_AUDIENCE = `${API}/mcp,${DOMAIN}/mcp/,https://second.example.com/mcp`;

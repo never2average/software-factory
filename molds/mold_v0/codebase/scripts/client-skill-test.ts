@@ -7,7 +7,7 @@
 //    profile.json block over it, null with neither; two packs declaring one, or a broken block, refuse the build.
 // 3. The files from a config: the frontmatter, the body as given, the generated connection section with the front door's
 //    address, reference/tools.md from the tools the server lists, the config's own files; the default body without one.
-// 4. Served (zero packs, an embedded database): /install offers it, /install.json names it, /install/skill.zip and
+// 4. Served (this build's own packs and config; zero packs in the mold, an embedded database): /install offers it, /install.json names it, /install/skill.zip and
 //    /downloads/<name>-skill.zip are the same zip, readable by Python's zipfile, every entry in the skill's folder, the
 //    same bytes on every request; its tools are exactly what tools/list answers.
 import assert from "node:assert/strict";
@@ -26,7 +26,9 @@ const ok = (what: string) => { checks++; console.log(`✓ ${what}`); };
 function world(packs: Record<string, unknown>, profile: Record<string, unknown> = {}) {
   const dir = path.join(TMP, `w${++n}`);
   for (const p of ["src", "scripts", "web/src", "web/scripts", "docs", "sql", "orchestrator", "package.json", "tsconfig.json", "web/package.json", "web/tsconfig.json"])
-    cpSync(path.join(ROOT, p), path.join(dir, p), { recursive: true, filter: (f) => !f.split(path.sep).includes("node_modules") });
+    // Never a host pack's own console or orchestrator code (this may run in an app's build copy): only the packs below.
+    cpSync(path.join(ROOT, p), path.join(dir, p), { recursive: true, filter: (f) => !f.split(path.sep).includes("node_modules")
+      && !/[\\/](web[\\/]src|orchestrator)[\\/]packs[\\/][^\\/]+$/.test(path.relative(ROOT, f) ? `/${path.relative(ROOT, f)}` : "") });
   symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"));
   symlinkSync(path.join(ROOT, "web", "node_modules"), path.join(dir, "web", "node_modules"));
   for (const [id, json] of Object.entries(packs)) {
@@ -125,14 +127,15 @@ try {
     ok("the files: frontmatter, the body as given, the connection section on the front door, the tools from the server, the config's files; a generated body without one");
   }
 
-  // ---------- 4. served, zero packs ----------
+  // ---------- 4. served, this build's own (zero packs in the mold) ----------
   {
     const { createOrg } = await import("../src/auth.js");
-    const { PROFILE } = await import("../src/profile.js");
+    const { clientSkillName } = await import("../src/client-skill.js");
+    const { GENERATED_CLIENT_SKILL } = await import("../src/client-skill.generated.js");
     const http = await startHttp();
     const get = (p: string) => http.req("GET", p);
     const guide = await (await get("/install.json")).json();
-    const name = skillName(null, PROFILE.mcp_server_name);
+    const name = clientSkillName();
     assert.deepEqual(guide.skill, { file: `${name}-skill.zip`, download: "/install/skill.zip" }, "install.json names it");
     const page = await (await get("/install")).text();
     assert.ok(page.includes('href="/install/skill.zip"') && page.includes(`Download ${name}-skill.zip`), "/install offers it");
@@ -144,7 +147,9 @@ try {
     assert.ok(zip.equals(Buffer.from(await (await get("/install/skill.zip")).arrayBuffer())), "the same bytes every time");
     assert.ok(zip.equals(Buffer.from(await (await get(`/downloads/${name}-skill.zip`)).arrayBuffer())), "the same zip at /downloads/<name>-skill.zip");
     const files = unzip(zip);
-    assert.deepEqual(Object.keys(files), [`${name}/SKILL.md`, `${name}/reference/tools.md`], "every entry in the skill's folder");
+    const own = Object.keys(GENERATED_CLIENT_SKILL?.files ?? {});
+    assert.deepEqual(Object.keys(files), ["SKILL.md", "reference/tools.md", ...own].sort().map((p) => `${name}/${p}`), "every entry in the skill's folder, sorted");
+    for (const p of own) assert.equal(files[`${name}/${p}`], GENERATED_CLIENT_SKILL!.files![p], `${p}: the config's own file, as written`);
     assert.ok(files[`${name}/SKILL.md`]!.startsWith(`---\nname: ${name}\n`) && files[`${name}/SKILL.md`]!.includes(`at ${guide.url}.`), "its name, and the address clients connect to (the install pages')");
     const org = (await createOrg(`Skill ${STAMP}`)).org;
     const { client } = await connect(org);
