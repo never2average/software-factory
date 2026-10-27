@@ -32,6 +32,7 @@ import { DEFAULT_INTERVAL_HOURS, MAX_CHAT_SHOWS, TIP_WORDS, type TipWord } from 
 import { people } from "./people.js";
 import { isSuspended } from "./clerk.js";
 import { capture } from "./telemetry.js";
+import { consoleUrl } from "./console-url.js";
 
 export class TipError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -152,7 +153,7 @@ export async function nudgeForChat(org: Org, opts: { force?: boolean } = {}): Pr
 
 /** The line appended to a tool result. Plain text: the model decides how to pass it on. */
 export function chatLine(n: Pick<NudgeRow, "message" | "prompt">) {
-  return `\n\n---\n${tipWord("chat_line", { message: n.message })}` + (n.prompt ? tipWord("chat_try", { prompt: n.prompt }) : "") + tipWord("chat_off", { url: `${publicUrl()}/app` });
+  return `\n\n---\n${tipWord("chat_line", { message: n.message })}` + (n.prompt ? tipWord("chat_try", { prompt: n.prompt }) : "") + tipWord("chat_off", { url: `${consoleUrl()}/app` });
 }
 
 /** Whether a tool's answer always carries the waiting tip (pack.json tips.always_after). */

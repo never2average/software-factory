@@ -1,0 +1,9 @@
+{
+  "phase": "P7 (mold_v0-144): the client skill becomes the shell's, generated for every build from its profile, its config (the host pack's pack.json client_skill) and what its MCP server lists, served at /install/skill.zip and /downloads/<name>-skill.zip and offered by /install; the console's address is the one front door (the API's root sends people there; the MCP address, OAuth metadata, install pages and skill name it when the console has an address of its own). The lane world sets only PUBLIC_URL (one address), so no address moves in these snapshots: test:mcp-domain (clerk and builtin, with and without APP_MCP_URL) and the live front-door run (an API and a console stand-in on two ports) prove the move. tools/list, instructions, prompts, every /api answer, the pages and the pack's smoke unchanged",
+  "allow": [
+    { "key": "generated::src/client-skill.generated.ts", "reason": "new: the client skill's config (null with zero packs and in Maxwell's build, Octillion's name, description, body and reference/metrics.md from its pack.json client_skill)" },
+    { "key": "api::routes::GET /install/skill.zip", "reason": "new: the client skill's zip, every build's (src/install-pages.ts), offered by /install and named by /install.json" },
+    { "key": "api::routes::GET /downloads/*-skill.zip", "reason": "new: the same zip at /downloads/<name>-skill.zip (Octillion's: /downloads/octillion-skill.zip, the address its pack's public files served before)" },
+    { "key": "api::routes::GET /index.html", "reason": "Octillion: its pack no longer has public files (public/index.html, the landing page from before mold_v0-138, and connect.html and the zip are gone; the landing page is pack.json landing, drawn by the console), so the shell's host landing route (/ and /index.html with the source offer's footer) is not mounted; GET / is the front-door route (a 308 to the console where it has its own address, else the root page as before)" }
+  ]
+}

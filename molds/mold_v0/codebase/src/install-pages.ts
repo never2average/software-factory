@@ -27,11 +27,15 @@
  * client in src/connect-catalog.ts connects by sign-in; the one entry that only sends a header ("Header-capable
  * clients") is only ever listed with a key, so it is never offered here.
  *
+ * The client skill (mold_v0-144, src/client-skill.ts): every build's skill bundle for AI clients, generated from its
+ * profile, its config (pack.json or profile.json `client_skill`) and what its MCP server lists, at the address above.
+ *   GET /install/skill.zip    the zip (also at /downloads/<name>-skill.zip); /install offers it, /install.json names it
+ *
  * The profile's `install_clients` (optional) narrows the clients to those it names. A signed-in member's own setup,
  * with their new key in each client's header (never a URL), is memberSetup below (the console's API keys page,
  * src/member-keys.ts).
  */
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { clerkEnabled, frontendApi } from "./clerk.js";
@@ -45,6 +49,7 @@ import { currentOffer } from "./data-map.js";
 import { offerFooterHtml, offerSentences } from "./source-offer.js";
 import { legalFooterHtml } from "./legal.js";
 import { GENERATED_LEGAL } from "./legal.generated.js";
+import { clientSkill, clientSkillFile } from "./client-skill.js";
 
 /** What the key placeholder reads as in a header: never a key, never in a URL. */
 export const KEY_PLACEHOLDER = "<your API key>";
@@ -80,6 +85,8 @@ export function installGuide(publicUrl: string, profile: Pick<Profile, "install_
   return { name: PROFILE.name, server: PROFILE.mcp_server_name, url, sign_in: signInAvailable, ...(keys ? {} : { api_keys: false }), clients,
     // Only when the packs add tools (mold_v0-010): absent, the guide is exactly what it was.
     ...(toolReference().packs.length ? { tool_reference: "/install/tools" } : {}),
+    // The client skill (mold_v0-144, src/client-skill.ts): every build's, generated from its profile, config and tools.
+    skill: { file: clientSkillFile(), download: SKILL_PATH },
     // The source offer (mold_v0-050), only when there is one: a copyleft upstream of a pack, or the app's own source.
     ...(currentOffer().offered ? { source_code: offerSentences(currentOffer()) } : {}) };
 }
@@ -159,12 +166,27 @@ const block = (v: { steps: string; command?: string | null; file?: string | null
   (v.command ? `<pre>${esc(v.command)}</pre>` : "") +
   (v.snippet ? `${v.file ? `<p class="muted">${esc(v.file)}</p>` : ""}<pre>${esc(v.snippet)}</pre>` : "");
 
+/** Where the client skill's zip is served (mold_v0-144), and the page section that offers it. */
+export const SKILL_PATH = "/install/skill.zip";
+const skillSection = (name: string) => `<h2>A skill for your AI client</h2>
+<p>The ${esc(name)} skill tells your AI client how to work with ${esc(name)}: what its tools do and when to use them. It works through the connection above.</p>
+<p><a href="${SKILL_PATH}" download="${esc(clientSkillFile())}">Download ${esc(clientSkillFile())}</a></p>
+<ul><li>Claude: open Settings, then Capabilities, then Skills, click Upload skill and choose the file.</li>
+<li>Claude Code and other clients that read skill folders: unzip it into the client's skills folder (for Claude Code, ~/.claude/skills).</li></ul>`;
+
 export function mountInstallPages(app: Express, publicUrl: string) {
   const send = (res: Response, status: number, html: string) => {
     res.status(status).set({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300",
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", "X-Content-Type-Options": "nosniff" }).send(html);
   };
   app.get("/install.json", (_req, res) => void res.set("Cache-Control", "public, max-age=300").json(installGuide(publicUrl)));
+  // The client skill (mold_v0-144): before /install/:client; also at /downloads/<name>-skill.zip, the address a product's
+  // own pages may link to.
+  const sendSkill = (_req: Request, res: Response, next: NextFunction) => void clientSkill(publicUrl).then(({ zip }) => {
+    res.status(200).set({ "Content-Type": "application/zip", "Content-Disposition": `attachment; filename="${clientSkillFile()}"`,
+      "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" }).send(zip);
+  }, next);
+  app.get([SKILL_PATH, `/downloads/${clientSkillFile()}`], sendSkill);
   // The tool reference, before /install/:client (mold_v0-010): only when the packs add tools, so a build with none
   // answers /install/tools as before (no such client).
   if (toolReference().packs.length) {
@@ -188,7 +210,7 @@ export function mountInstallPages(app: Express, publicUrl: string) {
     }).join("");
     send(res, 200, page(`Connect ${g.name}`, `<h1>Connect ${esc(g.name)} to your AI client</h1>
 <p class="muted">${esc(g.name)} is an MCP server at</p><pre>${esc(g.url)}</pre>
-<p>${"api_keys" in g ? (g.sign_in ? "Every client signs in with your account (OAuth)." : `Sign-in is not set up on this ${esc(g.name)} server yet: ask its admin.`) : g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}`));
+<p>${"api_keys" in g ? (g.sign_in ? "Every client signs in with your account (OAuth)." : `Sign-in is not set up on this ${esc(g.name)} server yet: ask its admin.`) : g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}${skillSection(g.name)}`));
   });
   app.get("/install/:client", (req: Request, res: Response) => {
     const g = installGuide(publicUrl);

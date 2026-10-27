@@ -10,7 +10,8 @@
  *                                           (WWW-Authenticate resource_metadata=...)
  *   authorization server metadata           RFC 8414 /.well-known/oauth-authorization-server and OIDC discovery
  *                                           /.well-known/openid-configuration, issuer exactly where AI clients
- *                                           connect (APP_MCP_URL, the app's own domain, else PUBLIC_URL; mold_v0-118:
+ *                                           connect (APP_MCP_URL, the app's own domain, else the console's own
+ *                                           address, else PUBLIC_URL; mold_v0-118, 144:
  *                                           the console forwards /.well-known and /oauth to this API, so the whole
  *                                           sign-in is on the one address); the authorization response carries iss
  *                                           (RFC 9207)
@@ -92,8 +93,8 @@ const P = <T>(fn: (db: Queryable & { transaction: <R>(f: (tx: Queryable) => Prom
   asPlatform(async () => fn(await getDb()));
 
 /**
- * The issuer: where AI clients connect, exactly (no trailing slash): APP_MCP_URL (the app's own domain) when it is set,
- * else this server's public address. Never taken from the request's Host. A client that signed in through the old
+ * The issuer: where AI clients connect, exactly (no trailing slash): the front door (APP_MCP_URL, the app's own domain;
+ * else the console's own address, mold_v0-144) when there is one, else this server's public address. Never taken from the request's Host. A client that signed in through the old
  * address keeps its grant: its refresh token is the server's own and /oauth/token answers on both addresses.
  */
 export const issuer = () => mcpUrlSetting() ?? (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/+$/, "");
