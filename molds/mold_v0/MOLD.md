@@ -1640,15 +1640,26 @@ drawing is a data-driven port of that page's own (its section wrapper, hero with
 footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
 and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
 The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
-second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text names (set in the logo row's type),
-named logos or the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+second call only when it repeats one the first screen already makes (below), up to 3 links such as the app's docs, a note, a visual, and a `strip` of text names (set in the logo row's type),
+named logos or the logos of the AI clients the install pages offer), `logos` (mold_v0-164: a row of organisations'
+logos under a title, each item {name, logo, href}: `logo` an image file of the pack that declares the block,
+`assets/<name>.svg` or `.png` of at most 30 KB, which gen-packs checks (a PNG by its signature; an SVG with no script,
+event handler, foreign object, entity or link or load of anything but its own parts), measures and copies under its
+content's hash to `web/public/landing/` (a file there no logo names is removed; `--check` calls it stale); the page
+draws each in a light tile of one height with its size reserved, grey until pointed at or focused, its name as its text,
+and an item with no file as its name; never in the wireframe, so an app has one only when it picks one), `problem` (icon points), `concept` (cards with a path of chips,
 one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
 `proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
 `install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
 carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
-shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
-links; the ways in: sign in and start, or one account button; `sign_in` and `open` relabel or re-address the account
-button's two states wherever the page shows it), `footer` (a tagline, a note, links, a copyright line,
+shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (at most 1
+link, none by default; the ways in: "Sign in", with the start call only on a page with no hero to carry it and no link,
+or one account button; `sign_in` and `open` relabel or re-address the account button's two states wherever the page
+shows it), `open_source` (mold_v0-164: `{repo: "https://github.com/<owner>/<repo>", label}`, an open-source app's
+repository: a GitHub button in the header on every width, named "<name> on GitHub", 44 px, its mark drawn inline, and a
+footer link, `label` or "Open source on GitHub", unless the footer already links it; the repository may not also be a
+hero link. Every component only an open-source app has is configured under this key, so a later one, such as a star
+count, joins it; an app without it has none of them), `footer` (a tagline, a note, links, a copyright line,
 `shell_links: false`), `seo` (title and description for search results and Open Graph, and `card`, the X card's size,
 `summary` or `summary_large_image` by default: the landing page's, and, since mold_v0-138, every public page's default
 title, description and link preview; the share image is the build's, mold_v0-093) and
@@ -1666,7 +1677,16 @@ checks the addresses before sending, posts to `POST /api/access-requests` like `
 first page as `source.landing` (the root layout's `VisitSource`, mold_v0-110). With no `sections` the page
 is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
 `{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
-one by one, as is its `request_page`. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+one by one, as is its `request_page`. **The first screen (mold_v0-164).** The header and the hero ask for at most two things: signing in and one other (the
+start, sign-up or a request for access, or the app's own). A call is where it leads (the sign-in's addresses `/app`,
+`/auth/sign-in` and the header's `sign_in`; the start's `/auth/sign-up` and `/request-access`), so one shown in both the
+header and the hero counts once (the first product's page repeats its two); the shell repeats none itself: its header
+has no install link and shows the start only on a page whose hero does not, and a hero has no second call unless the
+block gives one. A hero's second call or a header link that would add a third is refused, with what to do instead (put
+the install pages and docs in the footer or a later section), at its path in the pack's block, an old block's or the
+app's profile, and again on the page they make together (`firstScreenProblems`, run by gen-packs after merging). The
+install pages stay one click away: the footer's shell links (or the block's own footer link), the where-you-work
+section's link and the console. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
 value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
 (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
 footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
@@ -1900,7 +1920,9 @@ pack keeps only their config. Every text is a word: the journeys' nouns are the 
 `npm run test:migrations` (0026 adopted from 0023, 0024 and 0025, from every pre-049 start, refusals, rollbacks).
 
 **Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
-operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
+operator's rule): its `pack.json` alone, and (mold_v0-164) its landing page's images under `assets/` (`<name>.svg` or
+`.png`, one folder deep, with a `sources.json` saying where each came from: `mold.json` `packs.declarative.files`, and
+gen-packs, which checks each one the page names; "Landing page" above). A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
 `src/data-repositories.ts`) says, with no code, what a pack's loader used to:
 - a field's value is a value path (`a.b`, `a[0]`: a list's first item) or a **computed value**
   `{value, only?, matches?, max_length?, as?}`: the values at `value` (a value path that may also take every item of a

@@ -14,7 +14,7 @@ import { Visual } from './landing-visuals';
 import { SiteHeaderView } from './site-header';
 import {
   linkable, sectionIds,
-  type AccountsMode, type ConceptSection, type CtaSection, type FaqSection, type HeroSection, type HowItWorksSection,
+  type AccountsMode, type ConceptSection, type LogosSection, type CtaSection, type FaqSection, type HeroSection, type HowItWorksSection,
   type LandingBlock, type LandingClient, type LandingItem, type LandingLink, type LandingSection, type ProblemSection, type ProofSection,
   type SectionType, type WhereYouWorkSection
 } from './landing-types';
@@ -35,11 +35,11 @@ import { ogImages, twitterCard } from './share-image-meta';
  */
 
 /** Each section's entry in the header's navigation, and its eyebrow, when the block gives neither. */
-const NAV_LABEL: Record<Exclude<SectionType, 'hero' | 'cta'>, string> = {
+const NAV_LABEL: Record<Exclude<SectionType, 'hero' | 'cta' | 'logos'>, string> = {
   problem: 'Why', concept: 'Overview', how_it_works: 'How it works', proof: 'What you get', where_you_work: 'Where you work', faq: 'FAQ'
 };
 /** Each section's title when the block gives none. */
-const TITLE: Record<Exclude<SectionType, 'hero'>, () => string> = {
+const TITLE: Record<Exclude<SectionType, 'hero' | 'logos'>, () => string> = {
   problem: () => 'Why it matters',
   concept: () => fill('What {product} is'),
   how_it_works: () => 'How it works',
@@ -147,9 +147,15 @@ export function resolvedLanding(block: LandingBlock | null = declared, access?: 
   const sections = block?.sections?.length ? block.sections : neutralSections();
   const ids = sectionIds(sections);
   const placed: Placed[] = sections.map((section, i) => ({ section, id: ids[i]! }));
-  const nav = placed.flatMap(({ section: s, id }) => (s.type === 'hero' || s.type === 'cta' || s.nav === false ? [] : [{ label: s.nav_label ?? NAV_LABEL[s.type], href: `/#${id}` }]));
+  const nav = placed.flatMap(({ section: s, id }) => (s.type === 'hero' || s.type === 'cta' || s.type === 'logos' || s.nav === false ? [] : [{ label: s.nav_label ?? NAV_LABEL[s.type], href: `/#${id}` }]));
   const heroSection = sections.find((s): s is HeroSection => s.type === 'hero');
-  return { placed, nav, ctas, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access), header: block?.header, footer: block?.footer, seo: block?.seo };
+  // The first screen asks for at most two things (mold_v0-164, src/landing.ts FIRST_SCREEN_CALLS): the header's sign-in and
+  // one other. The hero carries the other, so the header shows the start itself only on a page with no hero and no link.
+  const startInHeader = !heroSection && !block?.header?.links?.length;
+  return {
+    placed, nav, ctas, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access), header: block?.header, footer: block?.footer, seo: block?.seo,
+    startInHeader, openSource: block?.open_source
+  };
 }
 
 /** The hero filled in from the profile where the block leaves it out. */
@@ -162,7 +168,8 @@ function heroOf(h: HeroSection, ctas: SiteCtas, access?: AccountsMode) {
     // The console's description, unless it only repeats the headline (a brand's is "<name> — <tagline>").
     subheadline: h.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? undefined : profile.console_description),
     primary_cta: h.primary_cta === 'account' ? 'account' as const : forAccess(h.primary_cta ?? ctas.start, access),
-    secondary_cta: forAccess(h.secondary_cta ?? ctas.install, access),
+    // No second call by default (mold_v0-164): the install pages are in the footer and the console.
+    secondary_cta: forAccess(h.secondary_cta, access),
     links: h.links?.map((k) => forAccess(k, access))
   };
 }
@@ -224,7 +231,7 @@ function Band({ id, eyebrow, title, lead, center, children }: {
   );
 }
 
-const head = (s: Exclude<LandingSection, HeroSection | CtaSection>) => ({ eyebrow: s.eyebrow ?? NAV_LABEL[s.type], title: s.title ?? TITLE[s.type](), lead: s.lead });
+const head = (s: Exclude<LandingSection, HeroSection | CtaSection | LogosSection>) => ({ eyebrow: s.eyebrow ?? NAV_LABEL[s.type], title: s.title ?? TITLE[s.type](), lead: s.lead });
 const two = (n: number) => String(n).padStart(2, '0');
 const Check = () => <svg aria-hidden='true' viewBox='0 0 16 16' className='text-primary mt-1 size-4 shrink-0'><path d='M3 8.5 6.5 12 13 4.5' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' /></svg>;
 
@@ -311,6 +318,39 @@ function Hero({ id, hero, ctas }: { id: string; hero: ReturnType<typeof heroOf>;
           </div>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+/**
+ * A row of logos (mold_v0-164): each in a light tile of one fixed height, its image as wide as its own proportions say
+ * (gen-packs measured it, so the row never shifts while images load), grey until pointed at or focused; an item with no
+ * image is its name in the same tile. The name is each image's text alternative. The row wraps on a phone.
+ */
+function Logos({ p, s }: { p: Placed; s: LogosSection }) {
+  const hid = `${p.id}-title`;
+  const tile = 'flex h-14 items-center justify-center rounded-lg border bg-white px-4 text-neutral-800';
+  const img = 'h-8 w-auto max-w-40 object-contain opacity-80 grayscale transition duration-200 group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0 motion-reduce:transition-none';
+  return (
+    <section id={p.id} aria-labelledby={s.title ? hid : undefined} aria-label={s.title ? undefined : (s.label ?? 'Logos')} className='scroll-mt-20 border-t py-12 sm:py-16'>
+      <Wrap>
+        {s.title ? <h2 id={hid} className='text-muted-foreground mb-6 font-mono text-xs tracking-wider uppercase'>{s.title}</h2> : null}
+        <ul aria-label={s.title ? s.label : undefined} className='flex flex-wrap gap-3'>
+          {s.items.map((it, i) => {
+            const body = it.image
+              ? <img src={it.image.src} alt={it.name} width={it.image.width} height={it.image.height} loading='lazy' decoding='async' className={img} style={{ aspectRatio: `${it.image.width} / ${it.image.height}` }} />
+              : <span className='text-sm font-semibold tracking-tight whitespace-nowrap opacity-80 transition group-hover:opacity-100'>{it.name}</span>;
+            return (
+              <li key={i}>
+                {it.href && linkable(it.href)
+                  ? <a href={it.href} title={it.name} className={cn('group focus-visible:ring-ring outline-none focus-visible:ring-2', tile)} {...(/^https:/i.test(it.href) ? { rel: 'noopener noreferrer' } : {})}>{body}</a>
+                  : <span title={it.name} className={cn('group', tile)}>{body}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        {s.note ? <p className='text-muted-foreground mt-4 max-w-3xl text-sm'>{s.note}</p> : null}
+      </Wrap>
     </section>
   );
 }
@@ -526,6 +566,7 @@ export function LandingSections({ access }: { access?: AccountsMode } = {}) {
         const s = p.section;
         switch (s.type) {
           case 'hero': return <Hero key={p.id} id={p.id} hero={heroOf(s, l.ctas, access)} ctas={l.ctas} />;
+          case 'logos': return <Logos key={p.id} p={p} s={s} />;
           case 'problem': return <Problem key={p.id} p={p} s={s} />;
           case 'concept': return <Concept key={p.id} p={p} s={s} />;
           case 'how_it_works': return <HowItWorks key={p.id} p={p} s={s} />;
@@ -553,8 +594,9 @@ const Logo = () => (
 export function SiteHeader({ access }: { access?: AccountsMode } = {}) {
   const l = resolvedLanding(declared, access);
   return (
-    <SiteHeaderView name={profile.name} mark={<BrandMark />} nav={l.nav} links={l.header?.links ?? [{ label: 'Install', href: l.ctas.install.href }]}
-      account={l.header?.account ?? 'sign_in_and_start'} ctas={l.ctas} />
+    <SiteHeaderView name={profile.name} mark={<BrandMark />} nav={l.nav} links={l.header?.links ?? []}
+      account={l.header?.account ?? 'sign_in_and_start'} ctas={l.ctas} start={l.startInHeader}
+      repo={l.openSource ? { href: l.openSource.repo, label: `${profile.name} on GitHub` } : undefined} />
   );
 }
 
@@ -567,7 +609,10 @@ export function SiteHeader({ access }: { access?: AccountsMode } = {}) {
 export function SiteFooter({ access }: { access?: AccountsMode } = {}) {
   const l = resolvedLanding(declared, access);
   const own = l.footer?.shell_links === false ? [] : [l.ctas.install, l.ctas.signIn, access === 'invite_only' ? l.ctas.start : { label: 'Create an account', href: l.ctas.start.href }];
-  const links: LandingLink[] = [...l.nav, ...own, ...(l.footer?.links ?? []).map((k) => forAccess(k, access))];
+  const declaredLinks = (l.footer?.links ?? []).map((k) => forAccess(k, access));
+  // An open-source app's repository (mold_v0-164): a footer link too, unless the block's footer already has one to it.
+  const repo = l.openSource && !declaredLinks.some((k) => k.href === l.openSource!.repo) ? [{ label: l.openSource.label ?? 'Open source on GitHub', href: l.openSource.repo }] : [];
+  const links: LandingLink[] = [...l.nav, ...own, ...declaredLinks, ...repo];
   const legal = buildLegal();
   // The app's Terms and Privacy (mold_v0-109), when its profile.json has `legal`.
   const legalNav = legalLinks(legal);

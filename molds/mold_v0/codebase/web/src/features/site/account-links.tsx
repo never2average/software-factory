@@ -2,8 +2,9 @@
 /**
  * The public pages' account-aware calls to action (mold_v0-122, after the first product's account button). The page is
  * prerendered for everyone, so until the browser's sign-in has loaded we don't know who is looking.
- *   AccountLinks   signed out: "Sign in" and the start call (sign-up or a request for access, from siteCtas); signed in:
- *                  one call into the console. Rendered signed out until loaded (and without script).
+ *   AccountLinks   signed out: "Sign in", and the start call (sign-up or a request for access, from siteCtas) when given
+ *                  (mold_v0-164: not when the page's hero carries it); signed in: one call into the console. Rendered
+ *                  signed out until loaded (and without script).
  *   AccountButton  one button: sign in, or open the console when signed in, with an arrow. Until the sign-in has loaded
  *                  it holds its place without a label instead of saying "Sign in" and flipping.
  */
@@ -25,13 +26,13 @@ export function useAccountLink(signIn: LandingLink, open: LandingLink) {
 }
 
 /** `compact`: "Sign in" only from small tablets up (the header's menu carries it on a phone, so the name keeps its room). */
-export function AccountLinks({ start, signIn, open, compact }: { start: LandingLink; signIn: LandingLink; open: LandingLink; compact?: boolean }) {
+export function AccountLinks({ start, signIn, open, compact }: { start?: LandingLink; signIn: LandingLink; open: LandingLink; compact?: boolean }) {
   const { isLoaded, isSignedIn } = useAuth();
   if (isLoaded && isSignedIn) return <Go link={open} className={cn(buttonVariants(), 'h-10 px-4')} />;
   return (
     <>
       <Go link={signIn} className={cn(buttonVariants({ variant: 'ghost' }), 'h-10', compact && 'hidden sm:inline-flex')} />
-      <Go link={start} className={cn(buttonVariants(), 'h-10 px-4')} />
+      {start ? <Go link={start} className={cn(buttonVariants(), 'h-10 px-4')} /> : null}
     </>
   );
 }
