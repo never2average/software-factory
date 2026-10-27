@@ -2,8 +2,13 @@
 // database, a stand-in Clerk, the server over HTTP. On Vercel the console project serves the domain and forwards /mcp,
 // /.well-known, /oauth and /install to the API, whose PUBLIC_URL is its own *.vercel.app address; the factory sets
 // APP_MCP_URL to the domain. Here PUBLIC_URL and APP_MCP_URL are two pretend addresses and requests go to the local port.
-//   npm run test:mcp-domain            both: clerk, then builtin
-//   tsx scripts/mcp-domain-test.ts clerk|builtin
+//   npm run test:mcp-domain            all four: clerk, builtin, then each with the console as the front door
+//   tsx scripts/mcp-domain-test.ts clerk|builtin [console]
+//
+// console (mold_v0-144, one front door): no APP_MCP_URL at all, only the console's own address (APP_CONSOLE_URL, as the
+//          factory sets it on the API project of every app on Vercel, with or without a domain): every check below
+//          holds for it as for APP_MCP_URL. In every mode the API's root sends people to the console's address (308,
+//          the query kept) and every other address answers as before; the client skill names the front door.
 //
 // clerk:   the resource metadata names the domain's /mcp (the admin MCP's too), the 401's resource_metadata is on the
 //          domain, /install.json, the install pages and the connector address in invitations use it, OAuth tokens
@@ -16,13 +21,16 @@ import { createHash, randomBytes } from "node:crypto";
 
 const PROVIDER = process.argv[2] === "builtin" ? "builtin" : "clerk";
 const API = "https://app-api.example-host.test";   // the API project's own address (PUBLIC_URL)
-const DOMAIN = "https://app.example.org";          // the app's own domain (APP_MCP_URL)
-Object.assign(process.env, { AUTH_PROVIDER: PROVIDER, APP_PROXY_HOPS: "1", PUBLIC_URL: API, APP_CONSOLE_URL: DOMAIN, APP_MCP_URL: `${DOMAIN}/mcp` });
+const DOMAIN = "https://app.example.org";          // the console's address: the app's own domain (APP_MCP_URL), or the console project's own
+const CONSOLE_ONLY = process.argv[3] === "console"; // mold_v0-144: no APP_MCP_URL, the console's address is the front door
+Object.assign(process.env, { AUTH_PROVIDER: PROVIDER, APP_PROXY_HOPS: "1", PUBLIC_URL: API, APP_CONSOLE_URL: DOMAIN, ...(CONSOLE_ONLY ? {} : { APP_MCP_URL: `${DOMAIN}/mcp` }) });
+if (CONSOLE_ONLY) delete process.env.APP_MCP_URL;
+const MODE = `${PROVIDER}${CONSOLE_ONLY ? ", console" : ""}`;
 const { cleanup, startHttp, STAMP } = await import("./lib/test-world.js");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const s256 = (s: string) => createHash("sha256").update(s).digest("base64url");
 let n = 0;
-const ok = (what: string) => { n++; console.log(`✓ [${PROVIDER}] ${what}`); };
+const ok = (what: string) => { n++; console.log(`✓ [${MODE}] ${what}`); };
 
 try {
   const { getDb } = await import("../src/db.js");
@@ -54,6 +62,32 @@ try {
     assert.ok(html.includes(`${DOMAIN}/mcp`) && !html.includes(API), `${p} shows the domain's address only`);
   }
   ok("the resource URI, Origins and install pages are on the domain; the old address is still accepted");
+
+  // ---------- the API's root sends people to the console (mold_v0-144); nothing else moves ----------
+  {
+    const root = await get("/");
+    assert.equal(root.status, 308, "the API's root is a permanent redirect");
+    assert.equal(root.headers.get("location"), `${DOMAIN}/`, "to the console's root");
+    assert.equal((await get("/?utm_source=x&ref=y")).headers.get("location"), `${DOMAIN}/?utm_source=x&ref=y`, "the query kept");
+    assert.equal((await get("/healthz")).status, 200, "the API's own addresses answer as before");
+    const cfg = await get("/api/auth/config");
+    assert.ok(cfg.status === 200 && !cfg.headers.get("location"), "an API call is not redirected");
+    const prm = await get("/.well-known/oauth-protected-resource");
+    assert.equal(prm.headers.get("access-control-allow-origin"), "*", "the OAuth metadata's CORS header is unchanged");
+    const pre = await fetch(`${base}/.well-known/oauth-protected-resource`, { method: "OPTIONS", headers: { origin: "https://claude.ai", "access-control-request-method": "GET" } });
+    assert.ok(pre.status < 300 && pre.headers.get("access-control-allow-origin") === "*", `a browser client's preflight is answered as before (${pre.status})`);
+    const zip = Buffer.from(await (await get("/install/skill.zip")).arrayBuffer());
+    assert.ok(zip.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])), "the client skill is a zip");
+    const { clientSkill } = await import("../src/client-skill.js");
+    const { mcpUrl } = await import("../src/console-url.js");
+    const files = (await clientSkill(mcpUrl())).files;
+    assert.ok(files["SKILL.md"]!.includes(`${DOMAIN}/mcp`) && !Object.values(files).some((t) => t.includes(API)), "the skill names the front door only");
+    // A server whose console is on its own address (one address for both): its root is its own page, as before.
+    process.env.APP_CONSOLE_URL = `${API}/`;
+    assert.notEqual((await get("/")).status, 308, "one address for both: no redirect");
+    process.env.APP_CONSOLE_URL = DOMAIN;
+  }
+  ok("the API's root sends people to the console's (query kept); /healthz, the API and the OAuth metadata's CORS are unchanged; the skill names the front door");
 
   if (PROVIDER === "clerk") {
     for (const p of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
@@ -88,19 +122,29 @@ try {
 
     const { connectInfo } = await import("../src/admin.js");
     assert.equal(connectInfo().connector_url, `${DOMAIN}/mcp`, "invitations name the domain's address");
-    // No APP_MCP_URL: exactly as before. An unusable one is ignored, never trusted.
+    // No APP_MCP_URL (or an unusable one, never trusted): the console's own address is the front door (mold_v0-144).
     for (const v of [undefined, "not an address", "javascript:alert(1)"]) {
       if (v === undefined) delete process.env.APP_MCP_URL; else process.env.APP_MCP_URL = v;
-      assert.deepEqual(mcpAudiences(), [`${API}/mcp`], `APP_MCP_URL=${v}`);
+      assert.deepEqual(mcpAudiences(), [`${DOMAIN}/mcp`, `${API}/mcp`], `APP_MCP_URL=${v}: the console's address, the API's still accepted`);
+      assert.equal(connectInfo().connector_url, `${DOMAIN}/mcp`);
+      assert.ok(allowedMcpOrigins().has(DOMAIN) && allowedMcpOrigins().has(API), "the console's address is an MCP Origin");
+    }
+    // Nor a console address of its own (none set, an unusable one, or the API's own origin): exactly as before. Under both
+    // spellings: a build with a host pack also holds the old one (src/host-env.ts), which is read when the new one is unset.
+    const { legacyEnvName } = await import("../src/env-names.js");
+    for (const c of [undefined, "not an address", `${API}/`]) {
+      for (const k of ["APP_CONSOLE_URL", legacyEnvName("APP_CONSOLE_URL")!]) { if (c === undefined) delete process.env[k]; else process.env[k] = c; }
+      assert.deepEqual(mcpAudiences(), [`${API}/mcp`], `APP_CONSOLE_URL=${c}`);
       assert.equal(connectInfo().connector_url, `${API}/mcp`);
       assert.ok(!allowedMcpOrigins().has(DOMAIN) && allowedMcpOrigins().has(API), "the domain is no MCP Origin of its own");
     }
+    for (const k of ["APP_CONSOLE_URL", legacyEnvName("APP_CONSOLE_URL")!]) process.env[k] = DOMAIN;
     // With CLERK_MCP_AUDIENCE set the domain still comes first, and the list is kept after it, once each.
     process.env.APP_MCP_URL = DOMAIN;
     process.env.CLERK_MCP_AUDIENCE = `${API}/mcp,${DOMAIN}/mcp/,https://second.example.com/mcp`;
     assert.deepEqual(mcpAudiences(), [`${DOMAIN}/mcp`, `${API}/mcp`, "https://second.example.com/mcp"]);
     delete process.env.CLERK_MCP_AUDIENCE;
-    ok("Clerk: invitations use the domain; without APP_MCP_URL (or with an unusable one) nothing changes; CLERK_MCP_AUDIENCE is kept after it");
+    ok("Clerk: invitations use the domain; without APP_MCP_URL the console's address is the front door, and without either nothing changes; CLERK_MCP_AUDIENCE is kept after it");
   } else {
     // ---------- the built-in authorization server, reached through the domain ----------
     for (const p of ["/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"]) {
@@ -163,7 +207,7 @@ try {
     ok("built-in: a whole sign-in for the domain's /mcp and for the old address's works; another resource is refused");
   }
   await http.close();
-  console.log(`\n${n} checks passed (${PROVIDER})`);
+  console.log(`\n${n} checks passed (${MODE})`);
 } finally {
   cleanup();
 }

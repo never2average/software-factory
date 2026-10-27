@@ -38,7 +38,8 @@ import * as roles from "./account-roles.js";
 import { answerDocs, sseStart, streamDocsAnswer, type DocsStreamEvent } from "./docs-answers.js";
 
 
-const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
+/** Where people open the console (src/console-url.ts): billing pages send them back there (mold_v0-144: one front door). */
+import { consoleUrl } from "./console-url.js";
 
 /**
  * Who is signed in, and for which account: a Clerk user acting in one Clerk organization. `role` is Clerk's (admin or
@@ -686,8 +687,8 @@ export function appRouter() {
       onboards_products: hostTable("products"), ...Object.assign({}, ...extras) });
   });
   api.get("/billing/usage", async (_req, res) => void res.json(await billingUsage(S(res))));
-  api.post("/billing/portal", async (_req, res) => { need(res, "billing"); res.json(await admin.portalLink(actor(res), S(res).slug, `${publicUrl()}/app#billing`)); });
-  api.post("/billing/checkout", async (req, res) => { need(res, "billing"); res.json(await admin.checkoutLink(actor(res), S(res).slug, req.body?.price_id, `${publicUrl()}/app#billing`, { requireAllowed: true })); });
+  api.post("/billing/portal", async (_req, res) => { need(res, "billing"); res.json(await admin.portalLink(actor(res), S(res).slug, `${consoleUrl()}/app#billing`)); });
+  api.post("/billing/checkout", async (req, res) => { need(res, "billing"); res.json(await admin.checkoutLink(actor(res), S(res).slug, req.body?.price_id, `${consoleUrl()}/app#billing`, { requireAllowed: true })); });
   api.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
     const hostError = hosts().some((h) => (h.routes?.appErrors ?? []).some((C) => err instanceof C));
     if (!(err instanceof AppError || hostError || err instanceof ContextError || err instanceof JourneyError || err instanceof TipError || err instanceof limits.LimitError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);

@@ -360,8 +360,8 @@ export function frontendApi(): string | null {
   }
 }
 /**
- * Every resource URI a /mcp token may be issued for: APP_MCP_URL's /mcp first when it is set (the app's own domain,
- * mold_v0-118), then CLERK_MCP_AUDIENCE (it may list more than one: a second domain), else PUBLIC_URL/mcp. A connection
+ * Every resource URI a /mcp token may be issued for: the front door's /mcp first when there is one (APP_MCP_URL, the
+ * app's own domain, mold_v0-118; else the console's own address, mold_v0-144: src/console-url.ts mcpUrlSetting), then CLERK_MCP_AUDIENCE (it may list more than one: a second domain), else PUBLIC_URL/mcp. A connection
  * made before the domain (its token names PUBLIC_URL/mcp) keeps working.
  */
 export const mcpAudiences = () => {

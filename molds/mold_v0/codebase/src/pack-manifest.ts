@@ -24,6 +24,7 @@ import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./a
 import { JOURNEY_TABLES, JOURNEY_WEB_WORDS, JOURNEY_WORDS, MAX_STAGES, TIP_TABLES, TIP_WEB_WORDS, TIP_WORDS } from "./journeys-words.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
 import { LandingDocSchema, LandingSchema } from "./landing.js";
+import { CLIENT_SKILL_WORDS, MAX_TEXT as MAX_SKILL_TEXT, type ClientSkillWord } from "./client-skill-config.js";
 import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
 import { SHELL_TEXTS, SHELL_TEXT_IDS } from "./shell-texts.js";
@@ -391,6 +392,18 @@ export const PackJsonSchema = z.object({
   tips: TipsSchema.optional(),
   /** The admin MCP's shell tools' and skills' words (mold_v0-140; src/admin-mcp.ts): AdminMcpSchema above. */
   admin_mcp: AdminMcpSchema.optional(),
+  /**
+   * The client skill's own words and files (mold_v0-144; src/client-skill-config.ts, which scripts/gen-packs.mjs runs for
+   * the rules this shape cannot say: name, one-line texts, paths, sizes). Absent, the skill is generated from the profile.
+   */
+  client_skill: z.object({
+    $comment: z.string().max(2000).optional(),
+    name: z.string().max(64).optional(),
+    description: z.string().max(1024).optional(),
+    body: z.string().max(MAX_SKILL_TEXT).optional(),
+    files: z.record(z.string().max(160), z.string().max(MAX_SKILL_TEXT)).optional(),
+    words: z.partialRecord(z.enum(Object.keys(CLIENT_SKILL_WORDS) as [ClientSkillWord, ...ClientSkillWord[]]), z.string().max(600)).optional(),
+  }).strict().optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)

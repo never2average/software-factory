@@ -52,7 +52,7 @@ import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
 import { clerkEnabled, ClerkError, frontendApi, mcpAudience } from "./clerk.js";
-import { mcpUrlSetting } from "./console-url.js";
+import { frontDoor, mcpUrlSetting } from "./console-url.js";
 import { StripeError } from "./billing.js";
 import { getDb } from "./db.js";
 import { probeFromCron, rlsProbeState } from "./rls.js";
@@ -88,7 +88,7 @@ import { NS } from "./namespace.js";
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://${HOST}:${PORT}`).replace(/\/$/, "");
-/** Where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118): the app's own domain when APP_MCP_URL names it, else PUBLIC_URL. */
+/** Where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118, 144): APP_MCP_URL, else the console's own address, else PUBLIC_URL. */
 const MCP_URL = () => mcpUrlSetting() ?? PUBLIC_URL;
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 /** The admin panel (/admin) and customer portal (/app): the Next.js app in web/, built to static files (npm run web:build). */
@@ -137,6 +137,16 @@ export function createApp() {
 
   // The consent screen of the built-in MCP authorization server (mold_v0-013, web/src/app/auth/consent) is never framed.
   app.use("/auth/consent", (_req, res, next) => { res.set({ "X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'" }); next(); });
+  // One front door (mold_v0-144): where the console has an address of its own (src/console-url.ts frontDoor: on Vercel, the
+  // console project, which forwards /mcp, /api, /.well-known, /oauth and /install here), the API's root sends people to
+  // the console's, with the query (utm_* and the like) kept. Every other address here answers as it did. A server that
+  // serves both on one address (no APP_CONSOLE_URL, or the same origin) keeps its root page below.
+  app.get("/", (req, res, next) => {
+    const to = frontDoor();
+    if (!to) return next();
+    const q = req.originalUrl.indexOf("?");
+    res.set("Cache-Control", "public, max-age=300").redirect(308, `${to}/${q >= 0 ? req.originalUrl.slice(q) : ""}`);
+  });
   // ---------- landing page + access requests ----------
   app.use(express.static(WEB_DIR, {
     extensions: ["html"], maxAge: "5m",

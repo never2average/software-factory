@@ -10,6 +10,8 @@
 //   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
 //   src/legal.generated.ts               profile.json `legal` (mold_v0-109, src/legal.ts), checked; null without one
 //   web/src/config/legal.generated.ts    the same, for the console's /terms, /privacy, footers and sitemap
+//   src/client-skill.generated.ts        the client skill's config (mold_v0-144, src/client-skill-config.ts): a pack's
+//                                        pack.json `client_skill`, the app's profile.json one over it; null without
 //   src/access-request.generated.ts      the access-request form's own fields (mold_v0-102, src/access-request.ts): the
 //                                        packs' pack.json access_request, or the app's profile.json one; [] without
 //   web/src/config/access-request.generated.ts  the same, for the request form and the staff console's Requests page
@@ -89,6 +91,8 @@ const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, unknownPlaceholders, word
 const { SHELL_TEXTS } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-texts.ts")).href);
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
+// The client skill's rules (mold_v0-144): plain TypeScript with no imports, as the words engine.
+const { clientSkillProblems, mergeClientSkill } = await import(pathToFileURL(path.join(HERE, "..", "src", "client-skill-config.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
 const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
@@ -143,6 +147,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts), the access-request form's own fields
   // (mold_v0-102, src/access-request.ts), the staff docs (mold_v0-139, src/staff-docs.ts)
   "landing", "guide", "staff_docs", "console", "access_request",
+  // the client skill's own words and files (mold_v0-144, src/client-skill-config.ts)
+  "client_skill",
   // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
@@ -991,6 +997,8 @@ const appWords = {}, hostWords = {};
 let profileLanding;
 /** profile.json `legal` (mold_v0-109, src/legal.ts): the app's legal pages; checked here, never part of the profile modules. */
 let profileLegal = null;
+/** profile.json `client_skill` (mold_v0-144, src/client-skill-config.ts): the app's own, over a pack's; never part of the profile modules. */
+let profileSkill = null;
 /** profile.json `console` (mold_v0-130, src/console-pages.ts): the shell pages the app hides, joined with its packs'. */
 let profileConsole;
 /** profile.json `access_request` (mold_v0-102, src/access-request.ts): the app's own request fields, which replace the packs'. */
@@ -1006,6 +1014,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   if (hostProfiles[0]?.host.profile?.legal !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set legal: only the app's own profile.json names the company behind it (mold_v0-109)");
   if (hostProfiles[0]?.host.profile?.access_request !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set access_request: a pack declares its request fields in pack.json `access_request` (mold_v0-102)");
+  if (hostProfiles[0]?.host.profile?.client_skill !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set client_skill: a pack declares its client skill in pack.json `client_skill` (mold_v0-144)");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
   if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
@@ -1055,6 +1064,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "access_request") { profileAccess = v; continue; }
       // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
       if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
+      // The client skill (mold_v0-144, src/client-skill-config.ts): over a pack's, written to client-skill.generated.ts below.
+      if (k === "client_skill") { const bad = clientSkillProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileSkill = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -1064,7 +1075,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, landing, legal, console, access_request, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1352,6 +1363,11 @@ process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profilePro
   }
 }
 const landingPage = readLanding();
+// The client skill (mold_v0-144, src/client-skill-config.ts): at most one pack declares one; checked here, written below.
+const skillPacks = packs.filter((p) => p.json?.client_skill !== undefined);
+if (skillPacks.length > 1) fail("packs", `packs ${skillPacks.map((p) => p.id).join(" and ")} both declare a client_skill: at most one pack of a build declares one (the app's profile.json client_skill changes it)`);
+for (const p of skillPacks) for (const b of clientSkillProblems(p.json.client_skill)) fail(`packs/${p.id}/pack.json`, b);
+const clientSkill = mergeClientSkill(skillPacks.length === 1 ? skillPacks[0].json.client_skill : null, profileSkill);
 // The request page's form (mold_v0-138, src/landing.ts request_page.form) asks the build's access_request fields by key:
 // each a declared one, and every required one asked (else no request it sends could be stored).
 {
@@ -2042,6 +2058,12 @@ files.set(path.join(OUT, "web", "src", "config", "access-request.generated.ts"),
   `export const accessFields: readonly AccessField[] = ${json(ACCESS_FIELDS)};\n`);
 files.set(path.join(OUT, "web", "src", "lib", "access-request.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/access-request.ts (a copy, so the console runs the server's rules)") + readFileSync(ACCESS_REQUEST, "utf8"));
+// The client skill (mold_v0-144, src/client-skill-config.ts): at most one pack's pack.json `client_skill`, the app's
+// profile.json one over it; null: the skill is generated from the profile and the server alone.
+files.set(path.join(OUT, "src", "client-skill.generated.ts"), HEADER +
+  "import type { ClientSkillConfig } from \"./client-skill-config.js\";\n\n" +
+  "/** The client skill's config (mold_v0-144, src/client-skill-config.ts): a pack's pack.json client_skill with the app's profile.json one over it; null: generated from the profile and the server alone. */\n" +
+  `export const GENERATED_CLIENT_SKILL: ClientSkillConfig | null = ${json(clientSkill)};\n`);
 // The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
 files.set(path.join(OUT, "src", "legal.generated.ts"), HEADER +
   "import type { Legal } from \"./legal.js\";\n\n" +

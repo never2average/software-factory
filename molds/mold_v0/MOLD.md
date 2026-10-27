@@ -1229,6 +1229,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (the golden `scripts/fixtures/install/zero-packs.json` was written by the code before this change). `npm run
   test:install-docs`. **Not covered:** an editable override of the generated text and a playground (015's) are not
   built; VS Code's install link is not offered (the client pages are unchanged for zero packs).
+- **The client skill** (mold_v0-144, built; `src/client-skill-config.ts`, `src/client-skill.ts`): every build serves a
+  skill bundle for AI clients (the Agent Skills format: `<name>/SKILL.md` and reference files), generated from its own
+  profile and config and what its customer MCP server lists: the frontmatter (name, description), the body, a section
+  saying where the connector is (the front door's `/mcp`, and `/install`), and `reference/tools.md` (every tool the
+  server lists, with its description and whether it changes anything). `GET /install/skill.zip` (also
+  `/downloads/<name>-skill.zip`), public, deterministic (sorted entries, one fixed time); `/install` offers it with the
+  upload steps, `/install.json` names it (`skill`). With no config the body is generated (the product's description, the
+  server's instructions, a table of its tools). A pack declares its own in pack.json `client_skill` (`name`,
+  `description`, `body`, `files`, `words`; at most one pack of a build), the app's profile.json `client_skill` over it
+  field by field; gen-packs checks it (a skill name of lowercase words and hyphens without a client's reserved words,
+  one-line description, a body without frontmatter, files beside SKILL.md ending .md or .txt, never SKILL.md or
+  reference/tools.md) and writes `src/client-skill.generated.ts`. `npm run test:client-skill`.
 - **Per-member MCP keys** (mold_v0-007, built; `src/member-keys.ts`, `sql/migrations/0013_member_keys.sql`,
   `/app/keys`): a signed-in person makes keys of their own (`POST /api/keys` `{name, expires_in_days}`: 7, 30, 90,
   180 or 365, default 90; at most 20 live), each named, shown once (only its sha256 is stored) and revocable
@@ -2086,8 +2098,18 @@ typed by hand, and nothing in the snapshot changes:
   resource metadata, the 401's `resource_metadata`, `/install`, `/install.json`, invitations' connector address, and,
   under the built-in sign-in, the authorization server's issuer and endpoints. A token issued for the API's own
   `PUBLIC_URL/mcp` is still accepted, the old address stays an allowed Origin, and `PUBLIC_URL` itself is unchanged
-  (webhooks, the gateway, the run sandboxes keep calling the API directly). An app without a domain gets nothing new.
-  Proven by `npm run test:mcp-domain` (both sign-ins).
+  (webhooks, the gateway, the run sandboxes keep calling the API directly). Proven by `npm run test:mcp-domain`.
+- **One front door: the console's address (mold_v0-144; the operator's decision of 2026-10-26).** An app without a
+  domain publishes its console's own address the same way: with no `APP_MCP_URL`, the shell takes the console's address
+  (`APP_CONSOLE_URL`, which every deploy writes on the API project) whenever it is another origin than `PUBLIC_URL`
+  (`src/console-url.ts` `frontDoor`, `mcpUrlSetting`), so the MCP address, the resource its sign-in is for (Clerk and
+  built-in), the OAuth metadata (`/.well-known/*`), the install pages, the client skill and every connector address
+  are on the console (`https://<app>.vercel.app/mcp`, or the domain once switched to). The API's root (`GET /`) answers
+  `308` to the console's root, with the query kept; every other address of the API answers as before (a token for
+  `PUBLIC_URL/mcp` is still accepted, the OAuth metadata keep `Access-Control-Allow-Origin: *`). Links that send a
+  person somewhere (the billing pages' return addresses, the in-chat tips' "turn them off" link) are on the console.
+  A server that serves both on one address (no `APP_CONSOLE_URL`, or the same origin) is unchanged. `npm run
+  test:mcp-domain` runs every check with the console as the front door too (`clerk console`, `builtin console`).
 - Order: the API first (twice on a first deploy, so it reads its own address as `PUBLIC_URL`), its `/healthz` must
   answer 200 ok; then the API-address variable on the console, then the console; then, when the console's address is
   not the one the API holds (a first deploy, a new domain), the API once more with it, health-checked again. Health on the console: `/healthz`

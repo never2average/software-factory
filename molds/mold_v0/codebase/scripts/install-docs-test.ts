@@ -5,7 +5,8 @@
 //
 // 1. Zero packs: /install, /install.json, every /install/<client>, /install/tools(.json) and the docs' tool table
 //    (web/src/content/mcp-tools.generated.json) are byte for byte the golden, which was written by the code before
-//    mold_v0-010 (the base of this change); no tool reference is mounted or linked.
+//    mold_v0-010 (the base of this change); no tool reference is mounted or linked. Rewritten once since, by mold_v0-144:
+//    /install ends with the client skill's section and /install.json names the skill (`skill`), nothing else changed.
 // 2. The clients the acceptance names each have a page that says how the client authenticates (sign-in or a key).
 // 3. A member's own setup (the console's API keys page): every snippet format, with the key in a header and never in
 //    an address, parsed per client (JSON configs, Codex's TOML, the CLI commands); chat apps sign in instead.
