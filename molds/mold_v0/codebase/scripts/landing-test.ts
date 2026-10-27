@@ -361,7 +361,7 @@ try {
       no("a PNG that is not one", { "lg/assets/a.png": "not a png" }, "assets/a.png", /packs\/lg\/assets\/a\.png is not a PNG/);
       refused("a logo with no pack declaring the block", gen(["--packs", none, "--profile", profile("lgprof", row([{ name: "A", logo: "assets/a.svg" }])), "--out", path.join(TMP, "x")]), /a logo is a file of the pack that declares the landing block/);
       refused("another file in a declarative pack", gen(["--packs", packsDir("lg-txt", { lg: row([{ name: "A" }]) }, { "lg/assets/notes.txt": "x" }), "--profile", profile("lgtxt", {}), "--out", path.join(TMP, "x")]),
-        /assets\/notes\.txt: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone \(and its landing page's images/);
+        /assets\/notes\.txt: a declarative pack \(no entry, migrations or runner\) is its pack\.json alone, so this file is never read; assets\/ holds the landing page's images only/);
       console.log("✓ the logos' files: measured, copied under their hashes and named there, a stale one removed (--check: stale), none without logos; a missing file, a script, a handler, a foreign object, an outside link or load, no size, too big or a false PNG refused; a declarative pack carries its assets/ images and nothing else");
     }
 

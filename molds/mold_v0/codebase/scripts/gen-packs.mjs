@@ -236,8 +236,10 @@ function declarativeOnly(rel) {
     ? "code: rows from the workspace's files or an upstream are repositories.<name>.map in pack.json (fields with value paths, list items a[0] and a[], only, matches, max_length, any; where; retires; only_latest), runs are job_kinds, the MCP tools are generated from the declarations (mcp)"
     : /\.md$/i.test(rel) ? "the customer guide's pages are pack.json guide.markdown (one page per ## heading)"
     : /\.sql$/i.test(rel) ? "rows live in the shell's tables: declare record_areas in pack.json"
+    : /^assets\//.test(rel) ? "assets/ holds the landing page's images only (<name>.svg or .png, one folder deep) and their sources.json (mold_v0-164)"
+    : /\.(svg|png)$/i.test(rel) ? "a landing page's image goes under assets/ (assets/<name>.svg or .png, mold_v0-164)"
     : "everything a declarative pack says is in its pack.json";
-  return `a declarative pack (no entry, migrations or runner) is its pack.json alone (and its landing page's images, assets/<name>.svg or .png), so this file is never read; ${say} (MOLD.md "Declared row maps")`;
+  return `a declarative pack (no entry, migrations or runner) is its pack.json alone, so this file is never read; ${say} (MOLD.md "Declared row maps")`;
 }
 /**
  * A declarative pack's images (mold_v0-164): the landing page's logos (src/landing.ts `logos`), under assets/, with the
