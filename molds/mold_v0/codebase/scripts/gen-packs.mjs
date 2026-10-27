@@ -1132,7 +1132,8 @@ for (const [id, json, file] of entries) {
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
       resultChecks: def.runResults?.check ?? [],
-      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
+      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [],
+        private_network: k.private_network === true })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
       // console's generated pages say of it, in its declared words.
       // A host pack's is the whole guide (mold_v0-139): no generated page beside it, so no title is reserved.
@@ -1252,6 +1253,8 @@ const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type ===
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due).length;
+/** Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner. */
+const privateNetworkKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
 /**
  * The shell pages this build's customer console hides (mold_v0-130, src/console-pages.ts): the packs' pack.json `console`
  * and the app's profile.json `console`, joined. Each leaves the /app sidebar (below, the tabs, nav-config.ts) and redirects
@@ -1269,7 +1272,7 @@ const ACCESS_FIELDS = (() => {
   return r.fields;
 })();
 const workspaceItems = [
-  ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
+  ...(credentialFields.length || privateNetworkKindCount ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
   // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
@@ -1684,7 +1687,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     `export const HOST_GUIDE: unknown = ${json(hostGuide)};\n\n` +
     "/**\n * The packs' customer guide (mold_v0-106; src/pack-guide.ts, web/src/content/customer-guide.ts PackGuideData): their own\n" +
     " * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.\n */\n" +
-    `export const PACK_GUIDE: unknown = ${json(packGuide)};\n`);
+    `export const PACK_GUIDE: unknown = ${json(packGuide)};\n\n` +
+    "/** Whether a kind may need a workspace's private network (mold_v0-036): the guide then has its On-premises runner page. */\n" +
+    `export const ONPREM_GUIDE = ${privateNetworkKindCount > 0};\n`);
 }
 // Staff docs (mold_v0-139, src/staff-docs.ts): each pack's pack.json staff_docs joins the shell's docs/ on /admin/docs
 // (web/scripts/sync-docs.mjs) and in the docs answers' corpus (scripts/sync-docs-corpus.ts), so no two at one path.
@@ -1759,7 +1764,7 @@ const profileSidebar = (() => {
   const at = `${rel(PROFILE_FILE)} console.sidebar`;
   const tabs = shownTabs(), listed = new Set(), out = [];
   const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
-  const lacks = { credentials: !credentialFields.length && "the build declares no credential field", schedules: !jobKindCount && "the build has no job kind to schedule",
+  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && "the build declares no credential field", schedules: !jobKindCount && "the build has no job kind to schedule",
     notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
     keys: profile.member_keys === false && "member API keys are off (profile.json member_keys)" };
   declared.forEach((g, i) => {
@@ -1945,6 +1950,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const packOnboardingSteps = ${onboardingSteps.length};\n\n` +
   "/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */\n" +
   `export const repositoryCount = ${packs.reduce((n, p) => n + Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length, 0)};\n\n` +
+  "/** Whether a kind of this build may need a workspace's private network (mold_v0-036): the Credentials page and the guide\n" +
+  " * then show the on-premises runner. */\n" +
+  `export const onPremRunners = ${privateNetworkKindCount > 0};\n\n` +
   "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
   `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds

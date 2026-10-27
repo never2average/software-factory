@@ -168,7 +168,9 @@ export async function revokeRunner(orgId: number | null, id: string, by: string 
     const rows = await tx.query<{ id: number; run_id: string }>(
       `UPDATE run_sandboxes SET state = 'deleted', deleted_at = now(), reap_reason = coalesce(reap_reason, 'its on-premises runner was revoked')
         WHERE onprem_runner_id = $1 AND state <> 'deleted' RETURNING id, run_id`, [r.id]);
-    for (const x of rows) await revokeRunSandboxTokens(x.id);
+    // Their worker tokens, in the same transaction: nothing of the runner works once this commits.
+    if (rows.length) await tx.query("/* tenant: internal, by the revoked runner's sandboxes */ UPDATE worker_tokens SET revoked_at = now() WHERE run_sandbox_id = ANY ($1::int[]) AND revoked_at IS NULL",
+      [rows.map((x) => x.id)]);
     // The runs those sandboxes carry out: their lease ends now, so the sweep below revokes their gateway tokens (spending
     // stops) and queues them again (or fails them), in the run's own workspace.
     const ids = rows.map((x) => x.run_id);
@@ -178,8 +180,10 @@ export async function revokeRunner(orgId: number | null, id: string, by: string 
     return { orgId: r.org_id, sandboxes: rows, stopped: stopped.length };
   }));
   if (!out) return { revoked: false, runs_stopped: 0 };
-  if (out.stopped) await sweepRuns();
-  for (const x of out.sandboxes) await recordComputeEvent({ kind: "reaped", job_id: x.run_id, reason: `on-premises runner ${id} revoked` });
+  await asPlatform(async () => {
+    if (out.stopped) await sweepRuns();
+    for (const x of out.sandboxes) await recordComputeEvent({ kind: "reaped", job_id: x.run_id, reason: `on-premises runner ${id} revoked` });
+  });
   return { revoked: true, runs_stopped: out.stopped };
 }
 
@@ -378,7 +382,7 @@ export async function reapSilentRunners(): Promise<number> {
   return asPlatform(async () => {
     const db = await getDb();
     const rows = await db.query<{ id: number; run_id: string }>(
-      `UPDATE run_sandboxes s SET state = 'deleted', deleted_at = now(), reap_reason = coalesce(s.reap_reason, 'its on-premises runner went silent')
+      `/* tenant: internal, every workspace's silent runners (their own sandboxes only) */ UPDATE run_sandboxes s SET state = 'deleted', deleted_at = now(), reap_reason = coalesce(s.reap_reason, 'its on-premises runner went silent')
          FROM onprem_runners r WHERE r.id = s.onprem_runner_id AND s.state <> 'deleted'
           AND (r.state <> 'enrolled' OR r.last_seen_at IS NULL OR r.last_seen_at < now() - make_interval(mins => $1))
         RETURNING s.id, s.run_id`, [Math.round(ONPREM.offlineReapMinutes())]);

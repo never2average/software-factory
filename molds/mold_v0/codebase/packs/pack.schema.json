@@ -774,6 +774,10 @@
                 "default": false,
                 "type": "boolean"
               },
+              "private_network": {
+                "default": false,
+                "type": "boolean"
+              },
               "approval": {
                 "type": "object",
                 "properties": {
@@ -1094,6 +1098,10 @@
                 }
               },
               "company_egress": {
+                "default": false,
+                "type": "boolean"
+              },
+              "private_network": {
                 "default": false,
                 "type": "boolean"
               },

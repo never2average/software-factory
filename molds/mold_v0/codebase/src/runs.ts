@@ -36,7 +36,7 @@ import { runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
 import { ENV } from "./env-names.js";
-import { noteOnPremisesStart, runLocationFor } from "./onprem-runners.js";
+import { noteOnPremisesStart, onPremAvailable, runLocationFor } from "./onprem-runners.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -297,7 +297,8 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
               coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds, (spec->>'concurrency_per_workspace')::int AS concurrency FROM runs
         WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND ($3::text IS NULL OR id = $3)
           -- A run routed to its workspace's on-premises runner (mold_v0-036) is claimed by its own sandbox only, by id.
-          AND (runner_location = 'hosted' OR $3::text IS NOT NULL)
+          -- With on-premises runners off in this build (APP_ONPREM_RUNNERS=off), every run is hosted again.
+          AND (runner_location = 'hosted' OR $3::text IS NOT NULL OR $4::boolean)
           -- One writer per workspace store: a run whose store another live run holds is not even a candidate, so a
           -- workspace with many queued runs never hides other workspaces' runs behind its own.
           AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
@@ -305,7 +306,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
           -- Nor one whose workspace already runs its kind's concurrency (mold_v0-018; rechecked under a lock below).
           AND (SELECT count(*) FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running')
               < LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2)
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency(), only]);
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency(), only, !onPremAvailable()]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
       // The kind's concurrency in this workspace (mold_v0-018): over it, the run waits in the queue.
@@ -376,10 +377,12 @@ export async function claimableRuns(limit = 200, where: { location?: "hosted" | 
             LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2) AS cap
        FROM runs
       WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND cancel_requested_at IS NULL
-        AND runner_location = $4 AND ($5::int IS NULL OR org_id = $5)
+        AND (runner_location = $4 OR $6::boolean) AND ($5::int IS NULL OR org_id = $5)
         AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
                  WHERE l.org_id = runs.org_id AND l.store = runs.pack AND l.expires_at > now() AND l.run_id <> runs.id))
-      ORDER BY created_at, id LIMIT $3`, [known, maxRunConcurrency(), Math.max(1, Math.min(limit, 1000)), location, org]));
+      ORDER BY created_at, id LIMIT $3`, [known, maxRunConcurrency(), Math.max(1, Math.min(limit, 1000)), location, org,
+        // With on-premises runners off in this build (APP_ONPREM_RUNNERS=off), the hosted scaler takes every run again.
+        location === "hosted" && !onPremAvailable()]));
   // As a claim would see them one after another: no more of a workspace's queued runs of a kind than it may still run
   // at once, and one run per workspace store (mold_v0-018, 033). A sandbox launched past that would only wait.
   const taken = new Map<string, number>(), stores = new Set<string>();

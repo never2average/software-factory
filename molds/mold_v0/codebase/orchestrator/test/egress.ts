@@ -99,6 +99,39 @@ check("decisions are logged", /"allow":"registry.npmjs.org"/.test(log) && /"why"
   check("a taken port makes the proxy exit with a clear error (not silently)", out.code === 1 && /egress proxy: proxy listener: /.test(out.err), `${out.code} ${out.err.trim().slice(0, 120)}`);
   check("the default DNS port is not the mDNS port", (EGRESS_DNS_PORT as number) !== 5353, String(EGRESS_DNS_PORT));
 }
+// An on-premises runner's private allow list (mold_v0-036): an address inside a listed network on a listed port goes
+// through; another port, another address, and loopback or link-local whatever is listed, never. Uses this host's own
+// private address (a container bridge's, a cloud's private interface).
+{
+  const mine = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal &&
+    (/^10\./.test(i.address) || /^192\.168\./.test(i.address) || /^172\.(1[6-9]|2\d|3[01])\./.test(i.address)))?.address;
+  if (!mine) check("private allow list: skipped (this host has no private IPv4 address)", true);
+  else {
+    const target = net.createServer((sock) => { sock.end("private hello\n"); });
+    await new Promise<void>((r) => target.listen(0, mine, r));
+    const tp = (target.address() as net.AddressInfo).port;
+    const pport = 33000 + Math.floor(Math.random() * 2000);
+    writeFileSync(path.join(dir, "allow-private.json"), JSON.stringify({ hosts: ["registry.npmjs.org"], private: [
+      { cidr: `${mine}/32`, ports: [tp] }, { cidr: "127.0.0.0/8", ports: [tp] }, { cidr: "169.254.0.0/16", ports: [80] }, { name: "localhost", ports: [443, tp] }] }));
+    const pp = spawn(process.execPath, [path.join(dir, "proxy.mjs"), path.join(dir, "allow-private.json"), path.join(dir, "log3.jsonl"), String(pport), String(pport + 1), String(pport + 2)], { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 800));
+    const via = (t: string, wantData = false) => new Promise<string>((resolve) => {
+      const c = net.connect(pport, "127.0.0.1", () => c.write(`CONNECT ${t} HTTP/1.1\r\nHost: ${t}\r\n\r\n`));
+      let buf = ""; c.setTimeout(8000);
+      c.on("data", (d) => { buf += d; if (buf.includes("private hello") || /^HTTP\/1\.1 403/.test(buf) || (!wantData && /^HTTP\/1\.1 200[^]*\r\n\r\n/.test(buf))) { c.destroy(); resolve(buf); } });
+      c.on("timeout", () => { c.destroy(); resolve(`timeout ${buf}`); }); c.on("error", (e) => resolve(`error ${e.message}`)); c.on("close", () => resolve(buf));
+    });
+    try {
+      const ok = await via(`${mine}:${tp}`, true);
+      check("private allow list: an address in a listed network, on a listed port, goes through", /^HTTP\/1\.1 200/.test(ok) && ok.includes("private hello"), ok.split("\r\n")[0]);
+      check("private allow list: the same address on another port is refused", /^HTTP\/1\.1 403/.test(await via(`${mine}:${tp + 1}`)));
+      check("private allow list: an address outside the listed networks is refused", /^HTTP\/1\.1 403/.test(await via(`10.255.255.254:${tp}`)) || mine === "10.255.255.254");
+      check("private allow list: loopback is never reached, even listed", /^HTTP\/1\.1 403/.test(await via(`127.0.0.1:${tp}`)) && /^HTTP\/1\.1 403/.test(await via(`localhost:${tp}`)));
+      check("private allow list: link-local (metadata) is never reached, even listed", /^HTTP\/1\.1 403/.test(await via("169.254.169.254:80")));
+      check("private allow list: the public allowlist is unchanged beside it", /^HTTP\/1\.1 200/.test(await via("registry.npmjs.org:443")) && /^HTTP\/1\.1 403/.test(await via("example.com:443")));
+    } finally { pp.kill(); target.close(); }
+  }
+}
 const failed = results.filter((r) => !r.ok);
 console.log(`EGRESS TEST ${failed.length ? "FAIL" : "PASS"} (${results.length - failed.length}/${results.length} assertions)`);
 process.exit(failed.length ? 1 : 0);

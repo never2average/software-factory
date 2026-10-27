@@ -1,17 +1,3 @@
-    let out = await pollRunner(who, req.body ?? {}, appAddress());
-    // Long poll: while there is nothing to start or remove, wait for a run of its workspace to be queued on premises
-    // (checked every second, the runner's whole poll again at most every 5 seconds).
-    let last = Date.now();
-    while (!closed && !out.assign.length && !out.remove.length && Date.now() - t0 < wait) {
-      await sleep(1000);
-      const [q] = await asPlatform(async () => (await getDb()).query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status = 'queued' AND runner_location = 'on_premises'", [who.orgId]));
-      if (Number(q?.n ?? 0) > 0 && Date.now() - last >= 5000 - 1000) {
-        await runnerFromCredential(bearer(req.headers.authorization)); // revoked meanwhile: this call says so
-        out = await pollRunner(who, { ...(req.body ?? {}), started: [], failed: [] }, appAddress());
-        last = Date.now();
-      }
-    }
 /**
  * On-premises runners over HTTP (mold_v0-036; src/onprem-runners.ts). Nothing is mounted unless the build has a kind
  * that needs a workspace's private network (and APP_ONPREM_RUNNERS is not off): every path then answers 404 as before.
@@ -45,6 +31,7 @@ import { publicUrl } from "./console-url.js";
 import { getDb } from "./db.js";
 import { PackError } from "./pack-api.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
 import { ENV } from "./env-names.js";
 import { adminRunners, createRunner, enrollRunner, onPremAvailable, pollRunner, revokeRunner, RunnerAuthError, runnerFromCredential, setRunnerLocation,
   workspaceRunners } from "./onprem-runners.js";
@@ -136,16 +123,17 @@ export function onPremRunnerRouter(): Router {
     let closed = false;
     res.on("close", () => { closed = true; });
     let out = await pollRunner(who, req.body ?? {}, appAddress());
-    // Long poll: while there is nothing to start or remove, wait for a run of its workspace to be queued on premises.
+    // Long poll: while there is nothing to start or remove, wait for a run of its workspace to be queued on premises
+    // (checked every second; the runner's whole poll again at most every 4 seconds).
+    let last = Date.now();
     while (!closed && !out.assign.length && !out.remove.length && Date.now() - t0 < wait) {
       await sleep(1000);
       const [q] = await asPlatform(async () => (await getDb()).query<{ n: number }>(
         "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status = 'queued' AND runner_location = 'on_premises'", [who.orgId]));
-      if (Number(q?.n ?? 0) > 0 || Date.now() - t0 >= wait) {
-        // Revoked meanwhile: the next call says so.
-        await runnerFromCredential(bearer(req.headers.authorization));
+      if (Number(q?.n ?? 0) > 0 && Date.now() - last >= 4000) {
+        await runnerFromCredential(bearer(req.headers.authorization)); // revoked meanwhile: this call says so
         out = await pollRunner(who, { ...(req.body ?? {}), started: [], failed: [] }, appAddress());
-        if (Number(q?.n ?? 0) > 0) break;
+        last = Date.now();
       }
     }
     return out;

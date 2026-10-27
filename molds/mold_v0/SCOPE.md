@@ -296,6 +296,9 @@ runner, run kinds, tools, pages and record areas are its own pack.
   can print them; a harness reaches models only with its gateway token. The factory handles secret names only.
 - **Runs.** A run's sandbox reaches only its allowlisted hosts; customer text in prompts is data, never instructions
   (`orchestrator/core/text-guard.ts`); a run writes back to the workspace store only when its validation passes.
+  A run that needs a workspace's private network runs on that workspace's own on-premises runner when it chose one
+  (mold_v0-036): outbound only, enrolled once with a one-time token, only its own workspace's runs, the same sandbox,
+  the private hosts its owner allows, revocable at once.
 - **Keys and tokens.** Keys never in URLs, hashed, named, revocable, expiring; OAuth tokens checked for audience and
   expiry; `Origin` validated on `/mcp` (mold_v0-031, 007, 013).
 - **Admin surface.** Platform staff only, every change audit-logged (`admin_access_log`).
@@ -305,4 +308,3 @@ runner, run kinds, tools, pages and record areas are its own pack.
 - Running a client's local process, or another company's MCP server (this is not a proxy).
 - Vendoring or patching a pack's upstream: a pack pins it and runs it at a process boundary.
 - A built-in payment provider: billing stays optional.
-- An on-premises runner for private networks (later, mold_v0-036).

@@ -40,7 +40,7 @@ import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
 import { dockerApi, runContainerBody } from "./run-container.js";
-import { reapSilentRunners } from "./onprem-runners.js";
+import { onPremAvailable, reapSilentRunners } from "./onprem-runners.js";
 import { boatNamespace, boatNamespaces } from "../orchestrator/core/boat-namespace.js";
 
 const env = ENV;
@@ -338,7 +338,8 @@ export async function claimForSandbox(runId: string, rowId: number): Promise<Cla
   // mold_v0-036: an on-premises runner's sandbox carries out only a run routed on premises, a hosted one only a hosted
   // run (a run moved between the two after its sandbox was launched is left to a sandbox of its new place).
   const [loc] = await db.query<{ runner_location: string }>("/* tenant: internal, the sandbox's own run by id */ SELECT runner_location FROM runs WHERE id = $1", [runId]);
-  if ((row.provider === "onprem") !== (loc?.runner_location === "on_premises")) {
+  const onPrem = loc?.runner_location === "on_premises" && onPremAvailable();
+  if ((row.provider === "onprem") !== onPrem) {
     await sandboxDone(rowId, "its run is routed to another runner location");
     return null;
   }
