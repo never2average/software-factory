@@ -633,8 +633,14 @@ def main(a):
     print(clear_stale_revert(adir, app_id, ordered) or "", end="")
     return 0
 
+KNOWN_FLAGS = {"--json", "--background", "--lane", "--list", "--dry-run"}
+
 def entry(a):
     """--json, --background, status and the lane lock around main()."""
+    if any(x in ("-h", "--help") for x in a): print(__doc__); return 0
+    # An unknown flag never starts the run of record (mold_v0-162: `lanes.py <app> --help` once ran every lane).
+    bad = [x for x in a if x.startswith("-") and x not in KNOWN_FLAGS]
+    if bad: print(f"lanes.py: unknown option {', '.join(bad)}; nothing was run.\n\n{__doc__}", file=sys.stderr); return 2
     as_json, a = AR.wants_json(a)
     if not a or a[0].startswith("-"): return main(a)
     app_id = a[0]; services.script_start("lanes.py", a, action="status" if a[1:2] == ["status"] else "lanes")
