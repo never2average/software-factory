@@ -27,7 +27,7 @@ import { jobKinds } from "./runs.js";
 import { RUN_USD } from "./run-spend.js";
 import { fill, word } from "./vocabulary.js";
 import * as clerk from "./clerk.js";
-import { mcpUrlSetting } from "./console-url.js";
+import { consoleUrl, mcpUrlSetting } from "./console-url.js";
 import { people as directory } from "./people.js";
 import * as mail from "./email.js";
 import { currentAdminRole } from "./admin-roles.js";
@@ -774,7 +774,7 @@ export async function setAllowance(actor: string, slug: string, usd: unknown) {
  * tagged with the account, and with the experiment and variant when the account was assigned this variant, so the
  * Experiments tab reads the conversion from Stripe; a link an admin sends for another variant is not counted in it.
  */
-export async function checkoutLink(actor: string, slug: string, priceId: unknown, returnUrl = `${publicUrl()}/app/billing`, opts: { requireAllowed?: boolean } = {}) {
+export async function checkoutLink(actor: string, slug: string, priceId: unknown, returnUrl = `${consoleUrl()}/app/billing`, opts: { requireAllowed?: boolean } = {}) {
   const db = await getDb();
   const [o] = await db.query<{ id: number; prepaid_allowed: boolean }>("SELECT id, prepaid_allowed FROM organizations WHERE slug = $1", [slug]);
   if (!o) throw new AdminError(`No account ${slug}`, 404);
@@ -792,7 +792,7 @@ export async function checkoutLink(actor: string, slug: string, priceId: unknown
 }
 
 /** A Stripe customer-portal link: plan changes, card, invoices, cancellation. */
-export async function portalLink(actor: string, slug: string, returnUrl = `${publicUrl()}/app/billing`) {
+export async function portalLink(actor: string, slug: string, returnUrl = `${consoleUrl()}/app/billing`) {
   const customer = await ensureCustomer(actor, slug);
   billing.invalidateSubscriptions();
   log(actor, "billing.portal_link", slug);

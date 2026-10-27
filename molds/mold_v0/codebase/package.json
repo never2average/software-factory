@@ -51,7 +51,7 @@
     "test:legal": "tsx scripts/legal-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
     "test:mcp-oauth": "tsx scripts/mcp-oauth-test.ts builtin && tsx scripts/mcp-oauth-test.ts clerk",
-    "test:mcp-domain": "tsx scripts/mcp-domain-test.ts clerk && tsx scripts/mcp-domain-test.ts builtin",
+    "test:mcp-domain": "tsx scripts/mcp-domain-test.ts clerk && tsx scripts/mcp-domain-test.ts builtin && tsx scripts/mcp-domain-test.ts clerk console && tsx scripts/mcp-domain-test.ts builtin console",
     "test:sign-in": "tsx scripts/sign-in-test.ts builtin && tsx scripts/sign-in-test.ts clerk",
     "test:email": "tsx scripts/email-test.ts",
     "test:status-pages": "tsx scripts/status-pages-test.ts builtin && tsx scripts/status-pages-test.ts clerk",
