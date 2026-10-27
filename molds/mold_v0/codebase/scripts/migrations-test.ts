@@ -633,12 +633,6 @@ async function suite(kind: "pglite" | "postgres") {
     // The host pack secured them as its row-level security migration did, through the names of before 0024.
     const secured = (v: number) => { const m = all.find((x) => x.version === v)!; return m.sql.slice(m.sql.indexOf("DO $mig$")).replaceAll("app_tenant_role()", "octillion_tenant_role()").replaceAll("app_tenant_org()", "octillion_tenant_org()"); };
     const creates26 = part(26, "CREATE TABLE IF NOT EXISTS nudges");
-    const upTo26 = async (v: number) => {
-      const dir = path.join(tmp, `upto26-${v}-${kind}-${++n}`);
-      mkdirSync(dir, { recursive: true });
-      for (const m of all.filter((x) => x.version <= v)) writeFileSync(path.join(dir, `${String(m.version).padStart(4, "0")}_${m.name}.sql`), m.sql);
-      return dir;
-    };
     const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
       "DO $w$ DECLARE r TEXT := octillion_tenant_role(); BEGIN ALTER TABLE widgets ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS tenant_isolation ON widgets;\n" +
       "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', r);\n" +
@@ -669,18 +663,20 @@ async function suite(kind: "pglite" | "postgres") {
       ["at 0023, then 0024, 0025 and 0026", 23, first, ["0024_neutral_database_names", "0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
       ["at 0024, then 0025 and 0026", 24, first, ["0025_account_context_memory (adopted)", "0026_journeys_and_tips (adopted)"]],
       ["at 0025 (the previous release), then 0026", 25, p6a, ["0026_journeys_and_tips (adopted)"]]] as const) {
-      const d = await fresh(kind);
       const before = hostPack(pack, { tables: ["widgets", ...JOURNEY_TABLES, ...(pack === first ? CONTEXT_TABLES : [])], platform_read: ["journey_seed"] });
-      if (firstAt > 23) await runMigrations(d, { dir: await upTo26(firstAt), packDirs: before });
-      else {
-        // At 0023 the tenant functions have their names of before 0024, which this runner's platform-library check does
-        // not read: the pack's migration is applied and recorded as that release's runner did.
-        await runMigrations(d, { dir: await upTo26(firstAt), packDirs: [] });
-        await d.exec(pack);
-        await d.exec("CREATE TABLE IF NOT EXISTS pack_schema_migrations (pack TEXT NOT NULL, version INT NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (pack, version))");
-        await d.query("INSERT INTO pack_schema_migrations (pack, version, name, checksum) VALUES ('hp', 1, 'widgets', $1)", [sha(pack)]);
-      }
-      await d.exec(rows);
+      // The release's database with the host pack and its rows, built once (from()).
+      const d = await from(kind, `p6b-${firstAt}`, async (db) => {
+        if (firstAt > 23) await runMigrations(db, { dir: await preDir(firstAt, true), packDirs: before });
+        else {
+          // At 0023 the tenant functions have their names of before 0024, which this runner's platform-library check
+          // does not read: the pack's migration is applied and recorded as that release's runner did.
+          await runMigrations(db, { dir: await preDir(firstAt, true), packDirs: [] });
+          await db.exec(pack);
+          await db.exec("CREATE TABLE IF NOT EXISTS pack_schema_migrations (pack TEXT NOT NULL, version INT NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (pack, version))");
+          await db.query("INSERT INTO pack_schema_migrations (pack, version, name, checksum) VALUES ('hp', 1, 'widgets', $1)", [sha(pack)]);
+        }
+        await db.exec(rows);
+      });
       const rowsBefore = new Map<string, unknown>(), stamps = new Map<string, string[]>();
       for (const t of JOURNEY_TABLES) { rowsBefore.set(t, await rowStats(d, t)); stamps.set(t, await catalogStamp(d, t)); }
       // Without the new earlier checksum the rewritten pack migration is an edit, refused as any edit is.
@@ -713,8 +709,7 @@ async function suite(kind: "pglite" | "postgres") {
     // whose 0003 ran in an earlier release, so secured_after does not hold).
     for (const [what, sql, re] of [["some of the tables", creates26.slice(0, creates26.indexOf("CREATE TABLE IF NOT EXISTS journey_templates")), /never some/],
       ["another shape", creates26, /in another shape than this migration gives them/]] as const) {
-      const e = await fresh(kind);
-      await runMigrations(e, { dir: await upTo26(25), packDirs: [] });
+      const e = await shellAt(kind, 25);
       await e.exec(sql);
       const stampsE = new Map<string, string[]>();
       for (const t of JOURNEY_TABLES) stampsE.set(t, await catalogStamp(e, t));
@@ -725,14 +720,13 @@ async function suite(kind: "pglite" | "postgres") {
     }
     // Rolling back a 0026 that made the tables, once this release wrote to them: refused, nothing changed.
     {
-      const f = await fresh(kind);
-      await runMigrations(f, { packDirs: [] });
+      const f = await shellAt(kind);
       await f.exec("INSERT INTO organizations (slug, name) VALUES ('rb26', 'Rb'); INSERT INTO nudge_prefs (org_id, user_id, muted) SELECT id, 'u', true FROM organizations WHERE slug = 'rb26'");
       await assert.rejects(f.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0026_journeys_and_tips.sql"), "utf8")), /hold 1 row\(s\) written by this release: not dropped/);
       assert.equal((await f.query<{ n: number }>("SELECT count(*)::int AS n FROM nudge_prefs"))[0]!.n, 1, "rollback refused: the row is kept");
       await f.drop();
     }
-    console.log(`  ✓ ${kind}: 0026 makes the journeys and tips tables on a new database and adopts them where a host pack made them, from 0023, 0024 and 0025 (rows identical, catalog rows untouched, the pack's twice-rewritten 0001 accepted at either earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
+    log(`  ✓ ${kind}: 0026 makes the journeys and tips tables on a new database and adopts them where a host pack made them, from 0023, 0024 and 0025 (rows identical, catalog rows untouched, the pack's twice-rewritten 0001 accepted at either earlier checksum, the ledger written, check:rls passes; its rollback keeps adopted tables as they are, drops ones it made only when empty); some of them or another shape refused`);
   }
 
   // A split migration's earlier checksum is accepted only for that file: any other edit is still refused below.
