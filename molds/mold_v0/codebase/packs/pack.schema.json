@@ -2952,6 +2952,15 @@
               ]
             }
           },
+          "rail": {
+            "minItems": 1,
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$"
+            }
+          },
           "page": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,40}$"

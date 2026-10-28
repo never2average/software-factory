@@ -1775,6 +1775,9 @@ if (memoryFacts) {
   files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
     `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
 }
+// A home tab's journeys card (mold_v0-172: a tab's rail) needs the journeys component on in this build.
+for (const t of packViews.tabs) if ((t.rail ?? []).includes("journeys") && !journeyFacts) fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: rail journeys: no pack of the build turns the journeys component on (pack.json journeys)`);
+refuse();
 // The shell's console sections shown from the start (mold_v0-171: console.show), only when a pack or the profile shows one.
 if (SHOWN_SECTIONS.length) {
   const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
@@ -2356,6 +2359,7 @@ function viewsModule() {
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
     charts: t.charts ?? [],
     ...(t.include?.length ? { include: t.include } : {}),
+    ...(t.rail?.length ? { rail: t.rail } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
@@ -2389,6 +2393,8 @@ function viewsModule() {
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
     "  /** The shell's sections an overview shows above its charts, in order (mold_v0-134): the Setup page's checklist, the notices. */\n" +
     "  include?: ('setup' | 'notices')[];\n" +
+    "  /** A home tab's right-column cards below the connection card, in order (mold_v0-172): journeys, notices, chart:<name>. */\n" +
+    "  rail?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +

@@ -130,6 +130,8 @@ export interface PackTabSpec {
   charts: string[];
   /** The shell's sections an overview shows above its charts, in order (mold_v0-134): the Setup page's checklist, the notices. */
   include?: ('setup' | 'notices')[];
+  /** A home tab's right-column cards below the connection card, in order (mold_v0-172): journeys, notices, chart:<name>. */
+  rail?: string[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
   empty?: { title: string; text: string; cta: { label: string; href: string } | null };
 }

@@ -193,7 +193,7 @@ export function OrgSwitcher() {
                     onClick={() => handleOrganizationSwitch(membership.organization.id)}
                     className='gap-2 p-2'
                   >
-                    <div className='flex size-6 items-center justify-center overflow-hidden rounded-md border'>
+                    <div className='bg-sidebar-primary text-sidebar-primary-foreground flex size-6 items-center justify-center overflow-hidden rounded-md'>
                       {membership.organization.hasImage && membership.organization.imageUrl ? (
                         <Image
                           src={membership.organization.imageUrl}

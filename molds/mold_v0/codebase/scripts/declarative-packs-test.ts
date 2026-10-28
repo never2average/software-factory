@@ -228,7 +228,7 @@ try {
   // ---------- 2d. a home tab: an overview that includes the shell's sections (mold_v0-134) ----------
   {
     let m = 0;
-    const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }]; };
+    const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }, { name: "numbers", title: "Numbers", type: "number", metrics: ["open_total"] }]; j.metrics.push({ name: "open_total", label: "Open findings", over: "tracker_findings" }); };
     const due = (j: any) => { j.record_areas.find((a: any) => a.name === "tracker_findings").due = { field: "due" }; };
     const home = (tab: Record<string, unknown>, more: Record<string, unknown>[] = [], withDue = true) =>
       variant((j) => { chart(j); if (withDue) due(j); j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], ...tab }, ...more]; });
@@ -244,11 +244,22 @@ try {
     no("a setup tab beside it", home({ include: ["setup"] }, [{ id: "start", kind: "setup", label: "Get started" }]), /tab home: include setup: tab start is the Setup page, which this tab now shows; drop that tab/);
     no("a notices tab beside it", home({ include: ["notices"] }, [{ id: "due", kind: "notices", label: "Due soon" }]), /tab home: include notices: tab due is the Notices page/);
     no("two home tabs", home({ include: ["setup"] }, [{ id: "home2", kind: "overview", label: "Home again", charts: ["summary"], include: ["notices", "setup"] }]), /tab home2: include setup: tab home already includes it \(one home page per build\)/);
+    // Its right column's cards (mold_v0-172: rail).
+    let r = 0;
+    const noRail = (what: string, json: unknown, re: RegExp) => { refused(`rail: ${what}`, tryPack(json), re); r++; };
+    noRail("on an overview that does not include setup", home({ include: ["notices"], rail: ["notices"] }), /tabs\[0\]\.rail: rail is for a home tab: an overview tab that includes setup/);
+    noRail("a card twice", home({ include: ["setup", "notices"], rail: ["notices", "notices"] }), /tabs\[0\]\.rail: a card is listed twice/);
+    noRail("an unknown card", home({ include: ["setup"], rail: ["billing"] }), /tabs\[0\]\.rail\[0\]: one of the shell's cards \(TAB_RAIL\) or chart:<one of the pack's number charts>/);
+    noRail("three cards", home({ include: ["setup", "notices"], rail: ["notices", "chart:numbers", "journeys"] }), /tabs\[0\]\.rail: Too big/);
+    noRail("notices the tab does not include", home({ include: ["setup"], rail: ["notices"] }), /tabs\[0\]\.rail: the notices card is for a tab that includes notices/);
+    noRail("a chart the pack does not declare", home({ include: ["setup"], rail: ["chart:nope"] }), /tab home: rail chart:nope: this pack declares no chart nope/);
+    noRail("a chart that is not a number chart", home({ include: ["setup"], rail: ["chart:summary"] }), /tab home: rail chart:summary: a card shows a number chart \(its tiles\); summary is a bar chart/);
+    noRail("journeys in a build without them", home({ include: ["setup"], rail: ["journeys"] }), /tab home: rail journeys: no pack of the build turns the journeys component on/);
     // Accepted: the include in its order (notices first here), a home tab with no charts, and the redirects.
     const ok = tryPack(variant((j) => {
       chart(j); due(j);
       j.metrics[0].roles = ["owner"];
-      j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], include: ["notices", "setup"] }, { id: "plain", kind: "overview", charts: ["summary"] },
+      j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], include: ["notices", "setup"], rail: ["chart:numbers", "notices"] }, { id: "plain", kind: "overview", charts: ["summary"] },
         { id: "apps", kind: "area", area: "tracker_apps" }];
     }));
     assert.equal(ok.r.status, 0, `a home tab builds: ${ok.r.stderr}`);
@@ -260,6 +271,9 @@ try {
     assert.deepEqual(got.home.roles, ["viewer", "member", "billing", "owner"], "a home tab is every role's (its charts' metric is the owner's only)");
     assert.deepEqual(got.plain.roles, ["owner"], "a plain overview is still narrowed to the roles that read its metrics");
     assert.ok(!("include" in got.plain), "an overview with no include carries none");
+    assert.deepEqual(got.home.rail, ["chart:numbers", "notices"], "its cards in the tab's order (mold_v0-172)");
+    assert.ok(!("rail" in got.plain), "an overview with no rail carries none");
+    assert.match(nav, /rail\?: string\[\];/, "the spec's type has the cards");
     assert.match(nav, /include\?: \('setup' \| 'notices'\)\[\];/, "the spec's type names the sections");
     const routes = JSON.parse(readFileSync(path.join(ok.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
     // The nested addresses of before (mold_v0-132) lead to the flat ones, first; then the home tab's.
@@ -286,6 +300,7 @@ try {
       "/app/activity -> /app/home", "/app/activity/:path* -> /app/home",
     ], "every redirect takes one hop to the home tab");
     console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, /app and /app/notices redirected to it in one hop`);
+    console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, journeys without them); built in its order`);
   }
 
   // ---------- 2d. flat console URLs (mold_v0-132) ----------
