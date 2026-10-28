@@ -2,10 +2,10 @@
 /**
  * The public pages' header (mold_v0-122, after the first product's): sticky, the build's mark and name, the picked
  * sections as navigation on wide screens and in a side sheet on small ones, the block's header link, and the ways in
- * (siteCtas: "Sign in", with the start call only when the page has no hero to carry it, or one account button) only on a
- * page that opted into two calls (mold_v0-164); by default the header asks for nothing (`ways` false, mold_v0-165: the
- * first screen's one call is the hero's button). An open-source app's repository is a GitHub button here on every width:
- * an icon, not a call.
+ * (by default one account button, "Sign in" or "Open dashboard"; or "Sign in", with the start call only when the page has
+ * no hero or link to carry it) on the two-call page, the default since mold_v0-168; on a one-call page (first_screen.calls
+ * 1, mold_v0-165) the header asks for nothing (`ways` false: the first screen's one call is the hero's button). An
+ * open-source app's repository is a GitHub button here on every width: an icon, not a call.
  */
 import Link from 'next/link';
 import { useState } from 'react';

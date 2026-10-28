@@ -40,7 +40,7 @@ export type LandingVisual = DecisionGraphVisual | TranscriptVisual | LoopVisual 
 
 export interface HeroSection {
   type: 'hero'; id?: string; eyebrow?: string; headline?: string; headline_highlight?: string; subheadline?: string;
-  /** A link, or 'account': sign in (or open the console when signed in), with an arrow. */
+  /** A link, or 'account' (the default on the two-call page, mold_v0-168): sign in (or open the console when signed in), with an arrow. */
   primary_cta?: LandingLink | 'account'; secondary_cta?: LandingLink; note?: string;
   /** Up to 3 more links under the calls to action (the app's own: its repository, its docs). */
   links?: LandingLink[];
@@ -81,7 +81,7 @@ export interface LandingBlock {
   request_page?: RequestPage;
   /** An open-source app's repository (mold_v0-164): the header's GitHub button and a footer link (`label`). */
   open_source?: OpenSource;
-  /** How many things the first screen asks for (mold_v0-165): 1, the default (the hero's one button), or 2 (the mold_v0-164 page). */
+  /** How many things the first screen asks for: 2, the default (mold_v0-168: signing in and "Early access", the first product's buttons), or 1 (mold_v0-165: the hero's one button). */
   first_screen?: { calls: 1 | 2 };
 }
 

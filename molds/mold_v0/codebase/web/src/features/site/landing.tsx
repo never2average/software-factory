@@ -20,7 +20,7 @@ import {
 } from './landing-types';
 import { buildLegal } from './legal';
 import { legalLinks } from './legal-types';
-import { forAccess, REQUEST, SIGN_UP, siteCtas, type SiteCtas } from './site-ctas';
+import { ACCOUNT_OPEN, ACCOUNT_SIGN_IN, forAccess, REQUEST, SIGN_UP, siteCtas, twoCallPage, type SiteCtas } from './site-ctas';
 import { ogImages, twitterCard } from './share-image-meta';
 
 /**
@@ -141,27 +141,33 @@ export interface Placed { section: LandingSection; id: string }
 
 /** The page this build shows: the block's sections (else the neutral wireframe), each with its anchor; the header's navigation. */
 export function resolvedLanding(block: LandingBlock | null = declared, access?: AccountsMode) {
-  // The account button's two states as the block's header names them (mold_v0-138), wherever the page shows it.
+  // The first screen asks for two things by default (mold_v0-168, src/landing.ts FIRST_SCREEN_CALLS): the first product's
+  // buttons, signing in and one other ("Early access"), each in the header and the hero. first_screen.calls 1
+  // (mold_v0-165): the hero's one button, the header asking for nothing.
+  const single = block?.first_screen?.calls === 1;
+  // The account button's two states as the block's header names them (mold_v0-138), wherever the page shows it; on the
+  // two-call page "Sign in" (/auth/sign-in) and "Open dashboard" (/app) unless it does.
   const shell = siteCtas(access);
-  const ctas: SiteCtas = { ...shell, signIn: block?.header?.sign_in ?? shell.signIn, open: block?.header?.open ?? shell.open };
+  const ctas: SiteCtas = { ...shell, signIn: block?.header?.sign_in ?? (single ? shell.signIn : ACCOUNT_SIGN_IN), open: block?.header?.open ?? (single ? shell.open : ACCOUNT_OPEN) };
   const sections = block?.sections?.length ? block.sections : neutralSections();
   const ids = sectionIds(sections);
   const placed: Placed[] = sections.map((section, i) => ({ section, id: ids[i]! }));
   const nav = placed.flatMap(({ section: s, id }) => (s.type === 'hero' || s.type === 'cta' || s.type === 'logos' || s.nav === false ? [] : [{ label: s.nav_label ?? NAV_LABEL[s.type], href: `/#${id}` }]));
   const heroSection = sections.find((s): s is HeroSection => s.type === 'hero');
-  // The first screen asks for one thing (mold_v0-165, src/landing.ts FIRST_SCREEN_CALLS): the hero's button; the header
-  // asks for nothing. A block with first_screen.calls 2 keeps the mold_v0-164 page: the header's sign-in and one other,
-  // the hero carrying the other, so the header shows the start itself only on a page with no hero and no link.
-  const single = (block?.first_screen?.calls ?? 1) === 1;
-  const startInHeader = !single && !heroSection && !block?.header?.links?.length;
+  // The two-call page's header: the block's link, else the page's other call; the account button unless it says
+  // "sign_in_and_start", where the header shows the start itself only on a page with no hero and no link.
+  const page = twoCallPage(block, heroSection ?? null);
+  const header = single ? block?.header : { ...block?.header, links: page.links.map((k) => forAccess(k, access)), account: page.account };
+  const startInHeader = !single && !heroSection && !page.links.length;
   return {
-    placed, nav, ctas, single, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access, single), header: block?.header, footer: block?.footer, seo: block?.seo,
+    placed, nav, ctas, single, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access, single, block), header, footer: block?.footer, seo: block?.seo,
     startInHeader, openSource: block?.open_source
   };
 }
 
-/** The hero filled in from the profile where the block leaves it out. `single`: the first screen's one call (mold_v0-165). */
-function heroOf(h: HeroSection, ctas: SiteCtas, access?: AccountsMode, single = true) {
+/** The hero filled in from the profile where the block leaves it out. `single`: the first screen's one call (mold_v0-165); else the two-call page's (mold_v0-168). */
+function heroOf(h: HeroSection, ctas: SiteCtas, access?: AccountsMode, single = false, block: LandingBlock | null = declared) {
+  const page = twoCallPage(block, h);
   const headline = h.headline ?? profile.short_description;
   return {
     ...h,
@@ -169,11 +175,13 @@ function heroOf(h: HeroSection, ctas: SiteCtas, access?: AccountsMode, single = 
     headline,
     // The console's description, unless it only repeats the headline (a brand's is "<name> — <tagline>").
     subheadline: h.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? undefined : profile.console_description),
-    // The one button's words are "Get started" unless the block names its own (mold_v0-165), also under invite-only accounts.
-    primary_cta: h.primary_cta === 'account' ? 'account' as const : forAccess(h.primary_cta ?? (single ? { label: SIGN_UP.label, href: ctas.start.href } : ctas.start), access),
-    // No second call by default (mold_v0-164), none at all on a one-call page (mold_v0-165, refused by gen-packs): the
-    // install pages are in the footer and the console.
-    secondary_cta: single ? undefined : forAccess(h.secondary_cta, access),
+    // A one-call page's button says "Get started" unless the block names its own (mold_v0-165), also under invite-only
+    // accounts. The two-call page's (mold_v0-168): the account button, else the block's own call.
+    primary_cta: single ? (h.primary_cta === 'account' ? 'account' as const : forAccess(h.primary_cta ?? { label: SIGN_UP.label, href: ctas.start.href }, access))
+      : page.primary === 'account' ? 'account' as const : forAccess(page.primary!, access),
+    // The two-call page's second call: the block's, else "Early access" beside the account button (mold_v0-168); none
+    // on a one-call page (mold_v0-165, refused by gen-packs). The install pages are in the footer and the console.
+    secondary_cta: single ? undefined : forAccess(page.secondary, access),
     links: single ? undefined : h.links?.map((k) => forAccess(k, access)),
     single
   };
@@ -592,7 +600,7 @@ export function LandingSections({ access }: { access?: AccountsMode } = {}) {
         const s = p.section;
         if (foot && p === foot.p) return null;
         switch (s.type) {
-          case 'hero': return <Hero key={p.id} id={p.id} hero={heroOf(s, l.ctas, access, l.single)} ctas={l.ctas} foot={foot} />;
+          case 'hero': return <Hero key={p.id} id={p.id} hero={heroOf(s, l.ctas, access, l.single, declared)} ctas={l.ctas} foot={foot} />;
           case 'logos': return <Logos key={p.id} p={p} s={s} />;
           case 'problem': return <Problem key={p.id} p={p} s={s} />;
           case 'concept': return <Concept key={p.id} p={p} s={s} />;
@@ -617,12 +625,12 @@ const Logo = () => (
   </Link>
 );
 
-/** The public pages' header: the build's mark and name, the picked sections, and (only on a two-call page, mold_v0-164) the block's header links and the ways in (account-aware). */
+/** The public pages' header: the build's mark and name, the picked sections, and (on the two-call page, the default since mold_v0-168) the header's link and the ways in (account-aware). */
 export function SiteHeader({ access }: { access?: AccountsMode } = {}) {
   const l = resolvedLanding(declared, access);
   return (
     <SiteHeaderView name={profile.name} mark={<BrandMark />} nav={l.nav} links={l.header?.links ?? []}
-      account={l.header?.account ?? 'sign_in_and_start'} ctas={l.ctas} start={l.startInHeader} ways={!l.single}
+      account={l.header?.account ?? 'account'} ctas={l.ctas} start={l.startInHeader} ways={!l.single}
       repo={l.openSource ? { href: l.openSource.repo, label: `${profile.name} on GitHub` } : undefined} />
   );
 }
