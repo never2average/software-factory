@@ -331,6 +331,14 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and links must name a declared area (both refused at build and at start). Handlers get `ctx.records`: reads of every
   platform area and the workspace's own rows; writes only to the pack's own workspace areas (admin routes: its own
   platform areas). `check:rls` probes both tables; `npm run test:record-areas` proves it with two workspaces.
+  The list page (mold_v0-170) is the console's database table (`RecordView`): the area's `list_columns` typed by their
+  fields (an enum filters by its options, a date or number sorts as one), search, a record count, sorting and filters,
+  a row opening the record beside the list with **Open record** for its own page; empty, it says where the area's rows
+  come from (for staff: its data repository, what to press on Data repositories, the admin MCP's sync tool;
+  `web/src/features/records/empty.ts`). The breadcrumb names the area by its label, as the sidebar does. An area of
+  platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
+  (`testing/console/world.mts`) writes them into its throwaway database so the pages are graded with rows; a deployed
+  build never writes them. `npm run test:record-pages` checks the empty states, the staff guide and the samples rule.
 - **jobKinds** (mold_v0-041, built): the generic run engine, beside the product's session queue (which it does not
   change). `sql/migrations/0005_runs.sql` adds `runs`, `run_events` and `run_results` (each `org_id` under
   `tenant_isolation`; the tenant role may only read them) and a `run` gateway token kind (`gateway_tokens.run_id`,
@@ -1863,6 +1871,11 @@ would: `# <title>`, a blank line, then the markdown. The markdown is checked wit
 is allowed (the renderer shows it as text) and so are relative links between docs (`journeys.md`, `../beta-guide.md`,
 which /admin/docs opens as that doc); a path the shell's `docs/` or another pack already has is refused.
 `npm run test:pack-guide`.
+/admin/docs opens on the first doc of its Guides group (a guide or walkthrough, such as a pack's beta guide). When no
+doc is one, it opens on the **staff guide** written from the build (mold_v0-170, `web/src/content/staff-guide.ts`, not a
+file and not in the docs answers' corpus): "<product> staff guide", with what the product does (the first page of its
+customer guide), letting people in, the sidebar's pages in order with what each is for, the shared record areas and
+the daily checks, so staff never land on an engineering document; those stay below it under Architecture and Specs.
 
 **A host pack's console, Setup page, settings and admin words (mold_v0-140, mold_v0-121).** What a host pack's code
 used to hand the shell is its pack.json, checked by `gen-packs.mjs` (`src/pack-manifest.ts` for the shape) and carried to

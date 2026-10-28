@@ -15,6 +15,7 @@ import { landing } from '../config/landing.generated';
 import { legal } from '../config/legal.generated';
 import { profile } from '../config/profile.generated';
 import { ADMIN_DOCS } from '../content/admin-docs.generated';
+import { STAFF_GUIDE_SLUG, staffGuideShown } from '../content/staff-guide';
 import { guidePages } from '../content/customer-guide';
 import catalog from '../content/mcp-tools.generated.json';
 import { findAppPage, findPackPage } from '../features/packs/registry';
@@ -32,7 +33,8 @@ const first = (p: Params, k: string) => p[k]?.[0] ?? '';
 const HOST_PAGES = new Set(packRoutes.rewrites.map((r) => r.destination));
 const host = (prefix: string) => (p: Params) => HOST_PAGES.has(`${prefix}/host/${first(p, 'pack')}/${(p.path ?? []).join('/')}`);
 const CUSTOMER_DOCS = new Set(guidePages(catalog).map((g) => g.slug));
-const ADMIN_DOC_SLUGS = new Set(ADMIN_DOCS.map((d) => d.slug));
+// The staff guide (mold_v0-170, content/staff-guide.ts) is written from the build when no doc is a guide.
+const ADMIN_DOC_SLUGS = new Set([...ADMIN_DOCS.map((d) => d.slug), ...(staffGuideShown ? [STAFF_GUIDE_SLUG] : [])]);
 
 /** Each dynamic route the build can answer for: the page's own test, from the same registry. */
 export const RESOLVED: Readonly<Record<string, (p: Params) => boolean>> = {

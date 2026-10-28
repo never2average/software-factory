@@ -15,7 +15,8 @@
 //   4. One workspace ("Lane workspace") linked to a mock Clerk organisation, and one person, its owner, who is also
 //      platform staff, so both /app and /admin render signed in; and two people in no workspace (one of them staff), for
 //      the portal's page for no account (a page's `as` in surface.mts picks them). The session is a token the mock signs and the API
-//      verifies; a fresh one is minted for every page (they live five minutes).
+//      verifies; a fresh one is minted for every page (they live five minutes). Then the shared record areas' sample
+//      records (mold_v0-170: pack.json record_areas[].samples), so their pages are graded with rows.
 //   5. The console: `next start` on 127.0.0.1 (a free port), killed with this process (PR_SET_PDEATHSIG).
 //   6. Each harness's run({origin, api, lane, pages, packs, session, sessionAs, argv}): pages from surface.mts (filtered by
 //      --pages), a row per pack; api and lane for a harness that reads the API itself or imports the lane copy's modules
@@ -122,6 +123,20 @@ try {
     ];
   };
   const sessionAs = { no_account: await nobody("lane.outsider@example.org", "Lane", false), staff_no_account: await nobody("lane.staff@example.org", "Staff", true) };
+
+  // 4b. The packs' sample records (mold_v0-170: pack.json record_areas[].samples, shared areas only), written as a
+  // repository's rows would be, so the shared areas' pages are graded with rows; an area a pack gives no samples stays
+  // empty and its empty state is graded. An area read live from an API is not stored, so it gets none.
+  const ra = await imp("src/record-areas.ts");
+  let samples = 0;
+  for (const a of ra.recordAreas() as { name: string; scope: string; repo: { kind: string } | null; samples?: { key: string; title?: string; version?: string; data: Record<string, unknown> }[] }[]) {
+    if (a.scope !== "platform" || a.repo?.kind === "http_api") continue;
+    for (const x of a.samples ?? []) {
+      await ra.putPlatform(null, a.name, x.key, { title: x.title ?? null, version: x.version ?? null, data: x.data }, "put", { source: "lane:samples", fingerprint: `lane:${x.key}` });
+      samples++;
+    }
+  }
+  if (samples) console.log(`lane world: ${samples} sample record(s) written to the shared areas that declare them`);
 
   // 5. The console, killed with this process even if this process is killed outright.
   const pdeath = "import ctypes,os,signal,sys; ctypes.CDLL(None).prctl(1, signal.SIGTERM); os.execvp(sys.argv[1], sys.argv[1:])";

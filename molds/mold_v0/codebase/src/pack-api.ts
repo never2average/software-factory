@@ -616,9 +616,26 @@ export const RecordAreaSchema = z.object({
     within_days: z.number().int().min(0).max(365).default(7),
     notify: z.array(z.enum(["owner", "billing", "member", "viewer"])).min(1).max(4).default(["owner"]),
   }).strict().optional(),
+  /**
+   * Example records of a shared (platform) area (mold_v0-170), for the test lanes only: the lane world
+   * (molds/mold_v0/testing/console/world.mts) writes them into its throwaway database, so the area's console pages are
+   * graded with rows as well as empty. A deployed build never writes them; the lane checks each against the area's
+   * fields as any write is.
+   */
+  samples: z.array(z.object({
+    key: z.string().regex(RECORD_KEY, "a record key: letters, digits and . _ : ( ) -, starting with a letter or digit"),
+    title: z.string().min(1).max(200).optional(),
+    version: z.string().min(1).max(120).optional(),
+    data: z.record(z.string(), z.unknown()),
+  }).strict()).max(20).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((a, ctx) => {
   const bad = (message: string, ...path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
+  if (a.samples?.length && a.scope !== "platform") bad("samples are for a shared (platform) area: a workspace's own records come from its own use", "samples");
+  for (const [i, x] of (a.samples ?? []).entries()) {
+    if ((a.samples ?? []).findIndex((y) => y.key === x.key) !== i) bad(`sample ${x.key} is declared twice`, "samples", i, "key");
+    for (const k of Object.keys(x.data)) if (!a.fields.some((f) => f.name === k)) bad(`${k} is not one of the area's fields`, "samples", i, "data", k);
+  }
   if (a.name === "areas") bad("areas is reserved (the list of areas at /api/records/areas)", "name");
   if (a.role === "asset" && a.scope === "platform") bad("an asset area holds a workspace's private data: workspace scope only", "scope");
   if (a.sealed && a.scope === "platform") bad("a shared (platform) area has no workspace key to seal it with: sealed is for workspace areas", "sealed");

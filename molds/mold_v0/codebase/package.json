@@ -34,6 +34,7 @@
     "test:declarative-packs": "tsx scripts/declarative-packs-test.ts",
     "test:row-maps": "tsx scripts/row-maps-test.ts",
     "test:record-areas": "tsx scripts/record-areas-test.ts",
+    "test:record-pages": "tsx scripts/record-pages-test.ts",
     "test:metrics": "tsx scripts/metrics-test.ts",
     "test:console-tabs": "tsx scripts/console-tabs-test.ts",
     "test:merged-tabs": "tsx scripts/merged-tabs-test.ts",
