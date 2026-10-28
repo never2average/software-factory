@@ -3000,6 +3000,12 @@
               "$comment": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
               }
             },
             "required": [
@@ -3017,6 +3023,12 @@
               "$comment": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
               },
               "store": {
                 "type": "string",
@@ -3321,6 +3333,12 @@
               "$comment": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
               },
               "upstream": {
                 "anyOf": [
@@ -3643,6 +3661,12 @@
               "$comment": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
               },
               "base_url": {
                 "type": "string",

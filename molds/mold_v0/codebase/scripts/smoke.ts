@@ -155,7 +155,10 @@ try {
     assert.deepEqual(names.slice(0, adminToolNames().length), adminToolNames(), "the admin MCP lists its own tools first, the host packs' where they belong");
     assert.equal(c.getServerVersion()?.name, `${PROFILE.mcp_server_name}-admin`);
     const settings = await c.callTool({ name: "list_settings", arguments: {} }) as { isError?: boolean; structuredContent?: { settings: { group: string }[] } };
-    assert.ok(!settings.isError && settings.structuredContent!.settings.some((s) => s.group === "capacity"), "the shell's settings are listed");
+    assert.ok(!settings.isError && settings.structuredContent!.settings.some((s) => s.group === "email"), "the shell's settings are listed");
+    // The session engine's capacity settings only in a build that has the engine (mold_v0-169).
+    const { sessionEngine } = await import("../src/host-tables.js");
+    assert.equal(settings.structuredContent!.settings.some((s) => s.group === "capacity"), sessionEngine(), "the engine's capacity settings exactly when the build has it");
     await c.close();
     ok(`the admin API and the admin MCP (${names.length} tools) need an admin token`);
   }

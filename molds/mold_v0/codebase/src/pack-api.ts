@@ -746,7 +746,9 @@ export const UpstreamSchema = z.object({
   /** Its licence, as an SPDX id or expression ("AGPL-3.0-only", "MIT OR Apache-2.0"): shown in the build's source offer. */
   license: z.string().regex(/^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/, "an SPDX licence id or expression (letters, digits, . + - ( ) and spaces)").optional(),
 }).strict();
-const ShellTablesSchema = z.object({ kind: z.literal("shell_tables"), $comment: comment }).strict();
+/** A repository's name as staff read it on the Data repositories page (mold_v0-169); absent: its id in words ("company_ledger": "Company ledger"). */
+const repoLabel = z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f\u007f]*$/, "plain text on one line").optional();
+const ShellTablesSchema = z.object({ kind: z.literal("shell_tables"), $comment: comment, label: repoLabel }).strict();
 /**
  * The workspace store's files (mold_v0-033): read only, indexed into the workspace's rows after a commit. Either `path`
  * (a file template: one row per `identity` value of a JSON-lines or JSON-list file, the last one winning when
@@ -756,7 +758,7 @@ const ShellTablesSchema = z.object({ kind: z.literal("shell_tables"), $comment: 
  * every sealed (sops) value.
  */
 const WorkspaceFilesSchema = z.object({
-  kind: z.literal("workspace_files"), $comment: comment,
+  kind: z.literal("workspace_files"), $comment: comment, label: repoLabel,
   store: name.optional(),
   path: repoPath.optional(),
   dir: repoPath.optional(),
@@ -778,7 +780,7 @@ const WorkspaceFilesSchema = z.object({
  * `prune.max_fraction` of it). Other keys are the pack's loader's own settings.
  */
 const UpstreamCatalogSchema = z.object({
-  kind: z.literal("upstream_catalog"), $comment: comment,
+  kind: z.literal("upstream_catalog"), $comment: comment, label: repoLabel,
   upstream: z.union([z.literal("pack.json#upstream"), UpstreamSchema]),
   transport: z.enum(["git", "github"]).optional(),
   files: z.record(fileKey, repoPath).optional(),
@@ -797,7 +799,7 @@ const UpstreamCatalogSchema = z.object({
  * `list.path` (the list of items at `list.items`), `get.path` (with {key}) and a `map` per area.
  */
 const HttpApiSchema = z.object({
-  kind: z.literal("http_api"), $comment: comment,
+  kind: z.literal("http_api"), $comment: comment, label: repoLabel,
   base_url: z.string().regex(/^https?:\/\/[a-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~/-]*)?$/i, "an https:// address"),
   egress: z.array(host).min(1).max(10),
   credential: name.optional(),
