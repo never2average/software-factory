@@ -1,0 +1,8 @@
+{
+  "phase": "mold_v0-171 (Maxwell): only the shared bug fixes reach Maxwell. The no-account words for platform staff are filled ('{an account}' became 'an account'). The console's copy of the access-request rules knows the new optional `person` field (Maxwell declares no access fields, so nothing it shows changes). Maxwell has no optional setup step, so its checklist count is the same. Its /request-access, sidebar, FinOps and MCP are unchanged",
+  "allow": [
+    { "key": "generated::web/src/lib/access-request.generated.ts", "reason": "the console's copy of src/access-request.ts (gen-packs copies the shared rules): it knows `person` and personText; Maxwell declares no access fields, so no page changes" },
+    { "key": "pages::/app?lane=staff-no-account (as staff_no_account)::text", "reason": "'{an account}' is filled: 'an account' (gap 3, a shell bug)" },
+    { "key": "shots::/app?lane=staff-no-account (as staff_no_account)::*", "reason": "the same filled words (gap 3)" }
+  ]
+}
