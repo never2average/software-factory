@@ -1,7 +1,9 @@
 'use client';
 // A tab a pack declares (mold_v0-058), at /app/<tab> (mold_v0-132): the shell draws it from pack.json alone.
-//   overview   the tab's charts (mold_v0-063; ./charts.tsx), below the shell's sections it includes, in its order
-//              (mold_v0-134, a home page): the Setup page's checklist (folded to a line once done), the notices
+//   overview   the tab's charts (mold_v0-063; ./charts.tsx). One that includes setup is the build's home (mold_v0-134,
+//              mold_v0-172): the Setup page's own layout (the checklist, the connection card and the cards of its
+//              pack.json rail on the right; the notices it includes below the checklist unless a card shows them), its
+//              charts below both columns
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date), each row opening
 //              the record's page when the tab has the detail view; the tab's charts above. A merged tab (mold_v0-135:
 //              pack.json `areas`) draws several areas as one list, rows merged by key on the server (./merged.ts)
@@ -16,13 +18,14 @@ import PageContainer from '@/components/layout/page-container';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { PackChartSpec, PackTabSpec, RecordAreaSpec } from '@/config/pack-nav.generated';
+import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
-import { SetupChecklist } from '@/features/portal/setup';
-import { DueSoonSection } from '@/features/schedules/notices-page';
+import { FloatPanel, SetupPage } from '@/features/portal/setup';
+import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
+import { Icons } from '@/components/icons';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { BoardColumns, RecordTable, TimelineList, type Page } from './board';
-import { ChartCell, formatValue, type MetricResult } from './charts';
+import { ChartCell, ChartTiles, formatValue, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
 import { ExportCsvButton } from './export';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
@@ -40,16 +43,21 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 
-/** The charts of a tab, from one request for all their metrics. */
-function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?: boolean }) {
+/** The numbers of some charts, from one request for all their metrics (keyed by metric name; null while loading). */
+function useChartMetrics(charts: PackChartSpec[]) {
   const names = useMemo(() => [...new Set(charts.flatMap((c) => c.metrics))], [charts]);
   const url = `/api/metrics?names=${encodeURIComponent(names.join(','))}`;
-  const { data, error } = useOrgLoad(async () => {
+  return useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as { metrics?: MetricResult[]; error?: string };
     if (!res.ok) throw httpError(res.status, body);
     return new Map((body.metrics ?? []).map((m) => [m.name, m]));
   }, [url]);
+}
+
+/** The charts of a tab, from one request for all their metrics. */
+function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?: boolean }) {
+  const { data, error } = useChartMetrics(charts);
   if (!charts.length) return null;
   if (error) return <ErrorState error={error} />;
   const results = data ?? new Map<string, MetricResult>();
@@ -64,16 +72,60 @@ function ChartGrid({ charts, whole = false }: { charts: PackChartSpec[]; whole?:
   );
 }
 
-/** An overview tab: the shell's sections it includes (mold_v0-134), then its charts. */
+/** An overview tab: its charts (one that includes setup is the home page: HomeTab). */
 function OverviewTab({ tab }: { tab: PackTabSpec }) {
   const charts = tabCharts(tab);
   // Charts alone: every one refused is the denied status page (mold_v0-131), never an empty grid.
   if (!tab.include?.length) return <ChartGrid charts={charts} whole />;
   return (
     <div className='flex flex-col gap-8'>
-      {tab.include.map((x) => (x === 'setup' ? <SetupChecklist key={x} /> : <DueSoonSection key={x} />))}
+      {tab.include.map((x) => <DueSoonSection key={x} />)}
       {charts.length > 0 && <ChartGrid charts={charts} />}
     </div>
+  );
+}
+
+/**
+ * A number chart as a card of the home page's right column (mold_v0-172: pack.json rail chart:<name>): its tiles, two
+ * a row, and a link to the pack's overview tab that shows it beside the other charts, when there is one. Hidden from a
+ * role that may not read one of its metrics, as on that tab.
+ */
+function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec }) {
+  const charts = useMemo(() => [chart], [chart]);
+  const { data, error } = useChartMetrics(charts);
+  const results = data ?? new Map<string, MetricResult>();
+  if (chart.metrics.some((n) => { const r = results.get(n); return !!r && 'error' in r && r.status === 403; })) return null;
+  const more = packTabs.find((t) => t.pack === home.pack && t.kind === 'overview' && t.id !== home.id && t.charts.includes(chart.name));
+  return (
+    <FloatPanel title={chart.title} icon={<Icons.chartBar />} description={chart.description ?? undefined}>
+      {error ? <ErrorState error={error} /> : <ChartTiles chart={chart} results={results} compact />}
+      {more && <Link href={more.url} className='text-primary self-start text-xs font-medium hover:underline'>Open {more.label}</Link>}
+    </FloatPanel>
+  );
+}
+
+/**
+ * The build's home (mold_v0-134, mold_v0-172): an overview tab that includes setup draws the Setup page's layout, the
+ * same for every build. Its rail's cards follow the connection card (journeys, notices, chart:<name>); the notices it
+ * includes and no card shows follow the checklist; its charts come below both columns. It has no title of its own (the
+ * Setup page has none): its sections name themselves.
+ */
+function HomeTab({ tab }: { tab: PackTabSpec }) {
+  const charts = tabCharts(tab);
+  const rail = tab.rail;
+  const notices = (tab.include ?? []).includes('notices');
+  const cards: Record<string, React.ReactNode> = {};
+  for (const x of rail ?? []) {
+    if (x === 'notices') cards[x] = <DueSoonCard />;
+    else if (x.startsWith('chart:')) {
+      const c = packCharts.find((y) => y.pack === tab.pack && y.name === x.slice(6));
+      if (c) cards[x] = <ChartCard chart={c} home={tab} />;
+    }
+  }
+  return (
+    <SetupPage rail={rail} cards={cards}
+      main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection /> : undefined}
+      below={charts.length ? <div className='mt-10'><ChartGrid charts={charts} /></div> : undefined} />
   );
 }
 
@@ -257,8 +309,13 @@ function RunsTab({ reports, label, empty }: { reports: boolean; label: string; e
   );
 }
 
+/** An overview tab that includes setup: the build's home page (mold_v0-134), every member's. */
+export const isHomeTab = (tab: PackTabSpec) => tab.kind === 'overview' && (tab.include ?? []).includes('setup');
+
 export function TabPage({ tab }: { tab: PackTabSpec }) {
   const { role, loaded, error } = useAccountRole();
+  // The home page is every role's (src/pack-api.ts: such a tab takes no roles) and draws its own page: the Setup page's.
+  if (isHomeTab(tab)) return <HomeTab tab={tab} />;
   // Nothing is asked of the server until the role is known (the server refuses what the role may not read anyway).
   const allowed = role === null || tab.roles.includes(role);
   return (

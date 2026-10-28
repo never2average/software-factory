@@ -245,19 +245,31 @@ function Plot({ chart, f, width }: { chart: PackChartSpec; f: Frame; width?: num
   );
 }
 
-/** Stat tiles: one per metric (label, then the value; the value's own figures, not tabular, at this size). */
-function Tiles({ ms }: { ms: MetricAnswer[] }) {
+/**
+ * Stat tiles: one per metric (label, then the value; the value's own figures, not tabular, at this size). `compact`: two
+ * a row at any width, without the metrics' descriptions (a card of the home page's right column, mold_v0-172).
+ */
+function Tiles({ ms, compact = false }: { ms: MetricAnswer[]; compact?: boolean }) {
   return (
-    <dl className='grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4'>
+    <dl className={compact ? 'grid grid-cols-2 gap-x-4 gap-y-3' : 'grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4'}>
       {ms.map((m) => (
-        <div key={m.name} className='min-w-0'>
+        <div key={m.name} className='min-w-0' title={compact && m.description ? m.description : undefined}>
           <dt className='text-muted-foreground text-xs font-medium'>{m.label}</dt>
-          <dd className='mt-1 text-2xl font-semibold tracking-tight'>{formatValue(m.value, m.unit)}</dd>
-          {m.description && <dd className='text-muted-foreground mt-0.5 text-xs'>{m.description}</dd>}
+          <dd className={compact ? 'mt-0.5 text-xl font-semibold tracking-tight' : 'mt-1 text-2xl font-semibold tracking-tight'}>{formatValue(m.value, m.unit)}</dd>
+          {!compact && m.description && <dd className='text-muted-foreground mt-0.5 text-xs'>{m.description}</dd>}
         </div>
       ))}
     </dl>
   );
+}
+
+/** A number chart's tiles alone (no cell around them): a skeleton until its metrics are in, a refusal's reason. */
+export function ChartTiles({ chart, results, compact = false }: { chart: PackChartSpec; results: Map<string, MetricResult>; compact?: boolean }) {
+  const rs = chart.metrics.map((n) => results.get(n));
+  const failed = rs.find((r): r is { name: string; error: string; status: number } => !!r && 'error' in r);
+  if (failed) return <p className='text-muted-foreground text-sm'>{failed.error}</p>;
+  const ms = rs.filter(isAnswer);
+  return ms.length !== chart.metrics.length ? <Skeleton className='h-24 w-full' /> : <Tiles ms={ms} compact={compact} />;
 }
 
 /** One chart in a grid cell: its title, the plot or the table, and a button between the two. */

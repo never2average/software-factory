@@ -24,7 +24,7 @@
 //    board (no moves), its timeline, its empty state and a narrow table the keyboard can scroll; a one-area tab's own
 //    columns.
 // 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
-// 5. A home tab (mold_v0-134): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
+// 5. A home tab (mold_v0-134, mold_v0-172): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
 //    notices (its Due soon tab dropped): the sidebar loses that tab, /app and /app/notices redirect to the home tab, and
 //    the tab page itself (the console's TabPage, bundled, its API answered in the page) draws the checklist (the next
 //    step's prompt, the connection panel), the first five notices and the charts, in that order; with every step done the
@@ -192,10 +192,11 @@ async function renderHome(chrome: string, web: string, complete: boolean): Promi
   const dir = path.join(TMP, `render-home-${complete ? "done" : "open"}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(web, "render-home.tsx"), `import { createRoot } from 'react-dom/client';
+import { NuqsAdapter } from 'nuqs/adapters/react';
 import { packTabs } from '@/config/pack-nav.generated';
 import { TabPage } from '@/features/tabs/tab-page';
 const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'overview')!;
-createRoot(document.getElementById('root')!).render(<div style={{ width: 1180 }}><TabPage tab={tab} /></div>);
+createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1180 }}><TabPage tab={tab} /></div></NuqsAdapter>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
 `);
   writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
@@ -214,13 +215,14 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
     step("first_call", "Ask Fixture something", complete, "Your first question checks everything works end to end.", "What can Fixture do?")];
   const notices = Array.from({ length: 7 }, (_, i) => ({ id: String(i + 1), kind: "due", area: "audit_findings", area_label: "Vulnerabilities", key: `f${i + 1}`, title: `Finding ${i + 1}`,
     due_on: `2026-10-2${i}`, created_at: "2026-10-20T00:00:00.000Z", emailed: i === 0, dismissed: false }));
-  const answers = [{ name: "open_by_severity", label: "Open by severity", unit: "count", kind: "groups", description: null, measure: "count", rows: 4, as_of: "2026-10-21T12:00:00.000Z",
+  const tile = (name: string, label: string, unit: string, value: number | null) => ({ name, label, unit, kind: "single", description: null, measure: "count", rows: 4, as_of: "2026-10-21T12:00:00.000Z", value });
+  const answers = [tile("open_findings", "Open", "count", 4), tile("overdue_findings", "Overdue", "count", 1), tile("time_to_fix", "Mean time to fix", "days", 3.5), tile("fix_rate", "Fixed", "percent", 0.25), { name: "open_by_severity", label: "Open by severity", unit: "count", kind: "groups", description: null, measure: "count", rows: 4, as_of: "2026-10-21T12:00:00.000Z",
     groups: [["low", "Low", 0], ["medium", "Medium", 1], ["high", "High", 1], ["critical", "Critical", 2]].map(([key, label, value]) => ({ key, label, value })) }];
   const api: Record<string, unknown> = {
     "/api/app/me": { account_role: "owner", role_label: "Owner", permissions: ["read", "edit", "launch", "manage", "billing"], needs: {}, roles: [] },
     "/api/app/setup": { steps, done: steps.filter((x) => x.done).length, total: steps.length, clients: [], calls: 0, groups: [], errors: [], live: null,
       connect: { connector_url: "https://console.example.org/mcp", secret: false, clients: [{ id: "claude", client: "Claude", group: "chat", method: "ui", steps: "Settings, then Connectors.", verified: true, share: null }] } },
-    "/api/onboarding": { steps: [{ pack: "fixture_vulns", id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", done: complete, at: null }], done: complete ? 1 : 0, total: 1 },
+    "/api/onboarding": { steps: [{ pack: "fixture_vulns", id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", prompt: "Add our first application.", done: complete, at: null }], done: complete ? 1 : 0, total: 1 },
     "/api/notices": { notices },
     "/api/metrics": { metrics: answers },
   };
@@ -437,58 +439,70 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     }
   }
 
-  // ---------- 5. a home tab: the overview includes the Setup page's checklist and the notices (mold_v0-134) ----------
+  // ---------- 5. a home tab: the overview includes the Setup page's checklist and the notices (mold_v0-134), drawn as the
+  // Setup page's layout with its own right-column cards (mold_v0-172) ----------
   {
     const home = buildCopy("home", ["fixture_vulns", "fixture_adoption"], (packs) => {
       const f = path.join(packs, "fixture_vulns", "pack.json");
       const j = JSON.parse(readFileSync(f, "utf8"));
       j.tabs = j.tabs.filter((t: { kind: string }) => t.kind !== "notices")
-        .map((t: { id: string }) => (t.id === "overview" ? { ...t, label: "Home", include: ["setup", "notices"] } : t));
-      j.onboarding = [{ id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", done_when: "record:audit_apps" }];
+        .flatMap((t: { id: string; charts: string[] }) => (t.id === "overview" ? [{ ...t, label: "Home", include: ["setup", "notices"], rail: ["chart:headline", "notices"], charts: ["severity"] },
+          { id: "dashboard", kind: "overview", label: "Dashboard", group: "Audit", icon: "chartBar", charts: t.charts }] : [t]));
+      j.onboarding = [{ id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", done_when: "record:audit_apps", prompt: "Add our first application." }];
       writeFileSync(f, JSON.stringify(j, null, 2));
     });
     const hweb = path.join(home, "web");
     const nav = inConsole<Nav>(hweb, NAV);
     const items = nav.portalNav.flatMap((g) => g.items.map((i: any) => `${g.label}: ${i.title} ${i.url}`));
-    assert.equal(items.find((x) => x.startsWith("Audit: ")), "Audit: Home /app/overview", "the home tab first, in its group, by its label");
+    assert.deepEqual(items.filter((x) => x.startsWith("Audit: ")).slice(0, 2), ["Audit: Home /app/overview", "Audit: Dashboard /app/dashboard"], "the home tab first, in its group, by its label; the charts' own tab after it");
     assert.ok(!items.some((x) => x.includes("/app/notices")), `the notices tab is gone from the sidebar: ${items.join(", ")}`);
     const spec = nav.packTabs.find((t: any) => t.pack === "fixture_vulns" && t.id === "overview");
-    assert.deepEqual([spec.include, spec.roles], [["setup", "notices"], ["viewer", "member", "billing", "owner"]], "its sections in order, and every role's");
+    assert.deepEqual([spec.include, spec.rail, spec.roles], [["setup", "notices"], ["chart:headline", "notices"], ["viewer", "member", "billing", "owner"]], "its sections in order, its cards, and every role's");
     const routes = JSON.parse(readFileSync(path.join(hweb, "src", "config", "pack-routes.generated.json"), "utf8")).redirects.filter((r: any) => !r.source.startsWith("/app/packs/")).map((r: any) => `${r.source} -> ${r.destination}`);
     assert.deepEqual(routes, ["/app -> /app/overview", "/app/notices -> /app/overview", "/app/notices/:path* -> /app/overview"],
       "/app and /app/notices lead to the home tab (the pages stay, for a build without one)");
-    console.log("✓ a home tab: the sidebar's Home, no Due soon tab; /app and /app/notices (and below) redirect to it");
+    console.log("✓ a home tab: the sidebar's Home then Dashboard, no Due soon tab; its rail; /app and /app/notices (and below) redirect to it");
     const chrome = findChrome();
     if (!chrome) console.log("✓ (no headless browser on this machine: the rendered home tab is skipped; set CHROME_BIN)");
     else {
       const open = await renderHome(chrome, hweb, false), done = await renderHome(chrome, hweb, true);
       const at = (html: string, re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
-      const order = [at(open, /data-home-section="setup"/), at(open, /data-home-section="notices"/), at(open, /data-chart-cell|class="grid border-t border-l/)];
-      assert.ok(order.every((x) => x >= 0) && order[0]! < order[1]! && order[1]! < order[2]!, `setup, then notices, then the charts: ${order}`);
+      // The Setup page's layout (mold_v0-172): the main column (the checklist), then the right column (the connection
+      // card, then the rail's cards in order), then the tab's charts below both.
+      const order = [at(open, />Get set up</), at(open, />Connect your AI client</), at(open, />Where things stand</), at(open, />Due soon</), at(open, /data-chart-cell|class="grid border-t border-l/)];
+      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the checklist, the connection card, the number card, the notices card, then the charts: ${order}`);
+      assert.doesNotMatch(open, /<h1/, "no page title: the Setup page has none");
       const setup = open.slice(order[0]!, order[1]!);
-      assert.match(setup, /<h2 id="home-setup-title"[^>]*>Setup<\/h2>/, "the checklist is a section named Setup");
       assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
-      assert.equal([...setup.matchAll(/ of 5 steps done\./g)].length, 1, "one count");
       assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
       const order146 = ["Join your team", "Add the connector to your AI client", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
       assert.ok(order146.every((x, i) => x >= 0 && (i === 0 || x > order146[i - 1]!)), `the shell's steps, then the pack's: ${order146}`);
-      assert.doesNotMatch(setup, /You accepted the invitation/, "compact: a done step says nothing more");
-      assert.match(setup, /aria-expanded="false"[^>]*>Join your team(&#x27;|')s account/, "it opens from its label");
-      assert.match(setup, /Pick your client.*Copy URL.*Test my connection/s, "the next open step is connecting: the connection panel is its body");
-      assert.doesNotMatch(setup, /Connect your AI client/, "no connection panel beside the list");
-      assert.doesNotMatch(setup, /Turn the tools on in your client\.|Describe one application you want audited\./, "compact: only the next open step's text");
+      for (const t of ["You accepted the invitation and signed in.", "Copy the URL into your client.", "Turn the tools on in your client.", "Describe one application you want audited."])
+        assert.ok(setup.includes(t), `every step says what it is, done or not: ${t}`);
+      assert.equal([...setup.matchAll(/Copy prompt/g)].length, 2, "a Copy prompt box for each open step with a prompt: the shell's question and the pack's step");
+      assert.match(setup, /What can Fixture do\?[\s\S]*Add our first application\./, "the shell step's prompt, then the pack step's own (pack.json prompt)");
+      assert.doesNotMatch(setup, /aria-expanded/, "no step is folded");
+      assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
-      const notices = open.slice(order[1]!, order[2]!);
+      assert.match(setup, /These steps tick themselves as you go\./, "the footer");
+      const rail = open.slice(order[1]!, order[4]!);
+      assert.match(rail, /Pick your client.*Copy URL.*Test my connection/s, "the connection card: pick, copy, test");
+      const numbers = open.slice(order[2]!, order[3]!);
+      assert.deepEqual(["Open", "Overdue", "Mean time to fix", "Fixed"].map((l) => numbers.includes(`>${l}</dt>`)), [true, true, true, true], "the number chart's tiles");
+      assert.match(numbers, />4<\/dd>[\s\S]*>1<\/dd>[\s\S]*>3\.5 days<\/dd>[\s\S]*>25%<\/dd>/, "with their values");
+      assert.match(numbers, /href="\/app\/dashboard"[^>]*>Open Dashboard</, "and a link to the tab that shows it with the other charts");
+      const notices = open.slice(order[3]!, order[4]!);
       assert.equal([...notices.matchAll(/href="\/app\/records\/audit_findings\//g)].length, 5, "the first five notices");
       assert.match(notices, /Show all 7/, "and a button for the rest");
-      assert.match(notices, /<h2[^>]*>Due soon<\/h2>/, "a section named Due soon");
-      assert.match(open, /aria-label="Open vulnerabilities by severity\./, "the charts draw below");
-      const folded = /<section aria-labelledby="home-setup-title" data-home-section="setup" data-complete=""[\s\S]*?<\/section>/.exec(done)?.[0] ?? "";
-      assert.match(folded, /You&#x27;re all set|You're all set/, "every step done: one line");
-      assert.match(folded, /5 of 5 setup steps done\./, "saying how many");
-      assert.match(folded, /aria-expanded="false"[^>]*>Show setup<\/button>/, "that opens again");
-      assert.doesNotMatch(done, /Connect your AI client|Pick your client|<ol class="mt-3"/, "folded: no checklist, no connection panel");
-      console.log("✓ rendered home tab: one checklist (shell steps then the pack's, one count, only the next one explained: the connection panel inside the connect step), five of seven notices with Show all, then the charts; all done, one line that opens again");
+      assert.doesNotMatch(open, /data-home-section="notices"/, "the notices are a card, not also a section");
+      assert.match(open, /aria-label="Open vulnerabilities by severity\./, "the tab's charts draw below");
+      assert.doesNotMatch(open, /Found and fixed per week|Open by regulator/, "only the home tab's own charts");
+      // Every step done: the same page (the original's never folds), every step a check, no prompt left to copy.
+      assert.match(done, /5 of 5 steps done\./, "all done");
+      assert.match(done, /Connect your AI client[\s\S]*Test my connection/, "the connection card stays");
+      assert.equal([...done.matchAll(/Copy prompt/g)].length, 0, "no prompt for a done step");
+      assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 5, "every step checked");
+      console.log("✓ rendered home tab: the Setup page's layout: one checklist (shell steps then the pack's, one count, every step described, a Copy prompt on each open one with a prompt), the connection card, the number card with a link to Dashboard, five of seven notices with Show all, the tab's charts below; all done, the same page with every step checked");
     }
     // 5b. the merge itself (mold_v0-146)
     const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.js");

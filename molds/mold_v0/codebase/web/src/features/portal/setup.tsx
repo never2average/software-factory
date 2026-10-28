@@ -1,11 +1,12 @@
 'use client';
-// /app Setup & training. Right column: the connection string (with a live connection test), a journey selector and
-// tips. Main column: the selected journey. "Get set up" is the setup timeline and recent problems (workflow coverage
-// lives on /app/adoption); the other journeys (managed on /admin, src/playbooks.ts) show their stages, marked from real tool calls.
-// SetupChecklist is the same checklist as a section of a home tab (mold_v0-134: an overview tab's include: setup).
-// Either way it is one list (mold_v0-146): the shell's setup steps and the packs' onboarding steps, merged in order
-// (setup-steps.ts); on a home tab the connection panel is the body of its "connect your AI client" step.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+// /app Setup & training, every build's home (mold_v0-172: a home tab, an overview tab that includes setup, draws this
+// same layout with its own right-column cards). Right column: the connection string (with a live connection test), then
+// the journey selector (or a home tab's cards: pack.json rail). Main column: the selected journey, then tips. "Get set up"
+// is the setup timeline and recent problems (workflow coverage lives on /app/adoption); the other journeys (managed on
+// /admin, src/playbooks.ts) show their stages, marked from real tool calls. It is one list (mold_v0-146): the shell's
+// setup steps and the packs' onboarding steps, merged in order (setup-steps.ts), every step with its description and,
+// while open, its prompt to copy.
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -49,85 +50,53 @@ interface Journey {
 }
 interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: string | null; link: string | null }[] }
 
-export function SetupPage() {
+/**
+ * The home page's layout (mold_v0-172: every build's, the Setup page's and a home tab's alike). `rail`: the cards below
+ * the connection card, in order (a home tab's pack.json rail: journeys, notices, chart:<name>; `cards` draws all but
+ * journeys); left out, the journey picker when the build has journeys. `main`: what follows the checklist in the main
+ * column (a home tab's records due soon); `below`: what follows both columns, full width (a home tab's charts).
+ */
+export function SetupPage({ rail, cards, main, below }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; below?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
   // Journeys and in-chat tips are the shell's components (mold_v0-143: pack.json journeys and tips): asked for only when on.
-  const showJourneys = journeysOn();
+  const showJourneys = journeysOn() && (rail === undefined || rail.includes('journeys'));
   const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (showJourneys ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
   const [selected, setSelected] = useQueryState('journey', { defaultValue: 'setup' });
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
   const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
   const stepsDone = steps.filter((x) => x.done).length;
+  const picker = showJourneys && <JourneyPicker key='journeys' setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+    void setSelected(id === 'setup' ? null : id);
+    if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
+  }} />;
   return (
     <PageContainer>
-      {error ? <ErrorState error={error} /> : !s ? <LoadingCards count={4} /> : (
+      {error ? <ErrorState error={error} /> : !s || !pack.settled ? <LoadingCards count={4} /> : (<>
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
             {selected === 'setup' || !journey ? (<>
-              <Checklist s={s} steps={steps} title='Get set up' anchored={pack.data !== null} />
+              <Checklist steps={steps} title='Get set up' anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
+            {main}
             {tipsOn() && <TipsSection />}
           </div>
           {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            {showJourneys && <JourneyPicker setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
-              void setSelected(id === 'setup' ? null : id);
-              if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
-            }} />}
+            {rail === undefined ? picker : rail.map((x) => (x === 'journeys' ? picker : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
         </div>
-      )}
+        {below}
+      </>)}
     </PageContainer>
   );
 }
 
-/**
- * The Setup page's checklist on a home tab (mold_v0-134): one list (mold_v0-146) of the setup steps and the packs'
- * onboarding steps, compact (only the next open step says what to do; any other opens on a click). The connection panel
- * is the body of the step that connects an AI client. Once every step is done it folds to one line, which opens it again
- * (to connect another client, say). Journeys, tips and recent problems stay on the Setup page's own layout (a build with
- * a host pack; /app leads to this tab only when a declared tab includes the checklist).
- */
-export function SetupChecklist() {
-  const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
-  const pack = usePackSteps();
-  const [open, setOpen] = useState(false);
-  if (error) return <ErrorState error={error} />;
-  if (!s || !pack.settled) return <LoadingCards count={1} />;
-  const steps = mergeSetupSteps(s.steps, pack.data?.steps ?? []);
-  const done = steps.filter((x) => x.done).length, total = steps.length;
-  const complete = done >= total;
-  if (complete && !open) return (
-    <section aria-labelledby='home-setup-title' data-home-section='setup' data-complete=''
-      className='flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-2.5 text-sm'>
-      <Icons.circleCheck aria-hidden='true' className='text-primary size-4 shrink-0' />
-      <h2 id='home-setup-title' className='font-medium'>You&apos;re all set</h2>
-      <span className='text-muted-foreground'>{total} of {total} setup steps done.</span>
-      <Button variant='link' size='sm' className='ml-auto h-auto px-0' aria-expanded={false} onClick={() => setOpen(true)}>Show setup</Button>
-    </section>
-  );
-  // A setup with no step to connect a client (a host pack's own steps) keeps the panel beside the list.
-  const inline = steps.some((x) => x.shell === 'connected');
-  const list = <Checklist s={s} steps={steps} title='Setup' titleId='home-setup-title' compact connect={inline ? reload : undefined} anchored
-    hide={complete ? <Button variant='link' size='sm' className='h-auto px-0' aria-expanded onClick={() => setOpen(false)}>Hide setup</Button> : null} />;
-  return (
-    <section aria-labelledby='home-setup-title' data-home-section='setup' className='flex min-w-0 flex-col gap-4'>
-      {inline ? list : (
-        <div className='grid w-full gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start'>
-          {list}
-          <ConnectionBox s={s} onConnected={reload} />
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** A floating panel for the pinned right column. */
-function FloatPanel({ title, icon, description, className, children }: { title: string; icon?: React.ReactNode; description?: React.ReactNode; className?: string; children: React.ReactNode }) {
+/** A floating panel for the pinned right column (a home tab's cards too: mold_v0-172). */
+export function FloatPanel({ title, icon, description, className, children }: { title: string; icon?: React.ReactNode; description?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
     <section className={cn('bg-card flex min-w-0 flex-col gap-3 rounded-xl border p-4 shadow-xl shadow-black/30', className)}>
       <div><h2 className='flex items-center gap-2 text-sm font-semibold tracking-tight'>{icon && <span className='text-primary [&_svg]:size-4'>{icon}</span>}{title}</h2>{description && <p className='text-muted-foreground text-xs'>{description}</p>}</div>
@@ -145,7 +114,7 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
   );
 }
 
-/** Pick a client, add the connection URL to it, test it: the panel's three steps (a home tab's connect step shows them inline). */
+/** Pick a client, add the connection URL to it, test it: the panel's three steps. */
 function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void }) {
   const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -387,37 +356,25 @@ interface TimelineItem { id: string; label: string; done: boolean; body: React.R
 
 /**
  * Get set up and every journey: progress, then a vertical timeline. The earliest open item is highlighted (ring on its
- * node, tinted body); done items show a check. One component, so every journey looks exactly like Get set up.
+ * node, tinted body); done items show a check. One component, so every journey looks exactly like Get set up. Every
+ * item says what it is and, while open, what to type (mold_v0-172: a home tab's checklist is this one too).
  */
-function TimelineSection({ title, titleId, done, total, noun, items, footer, extra, compact = false }: {
-  title: string; titleId?: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
-  /** Beside the percentage (a home tab's Hide setup). */
-  extra?: React.ReactNode;
-  /**
-   * A home tab's checklist (mold_v0-134): tighter, only the current item's text (and a step the page links to, #anchor);
-   * any other item's text opens from its label (mold_v0-146: a done connect step still reaches the connection panel).
-   */
-  compact?: boolean;
+function TimelineSection({ title, done, total, noun, items, footer }: {
+  title: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
 }) {
   const pct = Math.round((done / Math.max(1, total)) * 100);
   const current = items.find((x) => !x.done)?.id;
-  const linked = typeof window !== 'undefined' ? decodeURIComponent(window.location.hash.slice(1)) : '';
-  const [opened, setOpened] = useState<Set<string>>(() => new Set());
   const uid = useId();
-  const toggle = (id: string) => setOpened((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return (
-    <Section title={title} titleId={titleId} description={`${done} of ${total} ${noun} done.`}
-      action={<div className='flex items-center gap-3'>{extra}<Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge></div>}>
+    <Section title={title} description={`${done} of ${total} ${noun} done.`}
+      action={<div className='flex items-center gap-3'><Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge></div>}>
       <div className='bg-muted h-1.5 overflow-hidden rounded-full'><div className='bg-primary h-full rounded-full transition-all' style={{ width: `${pct}%` }} /></div>
       <ol className='mt-3'>
         {items.map((x, i) => {
           const cur = current === x.id;
           const last = i === items.length - 1;
-          const fixed = !compact || cur || (!!x.anchor && x.anchor === linked);
-          const shown = fixed || opened.has(x.id);
-          const bodyId = `${uid}-step-${i}`;
           return (
-            <li key={x.id} id={x.anchor} data-step={x.id} className={cn('relative flex scroll-mt-24 gap-4 last:pb-0', compact ? 'pb-3' : 'pb-7')}>
+            <li key={x.id} id={x.anchor} data-step={x.id} className={cn('relative flex scroll-mt-24 gap-4 last:pb-0', 'pb-7')}>
               {!last && <span aria-hidden='true' className={cn('absolute top-8 bottom-0 left-[15px] w-px', x.done ? 'bg-primary/60' : 'bg-border')} />}
               <span className={cn('relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums',
                 x.done ? 'border-primary bg-primary text-primary-foreground' : cur ? 'border-primary text-primary bg-background ring-primary/20 ring-4' : 'border-border text-muted-foreground bg-background')}>
@@ -425,20 +382,15 @@ function TimelineSection({ title, titleId, done, total, noun, items, footer, ext
               </span>
               <div className={cn('min-w-0 flex-1 pt-1', cur && 'bg-primary/5 -mt-1 rounded-lg px-4 py-3')}>
                 <div className='flex flex-wrap items-center gap-2'>
-                  {fixed || !x.body ? <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span> : (
-                    <button type='button' aria-expanded={shown} aria-controls={bodyId} onClick={() => toggle(x.id)}
-                      className={cn('-my-1.5 flex min-h-8 items-center gap-1.5 rounded-md text-left font-medium hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden', x.done && 'text-muted-foreground')}>
-                      {x.label}<Icons.chevronRight aria-hidden='true' className={cn('size-3.5 shrink-0 transition-transform', shown && 'rotate-90')} />
-                    </button>
-                  )}
+                  <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span>
                 </div>
-                {shown && x.body && <div id={bodyId}>{x.body}</div>}
+                {x.body && <div id={`${uid}-step-${i}`}>{x.body}</div>}
               </div>
             </li>
           );
         })}
       </ol>
-      {footer && !compact && <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>}
+      {footer && <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>}
     </Section>
   );
 }
@@ -460,12 +412,11 @@ function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
 }
 
 /**
- * The one checklist (mold_v0-146): the setup steps and the packs' steps, merged (setup-steps.ts). `connect`: the step
- * that connects an AI client shows the connection panel itself (a home tab; the Setup page has it pinned beside).
+ * The one checklist (mold_v0-146): the setup steps and the packs' steps, merged (setup-steps.ts), each with its
+ * description and, while open, the words to type in an AI client (mold_v0-172: a pack step's pack.json prompt too).
  */
-function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored }: {
-  s: Setup; steps: ChecklistStep[]; title: string; titleId?: string; compact?: boolean;
-  connect?: () => void; hide?: React.ReactNode;
+function Checklist({ steps, title, anchored }: {
+  steps: ChecklistStep[]; title: string;
   /** The packs' steps are in: scroll to a linked one. */
   anchored: boolean;
 }) {
@@ -475,19 +426,12 @@ function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored 
     if (!anchored || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: 'start' });
   }, [anchored]);
-  const connectKey = connect ? steps.find((x) => x.shell === 'connected')?.key : undefined;
   const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
-    body: x.key === connectKey ? (
-      <div className='mt-1 flex max-w-xl flex-col gap-3'>
-        <p className='text-muted-foreground text-sm'>{x.pack && x.help ? x.help : `${profile.name} runs inside the AI client you already use.`}{s.connect.secret ? ' Your connection URL contains your key: keep it private.' : ''}</p>
-        <ConnectSteps s={s} onConnected={connect!} />
-      </div>
-    ) : x.pack ? (x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null)
-      : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
+    body: x.pack && !x.help && !x.prompt ? null : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
   const done = steps.filter((x) => x.done).length;
   const ticks = steps.some((x) => x.pack);
   return (
-    <TimelineSection title={title} titleId={titleId} done={done} total={steps.length} noun='steps' compact={compact} items={items} extra={hide}
+    <TimelineSection title={title} done={done} total={steps.length} noun='steps' items={items}
       footer={ticks || journeysOn() ? <>
         {ticks && 'These steps tick themselves as you go. '}
         {journeysOn() && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}

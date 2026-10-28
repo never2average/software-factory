@@ -981,11 +981,12 @@ export type Chart = z.output<typeof ChartSchema>;
 /**
  * A console tab (mold_v0-058): an entry of the /app sidebar and the page it opens. When any pack declares tabs, the
  * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
- *   overview      the tab's `charts` (mold_v0-063); `include` puts the shell's own sections above them, in its order
- *                 (mold_v0-134, a home page): `setup` the Setup page's checklist (the connection, the setup steps and
- *                 the packs' onboarding steps), compact, folded to one line once every step is done; `notices` the
- *                 records due soon. /app or /app/notices then redirects to the tab, and a build refuses a setup or a
- *                 notices tab beside it (its page would only redirect here)
+ *   overview      the tab's `charts` (mold_v0-063); `include` makes it a home page (mold_v0-134): with `setup` it is
+ *                 drawn as the Setup page (mold_v0-172: the checklist of the setup steps and the packs' onboarding
+ *                 steps, each with its prompt, the connection card and the `rail` cards beside it, the charts below);
+ *                 `notices` the records due soon (below the checklist, or a `rail` card). /app or /app/notices then
+ *                 redirects to the tab, and a build refuses a setup or a notices tab beside it (its page would only
+ *                 redirect here)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
  *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
@@ -1009,6 +1010,15 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
 export const TAB_INCLUDES = ["setup", "notices"] as const;
+/**
+ * The cards of a home tab's right column (mold_v0-172), below the "Connect your AI client" card, in order:
+ *   journeys       the journey picker (the build's journeys component, pack.json journeys: shown only when it is on)
+ *   notices        the records due soon, as a short list (needs a due-date area; the tab then also includes notices)
+ *   chart:<name>   one of the pack's number charts as a card of its tiles, with a link to the tab that shows it beside
+ *                  the other charts (another overview tab of the pack listing it), when there is one
+ * Left out: the journey picker when the build has journeys, else no second card (the Setup page's own layout).
+ */
+export const TAB_RAIL = /^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$/;
 /**
  * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
  * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
@@ -1074,6 +1084,7 @@ export const TabSchema = z.object({
   timeline_by: point.optional(),
   charts: z.array(name).max(12).optional(),
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
+  rail: z.array(z.string().regex(TAB_RAIL, "journeys, notices or chart:<one of the pack's number charts>")).min(1).max(2).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
@@ -1092,6 +1103,9 @@ export const TabSchema = z.object({
   if (t.kind === "overview" && !t.charts?.length && !t.include?.length) bad("an overview tab lists its charts (or includes a section of the shell's)", "charts");
   if (t.include && t.kind !== "overview") bad("include is for an overview tab", "include");
   if (t.include && new Set(t.include).size !== t.include.length) bad("a section is included twice", "include");
+  if (t.rail && !(t.include ?? []).includes("setup")) bad("rail is for a home tab: an overview tab that includes setup", "rail");
+  if (t.rail && new Set(t.rail).size !== t.rail.length) bad("a card is listed twice", "rail");
+  if (t.rail?.includes("notices") && !(t.include ?? []).includes("notices")) bad("the notices card is for a tab that includes notices (/app/notices leads there)", "rail");
   if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
@@ -1453,6 +1467,13 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const c of p.charts ?? []) for (const m of c?.metrics ?? []) if (!metricNames.has(m)) problems.push(at(`chart ${c.name} shows metric ${m}, which this pack does not declare`));
   const chartNames = new Set((p.charts ?? []).map((c) => c?.name));
   for (const t of p.tabs ?? []) for (const c of t?.charts ?? []) if (!chartNames.has(c)) problems.push(at(`tab ${t.id} shows chart ${c}, which this pack does not declare`));
+  // A home tab's chart card (mold_v0-172): one of this pack's number charts (tiles), drawn small in the right column.
+  for (const t of p.tabs ?? []) for (const r of t?.rail ?? []) {
+    if (typeof r !== "string" || !r.startsWith("chart:")) continue;
+    const c = (p.charts ?? []).find((x) => x?.name === r.slice(6));
+    if (!c) problems.push(at(`tab ${t.id}: rail ${r}: this pack declares no chart ${r.slice(6)}`));
+    else if (c.type !== "number") problems.push(at(`tab ${t.id}: rail ${r}: a card shows a number chart (its tiles); ${c.name} is a ${c.type} chart`));
+  }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.oauthProviders, OAuthProviderSchema, "oauthProviders");

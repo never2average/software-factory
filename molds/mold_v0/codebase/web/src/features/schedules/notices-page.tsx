@@ -1,7 +1,8 @@
 'use client';
 // /app/notices (mold_v0-035; src/schedule-routes.ts): the workspace's in-app notices. Once a day the shell posts one for
 // each record whose due date falls within its area's window, and emails the workspace's owners a list of them.
-// The same list is a section of a home tab (mold_v0-134: an overview tab's include: notices), where /app/notices leads.
+// The same list is a section of a home tab (mold_v0-134: an overview tab's include: notices), where /app/notices leads,
+// or a card of its right column (mold_v0-172: pack.json rail notices).
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -9,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { FloatPanel } from '@/features/portal/setup';
+import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
 
 interface Notice { id: string; kind: 'due'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean }
@@ -88,5 +91,39 @@ export function DueSoonSection() {
       </div>
       <NoticesList limit={5} label='Due soon' />
     </section>
+  );
+}
+
+/**
+ * The notices as a card of the home page's right column (mold_v0-172: pack.json rail notices): the first five, each a
+ * link to its record with its due date, then a button for the rest.
+ */
+export function DueSoonCard() {
+  const { data, error } = useOrgLoad(() => call<{ notices: Notice[] }>('GET'));
+  const [all, setAll] = useState(false);
+  const shown = data ? (all ? data.notices : data.notices.slice(0, 5)) : [];
+  return (
+    <FloatPanel title='Due soon' icon={<Icons.calendar />} description='Records due soon. Checked once a day; owners also get them by email.'>
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={1} /> : !data.notices.length ? <p className='text-muted-foreground text-sm'>Nothing is due soon.</p> : (
+        <>
+          <ul className='flex flex-col gap-0.5' aria-label='Due soon'>
+            {shown.map((n) => (
+              <li key={n.id}>
+                <a href={`/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`}
+                  className='hover:bg-muted/60 flex items-center gap-3 rounded-lg px-3 py-2 text-sm'>
+                  <span className='min-w-0 flex-1 truncate font-medium'>{n.title ?? n.key}</span>
+                  <span className='text-muted-foreground shrink-0 font-mono text-xs'>{n.due_on}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          {data.notices.length > 5 && (
+            <button type='button' aria-expanded={all} onClick={() => setAll(!all)} className='text-primary self-start px-3 text-xs font-medium hover:underline'>
+              {all ? 'Show fewer' : `Show all ${data.notices.length}`}
+            </button>
+          )}
+        </>
+      )}
+    </FloatPanel>
   );
 }
