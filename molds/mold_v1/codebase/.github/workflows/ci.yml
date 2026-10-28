@@ -370,6 +370,13 @@ jobs:
         if: always()
         run: npm run test:record-lifecycle
 
+      # THE WARN FEED, READ BACK (operator:lifecycle-warnings): writeOutcome's own lines under "warn" parse to the rule,
+      # the states, the actor and the comment; counted by rule, area and actor beside every lifecycle move of the window;
+      # each workspace's transaction READ ONLY before its first read, and nothing written (a fake database).
+      - name: Lifecycle warnings report (the warn feed per workspace, read-only), offline
+        if: always()
+        run: npm run test:lifecycle-warnings
+
       # THE WORKFLOW ENGINE IS VENDORED, NEVER EDITED (lib/workflow-engine/; docs/WORKFLOW_ENGINE.md). Every file is
       # its recorded vendored sha256 with its header, the recorded local patches (a `.ts` on an import, a parameter property
       # made erasable, a comment line made neutral) are exactly the ones scripts/sync-workflow-engine.mjs declares, and
@@ -1690,6 +1697,16 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-lifecycle-db
+
+      # THE WARN FEED, READ BACK, as app_rw: the operator script lists a warned move seeded with writeOutcome's lines and
+      # counts the window's moves by the Postgres pattern; its transaction refuses a write (25006) and entity_activity is
+      # unchanged; a role that bypasses row-level security is refused.
+      - name: Lifecycle warnings report (operator script, read-only), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:lifecycle-warnings-db
 
       # DEPLOYMENTS AND IMPLEMENTATIONS FROM THEIR DEFINITION, against the real routes, upsert_customer and the per-area
       # tools: the default's writes and list as before (a list query filtered, sorted and paged in the database); a
