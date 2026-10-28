@@ -860,6 +860,12 @@ domain concept" below.
   - `"off"` (the default): nothing is read, stamped or written; a write is what it was before lifecycles were enforced.
   - `"warn"`: the move goes through with its stamps; the activity feed gets the move (`State moved "A" → "B" (label):
     comment [field: a → b]`) and a line naming the broken rule (`Lifecycle rule not followed (roles): …`).
+    Before moving a deployment from `"warn"` to `"strict"`, read those lines back with
+    `npm run operator:lifecycle-warnings -- --since <ISO date> [--until <ISO date>] [--org <id>] [--json]`
+    (`agent/lib/lifecycle-warnings.ts`): per workspace, each warned move (time, record, from → to, rule, actor,
+    comment), counted by rule, area and actor, beside every lifecycle move of the window and the share that warned.
+    Read-only: each transaction is `READ ONLY` before its first read; it runs as the application role, each workspace
+    in its own row-level-security scope, and refuses a role that bypasses it.
   - `"strict"`: refused. The ops API answers **409** with `{ error, errors, code: "lifecycle_refused", field, from, to,
     broken: [{ rule, message, transition }], allowed: [{ to, label, action, roles, requires, requires_comment }] }`;
     the agent's tool throws the same sentence (`… From "Under review" you can move to: "Complied" (Mark complied),
