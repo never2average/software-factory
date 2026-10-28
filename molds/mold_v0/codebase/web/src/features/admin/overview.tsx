@@ -56,20 +56,25 @@ export function AdminOverview() {
             ]}
           />
 
-          <Section title='Funnel' description='Accounts created in the period, by the furthest step they reached.'
+          <Section title='Funnel' description='Accounts created in the period, by the furthest step they reached. On the right, the share of the step before that stopped short of this one.'
             action={<DateRangePicker value={range} onChange={setRange} />}>
-            <ol className='grid gap-2.5'>
+            {/* Labels wrap rather than cut off (mold_v0-170); on a phone each step's label sits on its own line over its bar. */}
+            <ol className='grid gap-x-3 gap-y-2.5 sm:gap-y-2'>
               {o.funnel.map((f, idx) => {
                 const prev = idx ? o.funnel[idx - 1].reached : f.reached;
                 const drop = idx && prev ? Math.round(((prev - f.reached) / prev) * 100) : 0;
+                const before = idx ? o.funnel[idx - 1].label : '';
                 return (
-                  <li key={f.id} className='grid grid-cols-[minmax(0,11rem)_1fr_3rem_3.5rem] items-center gap-3 text-sm leading-none'>
-                    <span className='truncate'>{f.label}</span>
+                  <li key={f.id} className='grid grid-cols-[1fr_3rem_4.5rem] items-center gap-x-3 gap-y-1.5 text-sm sm:grid-cols-[minmax(0,15rem)_1fr_3rem_4.5rem]'>
+                    <span className='col-span-3 leading-snug break-words sm:col-span-1'>{f.label}</span>
                     <div className='bg-muted h-6 overflow-hidden rounded-md'>
                       <div className='bg-primary/85 h-full rounded-md transition-all' style={{ width: `${(f.reached / max) * 100}%` }} />
                     </div>
-                    <span className='text-right tabular-nums'>{f.reached}</span>
-                    <span className='text-muted-foreground text-right text-xs tabular-nums'>{drop > 0 ? `−${drop}%` : ''}</span>
+                    <span className='text-right leading-none tabular-nums'>{f.reached}</span>
+                    <span className='text-muted-foreground text-right text-xs leading-none tabular-nums'
+                      title={drop > 0 ? `${drop}% of the ${prev} that reached ${before} stopped before ${f.label}` : undefined}>
+                      {drop > 0 ? <>−{drop}%<span className='sr-only'> of the {prev} that reached {before} stopped before this step</span></> : ''}
+                    </span>
                   </li>
                 );
               })}

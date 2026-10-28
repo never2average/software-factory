@@ -671,6 +671,41 @@
             ],
             "additionalProperties": false
           },
+          "samples": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "data": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "key",
+                "data"
+              ],
+              "additionalProperties": false
+            }
+          },
           "$comment": {
             "type": "string",
             "maxLength": 2000
