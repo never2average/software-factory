@@ -90,7 +90,7 @@ export function NoAccount({ reason, email: serverEmail = null, platformAdmin = f
             <section aria-labelledby='no-account-admin' className='bg-card flex flex-col gap-3 rounded-xl border p-5'>
               <h2 id='no-account-admin' className='flex items-center gap-2 text-lg font-semibold'><Icons.shield aria-hidden='true' className='text-primary size-5 shrink-0' /> You are platform staff</h2>
               <p className='text-muted-foreground text-sm break-words'>
-                {fill('The admin console works without {an account}. To use this portal yourself, create {an account} there first and invite your own address to it; then come back here.')}
+                {fill('The admin console works without an {account}. To use this portal yourself, create an {account} there first and invite your own address to it; then come back here.')}
               </p>
               <div>
                 <a href='/admin' className={cn(buttonVariants(), 'h-10 px-4')} data-testid='open-admin'>Open the admin console <Icons.arrowRight aria-hidden='true' /></a>

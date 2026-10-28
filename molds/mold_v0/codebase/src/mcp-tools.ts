@@ -222,7 +222,7 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
   const { onboardingFor, onboardingSteps } = await import("./onboarding.js");
   const { consoleUrl } = await import("./console-url.js");
   const pack = packs().find((p) => p.id === t.pack)!;
-  // Base text in the build's words (src/vocabulary.ts: {workspace}, {a run}, {product}); declared text is inserted plain.
+  // Base text in the build's words (src/vocabulary.ts: {workspace}, a {run}, {product}); declared text is inserted plain.
   const declared = new Map(onboardingSteps().filter((s) => s.pack === t.pack).map((s) => [s.id, s]));
   const offered = generatedTools().filter((x) => x.pack === t.pack && x.door === "workspace" && !x.admin_only && permitted(x, ws.role));
   const offer = (op: GeneratedTool["op"], match: (x: GeneratedTool) => boolean) => offered.find((x) => x.op === op && match(x))?.name;

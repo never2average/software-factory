@@ -10,7 +10,8 @@
  *       { "key": "website", "label": "Company website", "type": "url", "required": true },
  *       { "key": "team", "label": "Team size", "type": "select", "options": [{ "value": "1-10", "label": "1 to 10" }, ...] },
  *       { "key": "tools", "label": "Tools you use", "type": "multi_select", "options": [...] },
- *       { "key": "goal", "label": "What should it do first?", "type": "long_text", "max_length": 1000, "help": "..." }
+ *       { "key": "goal", "label": "What should it do first?", "type": "long_text", "max_length": 1000, "help": "..." },
+ *       { "key": "role", "label": "Role", "type": "text", "person": true }
  *     ]
  *   }
  *
@@ -18,7 +19,8 @@
  * shell's own fields (email, name, company, message, source), each once across the build. `type`: text (one line), long_text,
  * url (http or https; one without a scheme gets https://), email, select (one of `options`) or multi_select (any of them).
  * `max_length` (text kinds; default 200, long_text 2000, url and email 500), `help` and `placeholder` are optional, as is
- * `required` (default false). Labels and help are plain text on one line. Without a declaration the form asks the shell's
+ * `required` (default false), and `person` (mold_v0-171: a text or select answer that says who the requester is, such as
+ * their role; the staff list shows it beside their name, "Head of DevRel · sam@…", and the request's Person line). Labels and help are plain text on one line. Without a declaration the form asks the shell's
  * own fields only: a work email, a name, the company and a message.
  *
  * The server stores what the form sends under `answers` (an object of key -> answer); a declared key at the top level of
@@ -40,6 +42,8 @@ export interface AccessField {
   max_length?: number;
   help?: string;
   placeholder?: string;
+  /** The answer says who the requester is (a role, a job title): shown beside their name on /admin/requests (mold_v0-171). */
+  person?: boolean;
 }
 export interface AccessRequestSpec { fields: AccessField[] }
 /** One stored answer: text, or the chosen options of a multi_select. */
@@ -52,7 +56,7 @@ const MAX_OPTIONS = 30;
 const KEY = /^[a-z][a-z0-9_]{0,39}$/;
 const DEFAULT_MAX: Record<AccessFieldType, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80 };
 const MAX_LENGTH: Record<AccessFieldType, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80 };
-const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder"];
+const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder", "person"];
 
 /** Characters a plain-text line may not hold (src/landing.ts NOT_PLAIN, src/legal.ts). */
 const NOT_PLAIN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u;
@@ -90,6 +94,8 @@ export function accessRequestProblems(spec: unknown): string[] {
     const type = f.type as AccessFieldType;
     if (!ACCESS_FIELD_TYPES.includes(type)) { out.push(`${at}.type: one of ${ACCESS_FIELD_TYPES.join(", ")}`); return; }
     if (f.required !== undefined && typeof f.required !== "boolean") out.push(`${at}.required: true or false`);
+    if (f.person !== undefined && typeof f.person !== "boolean") out.push(`${at}.person: true or false`);
+    else if (f.person === true && type !== "text" && type !== "select") out.push(`${at}.person: only a text or select answer (one line) says who the requester is`);
     for (const [k, max] of [["help", 200], ["placeholder", 120]] as const) {
       if (f[k] === undefined) continue;
       const p = plainProblem(f[k], max);
@@ -212,6 +218,12 @@ export function answerText(f: AccessField | undefined, v: AccessAnswer | null | 
   if (v === null || v === undefined) return "";
   const label = (x: string) => f?.options?.find((o) => o.value === x)?.label ?? x;
   return Array.isArray(v) ? v.map((x) => label(String(x))).join(", ") : label(String(v));
+}
+
+/** What the answers say of the requester (the fields declared `person`, mold_v0-171), in their order: "Head of DevRel". */
+export function personText(fields: readonly AccessField[], answers: Record<string, unknown> | null | undefined): string {
+  const a = isObject(answers) ? answers : {};
+  return fields.filter((f) => f.person).map((f) => answerText(f, typeof a[f.key] === "string" ? (a[f.key] as string).trim() : null)).filter(Boolean).join(" · ");
 }
 
 /**

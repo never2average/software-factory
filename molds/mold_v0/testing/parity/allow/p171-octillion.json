@@ -1,0 +1,29 @@
+{
+  "phase": "mold_v0-171 (Octillion): back to the original Octillion. /connect.html is served again (pack.json connect_page), the request list shows the requester's role (access_request role person), the no-account words are filled, the setup checklist counts 7 steps (the optional dashboard step is not counted), FinOps shows Experiments from the start (console.show), and the sidebar has no Connected apps or API keys, with /request-access leading to /early-access (console.hide, console.redirects). The MCP surface is unchanged",
+  "allow": [
+    { "key": "generated::src/access-request.generated.ts", "reason": "Octillion's Role field is declared person: true (gap 2)" },
+    { "key": "generated::web/src/config/access-request.generated.ts", "reason": "the same field, in the console's copy (gap 2)" },
+    { "key": "generated::web/src/lib/access-request.generated.ts", "reason": "the console's copy of src/access-request.ts, which now knows `person` and personText (gap 2)" },
+    { "key": "generated::src/hosts.generated.ts", "reason": "PACK_CONFIG carries Octillion's connect_page, which the server draws at /connect.html (gap 1)" },
+    { "key": "generated::web/src/config/build-facts.generated.ts", "reason": "SHOWN_SECTIONS [experiments]: FinOps shows its Experiments tab from the start (gap 5)" },
+    { "key": "generated::web/src/config/pack-nav.generated.ts", "reason": "hiddenConsoleUrls names /app/connected-apps and /app/keys (gap 6)" },
+    { "key": "generated::web/src/config/pack-routes.generated.json::**", "reason": "the redirects of gap 6: /request-access to /early-access, and the hidden /app/connected-apps and /app/keys to /app" },
+    { "key": "api::routes::GET /connect.html", "reason": "the connect guide's route (gap 1)" },
+    { "key": "pages::/admin/finops::text", "reason": "the Experiments tab is back between Plans and Model spend (gap 5)" },
+    { "key": "pages::/app::text", "reason": "the sidebar has no Connected apps or API keys (gap 6); the checklist counts 7 steps, not 8 (gap 4)" },
+    { "key": "pages::/app::links", "reason": "the sidebar's Connected apps and API keys links are gone (gap 6)" },
+    { "key": "pages::/app/docs::text", "reason": "the same sidebar (gap 6)" },
+    { "key": "pages::/app/docs::links", "reason": "the same sidebar (gap 6)" },
+    { "key": "pages::/app/connected-apps::*", "reason": "hidden: the address redirects to /app (gap 6)" },
+    { "key": "pages::/app/keys::*", "reason": "hidden: the address redirects to /app; existing keys keep working (gap 6)" },
+    { "key": "pages::/request-access::*", "reason": "redirects to Octillion's one request form, /early-access (gap 6)" },
+    { "key": "pages::/app?lane=staff-no-account (as staff_no_account)::text", "reason": "'{an account}' is filled: 'an account' (gap 3)" },
+    { "key": "shots::/admin/finops::*", "reason": "the Experiments tab (gap 5)" },
+    { "key": "shots::/app::*", "reason": "the sidebar and the checklist's count (gaps 4, 6)" },
+    { "key": "shots::/app/docs::*", "reason": "the sidebar (gap 6)" },
+    { "key": "shots::/app/connected-apps::*", "reason": "redirects to /app (gap 6)" },
+    { "key": "shots::/app/keys::*", "reason": "redirects to /app (gap 6)" },
+    { "key": "shots::/request-access::*", "reason": "redirects to /early-access (gap 6)" },
+    { "key": "shots::/app?lane=staff-no-account (as staff_no_account)::*", "reason": "the filled words (gap 3)" }
+  ]
+}

@@ -27,9 +27,13 @@ import { OrgSwitcher } from '../org-switcher';
 import { useNav } from './nav-context';
 import { BrandMark } from '@/components/brand';
 import { profile } from '@/config/profile.generated';
+import { hiddenConsoleUrls } from '@/config/pack-nav.generated';
 
-/** Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link. */
-const memberKeysOn = (profile as Readonly<Record<string, unknown>>).member_keys !== false;
+/**
+ * Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link; a build that hides
+ * the page (console.hide: ["keys"], mold_v0-171) loses the link and the page, the keys themselves unchanged.
+ */
+const memberKeysOn = (profile as Readonly<Record<string, unknown>>).member_keys !== false && !hiddenConsoleUrls.includes('/app/keys');
 
 /** Platform admins (platform staff) get a switch between the customer portal and /admin; nobody else sees it. */
 function usePlatformAdmin(area: string) {

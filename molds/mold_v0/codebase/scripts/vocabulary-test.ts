@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { aliasTable, checkVocabulary, shellEnvNames, TABLE_BEGIN, TABLE_END, withTable, type Vocabulary } from "./lib/vocabulary.js";
+import { aliasTable, checkPlaceholders, checkVocabulary, shellEnvNames, TABLE_BEGIN, TABLE_END, withTable, type Vocabulary } from "./lib/vocabulary.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REAL = JSON.parse(readFileSync(path.join(ROOT, "scripts", "vocabulary.json"), "utf8")) as Vocabulary;
@@ -114,6 +114,15 @@ try {
     assert.notEqual(withTable(once, aliasTable(shellEnvNames(d), `${UP}_`, "APP_")), once, "a name added in the code makes the table stale");
     assert.equal(withTable("no markers", table), null);
     ok("the env-name table lists every APP_ name of the code and deploy files with its old spelling, and goes stale when one is added");
+  }
+
+  // ---------- placeholders with their article inside the braces (mold_v0-171) ----------
+  {
+    const t = tree({ "web/src/a.tsx": "fill('works without {an account}; create {A Run} or {the workspaces}')\n", "src/b.ts": "fill('an {account}, a {run}')\n",
+      "packs/p/pack.json": "{}\n", "packs/p/x.ts": "'{an account}'\n", "docs/c.md": "{an account}\n" });
+    const f = checkPlaceholders(t);
+    assert.deepEqual(f.map((x) => `${x.file}:${x.line}:${x.text}`), ["web/src/a.tsx:1:{an account}", "web/src/a.tsx:1:{A Run}", "web/src/a.tsx:1:{the workspaces}"]);
+    ok("a placeholder with its article inside the braces is found in the shell's code (never in a pack's files or prose), and the right spelling is not");
   }
 
   // ---------- the codebase itself ----------

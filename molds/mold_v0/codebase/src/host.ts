@@ -22,6 +22,7 @@ import type { Population } from "./agents.js";
 import type { SettingDef } from "./settings.js";
 import type { TemplateValue } from "./text-template.js";
 import type { Permission, PlatformRole } from "./admin-roles.js";
+import type { ConnectPageConfig } from "./connect-page-config.js";
 
 /** What the customer portal's routes know about the signed-in person (src/app.ts Session). */
 export interface PortalSession { org: number; slug: string; user: string | null; email: string | null; role: "admin" | "member"; accountRole: import("./account-roles.js").AccountRole; clerkOrgId: string | null }
@@ -172,6 +173,7 @@ export interface WorkerHelpers {
  *   setup       the Setup page's own steps and workflow (src/app.ts setup): `steps`, `shell_steps`, `viewer_note`, `workflow`
  *   error_hints pack.json mcp.error_hints: a plain-language fix for a tool error people hit, by a pattern of its text
  *   texts       the shell's server-side texts in the product's words (mold_v0-141; src/shell-texts.ts, src/texts.ts)
+ *   connect_page the public connect guide, at the address it names (mold_v0-171; src/connect-page-config.ts, src/install-pages.ts)
  */
 export interface PackConfig {
   pack: string;
@@ -187,6 +189,7 @@ export interface PackConfig {
   journeys?: JourneysConfig;
   tips?: TipsConfig;
   texts?: Partial<Record<import("./shell-texts.js").ShellTextId, string>>;
+  connect_page?: ConnectPageConfig;
 }
 /**
  * The journeys component (mold_v0-143; src/journeys.ts): pack.json `journeys`, one pack's per build, which turns it on.
@@ -325,6 +328,8 @@ export const packConfigs = (): readonly PackConfig[] => packConfigList;
 export const setupConfig = (): SetupConfig => packConfigs().find((c) => c.setup)?.setup ?? {};
 /** The Setup page's workflow groups (pack.json setup.workflow, mold_v0-140), in order: what using the product fully means. */
 export const setupWorkflow = (): readonly { id: string; label: string; tools: readonly string[]; prompt: string }[] => setupConfig().workflow ?? [];
+/** The public connect guide (mold_v0-171: the one pack.json `connect_page` of the build), else null: no such page. */
+export const connectPageConfig = (): ConnectPageConfig | null => packConfigs().find((c) => c.connect_page)?.connect_page ?? null;
 /** The account context and memory component's config (mold_v0-142: the one pack.json `memory` of the build), else null: off. */
 export const memoryConfig = (): MemoryConfig | null => packConfigs().find((c) => c.memory)?.memory ?? null;
 /** The journeys component's config (mold_v0-143: the one pack.json `journeys` of the build), else null: off. */

@@ -52,7 +52,7 @@ process.exit(0);
 // ---------- 1 and 2: the rules and gen-packs; then 3 and 4 inside a build copy ----------
 
 async function outer() {
-  const { accessRequestProblems, answersOf, joinAccessFields, labelledAnswers } = await import("../src/access-request.js");
+  const { accessRequestProblems, answersOf, joinAccessFields, labelledAnswers, personText } = await import("../src/access-request.js");
   type F = import("../src/access-request.js").AccessField;
   const fields = FIELDS as F[];
   assert.deepEqual(accessRequestProblems({ fields }), [], "the fixture's fields are valid");
@@ -69,6 +69,8 @@ async function outer() {
     ["a bad key", { fields: [{ key: "A-b", label: "A", type: "text" }] }, /key: 1-40 lowercase letters/],
     ["max_length past the kind's ceiling", { fields: [{ key: "a", label: "A", type: "text", max_length: 9000 }] }, /max_length: a whole number from 1 to 500/],
     ["no fields", { fields: [] }, /a list of 1 to 20 fields/],
+    ["person on a long answer", { fields: [{ key: "a", label: "A", type: "long_text", person: true }] }, /person: only a text or select answer/],
+    ["person not a boolean", { fields: [{ key: "a", label: "A", type: "text", person: "yes" }] }, /person: true or false/],
   ];
   for (const [what, spec, re] of refused) assert.match(accessRequestProblems(spec).join("\n"), re, what);
   ok(`the rules: ${refused.length} malformed blocks refused (a shell field's key, a key twice, options on text, a select without options, unknown keys, text that is not plain)`);
@@ -94,6 +96,12 @@ async function outer() {
   const shown = labelledAnswers(fields, { tools: ["sheets", "erp"], team_size: "1-10", product_url: "https://old.example" });
   assert.deepEqual(shown.map((a) => [a.label, a.text]), [["Team size", "1 to 10"], ["Tools you use", "Spreadsheets, An ERP"], ["Product url", "https://old.example"]],
     "labelled in the declared order, options by their labels, an undeclared older answer under its key");
+  // What the requester said of themselves (mold_v0-171): the `person` fields' answers, in order, options by their labels.
+  const people = [{ key: "role", label: "Role", type: "text", person: true }, { key: "seniority", label: "Seniority", type: "select", person: true, options: [{ value: "lead", label: "Team lead" }] }, ...fields] as F[];
+  assert.deepEqual(accessRequestProblems({ fields: people }), [], "person on a text and a select field is valid");
+  assert.equal(personText(people, { role: " DevRel ", seniority: "lead", team_size: "1-10" }), "DevRel · Team lead");
+  assert.equal(personText(people, { seniority: "lead" }), "Team lead", "an empty one is left out");
+  assert.equal(personText(fields, { team_size: "1-10" }), "", "no person field: nothing");
   ok(`the answers: normalised (https://, repeats, trimming), ${bad.length} bad ones refused naming the label, a key nobody declared dropped, a host pack's flat form read`);
 
   const joined = joinAccessFields([{ id: "one", spec: { fields: [fields[0]] } }, { id: "two", spec: { fields: [fields[1]] } }], undefined);

@@ -29,6 +29,8 @@ export interface Org {
 }
 
 const KEY_PREFIX = "oct_";
+/** What every API key starts with (the connect guide names it, mold_v0-171: src/install-pages.ts). */
+export const API_KEY_PREFIX = KEY_PREFIX;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 export const randomId = (prefix: string, bytes = 9) => `${prefix}${randomBytes(bytes).toString("base64url")}`;
 

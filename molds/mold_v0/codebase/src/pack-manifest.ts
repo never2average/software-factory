@@ -19,7 +19,7 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { CONSOLE_COMPONENTS, CONSOLE_PAGES } from "./console-pages.js";
+import { CONSOLE_COMPONENTS, CONSOLE_PAGES, SHOWABLE_SECTIONS } from "./console-pages.js";
 import { ANSWER_STYLES, MEMORY_SCOPES, MEMORY_WORDS, type MemoryWord } from "./account-context-words.js";
 import { JOURNEY_TABLES, JOURNEY_WEB_WORDS, JOURNEY_WORDS, MAX_STAGES, TIP_TABLES, TIP_WEB_WORDS, TIP_WORDS } from "./journeys-words.js";
 import { ACCESS_FIELD_TYPES, MAX_ACCESS_FIELDS } from "./access-request.js";
@@ -247,7 +247,11 @@ const AccessFieldSchema = z.object({
   max_length: z.number().int().min(1).max(4000).optional(),
   help: z.string().trim().min(1).max(200).optional(),
   placeholder: z.string().trim().min(1).max(120).optional(),
+  /** The answer says who the requester is (mold_v0-171): shown beside their name on /admin/requests; a text or select field. */
+  person: z.boolean().optional(),
 }).strict();
+/** A link of the connect guide (mold_v0-171): its words and a path on this site, an #anchor or an https address. */
+const ConnectLinkSchema = z.object({ label: z.string().max(60), href: z.string().max(300) }).strict();
 const AccessRequestSchema = z.object({
   $comment: z.string().max(2000).optional(),
   fields: z.array(AccessFieldSchema).min(1).max(MAX_ACCESS_FIELDS),
@@ -421,10 +425,31 @@ export const PackJsonSchema = z.object({
     files: z.record(z.string().max(160), z.string().max(MAX_SKILL_TEXT)).optional(),
     words: z.partialRecord(z.enum(Object.keys(CLIENT_SKILL_WORDS) as [ClientSkillWord, ...ClientSkillWord[]]), z.string().max(600)).optional(),
   }).strict().optional(),
+  /**
+   * The public connect guide at an address of its own (mold_v0-171; src/connect-page-config.ts, which scripts/gen-packs.mjs
+   * runs for what this shape cannot say: the address, one-line texts, links, placeholders). One pack's per build.
+   */
+  connect_page: z.object({
+    $comment: z.string().max(2000).optional(),
+    path: z.string().max(260),
+    title: z.string().max(120),
+    description: z.string().max(300).optional(),
+    heading: z.string().max(120),
+    lead: z.string().max(600),
+    accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    accent_dark: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    header_link: ConnectLinkSchema.optional(),
+    clients: z.array(z.object({ name: z.string().max(80), steps: z.array(z.string().max(600)).min(1).max(10) }).strict()).min(1).max(8),
+    skill: z.object({ heading: z.string().max(120), lead: z.string().max(600).optional(), steps: z.array(z.string().max(600)).min(1).max(10).optional() }).strict().optional(),
+    first_run: z.object({ heading: z.string().max(120), cards: z.array(z.object({ title: z.string().max(80), text: z.string().max(400) }).strict()).min(1).max(6), note: z.string().max(600).optional() }).strict().optional(),
+    footer: z.object({ tagline: z.string().max(120).optional(), links: z.array(ConnectLinkSchema).min(1).max(6).optional() }).strict().optional(),
+  }).strict().optional(),
   console: z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
       .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+    /** The shell's console sections shown from the start, not only once they hold something (mold_v0-171; src/console-pages.ts SHOWABLE_SECTIONS). */
+    show: z.array(z.enum(SHOWABLE_SECTIONS)).max(SHOWABLE_SECTIONS.length).refine((h) => new Set(h).size === h.length, "each section once").optional(),
     /**
      * A host pack's sidebar entries among the shell's (mold_v0-140; they were its web/src/packs/<id>/nav.ts): /app's and
      * /admin's, each a list of placements applied in order. A new group: {"label", "before" or "after": a group's label,

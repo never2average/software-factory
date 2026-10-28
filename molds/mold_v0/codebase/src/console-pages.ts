@@ -34,12 +34,15 @@ export const CONSOLE_PAGES = {
   // Each person's connected apps (mold_v0-087): the AI apps signed in to /mcp, with Revoke (built-in sign-in), or where
   // the sign-in provider keeps them (Clerk).
   "connected-apps": "/app/connected-apps",
+  // Each person's own API keys (mold_v0-007; the sidebar's footer link): hidden (mold_v0-171), the link and the page go;
+  // the keys made before keep working (the API is never changed). profile.json member_keys false turns the keys off.
+  keys: "/app/keys",
 } as const;
 export type ConsolePage = keyof typeof CONSOLE_PAGES;
 
 /** A declared tab's kind -> the shell page it opens (mold_v0-058: a `usage` tab opens the Activity page). */
 export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
-  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files",
+  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys",
 };
 
 /**
@@ -67,12 +70,31 @@ export const SIDEBAR_SHELL_PAGES = ["setup", "usage", "billing", "profile", "tea
 export const sidebarShellPage = (id: string): ConsolePage | null =>
   Object.hasOwn(TAB_KIND_PAGE, id) ? TAB_KIND_PAGE[id]! : Object.hasOwn(CONSOLE_PAGES, id) ? (id as ConsolePage) : null;
 
+/**
+ * The shell's console sections that appear once they hold something, which a build may show from the start (mold_v0-171):
+ *
+ *   "console": { "show": ["experiments"] }     in a pack's pack.json, or in the app's profile.json (joined, as hide)
+ *
+ *   experiments  Operations › FinOps › Experiments (/admin/finops?section=experiments): the pricing experiments, shown
+ *                with its empty state (how to start one) before the first exists; without it the tab appears with the
+ *                first experiment (or when a link opens it). The admin MCP's pricing_experiment skill is offered either way.
+ */
+export const SHOWABLE_SECTIONS = ["experiments"] as const;
+export type ShowableSection = (typeof SHOWABLE_SECTIONS)[number];
+
+/** The sections shown from the start by a set of `console` blocks (checked first), in SHOWABLE_SECTIONS order. */
+export function shownSections(blocks: unknown[]): ShowableSection[] {
+  const shown = new Set<string>();
+  for (const b of blocks) for (const x of ((b as { show?: unknown[] } | undefined)?.show ?? [])) if (typeof x === "string") shown.add(x);
+  return SHOWABLE_SECTIONS.filter((k) => shown.has(k));
+}
+
 /** The problems of one `console` block (where: "pack.json" or "profile.json"); [] when it is good. */
 export function consoleProblems(v: unknown, where: string): string[] {
   if (v === undefined) return [];
   if (!v || typeof v !== "object" || Array.isArray(v)) return [`${where} console: an object, e.g. {"hide": ["activity"]}`];
   const out: string[] = [];
-  const known = where === "profile.json" ? ["hide", "sidebar"] : ["hide", ...PACK_CONSOLE_KEYS];
+  const known = where === "profile.json" ? ["hide", "show", "sidebar"] : ["hide", "show", ...PACK_CONSOLE_KEYS];
   for (const k of Object.keys(v)) {
     if (k === "sidebar" && where !== "profile.json") out.push(`${where} console: sidebar is the app's (profile.json); a pack orders its own tabs (tabs, group)`);
     else if ((PACK_CONSOLE_KEYS as readonly string[]).includes(k) && where === "profile.json") out.push(`${where} console: ${k} is a pack's (its pack.json console.${k}), never the app's profile`);
@@ -86,6 +108,14 @@ export function consoleProblems(v: unknown, where: string): string[] {
     else {
       for (const x of hide) if (typeof x !== "string" || !(x in CONSOLE_PAGES)) out.push(`${where} console.hide: ${JSON.stringify(x).slice(0, 60)} is not a page the console may hide (${Object.keys(CONSOLE_PAGES).join(", ")})`);
       if (new Set(hide).size !== hide.length) out.push(`${where} console.hide: each page once`);
+    }
+  }
+  const show = (v as { show?: unknown }).show;
+  if (show !== undefined) {
+    if (!Array.isArray(show)) out.push(`${where} console.show: a list of section ids (${SHOWABLE_SECTIONS.join(", ")})`);
+    else {
+      for (const x of show) if (typeof x !== "string" || !(SHOWABLE_SECTIONS as readonly string[]).includes(x)) out.push(`${where} console.show: ${JSON.stringify(x).slice(0, 60)} is not a section the console may show from the start (${SHOWABLE_SECTIONS.join(", ")})`);
+      if (new Set(show).size !== show.length) out.push(`${where} console.show: each section once`);
     }
   }
   return out;
