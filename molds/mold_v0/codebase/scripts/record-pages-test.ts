@@ -11,11 +11,17 @@
 //   3. A shared area's samples (src/pack-api.ts RecordAreaSchema): for the lanes only, shared (platform) areas only, each
 //      key once, each data key a declared field.
 import assert from "node:assert/strict";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+// The console's modules by path (as scripts/status-pages-test.ts loads them): the server's typecheck never reads web/.
+const WEB = path.resolve(import.meta.dirname, "..", "web", "src");
+const web = (rel: string) => import(pathToFileURL(path.join(WEB, rel)).href);
 
 const ok = (m: string) => console.log(`✓ ${m}`);
 
 // 1. Empty states.
-const { recordEmptyText, repoOf, REPOSITORIES_URL } = await import("../web/src/features/records/empty.js");
+const { recordEmptyText, repoOf, REPOSITORIES_URL } = await web("features/records/empty.ts");
 const area = { label: "Library", scope: "platform" as const };
 const catalog = { name: "lib_catalogs", kind: "upstream_catalog", index: "automatic" as const, upstream: { repo: "example/lib", commit: "abc" },
   state: { indexing: false, current: false, last_error: null, pin: null }, area_rows: [{ name: "library" }] };
@@ -41,9 +47,9 @@ assert.equal(repoOf("other", [catalog]), null);
 ok("a record area's empty state: its label, where its rows come from and how staff fill it now; customers get no staff link");
 
 // 2. The staff guide, in this build (the mold's own: no pack, the neutral profile, the shell's docs, none a guide).
-const g = await import("../web/src/content/staff-guide.js");
-const { ADMIN_DOCS } = await import("../web/src/content/admin-docs.generated.js");
-assert.equal(g.staffGuideShown, !ADMIN_DOCS.some((d) => g.adminDocGroup(d) === "Guides"));
+const g = await web("content/staff-guide.ts");
+const { ADMIN_DOCS } = await web("content/admin-docs.generated.ts");
+assert.equal(g.staffGuideShown, !ADMIN_DOCS.some((d: { group: string; slug: string }) => g.adminDocGroup(d) === "Guides"));
 assert.equal(g.adminDocGroup({ group: "", slug: "beta-guide" }), "Guides");
 assert.equal(g.adminDocGroup({ group: "", slug: "budget-rules-spec" }), "Specs");
 assert.equal(g.adminDocGroup({ group: "case-studies", slug: "case-studies-x" }), "Case studies");
@@ -53,7 +59,7 @@ const nav = [
   { label: "Operations", items: [{ title: "Key vault", url: "/admin/keys" }, { title: "A pack page", url: "/admin/packs/p/x" }] },
 ];
 const { title, markdown } = g.staffGuideMarkdown(nav);
-const { profile } = await import("../web/src/config/profile.generated.js");
+const { profile } = await web("config/profile.generated.ts");
 assert.equal(title, `${profile.name} staff guide`);
 assert.ok(markdown.startsWith(`# ${title}\n`));
 for (const h of [`## What ${profile.name} does`, "## Letting people in", "## The console, page by page", "## Every day"]) assert.ok(markdown.includes(h), h);
