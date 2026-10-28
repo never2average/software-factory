@@ -105,9 +105,12 @@ export interface Col<T> {
  *  sticky header and the pager stays put, however many rows there are. */
 export function DataList<T>({ cols, rows, empty, onRow, minWidth = 640, noun, height }: { cols: Col<T>[]; rows: T[] | undefined; empty: ReactNode; onRow?: (r: T) => void; minWidth?: number; noun?: string; height?: string }) {
   const p = usePaged(rows ?? []);
+  const none = !rows?.length;
   return (
     <div>
-    <div className={cn('overflow-x-auto', height && cn('overflow-y-auto overscroll-contain', height))}>
+    {/* With no rows the list is only as tall as its header and the message, and the message sits under the scrolled
+        header, centred in what the screen shows: inside a table wider than a phone it was centred off-screen (mold_v0-170). */}
+    <div className={cn('overflow-x-auto', height && !none && cn('overflow-y-auto overscroll-contain', height))}>
       <Table style={{ minWidth }}>
         <TableHeader className={height ? 'bg-background sticky top-0 z-10' : undefined}>
           <TableRow>
@@ -119,9 +122,6 @@ export function DataList<T>({ cols, rows, empty, onRow, minWidth = 640, noun, he
           </TableRow>
         </TableHeader>
         <TableBody>
-          {!rows?.length && (
-            <TableRow><TableCell colSpan={cols.length} className='text-muted-foreground py-10 text-center whitespace-normal'>{empty}</TableCell></TableRow>
-          )}
           {p.rows.map((r, i) => (
             <TableRow
               key={i}
@@ -140,6 +140,7 @@ export function DataList<T>({ cols, rows, empty, onRow, minWidth = 640, noun, he
         </TableBody>
       </Table>
     </div>
+    {none && <div role='status' className='text-muted-foreground border-b px-4 py-10 text-center text-sm'>{empty}</div>}
     <TablePager p={p} noun={noun} />
     </div>
   );

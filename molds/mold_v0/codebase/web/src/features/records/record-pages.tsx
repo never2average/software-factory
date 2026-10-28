@@ -4,11 +4,15 @@
 // (web/src/config/pack-nav.generated.ts); rows from /api/records (a workspace's view: shared areas and its own) or
 // /api/admin/records (platform staff: the shared areas). Read only: records are written by the packs and the platform.
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { RecordAreaSpec } from '@/config/pack-nav.generated';
+import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
+import { Field, RecordView, type PropType, type RecordCol } from '@/components/layout/record-view';
+import { useRepositories } from '@/features/admin/repositories';
+import { EmptyState } from '@/features/tabs/empty';
+import { cn } from '@/lib/utils';
+import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
@@ -28,39 +32,119 @@ async function getJson<T>(url: string): Promise<T> {
 const cell = (v: unknown) => (v == null ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : String(v));
 const where = (area: RecordAreaSpec) => (area.scope === 'platform' ? 'Shared by every workspace (read only)' : "This workspace's own");
 
+/** How many records the list reads in one go (pages of 200, the API's most): search, sort and filter run on these. */
+export const LIST_MAX = 2000;
+
+/** Every record of the area up to LIST_MAX, and whether there were more. */
+async function loadAll(url: string): Promise<{ records: RecordRow[]; more: boolean }> {
+  const records: RecordRow[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const page: Page = await getJson<Page>(`${url}?limit=200${after ? `&after=${encodeURIComponent(after)}` : ''}`);
+    records.push(...page.records);
+    after = page.next;
+    if (!after) return { records, more: false };
+    if (records.length >= LIST_MAX) return { records: records.slice(0, LIST_MAX), more: true };
+  }
+}
+
+const optionLabel = (f: RecordFieldSpec, v: unknown) => {
+  const o = f.options?.find((x) => (typeof x === 'string' ? x : x.value) === v);
+  return o && typeof o !== 'string' ? o.label ?? o.value : String(v);
+};
+/** A field's value as the list and the peek show it: an option's label, Yes / No, a date, lists joined. */
+export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
+  if (v == null || v === '') return '';
+  if (Array.isArray(v)) return v.map((x) => fieldText(f, x)).filter(Boolean).join(', ');
+  if (f?.type === 'enum') return optionLabel(f, v);
+  if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10);
+  return cell(v);
+}
+const COL_TYPE: Record<string, PropType> = { enum: 'select', number: 'number', date: 'date', boolean: 'boolean' };
+const dash = <span className='text-muted-foreground'>—</span>;
+
+/** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
+function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
+  const record: RecordCol<RecordRow> = {
+    key: '_record', label: 'Record', title: true, keep: true, type: 'text', className: 'min-w-56',
+    value: (r) => r.title || r.key,
+    render: (r) => (
+      <span className='flex min-w-0 flex-col gap-1'>
+        <span className='leading-snug font-medium'>{r.title || r.key}</span>
+        {r.title && r.title !== r.key && <span className='text-muted-foreground font-mono text-xs leading-none break-all'>{r.key}</span>}
+      </span>
+    )
+  };
+  const fields = area.list_columns.map((name): RecordCol<RecordRow> => {
+    const f = area.fields.find((x) => x.name === name);
+    const type = (f && !f.multiple && COL_TYPE[f.type]) || 'text';
+    return {
+      key: name, label: areaFieldLabel(area, name), type, keep: false,
+      ...(type === 'select' && f?.options ? { options: f.options.map((o) => (typeof o === 'string' ? { value: o } : { value: o.value, label: o.label })) } : {}),
+      value: (r) => {
+        const v = r.data[name];
+        if (v == null) return null;
+        if (type === 'number') return typeof v === 'number' ? v : Number(v);
+        if (type === 'boolean') return Boolean(v);
+        return type === 'select' || type === 'date' ? String(v) : fieldText(f, v);
+      },
+      render: (r) => {
+        const t = fieldText(f, r.data[name]);
+        return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums')}>{t}</span> : dash;
+      }
+    };
+  });
+  const updated: RecordCol<RecordRow> = { key: '_updated', label: 'Updated', type: 'date', hidden: true, value: (r) => r.updated_at, render: (r) => r.updated_at.slice(0, 10) };
+  return [record, ...fields, updated];
+}
+
+/** A field's value in the peek: a reference to a record this page can show links to it. */
+function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown }) {
+  const to = f.type === 'reference' ? f.to : area.links.find((l) => l.field === f.name)?.area;
+  const keys = (Array.isArray(v) ? v : [v]).filter((k): k is string => typeof k === 'string' && k !== '');
+  if (to && keys.length && findRecordArea(base, to)) return (
+    <span className='flex flex-wrap gap-x-3 gap-y-1'>
+      {keys.map((k) => <Link key={k} className='underline-offset-4 hover:underline' href={`/${base}/records/${to}/${encodeURIComponent(k)}`}>{k}</Link>)}
+    </span>
+  );
+  return <>{fieldText(f, v) || dash}</>;
+}
+
+/** The empty state inside the table: what fills the area and, for staff, where to fill it now. */
+function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
+  const repos = useRepositories(base === 'admin');
+  const e = recordEmptyText(area, base, base === 'admin' ? repoOf(area.name, repos.data?.repositories) : null);
+  return <div className='mx-auto max-w-xl text-left'><EmptyState empty={e} id={`records-${area.name}-empty`} /></div>;
+}
+
 export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
-  const [after, setAfter] = useState<string[]>([]);
-  const cursor = after.at(-1) ?? '';
-  const url = `${recordsApi(base)}/${area.name}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
-  const { data, error } = useOrgLoad(() => getJson<Page>(url), [url]);
+  const url = `${recordsApi(base)}/${area.name}`;
+  const { data, error } = useOrgLoad(() => loadAll(url), [url]);
+  const cols = useMemo(() => columnsOf(area), [area]);
+  const detailHref = (r: RecordRow) => `/${base}/records/${area.name}/${encodeURIComponent(r.key)}`;
   return (
-    <PageContainer pageTitle={area.label} pageDescription={area.description ?? where(area)}
-      pageHeaderAction={data?.records.length ? <ExportCsvButton url={`${recordsApi(base)}/${area.name}`} area={area} name={area.name} areas={[area.name]} /> : undefined}>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={1} /> : !data.records.length ? (
-        <p className='text-muted-foreground text-sm'>No records yet.</p>
-      ) : (
-        <div className='flex flex-col gap-4'>
-          <Table label={area.label}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Record</TableHead>
-                {area.list_columns.map((c) => <TableHead key={c}>{areaFieldLabel(area, c)}</TableHead>)}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.records.map((r) => (
-                <TableRow key={r.key}>
-                  <TableCell><Link className='underline-offset-4 hover:underline' href={`/${base}/records/${area.name}/${encodeURIComponent(r.key)}`}>{r.title || r.key}</Link></TableCell>
-                  {area.list_columns.map((c) => <TableCell key={c}>{cell(r.data[c])}</TableCell>)}
-                </TableRow>
+    <PageContainer pageTitle={area.label} pageDescription={area.description ?? where(area)}>
+      {error ? <ErrorState error={error} /> : (
+        <RecordView<RecordRow>
+          id={`${base}-records-${area.name}`} compact noun='records' properties
+          rows={data?.records ?? []} rowKey={(r) => r.key} cols={cols} loading={!data}
+          searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
+          searchPlaceholder={`Search ${area.label.toLowerCase()}`}
+          filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span> : undefined}
+          primary={data?.records.length ? <ExportCsvButton url={url} area={area} name={area.name} areas={[area.name]} /> : undefined}
+          empty={<RecordEmpty area={area} base={base} />}
+          detailTitle={(r) => r.title || r.key}
+          detailActions={(r) => <Button variant='outline' size='sm' render={<Link href={detailHref(r)} />}>Open record</Button>}
+          detail={(r) => (
+            <dl>
+              {r.version && <Field label='Version'>{r.version}</Field>}
+              {area.fields.filter((f) => !area.list_columns.includes(f.name)).map((f) => (
+                <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
               ))}
-            </TableBody>
-          </Table>
-          <div className='flex gap-2'>
-            {after.length > 0 && <Button variant='outline' size='sm' onClick={() => setAfter(after.slice(0, -1))}>Previous</Button>}
-            {data.next && <Button variant='outline' size='sm' onClick={() => setAfter([...after, data.next!])}>Next</Button>}
-          </div>
-        </div>
+            </dl>
+          )}
+        />
       )}
     </PageContainer>
   );

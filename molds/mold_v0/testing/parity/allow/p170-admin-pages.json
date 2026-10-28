@@ -1,0 +1,7 @@
+{
+  "phase": "mold_v0-170: the admin pages' quality (record areas as a database table, a staff guide as the admin Docs' landing page when no pack brings a guide, the admin home's funnel); Octillion keeps its beta guide and every page but the admin home unchanged",
+  "allow": [
+    { "key": "pages::/admin::text", "reason": "the funnel says what its right-hand percentage is (the share of the step before that stopped short of this one), and a screen reader hears it in full beside each figure" },
+    { "key": "shots::/admin::*", "reason": "funnel labels wrap instead of being cut off (a wider label column at 1440, the label over its bar on a phone), and an empty Needs attention list is as tall as its header and message, the message under the scrolled header instead of centred off-screen in the wide table" }
+  ]
+}
