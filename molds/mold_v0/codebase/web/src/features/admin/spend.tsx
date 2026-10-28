@@ -28,6 +28,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import * as facts from '@/config/build-facts.generated';
 import { ApiError } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { accountHref, post, useAdmin, useAdminAction } from './lib';
@@ -205,6 +206,9 @@ const twoLine = (main: ReactNode, second?: ReactNode, title?: string) => (
 );
 const exportName = (what: string, group: string, r?: { from: string; to: string }) => `${what}-by-${group}-${r?.from ?? ''}_${r?.to ?? ''}`;
 
+/** The build shows the Experiments tab from the start (mold_v0-171: pack.json or profile.json console.show). */
+const EXPERIMENTS_SHOWN = ((facts as { SHOWN_SECTIONS?: readonly string[] }).SHOWN_SECTIONS ?? []).includes('experiments');
+
 export function AdminFinOps() {
   // useSearchParams (the tab) needs a Suspense boundary for the static render.
   return <Suspense fallback={<PageContainer><Skeleton className='h-72 rounded-lg' /></PageContainer>}><SpendPage /></Suspense>;
@@ -225,9 +229,10 @@ function SpendPage() {
   const charges = useAdmin<RunCharges | { enabled: false }>(tab === 'charges' ? `/spend/run-charges?${q}` : null, { keep: true });
   const active = tab === 'runs' ? null : tab === 'revenue' || tab === 'plans' ? revenue : tab === 'experiments' ? exps : tab === 'spend' ? spend : tab === 'compute' ? compute : tab === 'charges' ? charges : storage;
   // Run charges (mold_v0-019) is a tab only when the app bills runs (the Revenue report says so), or a link opens it.
-  // The runs tab only with the packs' runs; Experiments only with a pricing experiment, or when a link opens it.
+  // The runs tab only with the packs' runs; Experiments with a pricing experiment, when a link opens it, or always where
+  // the build shows it from the start (console.show: ["experiments"], mold_v0-171: its empty state says how to start one).
   const tabs = TABS.filter(([id]) => (id !== 'charges' || tab === 'charges' || !!revenue.data?.run_charges)
-    && (id !== 'runs' || packRuns()) && (id !== 'experiments' || tab === 'experiments' || anyExperiment));
+    && (id !== 'runs' || packRuns()) && (id !== 'experiments' || tab === 'experiments' || anyExperiment || EXPERIMENTS_SHOWN));
   const qc = useQueryClient();
   const fetching = useIsFetching({ queryKey: ['admin'] }) > 0;
   const bar = (

@@ -24,7 +24,7 @@ import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
 import { onboardingAnchor } from '@/features/tabs/empty';
-import { mergeSetupSteps, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
+import { mergeSetupSteps, stepProgress, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
 import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
 import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
@@ -59,7 +59,7 @@ export function SetupPage() {
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
   const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
-  const stepsDone = steps.filter((x) => x.done).length;
+  const progress = stepProgress(steps);
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !s ? <LoadingCards count={4} /> : (
@@ -74,7 +74,7 @@ export function SetupPage() {
           {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            {showJourneys && <JourneyPicker setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+            {showJourneys && <JourneyPicker setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
               void setSelected(id === 'setup' ? null : id);
               if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
             }} />}
@@ -99,7 +99,7 @@ export function SetupChecklist() {
   if (error) return <ErrorState error={error} />;
   if (!s || !pack.settled) return <LoadingCards count={1} />;
   const steps = mergeSetupSteps(s.steps, pack.data?.steps ?? []);
-  const done = steps.filter((x) => x.done).length, total = steps.length;
+  const { done, total } = stepProgress(steps);
   const complete = done >= total;
   if (complete && !open) return (
     <section aria-labelledby='home-setup-title' data-home-section='setup' data-complete=''
@@ -484,10 +484,10 @@ function Checklist({ s, steps, title, titleId, compact, connect, hide, anchored 
       </div>
     ) : x.pack ? (x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null)
       : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
-  const done = steps.filter((x) => x.done).length;
+  const { done, total } = stepProgress(steps);
   const ticks = steps.some((x) => x.pack);
   return (
-    <TimelineSection title={title} titleId={titleId} done={done} total={steps.length} noun='steps' compact={compact} items={items} extra={hide}
+    <TimelineSection title={title} titleId={titleId} done={done} total={total} noun='steps' compact={compact} items={items} extra={hide}
       footer={ticks || journeysOn() ? <>
         {ticks && 'These steps tick themselves as you go. '}
         {journeysOn() && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}

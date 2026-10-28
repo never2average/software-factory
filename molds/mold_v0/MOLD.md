@@ -622,7 +622,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `web/src/config/vocabulary.generated.ts` and a gen-packs copy of the same engine (`web/src/lib/words.generated.ts`).
   The usage pages count the generic runs, so they take the packs' and the app's words, never a host pack's. Billing,
   Budget rules, the launch refusals (over MCP and the console), the policy checks and the account and platform roles'
-  help are written this way; contact lines name `{product}`. `npm run check:vocabulary` also runs the concept-word
+  help are written this way; contact lines name `{product}`. A placeholder with its article inside the braces
+  ("{an account}") is never filled, so the page would show it as written: `npm run check:vocabulary` refuses one in the
+  shell's code (mold_v0-171; the article goes before it, "an {account}"). `npm run check:vocabulary` also runs the concept-word
   ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
   simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
   values are contracts and are not counted; since mold_v0-113 the staff docs (`docs/*.md`, which `/admin/docs` and the
@@ -980,7 +982,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   list at `/api/onboarding` (signed-in people of the workspace, read only; mounted only when a step exists). The
   console shows **one checklist** (mold_v0-146, `web/src/features/portal/setup-steps.ts`): the shell's setup steps
   (joining, connecting an AI client, its tools, a first question) first, then the packs' steps in declared order, as one
-  list with one count. A pack step whose condition the shell measures too (`workspace`, `connected`, `first_call`;
+  list with one count (mold_v0-171: a host pack's setup step declared `optional` is shown and counted on neither side,
+  as the server's own `done` and `total`: "3 of 7" for eight steps with one optional, `stepProgress`). A pack step whose condition the shell measures too (`workspace`, `connected`, `first_call`;
   `/api/onboarding` says which as `covers`: `joined`, `connected`, `first_call`) takes that shell step's place, and the
   shell's later steps follow it: a pack puts the connection where it wants it by declaring a `done_when: connected`
   step. With zero packs (`packOnboardingSteps` 0 in `pack-nav.generated.ts`) it asks nothing and the list is the
@@ -1251,6 +1254,16 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   field by field; gen-packs checks it (a skill name of lowercase words and hyphens without a client's reserved words,
   one-line description, a body without frontmatter, files beside SKILL.md ending .md or .txt, never SKILL.md or
   reference/tools.md) and writes `src/client-skill.generated.ts`. `npm run test:client-skill`.
+- **The connect guide** (mold_v0-171, built; `src/connect-page-config.ts`, `src/install-pages.ts`): one more public page
+  where a pack declares pack.json `connect_page` (one pack per build), at the address it names (the first product's
+  `/connect.html`, a link it had sent to customers; never one of the shell's own addresses). The shell draws it from the
+  config's words (title, heading, lead, each client's numbered steps, the skill's heading and steps, first-run cards and
+  note, footer tagline and links, a header link, the accent colours) and what it knows: the connector's address (the
+  front door's `/mcp`), how a client signs in, how a member key goes in a header (with keys on, never in the address),
+  a link to `/app`, the client skill's download button (`/downloads/<name>-skill.zip`) and "© <year> <product>". Texts
+  are one line each, escaped, with `**bold**`, `` `code` ``, `[links](/path)` (a path, an #anchor or https) and the
+  `{product}` and `{skill_file}` placeholders; gen-packs refuses anything else and carries the block to the server in
+  `PACK_CONFIG`. Without one, nothing changes. `npm run test:connect-page`.
 - **Per-member MCP keys** (mold_v0-007, built; `src/member-keys.ts`, `sql/migrations/0013_member_keys.sql`,
   `/app/keys`): a signed-in person makes keys of their own (`POST /api/keys` `{name, expires_in_days}`: 7, 30, 90,
   180 or 365, default 90; at most 20 live), each named, shown once (only its sha256 is stored) and revocable
@@ -1755,10 +1768,17 @@ says when a catalog could not be indexed at its pin. `npm run test:catalog-index
 
 **Shell pages a build hides (mold_v0-130).** `console.hide` in a pack's pack.json or the app's profile.json (joined) names
 shell pages of the customer console to leave out: `activity`, `usage`, `billing`, `profile`, `credentials`, `schedules`,
-`notices`, `files`, `connected-apps` (`src/console-pages.ts`). A hidden page leaves the /app sidebar (the shell's entries, the Workspace
+`notices`, `files`, `connected-apps`, `keys` (`src/console-pages.ts`; `keys`, mold_v0-171: the API keys page and the
+sidebar footer's link, the keys already made still working). A hidden page leaves the /app sidebar (the shell's entries, the Workspace
 and Activity groups, any declared tab that opens it), the tab pages and the customer guide's tab list, and its address
 and everything under it redirect to /app (`pack-routes.generated.json`). The staff console and the API are unchanged.
 `npm run test:console-hide`.
+
+**Console sections shown from the start (mold_v0-171).** `console.show` in a pack's pack.json or the app's profile.json
+(joined) names shell sections that otherwise appear only once they hold something: `experiments`, FinOps' Experiments
+tab, shown with its empty state (how to start a pricing experiment) before the first exists (the admin MCP offers the
+`pricing_experiment` skill either way). gen-packs writes `SHOWN_SECTIONS` into the console's build facts only when a
+section is named, so a build without the setting is unchanged.
 
 **The whole sidebar from config (mold_v0-133).** With declared tabs the /app sidebar is exactly the tabs, in their
 groups and order (mold_v0-058), and the tab kinds now reach every shell page (`team`, `keys` beside `setup`, `usage`,
@@ -1987,7 +2007,8 @@ a pack's pack.json (the packs' joined in pack order, a key once in a build) or i
 replaces the packs' (a host pack's `host.profile` may not set it). Each field is a `key` (lowercase letters, digits and
 `_`, never `email`, `name`, `company`, `message` or `source`), a `label`, a `type` (`text`, `long_text`, `url`, `email`,
 `select`, `multi_select`), optionally `required`, `options` (`{value, label}`, a select's only), `max_length`, `help`,
-`placeholder`; at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
+`placeholder`, `person` (mold_v0-171: a `text` or `select` answer that says who the requester is, such as a role,
+shown beside their name in the Requests list, "DevRel · sam@…", and on the request's Person line); at most 20. The rules are `src/access-request.ts`, pure and shared: `gen-packs.mjs` checks the blocks
 with it and writes the build's fields to `src/access-request.generated.ts` and `web/src/config/access-request.generated.ts`
 (and copies the rules to `web/src/lib/access-request.generated.ts`), never into the profile modules, so the MCP surface
 is unchanged. The public `/request-access` form and the portal's page for no account (mold_v0-098) ask the fields after

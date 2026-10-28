@@ -103,9 +103,10 @@ const { SHELL_TEXTS } = await import(pathToFileURL(path.join(HERE, "..", "src", 
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 // The client skill's rules (mold_v0-144): plain TypeScript with no imports, as the words engine.
+const { connectPageProblems } = await import(pathToFileURL(path.join(HERE, "..", "src", "connect-page-config.ts")).href);
 const { clientSkillProblems, mergeClientSkill } = await import(pathToFileURL(path.join(HERE, "..", "src", "client-skill-config.ts")).href);
 // The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
-const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
+const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, shownSections, SIDEBAR_SHELL_PAGES, sidebarShellPage, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 // The admin MCP's shell tool names (mold_v0-067) and its skills' texts (mold_v0-140): plain TypeScript with no imports, as
 // the words engine, so a pack's admin_mcp words are checked against them here.
 const { ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(path.join(HERE, "..", "src", "shell-tools.ts")).href);
@@ -160,6 +161,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "landing", "guide", "staff_docs", "console", "access_request",
   // the client skill's own words and files (mold_v0-144, src/client-skill-config.ts)
   "client_skill",
+  // the public connect guide at an address of its own (mold_v0-171, src/connect-page-config.ts; PACK_CONFIG)
+  "connect_page",
   // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
@@ -1375,6 +1378,8 @@ const privateNetworkKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.ki
  */
 for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
 const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
+/** The shell's console sections shown from the start (mold_v0-171, src/console-pages.ts SHOWABLE_SECTIONS): `console.show`, joined. */
+const SHOWN_SECTIONS = shownSections([...packs.map((p) => p.json?.console), profileConsole]);
 /**
  * The access-request form's own fields (mold_v0-102, src/access-request.ts): the packs' pack.json `access_request` in pack
  * order (a key once in a build), or the app's profile.json `access_request` in their place. [] asks the shell's own only.
@@ -1647,6 +1652,8 @@ let journeyFacts = null, tipFacts = null;
 /** The shell's console texts the packs write (mold_v0-141: pack.json texts), and which pack writes each text. */
 const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
+/** The pack that declares the connect guide (mold_v0-171), once checked. */
+let connectOwner = null;
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
   const groups = new Map(SHELL_GROUPS.map((g) => [g, "the shell"])), keys = new Map(), reworded = new Map();
@@ -1747,6 +1754,17 @@ const packConfig = [];
       }
       if (Object.keys(server).length) c.texts = server;
     }
+    // The public connect guide (mold_v0-171, src/connect-page-config.ts): one pack's per build, at an address of its own.
+    if (j.connect_page !== undefined) {
+      const bad = connectPageProblems(j.connect_page);
+      for (const b of bad) fail(at, b);
+      if (connectOwner) fail(at, `connect_page: pack ${connectOwner} declares the connect guide too: one pack's`);
+      else if (!bad.length) {
+        connectOwner = p.id;
+        const { $comment: _c, ...rest } = j.connect_page;
+        c.connect_page = rest;
+      }
+    }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
   refuse();
@@ -1756,6 +1774,12 @@ if (memoryFacts) {
   const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
   files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
     `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
+}
+// The shell's console sections shown from the start (mold_v0-171: console.show), only when a pack or the profile shows one.
+if (SHOWN_SECTIONS.length) {
+  const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
+  files.set(bf, files.get(bf) + "/** The shell's console sections shown from the start, not only once they hold something (mold_v0-171: console.show). */\n" +
+    `export const SHOWN_SECTIONS: readonly string[] = ${json(SHOWN_SECTIONS)};\n`);
 }
 // The journeys and tips components' facts for the console (mold_v0-143), only when each is on.
 if (journeyFacts || tipFacts) {

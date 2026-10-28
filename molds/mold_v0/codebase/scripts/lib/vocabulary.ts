@@ -89,6 +89,30 @@ export function checkVocabulary(root: string, v: Vocabulary): Report {
   return { findings, unused, scanned };
 }
 
+// ---------- placeholders the words engine never fills (mold_v0-171) ----------
+
+/**
+ * A placeholder written with its article inside the braces ("{an account}", "{a run}", "{the workspace}"): the words
+ * engine (src/words.ts) fills only a bare key, with the article before it ("an {account}"), so such text reaches the
+ * page as it is written. Read in the shell's code and its texts (src/, web/src/, scripts/), never in a pack's files.
+ */
+export const BROKEN_PLACEHOLDER = /\{(?:an?|the|your) (?:workspace|account|member|owner|run|tool_call|key|product)s?\}/gi;
+const PLACEHOLDER_SOURCES = /^(src|web\/src|scripts)\/.*\.(ts|tsx|mts|mjs|json)$/;
+
+/** Every placeholder with its article inside the braces in the shell's code: the engine leaves them unfilled. */
+export function checkPlaceholders(root: string): Finding[] {
+  const packed = hasPacks(root);
+  const out: Finding[] = [];
+  for (const rel of listFiles(root)) {
+    if (!PLACEHOLDER_SOURCES.test(rel) || packOwned(rel, packed) || rel === "scripts/lib/vocabulary.ts" || rel === "scripts/vocabulary-test.ts") continue;
+    readFileSync(path.join(root, rel), "utf8").split("\n").forEach((line, i) => {
+      BROKEN_PLACEHOLDER.lastIndex = 0;
+      for (const m of line.matchAll(BROKEN_PLACEHOLDER)) out.push({ file: rel, line: i + 1, text: m[0] });
+    });
+  }
+  return out;
+}
+
 // ---------- the env names' alias table (MOLD.md) ----------
 
 /** Where the shell names its environment variables: code, deploy files, the env example (not prose). */
