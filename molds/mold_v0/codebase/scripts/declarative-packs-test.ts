@@ -228,7 +228,7 @@ try {
   // ---------- 2d. a home tab: an overview that includes the shell's sections (mold_v0-134) ----------
   {
     let m = 0;
-    const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }, { name: "numbers", title: "Numbers", type: "number", metrics: [j.metrics[0].name] }]; };
+    const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }, { name: "numbers", title: "Numbers", type: "number", metrics: ["open_total"] }]; j.metrics.push({ name: "open_total", label: "Open findings", over: "tracker_findings" }); };
     const due = (j: any) => { j.record_areas.find((a: any) => a.name === "tracker_findings").due = { field: "due" }; };
     const home = (tab: Record<string, unknown>, more: Record<string, unknown>[] = [], withDue = true) =>
       variant((j) => { chart(j); if (withDue) due(j); j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], ...tab }, ...more]; });
@@ -249,7 +249,7 @@ try {
     const noRail = (what: string, json: unknown, re: RegExp) => { refused(`rail: ${what}`, tryPack(json), re); r++; };
     noRail("on an overview that does not include setup", home({ include: ["notices"], rail: ["notices"] }), /tabs\[0\]\.rail: rail is for a home tab: an overview tab that includes setup/);
     noRail("a card twice", home({ include: ["setup", "notices"], rail: ["notices", "notices"] }), /tabs\[0\]\.rail: a card is listed twice/);
-    noRail("an unknown card", home({ include: ["setup"], rail: ["billing"] }), /tabs\[0\]\.rail\[0\]: journeys, notices or chart:<one of the pack's number charts>/);
+    noRail("an unknown card", home({ include: ["setup"], rail: ["billing"] }), /tabs\[0\]\.rail\[0\]: one of the shell's cards \(TAB_RAIL\) or chart:<one of the pack's number charts>/);
     noRail("three cards", home({ include: ["setup", "notices"], rail: ["notices", "chart:numbers", "journeys"] }), /tabs\[0\]\.rail: Too big/);
     noRail("notices the tab does not include", home({ include: ["setup"], rail: ["notices"] }), /tabs\[0\]\.rail: the notices card is for a tab that includes notices/);
     noRail("a chart the pack does not declare", home({ include: ["setup"], rail: ["chart:nope"] }), /tab home: rail chart:nope: this pack declares no chart nope/);
@@ -259,7 +259,7 @@ try {
     const ok = tryPack(variant((j) => {
       chart(j); due(j);
       j.metrics[0].roles = ["owner"];
-      j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], include: ["notices", "setup"], rail: ["chart:numbers", "notices"] }, { id: "plain", kind: "overview", charts: ["summary", "numbers"] },
+      j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], include: ["notices", "setup"], rail: ["chart:numbers", "notices"] }, { id: "plain", kind: "overview", charts: ["summary"] },
         { id: "apps", kind: "area", area: "tracker_apps" }];
     }));
     assert.equal(ok.r.status, 0, `a home tab builds: ${ok.r.stderr}`);

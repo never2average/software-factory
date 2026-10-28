@@ -1084,7 +1084,7 @@ export const TabSchema = z.object({
   timeline_by: point.optional(),
   charts: z.array(name).max(12).optional(),
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
-  rail: z.array(z.string().regex(TAB_RAIL, "journeys, notices or chart:<one of the pack's number charts>")).min(1).max(2).optional(),
+  rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL) or chart:<one of the pack's number charts>")).min(1).max(2).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),

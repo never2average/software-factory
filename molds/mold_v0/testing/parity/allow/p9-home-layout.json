@@ -1,0 +1,6 @@
+{
+  "phase": "mold_v0-172: every build's Home is the Setup page's layout (a home tab of a declarative pack included); a home tab's right-column cards come from pack.json rail. Octillion has no home tab: its /app page, every answer and every tool are unchanged",
+  "allow": [
+    { "key": "generated::web/src/config/pack-nav.generated.ts", "reason": "the tab spec's type gains rail?: string[] (a home tab's right-column cards); Octillion declares no tab, so its tabs list is unchanged" }
+  ]
+}
