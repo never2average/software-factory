@@ -902,6 +902,8 @@ esac
 printf 'header = "Authorization: Bearer %s"\\n' "$CRON_SECRET" | /usr/bin/curl --silent --show-error --fail --max-time 110 --output /dev/null --config - "http://127.0.0.1:@PORT@/api/cron/$1"
 """, HEAD=fill(HEAD, APP=S["app_id"]), ROUTES=routes, PORT=PORTS["web"])
 
+CADDY_SITES_DIR = "/etc/caddy/sites.d"
+
 def caddyfile(S):
     email = f"\temail {S['email']}\n" if S["email"] else ""
     return (fill(HEAD, APP=S["app_id"]) + "{\n" + email + "}\n\n" + f"""{S['domain_shown']} {{
@@ -920,6 +922,11 @@ def caddyfile(S):
 		flush_interval -1
 	}}
 }}
+
+# Companion sites on this server (a service deployed beside the app, one file each) live in {CADDY_SITES_DIR}/ and are
+# imported here, so regenerating this file never drops them. An empty or missing folder is fine. Each one is served by
+# this Caddy like the app, so it adds no public listener; a broken one fails the caddy step's validation, not silently.
+import {CADDY_SITES_DIR}/*.caddy
 """)
 
 def egress_nft(S):
@@ -1748,12 +1755,14 @@ def caddy_sh(S):
     return fill("""#!/bin/bash
 @HEAD@# TLS for @DOMAIN@. Caddy gets and renews the certificate by itself once the domain points at this server.
 set -eu
-@GUARD@caddy validate --adapter caddyfile --config @FACTORY@/Caddyfile >/dev/null
+@GUARD@install -d -m 755 @SITES@
+caddy validate --adapter caddyfile --config @FACTORY@/Caddyfile >/dev/null
 install -m 644 @FACTORY@/Caddyfile /etc/caddy/Caddyfile
 systemctl enable caddy >/dev/null
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
 echo "caddy: serving @DOMAIN@"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), FACTORY=S["factory_dir"], DOMAIN=S["domain_shown"])
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), FACTORY=S["factory_dir"], DOMAIN=S["domain_shown"],
+       SITES=CADDY_SITES_DIR)
 
 def health_sh(S, crons):
     return fill("""#!/bin/bash

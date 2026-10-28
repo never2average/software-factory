@@ -253,6 +253,10 @@ def _generated_files(check, tmp):
     check("the Caddyfile serves the domain over TLS and proxies only to the web app on loopback", "app.example.com {" in cf and "reverse_proxy 127.0.0.1:3000" in cf
           and "3001" not in cf and "3002" not in cf and "http://" not in cf, cf)
     check("  ...keeps the cron routes private and names the operator for certificate mail", "respond @cron 404" in cf and "path /api/cron/*" in cf and "email operator@example.com" in cf)
+    check("  ...imports companion sites from their own folder, after the app's site, so regenerating it keeps them",
+          cf.rstrip().endswith("import /etc/caddy/sites.d/*.caddy") and cf.index("app.example.com {") < cf.index("import /etc/caddy/sites.d/"), cf)
+    check("  ...and the caddy step creates that folder before validating", V.caddy_sh(S).index("install -d -m 755 /etc/caddy/sites.d")
+          < V.caddy_sh(S).index("caddy validate"))
     fw = V.firewall_sh(S)
     allows = sorted(l.strip() for l in fw.splitlines() if l.strip().startswith("ufw allow"))
     check("the firewall allows 22, 80 and 443 and nothing else", allows == ["ufw allow 22/tcp", "ufw allow 443/tcp", "ufw allow 80/tcp"], allows)
