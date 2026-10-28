@@ -5,6 +5,7 @@
   mold.py refresh <mold_id> [--into DIR]   the source at its current main; records the new commit and snapshot date
                                            in state/factory.json and the mold's MOLD.md
   mold.py check <mold_id> [--into DIR]     compare the snapshot with the pinned commit; writes nothing
+  mold.py fetch|refresh <mold_id> --dry-run   clone the source and list what would change; writes nothing
   mold.py fetch <mold_id> --rehearsal      INSIDE A REHEARSAL ONLY (FACTORY_REHEARSAL set; lib/services.py): write a tiny
                                            stand-in mold instead of fetching the source: a few files of codebase, the
                                            brand rules for them, and five lanes whose checks run in under a second against
@@ -90,11 +91,11 @@ def clone_at(url, tmp, commit=None, branch="main"):
     return head
 
 
-def sync(tmp, dest):
+def sync(tmp, dest, dry=False):
     """rsync the clone over dest. -> how many paths it changed."""
     os.makedirs(dest, exist_ok=True)
     # --checksum: a fresh clone gives every file a new mtime, so only content, size, a new path or a deletion counts.
-    argv = ["rsync", "-a", "--checksum", "--delete", "--itemize-changes"] + [x for e in EXCLUDES for x in ("--exclude", e)] + [tmp + "/", dest + "/"]
+    argv = ["rsync", "-a", "--checksum", "--delete", "--itemize-changes"] + (["--dry-run"] if dry else []) + [x for e in EXCLUDES for x in ("--exclude", e)] + [tmp + "/", dest + "/"]
     r = run(argv)
     if r.returncode: raise Stop(f"rsync could not copy the clone into {dest}: {r.stderr.strip()[-300:]}")
     changed = lambda l: l.startswith("*deleting") or (len(l) > 11 and l[1] in "fL" and any(c in l[2:11] for c in "cs+"))
@@ -162,8 +163,15 @@ def in_tree(cmd, mold_id, I, root, rehearsal=False):
     return 0
 
 
+KNOWN_FLAGS = {"--into", "--rehearsal", "--dry-run"}
+
 def main(a, root=ROOT, today=None):
+    if any(x in ("-h", "--help") for x in a): print(__doc__); return 0
+    # An unknown option never runs the command (mold_v0-167: `refresh --dry-run` once refreshed for real).
+    bad = [x for i, x in enumerate(a) if x.startswith("-") and x not in KNOWN_FLAGS and not (i and a[i - 1] == "--into")]
+    if bad: print(f"mold.py: unknown option {', '.join(bad)}; nothing was run.", file=sys.stderr); return 2
     if not a or a[0] not in ("fetch", "refresh", "check") or len(a) < 2: print(__doc__); return 2
+    dry = "--dry-run" in a
     cmd, mold_id = a[0], a[1]
     try: I = intree.info(mold_id, root)
     except intree.Unreadable as e: print(str(e), file=sys.stderr); return 2
@@ -189,6 +197,10 @@ def main(a, root=ROOT, today=None):
         try:
             head = clone_at(url, tmp, commit=None if cmd == "refresh" else pinned)
             print(f"{mold_id}: the source at {head[:12]}" + (" (its current main)" if cmd == "refresh" else " (the pinned commit)"))
+            if cmd != "check" and dry:
+                n = sync(tmp, dest, dry=True)
+                print(f"  DRY RUN: {n} path(s) would change in {os.path.relpath(dest, root) if dest.startswith(root + os.sep) else dest}; nothing was written")
+                return 0
             if cmd != "check":
                 n = sync(tmp, dest)
                 print(f"  copied into {os.path.relpath(dest, root) if dest.startswith(root + os.sep) else dest}: "
