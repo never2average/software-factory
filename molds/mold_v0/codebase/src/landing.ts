@@ -16,12 +16,12 @@
  * With no `sections` the page is the whole wireframe, in that order, in the shell's neutral words.
  *
  *   hero            eyebrow, headline (default: the profile's tagline) and headline_highlight (in the primary colour),
- *                   subheadline, primary_cta (the page's one button: a link, or "account": sign in or open the console,
- *                   with an arrow; default: "Get started" to the start, which is sign-up or a request for access, and
- *                   into the console for someone signed in), note, a `visual` beside it, and a strip under it: text
- *                   names in the logos' type (`items`), named `logos`, or the logos of the AI clients offered. Only
- *                   with first_screen.calls 2 (FIRST SCREEN below): secondary_cta (a call the first screen already
- *                   makes) and up to 3 more `links` {label, href}
+ *                   subheadline, primary_cta (a link, or "account", the default: "Sign in", or "Open dashboard" for
+ *                   someone signed in, with an arrow), secondary_cta (default with the account button: "Early access"
+ *                   to the request page, outlined), note, a `visual` beside it, and a strip under it: text names in the
+ *                   logos' type (`items`), named `logos`, or the logos of the AI clients offered; up to 3 more `links`
+ *                   {label, href}. With first_screen.calls 1 (FIRST SCREEN below) only primary_cta: one button,
+ *                   default "Get started" to the start (sign-up or a request for access, into the console signed in)
  *                   A logos section with no title right after it is drawn as its foot (mold_v0-165: no divider, no
  *                   band of its own; the logos' `label` names the list for a screen reader)
  *   logos           a row of organisations' logos (mold_v0-164): a title and 1 to 40 items {name, logo, href}, where
@@ -40,13 +40,13 @@
  * Every section but hero and cta may carry `id` (its anchor, a slug), `nav_label` or `nav: false` (its entry in the
  * header's navigation, which lists the picked sections in order), `eyebrow`, `title`, `lead` and a `visual`, one of the
  * templates below (VISUALS: decision_graph, transcript, loop, paths, scorecard, chat). Beside `sections`:
- *   header          `sign_in` and `open` relabel or re-address the account's two states (signed out: sign in; signed
- *                   in: into the console) wherever the page shows them. Only on a page that opted into two calls
- *                   (first_screen below): a link beside the ways in, and which ways in ("sign_in_and_start", the
- *                   default: "Sign in", and the start call only when the hero has no call of its own; or "account": one
- *                   account button)
- *   first_screen    (mold_v0-165) {calls: 1 | 2}: how many things the first screen asks for. 1, the default: the hero's
- *                   one button and nothing else. 2: the mold_v0-164 page (the header's sign-in and one other)
+ *   header          `sign_in` and `open` relabel or re-address the account's two states (signed out: "Sign in" to
+ *                   /auth/sign-in; signed in: "Open dashboard" to /app) wherever the page shows them; a link beside
+ *                   the ways in (default: the page's other call, "Early access" to the request page); and which ways
+ *                   in ("account", the default: one account button; or "sign_in_and_start": "Sign in", and the start
+ *                   call only on a page with no hero and no link). None of it on a one-call page (first_screen below)
+ *   first_screen    (mold_v0-165, mold_v0-168) {calls: 1 | 2}: how many things the first screen asks for. 2, the
+ *                   default: signing in and one other (FIRST SCREEN below). 1: the hero's one button and nothing else
  *   open_source     (mold_v0-164) the app's open-source repository, {repo: https://github.com/<owner>/<repo>, label}: a
  *                   GitHub button in the header on every width, and a footer link (`label`, default "Open source on
  *                   GitHub"). The components only an open-source app has are grouped here; an app without it has none
@@ -62,16 +62,20 @@
  *                   that also holds the name and the message, and what it says once sent, where {company} and {email}
  *                   are the sender's)
  *
- * THE FIRST SCREEN (mold_v0-165): the header and the hero ask for FIRST_SCREEN_CALLS (1) thing: the hero's one button,
- * "Get started" unless the block's primary_cta labels it, leading to the start (sign-up, or the request form while
- * accounts are invite-only) and, for someone already signed in, into the console under the same label. The header asks
- * for nothing: no sign-in, no start, no link (an open-source app's GitHub icon is not a call); signing in is in the
- * footer and on the request form. A header link, the header's account button, a hero's second call or a hero link is
- * refused with what to do instead (firstScreenProblems, also run on the merged block by gen-packs). A block may opt into
- * the mold_v0-164 page with `first_screen: {calls: 2}`: at most two things, signing in and one other, where a call is
- * where it leads, so the same one in the header and in the hero counts once (the first product's page repeats its two).
- * Other ways in (the install pages, docs) go in the footer or a later section. A logos row with no title right under the
- * hero is drawn as the hero's foot, not as a section of its own.
+ * THE FIRST SCREEN (mold_v0-168, the operator's 2026-10-28 decision: the first product's buttons are every app's): the
+ * header and the hero ask for FIRST_SCREEN_CALLS (2) things, signing in and one other, each shown in both. Unless the
+ * block says otherwise (twoCallPage): the header has one link, "Early access" to the request page (request_page.path,
+ * else /request-access), and the account button ("Sign in" to /auth/sign-in; "Open dashboard" to /app once signed in);
+ * the hero has the same account button and an outlined "Early access" to the same page. A block's own hero call (a link
+ * as primary_cta, or a secondary_cta) is the page's other call instead, and the header's default link follows it. A call
+ * is where it leads, so the same one in the header and in the hero counts once, and one that would add a third is
+ * refused with what to do instead (firstScreenProblems, also run on the merged block by gen-packs). An open-source app's
+ * GitHub icon is not a call. A block may ask for one thing with `first_screen: {calls: 1}` (mold_v0-165): the hero's one
+ * button, "Get started" unless primary_cta labels it, to the start (sign-up, or the request form while accounts are
+ * invite-only; into the console signed in, under the same label), the header asking for nothing and signing in in the
+ * footer; there a header link, the header's account button, a hero's second call or a hero link is refused. Other ways
+ * in (the install pages, docs) go in the footer or a later section. A logos row with no title right under the hero is
+ * drawn as the hero's foot, not as a section of its own.
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
  * still read, and converted to sections (toSections) when gen-packs writes the build: hero (coverage becomes its strip),
@@ -121,12 +125,12 @@ const Footer = z.object({
   tagline: text(200).optional(), copyright: text(120).optional(), shell_links: z.boolean().optional(),
 }).strict();
 /**
- * The header (mold_v0-122; mold_v0-164: at most 1 link, none by default, as the first screen allows): which ways in:
- * "sign_in_and_start" (default: sign in, and the start call) or "account" (one account button: sign in, or open the
- * console when signed in, with an arrow).
+ * The header (mold_v0-122; mold_v0-164: at most 1 link, as the first screen allows; mold_v0-168: by default the page's
+ * other call, "Early access"): which ways in: "account" (default: one account button, sign in, or open the console when
+ * signed in, with an arrow) or "sign_in_and_start" (sign in, and the start call on a page with no hero and no link).
  */
 const Header = z.object({
-  links: z.array(Cta).max(1, "at most 1 link: the first screen asks for at most two things (sign in and one other), and only with first_screen.calls 2").optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
+  links: z.array(Cta).max(1, "at most 1 link: the first screen asks for at most two things (sign in and one other)").optional(), account: z.enum(["sign_in_and_start", "account"]).optional(),
   sign_in: Cta.optional(), open: Cta.optional(),
 }).strict();
 /**
@@ -445,17 +449,24 @@ function landingIssues(json: unknown): Issue[] {
 
 // ---------- the first screen (mold_v0-164, mold_v0-165) ----------
 
-/** The first screen (the header and the hero) asks for this many things: the hero's one button (mold_v0-165). */
-export const FIRST_SCREEN_CALLS = 1;
-/** What a block may opt into with first_screen.calls (the mold_v0-164 page): signing in and one other. */
+/** The first screen (the header and the hero) asks for this many things by default: signing in and one other (mold_v0-168). */
+export const FIRST_SCREEN_CALLS = 2;
+/** The most a first screen asks for (first_screen.calls 1 asks for one: the hero's button, mold_v0-165). */
 export const FIRST_SCREEN_CALLS_MAX = 2;
-/** The hero's button's words when the block gives none (mold_v0-165). */
+/** A one-call page's button's words when the block gives none (mold_v0-165). */
 export const START_LABEL = "Get started";
+/** The two-call page's defaults (mold_v0-168, the first product's buttons): its other call, and the account button's two states. */
+export const EARLY_ACCESS_LABEL = "Early access";
+export const REQUEST_PATH = "/request-access";
+export const ACCOUNT_SIGN_IN = { label: "Sign in", href: "/auth/sign-in" } as const;
+export const ACCOUNT_OPEN = { label: "Open dashboard", href: "/app" } as const;
+/** Where a page's request for access is: its request_page, else the shell's form. */
+export const requestPathOf = (l: { request_page?: { path: string } } | null | undefined): string => l?.request_page?.path ?? REQUEST_PATH;
 /** Where the shell's own ways in lead (web/src/features/site/site-ctas.ts): signing in, and the start (sign-up, or the request form under invite-only accounts). */
 const SIGN_IN_PATHS = ["/app", "/auth/sign-in"];
 export const START_PATHS = ["/auth/sign-up", "/request-access"];
 
-/** How many things a block's first screen asks for: first_screen.calls, else FIRST_SCREEN_CALLS. */
+/** How many things a block's first screen asks for: first_screen.calls, else FIRST_SCREEN_CALLS (2). */
 export const firstScreenCalls = (l: { first_screen?: { calls: number } } | null | undefined): number => l?.first_screen?.calls ?? FIRST_SCREEN_CALLS;
 
 function firstScreenIssues(l: Landing): Issue[] {
@@ -471,10 +482,10 @@ function firstScreenIssues(l: Landing): Issue[] {
   return out;
 }
 
-/** The rule (mold_v0-165): one call to action on the first screen, the hero's button; nothing in the header asks for anything. */
+/** first_screen.calls 1 (mold_v0-165): one call to action on the first screen, the hero's button; nothing in the header asks for anything. */
 function singleCallIssues(l: Landing, hero: SectionOf<"hero"> | null, at: (string | number)[]): Issue[] {
   const why = (what: string) => `the first screen (the header and the hero) asks for one thing, the hero's button (primary_cta, "${START_LABEL}" by default); ${what} adds another`;
-  const fix = "Put other ways in (signing in, an install page, docs) in the footer's links or a later section, or keep the two-call page (signing in and one other) with landing.first_screen: {\"calls\": 2}";
+  const fix = "Put other ways in (signing in, an install page, docs) in the footer's links or a later section, or leave first_screen out for the default two-call page (signing in and one other)";
   const out: Issue[] = [];
   (l.header?.links ?? []).forEach((k, i) => out.push({ path: ["header", "links", i], message: `${why(`the header link "${k.label}"`)}. ${fix}` }));
   if (l.header?.account === "account") out.push({ path: ["header", "account"], message: `${why("the header's account button")}. Leave header.account out (signing in is in the footer and on the request form). ${fix}` });
@@ -483,26 +494,45 @@ function singleCallIssues(l: Landing, hero: SectionOf<"hero"> | null, at: (strin
   return out;
 }
 
-/** The mold_v0-164 page (first_screen.calls 2): at most two things, signing in and one other; a repeat counts once. */
+type Link = { label: string; href: string };
+/**
+ * The two-call page as the shell draws it (mold_v0-168; web/src/features/site/landing.tsx draws the same): what the block
+ * says, else the first product's buttons. The hero: primary_cta, else the account button; secondary_cta, else (beside
+ * the account button) "Early access" to the request page. The header: its links, else one, the page's other call (the
+ * hero's own call that is not signing in, else "Early access"); its ways in, else the account button.
+ */
+export function twoCallPage(l: { header?: { links?: Link[]; account?: "sign_in_and_start" | "account"; sign_in?: Link }; request_page?: { path: string } },
+  hero: { primary_cta?: Link | "account"; secondary_cta?: Link } | null) {
+  const early: Link = { label: EARLY_ACCESS_LABEL, href: requestPathOf(l) };
+  const signIn = new Set([...SIGN_IN_PATHS, l.header?.sign_in?.href ?? ACCOUNT_SIGN_IN.href]);
+  const primary = hero ? hero.primary_cta ?? ("account" as const) : undefined;
+  const secondary = hero ? hero.secondary_cta ?? (primary === "account" ? early : undefined) : undefined;
+  const other = [primary, secondary].find((k): k is Link => !!k && k !== "account" && !signIn.has(k.href)) ?? early;
+  return { primary, secondary, links: l.header?.links ?? [other], account: l.header?.account ?? ("account" as const), linksDefault: !l.header?.links };
+}
+
+/** The two-call page (the default, mold_v0-168; mold_v0-164): at most two things, signing in and one other; a repeat counts once. */
 function twoCallIssues(l: Landing, hero: SectionOf<"hero"> | null, at: (string | number)[], wireframe: boolean): Issue[] {
-  const signIn = new Set([...SIGN_IN_PATHS, ...(l.header?.sign_in ? [l.header.sign_in.href] : [])]);
-  const callOf = (href: string) => (signIn.has(href) ? "sign in" : START_PATHS.includes(href) ? "the start" : href);
+  const signIn = new Set([...SIGN_IN_PATHS, l.header?.sign_in?.href ?? ACCOUNT_SIGN_IN.href]);
+  const starts = [...START_PATHS, requestPathOf(l)];
+  const callOf = (href: string) => (signIn.has(href) ? "sign in" : starts.includes(href) ? "the start" : href);
+  const page = twoCallPage(l, hero);
   // In the order a visitor reads them: the header's sign-in, its link, then the hero's calls. The shell's header shows
-  // the start itself only when the page has no hero call (landing.tsx SiteHeader).
+  // the start itself only when the page has no hero and no link, under "sign_in_and_start" (landing.tsx SiteHeader).
   const shown: { call: string; path: (string | number)[]; what: string }[] = [{ call: "sign in", path: ["header"], what: "the header's sign-in" }];
-  (l.header?.links ?? []).forEach((k, i) => shown.push({ call: callOf(k.href), path: ["header", "links", i], what: `the header link "${k.label}"` }));
+  page.links.forEach((k, i) => shown.push({ call: callOf(k.href), path: page.linksDefault ? ["header"] : ["header", "links", i], what: `the header link "${k.label}"${page.linksDefault ? " (the default; header.links: [] leaves it out)" : ""}` }));
   if (hero) {
-    const p = hero.primary_cta;
+    const p = page.primary!;
     // The wireframe's hero (no sections) is the shell's: what pushes it over is the header's link.
-    shown.push({ call: p === "account" ? "sign in" : p ? callOf(p.href) : "the start", path: wireframe ? ["header", "links"] : [...at, "primary_cta"], what: "the hero's call to action" });
-    if (hero.secondary_cta) shown.push({ call: callOf(hero.secondary_cta.href), path: [...at, "secondary_cta"], what: `the hero's second call "${hero.secondary_cta.label}"` });
-  } else if (l.header?.account !== "account" && !(l.header?.links ?? []).length) shown.push({ call: "the start", path: ["header"], what: "the header's start" });
+    shown.push({ call: p === "account" ? "sign in" : callOf(p.href), path: wireframe ? ["header", "links"] : [...at, "primary_cta"], what: "the hero's call to action" });
+    if (page.secondary) shown.push({ call: callOf(page.secondary.href), path: wireframe ? ["header", "links"] : [...at, "secondary_cta"], what: `the hero's second call "${page.secondary.label}"${hero.secondary_cta ? "" : " (the default)"}` });
+  } else if (page.account !== "account" && !page.links.length) shown.push({ call: "the start", path: ["header"], what: "the header's start" });
   const out: Issue[] = [];
   const seen: string[] = [];
   for (const s of shown) {
     if (seen.includes(s.call)) continue;
     seen.push(s.call);
-    if (seen.length > FIRST_SCREEN_CALLS_MAX) out.push({ path: s.path, message: `the first screen (the header and the hero) asks for at most ${FIRST_SCREEN_CALLS_MAX} things with first_screen.calls 2, signing in and one other (${seen.slice(0, FIRST_SCREEN_CALLS_MAX).join(", ")}); ${s.what} adds another (${s.call}). Keep one call to action in the hero (primary_cta), and put other ways in (an install page, docs) in the footer's links or a later section` });
+    if (seen.length > FIRST_SCREEN_CALLS_MAX) out.push({ path: s.path, message: `the first screen (the header and the hero) asks for at most ${FIRST_SCREEN_CALLS_MAX} things, signing in and one other (${seen.slice(0, FIRST_SCREEN_CALLS_MAX).join(", ")}); ${s.what} adds another (${s.call}). Keep one call to action in the hero (primary_cta), and put other ways in (an install page, docs) in the footer's links or a later section` });
   }
   return out;
 }
