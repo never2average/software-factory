@@ -1,0 +1,9 @@
+{
+  "phase": "mold_v0-169: the admin pages of an engine the build has not got; for a build with the session engine (the first product's) Compute, Agent configuration's settings and every answer unchanged, the key vault without the two pack stores no pack of it declares, and Agent configuration's help wrapped",
+  "allow": [
+    { "key": "api::/api/admin/onboarding/compute/keys::body::providers::**", "reason": "the key vault lists only the providers this build reads (src/platform-keys.ts providerInBuild): pack_credentials and oauth_clients only when a pack declares operator credentials or OAuth providers, which this build's packs do not; 14 providers, as the original product listed" },
+    { "key": "pages::/admin/keys::text", "reason": "the same two rows (OAuth clients and the raw id pack_credentials, both 'Other', 'no key') no longer listed: 14 providers" },
+    { "key": "shots::/admin/keys::*", "reason": "without the raw id pack_credentials the Provider column is no longer widened at 390 px, so the row's menu fits on the page; the same 14 rows" },
+    { "key": "shots::/admin/configuration::*", "reason": "Agent configuration's help wraps under each setting instead of one cut line that set the column to the longest help, which pushed Value, From and Variable off the right edge (in the original too); the same 18 settings, values and order" }
+  ]
+}

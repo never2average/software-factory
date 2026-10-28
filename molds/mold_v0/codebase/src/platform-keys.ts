@@ -24,13 +24,43 @@ export async function saveSettingValues(actor: string, values: unknown) {
 
 const vaultError = (e: unknown) => (e instanceof AdminError ? e : new AdminError((e as Error).message));
 
+// ---------- which providers this build reads (mold_v0-169) ----------
+// The vault's provider rows are the shell's migrations', the same in every build; the key vault page and the admin MCP list
+// only the ones something in this build reads, so a build without the session engine is not asked for keys of coding
+// agents, research search or the orchestrators' sandboxes it never uses.
+
+/** Read by the shell itself in every build: email (Resend), and the one-model calls behind the docs answers and packs'
+ * askModel (src/ask-model.ts: Cloudflare Workers AI, then Claude, directly or on Vertex AI, then OpenAI). */
+const SHELL_PROVIDERS = new Set(["resend", "cloudflare", "anthropic", "vertex", "openai"]);
+/** Read only by the session engine (src/host-tables.ts sessionEngine): its agents' gateway providers and coding-agent
+ * harnesses (harnesses/registry.json), its research's search providers, and the sandboxes its orchestrators run in. */
+const ENGINE_PROVIDERS = new Set(["google", "dashscope", "github_copilot", "cursor", "amp", "factory", "exa", "libraries_io", "boat"]);
+
+/**
+ * Whether this build reads a vault provider: one holding a key always (nothing a staff member stored is hidden); the
+ * shell's own; a gateway provider some pack's job kind names; the packs' operator credentials and OAuth clients only when
+ * a pack declares them; boat when the session engine runs orchestrators on it or APP_RUN_SANDBOX=boat runs the packs'
+ * runs there; the engine's when the build has the engine; a provider staff added by hand.
+ */
+export async function providerInBuild(slug: string, keys: number): Promise<boolean> {
+  if (keys > 0 || SHELL_PROVIDERS.has(slug)) return true;
+  const { sessionEngine } = await import("./host-tables.js");
+  if (slug === "pack_credentials") return (await import("./credentials.js")).operatorCredentialSpecs().length > 0;
+  if (slug === "oauth_clients") return (await import("./oauth-connections.js")).oauthProviders().length > 0;
+  if (slug === "boat") return sessionEngine() || (await import("./run-sandboxes.js")).RUN_SANDBOXES.mode() === "boat";
+  if ((await import("./runs.js")).jobKinds().some((k) => k.providers.includes(slug))) return true;
+  return ENGINE_PROVIDERS.has(slug) ? sessionEngine() : true;
+}
+
 /** Providers (with how many keys they hold and when one was last used) and every credential, hints only. */
 export async function modelKeys() {
   // Every key is a vault key (env keys were imported once, src/keyvault-env.ts); env_set names the variables still set
   // on the server for a provider, which nothing reads any more and can be deleted there.
-  const [providers, creds, envSet] = await Promise.all([kv.listProviders(), kv.listCredentials() as Promise<any[]>, envStillSet()]);
+  const [all, creds, envSet] = await Promise.all([kv.listProviders(), kv.listCredentials() as Promise<any[]>, envStillSet()]);
   const credentials = creds.map(({ key_id: _k, meta, ...c }) => ({ ...c, uses: Number(c.uses),
     ...(meta?.client_email ? { project_id: meta.project_id || null, client_email: meta.client_email } : {}) }));
+  const shown = await Promise.all(all.map((p) => providerInBuild(p.slug, credentials.filter((c) => c.provider === p.slug).length)));
+  const providers = all.filter((_, i) => shown[i]);
   return {
     unlocked: kv.vaultUnlocked(),
     providers: providers.map((p) => {

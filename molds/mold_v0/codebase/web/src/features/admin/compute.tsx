@@ -39,6 +39,7 @@ import { AdminEmails } from './emails';
 import { ComputeDecisions, type Tick } from './compute-decisions';
 import { ComputeRunners } from './compute-runners';
 import { onPremRunners } from '@/config/pack-nav.generated';
+import { packRuns, sessionEngine } from './engine';
 
 interface Setting {
   key: string; group: string; label: string; help: string; kind: 'text' | 'int' | 'number' | 'choice'; default: string | number;
@@ -66,6 +67,12 @@ interface Summary {
   settings: Setting[]; knobs: Knob[];
   provider: { name: string; api: string; namespace: string; ok: boolean; error: string | null; has_key: boolean; key_hint: string | null; key_label: string | null; uses: number; last_used_at: string | null };
   links: { newrelic: string | null };
+  /**
+   * A build without the session engine (mold_v0-169, src/compute.ts): false, whether it runs anything on boat, and its
+   * packs' run sandboxes. Absent in a build with the engine.
+   */
+  engine?: false; uses_boat?: boolean;
+  runs?: { mode: string; live: number; max: number; launches_per_tick: number; queued: number };
 }
 
 const SUMMARY = '/compute/summary';
@@ -120,8 +127,10 @@ function ComputePage() {
   // ?section= picks the tab (orchestrators by default); each tab is its headline numbers and one table. The record
   // tables load and fail on their own, so they show even when the summary did not load.
   const section = useSearchParams().get('section');
-  const tab = TABS.some(([id]) => id === section) ? section! : section === 'activity' ? 'decisions' : 'orchestrators';
+  const tab = TABS.some(([id]) => id === section) ? section! : section === 'activity' && ENGINE ? 'decisions' : TABS[0]![0];
   const s = data;
+  // boat is asked only in a build that runs something there (the engine's orchestrators, or the packs' runs: mold_v0-169).
+  const boat = ENGINE || !!data?.uses_boat;
   return (
     <PageContainer>
       <div className='flex min-w-0 flex-col gap-3'>
@@ -130,7 +139,7 @@ function ComputePage() {
             <div className='flex flex-wrap items-center gap-2'>
               {data && <Freshness s={data} />}
               {paused && <Button variant='outline' size='sm' onClick={() => setResumed(true)} title={editing ? 'Refresh is paused while a setting has an unsaved edit' : 'Refresh is paused while a record is open'}><Icons.clock /> Paused · Resume</Button>}
-              <Button variant='outline' size='sm' disabled={refreshing} onClick={() => void refresh()} title='Ask boat.dev again and reload every figure'>{refreshing ? <Icons.spinner className='animate-spin' /> : <Icons.refresh />} Refresh</Button>
+              <Button variant='outline' size='sm' disabled={refreshing} onClick={() => void refresh()} title={boat ? 'Ask boat.dev again and reload every figure' : 'Reload every figure'}>{refreshing ? <Icons.spinner className='animate-spin' /> : <Icons.refresh />} Refresh</Button>
               {data && <RunTick s={data} />}
               {data?.links.newrelic && <ActionsMenu label='More' items={[{ label: 'Open in New Relic', icon: <Icons.externalLink />, onSelect: () => window.open(data.links.newrelic!, '_blank', 'noopener') }]} />}
             </div>
@@ -146,8 +155,8 @@ function ComputePage() {
         {tab === 'orchestrators' && <ComputeOrchestrators verdict={data?.verdict ?? []} summary={s && <OrchCards s={s} />} />}
         {tab === 'failures' && <ComputeFailures stats={(f, hours) => <FailureCards f={f} hours={hours} />} />}
         {tab === 'decisions' && <ComputeDecisions runtime={data?.runtime ?? null} stats={(rows) => <DecisionCards s={s} rows={rows} />} />}
-        {tab === 'limits' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && <Limits s={s} onEditing={setEdit} />)}
-        {tab === 'environment' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && <Environment s={s} onTest={() => void refresh()} testing={refreshing} />)}
+        {tab === 'limits' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && (ENGINE ? <Limits s={s} onEditing={setEdit} /> : <RunLimits s={s} />))}
+        {tab === 'environment' && (isLoading ? <Skeleton className='h-72 rounded-lg' /> : s && <Environment s={s} boat={boat} onTest={() => void refresh()} testing={refreshing} />)}
         {tab === 'emails' && <AdminEmails embedded />}
         {tab === 'runners' && onPremRunners && <ComputeRunners />}
       </div>
@@ -155,8 +164,17 @@ function ComputePage() {
   );
 }
 
-// On-premises runners (mold_v0-036): a tab only in a build where a kind may need a workspace's private network.
-const TABS: readonly (readonly [string, string])[] = [['orchestrators', 'Orchestrators'], ['failures', 'Failures'], ['decisions', 'Autoscaler decisions'], ['limits', 'Limits'], ['environment', 'Environment'], ['emails', 'Emails'],
+/**
+ * Orchestrators, their Failures and the Autoscaler decisions that launch them are the session engine's (mold_v0-169): a
+ * build without it (src/host-tables.ts, the console's engine.ts) has no orchestrator, so it lists Limits (its packs' run
+ * sandboxes, when a pack has a job kind), Environment and Emails. On-premises runners (mold_v0-036): a tab only in a build
+ * where a kind may need a workspace's private network.
+ */
+const ENGINE = sessionEngine();
+const TABS: readonly (readonly [string, string])[] = [
+  ...(ENGINE ? [['orchestrators', 'Orchestrators'], ['failures', 'Failures'], ['decisions', 'Autoscaler decisions'], ['limits', 'Limits']] as const
+    : packRuns() ? [['limits', 'Limits']] as const : []),
+  ['environment', 'Environment'], ['emails', 'Emails'],
   ...(onPremRunners ? [['runners', 'On-premises runners'] as const] : [])];
 
 /** Tells the page whether a record peek is open (?session, ?orch, ?job or ?tick), so the summary stops refreshing. */
@@ -399,6 +417,49 @@ function Limits({ s, onEditing }: { s: Summary; onEditing: (key: string, on: boo
   );
 }
 
+/**
+ * Limits in a build without the session engine (mold_v0-169): its packs' runs, each in a run sandbox the autoscaler
+ * launches (src/run-sandboxes.ts), set on the server; the boat account's plan only when the runs may go to boat.
+ */
+function RunLimits({ s }: { s: Summary }) {
+  const r = s.runs, l = s.limits;
+  if (!r) return null;
+  const rows: LimitRow[] = [
+    { key: 'run_sandboxes', label: 'Run sandboxes at once', used: r.live, limit: r.max, status: statusOf(r.live, r.max, false),
+      sub: <>{r.queued} queued · launched {r.launches_per_tick} a tick at most</>, source: null, fixed: 'APP_MAX_RUN_SANDBOXES on the server' },
+    ...(s.uses_boat ? [{ key: 'plan', label: 'boat sandboxes at once', used: l.active_now, limit: l.plan, status: statusOf(l.active_now, l.plan, false),
+      unavailable: l.plan == null ? `boat.dev did not answer: ${l.error ?? 'no answer'}` : null,
+      sub: <>every deployment's on the boat account</>, source: null, fixed: 'boat plan' }] : [])
+  ];
+  const cols: RecordCol<LimitRow>[] = [
+    { key: 'limit', label: 'Limit', title: true, keep: true, type: 'text', value: (x) => x.label, render: (x) => (
+      <span className='flex flex-col gap-1'><span className='leading-none font-medium'>{x.label}</span>{x.sub && <span className='text-muted-foreground text-xs'>{x.sub}</span>}</span>
+    ) },
+    { key: 'used', label: 'Used / Limit', className: 'w-64', type: 'number', value: (x) => (x.limit ? (x.used ?? 0) / x.limit : null), render: (x) => (
+      x.unavailable ? <span className='text-muted-foreground' title={x.unavailable}>—</span>
+        : x.limit != null && x.used != null ? (
+          <span className='flex flex-col gap-1.5'>
+            <span className='text-sm tabular-nums'>{x.used} <span className='text-muted-foreground'>of {x.limit}</span></span>
+            <Meter used={x.used} limit={x.limit} status={x.status} />
+          </span>
+        ) : <span className='text-muted-foreground'>—</span>
+    ) },
+    { key: 'status', label: 'Status', type: 'select', value: (x) => (x.unavailable || !x.status ? '' : x.status), render: (x) => (x.unavailable || !x.status ? <span className='text-muted-foreground'>—</span> : STATUS[x.status]) },
+    { key: 'change', label: 'Change', className: 'w-64', render: (x) => <span className='text-muted-foreground text-xs'>{x.fixed ?? '—'}</span> }
+  ];
+  const cards = <Cards items={[
+      { label: 'Run sandboxes in use', value: r.live },
+      { label: 'Queued', value: r.queued },
+      { label: 'Where runs run', value: <span className='text-base'>{RUN_MODE[r.mode] ?? r.mode}</span> }
+    ]} />;
+  return (
+    <RecordView id='compute-limits' rows={rows} rowKey={(x) => x.key} cols={cols} noun='limits' initialSize={25} compact summary={cards}
+      searchText={(x) => `${x.label} ${x.fixed ?? ''}`} searchPlaceholder='Search limits' empty='No limits.' />
+  );
+}
+/** APP_RUN_SANDBOX in words. */
+const RUN_MODE: Record<string, string> = { auto: 'boat, else Docker', boat: 'boat.dev', docker: 'Docker on this server', off: 'Nowhere (off)', process: 'No sandbox (tests)' };
+
 /** A capacity setting in its Limits row: saves on Enter, on leaving the field, or on choosing an option. */
 function LimitInput({ s, onSave, onDirty, disabled }: { s: Setting; onSave: (v: string) => void; onDirty: (on: boolean) => void; disabled?: boolean }) {
   const [v, setV] = useState(String(s.value));
@@ -424,7 +485,7 @@ const RELATED: { key: string; page: string; href: string }[] = [
 
 /** The environment the autoscaler runs with (read only), settings changed elsewhere, and the boat account in the cards. */
 interface EnvRow { name: string; value: string; source: ReactNode; sourceText: string; meaning: ReactNode; meaningText: string }
-function Environment({ s, onTest, testing }: { s: Summary; onTest: () => void; testing: boolean }) {
+function Environment({ s, boat, onTest, testing }: { s: Summary; boat: boolean; onTest: () => void; testing: boolean }) {
   const p = s.provider;
   const t = useTrend();
   // The boat account's facts are rows here (the runtime and APP_AUTOSCALE are knobs); the cards are what the
@@ -437,7 +498,7 @@ function Environment({ s, onTest, testing }: { s: Summary; onTest: () => void; t
       meaning: p.has_key ? <>{p.key_label ?? 'default'} · used {p.uses} times{p.last_used_at && <>, last <When d={p.last_used_at} /></>}</> : <Link href='/admin/keys' className='text-foreground hover:underline'>Add a boat key in the key vault</Link> }
   ];
   const rows: EnvRow[] = [
-    ...boatRows,
+    ...(boat ? boatRows : []),
     ...s.knobs.map((k) => ({ name: k.name, value: k.value, source: k.source, sourceText: k.source, meaning: k.meaning, meaningText: k.meaning })),
     ...RELATED.map((r) => ({ ...r, s: s.settings.find((x) => x.key === r.key) })).filter((r) => r.s).map((r) => ({
       name: r.key, value: String(r.s!.value), source: <SourceOf s={r.s!} />, sourceText: r.s!.source, meaningText: `${r.s!.label}. Change it in ${r.page}`,
@@ -453,13 +514,14 @@ function Environment({ s, onTest, testing }: { s: Summary; onTest: () => void; t
   const cards = <Cards items={[
       { label: 'Autoscaler ticks, 24 h', spark: t('ticks'), value: total(t('ticks')) ?? '—' },
       { label: 'Ticks with an error, 24 h', spark: t('tick_errors'), value: total(t('tick_errors')) ?? '—' },
-      { label: 'Orchestrators started, 24 h', spark: t('launches'), value: total(t('launches')) ?? '—' },
-      { label: 'Sandboxes deleted, 24 h', spark: t('deletes'), value: total(t('deletes')) ?? '—' }
+      // The orchestrators' figures are the session engine's (mold_v0-169).
+      ...(ENGINE ? [{ label: 'Orchestrators started, 24 h', spark: t('launches'), value: total(t('launches')) ?? '—' },
+        { label: 'Sandboxes deleted, 24 h', spark: t('deletes'), value: total(t('deletes')) ?? '—' }] : [])
     ]} />;
   return (
     <RecordView id='compute-environment' rows={rows} rowKey={(r) => r.name} cols={cols} noun='settings' initialSize={50} compact summary={cards}
       searchText={(r) => `${r.name} ${r.value} ${r.sourceText} ${r.meaningText}`} searchPlaceholder='Search settings'
-      filters={<Button variant='outline' disabled={testing} onClick={onTest}>{testing ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} Test connection</Button>}
+      filters={boat ? <Button variant='outline' disabled={testing} onClick={onTest}>{testing ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} Test connection</Button> : undefined}
       empty='No settings.' />
   );
 }

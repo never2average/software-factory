@@ -20,7 +20,8 @@ interface IndexState {
   attempted_by: string | null; last_error: string | null; last_error_at: string | null; indexing: boolean; current: boolean;
 }
 export interface RepositoryRow {
-  pack: string; name: string; kind: string; indexedBy: string; area_rows: AreaRows[];
+  /** label: the pack's, else its id in words; pack_name: its pack's name (mold_v0-169: what staff read, not the ids). */
+  pack: string; name: string; label: string; pack_name: string; kind: string; indexedBy: string; area_rows: AreaRows[];
   upstream?: { repo: string; commit: string }; index?: 'automatic' | 'manual'; state?: IndexState | null;
 }
 interface Status { automatic: boolean; repositories: RepositoryRow[] }
@@ -56,7 +57,8 @@ export function AdminRepositories() {
       {isLoading || !data ? <LoadingCards count={2} /> : (
         <div className='flex max-w-5xl flex-col gap-8'>
           {!data.automatic && catalogs.some((c) => c.index === 'automatic') && (
-            <Notice tone='info'>Automatic indexing is turned off on this server (APP_CATALOG_AUTOINDEX=off): catalogs are indexed only when staff press Index now, or by the deploy.</Notice>
+            // Said for staff (mold_v0-169): what happens and what to press; the server setting behind it is in the docs.
+            <Notice tone='info'>Catalogs are not indexed on their own on this deployment: press Index now on a catalog to bring in its rows (the next deploy indexes them too).</Notice>
           )}
           <Section title='Upstream catalogs' description='Each is indexed by the server whenever its pin changes, unless its pack indexes it by hand.'>
             {catalogs.length ? <div className='flex flex-col gap-4'>{catalogs.map((r) => <Catalog key={`${r.pack}/${r.name}`} r={r} />)}</div>
@@ -67,7 +69,7 @@ export function AdminRepositories() {
               <ul className='divide-y rounded-lg border'>
                 {others.map((r) => (
                   <li key={`${r.pack}/${r.name}`} className='flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-3 text-sm'>
-                    <span className='font-medium'><Mono>{r.name}</Mono></span>
+                    <span className='font-medium' title={r.name}>{r.label}</span>
                     <span className='text-muted-foreground'>{KIND[r.kind] ?? r.kind} · {BY[r.indexedBy] ?? r.indexedBy} · feeds {r.area_rows.map((a) => a.label).join(', ') || 'no area'}</span>
                   </li>
                 ))}
@@ -87,7 +89,7 @@ function Catalog({ r }: { r: RepositoryRow }) {
   const sync = useMutation<{ index: { areas: { area: string; created: number; updated: number; unchanged: number; deleted: number }[] } }, Error, boolean>({
     mutationFn: (force) => adminDataApi('POST', `/_repositories/${encodeURIComponent(r.pack)}/${encodeURIComponent(r.name)}/sync`, force ? { force: true } : {}),
     onSuccess: (x) => {
-      toast.success(`${r.name} indexed: ${x.index.areas.map((a) => `${a.area} ${a.created + a.updated + a.unchanged}`).join(', ')}`);
+      toast.success(`${r.label} indexed: ${x.index.areas.map((a) => `${r.area_rows.find((y) => y.name === a.area)?.label ?? a.area} ${a.created + a.updated + a.unchanged}`).join(', ')}`);
       void qc.invalidateQueries({ queryKey: ['admin'] });
     },
     onError: (e) => { toast.error(e.message); void qc.invalidateQueries({ queryKey: ['admin', 'data', '_repositories'] }); }
@@ -99,15 +101,15 @@ function Catalog({ r }: { r: RepositoryRow }) {
     <section aria-labelledby={headingId} className='rounded-lg border'>
       <div className='flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3'>
         <div className='flex min-w-0 flex-col gap-1'>
-          <h3 id={headingId} className='flex flex-wrap items-center gap-2 font-medium'><Mono>{r.name}</Mono><StatusBadge tone={st.tone}>{st.text}</StatusBadge></h3>
+          <h3 id={headingId} className='flex flex-wrap items-center gap-2 font-medium'><span title={r.name}>{r.label}</span><StatusBadge tone={st.tone}>{st.text}</StatusBadge></h3>
           <p className='text-muted-foreground text-xs break-all'>
-            {r.upstream!.repo} at <Mono>{short(r.upstream!.commit)}</Mono> · {r.index === 'manual' ? 'indexed by staff only' : 'indexes itself'} · pack {r.pack}
+            {r.upstream!.repo} at <Mono>{short(r.upstream!.commit)}</Mono> · {r.index === 'manual' ? 'indexed by staff only' : 'indexes itself'} · from {r.pack_name}
           </p>
         </div>
         <div className='flex flex-wrap gap-2'>
           {refused && can('delete') && (
             <ConfirmButton label='Index and allow removals' size='sm' variant='outline' disabled={busy}
-              title={`Index ${r.name} and allow its removals?`}
+              title={`Index ${r.label} and allow its removals?`}
               description='The last index was refused because it would remove many rows (or empty an area). Forcing it removes the rows the catalog no longer has, and takes back rows edited by hand.'
               confirmLabel='Index and remove' onConfirm={() => sync.mutate(true)} />
           )}
@@ -147,7 +149,7 @@ export function RepositoryNotice() {
   return (
     <div className='px-4 pt-2 md:px-6 md:pt-4'>
       <Notice tone='warn'>
-        {bad.length === 1 ? `The catalog ${bad[0]!.name} could not be indexed at its pin` : `${bad.length} catalogs could not be indexed at their pins`}
+        {bad.length === 1 ? `The catalog ${bad[0]!.label} could not be indexed at its pin` : `${bad.length} catalogs could not be indexed at their pins`}
         {': '}{bad[0]!.state!.last_error}{' '}
         <Link href='/admin/repositories' className='font-medium underline underline-offset-4'>Open Data repositories</Link>
       </Notice>

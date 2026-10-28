@@ -11,6 +11,7 @@ import { directKeysAllowed, HARNESS_ENV, ORCHESTRATOR_ONLY_PROVIDERS } from "./g
 import { BOAT, BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { ENV, legacyEnvName } from "./env-names.js";
+import { RUN_SANDBOXES } from "./run-sandboxes.js";
 
 /**
  * The admin Compute page's server side (docs/compute-and-traces-spec.md §2): one summary that answers "is compute
@@ -181,6 +182,16 @@ export interface VerdictFacts {
   leaked_workers: number;
   orphan_deletes_24h: number; namespace: string;
   idle_orchestrators: number;
+  /**
+   * mold_v0-169: false in a build without the session engine (src/host-tables.ts), whose queued work is the packs' runs,
+   * each launched in a run sandbox, never an orchestrator. Absent: true (the engine's rules and words, as before).
+   */
+  engine?: boolean;
+  /**
+   * Whether this build runs anything on boat: the engine's orchestrators, or the packs' runs (APP_RUN_SANDBOX=boat, or a
+   * boat key in the vault for APP_RUN_SANDBOX=auto). False: no rule about boat or its key. Absent: true.
+   */
+  uses_boat?: boolean;
 }
 
 const mins = (s: number) => Math.max(1, Math.round(s / 60));
@@ -196,12 +207,13 @@ export function computeVerdict(f: VerdictFacts): Verdict[] {
   const add = (level: Level, code: string, text: string, href: string | null) => out.push({ level, code, text, href });
   const queued = f.queue.sessions + f.queue.research;
   const note = f.tick.note ?? "";
-  if (!f.enabled) add("red", "autoscale_off", "The autoscaler is off. Queued work will not get orchestrators.", "#environment");
+  const engine = f.engine !== false, boat = f.uses_boat !== false;
+  if (!f.enabled) add("red", "autoscale_off", engine ? "The autoscaler is off. Queued work will not get orchestrators." : fill("The autoscaler is off. Queued {runs} will not get a sandbox."), "#environment");
   if (f.runtime === "vercel" && f.enabled && !f.kick_configured)
     add("red", "kick_unconfigured", "This deployment cannot trigger the autoscaler: PUBLIC_URL is not HTTPS or the worker token is unset.", "#environment");
   // Without a key boat is never asked, so "not answering" would only repeat the missing key.
-  if (f.has_boat_key && f.boat_error) add("red", "boat_down", `boat.dev is not answering: ${f.boat_error}`, "/admin/keys");
-  if (!f.has_boat_key) add("red", "no_boat_key", "No boat key. Add one in Key vault.", "/admin/keys");
+  if (boat && f.has_boat_key && f.boat_error) add("red", "boat_down", `boat.dev is not answering: ${f.boat_error}`, "/admin/keys");
+  if (boat && !f.has_boat_key) add("red", "no_boat_key", "No boat key. Add one in Key vault.", "/admin/keys");
   if (f.tick.error) add("red", "tick_error", `The last tick failed: ${f.tick.error}`, "/admin/compute?section=decisions&has=error");
   if (f.enabled && queued > 0 && (f.tick.age_s == null || f.tick.age_s > 600)) {
     const what = [f.queue.sessions && plural(f.queue.sessions, "session"), f.queue.research && plural(f.queue.research, "research job")].filter(Boolean).join(" and ");
@@ -239,7 +251,8 @@ export function computeVerdict(f: VerdictFacts): Verdict[] {
       "/admin/compute?section=decisions");
   if (f.idle_orchestrators > 0)
     add("amber", "idle_orch", `${plural(f.idle_orchestrators, "orchestrator")} ${f.idle_orchestrators === 1 ? "is" : "are"} idle but not drained.`, "/admin/compute?section=orchestrators&state=live");
-  if (!out.length)
+  if (!out.length && !engine) add("green", "ok", "Compute is healthy.", null);
+  else if (!out.length)
     add("green", "ok", `Compute is healthy. ${plural(f.running.sessions, "session")} running on ${plural(f.running.orchestrators, "orchestrator")}, queue ${queued}${queued ? `, oldest ${ago(Math.max(oldS, oldR))}` : ""}.`, null);
   return out;
 }
@@ -311,8 +324,29 @@ const KNOBS: { name: string; def: string; meaning: string }[] = [
  */
 const shownName = (n: string) => (sessionEngine() ? legacyEnvName(n) ?? n : n);
 
+/**
+ * What a build without the session engine (mold_v0-169) runs with instead: no orchestrators, only the packs' runs, each in
+ * a run sandbox the autoscaler launches (src/run-sandboxes.ts RUN_SANDBOXES: these defaults are its).
+ */
+const RUN_KNOBS: { name: string; def: string; meaning: string }[] = [
+  { name: "APP_AUTOSCALE", def: "on", meaning: "Kill switch: off launches and deletes nothing; queued {runs} wait." },
+  { name: "APP_AUTOSCALE_TICK_SECONDS", def: "15", meaning: "How often the autoscaler ticks on a VM (Vercel ticks on events instead)." },
+  { name: "APP_RUN_SANDBOX", def: "auto", meaning: "Where each {run} runs: boat (a boat.dev sandbox), docker (a container on this server), auto (boat when its key is in Key vault, else docker when this server has Docker) or off." },
+  { name: "APP_MAX_RUN_SANDBOXES", def: "10", meaning: "Most run sandboxes at once." },
+  { name: "APP_RUN_LAUNCHES_PER_TICK", def: "4", meaning: "Most run sandboxes launched in one tick." },
+  { name: "APP_RUN_BOOT_MINUTES", def: "10", meaning: "A run sandbox that has not started its {run} after this long is deleted." },
+  { name: "APP_RUN_LAUNCH_ATTEMPTS", def: "3", meaning: "Failed sandbox starts before a {run} fails as an infrastructure error." },
+];
+
 export function computeKnobs(runtime: "vm" | "vercel") {
   const set = (k: string) => env[k] !== undefined && env[k] !== "";
+  if (!sessionEngine()) return [
+    ...RUN_KNOBS.map((k) => ({ name: k.name, value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
+    { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,
+      meaning: runtime === "vercel" ? "Serverless: the autoscaler ticks on events and a cron every 5 minutes." : "A long-running server: the autoscaler ticks on a timer." },
+    { name: "Kick configured", value: kickConfigured() ? "yes" : "no", source: "env" as const,
+      meaning: "Events can trigger a tick: the autoscaler is on, PUBLIC_URL is HTTPS and APP_WORKER_TOKEN is set." },
+  ];
   return [
     ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: fill(k.meaning) })),
     { name: shownName("APP_BOAT_NAMESPACE"), value: lib.BOAT_NAMESPACE, source: set("APP_BOAT_NAMESPACE") ? "env" as const : "default" as const,
@@ -470,6 +504,10 @@ async function buildSummary(fresh: boolean) {
 
   const oldestSession = iso(ses?.oldest_queued), oldestResearch = iso(rsh?.oldest);
   const ageOf = (d: string | null) => (d ? Math.max(0, (now - Date.parse(d)) / 1000) : null);
+  // mold_v0-169: boat matters to this build when the engine's orchestrators run there, or the packs' runs may.
+  const runMode = RUN_SANDBOXES.mode();
+  const usesBoat = eng || runMode === "boat" || (runMode === "auto" && !!key);
+  const [runsNow] = eng ? [{ live: 0 }] : await db.query<{ live: number }>("SELECT count(*)::int AS live FROM run_sandboxes WHERE state IN ('booting', 'running')");
   const facts: VerdictFacts = {
     enabled: AUTOSCALE.enabled(), runtime, kick_configured: kickConfigured(), has_boat_key: !!key, boat_error: key ? sb.error ?? lim.error : null,
     tick: { age_s: tickAge, error: tick?.error ?? null, note: tick?.note ?? null },
@@ -479,6 +517,7 @@ async function buildSummary(fresh: boolean) {
     others, free, per_job: perJob, job_orch_live: jobActive.length, job_orch_cap: jobCap, not_checking_in: notCheckingIn,
     launch_failures_1h: { count: n(orch?.failed_1h), step: lastFail?.launch_step ?? null, message: lastFail?.launch_error?.slice(0, 160) ?? null },
     missing_keys: missingKeys, leaked_workers: leaked, orphan_deletes_24h: n(orphans?.n), namespace: lib.BOAT_NAMESPACE, idle_orchestrators: idle,
+    ...(eng ? {} : { engine: false, uses_boat: usesBoat }),
   };
 
   const orchSandboxUsd = (n(orch?.seconds_today) / 3600) * (BOAT_PRICE_PER_HOUR[lib.ORCH_SANDBOX_TYPE] ?? 0);
@@ -514,5 +553,9 @@ async function buildSummary(fresh: boolean) {
     provider: { name: "boat.dev", api: BOAT.apiUrl, namespace: lib.BOAT_NAMESPACE, ok: key ? sb.ok && !sb.stale : false, error: key ? sb.error : "No boat key in the vault",
                 has_key: !!key, key_hint: key?.hint ?? null, key_label: key?.label ?? null, uses: key ? n(key.uses) : 0, last_used_at: iso(key?.last_used_at) },
     links: { newrelic: env.NEW_RELIC_DASHBOARD_URL || null },
+    // A build without the session engine (mold_v0-169): its Compute page shows its runs' sandboxes, and boat only when it uses it.
+    ...(eng ? {} : { engine: false, uses_boat: usesBoat,
+      runs: { mode: runMode, live: n(runsNow?.live), max: RUN_SANDBOXES.maxSandboxes(), launches_per_tick: RUN_SANDBOXES.launchesPerTick(),
+              queued: Object.values(demand?.runs ?? {}).reduce((a, b) => a + n(b), 0) } }),
   };
 }
