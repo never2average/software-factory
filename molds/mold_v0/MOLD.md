@@ -1026,10 +1026,11 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   may still be set (`update_setting`). Key vault and `key_vault_status` (`src/platform-keys.ts` `providerInBuild`) list
   the shell's providers (Resend, and the docs answers' Cloudflare, Anthropic, Vertex AI and OpenAI), a gateway
   provider a pack's job kind names, "Staff-held run credentials" (`pack_credentials`) and "OAuth app clients" only when
-  a pack declares operator credentials or OAuth providers, boat with the engine or `APP_RUN_SANDBOX=boat`, the engine's
-  (coding agents, research search, Gemini, DashScope) with the engine, and any provider that holds a key. A build
-  without the engine whose runs should go to boat with `APP_RUN_SANDBOX=auto` sets `APP_RUN_SANDBOX=boat` to add its
-  key there. Data repositories names each repository by its pack's `label` (pack.json `repositories.<id>.label`), else
+  a pack declares operator credentials or OAuth providers, boat with the engine or when the packs' runs may get their
+  sandbox there (`src/run-sandboxes.ts` `boatForRuns`: job kinds and `APP_RUN_SANDBOX` auto, the default and on Vercel
+  the only hosted sandbox, or boat; not when the deployment names docker or off), the engine's (coding agents, research
+  search, Gemini, DashScope) with the engine, and any provider that holds a key. Compute's boat rows follow the same
+  rule (`uses_boat`, also true in auto with a boat key). Data repositories names each repository by its pack's `label` (pack.json `repositories.<id>.label`), else
   its id in words, and its pack by name, and says catalogs that do not index on their own in words for staff. Agent
   configuration's help wraps, so its Value, From and Variable columns stay on the page at 1440 px. `npm run
   test:admin-engine` proves a shell build and, run in a host pack's build, that every setting, provider and Compute

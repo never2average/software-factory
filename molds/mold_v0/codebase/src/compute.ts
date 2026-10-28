@@ -11,7 +11,8 @@ import { directKeysAllowed, HARNESS_ENV, ORCHESTRATOR_ONLY_PROVIDERS } from "./g
 import { BOAT, BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { ENV, legacyEnvName } from "./env-names.js";
-import { RUN_SANDBOXES } from "./run-sandboxes.js";
+import { boatForRuns, RUN_SANDBOXES } from "./run-sandboxes.js";
+import { jobKinds } from "./runs.js";
 
 /**
  * The admin Compute page's server side (docs/compute-and-traces-spec.md §2): one summary that answers "is compute
@@ -504,9 +505,10 @@ async function buildSummary(fresh: boolean) {
 
   const oldestSession = iso(ses?.oldest_queued), oldestResearch = iso(rsh?.oldest);
   const ageOf = (d: string | null) => (d ? Math.max(0, (now - Date.parse(d)) / 1000) : null);
-  // mold_v0-169: boat matters to this build when the engine's orchestrators run there, or the packs' runs may.
+  // mold_v0-169: boat matters to this build when the engine's orchestrators run there, or the packs' runs may
+  // (APP_RUN_SANDBOX=boat, or auto with job kinds or a boat key; not when the deployment names docker or off).
   const runMode = RUN_SANDBOXES.mode();
-  const usesBoat = eng || runMode === "boat" || (runMode === "auto" && !!key);
+  const usesBoat = eng || boatForRuns(runMode, jobKinds().length > 0) || (runMode === "auto" && !!key);
   const [runsNow] = eng ? [{ live: 0 }] : await db.query<{ live: number }>("SELECT count(*)::int AS live FROM run_sandboxes WHERE state IN ('booting', 'running')");
   const facts: VerdictFacts = {
     enabled: AUTOSCALE.enabled(), runtime, kick_configured: kickConfigured(), has_boat_key: !!key, boat_error: key ? sb.error ?? lim.error : null,

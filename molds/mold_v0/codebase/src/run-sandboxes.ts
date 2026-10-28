@@ -60,6 +60,13 @@ export const RUN_SANDBOXES = {
   backoffSeconds: () => Math.max(0, num(env.APP_RUN_LAUNCH_BACKOFF_SECONDS, 30)),
   unsandboxedAllowed: () => env.APP_ALLOW_UNSANDBOXED_RUNS === "yes",
 };
+/**
+ * Whether the packs' runs may get their sandbox from boat (mold_v0-169): APP_RUN_SANDBOX=boat, or auto (the default:
+ * boat when its key is in the vault, else Docker) in a build whose packs have job kinds. A deployment that names another
+ * sandbox (docker on a server, off) does not use boat for runs. On Vercel, auto with job kinds is boat: there is no Docker.
+ */
+export const boatForRuns = (mode: string, hasKinds: boolean) => mode === "boat" || (mode === "auto" && hasKinds);
+
 export const sandboxWorkerId = (rowId: number) => `sbx-${rowId}`;
 /** What a boat run sandbox gets besides the runner's code (mold_v0-072): the run tools' installer and the build's list. */
 export const RUN_TOOL_INSTALL_FILES = ["scripts/install-run-tools.ts", "src/run-tools.generated.json"];

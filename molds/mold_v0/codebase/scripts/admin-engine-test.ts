@@ -8,7 +8,8 @@
 //      Cloudflare model under what it does there (the docs answers). Every setting may still be set (update_setting).
 //   2. Key vault (GET /compute/keys, key_vault_status) lists only the providers the build reads: the shell's (email, the
 //      docs answers' models); a gateway provider a pack's job kind names; the packs' operator credentials and OAuth clients
-//      only when a pack declares them; boat only with APP_RUN_SANDBOX=boat; any provider that holds a key.
+//      only when a pack declares them; boat when a pack's job kinds may run there (APP_RUN_SANDBOX auto or boat, not
+//      docker or off); any provider that holds a key.
 //   3. Compute (GET /compute/summary) has no orchestrator knob, says the autoscaler's kill switch in runs, never asks for
 //      a boat key it does not use, and reports the packs' run sandboxes.
 //   4. Data repositories: a repository's label is its pack's, else its id in words.
@@ -79,8 +80,16 @@ try {
           client_id: { vault: "fixture_vault.gh_id" }, client_secret: { vault: "fixture_vault.gh_secret" } }],
       });
       setPacksForTest([{ manifest: { id: "fixture_vault", name: "Fixture vault", version: "1", entry: "index.ts", migrations: null, dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: fixture } as never]);
-      assert.deepEqual(await slugs(), [...SHELL_PROVIDERS, "github_app", "google", "oauth_clients", "pack_credentials"].sort(),
-        "a pack's kind's gateway provider, its operator credentials and its OAuth clients");
+      assert.deepEqual(await slugs(), [...SHELL_PROVIDERS, "boat", "github_app", "google", "oauth_clients", "pack_credentials"].sort(),
+        "a pack's kind's gateway provider, its operator credentials, its OAuth clients, and boat: its runs' sandbox with APP_RUN_SANDBOX=auto");
+      const s1 = await computeSummary({ fresh: true }) as Record<string, any>;
+      assert.equal(s1.uses_boat, true, "Compute: job kinds with APP_RUN_SANDBOX=auto run on boat");
+      assert.ok(s1.verdict.some((v: { code: string }) => v.code === "no_boat_key"), "so their missing boat key is said");
+      const was0 = process.env.APP_RUN_SANDBOX;
+      process.env.APP_RUN_SANDBOX = "docker";
+      assert.ok(!(await slugs()).includes("boat"), "APP_RUN_SANDBOX=docker: the runs never use boat");
+      assert.equal((await computeSummary({ fresh: true }) as Record<string, any>).uses_boat, false, "nor does Compute show it");
+      if (was0 === undefined) delete process.env.APP_RUN_SANDBOX; else process.env.APP_RUN_SANDBOX = was0;
       setPacksForTest([]);
       const held = await kv.setCredential("google", "gemini-test-key-0123456789", { label: "held" });
       assert.ok((await slugs()).includes("google"), "a provider holding a key is always listed");

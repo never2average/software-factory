@@ -39,16 +39,17 @@ const ENGINE_PROVIDERS = new Set(["google", "dashscope", "github_copilot", "curs
 /**
  * Whether this build reads a vault provider: one holding a key always (nothing a staff member stored is hidden); the
  * shell's own; a gateway provider some pack's job kind names; the packs' operator credentials and OAuth clients only when
- * a pack declares them; boat when the session engine runs orchestrators on it or APP_RUN_SANDBOX=boat runs the packs'
- * runs there; the engine's when the build has the engine; a provider staff added by hand.
+ * a pack declares them; boat when the session engine runs orchestrators on it or the packs' runs may go there
+ * (boatForRuns); the engine's when the build has the engine; a provider staff added by hand.
  */
 export async function providerInBuild(slug: string, keys: number): Promise<boolean> {
   if (keys > 0 || SHELL_PROVIDERS.has(slug)) return true;
   const { sessionEngine } = await import("./host-tables.js");
   if (slug === "pack_credentials") return (await import("./credentials.js")).operatorCredentialSpecs().length > 0;
   if (slug === "oauth_clients") return (await import("./oauth-connections.js")).oauthProviders().length > 0;
-  if (slug === "boat") return sessionEngine() || (await import("./run-sandboxes.js")).RUN_SANDBOXES.mode() === "boat";
-  if ((await import("./runs.js")).jobKinds().some((k) => k.providers.includes(slug))) return true;
+  const kinds = (await import("./runs.js")).jobKinds();
+  if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
+  if (kinds.some((k) => k.providers.includes(slug))) return true;
   return ENGINE_PROVIDERS.has(slug) ? sessionEngine() : true;
 }
 
