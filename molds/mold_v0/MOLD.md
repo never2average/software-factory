@@ -1420,19 +1420,28 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   resolved spec (`scripts/fixtures/packs/fixture_status`); `npm run test:merged-tabs` checks the rows, paging at every
   size, two workspaces and the route's refusals in an embedded database; `npm run test:console-tabs` draws a merged
   table, board, timeline, empty state and a narrow table in a headless browser.
-  **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
-  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the one list of the
-  setup steps and the packs' steps, mold_v0-146, only the next open one explained and any other opened from its label;
-  the connection panel is the body of the step that connects an AI client, not a panel beside it; folded to one line,
-  "You're all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
-  `notices` the records due soon (the first five, then "Show all"; `DueSoonSection` in
-  `web/src/features/schedules/notices-page.tsx`). Its charts may then be left out. `/app` (setup) and `/app/notices`
+  **A home tab** (mold_v0-134, mold_v0-172): an `overview` tab's `include` (`["setup", "notices"]`, each at most once)
+  makes it the build's home, drawn as the Setup page itself, the same layout for every build (`SetupPage` in
+  `web/src/features/portal/setup.tsx`; `HomeTab` in `web/src/features/tabs/tab-page.tsx`), with no page title: the main
+  column is the one checklist (the setup steps and the packs' steps, mold_v0-146), every step with its description and,
+  while open, its prompt in a Copy prompt box (a pack step's pack.json `prompt`, the get_started tool's "say"; the
+  current one highlighted, done ones checked), then tips when the build has them; the right column is the "Connect your
+  AI client" card (pick a client, the URL with Copy URL, Test my connection), then the tab's `rail`, up to two cards in
+  order: `journeys` (the journey picker; the build must turn journeys on), `notices` (the records due soon, the first
+  five then "Show all"; `DueSoonCard` in `web/src/features/schedules/notices-page.tsx`; needs `include: notices`), or
+  `chart:<name>` (one of the pack's `number` charts as a card of its tiles, with a link to the pack's other overview
+  tab that lists it). Without `rail` the second card is the journey picker when the build has journeys. Included
+  `notices` no card shows follow the checklist (`DueSoonSection`); the tab's `charts` come below both columns (a pack
+  puts the rest on an overview tab of their own, as Maxwell's Dashboard). `/app` (setup) and `/app/notices`
   (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
   too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
   section twice or unknown, `roles` on such a tab (it is every member's home: it is every role's, not narrowed by its
-  charts' metrics), `notices` with no due-date area, a second tab including the same section, and a `setup` or `notices`
-  tab beside it (its page would only redirect). `npm run test:declarative-packs` refuses those and checks the registry and
-  the redirects; `npm run test:console-tabs` draws the tab (open checklist, notices, charts; then folded).
+  charts' metrics), `notices` with no due-date area, a second tab including the same section, a `setup` or `notices`
+  tab beside it (its page would only redirect), and a `rail` on any other tab, a card twice, `notices` without
+  `include: notices`, a chart that is not one of the pack's number charts, `journeys` in a build without them.
+  `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
+  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, its charts;
+  then every step done).
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per

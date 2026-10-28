@@ -119,7 +119,8 @@ const SHELL_STEP: Record<string, string> = { workspace: "joined", connected: "co
 export async function onboardingFor(orgId: number, pack?: string) {
   const steps = await Promise.all(onboardingSteps().filter((s) => pack === undefined || s.pack === pack).map(async (s) => {
     const at = await doneAt(orgId, s);
-    return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, done: at !== null, at, covers: SHELL_STEP[s.done_when.split(":", 1)[0]!] ?? null };
+    // prompt (mold_v0-172): what to type in an AI client for the step (the get_started tool's "say"), shown on the Home page with Copy prompt.
+    return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, prompt: s.prompt ?? null, done: at !== null, at, covers: SHELL_STEP[s.done_when.split(":", 1)[0]!] ?? null };
   }));
   return { steps, done: steps.filter((s) => s.done).length, total: steps.length };
 }

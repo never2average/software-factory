@@ -73,8 +73,9 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
   const area = t.area ? d.areas.find((a) => a.name === t.area) : undefined;
   switch (t.kind) {
     case 'overview': {
-      // A home tab (mold_v0-134): the shell's sections it includes come first, in its order.
-      const parts: string[] = (t.include ?? []).map((x) => (x === 'setup' ? 'your setup checklist, until every step is done' : 'the records due soon'));
+      // A home tab (mold_v0-134): the shell's sections it includes come first, in its order (mold_v0-172: the checklist
+      // stays, beside the connection to your AI client).
+      const parts: string[] = (t.include ?? []).map((x) => (x === 'setup' ? 'your setup checklist and how to connect your AI client' : 'the records due soon'));
       if (t.charts.length) parts.push(`charts: ${list(t.charts)}`);
       const text = parts.join('; ');
       return text ? sentence(text.charAt(0).toUpperCase() + text.slice(1)) : 'The overview charts.';

@@ -8,7 +8,7 @@
 // follow the pack's step. So a pack places the connection where it wants it by declaring a step `done_when: connected`.
 
 export interface ShellSetupStep { id: string; label: string; done: boolean; at: string | null; help: string; prompt?: string | null; optional?: boolean }
-export interface PackSetupStep { pack: string; id: string; label: string; help: string | null; done: boolean; at: string | null; covers?: string | null }
+export interface PackSetupStep { pack: string; id: string; label: string; help: string | null; prompt?: string | null; done: boolean; at: string | null; covers?: string | null }
 
 export interface ChecklistStep {
   /** Unique in the list: `shell:<id>` or `<pack>/<id>`. */
@@ -28,7 +28,7 @@ export interface ChecklistStep {
 }
 
 export function mergeSetupSteps(shell: ShellSetupStep[], packSteps: PackSetupStep[]): ChecklistStep[] {
-  const out: ChecklistStep[] = packSteps.map((p) => ({ key: `${p.pack}/${p.id}`, label: p.label, help: p.help, prompt: null, done: p.done, at: p.at, pack: p.pack, id: p.id, shell: p.covers ?? null }));
+  const out: ChecklistStep[] = packSteps.map((p) => ({ key: `${p.pack}/${p.id}`, label: p.label, help: p.help, prompt: p.prompt ?? null, done: p.done, at: p.at, pack: p.pack, id: p.id, shell: p.covers ?? null }));
   let cursor = 0;
   for (const x of shell) {
     const at = out.findIndex((p) => p.pack && p.shell === x.id);
