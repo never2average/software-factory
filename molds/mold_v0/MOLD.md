@@ -1649,9 +1649,9 @@ order: `sections: [{"type": ...}]`. The library is the first product's landing p
 drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
 footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
 and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
-The types: `hero` (eyebrow, headline and its highlighted end, subheadline, the page's one call to action or the account
-button, with `first_screen.calls` 2 only a second call that repeats one the first screen already makes and up to 3 links
-such as the app's docs (below), a note, a visual, and a `strip` of text names (set in the logo row's type),
+The types: `hero` (eyebrow, headline and its highlighted end, subheadline, its call to action (by default the account
+button) and a second call (by default "Early access"), and up to 3 links such as the app's docs (with `first_screen.calls`
+1 only its one call; below), a note, a visual, and a `strip` of text names (set in the logo row's type),
 named logos or the logos of the AI clients the install pages offer), `logos` (mold_v0-164: a row of organisations'
 logos under a title (with none, right after the hero: the hero's foot, mold_v0-165), each item {name, logo, href}: `logo` an image file of the pack that declares the block,
 `assets/<name>.svg` or `.png` of at most 30 KB, which gen-packs checks (a PNG by its signature; an SVG with no script,
@@ -1664,9 +1664,10 @@ one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a fl
 `install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
 carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
 shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (at most 1
-link, none by default; the ways in: "Sign in", with the start call only on a page with no hero to carry it and no link,
-or one account button; `sign_in` and `open` relabel or re-address the account button's two states wherever the page
-shows it), `open_source` (mold_v0-164: `{repo: "https://github.com/<owner>/<repo>", label}`, an open-source app's
+link, by default the page's other call, "Early access"; the ways in: one account button by default, or "Sign in" with
+the start call only on a page with no hero and no link (`"sign_in_and_start"`); `sign_in` and `open` relabel or
+re-address the account button's two states, "Sign in" to `/auth/sign-in` and "Open dashboard" to `/app` by default,
+wherever the page shows it), `open_source` (mold_v0-164: `{repo: "https://github.com/<owner>/<repo>", label}`, an open-source app's
 repository: a GitHub button in the header on every width, named "<name> on GitHub", 44 px, its mark drawn inline, and a
 footer link, `label` or "Open source on GitHub", unless the footer already links it; the repository may not also be a
 hero link. Every component only an open-source app has is configured under this key, so a later one, such as a star
@@ -1688,20 +1689,25 @@ checks the addresses before sending, posts to `POST /api/access-requests` like `
 first page as `source.landing` (the root layout's `VisitSource`, mold_v0-110). With no `sections` the page
 is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
 `{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
-one by one, as is its `request_page`. **The first screen (mold_v0-165).** The header and the hero ask for one thing: the hero's button, "Get started"
-unless the block's `primary_cta` labels it. It leads to the start (sign-up, or `/request-access` while accounts are
-invite-only, where "Already invited? Sign in" is) and, for someone already signed in, into the console (`/app`) under the
-same label (`StartButton`, `web/src/features/site/account-links.tsx`: the label never flips). The header asks for
-nothing: no sign-in, no start, no link; an open-source app's GitHub icon (`open_source`) is not a call. Signing in is
-always in the footer (even with `shell_links: false`) and on the request form. A header link, `header.account:
-"account"`, a hero's `secondary_cta` or a hero's `links` is refused with a message that names it and says what to do
-instead, at its path in the pack's block, an old block's or the app's profile, and again on the page they make together
-(`firstScreenProblems`, run by gen-packs after merging). A block keeps the mold_v0-164 page with `first_screen: {"calls":
-2}` (the first product's page does): at most two things, signing in and one other (the start, or the app's own), where
-a call is where it leads (the sign-in's addresses `/app`, `/auth/sign-in` and the header's `sign_in`; the start's
-`/auth/sign-up` and `/request-access`), so one shown in both the header and the hero counts once; the header shows
-"Sign in" (or the account button) and the start only on a page whose hero does not, and a header link or hero call
-that would add a third is refused. The install pages stay one click away: the footer's shell links (or the block's own
+one by one, as is its `request_page`. **The first screen (mold_v0-168: the operator's decision of 2026-10-28, the first product's buttons are every
+app's default).** The header and the hero ask for two things, signing in and one other, each shown in both. Unless the
+block says otherwise, the header has one link, "Early access" to the request page (`request_page.path`, else
+`/request-access`), and the account button ("Sign in" to `/auth/sign-in`; "Open dashboard" to `/app` once signed in);
+the hero has the same account button (with an arrow) and an outlined "Early access" to the same page. An open-source
+app's GitHub icon (`open_source`) is not a call. A block's own hero call (a link as `primary_cta`, or a
+`secondary_cta`) is the page's other call instead, and the header's default link follows it; `header.links: []` leaves
+the header's link out. A call is where it leads (the sign-in's addresses `/app`, `/auth/sign-in` and the header's
+`sign_in`; the start's `/auth/sign-up`, `/request-access` and the request page's path), so one shown in both the header
+and the hero counts once, and a header link or hero call that would add a third is refused with a message that names
+it and says what to do instead, at its path in the pack's block, an old block's or the app's profile, and again on the
+page they make together (`firstScreenProblems`, run by gen-packs after merging; the shell draws the same page,
+`twoCallPage` in `src/landing.ts` and `web/src/features/site/site-ctas.ts`). **One call (mold_v0-165), by choice:**
+`first_screen: {"calls": 1}` makes the first screen ask for one thing, the hero's button, "Get started" unless the
+block's `primary_cta` labels it. It leads to the start (sign-up, or `/request-access` while accounts are invite-only,
+where "Already invited? Sign in" is) and, for someone already signed in, into the console (`/app`) under the same label
+(`StartButton`, `web/src/features/site/account-links.tsx`: the label never flips). The header then asks for nothing,
+signing in is always in the footer (even with `shell_links: false`), and a header link, `header.account: "account"`, a
+hero's `secondary_cta` or a hero's `links` is refused. The install pages stay one click away: the footer's shell links (or the block's own
 footer link), the where-you-work section's link and the console. A `logos` section with no title right after the hero
 is drawn as the hero's foot (no heading, no divider, no band of its own; its `label` names the list for a screen
 reader). At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
