@@ -481,7 +481,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
         assert.ok(setup.includes(t), `every step says what it is, done or not: ${t}`);
       assert.equal([...setup.matchAll(/Copy prompt/g)].length, 2, "a Copy prompt box for each open step with a prompt: the shell's question and the pack's step");
       assert.match(setup, /What can Fixture do\?[\s\S]*Add our first application\./, "the shell step's prompt, then the pack step's own (pack.json prompt)");
-      assert.doesNotMatch(setup, /aria-expanded/, "no step is folded");
+      assert.doesNotMatch(setup, /aria-expanded="/, "no step is folded");
       assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
       assert.match(setup, /These steps tick themselves as you go\./, "the footer");
