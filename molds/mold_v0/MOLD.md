@@ -1011,6 +1011,30 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   plan in one, or an account ever shown a variant: `src/experiments.ts` `anyPricingExperiment`,
   `GET /spend/experiments/any`), after the runs tab, or when a link opens it. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
   build, and, run in a host pack's build, that the engine's stages, messages, account page and funnel are unchanged.
+- **Admin pages of an engine the build has not got** (mold_v0-169, built): the platform admin shows an engine's pages,
+  tabs, settings and keys only in a build that has it, from the build itself (the host pack's tables, the packs' job
+  kinds, credentials and OAuth providers, the run sandbox setting), never from an app's name. Without the session
+  engine: Compute lists Limits (the packs' run sandboxes: how many at once, queued, where they run; the boat plan only
+  when the runs may use boat), Environment (the run sandboxes' settings instead of the orchestrators'; boat's rows and
+  "Test connection" only when boat is used) and Emails (and On-premises runners where a kind may need them), not
+  Orchestrators, Failures or Autoscaler decisions; its summary (`GET /compute/summary`, the admin MCP's) says the
+  autoscaler's kill switch in runs, never asks for a boat key the build does not use, and carries `engine: false`,
+  `uses_boat` and `runs` (absent with the engine, so its answer is unchanged). Agent configuration and `list_settings`
+  (`src/settings.ts` `settingsInBuild`, a shell setting's `readBy`) leave out the engine's settings (orchestrator model,
+  sessions per run, capacity, sandbox size), list the Vertex AI region only with the engine or a Vertex key in the vault,
+  and name the Cloudflare model for what it does without the engine (the docs answers' first model); every setting
+  may still be set (`update_setting`). Key vault and `key_vault_status` (`src/platform-keys.ts` `providerInBuild`) list
+  the shell's providers (Resend, and the docs answers' Cloudflare, Anthropic, Vertex AI and OpenAI), a gateway
+  provider a pack's job kind names, "Staff-held run credentials" (`pack_credentials`) and "OAuth app clients" only when
+  a pack declares operator credentials or OAuth providers, boat with the engine or when the packs' runs may get their
+  sandbox there (`src/run-sandboxes.ts` `boatForRuns`: job kinds and `APP_RUN_SANDBOX` auto, the default and on Vercel
+  the only hosted sandbox, or boat; not when the deployment names docker or off), the engine's (coding agents, research
+  search, Gemini, DashScope) with the engine, and any provider that holds a key. Compute's boat rows follow the same
+  rule (`uses_boat`, also true in auto with a boat key). Data repositories names each repository by its pack's `label` (pack.json `repositories.<id>.label`), else
+  its id in words, and its pack by name, and says catalogs that do not index on their own in words for staff. Agent
+  configuration's help wraps, so its Value, From and Variable columns stay on the page at 1440 px. `npm run
+  test:admin-engine` proves a shell build and, run in a host pack's build, that every setting, provider and Compute
+  figure is as before.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a

@@ -3,6 +3,7 @@ import { defaultSender } from "./profile.js";
 import { packConfigs } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
+import { sessionEngine } from "./host-tables.js";
 
 /**
  * Global platform settings (/admin/compute): knobs that used to be environment variables only. Each setting is keyed
@@ -33,6 +34,14 @@ export interface SettingDef {
   options?: string[]; min?: number; max?: number;
   /** What a text setting holds (default: a model id). sender = "Name <address>" or an address; emails = addresses, comma-separated, or empty. */
   format?: "model" | "sender" | "emails";
+  /**
+   * A shell setting only some builds read (mold_v0-169; listSettings lists it only there): "engine" the session engine's
+   * (its orchestrators, sessions and capacity: a build whose host pack owns its tables, src/host-tables.ts); "vertex" Claude
+   * on Vertex AI's (the session engine's, or a build whose key vault holds a Vertex service-account key).
+   */
+  readBy?: "engine" | "vertex";
+  /** The label and help a build without the session engine shows instead (what the setting does there). */
+  withoutEngine?: { label: string; help: string };
 }
 
 /** The shell's own groups, in order; a pack's groups go after the group each names (settingGroups). */
@@ -45,21 +54,22 @@ export const SETTING_GROUPS: { id: SettingGroup; label: string }[] = [
 ];
 
 export const SETTINGS: SettingDef[] = [
-  { key: "ORCHESTRATOR_MODEL", group: "models", label: "Orchestrator model", kind: "text", default: "gpt-6.1-sol",
+  { key: "ORCHESTRATOR_MODEL", group: "models", label: "Orchestrator model", kind: "text", default: "gpt-6.1-sol", readBy: "engine",
     help: "The model each orchestrator thinks with (it plays the developer and drives the agents). Applies to orchestrators started after the change." },
   { key: "CLOUDFLARE_AI_MODEL", group: "models", label: "Research quick-pass model", kind: "text", default: "@cf/zai-org/glm-5.3-flash",
-    help: "Cloudflare Workers AI model for the first, quick brief on an access request's company." },
-  { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5",
+    help: "Cloudflare Workers AI model for the first, quick brief on an access request's company.",
+    withoutEngine: { label: "Quick answers model", help: "Cloudflare Workers AI model asked first for the docs' \"Ask AI\" answers (Claude answers when it does not). Used only while Cloudflare Workers AI is on in Key vault." } },
+  { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5", readBy: "vertex",
     help: "Google Cloud region for Claude (and Gemini) on Vertex AI, e.g. us-east5, europe-west1, global. The project comes from the Vertex AI service-account key in Key vault." },
-  { key: ENGINE_SETTINGS.maxSessionsPerRun, group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
+  { key: ENGINE_SETTINGS.maxSessionsPerRun, readBy: "engine", group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
     help: "A run that would start more sessions than this is refused." },
-  { key: ENGINE_SETTINGS.maxOrchestrators, group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
+  { key: ENGINE_SETTINGS.maxOrchestrators, readBy: "engine", group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
     help: "Most shared orchestrators the autoscaler keeps running at once." },
-  { key: ENGINE_SETTINGS.maxJobOrchestrators, group: "capacity", label: "Per-job orchestrators", kind: "int", default: 12, min: 1, max: 1000,
+  { key: ENGINE_SETTINGS.maxJobOrchestrators, readBy: "engine", group: "capacity", label: "Per-job orchestrators", kind: "int", default: 12, min: 1, max: 1000,
     help: "Most one-job orchestrators (one per {run} or research job) running at once." },
-  { key: ENGINE_SETTINGS.jobPodCapacity, group: "capacity", label: "Worker sandboxes per job", kind: "int", default: 40, min: 1, max: 50,
+  { key: ENGINE_SETTINGS.jobPodCapacity, readBy: "engine", group: "capacity", label: "Worker sandboxes per job", kind: "int", default: 40, min: 1, max: 50,
     help: "Worker sandboxes one per-job orchestrator runs at once." },
-  { key: "BOAT_SANDBOX_SIZE", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
+  { key: "BOAT_SANDBOX_SIZE", readBy: "engine", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
     help: "boat.dev machine size for orchestrators started after the change and their worker sandboxes." },
   { key: "DOCS_ANSWERS_DAILY_MAX", group: "docs", label: "Docs answers a day", kind: "int", default: 500, min: 0, max: 100000,
     help: "Most model calls for \"Ask AI\" answers in the Cmd+K bar a UTC day, across all accounts and admins. Past it, people still get the matching docs sections, without the summary." },
@@ -93,8 +103,10 @@ export function settingGroups(): { id: SettingGroup; label: string }[] {
  */
 export function allSettings(): SettingDef[] {
   const order = new Map(settingGroups().map((g, i) => [g.id, i]));
-  // The shell's help in the build's words ({run}: src/vocabulary.ts, mold_v0-141); a pack's own is its words already.
-  const all: SettingDef[] = SETTINGS.map((d) => ({ ...d, help: fill(d.help) }));
+  // The shell's help in the build's words ({run}: src/vocabulary.ts, mold_v0-141); a pack's own is its words already. A
+  // build without the session engine says what a setting does there (withoutEngine, mold_v0-169).
+  const eng = sessionEngine();
+  const all: SettingDef[] = SETTINGS.map(({ withoutEngine, ...d }) => ({ ...d, ...(!eng && withoutEngine ? withoutEngine : {}), help: fill(!eng && withoutEngine ? withoutEngine.help : d.help) }));
   for (const c of packConfigs()) for (const { before, ...d } of c.settings?.defs ?? []) {
     if (all.some((x) => x.key === d.key)) throw new Error(`pack ${c.pack}: pack.json settings.defs ${d.key} is a setting the build already has`);
     const at = before ? all.findIndex((x) => x.key === before) : -1;
@@ -208,10 +220,29 @@ export async function setSettings(actor: string, values: Record<string, unknown>
   return changes;
 }
 
-/** Every setting with the value in force and where it comes from (for /admin/compute). */
-export async function listSettings() {
+/**
+ * Whether this build reads a setting (mold_v0-169): a shell setting marked `readBy` only in a build with what reads it
+ * (the session engine; Claude on Vertex AI: the engine, or a Vertex service-account key in the vault); every other one
+ * always. A setting the build does not read is still kept and may still be set (setSettings): it is only not listed.
+ */
+export async function settingsInBuild(): Promise<(d: SettingDef) => boolean> {
+  const eng = sessionEngine();
+  const vertex = eng || await (async () => {
+    const { listCredentials, listProviders, VERTEX_LABEL, VERTEX_PROVIDER } = await import("./keyvault.js");
+    const [creds, providers] = await Promise.all([listCredentials() as Promise<{ provider: string; label: string }[]>, listProviders()]);
+    return creds.some((c) => c.provider === VERTEX_PROVIDER || c.label === VERTEX_LABEL) || providers.some((p) => p.backend === "vertex");
+  })().catch(() => false);
+  return (d) => (d.readBy === "engine" ? eng : d.readBy === "vertex" ? vertex : true);
+}
+
+/**
+ * Every setting this build reads (settingsInBuild; `all`: every one, read or not) with the value in force and where it
+ * comes from (for /admin/compute, Agent configuration and the admin MCP).
+ */
+export async function listSettings(opts: { all?: boolean } = {}) {
   await freshSettings();
-  return allSettings().map((d) => {
+  const read = opts.all ? () => true : await settingsInBuild();
+  return allSettings().filter(read).map(({ readBy: _r, ...d }) => {
     const row = cache.get(d.key), env = envOf(d.key);
     return {
       ...d, value: settingValue(d.key), source: row ? "set" as const : env !== undefined ? "env" as const : "default" as const,

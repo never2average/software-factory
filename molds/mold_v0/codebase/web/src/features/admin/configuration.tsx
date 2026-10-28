@@ -54,7 +54,9 @@ export function AdminConfiguration() {
   const backTo = (x: Setting) => (x.env != null ? `the environment (${x.env})` : `the default (${x.default})`);
   const cols: RecordCol<Setting>[] = [
     { key: 'setting', label: 'Setting', keep: true, type: 'text', value: (x) => x.label,
-      render: (x) => <span className='flex min-w-0 flex-col gap-1'><span className='leading-none font-medium'>{x.label}</span><span className='text-muted-foreground truncate text-xs' title={x.help}>{x.help}</span></span> },
+      // The help wraps (mold_v0-169): cut to one line it set the column's width to the longest help, which pushed Value,
+      // From and Variable off the page's right edge at 1440 px.
+      render: (x) => <span className='flex min-w-56 flex-col gap-1'><span className='leading-none font-medium'>{x.label}</span><span className='text-muted-foreground text-xs whitespace-normal'>{x.help}</span></span> },
     { key: 'group', label: 'Group', type: 'select', value: (x) => groupName(x.group), render: (x) => groupName(x.group) },
     { key: 'value', label: 'Value', className: 'w-80', keep: true, render: (x) => (
       <span className='flex items-center gap-1' onClick={(e) => e.stopPropagation()}>
