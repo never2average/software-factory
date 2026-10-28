@@ -28,16 +28,23 @@ interface Provider { slug: string; mode: 'gateway' | 'direct'; backend: string; 
 const NAME: Record<string, string> = {
   anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google Gemini', cloudflare: 'Cloudflare Workers AI', dashscope: 'Alibaba DashScope',
   vertex: 'Vertex AI (Google Cloud)', boat: 'boat.dev', exa: 'Exa', libraries_io: 'Libraries.io', resend: 'Resend', amp: 'Amp', cursor: 'Cursor', factory: 'Factory', github_copilot: 'GitHub Copilot',
-  oauth_clients: 'OAuth clients'
+  // The packs' own stores (mold_v0-169: listed only in a build whose packs declare them, src/platform-keys.ts providerInBuild).
+  oauth_clients: 'OAuth app clients', pack_credentials: 'Staff-held run credentials'
 };
 const nameOf = (slug: string) => NAME[slug] ?? slug;
 interface Credential { id: number; provider: string; label: string; hint: string; enabled: boolean; uses: number; last_used_at: string | null; project_id?: string | null; client_email?: string }
 const TYPE: Record<string, string> = {
   anthropic: 'Inference', openai: 'Inference', google: 'Inference', cloudflare: 'Inference', dashscope: 'Inference', vertex: 'Inference',
   boat: 'Sandbox', exa: 'Search', libraries_io: 'Search', resend: 'Email',
-  amp: 'Coding agent', cursor: 'Coding agent', factory: 'Coding agent', github_copilot: 'Coding agent'
+  amp: 'Coding agent', cursor: 'Coding agent', factory: 'Coding agent', github_copilot: 'Coding agent',
+  oauth_clients: 'Connection', pack_credentials: 'Run credential'
 };
-const TYPES = ['Inference', 'Sandbox', 'Search', 'Email', 'Coding agent', 'Other'];
+const TYPES = ['Inference', 'Sandbox', 'Search', 'Email', 'Coding agent', 'Connection', 'Run credential', 'Other'];
+/** What a provider's keys are for, where its name alone does not say (on hover, and as the Add a key form's hint). */
+const ABOUT: Record<string, string> = {
+  oauth_clients: 'The client id and secret of each OAuth provider workspaces connect to, under the labels OAuth providers (below) names',
+  pack_credentials: "Logins the platform's staff hold for a pack's runs, each labelled <pack>.<name>; never shown to a workspace"
+};
 const typeOf = (slug: string) => TYPE[slug] ?? 'Other';
 /** Server-only keys (email) are used by the API itself; never by orchestrators or agents. */
 const SERVER_ONLY = new Set(['resend']);
@@ -61,7 +68,7 @@ export function AdminKeyVault() {
   const keysOf = (p: Provider) => creds.filter((c) => c.provider === p.slug);
   const cols: RecordCol<Provider>[] = [
     { key: 'provider', label: 'Provider', keep: true, type: 'text', value: (p) => nameOf(p.slug), render: (p) => (
-      <span className='flex flex-col gap-0.5'><span className='font-medium' title={p.slug}>{nameOf(p.slug)}</span><span className='text-muted-foreground text-xs'>{typeOf(p.slug)}</span></span>
+      <span className='flex flex-col gap-0.5'><span className='font-medium' title={ABOUT[p.slug] ?? p.slug}>{nameOf(p.slug)}</span><span className='text-muted-foreground text-xs'>{typeOf(p.slug)}</span></span>
     ) },
     { key: 'type', label: 'Type', hidden: true, type: 'select', value: (p) => typeOf(p.slug), options: TYPES.map((t) => ({ value: t })), render: (p) => typeOf(p.slug) },
     { key: 'use', label: 'Access', hidden: true, type: 'select', value: useOf,
@@ -97,7 +104,8 @@ export function AdminKeyVault() {
       <RecordView id='key-vault' rows={providers} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
         searchText={(p) => `${p.slug} ${nameOf(p.slug)} ${typeOf(p.slug)} ${keysOf(p).map((c) => `${c.label} ${c.hint} ${c.project_id ?? ''}`).join(' ')}`}
         searchPlaceholder='Search providers and keys · encrypted at rest; agents get scoped gateway tokens, never these keys'
-        views={[{ id: 'all', label: 'All' }, ...TYPES.slice(0, 4).map((t) => ({ id: t, label: t, match: (p: Provider) => typeOf(p.slug) === t }))]}
+        // The first four kinds this build has a provider of (a build without the session engine has no sandbox or search).
+        views={[{ id: 'all', label: 'All' }, ...TYPES.filter((t) => providers.some((p) => typeOf(p.slug) === t)).slice(0, 4).map((t) => ({ id: t, label: t, match: (p: Provider) => typeOf(p.slug) === t }))]}
         defaultSort={[{ key: 'type', dir: 'asc' }]}
         primary={<Gate need='keys'><Button onClick={() => setAdding(providers[0]?.slug ?? null)} disabled={data?.unlocked === false}><Icons.add /> Add a key</Button></Gate>}
         primaryMenu={[lock({ label: 'Import keys…', icon: <Icons.upload />, disabled: data?.unlocked === false, onSelect: () => setImporting(true) }, 'keys')]}
@@ -160,7 +168,7 @@ function AddKey({ providers, initial, onClose }: { providers: Provider[]; initia
               {providers.map((p) => <NativeSelectOption key={p.slug} value={p.slug}>{nameOf(p.slug)} · {typeOf(p.slug)}</NativeSelectOption>)}
             </NativeSelect>
           </FormRow>
-          <FormRow id='ak-label' label='Label (optional)' hint={f.provider === 'vertex' ? 'A Google Cloud service-account JSON key; Claude on Vertex AI uses it (project from the key, region from Agent configuration).' : 'A new label adds to the pool; the same label replaces that key.'}>
+          <FormRow id='ak-label' label='Label (optional)' hint={f.provider === 'vertex' ? 'A Google Cloud service-account JSON key; Claude on Vertex AI uses it (project from the key, region from Agent configuration).' : ABOUT[f.provider] ? `${ABOUT[f.provider]}.` : 'A new label adds to the pool; the same label replaces that key.'}>
             <Input id='ak-label' maxLength={60} placeholder={f.provider === 'vertex' ? 'vertex' : 'default'} value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} />
           </FormRow>
           <FormRow id='ak-secret' label={vertex ? 'Service-account JSON' : 'Key'}>

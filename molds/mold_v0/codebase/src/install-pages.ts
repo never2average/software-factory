@@ -31,6 +31,12 @@
  * profile, its config (pack.json or profile.json `client_skill`) and what its MCP server lists, at the address above.
  *   GET /install/skill.zip    the zip (also at /downloads/<name>-skill.zip); /install offers it, /install.json names it
  *
+ * The connect guide (mold_v0-171, src/connect-page-config.ts): where a pack declares pack.json `connect_page`, one more
+ * public page at the address it names (the first product's /connect.html): its own words around the connector's address,
+ * how a client signs in (and, with member keys on, how a key goes in a header), the client skill's download button and a
+ * first run. Without one, nothing changes.
+ *   GET <connect_page.path>  that page
+ *
  * The profile's `install_clients` (optional) narrows the clients to those it names. A signed-in member's own setup,
  * with their new key in each client's header (never a URL), is memberSetup below (the console's API keys page,
  * src/member-keys.ts).
@@ -50,6 +56,9 @@ import { offerFooterHtml, offerSentences } from "./source-offer.js";
 import { legalFooterHtml } from "./legal.js";
 import { GENERATED_LEGAL } from "./legal.generated.js";
 import { clientSkill, clientSkillFile } from "./client-skill.js";
+import { connectPageConfig } from "./host.js";
+import { inlineHtml, type ConnectPageConfig } from "./connect-page-config.js";
+import { API_KEY_PREFIX } from "./auth.js";
 
 /** What the key placeholder reads as in a header: never a key, never in a URL. */
 export const KEY_PLACEHOLDER = "<your API key>";
@@ -174,6 +183,66 @@ const skillSection = (name: string) => `<h2>A skill for your AI client</h2>
 <ul><li>Claude: open Settings, then Capabilities, then Skills, click Upload skill and choose the file.</li>
 <li>Claude Code and other clients that read skill folders: unzip it into the client's skills folder (for Claude Code, ~/.claude/skills).</li></ul>`;
 
+// ---------- the connect guide (mold_v0-171) ----------
+
+const CONNECT_CSS = (light: string, dark: string) => `:root{--bg:#f4f2ec;--surface:#fffdf8;--ink:#15140f;--ink-2:#4a4840;--ink-3:#6b685e;--line:#d9d5c8;--accent:${light};--accent-ink:#fff;
+--accent-soft:color-mix(in srgb,${light} 16%,transparent);--code-bg:#15140f;--code-ink:#e9e6dc;--focus:#1d5fbf;
+--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#0d0e0b;--surface:#181a15;--ink:#efede5;--ink-2:#bdbaaf;--ink-3:#8f8c81;--line:#2a2c25;--accent:${dark};--accent-ink:#140a05;
+--accent-soft:color-mix(in srgb,${dark} 22%,transparent);--code-bg:#080907;--focus:#7aa7ff}}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans)}
+a{color:var(--accent)}a:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:6px}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px}header{border-bottom:1px solid var(--line)}
+header .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;gap:10px;align-items:center;font-weight:700;color:var(--ink);text-decoration:none;letter-spacing:-.01em}.brand img{border-radius:6px}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1;letter-spacing:-.02em;margin:48px 0 12px}h2{font-size:22px;margin:40px 0 10px;letter-spacing:-.01em}
+p.lead{color:var(--ink-2);font-size:18px;margin:0 0 24px}.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0}
+ol{padding-left:22px}li{margin:6px 0}code{font-family:var(--mono);font-size:14px;background:var(--accent-soft);padding:1px 6px;border-radius:6px;overflow-wrap:anywhere}
+pre{background:var(--code-bg);color:var(--code-ink);padding:14px 16px;border-radius:10px;overflow-x:auto;font:14px/1.5 var(--mono)}
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600;padding:10px 16px;border-radius:10px}
+.muted{color:var(--ink-3);font-size:14px}.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0;color:var(--ink-3);font-size:14px}`;
+
+/**
+ * The connect guide's page (mold_v0-171): the config's words around what the shell knows (the connector's address, how
+ * clients sign in, member keys, the client skill's file). `opts` fixes the year and the sign-in for tests.
+ */
+export function connectPageHtml(cfg: ConnectPageConfig, mcpBase: string, opts: { year?: number; signIn?: boolean; keys?: boolean } = {}): string {
+  const product = PROFILE.name, file = clientSkillFile();
+  const t = (x: string) => inlineHtml(x, { product, skill_file: file });
+  const keys = opts.keys ?? memberKeysOn();
+  const signIn = opts.signIn ?? signInOn(keys);
+  const url = `${mcpBase.replace(/\/$/, "")}/mcp`;
+  const steps = (list: readonly string[]) => `<ol>${list.map((x) => `<li>${t(x)}</li>`).join("")}</ol>`;
+  const keyNote = keys
+    ? `If you were given an API key (<code>${esc(API_KEY_PREFIX)}…</code>) instead, your client sends it as a header, <code>Authorization: Bearer &lt;key&gt;</code>, never in the URL.${signIn ? " Claude and ChatGPT cannot send a header: ask for a sign-in invitation to use them." : ""} `
+    : "";
+  const card = `<div class="card"><strong>Your connector URL</strong>
+<p class="muted" style="margin:6px 0 10px">${signIn ? "It is the same for everyone and has no secret in it: you sign in with your work email when your client asks (accept your invitation email first)." : `Connect with an API key from your ${esc(product)} account, sent in a header (never in the address).`}</p>
+<pre>${esc(url)}</pre>
+<p class="muted" style="margin:10px 0 0">${keyNote}Per-client setup is on <a href="/app">your setup page</a>.</p></div>`;
+  const clients = cfg.clients.map((c) => `<h2>${t(c.name)}</h2>${steps(c.steps)}`).join("\n");
+  const skill = cfg.skill ? `<h2 id="skill">${t(cfg.skill.heading)}</h2>${cfg.skill.lead ? `<p>${t(cfg.skill.lead)}</p>` : ""}
+<p><a class="btn" href="/downloads/${esc(file)}" download>Download ${esc(file)}</a></p>${cfg.skill.steps ? steps(cfg.skill.steps) : ""}` : "";
+  const first = cfg.first_run ? `<h2>${t(cfg.first_run.heading)}</h2><div class="grid">${cfg.first_run.cards.map((c) => `<div class="card"><strong>${t(c.title)}</strong><p class="muted">${t(c.text)}</p></div>`).join("")}</div>${cfg.first_run.note ? `<p class="muted">${t(cfg.first_run.note)}</p>` : ""}` : "";
+  const foot = [`© ${opts.year ?? new Date().getUTCFullYear()} ${esc(product)}`, ...(cfg.footer?.tagline ? [t(cfg.footer.tagline)] : []),
+    ...(cfg.footer?.links ?? []).map((l) => `<a href="${esc(l.href)}">${t(l.label)}</a>`)].join(" · ");
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(cfg.title.replace(/\{product\}/g, product).replace(/\{skill_file\}/g, file))}</title>${cfg.description ? `\n<meta name="description" content="${esc(cfg.description.replace(/\{product\}/g, product).replace(/\{skill_file\}/g, file))}">` : ""}
+<link rel="icon" href="/icon.svg"><style>${CONNECT_CSS(cfg.accent ?? "#1d5fbf", cfg.accent_dark ?? cfg.accent ?? "#7aa7ff")}</style></head>
+<body><header><div class="wrap"><a class="brand" href="/"><img src="/icon.svg" width="22" height="22" alt="">${esc(product)}</a>${cfg.header_link ? `<a href="${esc(cfg.header_link.href)}">${t(cfg.header_link.label)}</a>` : ""}</div></header>
+<main class="wrap"><h1>${t(cfg.heading)}</h1><p class="lead">${t(cfg.lead)}</p>
+${card}
+${clients}
+${skill}
+${first}
+</main>
+<footer><div class="wrap">${foot}${legalFooterHtml(GENERATED_LEGAL)}${offerFooterHtml(currentOffer())}</div></footer>
+</body></html>
+`;
+}
+
 export function mountInstallPages(app: Express, publicUrl: string) {
   const send = (res: Response, status: number, html: string) => {
     res.status(status).set({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300",
@@ -211,6 +280,13 @@ export function mountInstallPages(app: Express, publicUrl: string) {
     send(res, 200, page(`Connect ${g.name}`, `<h1>Connect ${esc(g.name)} to your AI client</h1>
 <p class="muted">${esc(g.name)} is an MCP server at</p><pre>${esc(g.url)}</pre>
 <p>${"api_keys" in g ? (g.sign_in ? "Every client signs in with your account (OAuth)." : `Sign-in is not set up on this ${esc(g.name)} server yet: ask its admin.`) : g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}${skillSection(g.name)}`));
+  });
+  // The connect guide (mold_v0-171): only where a pack declares one, at its own address.
+  const connect = connectPageConfig();
+  if (connect) app.get(connect.path, (_req, res) => {
+    res.status(200).set({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", "X-Content-Type-Options": "nosniff" })
+      .send(connectPageHtml(connect, publicUrl));
   });
   app.get("/install/:client", (req: Request, res: Response) => {
     const g = installGuide(publicUrl);

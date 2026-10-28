@@ -269,7 +269,7 @@ export const ADMIN_TOOLS = {
     input: { key: z.string().describe(`Setting key, e.g. ${SETTING_EXAMPLE}`), value: z.union([z.string(), z.number(), z.null()]).describe("New value, or null to reset") },
     run: async (a, c) => {
       await saveSettingValues(c.actor, { [String(a.key)]: a.value });
-      const s = (await listSettings()).find((x) => x.key === a.key)!;
+      const s = (await listSettings({ all: true })).find((x) => x.key === a.key)!; // a setting this build does not list may still be set
       return pick(s, ["key", "label", "value", "source", "updated_at", "updated_by"]);
     },
     summary: (d) => `${d.key} = ${JSON.stringify(d.value)} (${d.source}).`,

@@ -116,9 +116,12 @@ try {
     const bad: [string, (id: string, j: any) => void, unknown, RegExp][] = [
       ["a page that is not one", (_i, j) => { j.console = { hide: ["setup"] }; }, undefined, /console\.hide/],
       ["a page twice", (_i, j) => { j.console = { hide: ["activity", "activity"] }; }, undefined, /each page once/],
-      ["an unknown key", (_i, j) => { j.console = { show: ["activity"] }; }, undefined, /console/],
+      ["an unknown key", (_i, j) => { j.console = { unhide: ["activity"] }; }, undefined, /console/],
+      // The sections shown from the start (mold_v0-171): only the shell's, each once.
+      ["a section that is not one", (_i, j) => { j.console = { show: ["activity"] }; }, undefined, /console/],
+      ["the profile's unknown section", () => {}, { console: { show: ["billing"] } }, /profile\.json console\.show: "billing" is not a section/],
       ["the profile's unknown page", () => {}, { console: { hide: ["admin"] } }, /profile\.json console\.hide: "admin" is not a page/],
-      ["the profile's unknown key", () => {}, { console: { show: [] } }, /profile\.json console: unknown field show/],
+      ["the profile's unknown key", () => {}, { console: { unhide: [] } }, /profile\.json console: unknown field unhide/],
       // A pack's own console keys (mold_v0-140): never the app's profile.
       ["a pack's nav in the profile", () => {}, { console: { nav: [] } }, /profile\.json console: nav is a pack's \(its pack\.json console\.nav\), never the app's profile/],
     ];

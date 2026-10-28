@@ -74,9 +74,12 @@ export function repositoriesOf(pack: string): { name: string; settings: Reposito
     return { name, settings, areas: areas.filter((x) => x.repo?.name === name) };
   });
 }
-/** Every repository of the build, for the admin data API's list. */
+/** A repository's id in words, when its pack gives it no label (mold_v0-169): "company_ledger" is "Company ledger". */
+export const repositoryLabel = (name: string, label?: string) => label ?? (name.charAt(0).toUpperCase() + name.slice(1)).replace(/[_-]+/g, " ");
+/** Every repository of the build, for the admin data API's list: with its label and its pack's name, as staff read them. */
 export const allRepositories = () => packs().flatMap((p) => repositoriesOf(p.id).map((r) => ({
-  pack: p.id, name: r.name, areas: r.areas.map((a) => a.name), ...ADAPTERS[r.settings.kind],
+  pack: p.id, name: r.name, label: repositoryLabel(r.name, r.settings.label), pack_name: p.manifest.name ?? p.id,
+  areas: r.areas.map((a) => a.name), ...ADAPTERS[r.settings.kind],
 })));
 const repositoryOrThrow = (pack: string, name: string) => {
   const r = repositoriesOf(pack).find((x) => x.name === name);

@@ -25,7 +25,7 @@ import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
 import { onboardingAnchor } from '@/features/tabs/empty';
-import { mergeSetupSteps, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
+import { mergeSetupSteps, stepProgress, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
 import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
 import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
@@ -66,8 +66,8 @@ export function SetupPage({ rail, cards, main, below }: { rail?: readonly string
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
   const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
-  const stepsDone = steps.filter((x) => x.done).length;
-  const picker = showJourneys && <JourneyPicker key='journeys' setup={{ done: stepsDone, total: steps.length }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+  const progress = stepProgress(steps);
+  const picker = showJourneys && <JourneyPicker key='journeys' setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
     void setSelected(id === 'setup' ? null : id);
     if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
   }} />;
@@ -428,10 +428,10 @@ function Checklist({ steps, title, anchored }: {
   }, [anchored]);
   const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
     body: x.pack && !x.help && !x.prompt ? null : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
-  const done = steps.filter((x) => x.done).length;
+  const { done, total } = stepProgress(steps);
   const ticks = steps.some((x) => x.pack);
   return (
-    <TimelineSection title={title} done={done} total={steps.length} noun='steps' items={items}
+    <TimelineSection title={title} done={done} total={total} noun='steps' items={items}
       footer={ticks || journeysOn() ? <>
         {ticks && 'These steps tick themselves as you go. '}
         {journeysOn() && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}

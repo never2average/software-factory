@@ -26,7 +26,7 @@ import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
 import { accessFields } from '@/config/access-request.generated';
-import { answerText, labelledAnswers, type AccessAnswer } from '@/lib/access-request.generated';
+import { answerText, labelledAnswers, personText, type AccessAnswer } from '@/lib/access-request.generated';
 import { text } from '@/lib/texts';
 
 interface Req {
@@ -73,6 +73,8 @@ const SITE_FIELD = accessFields.find((f) => f.type === 'url') ?? null;
 const siteOf = (q: Req) => { const v = SITE_FIELD ? q.answers?.[SITE_FIELD.key] : null; return typeof v === 'string' && v ? v : null; };
 const link = (q: Req) => { const v = siteOf(q); return v ? (/^https?:\/\//.test(v) ? v : `https://${v}`) : null; };
 const host = (q: Req) => { const u = link(q); try { return u ? new URL(u).host.replace(/^www\./, '') : null; } catch { return siteOf(q); } };
+/** What the requester said of themselves (the fields declared `person`, such as their role; mold_v0-171), or null. */
+const personOf = (q: Req) => personText(accessFields, q.answers) || null;
 /** Every answer as text, for the search box. */
 const answersText = (q: Req) => labelledAnswers(accessFields, q.answers).map((a) => a.text).join(' ');
 const FIT = { strong: 'text-primary font-medium', possible: 'text-foreground', weak: 'text-muted-foreground', unknown: 'text-muted-foreground' } as const;
@@ -180,9 +182,9 @@ export function AdminRequests() {
     { key: 'status', label: 'Status', type: 'select', className: 'w-28', keep: true, value: (q) => q.status,
       options: [{ value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }, { value: 'declined', label: 'Declined' }],
       render: (q) => <StatusBadge tone={TONE[q.status]}>{q.status}</StatusBadge> },
-    { key: 'person', label: 'Person', type: 'text', className: 'w-56', value: (q) => `${q.name ?? ''} ${q.email}`, render: (q) => (<>
+    { key: 'person', label: 'Person', type: 'text', className: 'w-56', value: (q) => `${q.name ?? ''} ${personOf(q) ?? ''} ${q.email}`, render: (q) => (<>
       <p className='truncate text-sm leading-none'>{q.name || q.email}</p>
-      {(q.name || !isWork(q)) && <p className='text-muted-foreground mt-1.5 truncate text-xs leading-none'>{[q.name ? q.email : null, isWork(q) ? null : 'personal'].filter(Boolean).join(' · ')}</p>}
+      {(q.name || personOf(q) || !isWork(q)) && <p className='text-muted-foreground mt-1.5 truncate text-xs leading-none'>{[personOf(q), q.name ? q.email : null, isWork(q) ? null : 'personal'].filter(Boolean).join(' · ')}</p>}
     </>) },
     // A host pack's research of the requester's company (hostFeature('research')): its verdict, only where it exists.
     ...(hostFeature('research') ? [{ key: 'fit', label: 'Fit', type: 'select' as const, className: 'w-28', value: (q: Req) => q.research?.fit ?? (q.research_status === 'running' ? 'researching' : 'not researched'),
@@ -352,11 +354,12 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
       <section>
         <Label2>From them</Label2>
         <dl>
-          <Field label='Person'>{q.name || '—'}</Field>
+          <Field label='Person'>{q.name || '—'}{personOf(q) && <span className='text-muted-foreground'> · {personOf(q)}</span>}</Field>
           <Field label='Email'><a className='hover:underline' href={`mailto:${q.email}`}>{q.email}</a>{!isWork(q) && <span className='text-amber-600 dark:text-amber-400'> · personal</span>}</Field>
           <Field label='Company'>{q.company}</Field>
-          {/* The build's own questions, in the order it declares them; one it asks but they left empty says so. */}
-          {accessFields.map((f) => {
+          {/* The build's own questions, in the order it declares them; one it asks but they left empty says so. An answer
+              about the person (`person`) is on the Person line above. */}
+          {accessFields.filter((f) => !f.person).map((f) => {
             const v = q.answers?.[f.key];
             const text = answerText(f, v);
             const href = f.type === 'url' && typeof v === 'string' && /^https?:\/\//.test(v) ? v : null;

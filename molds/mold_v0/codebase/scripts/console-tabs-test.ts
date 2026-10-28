@@ -25,14 +25,14 @@
 //    columns.
 // 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
 // 5. A home tab (mold_v0-134, mold_v0-172): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
-//    notices (its Due soon tab dropped): the sidebar loses that tab, /app and /app/notices redirect to the home tab, and
-//    the tab page itself (the console's TabPage, bundled, its API answered in the page) draws the checklist (the next
-//    step's prompt, the connection panel), the first five notices and the charts, in that order; with every step done the
-//    checklist is one line that opens again. Screenshots with CONSOLE_TABS_SNAPSHOT_DIR (home-*.png).
+//    notices (its Due soon tab dropped), with rail cards (its number chart, the notices) and its charts moved to a
+//    Dashboard tab but one: the sidebar loses the Due soon tab, /app and /app/notices redirect to the home tab, and the
+//    tab page itself (the console's TabPage, bundled, its API answered in the page) draws the Setup page's layout: the
+//    checklist (every step described, a Copy prompt on each open step with a prompt), the connection card, the number
+//    card linking to Dashboard, the notices card (five, then Show all), and the tab's own chart below; with every step
+//    done the same page, every step checked. Screenshots with CONSOLE_TABS_SNAPSHOT_DIR (home-*.png).
 // 5b. One checklist (mold_v0-146): the setup steps and the pack's steps merged into one ordered list (setup-steps.ts:
-//    the shell's first, a pack step that stands for a shell step takes its place, the shell steps after it follow it); on
-//    the home tab one list, one count, the connection panel inside its connect step (no panel beside it), a done step's
-//    text behind its label.
+//    the shell's first, a pack step that stands for a shell step takes its place, the shell steps after it follow it).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -518,6 +518,15 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       "each covered shell step is dropped once, in the pack's place");
     assert.equal(mergeSetupSteps(shell, [pk("link", "connected")]).find((x: { key: string }) => x.key === "p/link")?.shell, "connected", "the pack's connect step carries the connection panel");
     console.log("✓ one checklist (mold_v0-146): the shell's steps then the packs', a pack step standing for a shell step in its place with the shell's later steps after it");
+    // 5c. the count (mold_v0-171): an optional step is shown and never counted, as the server's own done and total.
+    const { stepProgress } = await import("../web/src/features/portal/setup-steps.js");
+    const withOptional = mergeSetupSteps([sh("joined", true), sh("connected"), sh("tools"), { ...sh("dashboard"), optional: true }, sh("first_call"), sh("onboarded", true), sh("simulated", true), sh("reported")], []);
+    assert.equal(withOptional.length, 8, "the optional step is in the list");
+    assert.equal(withOptional.find((x: { key: string }) => x.key === "shell:dashboard")?.optional, true, "and carries optional");
+    assert.deepEqual(stepProgress(withOptional), { done: 3, total: 7 }, "3 of 7, not 3 of 8");
+    assert.deepEqual(stepProgress([{ ...sh("dashboard", true), optional: true }, sh("a", true)]), { done: 1, total: 1 }, "a done optional step is not counted either");
+    assert.deepEqual(stepProgress(mergeSetupSteps(shell, [pk("a")])), { done: 1, total: 5 }, "with no optional step every step counts");
+    console.log("✓ the checklist counts the steps that count (mold_v0-171): an optional step is shown, never in done or total (3 of 7 for eight steps with one optional)");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
