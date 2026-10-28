@@ -504,6 +504,15 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       "each covered shell step is dropped once, in the pack's place");
     assert.equal(mergeSetupSteps(shell, [pk("link", "connected")]).find((x: { key: string }) => x.key === "p/link")?.shell, "connected", "the pack's connect step carries the connection panel");
     console.log("✓ one checklist (mold_v0-146): the shell's steps then the packs', a pack step standing for a shell step in its place with the shell's later steps after it");
+    // 5c. the count (mold_v0-171): an optional step is shown and never counted, as the server's own done and total.
+    const { stepProgress } = await import("../web/src/features/portal/setup-steps.js");
+    const withOptional = mergeSetupSteps([sh("joined", true), sh("connected"), sh("tools"), { ...sh("dashboard"), optional: true }, sh("first_call"), sh("onboarded", true), sh("simulated", true), sh("reported")], []);
+    assert.equal(withOptional.length, 8, "the optional step is in the list");
+    assert.equal(withOptional.find((x: { key: string }) => x.key === "shell:dashboard")?.optional, true, "and carries optional");
+    assert.deepEqual(stepProgress(withOptional), { done: 3, total: 7 }, "3 of 7, not 3 of 8");
+    assert.deepEqual(stepProgress([{ ...sh("dashboard", true), optional: true }, sh("a", true)]), { done: 1, total: 1 }, "a done optional step is not counted either");
+    assert.deepEqual(stepProgress(mergeSetupSteps(shell, [pk("a")])), { done: 1, total: 5 }, "with no optional step every step counts");
+    console.log("✓ the checklist counts the steps that count (mold_v0-171): an optional step is shown, never in done or total (3 of 7 for eight steps with one optional)");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------

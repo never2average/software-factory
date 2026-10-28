@@ -48,6 +48,12 @@
      "url": "/app/profile",
      "icon": "account",
      "items": []
+    },
+    {
+     "title": "Connected apps",
+     "url": "/app/connected-apps",
+     "icon": "plug",
+     "items": []
     }
    ]
   }

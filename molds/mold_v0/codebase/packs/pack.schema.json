@@ -9064,6 +9064,9 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 120
+              },
+              "person": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -10416,6 +10419,197 @@
       },
       "additionalProperties": false
     },
+    "connect_page": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 260
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "heading": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "lead": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "accent_dark": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "header_link": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 60
+            },
+            "href": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          "required": [
+            "label",
+            "href"
+          ],
+          "additionalProperties": false
+        },
+        "clients": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "steps": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 600
+                }
+              }
+            },
+            "required": [
+              "name",
+              "steps"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "skill": {
+          "type": "object",
+          "properties": {
+            "heading": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "lead": {
+              "type": "string",
+              "maxLength": 600
+            },
+            "steps": {
+              "minItems": 1,
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 600
+              }
+            }
+          },
+          "required": [
+            "heading"
+          ],
+          "additionalProperties": false
+        },
+        "first_run": {
+          "type": "object",
+          "properties": {
+            "heading": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "cards": {
+              "minItems": 1,
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "title",
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 600
+            }
+          },
+          "required": [
+            "heading",
+            "cards"
+          ],
+          "additionalProperties": false
+        },
+        "footer": {
+          "type": "object",
+          "properties": {
+            "tagline": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "links": {
+              "minItems": 1,
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "href": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                },
+                "required": [
+                  "label",
+                  "href"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "path",
+        "title",
+        "heading",
+        "lead",
+        "clients"
+      ],
+      "additionalProperties": false
+    },
     "console": {
       "type": "object",
       "properties": {
@@ -10437,7 +10631,18 @@
               "schedules",
               "notices",
               "files",
-              "connected-apps"
+              "connected-apps",
+              "keys"
+            ]
+          }
+        },
+        "show": {
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "experiments"
             ]
           }
         },
