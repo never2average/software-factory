@@ -350,6 +350,17 @@ python3 .claude/scripts/provision.py <app_id> --operator new-org --yes -- --name
   only on a plain yes rerun it with `--yes`. Without `--yes` it stops with exit 3 and a `needs` entry of kind `approval`.
 - `--json` (before `--`) prints one result: `details.operator` has the script, the target, the masked arguments and command, `env`
   (the names handed to the script, never values; on Vercel), and the script's exit code. Exit 0 the script finished with 0, 1 it failed or the app could not be reached, 2 bad input, 3 a yes is needed.
+- **A mold_v0 app on Vercel** (mold_v0-173) takes the same path: from its build copy (or the mold's codebase), with `DATABASE_URL`
+  and `APP_RUN_SANDBOX` read from its API project (`<project>-api`) for the run only, and no file store. Its
+  `operator:vault-status` is **read-only**: it says which keys the app's Key vault holds (set or not, when last changed, never a
+  value), which providers the packs' run kinds need and which are missing, and why queued runs wait. It still asks for the yes,
+  because it connects to the live database; the dry run and the request say it only reads. `provision.py <app_id>` (the check)
+  names the providers the run kinds need and this command:
+
+  ```
+  python3 .claude/scripts/provision.py <app_id> --operator vault-status --dry-run          # what would run; nothing contacted
+  python3 .claude/scripts/provision.py <app_id> --operator vault-status --yes [-- --json] # only after the person's yes
+  ```
 
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this

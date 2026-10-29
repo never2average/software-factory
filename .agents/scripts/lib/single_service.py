@@ -874,6 +874,53 @@ def health_verdict(F, kv, public, pages=None):
     return bad
 
 # ---------------------------------------------------------------------------------------------------------
+# the key vault the run kinds need (mold_v0-173): offline, from the packs' pack.json
+# ---------------------------------------------------------------------------------------------------------
+def pack_json(app_id, app, pid, root=None):
+    """The pack.json of pack `pid` as this app's build has it (build/<app_id>/packs/<pid>/), else the factory's pack
+    (packs/<pid>/files/packs/<pid>/); None when neither is on disk."""
+    r = root or ROOT
+    for p in (os.path.join(source_for(app_id, app, r), "packs", pid, "pack.json"), os.path.join(r, "packs", pid, "files", "packs", pid, "pack.json")):
+        try: return load(p)
+        except (OSError, ValueError): continue
+    return None
+
+def run_needs(app_id, app, target, root=None):
+    """{"kinds": n, "needs": {slug: [<pack>.<kind>, ...]}, "boat": bool, "unread": [pack ids]} from the job kinds the
+    packs' pack.json declare: each kind's gateway `providers`, its `operator_credentials` (the vault's pack_credentials),
+    and boat for their sandboxes on Vercel (APP_RUN_SANDBOX auto, the only hosted sandbox there; src/run-sandboxes.ts
+    boatForRuns). Kinds a pack adds in code (definePack) are not seen here; the operator script reads the build itself."""
+    needs, n, unread = {}, 0, []
+    for pid in app.get("packs") or []:
+        doc = pack_json(app_id, app, pid, root)
+        if doc is None: unread.append(pid); continue
+        for k in doc.get("job_kinds") or []:
+            if not isinstance(k, dict): continue
+            n += 1; kid = f"{pid}.{k.get('name', '?')}"
+            for slug in k.get("providers") or []: needs.setdefault(slug, []).append(kid)
+            if k.get("operator_credentials"): needs.setdefault("pack_credentials", []).append(kid)
+    boat = target == "vercel" and n > 0
+    return {"kinds": n, "needs": needs, "boat": boat, "unread": unread}
+
+def say_run_needs(app_id, app, target, say=print, root=None):
+    """One line for the offline check: what the run kinds need from the key vault and the command that says whether it is
+    set. Never contacts anything: whether a key is set is in the app's database, which only that command reads."""
+    if not (app.get("packs") or []): return
+    r = run_needs(app_id, app, target, root)
+    parts = [f"{slug} ({len(ks)} kind{'s' if len(ks) > 1 else ''})" for slug, ks in sorted(r["needs"].items())]
+    if r["boat"]: parts.append("boat (the runs' sandboxes on Vercel)")
+    what = (f"the run kinds ({r['kinds']}, from the packs' pack.json) need from the key vault: {', '.join(parts)}" if parts
+            else f"the run kinds ({r['kinds']}, from the packs' pack.json) need no key from the key vault")
+    if r["unread"]: what += f" (pack.json not on disk for {', '.join(r['unread'])})"
+    if target == "vercel" and parts:
+        say(f"  {what}. Whether each is set is in the app's database (not read by this check); a read-only report, which needs a yes: "
+            f"python3 .claude/scripts/provision.py {app_id} --operator vault-status --dry-run (then --yes)")
+    elif parts:
+        say(f"  {what}. Whether each is set: the app's /admin Key vault page (the factory runs operator:vault-status for an app on Vercel only, today)")
+    else:
+        say(f"  {what}.")
+
+# ---------------------------------------------------------------------------------------------------------
 # compose_remote: check, deploy, set-secret, rollback
 # ---------------------------------------------------------------------------------------------------------
 def uses_build(app):
@@ -923,6 +970,7 @@ def check(app_id, app, infra, adir, say=print, root=None):
     for e in errs: say("  state: " + e)
     pre = preflight(cb, F, S)
     for p in pre: say("  not ready: " + p)
+    say_run_needs(app_id, app, "compose_remote", say=say, root=root)
     say("a deploy will, in order:")
     for i, st in enumerate(plan(S, F, source_for(app_id, app, root)), 1): say(f"  {i:2d}. {st['title']}")
     say(f"values only you hold, asked for at a hidden prompt during the deploy if the server lacks them: {', '.join(S['secrets_user']) or 'none'}")
@@ -1820,6 +1868,7 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
         say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
     ck = clerk_reading(app_id, app, man, cb, names, {r: bool(meta[r].get("id")) for r in names}, P, root, read_json, api_held=present["api"])
     for l in (ck or {}).get("lines") or []: say(l)
+    say_run_needs(app_id, app, "vercel", say=say, root=root)
     say("a deploy will:")
     for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
@@ -1899,6 +1948,15 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
     t = infra.get("target"); dry = "--dry-run" in a
     try:
         errs = VR.state_problems(app_id, adir) if root is None else []
+        if "--operator" in (a[:a.index("--")] if "--" in a else a):
+            # One of the build's operator:* scripts (mold_v0-173: today the read-only operator:vault-status) against the app
+            # on Vercel, the way lib/operator_run.py runs mold_v1's: from the build copy, with DATABASE_URL read from the API
+            # project's production environment for the run only; a dry run with --dry-run, exit 3 for a yes without --yes.
+            # Ahead of every other flag: the script's own arguments (after --) are never read as provision's.
+            import operator_run
+            if t == "vercel": refuse_project(app_id, infra, P, root)
+            api = ((infra.get("vercel") or {}).get("projects") or {}).get("api") or vercel_projects(vercel_project(infra)).get("api", "")
+            return operator_run.main_for(app_id, a, app, infra, ds, P=P, say=say, v0={"build": source_for(app_id, app, root), "env_project": api})
         if "--lane-key" in a:
             if t == "vercel": refuse_project(app_id, infra, P, root)
             return lane_key(app_id, app, infra, a, P, say=say, root=root, adir=adir)

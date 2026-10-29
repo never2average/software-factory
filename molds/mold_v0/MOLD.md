@@ -1046,6 +1046,24 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   configuration's help wraps, so its Value, From and Variable columns stay on the page at 1440 px. `npm run
   test:admin-engine` proves a shell build and, run in a host pack's build, that every setting, provider and Compute
   figure is as before.
+- **The key vault from the factory, read-only** (mold_v0-173, built): `npm run operator:vault-status [-- --json] [-- --all]`
+  (`scripts/operator/vault-status.ts`, `src/vault-status.ts`) says, per key vault provider the build reads (as the Key
+  vault page lists them: `src/vault-providers.ts` `providerInBuild`, moved out of `src/platform-keys.ts`), its name,
+  category, whether a key is set (turned on, the provider turned on; a Vertex AI backend counts its service-account
+  key) and when a key last changed; which providers the build's run kinds need (each kind's `providers`, its
+  `operator_credentials` as `pack_credentials` labels, boat when `boatForRuns` sends the runs' sandboxes there; with
+  the deployment's `APP_RUN_SANDBOX`) and which of those are missing; and how many runs are queued and the latest
+  `waiting` reason on them (`run_events`). It is **read-only**: one connection with the app's own role (`DATABASE_URL`,
+  else the local PGlite database), one transaction made `READ ONLY` before its first query (checked with `SHOW
+  transaction_read_only`) and always rolled back; it never calls `getDb` (which migrates): `DATABASE_URL` is taken out of
+  the environment before the app's modules load. It never prints a value: its queries select slugs, flags, counts and
+  timestamps only, never the sealed value, its hint or its metadata. Its first line, `// READ-ONLY. ...`, is what the
+  factory's `provision.py <app> --operator vault-status [--dry-run|--yes]` reads to say so when it asks for the yes
+  (`.claude/scripts/lib/operator_run.py`: a mold_v0 app on Vercel runs it from its build copy with `DATABASE_URL` and
+  `APP_RUN_SANDBOX` read from its `<project>-api` production environment for the run only), and `provision.py <app>`
+  (the check, offline) names the providers the packs' job kinds need with that command. `npm run test:vault-status`
+  proves set and unset, no seeded secret or its hint in any output, a write inside its transaction refused (25006) and
+  the database unchanged after it ran.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a

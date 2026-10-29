@@ -105,6 +105,8 @@
     "fleet:status": "tsx --env-file-if-exists=.env scripts/fleet-status.ts",
     "orchestrator:install": "npm --prefix orchestrator ci",
     "keyvault": "tsx --env-file-if-exists=.env scripts/keyvault.ts",
+    "operator:vault-status": "node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts",
+    "test:vault-status": "tsx scripts/vault-status-test.ts",
     "usage": "tsx --env-file-if-exists=.env scripts/usage.ts",
     "mcp:check": "tsx scripts/mcp-check.ts",
     "web:build": "npm --prefix web ci && npm --prefix web run build",
