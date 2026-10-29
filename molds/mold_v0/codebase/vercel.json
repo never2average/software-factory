@@ -10,7 +10,7 @@
   ],
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{public/**,sql/**,packs/**,harnesses/**,src/**,orchestrator/**}",
+      "includeFiles": "{public/**,sql/**,packs/**,harnesses/**,src/**,orchestrator/**,scripts/install-run-tools.ts}",
       "maxDuration": 300
     }
   },
