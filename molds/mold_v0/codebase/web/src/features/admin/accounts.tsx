@@ -76,7 +76,7 @@ export function AdminAccounts() {
     { key: 'next_step', label: 'Next step', type: 'text', hidden: true, value: (o) => o.next_step, render: (o) => o.next_step },
     { key: 'attention', label: 'Attention', type: 'number', keep: true, value: (o) => o.attention.length, render: (o) => o.attention.length ? (
       <Tooltip>
-        <TooltipTrigger render={<span className='flex max-w-72 min-w-0 flex-col gap-1 text-sm leading-none text-amber-400' />}>
+        <TooltipTrigger render={<span className='flex max-w-72 min-w-0 flex-col gap-1 text-sm leading-none text-amber-700 dark:text-amber-400' />}>
           <span className='truncate leading-none'>{o.attention[0]}</span>
           {o.attention.length > 1 && <span className='text-muted-foreground text-xs leading-none'>+{o.attention.length - 1} more</span>}
         </TooltipTrigger>
