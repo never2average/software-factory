@@ -110,7 +110,7 @@ export function NoticesPage() {
           searchText={(n) => `${n.title ?? ''} ${n.key} ${n.area_label} ${n.due_on}`}
           searchPlaceholder='Search notices'
           primary={data?.notices.length ? <ExportRowsButton name='notices' rows={data.notices} cols={cols} /> : undefined}
-          empty={<div className='mx-auto max-w-xl text-left'><EmptyState id='empty-notices' empty={{
+          empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-notices' empty={{
             title: 'Nothing is due soon.',
             text: 'A record shows here when its due date comes within its area\'s window. Checked once a day; owners also get them by email.',
             cta: null

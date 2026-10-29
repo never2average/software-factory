@@ -221,7 +221,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} compact={!tab.charts.length}
             exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas}
-            empty={<div className='mx-auto max-w-xl text-left'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
+            empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
     </div>

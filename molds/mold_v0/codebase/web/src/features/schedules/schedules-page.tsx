@@ -56,7 +56,7 @@ export function SchedulesPage() {
             searchPlaceholder='Search schedules'
             filters={data && <span className='text-muted-foreground text-xs'>{data.can_manage ? 'Open a schedule to change when it runs.' : 'An owner of this workspace changes these.'}</span>}
             primary={data?.schedules.length ? <ExportRowsButton name='schedules' rows={data.schedules} cols={cols} /> : undefined}
-            empty={<div className='mx-auto max-w-xl text-left'><EmptyState id='empty-schedules' empty={{
+            empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-schedules' empty={{
               title: 'No schedules yet.',
               text: data?.can_manage && data.kinds.length ? 'Add one below: pick what runs, and when (UTC).' : 'An owner of this workspace adds them.',
               cta: null

@@ -118,7 +118,7 @@ function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 
 function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
   const repos = useRepositories(base === 'admin');
   const e = recordEmptyText(area, base, base === 'admin' ? repoOf(area.name, repos.data?.repositories) : null);
-  return <div className='mx-auto max-w-xl text-left'><EmptyState empty={e} id={`records-${area.name}-empty`} /></div>;
+  return <div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={e} id={`records-${area.name}-empty`} /></div>;
 }
 
 /**

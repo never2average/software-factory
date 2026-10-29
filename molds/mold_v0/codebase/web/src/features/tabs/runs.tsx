@@ -115,7 +115,7 @@ export function RunsTable({ tab, reports }: { tab: Pick<PackTabSpec, 'pack' | 'i
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${statusLabel(r.status)} ${runTarget(r)?.key ?? ''} ${r.id}`}
       searchPlaceholder={`Search ${noun}`}
       primary={runs.length ? <ExportRowsButton name={`${tab.pack}-${tab.id}`} rows={runs} cols={cols} /> : undefined}
-      empty={<div className='mx-auto max-w-xl text-left'><EmptyState empty={tab.empty} id={reports ? 'empty-reports' : 'empty-runs'} /></div>}
+      empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={reports ? 'empty-reports' : 'empty-runs'} /></div>}
       detailTitle={(r) => runKindLabel(r.pack, r.kind)}
       detailActions={(r) => {
         const t = runTarget(r);
