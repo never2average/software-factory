@@ -2,10 +2,11 @@
 // /app/credentials (mold_v0-034; src/credential-routes.ts): the credential fields the packs declare, each value stored
 // sealed with the workspace's data key. A value is typed once, sent once, and never shown again: the page shows only
 // its last 4 characters, to owners. Owners set, replace and remove values; everyone else in the workspace sees which are set.
+// The credentials are the console's database table (mold_v0-176): one opens beside the list with its values and the form.
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { Section } from '@/components/layout/section';
+import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,14 +59,42 @@ export function CredentialsPage() {
       ) : (
         <div className='flex flex-col gap-10'>
           <GithubAppSection />
-          {data.fields.map((f) => (
-            <FieldSection key={`${f.pack}/${f.name}`} f={f} values={data.values.filter((v) => v.pack === f.pack && v.name === f.name)} canManage={data.can_manage} onChanged={reload}
-              oauth={f.oauth && oauth ? <OAuthConnections f={f} view={oauth} onChanged={reloadOAuth} /> : null} />
-          ))}
+          {/* The console's database table (mold_v0-176, as on Accounts): a credential per row; it opens beside the list,
+              where owners set, replace and remove its values. */}
+          <RecordView<Field>
+            id='app-credentials' compact noun='credentials' properties
+            rows={data.fields} rowKey={(f) => `${f.pack}/${f.name}`} cols={credentialColumns(data.values)}
+            searchText={(f) => `${f.label} ${f.name} ${f.help ?? ''} ${bound(f)}`}
+            searchPlaceholder='Search credentials'
+            filters={<span className='text-muted-foreground text-xs'>{data.can_manage ? 'Open a credential to set or replace it.' : 'An owner of this workspace sets these.'}</span>}
+            empty={<p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>}
+            detailTitle={(f) => f.label}
+            detail={(f) => (
+              <FieldSection key={`${f.pack}/${f.name}`} f={f} values={data.values.filter((v) => v.pack === f.pack && v.name === f.name)} canManage={data.can_manage} onChanged={reload}
+                oauth={f.oauth && oauth ? <OAuthConnections f={f} view={oauth} onChanged={reloadOAuth} /> : null} />
+            )}
+          />
         </div>
       )}
     </PageContainer>
   );
+}
+
+const valuesOf = (f: Field, values: Stored[]) => values.filter((v) => v.pack === f.pack && v.name === f.name);
+const latest = (vs: Stored[]) => vs.map((v) => v.updated_at).sort().at(-1) ?? null;
+
+function credentialColumns(values: Stored[]): RecordCol<Field>[] {
+  return [
+    { key: 'credential', label: 'Credential', title: true, keep: true, type: 'text', className: 'min-w-48', value: (f) => f.label, render: (f) => <span className='leading-snug font-medium'>{f.label}</span> },
+    {
+      key: 'state', label: 'Status', type: 'select', keep: true, options: [{ value: 'set', label: 'Set' }, { value: 'not_set', label: 'Not set' }],
+      value: (f) => (valuesOf(f, values).length ? 'set' : 'not_set'),
+      render: (f) => { const n = valuesOf(f, values).length; return <Badge variant={n ? 'secondary' : 'outline'}>{!n ? 'Not set' : f.bound_to === 'workspace' ? 'Set' : `${n} set`}</Badge>; }
+    },
+    { key: 'bound', label: 'Applies to', type: 'text', value: (f) => bound(f), render: (f) => bound(f) },
+    { key: 'deliver', label: 'Given to runs as', type: 'text', value: (f) => ('env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file), render: (f) => <span className='font-mono text-xs'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</span> },
+    { key: 'updated', label: 'Updated', type: 'date', value: (f) => latest(valuesOf(f, values)), render: (f) => <When d={latest(valuesOf(f, values))} /> }
+  ];
 }
 
 function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; values: Stored[]; canManage: boolean; onChanged: () => unknown; oauth?: React.ReactNode }) {
@@ -86,8 +115,9 @@ function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; va
   const remove = (v: Stored) => call('DELETE', { pack: v.pack, name: v.name, asset: v.asset, environment: v.environment })
     .then(() => { toast.success('Removed'); return onChanged(); }).catch(fail);
   return (
-    <Section title={f.label} description={<>{f.help ?? bound(f)} <Badge variant='secondary' className='ml-1'>{'env' in f.deliver_as ? f.deliver_as.env : f.deliver_as.file}</Badge>
-      {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected above, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</>}>
+    <div className='flex min-w-0 flex-col gap-3'>
+      <p className='text-muted-foreground text-sm'>{f.help ?? bound(f)}
+        {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</p>
       {oauth}
       {oauth && <p className='text-muted-foreground text-xs'>Or paste a value: it is used where nothing is connected.</p>}
       {values.length > 0 ? (
@@ -124,13 +154,13 @@ function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; va
           ) : <Input className='w-36' placeholder='environment' value={environment} onChange={(e) => setEnvironment(e.target.value)} aria-label='Environment' />)}
           {'file' in f.deliver_as ? (
             // A file (a key, a certificate) keeps its line breaks: a text area, not a one-line field.
-            <Textarea className='w-96 font-mono text-xs' rows={4} autoComplete='off' spellCheck={false} placeholder='Paste the file' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
+            <Textarea className='w-full max-w-96 font-mono text-xs' rows={4} autoComplete='off' spellCheck={false} placeholder='Paste the file' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
           ) : (
-            <Input className='w-72' type='password' autoComplete='off' spellCheck={false} placeholder='Paste the value' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
+            <Input className='w-full max-w-72' type='password' autoComplete='off' spellCheck={false} placeholder='Paste the value' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
           )}
           <Button type='submit' size='sm' disabled={busy || !value}>{values.length ? 'Save or replace' : 'Save'}</Button>
         </form>
       ) : <p className='text-muted-foreground text-xs'>An owner of this workspace sets these.</p>}
-    </Section>
+    </div>
   );
 }

@@ -72,3 +72,20 @@ export function ExportCsvButton({ url, area, name, rows, areas }: { url: string;
     </div>
   );
 }
+
+/**
+ * Export CSV of a list the page already holds (mold_v0-176: runs, reports, schedules, notices): every row it read, a
+ * column per typed column (its plain name, its raw value), text a spreadsheet would run as a formula defused as above.
+ */
+export function ExportRowsButton<T>({ name, rows, cols }: { name: string; rows: readonly T[]; cols: { key: string; label: unknown; name?: string; value?: (r: T) => unknown; csv?: false }[] }) {
+  const shown = cols.filter((c) => c.value && c.csv !== false);
+  const run = () => {
+    const head = shown.map((c) => c.name ?? (typeof c.label === 'string' ? c.label : c.key));
+    downloadText(`${name}-${today()}.csv`, '﻿' + line(head) + rows.map((r) => line(shown.map((c) => c.value!(r)))).join(''), 'text/csv;charset=utf-8');
+  };
+  return (
+    <Button variant='outline' size='sm' onClick={run} disabled={!rows.length} data-testid='export-csv'>
+      <Icons.download aria-hidden='true' /> Export CSV
+    </Button>
+  );
+}

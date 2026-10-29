@@ -339,6 +339,21 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
   (`testing/console/world.mts`) writes them into its throwaway database so the pages are graded with rows; a deployed
   build never writes them. `npm run test:record-pages` checks the empty states, the staff guide and the samples rule.
+  **Every customer list is that table (mold_v0-176).** An area tab's table view (`RecordTableView`, the same component
+  as the list page: a merged tab's rows too, a row opening the record of the first of its areas), the `runs` and
+  `reports` tabs (`web/src/features/tabs/runs.tsx`: kind in the pack's words, status, the asset record it ran over,
+  started or finished, duration, results and cost; status and kind filter by their options; a row opens the run beside
+  the list with its error and results and a link to that record), Schedules (a row opens the schedule, where owners
+  change when it runs or remove one they added; the switch turns it on and off in its row), Notices (a row's menu
+  dismisses it) and Credentials (a credential per row, opening its values and the form beside the list) all draw
+  `RecordView`, with the page's own empty state guiding the person (a tab's `empty`) and nothing linking to a staff page.
+  Boards and timelines stay as they were. Pages a build's original look gives a look of their own (API keys, Usage,
+  Activity, Connected apps, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
+  workspace sample rows of its own (`testing/console/seed.mts`): every stored workspace area a few records made from its
+  fields (an enum through its options, dates around today, a reference to a record the world has) and a few runs of the
+  build's job kinds (finished, failed, running; over an asset record when the kind reads one; with results against the
+  shared check samples), so the lists are graded with rows. Only the lane world writes them; `npm run
+  test:record-pages` checks a run's row in words and that every customer list page is the table.
 - **jobKinds** (mold_v0-041, built): the generic run engine, beside the product's session queue (which it does not
   change). `sql/migrations/0005_runs.sql` adds `runs`, `run_events` and `run_results` (each `org_id` under
   `tenant_isolation`; the tenant role may only read them) and a `run` gateway token kind (`gateway_tokens.run_id`,
