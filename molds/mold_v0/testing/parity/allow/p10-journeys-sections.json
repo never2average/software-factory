@@ -1,0 +1,6 @@
+{
+  "phase": "mold_v0-175: every build's Home offers the journey picker (Get set up first), a home tab is drawn at /app, sections tabs (in-page tabs) and filtered area tabs. Octillion declares no tab and already had the picker with Get set up: its /app and /app/journeys pages, every answer and every tool are unchanged",
+  "allow": [
+    { "key": "generated::web/src/config/pack-nav.generated.ts", "reason": "the tab spec's type gains the sections kind, charts_title, filtered and sections (a home tab's charts heading, a filtered area tab, a sections tab's in-page tabs); Octillion declares no tab, so its tabs list is unchanged" }
+  ]
+}

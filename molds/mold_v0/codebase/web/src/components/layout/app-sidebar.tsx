@@ -88,7 +88,8 @@ export default function AppSidebar() {
       <SidebarContent className='overflow-x-hidden'>
         {filteredGroups.map((group) => (
           <SidebarGroup key={group.label || 'ungrouped'} className='py-0 group-data-[collapsible=icon]:py-1.5'>
-            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
+            {/* A group of one entry named like it (mold_v0-175: Overview in Overview) shows no heading that repeats it. */}
+            {group.label && !(group.items.length === 1 && group.items[0]!.title === group.label) && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
             <SidebarMenu>
               {group.items.map((item) => {
                 const Icon = item.icon ? Icons[item.icon] : Icons.logo;
