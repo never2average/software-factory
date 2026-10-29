@@ -1490,6 +1490,32 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (a list filter as the record tools take it: `{"status": {"in": ["remediating", "resolved"]}}`), applied by the server
   on `/api/records/tabs/<pack>/<tab>` (never by the page: paging stays right); a field the area lacks is refused.
   `npm run test:declarative-packs` refuses those and checks the URLs, the sidebar and the redirects.
+  **A list tab's four cards** (mold_v0-181): every area, runs, reports and schedules tab (on its own page or as an
+  in-page tab) shows four cards directly below its toolbar (the row with search, Filter and Export CSV) and above its
+  table (above a board or a timeline, which have no toolbar), each a label, a value and a sparkline of the last 12
+  weeks (`web/src/features/tabs/sparklines.tsx`, drawn as the console's headline numbers: `StatStrip` with `quad`, four
+  across from a wide screen and two by two below it, one fixed height with placeholders while they load, each card's
+  value and trend said in words for a screen reader). pack.json `sparklines` on such a tab names exactly 4 of the pack's
+  metrics, in order: a single number (a count or a sum: its line is a running total of the rows it reads today by the
+  week each was added, ending at the value; an average, a rate or a duration: its line is the same measure week by week,
+  by its duration's end or else when the row was added) or a series (`by_time`: the value is its current bucket, the
+  label "<label> this week", "this month" or "today", the line its weeks); never one with `group_by`. Without it the
+  shell's four (`src/metric-spec.ts` `sparkPlan`): an area tab's rows (under the tab's label), new in the last 7 days,
+  then two of the pack's own metrics over the area that the person may read, else changed in the last 7 days and the
+  most common value of the area's main enum (its lifecycle's field, else the first single-choice enum of the table's
+  columns); a filtered tab's cards count the rows its filter shows (a filter they cannot apply, a key, a title, a
+  prefix or text, is refused at build: declare the tab's `sparklines`), a merged tab's its own area's. A runs, reports
+  or schedules tab: {Runs} this week (reports: finished), the share that succeeded, the average duration and the
+  spend. The numbers come from `GET /api/sparklines/<pack>/<tab>` (`src/sparklines.ts`, mounted when a pack declares a
+  list tab, so with zero packs or none nothing answers): every card a metric the metric engine computes for the
+  session's workspace under its row-level security (`computeSpec`: the declared ones and the shell's, no SQL of its
+  own), the tab refused to a role the sidebar does not show it to (403) or when its list is withheld (404), each card
+  to a role that may not read its metric alone (its place and label kept, "not shown to your role"). gen-packs refuses
+  `sparklines` that are not exactly 4, a metric twice, on another kind of tab, a metric the pack does not declare, one
+  with `group_by`, one whose weeks have no point in time. A build whose packs declare no list tab (Octillion's host
+  pack) shows no card and mounts no route. `npm run test:declarative-packs` refuses those; `npm run test:metrics`
+  checks each card's value and weeks by hand (declared, an area's and a runs tab's defaults, the commonest value), two
+  workspaces, a role, and the route; `npm run test:record-pages` the words and that every list shows them.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per

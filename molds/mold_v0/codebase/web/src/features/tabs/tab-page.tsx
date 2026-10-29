@@ -12,6 +12,8 @@
 //   runs       the workspace's runs; reports: finished runs and their results (./runs.tsx: the same database table)
 //   sections   one page of several area tabs (mold_v0-175: pack.json `sections`), an in-page tab strip above the
 //              selected one's charts, views and table (?tab=<id>)
+// Every list (area, runs, reports, schedules) shows four cards below its toolbar (mold_v0-181; ./sparklines.tsx): the
+// tab's pack.json `sparklines`, else the shell's for its kind.
 // An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
@@ -36,6 +38,7 @@ import { ExportCsvButton } from './export';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { RunsTable } from './runs';
+import { TabSparklines } from './sparklines';
 import { httpError } from '@/features/status/from-error';
 import { StatusPage } from '@/features/status/status-page';
 
@@ -223,12 +226,15 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         {!table && <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />}
       </div>
       )}
-      <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
+      <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}
+        className={table ? undefined : 'flex flex-col gap-3'}>
+      {/* The four cards (mold_v0-181): below the table's toolbar; a board or a timeline has none, so above it. */}
+      {!table && <TabSparklines tab={tab} />}
       {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
         : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} compact={!tab.charts.length}
-            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
@@ -254,8 +260,8 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
       </TabsList>
       <TabsContent value={current.id}>
         {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
-          : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} />
-          : current.kind === 'schedules' ? <SchedulesBody key={current.id} /> : null}
+          : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
+          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} /> : null}
       </TabsContent>
     </Tabs>
   );
@@ -279,7 +285,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
         : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
         : tab.kind === 'sections' ? <SectionsTab tab={tab} role={role} />
-        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTable tab={tab} reports={tab.kind === 'reports'} />
+        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTable tab={tab} reports={tab.kind === 'reports'} summary={<TabSparklines tab={tab} />} />
         : null}
     </PageContainer>
   );
