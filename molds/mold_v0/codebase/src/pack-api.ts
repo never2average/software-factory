@@ -1003,9 +1003,10 @@ export type Chart = z.output<typeof ChartSchema>;
  *   overview      the tab's `charts` (mold_v0-063); `include` makes it a home page (mold_v0-134): with `setup` it is
  *                 drawn as the Setup page (mold_v0-172: the checklist of the setup steps and the packs' onboarding
  *                 steps, each with its prompt, the connection card and the `rail` cards beside it, the charts below);
- *                 `notices` the records due soon (below the checklist, or a `rail` card). /app or /app/notices then
- *                 redirects to the tab, and a build refuses a setup or a notices tab beside it (its page would only
- *                 redirect here)
+ *                 `notices` the records due soon (below the checklist, or a `rail` card). A tab that includes setup
+ *                 is drawn at /app itself (mold_v0-175; its /app/<id> redirects there), `charts_title` the heading
+ *                 above its charts; /app/notices then redirects to the tab, and a build refuses a setup or a notices
+ *                 tab beside it (its page would only redirect here)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
  *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
@@ -1014,6 +1015,13 @@ export type Chart = z.output<typeof ChartSchema>;
  *   runs          the workspace's runs; reports: finished runs and their results
  *   credentials, usage, schedules, notices, setup, billing, profile   the shell's own page
  *   page          one of the pack's own pages (pack.json pages, `page`)
+ *   sections      one page of several of the pack's tabs (mold_v0-175): `sections` names them in order (area, runs,
+ *                 reports or schedules tabs), each an in-page tab under its own label (above its charts, views and
+ *                 table; ?tab=<id> picks one). They leave the sidebar, their own address of before (/app/<id>, or the
+ *                 shell's page: /app/schedules) redirects to /app/<this tab>?tab=<id>, and this tab is shown to the
+ *                 roles that may read one of them (each in-page tab to the roles its own tab is)
+ * An area tab over one area may narrow its rows with `filter` (mold_v0-175): a list filter as the record tools take it
+ * ({field: value} or {field: {op: value}}), applied by the server (/api/records/tabs/<pack>/<tab>), never by the page.
  *   files         the pack's workspace store in the console's file viewer (mold_v0-056; /app/files): versions, files,
  *                 diffs, for the roles that may read every one of the pack's record areas
  * `label` is the tab's name in the app's words (default: the area's label, else the shell's word), `icon` one of
@@ -1021,7 +1029,10 @@ export type Chart = z.output<typeof ChartSchema>;
  * the area, an overview never to one that may read none of its metrics).
  */
 // team and keys (mold_v0-133): the shell's Team page (part of Billing) and the person's own API keys, so a declared sidebar reaches every shell page.
-export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files"] as const;
+// sections (mold_v0-175): one page of several of the pack's area tabs, as in-page tabs.
+/** The kinds of tab a sections tab shows as its in-page tabs (mold_v0-175). */
+export const SECTION_KINDS = ["area", "runs", "reports", "schedules"] as const;
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections"] as const;
 /** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
 export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
@@ -1031,11 +1042,12 @@ export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 export const TAB_INCLUDES = ["setup", "notices"] as const;
 /**
  * The cards of a home tab's right column (mold_v0-172), below the "Connect your AI client" card, in order:
- *   journeys       the journey picker (the build's journeys component, pack.json journeys: shown only when it is on)
+ *   journeys       the journey picker: "Get set up" (the setup steps, every build's) and the build's journeys
+ *                  (mold_v0-175: pack.json journeys adds its own; with none the picker has Get set up alone)
  *   notices        the records due soon, as a short list (needs a due-date area; the tab then also includes notices)
  *   chart:<name>   one of the pack's number charts as a card of its tiles, with a link to the tab that shows it beside
  *                  the other charts (another overview tab of the pack listing it), when there is one
- * Left out: the journey picker when the build has journeys, else no second card (the Setup page's own layout).
+ * Left out: the journey picker (the Setup page's own layout: every build has Get set up, mold_v0-175).
  */
 export const TAB_RAIL = /^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$/;
 /**
@@ -1104,6 +1116,13 @@ export const TabSchema = z.object({
   charts: z.array(name).max(12).optional(),
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
   rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL) or chart:<one of the pack's number charts>")).min(1).max(2).optional(),
+  /** An area tab's own narrowing of its one area's rows (mold_v0-175): a list filter, {field: value} or {field: {op: value}}. */
+  filter: z.record(z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "a field of the area (or key, title, updated_at)"), z.unknown())
+    .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
+  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
+  sections: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a tab id of this pack")).min(2).max(6).optional(),
+  /** A home tab's heading above its charts, below both columns (mold_v0-175); none by default. */
+  charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
@@ -1125,6 +1144,11 @@ export const TabSchema = z.object({
   if (t.rail && !(t.include ?? []).includes("setup")) bad("rail is for a home tab: an overview tab that includes setup", "rail");
   if (t.rail && new Set(t.rail).size !== t.rail.length) bad("a card is listed twice", "rail");
   if (t.rail?.includes("notices") && !(t.include ?? []).includes("notices")) bad("the notices card is for a tab that includes notices (/app/notices leads there)", "rail");
+  if (t.filter && (t.kind !== "area" || !t.area || t.areas)) bad("filter is for an area tab over one area (area)", "filter");
+  if (t.kind === "sections" && !t.sections) bad("a sections tab names the tabs it shows (sections)", "sections");
+  if (t.sections && t.kind !== "sections") bad("sections is for a sections tab", "sections");
+  if (t.sections && new Set(t.sections).size !== t.sections.length) bad("a tab is listed twice", "sections");
+  if (t.charts_title !== undefined && (!(t.include ?? []).includes("setup") || !t.charts?.length)) bad("charts_title is for a home tab with charts: an overview tab that includes setup and lists charts", "charts_title");
   if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
@@ -1492,6 +1516,15 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     const c = (p.charts ?? []).find((x) => x?.name === r.slice(6));
     if (!c) problems.push(at(`tab ${t.id}: rail ${r}: this pack declares no chart ${r.slice(6)}`));
     else if (c.type !== "number") problems.push(at(`tab ${t.id}: rail ${r}: a card shows a number chart (its tiles); ${c.name} is a ${c.type} chart`));
+  }
+  // A sections tab's in-page tabs (mold_v0-175): this pack's own area tabs, each in one sections tab at most.
+  const inSections = new Map<string, string>();
+  for (const t of p.tabs ?? []) for (const id of t?.sections ?? []) {
+    const x = (p.tabs ?? []).find((y) => y?.id === id);
+    if (!x) problems.push(at(`tab ${t.id}: sections ${id}: this pack declares no tab ${id}`));
+    else if (!SECTION_KINDS.includes(x.kind as never)) problems.push(at(`tab ${t.id}: sections ${id}: an in-page tab is an area, runs, reports or schedules tab; ${id} is a ${x.kind} tab`));
+    else if (inSections.has(id) && inSections.get(id) !== t.id) problems.push(at(`tab ${t.id}: sections ${id}: tab ${inSections.get(id)} shows it already`));
+    inSections.set(id, t.id);
   }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");

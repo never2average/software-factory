@@ -1775,9 +1775,6 @@ if (memoryFacts) {
   files.set(bf, files.get(bf) + "/** The account context and memory component (mold_v0-142: pack.json memory): its /app/context pages, their old addresses and its words. */\n" +
     `export const CONTEXT_MEMORY = ${json(memoryFacts)};\n`);
 }
-// A home tab's journeys card (mold_v0-172: a tab's rail) needs the journeys component on in this build.
-for (const t of packViews.tabs) if ((t.rail ?? []).includes("journeys") && !journeyFacts) fail(`packs/${t.pack}/pack.json`, `tab ${t.id}: rail journeys: no pack of the build turns the journeys component on (pack.json journeys)`);
-refuse();
 // The shell's console sections shown from the start (mold_v0-171: console.show), only when a pack or the profile shows one.
 if (SHOWN_SECTIONS.length) {
   const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
@@ -1971,12 +1968,24 @@ const SHELL_ADMIN_SEGMENTS = new Set(existsSync(SHELL_ADMIN_DIR) ? readdirSync(S
   .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name) && e.name !== "host").map((e) => e.name) : []);
 /** The flat address of a pack's customer page or tab page: /app/<id>. */
 const appPageUrl = (id) => `/app/${id}`;
+/** A home tab (mold_v0-134): an overview that includes the Setup page's checklist, the build's home page. */
+const isHomeTab = (t) => t.kind === "overview" && (t.include ?? []).includes("setup");
+/** The shell's page a tab of each kind opens (the sidebar's entry for it). */
+const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
+  "connected-apps": "/app/connected-apps" };
+/** The sections tab that shows a tab as one of its in-page tabs (mold_v0-175), or null. */
+const sectionParent = (t) => packViews.tabs.find((x) => x.kind === "sections" && x.pack === t.pack && (x.sections ?? []).includes(t.id)) ?? null;
+/**
+ * A tab's own page: /app/<id>; but the home tab's is /app itself, and an in-page tab's its sections tab's with ?tab=<id>
+ * (mold_v0-175: each one's old /app/<id> redirects there).
+ */
+const tabUrl = (t) => { const parent = sectionParent(t); return isHomeTab(t) ? "/app" : parent ? `${appPageUrl(parent.id)}?tab=${t.id}` : appPageUrl(t.id); };
 /** Every flat customer page of the build: the packs' app pages, then the shown tabs with a page of their own. */
 function flatAppPages() {
-  return [...packs.flatMap((p) => p.pages.filter((pg) => pg.area === "app").map((pg) => ({ pack: pg.pack, id: pg.id, what: `app page ${pg.id}` }))),
-    ...shownTabs().filter((t) => TAB_OWN_PAGE.has(t.kind)).map((t) => ({ pack: t.pack, id: t.id, what: `tab ${t.id}` }))];
+  return [...packs.flatMap((p) => p.pages.filter((pg) => pg.area === "app").map((pg) => ({ pack: pg.pack, id: pg.id, url: appPageUrl(pg.id), what: `app page ${pg.id}` }))),
+    ...shownTabs().filter((t) => TAB_OWN_PAGE.has(t.kind)).map((t) => ({ pack: t.pack, id: t.id, url: tabUrl(t), what: `tab ${t.id}` }))];
 }
-const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports"]);
+const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports", "sections"]);
 {
   const hostSegments = new Map();
   for (const id of webPacks) {
@@ -2090,14 +2099,18 @@ const profileSidebar = (() => {
     declared.push({ path: requestPage.path, page: "request", pack: owner });
   }
   // A home tab (mold_v0-134): an overview that includes the Setup page's checklist or the notices is where /app or
-  // /app/notices (and every address under it) now leads; a hidden page (mold_v0-130) leads to the console's home.
+  // /app/notices (and every address under it) now leads; a hidden page (mold_v0-130) leads to the console's home. The
+  // one that includes the checklist is /app itself (mold_v0-175), its own /app/<id> of before leading there.
   const home = Object.fromEntries(["setup", "notices"].map((x) => {
     const t = shownTabs().find((y) => y.kind === "overview" && (y.include ?? []).includes(x));
-    return [x, t ? appPageUrl(t.id) : null];
+    return [x, t ? tabUrl(t) : null];
   }));
   // The nested addresses pack pages and tabs had before mold_v0-132 lead to their flat ones (bookmarks, old links).
-  for (const f of flatAppPages()) redirects.push({ source: `/app/packs/${f.pack}/${f.id}`, destination: appPageUrl(f.id), permanent: false });
-  if (home.setup) redirects.push({ source: "/app", destination: home.setup, permanent: false });
+  for (const f of flatAppPages()) redirects.push({ source: `/app/packs/${f.pack}/${f.id}`, destination: f.url, permanent: false });
+  const homeTab = shownTabs().find(isHomeTab);
+  if (homeTab) redirects.push({ source: appPageUrl(homeTab.id), destination: "/app", permanent: false });
+  // An in-page tab of a sections tab (mold_v0-175): its own address of before leads to that tab of the page.
+  for (const t of shownTabs()) if (sectionParent(t)) redirects.push({ source: SHELL_PAGES[t.kind] ?? appPageUrl(t.id), destination: tabUrl(t), permanent: false });
   if (home.notices) redirects.push(...["/app/notices", "/app/notices/:path*"].map((source) => ({ source, destination: home.notices, permanent: false })));
   redirects.push(...hiddenRedirects(HIDDEN.filter((h) => !(h === "notices" && home.notices)), home.setup ?? "/app"));
   refuse();
@@ -2305,7 +2318,9 @@ function packGuideData() {
     onboarding: facts.flatMap(({ f }) => (f?.onboarding ?? []).map((st) => ({ label: st.label, help: st.help, prompt: st.prompt }))),
     get_started: tools.filter((t) => t.op === "get_started").map((t) => t.name),
     tabs: shownTabs().map((t) => ({ group: t.group ?? "", label: t.label, kind: t.kind, description: t.description ?? null,
-      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle), ...(t.include?.length ? { include: t.include } : {}) })),
+      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle), ...(t.include?.length ? { include: t.include } : {}),
+      // A sections tab's in-page tabs, by their labels (mold_v0-175).
+      ...(t.kind === "sections" ? { sections: (t.sections ?? []).map((id) => shownTabs().find((x) => x.pack === t.pack && x.id === id)?.label).filter(Boolean) } : {}) })),
     areas: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => {
       const opts = (fl) => (fl?.options ?? []).map(optionOf);
       const lc = a.lifecycle, lcField = lc ? a.fields.find((fl) => fl.name === lc.field) : null;
@@ -2337,6 +2352,11 @@ function packGuideData() {
 
 /** The declared tabs a workspace is shown: not one over an area or runs whose list tool the pack withholds (mold_v0-067). */
 function shownTabs() {
+  const shown = shownTabsAlone();
+  // A sections tab (mold_v0-175) is shown while one of its in-page tabs is.
+  return shown.filter((t) => t.kind !== "sections" || (t.sections ?? []).some((id) => shown.some((x) => x.pack === t.pack && x.id === id)));
+}
+function shownTabsAlone() {
   return packViews.tabs.filter((t) => !(t.kind === "area" && (t.areas ?? [{ area: t.area }]).some((a) => listWithheld(a.area))) && !(t.kind === "runs" && runsWithheld(t.pack))
     // nor one that opens a shell page the build hides (mold_v0-130)
     && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
@@ -2347,19 +2367,20 @@ function shownTabs() {
  * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
  */
 function viewsModule() {
-  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
-    "connected-apps": "/app/connected-apps" };
   const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = shownTabs();
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
-    url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? appPageUrl(t.kind === "page" ? t.page : t.id), roles: t.roles,
+    url: t.kind === "files" ? `/app/files?store=${t.pack}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
     charts: t.charts ?? [],
     ...(t.include?.length ? { include: t.include } : {}),
     ...(t.rail?.length ? { rail: t.rail } : {}),
+    ...(t.charts_title ? { charts_title: t.charts_title } : {}),
+    ...(t.filter ? { filtered: true } : {}),
+    ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
@@ -2371,7 +2392,8 @@ function viewsModule() {
   }) });
   // A page is in the sidebar once (mold_v0-133): packs written apart may each open the same shell page (Activity,
   // Billing); the first tab that opens it keeps its entry, a later one is left out of the sidebar.
-  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i)) {
+  // An in-page tab of a sections tab (mold_v0-175) is that page's, not the sidebar's.
+  else for (const t of tabs.filter((x, i) => tabs.findIndex((y) => y.url === x.url) === i && !sectionParent(x))) {
     const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
     // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
     let g = groups.find((x) => x.label === label);
@@ -2385,7 +2407,7 @@ function viewsModule() {
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
     `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
-    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files';\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
@@ -2395,6 +2417,12 @@ function viewsModule() {
     "  include?: ('setup' | 'notices')[];\n" +
     "  /** A home tab's right-column cards below the connection card, in order (mold_v0-172): journeys, notices, chart:<name>. */\n" +
     "  rail?: string[];\n" +
+    "  /** A home tab's heading above its charts (mold_v0-175). */\n" +
+    "  charts_title?: string;\n" +
+    "  /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */\n" +
+    "  filtered?: boolean;\n" +
+    "  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */\n" +
+    "  sections?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +

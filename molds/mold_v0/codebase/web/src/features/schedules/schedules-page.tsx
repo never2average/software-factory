@@ -38,9 +38,18 @@ const keysOf = (text: string) => text.split(/[\s,]+/).map((k) => k.trim()).filte
 const assetWords = (s: Schedule) => (!s.assets ? 'the workspace' : s.assets.keys ? `${s.assets.area}: ${s.assets.keys.join(', ')}` : `every ${s.assets.area} record`);
 
 export function SchedulesPage() {
-  const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
   return (
     <PageContainer pageTitle='Schedules' pageDescription='When runs start by themselves. Times are cron expressions in UTC; a time missed while nothing was running runs once, not once per missed time.'>
+      <SchedulesBody />
+    </PageContainer>
+  );
+}
+
+/** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab). */
+export function SchedulesBody() {
+  const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
+  return (
+    <>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
         <div className='flex flex-col gap-10'>
           <Section title='Schedules' description={data.can_manage ? 'Turn a schedule off or on, or change when it runs.' : 'An owner of this workspace changes these.'}>
@@ -67,7 +76,7 @@ export function SchedulesPage() {
           {data.can_manage && data.kinds.length > 0 && <AddSchedule data={data} onAdded={reload} />}
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }
 

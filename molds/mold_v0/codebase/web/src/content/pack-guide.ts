@@ -20,7 +20,7 @@ export interface PackGuideData {
   packs: { id: string; name: string; description: string | null }[];
   onboarding: { label: string; help: string | null; prompt: string | null }[];
   get_started: string[];
-  tabs: { group: string; label: string; kind: string; description: string | null; area?: string; charts: string[]; include?: string[] }[];
+  tabs: { group: string; label: string; kind: string; description: string | null; area?: string; charts: string[]; include?: string[]; sections?: string[] }[];
   areas: {
     name: string; label: string; description: string | null; scope: 'platform' | 'workspace'; role: string; sealed: boolean;
     fields: { label: string; type: string; help: string | null; required: boolean; options: string[]; to: string | null; multiple: boolean }[];
@@ -91,6 +91,11 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
     case 'billing': return "Your plan and this month's spend.";
     case 'profile': return 'Your own profile.';
     case 'files': return fill("Your {workspace}'s files.");
+    case 'sections': {
+      // A sections tab (mold_v0-175): its in-page tabs, by their labels.
+      const names = t.sections ?? [];
+      return names.length ? `In one page, as tabs: ${list(names)}.` : '';
+    }
     default: return '';
   }
 }

@@ -34,6 +34,7 @@ import { JOURNEY_WORDS, MAX_IMPORT, MAX_STAGES, type JourneyWord } from "./journ
 import { shellText } from "./texts.js";
 import { PROFILE } from "./profile.js";
 import { reportRange } from "./insights.js";
+import { generatedTools } from "./mcp-tools.js";
 
 export class JourneyError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -55,8 +56,11 @@ export function word(k: JourneyWord, vars: Record<string, string | number> = {})
 }
 const fail = (k: JourneyWord, status = 400, vars: Record<string, string | number> = {}) => new JourneyError(word(k, vars), status);
 
-/** The tools a stage may name: the product's own (every host pack's) and the memory component's (src/host.ts). */
-export const journeyToolNames = (): string[] => [...hostToolNames(), ...memoryToolNames()];
+/**
+ * The tools a stage may name: the product's own (every host pack's), the memory component's (src/host.ts) and the
+ * declarative packs' generated ones (mold_v0-175: src/mcp-tools.ts, a config-only product's whole surface).
+ */
+export const journeyToolNames = (): string[] => [...new Set([...hostToolNames(), ...memoryToolNames(), ...generatedTools().map((t) => t.name)])];
 /** The built-in templates' ids (pack.json journeys.templates): the console tells them from ones written by hand. */
 export const builtInIds = (): string[] => (config().templates ?? []).map((t) => t.id);
 

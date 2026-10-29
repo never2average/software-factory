@@ -10,6 +10,9 @@ export function findTab(id: string): PackTabSpec | null {
   return packTabs.find((t) => t.id === id && ownPage(t)) ?? null;
 }
 
+/** The build's home tab (mold_v0-134; an overview that includes setup), drawn at /app itself (mold_v0-175), or null. */
+export const homeTab = (): PackTabSpec | null => packTabs.find((t) => t.kind === 'overview' && t.url === '/app') ?? null;
+
 /** Every tab with a page of its own, for generateStaticParams (beside the packs' own pages). */
 export const tabPageParams = () => packTabs.filter(ownPage).map((t) => ({ page: t.id }));
 
