@@ -1460,21 +1460,36 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   while open, its prompt in a Copy prompt box (a pack step's pack.json `prompt`, the get_started tool's "say"; the
   current one highlighted, done ones checked), then tips when the build has them; the right column is the "Connect your
   AI client" card (pick a client, the URL with Copy URL, Test my connection), then the tab's `rail`, up to two cards in
-  order: `journeys` (the journey picker; the build must turn journeys on), `notices` (the records due soon, the first
+  order: `journeys` (the journey picker: every build has journeys, mold_v0-175: "Get set up", the setup steps
+  themselves, always first, then the journeys component's when pack.json `journeys` turns it on), `notices` (the records due soon, the first
   five then "Show all"; `DueSoonCard` in `web/src/features/schedules/notices-page.tsx`; needs `include: notices`), or
   `chart:<name>` (one of the pack's `number` charts as a card of its tiles, with a link to the pack's other overview
-  tab that lists it). Without `rail` the second card is the journey picker when the build has journeys. Included
-  `notices` no card shows follow the checklist (`DueSoonSection`); the tab's `charts` come below both columns (a pack
-  puts the rest on an overview tab of their own, as Maxwell's Dashboard). `/app` (setup) and `/app/notices`
-  (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
+  tab that lists it). Without `rail` the second card is the journey picker (the Setup page's own layout, zero packs
+  included: Get set up alone there). Included `notices` no card shows follow the checklist (`DueSoonSection`); the tab's
+  `charts` come below both columns, under its `charts_title` when it has one (mold_v0-175; Maxwell's "Numbers"). The
+  tab is drawn at `/app` itself (mold_v0-175, `web/src/app/app/page.tsx`): its own `/app/<id>` and `/app/notices` (and
+  every address under it) redirect to `/app` (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
   too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
   section twice or unknown, `roles` on such a tab (it is every member's home: it is every role's, not narrowed by its
   charts' metrics), `notices` with no due-date area, a second tab including the same section, a `setup` or `notices`
   tab beside it (its page would only redirect), and a `rail` on any other tab, a card twice, `notices` without
-  `include: notices`, a chart that is not one of the pack's number charts, `journeys` in a build without them.
+  `include: notices`, a chart that is not one of the pack's number charts, and `charts_title` on a tab that is not a
+  home tab with charts. **The sidebar** shows no heading for a group of one entry named like the group (mold_v0-175:
+  `web/src/components/layout/app-sidebar.tsx`; a pack's Overview tab in an Overview group is one entry).
   `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
   draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, its charts;
   then every step done).
+  **A sections tab** (mold_v0-175): `{"kind": "sections", "sections": ["<tab id>", ...]}` draws several of the pack's
+  own tabs (area, runs, reports or schedules: 2 to 6) as one page with an in-page tab strip (`Tabs`, line variant)
+  above the selected one's charts, views and table (`SectionsTab` in `web/src/features/tabs/tab-page.tsx`; the table is
+  the area tab's own, whatever draws it). `?tab=<id>` picks one (the first by default); each in-page tab is the page's
+  `?tab=<id>` in the registry, leaves the sidebar, and its address of before (`/app/<id>`, or the shell's page for a
+  schedules tab: `/app/schedules`) redirects there. The page is shown to the roles that may read one of its tabs, each
+  in-page tab to its own roles. Refused: a sections tab naming none or one, a tab twice, an undeclared tab, another kind,
+  a tab in two sections tabs. **A filtered area tab** (mold_v0-175): an area tab over one area may declare `filter`
+  (a list filter as the record tools take it: `{"status": {"in": ["remediating", "resolved"]}}`), applied by the server
+  on `/api/records/tabs/<pack>/<tab>` (never by the page: paging stays right); a field the area lacks is refused.
+  `npm run test:declarative-packs` refuses those and checks the URLs, the sidebar and the redirects.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -2012,12 +2027,17 @@ pack keeps only their config. Every text is a word: the journeys' nouns are the 
   deleted, one untouched follows the pack when its stages change, one edited is left alone; `seeded_before_ledger` for a
   database seeded before the ledger) and promoted; admins write more on `/admin/journeys` (`library` permission; delete:
   `delete`), promote and order them, and see each one's adoption across accounts (started, finished, median time, where
-  most stop). A stage is done when one of its tools (the build's own: the host packs' and the memory component's) ran
+  most stop). A stage is done when one of its tools (the build's own: the host packs', the memory component's and,
+  mold_v0-175, the declarative packs' generated ones) ran
   successfully for the account after the previous stage was done, or an /app page's action that does the same
   (`recordPageAction`); a stage with no tool is marked by hand. Progress is kept once (`journey_progress`) and sent as
   events once each. Placeholders in a stage (`{product}`, `{competitor}`: whatever the templates use) are filled per
   account by the host hook `journeys.values(orgId)`; without it they read as written. Customers see them on /app Setup
-  (the picker, the shell's) and on `/app/journeys`: each use case person by person (how far, calls, errors, where stuck,
+  (the picker, the shell's) and on `/app/journeys`. **Every build has journeys** (mold_v0-175): the picker on the home
+  page always offers "Get set up" first, the setup steps themselves (the shell's and the packs' onboarding steps, its
+  progress theirs), so a build without the component (zero packs) shows the picker with Get set up alone and serves
+  nothing else of it; a pack adds its own journeys with `journeys.templates` (Maxwell: eight, JSON only). On
+  `/app/journeys`: each use case person by person (how far, calls, errors, where stuck,
   who can help), help requests between teammates (ask, pick up, hand back, close), their own use cases (add, import JSON
   or CSV beyond the 16 kB body limit, export, remove). `launch` names the tools and Setup workflow groups that start work:
   a viewer sees the Setup page's viewer note instead of their prompts. Routes: `/api/app/journeys`, `/api/app/adoption`,

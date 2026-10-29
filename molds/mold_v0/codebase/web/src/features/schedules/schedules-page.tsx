@@ -42,10 +42,19 @@ const keysOf = (text: string) => text.split(/[\s,]+/).map((k) => k.trim()).filte
 const assetWords = (s: Schedule) => (!s.assets ? 'the workspace' : s.assets.keys ? `${s.assets.area}: ${s.assets.keys.join(', ')}` : `every ${s.assets.area} record`);
 
 export function SchedulesPage() {
+  return (
+    <PageContainer pageTitle='Schedules' pageDescription='When runs start by themselves. Times are cron expressions in UTC; a time missed while nothing was running runs once, not once per missed time.'>
+      <SchedulesBody />
+    </PageContainer>
+  );
+}
+
+/** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab). */
+export function SchedulesBody() {
   const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
   const cols = useMemo(() => (data ? columns(data, reload) : []), [data, reload]);
   return (
-    <PageContainer pageTitle='Schedules' pageDescription='When runs start by themselves. Times are cron expressions in UTC; a time missed while nothing was running runs once, not once per missed time.'>
+    <>
       {error ? <ErrorState error={error} /> : (
         <div className='flex flex-col gap-10'>
           {/* The console's database table (mold_v0-176, as on Accounts): a row opens the schedule beside the list. */}
@@ -67,7 +76,7 @@ export function SchedulesPage() {
           {data?.can_manage && data.kinds.length > 0 && <AddSchedule data={data} onAdded={reload} />}
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }
 

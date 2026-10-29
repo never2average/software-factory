@@ -10,17 +10,22 @@
 //              detail view. A merged tab (mold_v0-135: pack.json `areas`) draws several areas as one list, rows merged
 //              by key on the server (./merged.ts)
 //   runs       the workspace's runs; reports: finished runs and their results (./runs.tsx: the same database table)
+//   sections   one page of several area tabs (mold_v0-175: pack.json `sections`), an in-page tab strip above the
+//              selected one's charts, views and table (?tab=<id>)
 // An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
 // the server refuses the rest whatever the page asks.
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useQueryState } from 'nuqs';
 import PageContainer from '@/components/layout/page-container';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
 import { FloatPanel, SetupPage } from '@/features/portal/setup';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
+import { SchedulesBody } from '@/features/schedules/schedules-page';
 import { Icons } from '@/components/icons';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { RecordTableView } from '@/features/records/record-pages';
@@ -107,8 +112,9 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
 /**
  * The build's home (mold_v0-134, mold_v0-172): an overview tab that includes setup draws the Setup page's layout, the
  * same for every build. Its rail's cards follow the connection card (journeys, notices, chart:<name>); the notices it
- * includes and no card shows follow the checklist; its charts come below both columns. It has no title of its own (the
- * Setup page has none): its sections name themselves.
+ * includes and no card shows follow the checklist; its charts come below both columns (under its charts_title, when it
+ * has one: mold_v0-175). It has no title of its own (the Setup page has none): its sections name themselves. It is drawn
+ * at /app itself (mold_v0-175, web/src/app/app/page.tsx).
  */
 function HomeTab({ tab }: { tab: PackTabSpec }) {
   const charts = tabCharts(tab);
@@ -125,7 +131,9 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
   return (
     <SetupPage rail={rail} cards={cards}
       main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection /> : undefined}
-      below={charts.length ? <div className='mt-10'><ChartGrid charts={charts} /></div> : undefined} />
+      below={charts.length ? (tab.charts_title
+        ? <section aria-labelledby='home-charts' className='mt-10 flex flex-col gap-4'><h2 id='home-charts' className='text-lg font-semibold tracking-tight'>{tab.charts_title}</h2><ChartGrid charts={charts} /></section>
+        : <div className='mt-10'><ChartGrid charts={charts} /></div>) : undefined} />
   );
 }
 
@@ -228,6 +236,31 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   );
 }
 
+/**
+ * A sections tab (mold_v0-175): its in-page tabs, each one of the pack's tabs (area, runs, reports, schedules) under its
+ * own label, the ones this role may read; the selected one (?tab=<id>, the first by default) draws as its own page
+ * would, below the strip.
+ */
+function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
+  const subs = (tab.sections ?? []).map((id) => packTabs.find((t) => t.pack === tab.pack && t.id === id))
+    .filter((t): t is PackTabSpec => !!t && (role === null || t.roles.includes(role)));
+  const [selected, setSelected] = useQueryState('tab', { defaultValue: subs[0]?.id ?? '' });
+  const current = subs.find((t) => t.id === selected) ?? subs[0];
+  if (!current) return null;
+  return (
+    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className='gap-6'>
+      <TabsList variant='line' className='gap-6 p-0'>
+        {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
+      </TabsList>
+      <TabsContent value={current.id}>
+        {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
+          : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} />
+          : current.kind === 'schedules' ? <SchedulesBody key={current.id} /> : null}
+      </TabsContent>
+    </Tabs>
+  );
+}
+
 /** An overview tab that includes setup: the build's home page (mold_v0-134), every member's. */
 export const isHomeTab = (tab: PackTabSpec) => tab.kind === 'overview' && (tab.include ?? []).includes('setup');
 
@@ -243,6 +276,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
       {error && !loaded ? <ErrorState error={error} /> : !loaded ? <LoadingCards count={1} /> : !allowed ? <StatusPage kind='denied' area='app' />
         : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
+        : tab.kind === 'sections' ? <SectionsTab tab={tab} role={role} />
         : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTable tab={tab} reports={tab.kind === 'reports'} />
         : null}
     </PageContainer>
