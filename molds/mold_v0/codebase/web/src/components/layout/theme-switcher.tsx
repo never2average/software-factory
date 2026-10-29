@@ -34,7 +34,7 @@ export function ThemeSwitcher() {
       <DropdownMenuContent align='end' className='min-w-36'>
         <DropdownMenuRadioGroup aria-label='Theme' value={mode ?? undefined} onValueChange={(v) => isColorMode(v) && setMode(v)}>
           {MODES.map(({ mode: m, label, Icon }) => (
-            <DropdownMenuRadioItem key={m} value={m} className='min-h-11 md:min-h-8'>
+            <DropdownMenuRadioItem key={m} value={m} closeOnClick className='min-h-11 md:min-h-8'>
               <Icon aria-hidden /> {label}
             </DropdownMenuRadioItem>
           ))}
