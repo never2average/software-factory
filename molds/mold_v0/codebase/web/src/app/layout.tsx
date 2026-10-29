@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { fontVariables } from '@/components/themes/font.config';
 import { DEFAULT_THEME, THEMES } from '@/components/themes/theme.config';
 import ThemeProvider from '@/components/themes/theme-provider';
+import { colorModeScript } from '@/components/themes/color-mode';
 import { siteUrl } from '@/lib/site-url';
 import { cn } from '@/lib/utils';
 import type { Metadata, Viewport } from 'next';
@@ -13,7 +14,8 @@ import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import '../styles/globals.css';
 import { VisitSource } from '@/features/site/visit-source';
 
-// One look everywhere: Supabase dark. No light mode, no toggle.
+// One look (Supabase), dark everywhere by default. The console (/app, /admin) has a Light / Dark / System switcher in its
+// top bar (mold_v0-177, components/themes/color-mode.ts); every other page stays dark.
 const THEME_COLOR = '#171717';
 
 // Absolute URLs for icons and the share image: the console's own address (web/src/lib/site-url.ts, as robots.txt and the sitemap).
@@ -41,6 +43,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang='en' suppressHydrationWarning data-theme={themeToApply} className='dark' style={{ colorScheme: 'dark' }}>
+      <head>
+        {/* Before the body is parsed: the console's stored mode on <html>, so its first paint is never the wrong one. */}
+        <script dangerouslySetInnerHTML={{ __html: colorModeScript }} />
+      </head>
       <body
         className={cn(
           'bg-background overflow-x-hidden overscroll-none font-sans antialiased',
@@ -51,13 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {/* Where a visit began, for a request for access made later in it (mold_v0-110). */}
         <VisitSource />
         <NuqsAdapter>
-          <ThemeProvider
-            attribute='class'
-            defaultTheme='dark'
-            forcedTheme='dark'
-            enableSystem={false}
-            disableTransitionOnChange
-          >
+          <ThemeProvider>
             <Providers activeThemeValue={themeToApply}>
               <Toaster />
               {children}

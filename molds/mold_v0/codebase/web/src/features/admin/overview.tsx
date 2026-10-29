@@ -96,7 +96,7 @@ export function AdminOverview() {
                 cols={[
                   { label: 'Account', className: 'w-48', render: (a) => <span className='font-medium'>{a.name}</span> },
                   { label: 'Stage', className: 'w-40', render: (a) => <StatusBadge>{a.stage_label}</StatusBadge> },
-                  { label: 'Issues', render: (a) => <span className='block max-w-xl truncate text-amber-400' title={a.attention.join('\n')}>{a.attention.length > 1 ? `${a.attention.length} · ` : ''}{a.attention.join(' · ')}</span> },
+                  { label: 'Issues', render: (a) => <span className='block max-w-xl truncate text-amber-700 dark:text-amber-400' title={a.attention.join('\n')}>{a.attention.length > 1 ? `${a.attention.length} · ` : ''}{a.attention.join(' · ')}</span> },
                   { label: 'Contact', className: 'w-56', render: (a) => <span className='text-muted-foreground block max-w-56 truncate'>{a.contact ?? '—'}</span> },
                   { label: 'Last seen', className: 'w-28', render: (a) => <When d={a.last_seen} className='text-muted-foreground text-xs' /> }
                 ]}
