@@ -231,10 +231,10 @@ export function boatProvider(apiUrl: string): RunSandboxProvider {
         await lib.put(id, `${lib.HOME}/runner.env.new`, envBody);
         await lib.put(id, `${lib.HOME}/${RUN_SETUP.script}`, runSetupScript(lib.HOME));
         need("start", 10_000);
-        // Detached, as the sandbox's own user (the script uses sudo where it needs root), with this command's PATH (where
-        // the provider's node and npm are): the command returns at once, the set-up goes on in the sandbox.
+        // Detached, as a unit of its own (as root, as the runner it starts; its sudo calls are then no-ops), with this
+        // command's PATH (where the provider's node and npm are): the command returns at once, the set-up goes on.
         const st = await lib.run(id, `set -e; cd ${lib.HOME}; rm -f ${RUN_SETUP.status} ${RUN_SETUP.log}; chmod 700 ${RUN_SETUP.script}
-sudo -n systemd-run --quiet --collect --unit=${RUN_SETUP.unit} --uid="$(id -u)" --gid="$(id -g)" --setenv=HOME="$HOME" --setenv=PATH="$PATH" \\
+sudo -n systemd-run --quiet --collect --unit=${RUN_SETUP.unit} --setenv=HOME=/root --setenv=PATH="$PATH" \\
   --property=WorkingDirectory=${lib.HOME} /bin/bash ${lib.HOME}/${RUN_SETUP.script}`, 60);
         if (st.code !== 0) throw new Error(`the set-up did not start: ${(st.stderr || st.stdout).slice(-300)}`);
         return { sandboxId: id };

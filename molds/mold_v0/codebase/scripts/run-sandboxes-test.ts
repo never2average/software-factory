@@ -468,7 +468,7 @@ try {
         assert.equal(r.status, 1);
         assert.deepEqual([st.state, st.step], ["failed", "npm"], status);
         assert.match(st.detail, /npm ERR! code E404 \(stand-in\) \| npm ci failed/);
-        assert.ok(!readFileSync(path.join(h, "sudo.log"), "utf8").includes("app-runner"), "no runner after a failed step");
+        assert.ok(!existsSync(path.join(h, "sudo.log")) || !readFileSync(path.join(h, "sudo.log"), "utf8").includes("app-runner"), "no runner after a failed step");
       } else {
         assert.equal(r.status, 0, log);
         assert.equal(status, "started runner", log);
@@ -482,12 +482,12 @@ try {
     // A dropped connection on a read (a keep-alive socket dead after a Vercel freeze) is tried again on a fresh one.
     dropListings = 1; dropped = 0;
     const t0 = await rs.tick();
-    assert.equal(t0.error, undefined, t0.error);
+    assert.equal(t0.error, undefined, String(t0.error));
     assert.equal(dropped, 1, "the first listing was dropped, the tick went on");
     // One that keeps failing says which request failed and why (undici's bare "fetch failed" hid both).
     dropListings = 10;
     const t1 = await rs.tick();
-    assert.match(t1.error ?? "", /^boat GET \/sandboxes: fetch failed \(.+\)$/, t1.error);
+    assert.match(t1.error ?? "", /^boat GET \/sandboxes: fetch failed \(.+\)$/, String(t1.error));
     dropListings = 0;
 
     // A set-up that fails in the sandbox: reaped at the next tick with its step and the sandbox's own error, the run told

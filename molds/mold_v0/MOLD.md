@@ -519,7 +519,23 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **Providers** (`APP_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
   small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
   imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
-  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `apprun-<uid>`); `docker` (a server of its own: the compose project's
+  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `apprun-<uid>`).
+  **A boat launch fits its call** (mold_v0-179): the launch only creates the sandbox, sends the code's tarball and the
+  env file, and starts the set-up script (`runSetupScript`, `run-setup.sh`) as a detached unit; unpacking, `npm ci`,
+  the run user, packages, the run tools and the runner's start happen in the sandbox afterwards, the script writing its
+  step to `run-setup.status` and its errors to `run-setup.err`. Each tick asks a launched, unclaimed sandbox where its
+  set-up stands (after `APP_RUN_SETUP_CHECK_SECONDS`, 20): a failed one is reaped at once as a failed start with its
+  step (`setup <step>`) and the sandbox's own error, which the run then fails with after its tries; one still going is
+  said on the run (`waiting`: "its sandbox is being set up (npm)"). On Vercel a launch starts only with
+  90 s of its call left and each step only with time for it (`getDeadline`), so a launch ends, deleting its sandbox
+  if it failed, inside its call, never frozen half done (a 300 s call once was, mid-upload). Boat requests that can be
+  repeated (reads, file writes, deletes, renames, a create with its idempotency key) are tried again on a fresh
+  connection when one drops (a keep-alive socket dead after a Vercel freeze: "fetch failed"), and a request that fails
+  says which and why (`boat GET /sandboxes: fetch failed (UND_ERR_SOCKET: other side closed)`). The runner keeps its
+  run's lease, and the workspace store's, from its claim on while it prepares the sandbox (the lockdown took longer
+  than a 120 s lease), and records how long that took (`sandbox_prepared`). On Vercel the database pool closes idle
+  connections after 5 s and is attached to the function (`attachDatabasePool`), so a frozen instance never reuses a
+  dead one. `docker` (a server of its own: the compose project's
   `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
   which has git and nftables (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
   is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
