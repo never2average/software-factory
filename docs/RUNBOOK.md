@@ -721,7 +721,7 @@ python3 .claude/scripts/provision.py <app_id> status
 ```
 
 `--allow-unverified-mold` is needed for every mold_v0 deploy today: the release gate wants this repository's own
-GitHub checks for the commit, and none run yet (ticket mold_v0-001, parked by the operator). The reason is recorded in
+GitHub checks for the commit, and none run yet (ticket mold_v0-001, set aside by the operator on 2026-10-22). The reason is recorded in
 `infrastructure.json` `deploy_gate.override`. A check that failed still refuses.
 
 What the deploy does: a fresh build copy (`build/<app_id>/`: the shell, the brand, the packs, checked), the API
@@ -767,7 +767,8 @@ connect to `https://app.example.com/mcp`, and emails and install pages name it. 
    **Create account**. That person gets an invitation by email. (Someone who asked for access on the landing page waits in **Access requests**:
    **Approve** does the same.)
 4. On the new account, **Set monthly allowance…**: the most its runs may spend on models in a month, in US dollars.
-   **An account with no plan and no allowance has $0 and cannot start a run.** Per-run and per-month-per-kind
+   **An account with no plan and no allowance has $0 and cannot start a run** (unless the API project sets a default,
+   `APP_ORG_MONTHLY_BUDGET_USD`). Per-run and per-month-per-kind
    ceilings come from the app's profile (`## Budgets` in the brief).
 5. The customer accepts the invitation and signs in. Their **Home** lists the setup steps, each ticking itself off
    from what really happens: connect the AI client (the connection card on **Home**, or **Setup & training** in an app
