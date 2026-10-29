@@ -41,11 +41,12 @@ export function StatStrip({ items, className, quad }: {
       {items.map((it, i) => {
         const body = (
           <>
-            <dt className={cn('text-muted-foreground text-xs font-medium', quad && 'truncate')}>
+            <dt className={cn('text-muted-foreground text-xs font-medium', quad && 'truncate')} title={quad && typeof it.label === 'string' ? it.label : undefined}>
               {it.href ? <a href={it.href} className='outline-hidden after:absolute after:inset-0 group-hover:underline'>{it.label}</a> : it.label}
             </dt>
             <dd className='mt-1 flex items-end justify-between gap-3' aria-hidden={it.said ? true : undefined}>
-              <span className={cn('text-2xl font-semibold tabular-nums tracking-tight', quad && 'min-w-0 truncate')}>{it.value}</span>
+              {/* A card's number is never cut: the sparkline narrows instead (down to 32px), the number a step smaller on a phone. */}
+              <span className={cn('text-2xl font-semibold tabular-nums tracking-tight', quad && 'shrink-0 max-sm:text-xl')}>{it.value}</span>
               {it.spark && it.spark.length > 1 ? <Sparkline values={it.spark} /> : quad && <span className='mb-1 h-7 w-24 min-w-8 shrink' />}
             </dd>
             {it.said && <dd className='sr-only'>{it.said}</dd>}

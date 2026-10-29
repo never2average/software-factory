@@ -21,7 +21,10 @@ export interface SparkAnswers { weeks: number; buckets: string[]; as_of: string;
 
 const value = (v: number | null, unit: Unit) => cardValue(v, unit, formatValue);
 
-/** A week with nothing to measure (no row to average) draws at the week before it (the first: at the first that has one). */
+/**
+ * A week with nothing to measure (no row to average) draws at the week before it (the first: at the first that has one);
+ * a card with fewer than two such weeks draws no line (its place is kept).
+ */
 const drawn = (series: (number | null)[]) => {
   let last = series.find((v) => v !== null) ?? 0;
   return series.map((v) => (v === null ? last : (last = v)));
@@ -45,7 +48,7 @@ export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }
       // A card this role may not read, or that failed, keeps its place and its label, and says why.
       if (c.error) return { label: c.label, value: '—', said: c.status === 403 ? 'Not shown to your role.' : 'Not available.' };
       return {
-        label: c.label, value: value(c.value, c.unit), spark: c.series.some((v) => v !== null) ? drawn(c.series) : undefined,
+        label: c.label, value: value(c.value, c.unit), spark: c.series.filter((v) => v !== null).length > 1 ? drawn(c.series) : undefined,
         // Read after the label (the list's term): the number, then the trend.
         said: `${value(c.value, c.unit)}. ${trendWords(c, data.weeks, formatValue)}`
       };
