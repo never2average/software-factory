@@ -669,7 +669,9 @@ python3 .claude/scripts/mint.py <app_id>
 The second line lists the ten stations and the one thing that happens next. For a mold_v0 app *workspaces* and
 *package* say "not needed" (accounts are made in the app's own console; AI clients connect to its address, there is
 no package to publish). `python3 .claude/scripts/mint.py <app_id> run` does every station that needs nobody and stops,
-saying exactly what it needs, at the first that needs you. Its parts, if one fails and has to be run alone:
+saying exactly what it needs, at the first that needs you. When the next station is the deploy, the agent asks you
+first and runs the deploy as in §11.4 (a mold_v0 deploy needs one more word on its command line today). Its parts, if
+one fails and has to be run alone:
 
 | Station | Command |
 |---|---|
