@@ -10,7 +10,8 @@ node_modules
 .agents
 .claude
 skills-lock.json
-/scripts
+/scripts/*
+!/scripts/install-run-tools.ts
 orchestrator/node_modules
 web
 web-static
