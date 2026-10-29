@@ -115,10 +115,10 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
   const queued = (await q(`SELECT to_regclass('runs') IS NOT NULL AS runs, to_regclass('run_events') IS NOT NULL AS events`))[0];
   let qd: VaultStatus["queued"] = null;
   if (queued?.runs) {
-    const [c] = await q(`SELECT count(*)::int AS n, min(created_at) AS oldest FROM runs WHERE status = 'queued'`);
-    const by = await q(`SELECT pack, kind, count(*)::int AS n FROM runs WHERE status = 'queued' GROUP BY pack, kind ORDER BY n DESC, pack, kind LIMIT 10`);
+    const [c] = await q(`/* tenant: internal: the platform operator's read-only vault report counts queued runs across every workspace (no row leaves this report) */ SELECT count(*)::int AS n, min(created_at) AS oldest FROM runs WHERE status = 'queued'`);
+    const by = await q(`/* tenant: internal: the platform operator's read-only vault report counts queued runs across every workspace (no row leaves this report) */ SELECT pack, kind, count(*)::int AS n FROM runs WHERE status = 'queued' GROUP BY pack, kind ORDER BY n DESC, pack, kind LIMIT 10`);
     const [w] = queued.events ? await q(
-      `SELECT e.data->>'reason' AS reason, e.at, r.pack, r.kind FROM run_events e JOIN runs r ON r.id = e.run_id
+      `/* tenant: internal: the platform operator's read-only vault report counts queued runs across every workspace (no row leaves this report) */ SELECT e.data->>'reason' AS reason, e.at, r.pack, r.kind FROM run_events e JOIN runs r ON r.id = e.run_id
         WHERE r.status = 'queued' AND e.type = 'waiting' ORDER BY e.id DESC LIMIT 1`) : [];
     qd = { count: Number(c?.n ?? 0), oldest_at: iso(c?.oldest), by_kind: by.map((b) => ({ pack: b.pack, kind: b.kind, count: Number(b.n) })),
            latest_waiting: w ? { reason: String(w.reason ?? "").slice(0, 500), at: iso(w.at)!, pack: w.pack, kind: w.kind } : null };
