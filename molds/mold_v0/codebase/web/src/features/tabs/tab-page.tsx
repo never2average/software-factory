@@ -271,7 +271,9 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
   // Nothing is asked of the server until the role is known (the server refuses what the role may not read anyway).
   const allowed = role === null || tab.roles.includes(role);
   return (
-    <PageContainer pageTitle={tab.label} pageDescription={tab.description ?? undefined}>
+    // A page of in-page tabs (sections) starts with its tab strip: no title or description above it (operator, 2026-10-29).
+    <PageContainer pageTitle={tab.kind === 'sections' ? undefined : tab.label}
+      pageDescription={tab.kind === 'sections' ? undefined : tab.description ?? undefined}>
       {/* /me refused (no account, suspended, signed out) or a role the tab is not for: the status page (mold_v0-131). */}
       {error && !loaded ? <ErrorState error={error} /> : !loaded ? <LoadingCards count={1} /> : !allowed ? <StatusPage kind='denied' area='app' />
         : tab.kind === 'overview' ? <OverviewTab tab={tab} />
