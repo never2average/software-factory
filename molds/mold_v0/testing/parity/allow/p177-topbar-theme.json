@@ -1,0 +1,8 @@
+{
+  "phase": "mold_v0-177: the console's top bar has Docs at the search box's height (an icon on a phone, as the search box now is) and a Light / Dark / System theme switcher right of Docs, in /app and /admin, for every app. The theme defaults to dark, what every console showed before (Octillion's original forced it), so the first paint and every page's body are unchanged; only the top bar differs. Every answer, tool and generated file is unchanged",
+  "allow": [
+    { "key": "shots::/app::*", "reason": "the top bar: Docs at the search box's height and the theme switcher beside it (the operator's ask, mold_v0-177); the page under it is unchanged, dark by default" },
+    { "key": "shots::/app/docs::*", "reason": "the same top bar" },
+    { "key": "shots::/admin::*", "reason": "the same top bar in the admin console" }
+  ]
+}
