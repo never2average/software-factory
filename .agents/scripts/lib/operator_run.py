@@ -27,6 +27,17 @@ WHERE IT RUNS
   Both add NODE_ENV=production and WORKSPACE_OPS_URL=<the app's address> (not secrets). `npm run operator:*` reads
   .env.local, which neither place has, so the script's own `node ...` line is run without its --env-file flag.
 
+MOLD_V0 ON VERCEL (mold_v0-173). A single-service app (lib/single_service.py) runs its operator scripts the Vercel way
+too, from its build copy (build/<app_id>/, or the mold's codebase when the app has no packs, brand or profile), with
+DATABASE_URL read from its API project's (<project>-api) production environment for the run only; nothing of a file
+store (its scripts write none), and the deployment's non-secret settings a script reads to answer as the app would
+(V0_SETTINGS: APP_RUN_SANDBOX), shown as they are. Its package lines run TypeScript through tsx
+(`node --import=tsx scripts/operator/<file>.ts`).
+
+READ-ONLY SCRIPTS. A script whose first line is `// READ-ONLY. <what it reads>` (mold_v0's operator:vault-status) still
+asks for the yes, since it reads a live app's database; the dry run and the request for the yes say it is read-only and
+what it reads, so the person knows what they are agreeing to.
+
 A YES FIRST. --dry-run prints the exact command (secrets masked: the database address, the env file's values, and any
 argument after a flag named like a password, secret, token or key) and runs nothing. Without --dry-run the script
 writes to a live application, so it runs only with --yes, which an agent passes only after the person said yes;
@@ -66,6 +77,8 @@ STORAGE_VARS = {"vercel-blob": ("BLOB_READ_WRITE_TOKEN",),
                        "STORAGE_S3_ACCESS_KEY_ID", "STORAGE_S3_SECRET_ACCESS_KEY", "STORAGE_S3_ADDRESSING")}
 PULLED_ENV = (DB_VAR,) + tuple(dict.fromkeys(v for vs in STORAGE_VARS.values() for v in vs))
 SHOWN_VALUES = ("STORAGE_DRIVER", "STORAGE_S3_REGION", "STORAGE_S3_ADDRESSING")   # not secrets: printed as they are
+V0_SETTINGS = ("APP_RUN_SANDBOX",)   # mold_v0: settings a script reads, not secrets: passed and printed as they are
+READ_ONLY_LINE = re.compile(r"^//\s*READ-ONLY\.\s*(.*)$")
 BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR")
 
 
@@ -121,6 +134,18 @@ def node_argv(cmdline):
     return ["node", *[f for f in flags if not f.startswith(("--env-file=", "--env-file-if-exists="))], toks[-1]], None
 
 
+def read_only_note(build, script_file):
+    """The script's own word that it only reads: its first line `// READ-ONLY. <what it reads>` -> that sentence (cut at
+    the first full stop), or None. Wording only: a read-only script still needs the yes."""
+    try:
+        with open(os.path.join(build, script_file), encoding="utf-8") as f: first = f.readline().strip()
+    except (OSError, UnicodeDecodeError): return None
+    m = READ_ONLY_LINE.match(first)
+    if not m: return None
+    said = m.group(1).split(". ")[0].strip().rstrip(".:")
+    return said or "it writes nothing"
+
+
 # ---- masking ---------------------------------------------------------------------------------------------------------
 def mask_args(args):
     """The script's arguments as they may be shown: a value after a flag named like a secret is ***, and so is a
@@ -172,11 +197,19 @@ def storage_env(vals):
     return env, f"its file store is {drv}: the script gets {names} from the same production environment, so its data-room files are written."
 
 
-def child_env(vals, url, base=None):
-    """The whole environment a Vercel run's child gets: BASE_ENV from this machine, the allow-listed values of the project."""
+def child_env(vals, url, base=None, v0=None):
+    """The whole environment a Vercel run's child gets: BASE_ENV from this machine, the allow-listed values of the project.
+    A mold_v0 run (v0) gets no file store, and the deployment's V0_SETTINGS it has."""
     base = os.environ if base is None else base
     env = {k: base[k] for k in BASE_ENV if base.get(k)}
     env[DB_VAR] = vals[DB_VAR]
+    if v0 is not None:
+        env.update({k: vals[k] for k in V0_SETTINGS if vals.get(k) and vals[k] != "[SENSITIVE]"})
+        env.update(NODE_ENV="production", WORKSPACE_OPS_URL=url)
+        set_ = [f"{k}={env[k]}" for k in V0_SETTINGS if k in env]
+        return env, ("it gets the app role's DATABASE_URL from the API project's production environment" +
+                     (f", and {', '.join(set_)} from the same environment" if set_ else f" (the project sets no {', '.join(V0_SETTINGS)}: the script reads the default)")
+                     + "; no file store (its scripts write no files).")
     store, said = storage_env(vals)
     env.update(store); env.update(NODE_ENV="production", WORKSPACE_OPS_URL=url)
     return env, said
@@ -184,7 +217,7 @@ def child_env(vals, url, base=None):
 
 def _secret_values(passed):
     """Every value handed to the script that is a secret (all of the project's but the driver's name and plain options)."""
-    return [v for k, v in passed.items() if k in PULLED_ENV and k not in SHOWN_VALUES]
+    return [v for k, v in passed.items() if k in PULLED_ENV and k not in SHOWN_VALUES and k not in V0_SETTINGS]
 
 
 def shown_env(names, proj):
@@ -255,17 +288,21 @@ def _build_dir(app_id, app, target):
     return library.build_dir_for(app_id, app)
 
 
-def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None, say=print):
-    """`provision.py <app_id> --operator ...`. Returns the exit code (0, 1, 2 or 3); never prints a secret."""
+def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None, say=print, v0=None):
+    """`provision.py <app_id> --operator ...`. Returns the exit code (0, 1, 2 or 3); never prints a secret.
+    v0 (mold_v0-173, lib/single_service.py): {"build": its build copy, "env_project": its API project} for a single-service
+    app on Vercel; None for mold_v1's."""
     try: o = parse(a)
     except Usage as e: say(f"{app_id}: {e} Nothing was run."); return 2
     target = infra.get("target"); key, args = o["key"], o["args"]; shown_args = mask_args(args)
     url = ((infra.get(target) or {}) if target in ("vercel", "vm_remote") else {}).get("production_url")
+    if v0 is not None and target != "vercel":
+        say(f"{app_id}: --operator runs a single-service app's scripts on Vercel only; this one's target is {target!r}. Nothing was run."); return 2
     if target not in ("vercel", "vm_remote"):
         say(f"{app_id}: --operator runs against an app that serves traffic (Vercel, or its own server); this one's target is {target!r}. Nothing was run."); return 2
     if not url or (target == "vm_remote" and not infra.get("deployed_at")):
         say(f"{app_id}: the app is not deployed yet, so it has no database to run {key} against. Nothing was contacted."); return 1
-    build = _build_dir(app_id, app, target)
+    build = v0["build"] if v0 is not None else _build_dir(app_id, app, target)
     allow = allowed(os.path.join(build, "package.json"))
     if not allow:
         say(f"{app_id}: there is no package.json with operator scripts under {os.path.relpath(build, ROOT)}/ (the app's build copy). "
@@ -276,21 +313,31 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
     if why: say(f"{app_id}: {key} is not run: {why}. Nothing was run."); return 2
     detail = {"script": key, "target": target, "args": shown_args, "dry_run": o["dry"]}
     read_only = key.startswith(AUDIT)
+    says_ro = None if read_only else read_only_note(build, argv[-1])   # wording only: it still needs the yes
+    if says_ro:
+        detail["read_only"] = says_ro
+        say(f"{app_id}: {key} is READ-ONLY: {says_ro}. It still runs only with a yes, since it reads the live app's database.")
     rerun = (f"python3 .claude/scripts/provision.py {app_id} --operator {key if read_only else key[len(PREFIX):]}"
              + ("" if read_only else " --yes") + f" -- {shlex.join(shown_args)}").rstrip(" -")
     if target == "vercel":
         if P is not None: P._refuse_live_or_shared_project(app_id, infra)
-        proj = (infra.get("vercel") or {}).get("project")
-        shown = (shown_env((DB_VAR, "BLOB_READ_WRITE_TOKEN"), proj) + f" NODE_ENV=production WORKSPACE_OPS_URL={shlex.quote(url)} "
-                 + shlex.join(argv + shown_args))
+        proj = v0["env_project"] if v0 is not None else (infra.get("vercel") or {}).get("project")
+        names = (DB_VAR,) + (V0_SETTINGS if v0 is not None else ("BLOB_READ_WRITE_TOKEN",))
+        shown = (shown_env((DB_VAR,) if v0 is not None else names, proj)
+                 + "".join(f" {k}=<as the project sets it, if it does>" for k in (V0_SETTINGS if v0 is not None else ()))
+                 + f" NODE_ENV=production WORKSPACE_OPS_URL={shlex.quote(url)} " + shlex.join(argv + shown_args))
         say(f"{app_id}: {key} on Vercel, run here from {os.path.relpath(build, ROOT)}/ (the app's build copy):")
         say(f"    $ cd {shlex.quote(os.path.relpath(build, ROOT))}")
         say(f"    $ {shown}")
-        say(f"    with nothing else of the project's environment, and of this machine's only {', '.join(BASE_ENV[:3])} and the like. "
-            f"The file store's settings follow the project's STORAGE_DRIVER: BLOB_READ_WRITE_TOKEN on Vercel Blob (unset, the default); "
-            f"STORAGE_DRIVER and STORAGE_S3_* (hidden) on s3; none on filesystem, whose files are on a disk the factory cannot reach, "
-            f"so a run there writes the database rows only and says so.")
-        detail["command"] = shown; detail["env"] = [DB_VAR, "BLOB_READ_WRITE_TOKEN", "NODE_ENV", "WORKSPACE_OPS_URL"]
+        if v0 is not None:
+            say(f"    with nothing else of the project's environment (no file store: its scripts write no files), and of this machine's "
+                f"only {', '.join(BASE_ENV[:3])} and the like. The database address is the app role's, from {proj}'s production environment.")
+        else:
+            say(f"    with nothing else of the project's environment, and of this machine's only {', '.join(BASE_ENV[:3])} and the like. "
+                f"The file store's settings follow the project's STORAGE_DRIVER: BLOB_READ_WRITE_TOKEN on Vercel Blob (unset, the default); "
+                f"STORAGE_DRIVER and STORAGE_S3_* (hidden) on s3; none on filesystem, whose files are on a disk the factory cannot reach, "
+                f"so a run there writes the database rows only and says so.")
+        detail["command"] = shown; detail["env"] = list(names) + ["NODE_ENV", "WORKSPACE_OPS_URL"]
     else:
         sys.path.insert(0, HERE); import vm_remote as V
         S = V.settings(app_id, app, infra, ds or {})
@@ -308,35 +355,44 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
         say("DRY RUN: nothing was run and nothing was contacted.")
         AR.note(summary=f"{app_id}: dry run of {key} on {target}; nothing was run", next=f"Only once the person said yes to running it: {rerun}"); return 0
     if not o["yes"] and not read_only:
+        if says_ro:
+            how = (f"{key} is read-only ({says_ro}), but it connects to the live app {app_id}'s database with the app's own login. "
+                   f"Say yes in the chat if it should run with the arguments shown; the agent then runs: {rerun}")
+            AR.need("approval", f"yes to run the read-only {key} on {app_id}", how)
+            AR.note(summary=f"{app_id}: {key} is read-only, and still needs a yes before it reads the live app's database; nothing was run", next=how)
+            say(f"{app_id}: {key} reads a live app's database, so it needs a yes first. Nothing was run. With the yes: {rerun}"); return 3
         how = (f"Running {key} writes to the live app {app_id} (its database{', on its own server' if target == 'vm_remote' else ''}). "
                f"Say yes in the chat if it should run with the arguments shown; the agent then runs: {rerun}")
         AR.need("approval", f"yes to run {key} on {app_id}", how)
         AR.note(summary=f"{app_id}: {key} needs a yes before it writes to the live app; nothing was run", next=how)
         say(f"{app_id}: {key} writes to a live app, so it needs a yes first. Nothing was run. With the yes: {rerun}"); return 3
-    rc = (_run_vercel if target == "vercel" else _run_remote)(app_id, app, infra, ds or {}, build, argv, args, url, key, runner, pull_env, say)
+    if target == "vercel": rc = _run_vercel(app_id, app, infra, ds or {}, build, argv, args, url, key, runner, pull_env, say, v0=v0)
+    else: rc = _run_remote(app_id, app, infra, ds or {}, build, argv, args, url, key, runner, pull_env, say)
     detail["exit_code"] = rc if isinstance(rc, int) else None
     ok = rc == 0
     AR.note(summary=f"{app_id}: {key} on {target} " + ("finished" if ok else "failed") + (f" (exit {rc})" if not ok and isinstance(rc, int) else ""))
     return 0 if ok else 1
 
 
-def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pull_env, say):
+def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pull_env, say, v0=None):
     if pull_env is None:
         if SCRIPTS not in sys.path: sys.path.insert(0, SCRIPTS)
         import clone
         pull_env = clone.pull_env
-    pulled = pull_env(infra["vercel"]["project"], build) or {}
-    vals = {k: pulled[k] for k in PULLED_ENV if isinstance(pulled.get(k), str)}   # the allow-list: nothing else is kept
+    proj = v0["env_project"] if v0 is not None else infra["vercel"]["project"]
+    pulled = pull_env(proj, build) or {}
+    keep = (DB_VAR,) + V0_SETTINGS if v0 is not None else PULLED_ENV
+    vals = {k: pulled[k] for k in keep if isinstance(pulled.get(k), str)}   # the allow-list: nothing else is kept
     del pulled
     for v in _secret_values(vals): AR.forbid(v)
     db = vals.get(DB_VAR)
     if not db or db == "[SENSITIVE]":
         say(f"{app_id}: the database address could not be read from the project's production environment. Nothing was run."); return 1
-    env, said = child_env(vals, url)
+    env, said = child_env(vals, url, v0=v0)
     hide = hider(_secret_values(env))
     AR.NOTES["details"].setdefault("operator", {})["env"] = sorted(k for k in env if k not in BASE_ENV)
     say(f"{app_id}: {said}")
-    say(f"    $ " + " ".join(f"{k}={env[k]}" if k in SHOWN_VALUES or k in ("NODE_ENV", "WORKSPACE_OPS_URL") else f"{k}=<hidden>"
+    say(f"    $ " + " ".join(f"{k}={env[k]}" if k in SHOWN_VALUES or k in V0_SETTINGS or k in ("NODE_ENV", "WORKSPACE_OPS_URL") else f"{k}=<hidden>"
                            for k in env if k not in BASE_ENV) + " " + shlex.join(argv + mask_args(args)))
     try:
         r = (runner or subprocess.run)(argv + list(args), cwd=build, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
@@ -346,7 +402,8 @@ def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pul
         say(f"{app_id}: {key} could not be started ({type(e).__name__}). Nothing was run."); return 1
     for text in (r.stdout, r.stderr):
         for l in hide(text).splitlines(): say(l)
-    say(f"{app_id}: {key} exited {r.returncode}. The database address and the file store's credentials were never printed.")
+    say(f"{app_id}: {key} exited {r.returncode}. " + ("The database address was never printed." if v0 is not None
+        else "The database address and the file store's credentials were never printed."))
     return r.returncode
 
 
@@ -564,6 +621,43 @@ def self_test(check=None):
                    rc == 0 and "no BLOB_READ_WRITE_TOKEN" in out, out)
             finally:
                 os.environ.pop("SF_SELFTEST_FACTORY_ONLY", None); AR._FORBIDDEN.clear()
+            # 4c. mold_v0-173: a single-service app on Vercel (lib/single_service.py hands over with v0): its build copy, the
+            # API project's DATABASE_URL and APP_RUN_SANDBOX only (no file store), a tsx line, and a READ-ONLY script's wording.
+            b0 = os.path.join(t, "build", "v0app"); os.makedirs(os.path.join(b0, "scripts", "operator"))
+            json.dump({"scripts": {"operator:vault-status": "node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts",
+                                   "operator:other": "node --import=tsx scripts/operator/other.ts"}}, open(os.path.join(b0, "package.json"), "w"))
+            open(os.path.join(b0, "scripts", "operator", "vault-status.ts"), "w").write("// READ-ONLY. Which keys the app's key vault holds: never a value. More.\nconsole.log(1);\n")
+            open(os.path.join(b0, "scripts", "operator", "other.ts"), "w").write("// writes things\n")
+            V0 = {"build": b0, "env_project": "app-one-api"}
+            ok("operator v0: a tsx package line is a plain node line", node_argv("node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts")[0]
+               == ["node", "--import=tsx", "scripts/operator/vault-status.ts"])
+            ok("operator v0: the READ-ONLY first line is read (wording only)", read_only_note(b0, "scripts/operator/vault-status.ts") == "Which keys the app's key vault holds: never a value"
+               and read_only_note(b0, "scripts/operator/other.ts") is None and read_only_note(b0, "scripts/operator/none.ts") is None)
+            V0FULL = {"DATABASE_URL": DB, "BLOB_READ_WRITE_TOKEN": BLOB, "APP_RUN_SANDBOX": "auto", **NOT_FOR_IT}
+            pulls.clear(); runs_.clear()
+            rc, out = go(["--operator", "vault-status", "--dry-run", "--", "--json"], pull_=pull_with(V0FULL), v0=V0)
+            ok("operator v0: --dry-run says READ-ONLY, names the API project and the tsx line, pulls and runs nothing",
+               rc == 0 and not pulls and not runs_ and "READ-ONLY: Which keys" in out and "app-one-api" in out and "node --import=tsx scripts/operator/vault-status.ts --json" in out
+               and "BLOB_READ_WRITE_TOKEN" not in out and "build/v0app" in out and AR.NOTES["details"]["operator"]["read_only"].startswith("Which keys"), out)
+            rc, out = go(["--operator", "vault-status", "--", "--json"], pull_=pull_with(V0FULL), v0=V0)
+            ok("operator v0: a read-only script still needs the yes (exit 3), and the request says it is read-only",
+               rc == 3 and not pulls and not runs_ and "read-only" in AR.NOTES["needs"][0]["how"] and "read-only" in AR.NOTES["needs"][0]["name"]
+               and "--operator vault-status --yes -- --json" in AR.NOTES["needs"][0]["how"], (out, AR.NOTES["needs"]))
+            rc, out = go(["--operator", "other"], pull_=pull_with(V0FULL), v0=V0)
+            ok("operator v0: a script without the READ-ONLY line asks for the yes as a write", rc == 3 and "writes to the live app" in AR.NOTES["needs"][0]["how"], out)
+            rc, out = go(["--operator", "vault-status", "--yes", "--", "--json"], pull_=pull_with(V0FULL), run_=echo_run, v0=V0)
+            env_ = runs_[-1][1]["env"] if runs_ else {}
+            ok("operator v0: --yes pulls the API project's environment and hands over DATABASE_URL and APP_RUN_SANDBOX only (no file store, nothing else)",
+               rc == 0 and pulls[-1] == ("app-one-api", b0) and runs_[-1][1]["cwd"] == b0
+               and runs_[-1][0] == ["node", "--import=tsx", "scripts/operator/vault-status.ts", "--json"]
+               and set(env_) - basics == {"DATABASE_URL", "APP_RUN_SANDBOX", "NODE_ENV", "WORKSPACE_OPS_URL"} and env_["DATABASE_URL"] == DB, (sorted(env_), out))
+            ok("operator v0: the database address is never printed (even echoed); APP_RUN_SANDBOX is shown as it is",
+               "Sup3rS3cretPw" not in out and BLOB not in out and "DATABASE_URL=[hidden]" in out and "APP_RUN_SANDBOX=auto" in out and "address was never printed" in out, out)
+            rc, out = go(["--operator", "vault-status", "--yes"], pull_=pull_with({"DATABASE_URL": DB}), run_=echo_run, v0=V0)
+            ok("operator v0: no APP_RUN_SANDBOX on the project: said, the script reads the default", rc == 0 and "APP_RUN_SANDBOX" not in runs_[-1][1]["env"] and "reads the default" in out, out)
+            rc, out = go(["--operator", "vault-status", "--yes"], inf={"target": "compose_remote", "compose_remote": {"production_url": "https://x.example.com"}}, v0=V0)
+            ok("operator v0: a single-service app off Vercel is refused, exit 2", rc == 2 and "Vercel only" in out, out)
+            AR._FORBIDDEN.clear()
             rc, out = go(["--operator", "new-org", "--yes", "--", "--exit", "4"])
             ok("operator vercel: a script that fails is exit 1", rc == 1 and AR.NOTES["details"]["operator"]["exit_code"] == 4, (rc, out))
             n0 = len(runs_)
