@@ -2,7 +2,7 @@
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec } from '../../config/pack-nav.generated';
 
 /** The kinds of tab drawn by the tab page itself; the others open a shell page (/app/billing...) or a pack page. */
-const OWN_PAGE = new Set<PackTabSpec['kind']>(['overview', 'area', 'runs', 'reports']);
+const OWN_PAGE = new Set<PackTabSpec['kind']>(['overview', 'area', 'runs', 'reports', 'sections']);
 const ownPage = (t: PackTabSpec) => OWN_PAGE.has(t.kind) && t.url === `/app/${t.id}`;
 
 /** The tab at /app/<id> (mold_v0-132: flat; its page is the shell's: overview, area, runs, reports), or null. */
