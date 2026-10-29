@@ -424,12 +424,14 @@ export async function failUnlaunchedRun(runId: string, reason: string): Promise<
  * Say once on each queued run why it waits (mold_v0-055): no sandbox to run it in. A `waiting` event with the reason,
  * written only when the run's last such event gave another reason (or none was written). Returns how many were noted.
  */
-export async function noteRunsWaiting(reason: string, limit = 200): Promise<number> {
+export async function noteRunsWaiting(reason: string, limit = 200, runIds: string[] | null = null): Promise<number> {
+  // `runIds`: only these runs (mold_v0-179: the autoscaler says where one run's sandbox stands); else every queued one.
   const rows = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; attempt: number }>(
     `/* tenant: internal: the autoscaler notes why queued runs wait, on each run's own row */
      SELECT r.id, r.org_id, r.attempt FROM runs r WHERE r.status = 'queued' AND r.runner_location = 'hosted'
+        AND ($3::text[] IS NULL OR r.id = ANY($3::text[]))
         AND coalesce((SELECT e.data->>'reason' FROM run_events e WHERE e.run_id = r.id AND e.type = 'waiting' ORDER BY e.id DESC LIMIT 1), '') <> $1
-      ORDER BY r.created_at LIMIT $2`, [reason, limit]));
+      ORDER BY r.created_at LIMIT $2`, [reason, limit, runIds]));
   for (const r of rows) await event(r.id, r.org_id, r.attempt, "waiting", { reason });
   return rows.length;
 }
