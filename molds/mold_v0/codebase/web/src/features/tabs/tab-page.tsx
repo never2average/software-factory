@@ -4,10 +4,12 @@
 //              mold_v0-172): the Setup page's own layout (the checklist, the connection card and the cards of its
 //              pack.json rail on the right; the notices it includes below the checklist unless a card shows them), its
 //              charts below both columns
-//   area       a record area's records: a table, a board (a column per state), a timeline (by a date), each row opening
-//              the record's page when the tab has the detail view; the tab's charts above. A merged tab (mold_v0-135:
-//              pack.json `areas`) draws several areas as one list, rows merged by key on the server (./merged.ts)
-//   runs       the workspace's runs; reports: finished runs and their results
+//   area       a record area's records: a table, a board (a column per state), a timeline (by a date); the tab's charts
+//              above. The table is the console's database table (mold_v0-176: RecordTableView, as the record pages and
+//              Accounts): a row opens the record beside the list, with Open record for its page when the tab has the
+//              detail view. A merged tab (mold_v0-135: pack.json `areas`) draws several areas as one list, rows merged
+//              by key on the server (./merged.ts)
+//   runs       the workspace's runs; reports: finished runs and their results (./runs.tsx: the same database table)
 // An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
@@ -15,22 +17,20 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import PageContainer from '@/components/layout/page-container';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
 import { FloatPanel, SetupPage } from '@/features/portal/setup';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
 import { Icons } from '@/components/icons';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
-import { BoardColumns, RecordTable, TimelineList, type Page } from './board';
-import { ChartCell, ChartTiles, formatValue, type MetricResult } from './charts';
+import { RecordTableView } from '@/features/records/record-pages';
+import { BoardColumns, TimelineList, type Page } from './board';
+import { ChartCell, ChartTiles, type MetricResult } from './charts';
 import { EmptyState, type EmptySpec } from './empty';
 import { ExportCsvButton } from './export';
 import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
-import { fill } from '@/lib/vocabulary';
+import { RunsTable } from './runs';
 import { httpError } from '@/features/status/from-error';
 import { StatusPage } from '@/features/status/status-page';
 
@@ -134,27 +134,6 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
 /** What an area view reads: the area as the tab shows it, where its rows come from, and how they are completed. */
 type Source = { area: RecordAreaSpec; url: string; rows: (p: Page) => Page };
 
-function TableView({ src: { area, url: base, rows }, detail, empty }: { src: Source; detail: boolean; empty?: EmptySpec }) {
-  const [after, setAfter] = useState<string[]>([]);
-  const cursor = after.at(-1) ?? '';
-  const url = `${base}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
-  const { data: raw, error } = useOrgLoad(() => getJson<Page>(url), [url]);
-  const data = raw && rows(raw);
-  if (error) return <ErrorState error={error} />;
-  if (!data) return <LoadingCards count={1} />;
-  // (A merged tab's page may hold no row and still have more: then its Next button shows.)
-  if (!data.records.length && !after.length && !data.next) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
-  return (
-    <div className='flex flex-col gap-4'>
-      <RecordTable area={area} detail={detail} data={data} />
-      <div className='flex gap-2'>
-        {after.length > 0 && <Button variant='outline' size='sm' onClick={() => setAfter(after.slice(0, -1))}>Previous</Button>}
-        {data.next && <Button variant='outline' size='sm' onClick={() => setAfter([...after, data.next!])}>Next</Button>}
-      </div>
-    </div>
-  );
-}
-
 /** Up to 200 records of an area at once (a board or a timeline), and whether there are more. */
 function useMany({ url: base, rows }: Source) {
   const url = `${base}?limit=200`;
@@ -208,9 +187,13 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   const detail = (tab.views ?? ['table', 'detail']).includes('detail');
   const [view, setView] = useState<'table' | 'board' | 'timeline'>(views[0] ?? 'table');
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
+  const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
+  const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
     <div className='flex flex-col gap-6'>
       <ChartGrid charts={tabCharts(tab)} />
+      {/* The views' switch, and Export CSV for the board and the timeline (the table has its own, in its toolbar). */}
+      {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
       {views.length > 1 ? (
         <div role='tablist' aria-label='Views' className='bg-muted text-muted-foreground inline-flex w-fit items-center rounded-lg p-[3px]'
@@ -229,82 +212,18 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
           ))}
         </div>
       ) : <span />}
-        <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={tab.areas ? tab.areas.map((a) => a.area) : [area.name]} />
+        {!table && <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />}
       </div>
+      )}
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
       {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
         : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
-        : views.length ? <TableView src={src} detail={detail} empty={tab.empty} /> : null}
+        : views.length ? (
+          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} compact={!tab.charts.length}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas}
+            empty={<div className='mx-auto max-w-xl text-left'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
+        ) : null}
       </div>
-    </div>
-  );
-}
-
-// ---------- runs and reports ----------
-
-type Run = { id: string; kind: string; status: string; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; error: string | null; results: Record<string, number> };
-type RunResult = { check: { area: string; key: string }; asset: { area: string; key: string } | null; source: { area: string; key: string } | null; status: string; evidence_ref: string | null };
-const when = (d: string | null) => (d ? new Date(d).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—');
-const RESULT_ORDER = ['fail', 'error', 'pass', 'not_applicable', 'unknown'];
-const RESULT_LABELS: Record<string, string> = { pass: 'Pass', fail: 'Fail', error: 'Error', not_applicable: 'Not applicable', unknown: 'Unknown' };
-const counts = (r: Record<string, number>) => RESULT_ORDER.filter((s) => r[s]).map((s) => `${r[s]} ${RESULT_LABELS[s]!.toLowerCase()}`).join(', ') || '—';
-
-function RunResults({ id }: { id: string }) {
-  const { data, error } = useOrgLoad(() => getJson<{ results: RunResult[] }>(`/api/runs/${encodeURIComponent(id)}`), [id]);
-  if (error) return <ErrorState error={error} />;
-  if (!data) return <LoadingCards count={1} />;
-  if (!data.results.length) return <p className='text-muted-foreground text-sm'>This run recorded no results.</p>;
-  const ref = (x: { area: string; key: string } | null) => (x ? <Link className='underline-offset-4 hover:underline' href={`/app/records/${x.area}/${encodeURIComponent(x.key)}`}>{x.key}</Link> : '—');
-  return (
-    <Table label={fill('Results of the {run}')}>
-      <TableHeader><TableRow><TableHead>Check</TableHead><TableHead>Asset</TableHead><TableHead>Result</TableHead><TableHead>Evidence</TableHead></TableRow></TableHeader>
-      <TableBody>
-        {data.results.map((r, i) => (
-          <TableRow key={i}>
-            <TableCell>{ref(r.check)}</TableCell><TableCell>{ref(r.asset)}</TableCell>
-            <TableCell><Badge variant={r.status === 'fail' || r.status === 'error' ? 'destructive' : 'secondary'}>{RESULT_LABELS[r.status] ?? r.status}</Badge></TableCell>
-            <TableCell className='font-mono text-xs break-all'>{r.evidence_ref ?? '—'}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-function RunsTab({ reports, label, empty }: { reports: boolean; label: string; empty?: EmptySpec }) {
-  const { data, error } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=100'), []);
-  const [open, setOpen] = useState<string | null>(null);
-  if (error) return <ErrorState error={error} />;
-  if (!data) return <LoadingCards count={1} />;
-  const runs = reports ? data.runs.filter((r) => r.status === 'succeeded' || r.status === 'failed') : data.runs;
-  if (!runs.length) return <EmptyState empty={empty} id={reports ? 'empty-reports' : 'empty-runs'} />;
-  return (
-    <div className='flex flex-col gap-4'>
-      <Table label={label}>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>{reports ? 'Finished' : 'Started'}</TableHead>
-            <TableHead>Results</TableHead><TableHead className='text-right'>Cost</TableHead>{reports && <TableHead />}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {runs.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell className='font-medium'>{r.kind}</TableCell>
-              <TableCell><Badge variant={r.status === 'failed' ? 'destructive' : 'secondary'}>{r.status}</Badge></TableCell>
-              <TableCell>{when(reports ? r.ended_at : r.started_at ?? r.created_at)}</TableCell>
-              <TableCell>{counts(r.results)}</TableCell>
-              <TableCell className='text-right tabular-nums'>{formatValue(r.cost_usd, 'usd')}</TableCell>
-              {reports && (
-                <TableCell className='text-right'>
-                  <Button variant='ghost' size='sm' aria-expanded={open === r.id} onClick={() => setOpen(open === r.id ? null : r.id)}>{open === r.id ? 'Hide' : 'Results'}</Button>
-                </TableCell>
-              )}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      {reports && open && <section aria-label='Results of the run'><RunResults id={open} /></section>}
     </div>
   );
 }
@@ -324,7 +243,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
       {error && !loaded ? <ErrorState error={error} /> : !loaded ? <LoadingCards count={1} /> : !allowed ? <StatusPage kind='denied' area='app' />
         : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
-        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} label={tab.label} empty={tab.empty} />
+        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTable tab={tab} reports={tab.kind === 'reports'} />
         : null}
     </PageContainer>
   );

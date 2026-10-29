@@ -7,6 +7,9 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Badge } from '@/components/ui/badge';
+import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { EmptyState } from '@/features/tabs/empty';
+import { ExportRowsButton } from '@/features/tabs/export';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
@@ -73,10 +76,51 @@ function NoticesList({ limit, label }: { limit?: number; label?: string }) {
   );
 }
 
+/**
+ * /app/notices as the console's database table (mold_v0-176, as on Accounts): due date, record, area, when it was posted
+ * and whether it was emailed; search, filters, a pager, Export CSV; a row opens the notice beside the list with Open
+ * record, and each row's menu dismisses it. Home's section and card keep their short lists (NoticesList, DueSoonCard).
+ */
 export function NoticesPage() {
+  const { data, error, reload } = useOrgLoad(() => call<{ notices: Notice[] }>('GET'));
+  const dismiss = (n: Notice) => call('POST', `/${n.id}/dismiss`).then(() => { toast.success('Dismissed'); return reload(); }).catch(fail);
+  const href = (n: Notice) => `/app/records/${encodeURIComponent(n.area)}/${encodeURIComponent(n.key)}`;
+  const cols: RecordCol<Notice>[] = [
+    {
+      key: 'record', label: 'Record', title: true, keep: true, type: 'text', className: 'min-w-56', value: (n) => n.title ?? n.key,
+      render: (n) => (
+        <span className='flex min-w-0 flex-col gap-1'>
+          <span className='leading-snug font-medium'>{n.title ?? n.key}</span>
+          {n.title && n.title !== n.key && <span className='text-muted-foreground font-mono text-xs leading-none break-all'>{n.key}</span>}
+        </span>
+      )
+    },
+    { key: 'due', label: 'Due', type: 'date', keep: true, value: (n) => n.due_on, render: (n) => <span className='font-mono text-sm'>{n.due_on}</span> },
+    { key: 'area', label: 'Area', type: 'select', value: (n) => n.area_label, render: (n) => n.area_label },
+    { key: 'posted', label: 'Posted', type: 'date', value: (n) => n.created_at, render: (n) => <When d={n.created_at} /> },
+    { key: 'emailed', label: 'Emailed', type: 'boolean', value: (n) => n.emailed, render: (n) => (n.emailed ? 'Yes' : 'No') }
+  ];
   return (
     <PageContainer pageTitle='Notices' pageDescription={DESCRIPTION}>
-      <NoticesList label='Notices' />
+      {error ? <ErrorState error={error} /> : (
+        <RecordView<Notice>
+          id='app-notices' compact noun='notices' properties
+          rows={data?.notices ?? []} rowKey={(n) => n.id} cols={cols} loading={!data}
+          defaultSort={[{ key: 'due', dir: 'asc' }]}
+          searchText={(n) => `${n.title ?? ''} ${n.key} ${n.area_label} ${n.due_on}`}
+          searchPlaceholder='Search notices'
+          primary={data?.notices.length ? <ExportRowsButton name='notices' rows={data.notices} cols={cols} /> : undefined}
+          empty={<div className='mx-auto max-w-xl text-left'><EmptyState id='empty-notices' empty={{
+            title: 'Nothing is due soon.',
+            text: 'A record shows here when its due date comes within its area\'s window. Checked once a day; owners also get them by email.',
+            cta: null
+          }} /></div>}
+          actions={(n) => [{ label: 'Dismiss', onSelect: () => void dismiss(n) }]}
+          detailTitle={(n) => n.title ?? n.key}
+          detailActions={(n) => <Button variant='outline' size='sm' render={<a href={href(n)} />}>Open record</Button>}
+          detail={(n) => <Button variant='ghost' size='sm' onClick={() => void dismiss(n)}>Dismiss<span className='sr-only'> {n.title ?? n.key}</span></Button>}
+        />
+      )}
     </PageContainer>
   );
 }

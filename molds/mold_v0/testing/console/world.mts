@@ -16,7 +16,8 @@
 //      platform staff, so both /app and /admin render signed in; and two people in no workspace (one of them staff), for
 //      the portal's page for no account (a page's `as` in surface.mts picks them). The session is a token the mock signs and the API
 //      verifies; a fresh one is minted for every page (they live five minutes). Then the shared record areas' sample
-//      records (mold_v0-170: pack.json record_areas[].samples), so their pages are graded with rows.
+//      records (mold_v0-170: pack.json record_areas[].samples), so their pages are graded with rows; then the workspace's
+//      own sample rows (mold_v0-176: ./seed.mts), made from the build's declarations, so its lists have rows too.
 //   5. The console: `next start` on 127.0.0.1 (a free port), killed with this process (PR_SET_PDEATHSIG).
 //   6. Each harness's run({origin, api, lane, pages, packs, session, sessionAs, argv}): pages from surface.mts (filtered by
 //      --pages), a row per pack; api and lane for a harness that reads the API itself or imports the lane copy's modules
@@ -137,6 +138,12 @@ try {
     }
   }
   if (samples) console.log(`lane world: ${samples} sample record(s) written to the shared areas that declare them`);
+
+  // 4c. The workspace's own sample rows (mold_v0-176), so its lists are graded with rows: a workspace's records come from
+  // its own use, never from a pack's samples (src/pack-api.ts refuses those), so the lane world makes them itself.
+  const { seedWorkspace } = await import(pathToFileURL(path.join(import.meta.dirname, "seed.mts")).href);
+  const own = await seedWorkspace(org.orgId, lane);
+  if (own.records || own.runs) console.log(`lane world: ${own.records} sample record(s) in the workspace's own areas, ${own.runs} sample run(s) with ${own.results} result(s)${own.skipped.length ? `; not seeded: ${own.skipped.join("; ")}` : ""}`);
 
   // 5. The console, killed with this process even if this process is killed outright.
   const pdeath = "import ctypes,os,signal,sys; ctypes.CDLL(None).prctl(1, signal.SIGTERM); os.execvp(sys.argv[1], sys.argv[1:])";

@@ -3,8 +3,10 @@
 // definePack({ recordAreas }), with no pack code. Labels and columns come from the generated registry
 // (web/src/config/pack-nav.generated.ts); rows from /api/records (a workspace's view: shared areas and its own) or
 // /api/admin/records (platform staff: the shared areas). Read only: records are written by the packs and the platform.
+// The list is the console's database table (RecordView, as on Accounts; mold_v0-170), and so is every customer list of
+// an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
@@ -18,8 +20,9 @@ import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
 import { httpError } from '@/features/status/from-error';
 
-type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version: string | null; updated_at: string };
-type Page = { records: RecordRow[]; next: string | null };
+/** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
+type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[] };
+export type Page = { records: RecordRow[]; next: string | null };
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[] };
 
 async function getJson<T>(url: string): Promise<T> {
@@ -35,12 +38,12 @@ const where = (area: RecordAreaSpec) => (area.scope === 'platform' ? 'Shared by 
 /** How many records the list reads in one go (pages of 200, the API's most): search, sort and filter run on these. */
 export const LIST_MAX = 2000;
 
-/** Every record of the area up to LIST_MAX, and whether there were more. */
-async function loadAll(url: string): Promise<{ records: RecordRow[]; more: boolean }> {
+/** Every record of the area up to LIST_MAX, and whether there were more; `rows` completes each page (a merged tab's source). */
+async function loadAll(url: string, rows: (p: Page) => Page = (p) => p): Promise<{ records: RecordRow[]; more: boolean }> {
   const records: RecordRow[] = [];
   let after: string | null = null;
   for (;;) {
-    const page: Page = await getJson<Page>(`${url}?limit=200${after ? `&after=${encodeURIComponent(after)}` : ''}`);
+    const page: Page = rows(await getJson<Page>(`${url}?limit=200${after ? `&after=${encodeURIComponent(after)}` : ''}`));
     records.push(...page.records);
     after = page.next;
     if (!after) return { records, more: false };
@@ -118,34 +121,52 @@ function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admi
   return <div className='mx-auto max-w-xl text-left'><EmptyState empty={e} id={`records-${area.name}-empty`} /></div>;
 }
 
-export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
-  const url = `${recordsApi(base)}/${area.name}`;
-  const { data, error } = useOrgLoad(() => loadAll(url), [url]);
+/**
+ * An area's records as the console's database table (mold_v0-170, mold_v0-176): the area's list columns typed by their
+ * fields (an enum filters by its options; dates and numbers sort as such), search, a record count, sorting, filters, a
+ * pager, Export CSV, a loading state and the empty state it is given; a row opens the record beside the list, with Open
+ * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
+ * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
+ */
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true }: {
+  area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
+  /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
+  compact?: boolean;
+  /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
+  exportName?: string; exportAreas?: string[];
+}) {
+  const { data, error } = useOrgLoad(() => loadAll(url, rows), [url, rows]);
   const cols = useMemo(() => columnsOf(area), [area]);
-  const detailHref = (r: RecordRow) => `/${base}/records/${area.name}/${encodeURIComponent(r.key)}`;
+  const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
+  const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
+  if (error) return <ErrorState error={error} />;
+  return (
+    <RecordView<RecordRow>
+      id={id} compact={compact} noun='records' properties
+      rows={data?.records ?? []} rowKey={(r) => r.key} cols={cols} loading={!data}
+      searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
+      searchPlaceholder={`Search ${area.label.toLowerCase()}`}
+      filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span> : undefined}
+      primary={data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
+      empty={empty}
+      detailTitle={(r) => r.title || r.key}
+      detailActions={(r) => { const href = detailHref(r); return href ? <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button> : null; }}
+      detail={(r) => (
+        <dl>
+          {r.version && <Field label='Version'>{r.version}</Field>}
+          {area.fields.filter((f) => !area.list_columns.includes(f.name)).map((f) => (
+            <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
+          ))}
+        </dl>
+      )}
+    />
+  );
+}
+
+export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
   return (
     <PageContainer pageTitle={area.label} pageDescription={area.description ?? where(area)}>
-      {error ? <ErrorState error={error} /> : (
-        <RecordView<RecordRow>
-          id={`${base}-records-${area.name}`} compact noun='records' properties
-          rows={data?.records ?? []} rowKey={(r) => r.key} cols={cols} loading={!data}
-          searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
-          searchPlaceholder={`Search ${area.label.toLowerCase()}`}
-          filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span> : undefined}
-          primary={data?.records.length ? <ExportCsvButton url={url} area={area} name={area.name} areas={[area.name]} /> : undefined}
-          empty={<RecordEmpty area={area} base={base} />}
-          detailTitle={(r) => r.title || r.key}
-          detailActions={(r) => <Button variant='outline' size='sm' render={<Link href={detailHref(r)} />}>Open record</Button>}
-          detail={(r) => (
-            <dl>
-              {r.version && <Field label='Version'>{r.version}</Field>}
-              {area.fields.filter((f) => !area.list_columns.includes(f.name)).map((f) => (
-                <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
-              ))}
-            </dl>
-          )}
-        />
-      )}
+      <RecordTableView area={area} base={base} url={`${recordsApi(base)}/${area.name}`} id={`${base}-records-${area.name}`} empty={<RecordEmpty area={area} base={base} />} />
     </PageContainer>
   );
 }
