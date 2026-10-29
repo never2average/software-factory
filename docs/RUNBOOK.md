@@ -9,6 +9,9 @@ at the terminal** — every step that touches a secret value, because the agent 
 one. The whole path is: brief → intake → provision (check, read-only) → the credentials → deploy (prints its plan,
 then creates) → first sign-in → more workspaces and the first company (§6a) → lanes.
 
+That path is mold_v1's. An application from **mold_v0** (an MCP product: the shell, a pack and a brand) has its own,
+shorter path in §11.
+
 ## 0. What you get and what you must bring
 
 The factory gives an application everything except a handful of credentials. It mints the database (a free Neon
@@ -614,9 +617,191 @@ the old `GITLAB_TOKEN` line from `~/.profile` first.
 For a company's own server, tell the agent its name; it adds `--host gitlab.example.com`. If the `glab` command is
 installed and signed in on this machine, the factory uses that sign-in and no token is needed.
 
+## 11. An application from mold_v0 (an MCP product: the shell and a pack)
+
+Everything above is mold_v1 (a chat app with three Vercel projects). mold_v0 is the **MCP product shell**: one API
+and MCP server plus a web console, with workspaces (called accounts or companies in an app's own words), sign-in,
+install pages for AI clients, a key vault, a metered inference gateway, sandboxed runs, record areas, usage, billing
+and email. An application from it is the shell, **a pack** (`packs/<pack_id>/`: a `pack.json` that declares the
+product's records, runs, credentials, schedules, onboarding steps, words and guide pages) and **a brand**. Nothing in
+the shell is edited for an app. The shell's own reference is `molds/mold_v0/MOLD.md` ("How the factory runs it").
+
+Today it serves two apps on Vercel: the re-mint of the first product (live with users) and an audit product made only
+from a pack and a brand (deployed, five lanes passed on 2026-10-27, its first end-to-end audit still to run). The
+path is the same for both, and the same as above in outline: brief, state, pack, brand, keys, deploy, lanes, address,
+first user. What differs is below.
+
+### 11.1 The brief (you, about 15 minutes)
+
+A page in `briefs/<app_id>.md`. The lines the factory reads (`docs/INTAKE.md`, "mold_v0: …" sections, has all of them):
+
+```
+Mold: mold_v0
+It runs on Vercel.
+Packs: <pack_id>
+Brand: <Product name>
+Brand colour: #2F3A9E
+Logo: brands/<app_id>/logo.svg
+Tagline: <one line under the name>
+Admins: you@example.com
+Domain: app.example.com
+```
+
+- `It runs on Vercel.` (two Vercel projects) or `It runs on its own server.` (the shell's own Docker Compose stack
+  with HTTPS on a server you rent, target `compose_remote`; steps in `molds/mold_v0/MOLD.md`, "How the factory runs
+  it").
+- `Packs:` names an existing pack. Or describe the product in the brief's pack sections (`## Records`, `## Jobs`,
+  `## Credentials`, `## Schedules`, `## Onboarding`, `## Words`, `## MCP`, …; `docs/INTAKE.md`, "mold_v0: the
+  brief's pack sections") and intake writes the pack for you.
+- `Admins:` who may open the staff console (`/admin`). Without it nobody can, so intake asks.
+- Optional sections for the app's own settings (`## Profile`, `## Budgets`, `## MCP instructions`, the emails'
+  sender, the legal pages): `docs/INTAKE.md`, "mold_v0: the app's own profile settings".
+
+### 11.2 Start it (agent)
+
+Say *"mint `<app_id>` from briefs/`<app_id>`.md"*. The agent runs
+
+```
+python3 .claude/scripts/mint.py new <app_id> --brief briefs/<app_id>.md --mold mold_v0
+python3 .claude/scripts/mint.py <app_id>
+```
+
+The second line lists the ten stations and the one thing that happens next. For a mold_v0 app *workspaces* and
+*package* say "not needed" (accounts are made in the app's own console; AI clients connect to its address, there is
+no package to publish). `python3 .claude/scripts/mint.py <app_id> run` does every station that needs nobody and stops,
+saying exactly what it needs, at the first that needs you. When the next station is the deploy, the agent asks you
+first and runs the deploy as in §11.4 (a mold_v0 deploy needs one more word on its command line today). Its parts, if
+one fails and has to be run alone:
+
+| Station | Command |
+|---|---|
+| state | `python3 .claude/scripts/intake.py briefs/<app_id>.md --app <app_id> --mold mold_v0` (add `--ask` at a terminal to answer questions on screen) |
+| packs | `python3 .claude/scripts/packs.py check <pack_id> --mold mold_v0`; `packs.py show <pack_id>` lists what it adds |
+| brand | `python3 .claude/scripts/branding.py <app_id> set --name "<Name>" --color "#2F3A9E" --logo brands/<app_id>/logo.svg`, then `branding.py <app_id> preview` (a page showing the sign-in tile and colours). A brand of its own is required before the first deploy: the shell's default look must never ship |
+
+### 11.3 The keys (you, at the terminal, only if the check asks)
+
+```
+python3 .claude/scripts/provision.py <app_id>
+```
+
+Read-only: it says which of the two projects exist, what a deploy would create, and every secret name, sorted into
+what the deploy mints itself (the database address, the vault's master key, the worker token, the cron secret: never
+yours to set), the console's sign-in names, and the optional names that stay off while empty (billing, analytics, an
+object store, Google sign-in). A mold_v0 app on Vercel needs **no** key from you to deploy. Set an optional one only
+when you want what it turns on, in your own terminal, never in the chat:
+
+```
+python3 .claude/scripts/provision.py <app_id> --set-secret STRIPE_SECRET_KEY
+```
+
+It asks at a hidden prompt and writes the value only to the project that reads it; it applies at the next deploy.
+
+The keys the product itself uses are **not** environment settings. The model provider's key (Anthropic, or a Google
+Cloud Vertex AI service account), the sandbox provider's key (runs wait, and say so, until one is there) and the
+email service's key (Resend: invitations and emailed sign-in codes) go in the app's **Key vault**: open
+`https://<address>/admin/keys` signed in as a platform admin, press **Add a key** on the provider's row, paste the key
+and press **Save key**. A key is shown
+only as a hint after that, is stored sealed, and never reaches a run: a run gets a short-lived gateway token instead.
+
+Sign-in: an app whose state names Clerk's keys keeps Clerk (both apps today); otherwise the shell's built-in sign-in
+is used, an emailed eight-digit code (it needs the Resend key in the Key vault) and Google when its two names are set.
+
+### 11.4 Deploy (you say yes; about 10 minutes)
+
+See the plan first, read-only:
+
+```
+python3 .claude/scripts/provision.py <app_id> --deploy --dry-run
+```
+
+Then, once you have said yes to this deploy:
+
+```
+python3 .claude/scripts/provision.py <app_id> --deploy --allow-unverified-mold "<why>" --background
+python3 .claude/scripts/provision.py <app_id> status
+```
+
+`--allow-unverified-mold` is needed for every mold_v0 deploy today: the release gate wants this repository's own
+GitHub checks for the commit, and none run yet (ticket mold_v0-001, set aside by the operator on 2026-10-22). The reason is recorded in
+`infrastructure.json` `deploy_gate.override`. A check that failed still refuses.
+
+What the deploy does: a fresh build copy (`build/<app_id>/`: the shell, the brand, the packs, checked), the API
+project first (its own free Neon Postgres on the first deploy, proven empty; the keys the shell mints), then the
+console project pointed at the API, then health on both (`/healthz` through the console, `/admin` and `/app`
+answering), then the shell's row-level security check against the deployed database. If anything after the first
+deployment fails, **both** projects go back to what served before, by themselves, and the app is recorded `reverted`
+with the reason. `status` reports running, done, failed, or needs you.
+
+### 11.5 Lanes (agent; about 30 minutes)
+
+```
+python3 .claude/scripts/lanes.py <app_id> --list
+python3 .claude/scripts/provision.py <app_id> --lane-key --dry-run
+python3 .claude/scripts/lanes.py <app_id> --background
+python3 .claude/scripts/lanes.py <app_id> status
+```
+
+The MCP check needs an account of the app's own. `--lane-key --dry-run` shows what it would create; it writes to the
+app's data, so it runs (`--lane-key --yes`) only after your yes, once per app. The five lanes print a row per pack,
+so one pack's failure shows on its own; a failed lane reverts the app and files a ticket. Run them after every
+deploy: the *tests* station counts only lanes run after the last deploy.
+
+### 11.6 Its own address (you add one DNS record; up to an hour of waiting)
+
+```
+python3 .claude/scripts/domain.py <app_id> status
+python3 .claude/scripts/domain.py <app_id> attach app.example.com
+python3 .claude/scripts/domain.py <app_id> verify
+```
+
+`attach` prints the DNS record to add at the domain's registrar. `verify` passes when the domain serves the app's
+health answer through the console. `switch` (it needs your yes) makes the domain the front door: AI clients then
+connect to `https://app.example.com/mcp`, and emails and install pages name it. A redeploy follows. The
+`vercel.app` address keeps working.
+
+### 11.7 The first customer (you, in the app; about 20 minutes)
+
+1. Open `https://<address>/admin` and sign in with an address from the brief's `Admins:` line.
+2. **Key vault** (`/admin/keys`): add the model provider's key, the sandbox provider's key and the Resend key
+   (§11.3), if they are not there yet.
+3. **Accounts** (`/admin/accounts`), **New account**: fill in **Account name** and **First person's email**, then
+   **Create account**. That person gets an invitation by email. (Someone who asked for access on the landing page waits in **Access requests**:
+   **Approve** does the same.)
+4. On the new account, **Set monthly allowance…**: the most its runs may spend on models in a month, in US dollars.
+   **An account with no plan and no allowance has $0 and cannot start a run** (unless the API project sets a default,
+   `APP_ORG_MONTHLY_BUDGET_USD`). Per-run and per-month-per-kind
+   ceilings come from the app's profile (`## Budgets` in the brief).
+5. The customer accepts the invitation and signs in. Their **Home** lists the setup steps, each ticking itself off
+   from what really happens: connect the AI client (the connection card on **Home**, or **Setup & training** in an app
+   without a Home of its own, or the public `https://<address>/install` pages, one per client: Claude, ChatGPT, Cursor, VS Code, Claude Code and others; clients sign in, no key is
+   copied), then the pack's own steps. For the audit product those are: set up the company profile, add an
+   application, give it a read-only repository token on **Credentials**, refresh it, run the first audit, read the
+   findings. The customer guide (`/app/docs`) explains each.
+6. Watch it from **Overview** (`/admin`): the onboarding funnel, and **Needs attention** for an account that stopped
+   at a step. **Health** shows what failed; **FinOps** shows spend by account and by provider.
+
+The staff guide is the first page of **Docs** in the admin console (`/admin/docs`).
+
+### 11.8 Operating it
+
+| Want to | Run |
+|---|---|
+| see what is waiting across the factory (pull requests, tickets, deploys that are behind, leftovers) | `python3 .claude/scripts/sweep.py plan --json`; clean-up preview `python3 .claude/scripts/sweep.py clean --dry-run` |
+| redeploy after a merged change to the shell or a pack | `provision.py <app_id> --deploy --dry-run`, then (after a yes, except where a standing instruction pre-approves that app) `--deploy --allow-unverified-mold "<why>" --background` |
+| try the next release's database changes on a copy of the live database first (always, before a deploy that adds or edits a migration on an app with users) | `python3 .claude/scripts/provision.py <app_id> --rehearse-migrations --dry-run`, then `--rehearse-migrations --yes` after your yes. It makes a temporary Neon branch, applies the migrations there, measures them, and deletes the branch; the live database is only read. It needs a Neon API key on this machine, by name; if it is missing it stops and says how to add it |
+| re-prove that no account can read another's rows | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
+| go back after a bad release | a failed deploy goes back by itself (both projects). To go back by hand on Vercel: in each project (the API first, then the console) open **Deployments**, the deployment that served before (`infrastructure.json` `vercel.release.before` names both), then **Instant Rollback**; the next good deploy is promoted past it. On its own server: `python3 .claude/scripts/provision.py <app_id> --rollback-remote --dry-run`, then without `--dry-run`. The database is never rolled back, which is why a release that changes it is rehearsed on a copy first (the row above) |
+| change who may open `/admin` | the brief's `Admins:` line and intake, or `/admin/admins` in the app (owners only) |
+
+mold_v1 commands that do not apply to a mold_v0 app (each refuses with one sentence): `mint.py <app_id> code-request`
+and `code`, and `provision.py <app_id> --smoke`, `--rollback` and `--verify-db` on Vercel (its deploy checks and
+rolls back both projects itself).
+
 ## What this runbook does not cover
 
-- A custom domain (`domain: <host>` is recorded in state; attaching it is a Vercel dashboard step).
+- A custom domain in depth: `python3 .claude/scripts/domain.py <app_id> status | attach <domain> | verify | switch`
+  (§11.6 for a mold_v0 app; `domain.py --help` for the rest).
 - A clone of the live deployment: `.claude/skills/clone/SKILL.md`.
 - `target: vm` as a place to run the app for anyone (a server of your own that does serve the app is `target: vm_remote`,
   §9). `vm` is a local verification target only (the reasons are in

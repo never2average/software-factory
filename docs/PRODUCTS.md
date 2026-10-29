@@ -64,13 +64,17 @@ per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is n
 ## Where each product stands
 
 `stage` in `state/products.json`, moved only by `factory.py close`. The gate text per stage is in the same file;
-`factory.py tasks mold_v1 --all` lists the task per gate with its evidence.
+`factory.py tasks <mold_id> --all` lists the task per gate with its evidence. A product may also carry `gate_evidence`
+(optional, `products.schema.json`): per stage, each gate with the evidence that exists today and, for an open one,
+exactly what closes it. It is a record, not a switch: `stage` still moves only through `factory.py close`.
 
 | Product | Mold | Stage | Apps | Deploy targets |
 |---|---|---|---|---|
 | `delivered` | mold_v1 | released | claudecode_web_internal, claudecode_web_replica, sf_gateway_probe | vercel |
 | `dover` | mold_v1 | released | none | vercel |
-| `onfinance_hfc_research` | mold_v1 | deployed (released gates mold_v1-210..213) | onfinance_hfc (Vercel), onfinance_hfc_vm (own server) | vercel, vm_remote |
+| `onfinance_hfc_research` | mold_v1 | released | onfinance_hfc (Vercel), onfinance_hfc_vm (own server) | vercel, vm_remote |
+| `compliance_os` | mold_v1 | deployed | compliance_os | vercel |
+| `mcp_product_shell` | mold_v0 | stamped (gates and their evidence: `gate_evidence` in `state/products.json`) | octillion, maxwell | vercel, compose_remote |
 | `claudecode_web_governed` | mold_v2 | defined | none | vercel, vm |
 | `claudecode_web_research` | mold_v3 | defined | none | vercel, vm |
 
@@ -79,6 +83,58 @@ per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is n
 packaging are not decided yet (a `released` gate, mold_v1-211; the options and a recommendation are in
 `docs/customer-notes/pricing-options.md`); what it costs to run, per turn, per specialist run, per person and per
 workspace, is in `docs/COST_MODEL.md` §2b, §2c and §7.
+
+## What ships, concretely (mold_v0)
+
+`mcp_product_shell` is the MCP product shell (`molds/mold_v0/MOLD.md`): an API and MCP server with a web console in
+front of it, on Vercel as two projects (`<project>-api`, the function, with the app's own free Neon Postgres;
+`<project>`, the Next.js console, which people open and which carries the API's paths) or as one Docker Compose stack
+with HTTPS on a server of the app's own (`compose_remote`). Every app gets the same shell: accounts (each a workspace,
+under row-level security), sign-in (Clerk, or the built-in emailed code and Google), install pages for every MCP client
+(`/install`), a key vault, an inference gateway that meters every model call, sandboxed runs with an egress allowlist,
+record areas, schedules, onboarding steps, usage, billing and email, and a staff console (`/admin`). What an app is,
+it gets from **a pack** (`packs/<pack_id>/`: one `pack.json` declaring its records, runs, credentials, schedules,
+onboarding, words, charts, landing page and customer guide; config only, no code) and **a brand**. Two apps today: the
+re-mint of the first product (`octillion`, its host pack, live with users) and an audit product made from a pack and a
+brand only (`maxwell`). The operator's path, brief to first customer: `docs/RUNBOOK.md` §11.
+
+Customer-facing documentation is part of the build, never a separate site: the public install pages (`/install`, one
+per client, and `/install/tools`, every tool with its inputs), the customer guide in the console (`/app/docs`: the
+pack's own pages, then the pages the console writes from the pack's declarations: getting started and connecting a
+client, the console, the records, the runs, the MCP tools, the account; plus the on-premises runner when a run kind may
+need a private network), the staff guide (`/admin/docs`) and the data-flow statement each build writes (`DATA-MAP.md`).
+A pack's guide pages are `pack.json` `guide.markdown`.
+
+## mold_v0: packaging and pricing
+
+**Pricing: operator decision pending.** Nothing is charged today. No price below is a proposal: this lists what the
+shell can already do, so the decision is one choice plus its numbers. What is fixed today, from the app's state:
+
+| Today (maxwell) | Value | Where it is set |
+|---|---|---|
+| ceiling on one audit's model spend | US$40 | `application.json` `profile.limits.runs.budget_usd_max` (brief, `## Budgets`, operator 2026-10-22); the shell's default is 25 and the most an app may set is 200 (`molds/mold_v0/branding/rules.json` `profile.app_limits_max`) |
+| ceiling per audit kind, per company, per month | US$500 | `profile.limits.runs.kind_month_budget_usd` (same); default 200, at most 2000 |
+| what one audit actually costs | PLACEHOLDER: not measured yet | the first end-to-end audit (ticket mold_v0-030) measures it; the console's **Overview** (Audit cost) and **FinOps** show it per run |
+| a company's monthly allowance for model spend | none set: a company with no plan and no allowance has US$0 and cannot start an audit (unless the API project sets a default, `APP_ORG_MONTHLY_BUDGET_USD`) | staff set it per company (below) |
+
+The options, each already built in the shell (`molds/mold_v0/codebase/docs/accounts.md`, `src/billing.ts`,
+`src/run-charges.ts`, `src/entitlements.ts`):
+
+| Option | What the customer pays for | What it takes |
+|---|---|---|
+| **A. Allowance only** (pilot, or invoiced outside the app) | nothing in the app; a monthly cap on model spend per company | staff set it on the account (**Set monthly allowance…**, or the staff MCP tool `set_account_allowance`). No Stripe |
+| **B. Prepaid plans** | a monthly or yearly fee that includes a model-spend allowance; optionally usage pricing in tiers above it, a trial, and pricing experiments with weights | `provision.py <app> --set-secret STRIPE_SECRET_KEY`, then plans made in **FinOps › Plans › New plan** (or `create_plan`, dry run first); plans are invite-only per account (`allow_prepaid_plans`). `APP_REQUIRE_SUBSCRIPTION=1` makes a live plan required to start runs |
+| **C. Price per audit** | each finished audit: a fixed amount, and/or its metered model cost plus a percent; failed and cancelled audits free unless allowed | the shell's price per run (mold_v0-019, built, off by default): the app's profile `billing` and a `price` on each job kind in the pack; charged once per run through a Stripe meter, or kept in a ledger without Stripe. **Needs one reviewed factory change first**: `billing` is not a profile field an app may set yet (`docs/INTAKE.md`) |
+| **D. Plans with audits included or charged** | B, with each plan saying which features it unlocks (runs, schedules) and whether its audits are included or charged as in C | plan entitlements (mold_v0-083, built) and limits per plan (`profile.limits.plans.<plan>`, which an app may set). Entitlements need the same factory change as C |
+
+Inside a company, its own admins split the allowance (shared pool, even split or caps per person, team budgets) on
+**Limits**, whatever the option. To decide: pick A, B, C or D, and give the numbers it needs (the allowance; or each
+plan's name, fee, interval and included allowance; or the fixed amount or percent per audit). The agent then writes
+them where the table says.
+
+Packaging, decided by how the shell is built rather than by price: one company per workspace; hosted on Vercel or on
+a server of the customer's own (`compose_remote`); audits of systems inside a private network through the on-premises
+runner when such audits are offered (`molds/mold_v0/codebase/docs/on-premises-runner.md`).
 
 ## What a product is not
 

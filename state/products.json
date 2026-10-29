@@ -300,7 +300,116 @@
       "deploy_targets": [
         "vercel",
         "compose_remote"
-      ]
+      ],
+      "gate_evidence": {
+        "stamped": [
+          {
+            "gate": "molds/mold_v0/codebase pinned at a recorded commit (mold_v0-022, 027), then in-tree with its fork point recorded (mold_v0-040)",
+            "status": "met",
+            "evidence": [
+              "mold_v0-022 and mold_v0-027 done: the product pinned at a recorded commit",
+              "mold_v0-040 done (factory PR #21): in-tree since e8d8365, forked from 7399bd4, recorded in molds/mold_v0/mold.json source and state/factory.json"
+            ],
+            "as_of": "2026-10-29"
+          },
+          {
+            "gate": "MOLD.md and SCOPE.md describe the agent-run shell, its pack and record-area contract and where each capability lives; one app's four state files validate (factory.py validate)",
+            "status": "met",
+            "evidence": [
+              "mold_v0-023 done (factory PR #20): MOLD.md and SCOPE.md describe the agent-run shell and the pack and record-area contract",
+              "factory.py validate accepts the four state files of both apps (octillion, maxwell)"
+            ],
+            "as_of": "2026-10-29"
+          },
+          {
+            "gate": "the pack seam works: zero packs is a neutral shell that passes smoke and tenant-sql, and packs [\"octillion\"] reproduces the old pin with an empty surface diff (mold_v0-038, 039)",
+            "status": "met",
+            "evidence": [
+              "mold_v0-038 done (factory PR #22): zero packs, MCP surface sha256 31318d72, smoke and check:rls pass",
+              "mold_v0-039 done (factory PR #36): packs [\"octillion\"] reproduces the pin with the same MCP surface sha256, routes, nav, URLs and env names"
+            ],
+            "as_of": "2026-10-29"
+          }
+        ],
+        "lanes_passing": [
+          {
+            "gate": "the five mold_v0 lanes, each with a harness (mold_v0-021: load, accessibility and responsiveness are recorded skipped until then), run on the build copy (mold + packs, mold_v0-024) and pass, including a two-workspace context lane over every workspace-scoped table, snapshot, credential and run result",
+            "status": "open",
+            "evidence": [
+              "mold_v0-021 done: every lane has a harness (functional, context, load, accessibility, responsiveness), run on the build copy with a row per pack",
+              "maxwell: all five lanes pass on 2026-10-27 (functional 09:36, context 09:42, load 09:42, accessibility 09:43, responsiveness 09:47 UTC), molds/mold_v0/testing/<lane>/reports/maxwell-2026-10-27T*.md (on the factory machine; reports are git-ignored); application.json testing records each",
+              "octillion: functional and context pass on 2026-10-21; load, accessibility and responsiveness recorded skipped (run before their harnesses existed)"
+            ],
+            "as_of": "2026-10-29",
+            "closes_with": "maxwell was redeployed on 2026-10-28 (mold 967a9b2), so mint.py shows its tests station as next: re-run the five lanes on it (python3 .claude/scripts/lanes.py maxwell --background; agent, no yes needed) and they must pass again. Then file and close the gate task for this stage (factory.py add ... --product mcp_product_shell --advances lanes_passing), which also needs the second gate below."
+          },
+          {
+            "gate": "a fixture run kind goes through claim, events, complete, retry and cancel, with its cost from gateway usage and its egress allowlist enforced",
+            "status": "met",
+            "evidence": [
+              "mold_v0-041 done (factory PR #23): a fixture kind through claim, events, complete, retry and cancel; cost per run from gateway usage; per-run egress proxy enforced",
+              "mold_v0-055 done (factory PR #34): one sandbox per run, the run user locked to the egress proxy by a uid firewall"
+            ],
+            "as_of": "2026-10-29"
+          }
+        ],
+        "deployed": [
+          {
+            "gate": "an app from the shell live on Vercel (two projects) with its own database and its brand: a client signs in, calls a pack tool, starts a run, and the run's result and metered cost show in the console",
+            "status": "open",
+            "evidence": [
+              "maxwell live on Vercel as two projects (the API with its own Neon database, and the console), deployed 2026-10-28T16:14Z, health api 200 and web 200, behind its own domain, with its own brand (state/application/maxwell/infrastructure.json vercel, deployed_at)",
+              "row-level security check on the deployed database at that deploy: RLS CHECK PASS (datastores.json postgres.rls_verified)",
+              "the functional lane's mcp:check called the read-only tools against the deployed address on 2026-10-27"
+            ],
+            "as_of": "2026-10-29",
+            "closes_with": "a person signs in from an AI client, calls a pack tool, starts a run, and the run's result and metered cost show in the console: the first end-to-end audit, ticket mold_v0-030, which the operator runs"
+          },
+          {
+            "gate": "secrets present by name only in state; workspace credentials reach a run by name only (canary test: zero hits)",
+            "status": "met",
+            "evidence": [
+              "maxwell and octillion state hold secret names only (infrastructure.json secrets, secrets_derived, secrets_optional)",
+              "mold_v0-034 done (factory PR #25): workspace credentials sealed and injected by name; canary grep of transcripts, logs, index and MCP output 0 hits, cross-workspace 0"
+            ],
+            "as_of": "2026-10-29"
+          }
+        ],
+        "released": [
+          {
+            "gate": "the second app (an audit-agent pack) minted from the same shell with no shell change: deployed, lanes passing, a first run end to end",
+            "status": "open",
+            "evidence": [
+              "maxwell is pack.json only (packs/maxwell, a declarative pack: mold_v0-044, mold_v0-124) and its brand; packs.py check refuses code in an app pack",
+              "deployed 2026-10-28; five lanes passed 2026-10-27 (see lanes_passing)"
+            ],
+            "as_of": "2026-10-29",
+            "closes_with": "the first run end to end on maxwell (ticket mold_v0-030, run by the operator: set up the company profile, add an application, give its read-only token, refresh it, run an audit, read the findings and the audit's metered cost), and the lanes re-run after the 2026-10-28 deploy"
+          },
+          {
+            "gate": "onboarding works end to end for a new workspace from pack-declared steps",
+            "status": "open",
+            "evidence": [
+              "mold_v0-011 done (factory PR #25): onboarding steps from the pack, ticked from real events, per workspace",
+              "mold_v0-146 and mold_v0-172 done: Home shows one setup list (the pack's steps and connecting the AI client)",
+              "maxwell's pack declares the steps: company profile, first application, its repository token, refresh, first audit"
+            ],
+            "as_of": "2026-10-29",
+            "closes_with": "the same first audit (mold_v0-030) done as a new company, from the invitation to the first findings, with every Home step ticking itself off; docs/RUNBOOK.md section 11.7 is the path"
+          },
+          {
+            "gate": "docs, pricing/packaging and the operator runbook written",
+            "status": "open",
+            "evidence": [
+              "docs/RUNBOOK.md section 11: a mold_v0 app from the brief to the first customer, and operating it (mold_v0-026)",
+              "docs/PRODUCTS.md: the mold_v0 packaging and the pricing options the shell supports (mold_v0-026)",
+              "customer docs served by maxwell today: /install and /install/tools (public), the customer guide /app/docs (the pack's pages and the pages the console writes from it, the on-premises runner page), the staff guide /admin/docs; two pages staged for the pack (what an audit touches, your data)"
+            ],
+            "as_of": "2026-10-29",
+            "closes_with": "the operator decides pricing and packaging (docs/PRODUCTS.md, 'mold_v0: packaging and pricing', lists the options); the two staged guide pages are applied to packs/maxwell and deployed"
+          }
+        ]
+      }
     }
   ]
 }
