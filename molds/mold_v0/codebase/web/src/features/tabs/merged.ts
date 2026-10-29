@@ -32,9 +32,9 @@ export function viewArea(tab: PackTabSpec): RecordAreaSpec | null {
   return { ...own, label: tab.label, description: tab.description, fields, list_columns: tab.columns ?? own.list_columns, links: [], lifecycle: null };
 }
 
-/** Where a merged tab reads its rows (the server's merge), or one area's list. */
+/** Where a merged tab (or a filtered one, mold_v0-175) reads its rows (the server's merge or filter), or one area's list. */
 export const tabRecordsUrl = (tab: PackTabSpec, area: RecordAreaSpec) =>
-  tab.areas ? `/api/records/tabs/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : `/api/records/${area.name}`;
+  tab.areas || tab.filtered ? `/api/records/tabs/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : `/api/records/${area.name}`;
 
 /** A merged tab's rows with their source word (the first of each row's areas that has one) among their data. */
 export function withSource(tab: PackTabSpec, page: Page): Page {

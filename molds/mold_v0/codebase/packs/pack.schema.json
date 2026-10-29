@@ -2802,7 +2802,8 @@
               "team",
               "keys",
               "page",
-              "files"
+              "files",
+              "sections"
             ]
           },
           "label": {
@@ -2960,6 +2961,29 @@
               "type": "string",
               "pattern": "^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$"
             }
+          },
+          "filter": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+            },
+            "additionalProperties": {}
+          },
+          "sections": {
+            "minItems": 2,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,40}$"
+            }
+          },
+          "charts_title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "^[^{}<>\\n]*$"
           },
           "page": {
             "type": "string",

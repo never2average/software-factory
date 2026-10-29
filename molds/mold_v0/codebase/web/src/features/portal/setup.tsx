@@ -53,21 +53,24 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
 /**
  * The home page's layout (mold_v0-172: every build's, the Setup page's and a home tab's alike). `rail`: the cards below
  * the connection card, in order (a home tab's pack.json rail: journeys, notices, chart:<name>; `cards` draws all but
- * journeys); left out, the journey picker when the build has journeys. `main`: what follows the checklist in the main
+ * journeys); left out, the journey picker. Every build has journeys (mold_v0-175): the picker always offers "Get set up"
+ * (these setup steps), then the journeys component's when pack.json journeys turns it on. `main`: what follows the checklist in the main
  * column (a home tab's records due soon); `below`: what follows both columns, full width (a home tab's charts).
  */
 export function SetupPage({ rail, cards, main, below }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; below?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
-  // Journeys and in-chat tips are the shell's components (mold_v0-143: pack.json journeys and tips): asked for only when on.
-  const showJourneys = journeysOn() && (rail === undefined || rail.includes('journeys'));
+  // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys and the
+  // in-chat tips (mold_v0-143: pack.json journeys and tips) are asked for only when on.
+  const showPicker = rail === undefined || rail.includes('journeys');
+  const showJourneys = journeysOn() && showPicker;
   const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (showJourneys ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
   const [selected, setSelected] = useQueryState('journey', { defaultValue: 'setup' });
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
   const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
   const progress = stepProgress(steps);
-  const picker = showJourneys && <JourneyPicker key='journeys' setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+  const picker = showPicker && <JourneyPicker key='journeys' setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
     void setSelected(id === 'setup' ? null : id);
     if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
   }} />;

@@ -26,7 +26,8 @@
 // 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
 // 5. A home tab (mold_v0-134, mold_v0-172): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
 //    notices (its Due soon tab dropped), with rail cards (its number chart, the notices) and its charts moved to a
-//    Dashboard tab but one: the sidebar loses the Due soon tab, /app and /app/notices redirect to the home tab, and the
+//    Dashboard tab but one: the sidebar loses the Due soon tab, the tab is at /app (mold_v0-175: its own address and
+//    /app/notices redirect there), and the
 //    tab page itself (the console's TabPage, bundled, its API answered in the page) draws the Setup page's layout: the
 //    checklist (every step described, a Copy prompt on each open step with a prompt), the connection card, the number
 //    card linking to Dashboard, the notices card (five, then Show all), and the tab's own chart below; with every step
@@ -454,14 +455,14 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     const hweb = path.join(home, "web");
     const nav = inConsole<Nav>(hweb, NAV);
     const items = nav.portalNav.flatMap((g) => g.items.map((i: any) => `${g.label}: ${i.title} ${i.url}`));
-    assert.deepEqual(items.filter((x) => x.startsWith("Audit: ")).slice(0, 2), ["Audit: Home /app/overview", "Audit: Dashboard /app/dashboard"], "the home tab first, in its group, by its label; the charts' own tab after it");
+    assert.deepEqual(items.filter((x) => x.startsWith("Audit: ")).slice(0, 2), ["Audit: Home /app", "Audit: Dashboard /app/dashboard"], "the home tab first, in its group, by its label; the charts' own tab after it");
     assert.ok(!items.some((x) => x.includes("/app/notices")), `the notices tab is gone from the sidebar: ${items.join(", ")}`);
     const spec = nav.packTabs.find((t: any) => t.pack === "fixture_vulns" && t.id === "overview");
     assert.deepEqual([spec.include, spec.rail, spec.roles], [["setup", "notices"], ["chart:headline", "notices"], ["viewer", "member", "billing", "owner"]], "its sections in order, its cards, and every role's");
     const routes = JSON.parse(readFileSync(path.join(hweb, "src", "config", "pack-routes.generated.json"), "utf8")).redirects.filter((r: any) => !r.source.startsWith("/app/packs/")).map((r: any) => `${r.source} -> ${r.destination}`);
-    assert.deepEqual(routes, ["/app -> /app/overview", "/app/notices -> /app/overview", "/app/notices/:path* -> /app/overview"],
-      "/app and /app/notices lead to the home tab (the pages stay, for a build without one)");
-    console.log("✓ a home tab: the sidebar's Home then Dashboard, no Due soon tab; its rail; /app and /app/notices (and below) redirect to it");
+    assert.deepEqual(routes, ["/app/overview -> /app", "/app/notices -> /app", "/app/notices/:path* -> /app"],
+      "the home tab is drawn at /app (mold_v0-175): its own address and /app/notices lead there (the pages stay, for a build without one)");
+    console.log("✓ a home tab: the sidebar's Home (at /app) then Dashboard, no Due soon tab; its rail; its own address and /app/notices (and below) redirect to /app");
     const chrome = findChrome();
     if (!chrome) console.log("✓ (no headless browser on this machine: the rendered home tab is skipped; set CHROME_BIN)");
     else {

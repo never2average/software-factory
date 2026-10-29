@@ -113,7 +113,7 @@ export const packCharts: PackChartSpec[] = [];
 export interface PackTabSpec {
   pack: string;
   id: string;
-  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files';
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections';
   label: string;
   description: string | null;
   icon: string;
@@ -132,6 +132,12 @@ export interface PackTabSpec {
   include?: ('setup' | 'notices')[];
   /** A home tab's right-column cards below the connection card, in order (mold_v0-172): journeys, notices, chart:<name>. */
   rail?: string[];
+  /** A home tab's heading above its charts (mold_v0-175). */
+  charts_title?: string;
+  /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */
+  filtered?: boolean;
+  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
+  sections?: string[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
   empty?: { title: string; text: string; cta: { label: string; href: string } | null };
 }

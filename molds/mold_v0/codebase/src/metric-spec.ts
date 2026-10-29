@@ -309,6 +309,8 @@ export function checkViews(b: BuildViews): string[] {
         else if (!("data" in c.at) && (t.timeline_by ?? "updated") !== "updated") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
       }
       for (const c of t.columns ?? []) if (!a.fields.some((f) => f.name === c)) at(p, `${w}: column ${c} is not a field of area ${a.name}`);
+      // Its filter (mold_v0-175): the area's fields (or key, title, updated_at); the server checks each value as a list's.
+      for (const n of Object.keys(t.filter ?? {})) if (!["key", "title", "updated_at"].includes(n) && !a.fields.some((f) => f.name === n)) at(p, `${w}: filter ${n} is not a field of area ${a.name}`);
     }
     if (t.kind === "area" && t.areas) {
       // A merged tab (mold_v0-135): every area declared; a field it shows means one thing in every area that has it.
@@ -375,7 +377,7 @@ export function checkViews(b: BuildViews): string[] {
 /** The shell's word for each tab kind (a tab's label when it gives none and shows no area). */
 export const TAB_KIND_LABELS: Record<Tab["kind"], string> = {
   overview: "Overview", area: "Records", runs: "Runs", reports: "Reports", credentials: "Credentials", usage: "Activity", schedules: "Schedules",
-  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", team: "Team", keys: "API keys", page: "Page", files: "Files",
+  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", team: "Team", keys: "API keys", page: "Page", files: "Files", sections: "Records",
 };
 export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === tabArea(t))?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
 
@@ -384,8 +386,14 @@ export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.
  * permission. An overview: the roles that may read at least one of its charts' metrics. The shell's pages keep their own
  * rules (credentials and schedules show every member what they may see, as today).
  */
-export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" | "metrics" | "charts">): AccountRole[] {
+export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" | "metrics" | "charts"> & { tabs?: BuildViews["tabs"] }): AccountRole[] {
   let roles: AccountRole[] = ACCOUNT_ROLES.filter((r) => !t.roles || t.roles.includes(r));
+  // A sections tab (mold_v0-175): the roles that may read one of its in-page tabs.
+  if (t.kind === "sections") {
+    const subs = (t.sections ?? []).map((id) => b.tabs?.find((x) => x.pack === t.pack && x.id === id)).filter((x): x is SpecTab => !!x && x.kind !== "sections");
+    const may = new Set(subs.flatMap((x) => tabRoles(x, b)));
+    roles = roles.filter((r) => may.has(r));
+  }
   if (t.kind === "area") {
     // A merged tab (mold_v0-135): the roles that may read every one of its areas.
     for (const { area } of tabAreas(t)) {

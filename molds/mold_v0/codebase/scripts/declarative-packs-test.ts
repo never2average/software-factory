@@ -254,7 +254,13 @@ try {
     noRail("notices the tab does not include", home({ include: ["setup"], rail: ["notices"] }), /tabs\[0\]\.rail: the notices card is for a tab that includes notices/);
     noRail("a chart the pack does not declare", home({ include: ["setup"], rail: ["chart:nope"] }), /tab home: rail chart:nope: this pack declares no chart nope/);
     noRail("a chart that is not a number chart", home({ include: ["setup"], rail: ["chart:summary"] }), /tab home: rail chart:summary: a card shows a number chart \(its tiles\); summary is a bar chart/);
-    noRail("journeys in a build without them", home({ include: ["setup"], rail: ["journeys"] }), /tab home: rail journeys: no pack of the build turns the journeys component on/);
+    noRail("charts_title on a tab that is not a home tab", home({ include: ["notices"], charts_title: "Numbers" }), /tabs\[0\]\.charts_title: charts_title is for a home tab with charts/);
+    noRail("charts_title on a home tab with no charts", home({ include: ["setup"], charts: undefined, charts_title: "Numbers" }), /tabs\[0\]\.charts_title: charts_title is for a home tab with charts/);
+    // Every build has journeys (mold_v0-175): the picker's Get set up, with or without the journeys component.
+    const anyJourneys = tryPack(home({ include: ["setup"], rail: ["journeys"], charts_title: "Numbers" }));
+    assert.equal(anyJourneys.r.status, 0, `rail journeys builds without the journeys component (Get set up is every build's): ${anyJourneys.r.stderr}`);
+    const ajTabs = readFileSync(path.join(anyJourneys.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    assert.match(ajTabs, /"charts_title": "Numbers"/, "the home tab's charts heading is carried");
     // Accepted: the include in its order (notices first here), a home tab with no charts, and the redirects.
     const ok = tryPack(variant((j) => {
       chart(j); due(j);
@@ -267,7 +273,7 @@ try {
     const tabsOf = (text: string) => Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(text)![1]!) as { id: string }[]).map((t) => [t.id, t]));
     const got = tabsOf(nav) as Record<string, any>;
     assert.deepEqual(got.home.include, ["notices", "setup"], "the sections in the tab's order");
-    assert.equal(got.home.url, "/app/home", "a page of its own");
+    assert.equal(got.home.url, "/app", "the console's home itself (mold_v0-175)");
     assert.deepEqual(got.home.roles, ["viewer", "member", "billing", "owner"], "a home tab is every role's (its charts' metric is the owner's only)");
     assert.deepEqual(got.plain.roles, ["owner"], "a plain overview is still narrowed to the roles that read its metrics");
     assert.ok(!("include" in got.plain), "an overview with no include carries none");
@@ -279,28 +285,63 @@ try {
     // The nested addresses of before (mold_v0-132) lead to the flat ones, first; then the home tab's.
     const old = (r: { source: string }) => r.source.startsWith("/app/packs/");
     assert.deepEqual(routes.redirects.filter(old).map((r: { source: string; destination: string }) => `${r.source} -> ${r.destination}`),
-      ["/app/packs/fixture_tracker/home -> /app/home", "/app/packs/fixture_tracker/plain -> /app/plain", "/app/packs/fixture_tracker/apps -> /app/apps"], "each tab's nested address of before redirects to its flat one");
+      ["/app/packs/fixture_tracker/home -> /app", "/app/packs/fixture_tracker/plain -> /app/plain", "/app/packs/fixture_tracker/apps -> /app/apps"], "each tab's nested address of before redirects to its flat one");
     assert.deepEqual(routes.redirects.filter((r: { source: string }) => !old(r)), [
-      { source: "/app", destination: "/app/home", permanent: false },
-      { source: "/app/notices", destination: "/app/home", permanent: false },
-      { source: "/app/notices/:path*", destination: "/app/home", permanent: false },
-    ], "/app and /app/notices (and below it) lead to the home tab");
+      { source: "/app/home", destination: "/app", permanent: false },
+      { source: "/app/notices", destination: "/app", permanent: false },
+      { source: "/app/notices/:path*", destination: "/app", permanent: false },
+    ], "the home tab's own address and /app/notices (and below it) lead to /app, where the home tab is drawn");
     const only = tryPack(variant((j) => { j.tabs = [{ id: "home", kind: "overview", include: ["setup"] }, { id: "apps", kind: "area", area: "tracker_apps" }]; }));
     assert.equal(only.r.status, 0, `a home tab with no charts builds: ${only.r.stderr}`);
     const onlyTabs = tabsOf(readFileSync(path.join(only.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8")) as Record<string, any>;
     assert.deepEqual([onlyTabs.home.include, onlyTabs.home.charts, onlyTabs.home.label], [["setup"], [], "Overview"], "setup only, no charts, the kind's word");
     const onlyRoutes = JSON.parse(readFileSync(path.join(only.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
-    assert.deepEqual(onlyRoutes.redirects.filter((r: { source: string }) => !old(r)), [{ source: "/app", destination: "/app/home", permanent: false }], "setup only: /app leads there; /app/notices is untouched");
+    assert.deepEqual(onlyRoutes.redirects.filter((r: { source: string }) => !old(r)), [{ source: "/app/home", destination: "/app", permanent: false }], "setup only: its own address leads to /app; /app/notices is untouched");
     // A hidden page (mold_v0-130) leads to the home tab in one hop; a hidden Notices page that the tab includes leads there too.
     const hid = tryPack(variant((j) => { chart(j); due(j); j.console = { hide: ["activity", "notices"] }; j.tabs = [{ id: "home", kind: "overview", charts: ["summary"], include: ["setup", "notices"] }]; }));
     assert.equal(hid.r.status, 0, `a home tab with hidden pages builds: ${hid.r.stderr}`);
     const hidRoutes = JSON.parse(readFileSync(path.join(hid.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
     assert.deepEqual(hidRoutes.redirects.filter((r: { source: string }) => !old(r)).map((r: { source: string; destination: string }) => `${r.source} -> ${r.destination}`), [
-      "/app -> /app/home", "/app/notices -> /app/home", "/app/notices/:path* -> /app/home",
-      "/app/activity -> /app/home", "/app/activity/:path* -> /app/home",
-    ], "every redirect takes one hop to the home tab");
-    console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, /app and /app/notices redirected to it in one hop`);
-    console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, journeys without them); built in its order`);
+      "/app/home -> /app", "/app/notices -> /app", "/app/notices/:path* -> /app",
+      "/app/activity -> /app", "/app/activity/:path* -> /app",
+    ], "every redirect takes one hop to the home tab, at /app");
+    console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, drawn at /app with its own address and /app/notices redirected there in one hop`);
+    console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);
+  }
+
+  // ---------- 2e. a sections tab: several tabs of the pack as one page's in-page tabs (mold_v0-175) ----------
+  {
+    let m = 0;
+    const no = (what: string, json: unknown, re: RegExp) => { refused(`sections: ${what}`, tryPack(json), re); m++; };
+    const withTabs = (tabs: Record<string, unknown>[]) => variant((j) => { j.tabs = tabs; });
+    const apps = { id: "apps", kind: "area", area: "tracker_apps", label: "Apps" };
+    const open = { id: "open", kind: "area", area: "tracker_findings", label: "Open", filter: { state: "open" } };
+    no("a sections tab naming none", withTabs([{ id: "all", kind: "sections" }, apps]), /tabs\[0\]\.sections: a sections tab names the tabs it shows/);
+    no("sections on an area tab", withTabs([{ ...apps, sections: ["open", "x"] }, open]), /tabs\[0\]\.sections: sections is for a sections tab/);
+    no("a tab listed twice", withTabs([{ id: "all", kind: "sections", sections: ["apps", "apps"] }, apps]), /tabs\[0\]\.sections: a tab is listed twice/);
+    no("one tab", withTabs([{ id: "all", kind: "sections", sections: ["apps"] }, apps]), /tabs\[0\]\.sections: Too small/);
+    no("an undeclared tab", withTabs([{ id: "all", kind: "sections", sections: ["apps", "nope"] }, apps]), /tab all: sections nope: this pack declares no tab nope/);
+    no("a kind it cannot show", withTabs([{ id: "all", kind: "sections", sections: ["apps", "pay"] }, apps, { id: "pay", kind: "billing" }]), /tab all: sections pay: an in-page tab is an area, runs, reports or schedules tab; pay is a billing tab/);
+    no("a tab in two of them", withTabs([{ id: "all", kind: "sections", sections: ["apps", "open"] }, { id: "again", kind: "sections", sections: ["open", "apps"] }, apps, open]), /tab again: sections (open|apps): tab all shows it already/);
+    no("a filter on a merged tab", withTabs([{ id: "both", kind: "area", areas: [{ area: "tracker_findings" }, { area: "tracker_apps" }], filter: { state: "open" } }]), /tabs\[0\]\.filter: filter is for an area tab over one area/);
+    no("a filter over a field the area lacks", withTabs([{ ...open, filter: { colour: "red" } }]), /tab open: filter colour is not a field of area tracker_findings/);
+    const ok = tryPack(withTabs([{ id: "all", kind: "sections", label: "Everything", group: "Work", sections: ["apps", "open", "plan"] }, apps, open,
+      { id: "plan", kind: "schedules", label: "Schedule" }, { id: "other", kind: "area", area: "tracker_findings", label: "Findings", group: "Work" }]));
+    assert.equal(ok.r.status, 0, `a sections tab builds: ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const tabs = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
+    assert.deepEqual([tabs.all.url, tabs.all.sections], ["/app/all", ["apps", "open", "plan"]], "the page at its own address, its in-page tabs in order");
+    assert.deepEqual([tabs.apps.url, tabs.open.url, tabs.plan.url], ["/app/all?tab=apps", "/app/all?tab=open", "/app/all?tab=plan"], "each in-page tab is the page with ?tab=<id>");
+    assert.equal(tabs.open.filtered, true, "a filtered tab reads its rows from the server's filter");
+    assert.ok(!("filtered" in tabs.apps), "an unfiltered tab carries no flag");
+    assert.deepEqual(tabs.all.roles, ["viewer", "member", "billing", "owner"], "the page is every role's that may read one of its tabs");
+    const groups = JSON.parse(/export const tabPortalNav: NavGroup\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { label: string; items: { title: string; url: string }[] }[];
+    assert.deepEqual(groups.map((g) => `${g.label}: ${g.items.map((i) => i.title).join(", ")}`), ["Work: Everything, Findings"], "the in-page tabs leave the sidebar");
+    assert.match(nav, /sections\?: string\[\];/, "the spec's type has the in-page tabs");
+    const routes = JSON.parse(readFileSync(path.join(ok.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    const moved = routes.redirects.filter((r: { source: string }) => !r.source.startsWith("/app/packs/")).map((r: { source: string; destination: string }) => `${r.source} -> ${r.destination}`);
+    assert.deepEqual(moved, ["/app/apps -> /app/all?tab=apps", "/app/open -> /app/all?tab=open", "/app/schedules -> /app/all?tab=plan"], "each tab's address of before (a shell page's too) leads to its in-page tab");
+    console.log(`✓ a sections tab (mold_v0-175): ${m} malformed ones refused (none named, on another kind, twice, one, undeclared, a kind it cannot show, in two pages, a filter on a merged tab or over an unknown field); built: its in-page tabs at ?tab=, out of the sidebar, their old addresses redirected, a filtered tab flagged`);
   }
 
   // ---------- 2d. flat console URLs (mold_v0-132) ----------

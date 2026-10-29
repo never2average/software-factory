@@ -47,9 +47,14 @@ export function recordAppRouter(): Router {
   r.get("/areas", answer(async () => ({ areas: recordAreas().map(areaSummary) })));
   // A merged tab's page (mold_v0-135): only a declared tab's areas, each read as on /:area (its read permission, its
   // list withheld: 404 as there).
+  // A filtered tab's page (mold_v0-175): its one area, narrowed by the tab's declared filter (never the page's).
   r.get("/tabs/:pack/:tab", answer(async (req, res) => {
-    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && !!t.areas);
+    const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && (!!t.areas || !!t.filter));
     if (!tab || tabAreas(tab).some((a) => areaOpWithheld(a.area, "list"))) throw new PackError("Not found", 404);
+    if (!tab.areas) {
+      const a = areaOrThrow(tab.area!);
+      return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), filter: tab.filter }, actor(res))) };
+    }
     return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
   }));
   r.get("/:area", open("list"), answer(async (req, res) => {
