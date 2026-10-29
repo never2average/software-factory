@@ -42,7 +42,7 @@ const PUBLIC = "https://api.example";
 const BOAT_KEY = `boat_mock_${randomBytes(6).toString("hex")}`;
 Object.assign(process.env, {
   PUBLIC_URL: PUBLIC, APP_AUTOSCALE: "on", APP_ORCH_PER_JOB: "off", APP_RUN_SANDBOX: "auto",
-  APP_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), APP_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
+  APP_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), APP_STORAGE_DIR: path.join(TMP, "objects"), APP_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
 });
 delete process.env.APP_ALLOW_UNSANDBOXED_RUNS;
 
