@@ -24,7 +24,7 @@ import { AdminOAuthProviders } from './oauth-providers';
 // ---------- key vault ----------
 
 interface Provider { slug: string; mode: 'gateway' | 'direct'; backend: string; enabled: boolean; keys: number; enabled_keys: number; last_used_at: string | null; env_set?: string[] }
-/** Display names for the vault's provider ids. */
+/** Display names for the vault's provider ids (and TYPE below: src/vault-providers.ts keeps the server's copy for operator:vault-status). */
 const NAME: Record<string, string> = {
   anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google Gemini', cloudflare: 'Cloudflare Workers AI', dashscope: 'Alibaba DashScope',
   vertex: 'Vertex AI (Google Cloud)', boat: 'boat.dev', exa: 'Exa', libraries_io: 'Libraries.io', resend: 'Resend', amp: 'Amp', cursor: 'Cursor', factory: 'Factory', github_copilot: 'GitHub Copilot',

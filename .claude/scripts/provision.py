@@ -93,6 +93,9 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
   (BLOB_READ_WRITE_TOKEN; STORAGE_DRIVER + STORAGE_S3_* on s3; an allow-list, mold_v1-237) pulled for the run and never
   printed; on the filesystem driver it says file writes are not possible from the factory. --dry-run prints the exact command, secrets masked, and runs nothing. Anything else writes to a live
   app, so it runs only with --yes (passed once the person said yes); without it: exit 3, `needs` asks for the yes.
+  A mold_v0 app on Vercel (mold_v0-173) runs them the same way from its build copy, with DATABASE_URL (and APP_RUN_SANDBOX)
+  from its <project>-api project; its READ-ONLY operator:vault-status (which keys the Key vault holds, never a value)
+  still asks for the yes, and says it only reads.
 --verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
