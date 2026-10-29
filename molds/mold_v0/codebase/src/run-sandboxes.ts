@@ -153,7 +153,7 @@ command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || { echo 
 # its pinned sha256 before it is unpacked (root's, /opt/app-tools). Before the runner starts: a run never downloads one.
 cd ${lib.HOME}/app
 grep -q '"aws"' src/run-tools.generated.json && { command -v unzip >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null 2>&1 || true; }
-sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 900);
+sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 600);
         if (conf.code !== 0) throw new Error(`configure failed: ${conf.stderr.slice(-500)}`);
         step = "start";
         // As root (the runner switches to the run's user for the run itself), as a unit that outlives this command.

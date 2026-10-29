@@ -103,8 +103,9 @@ export async function boatCommandRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Synchronous command (<= 600s). Boat may truncate long output. */
+/** Synchronous command (<= 600s: boat refuses a longer timeoutSeconds with 400 invalid_timeout). Boat may truncate long output. */
 export async function boatExec(id: string, command: string, timeoutSeconds = 120): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  timeoutSeconds = Math.max(1, Math.min(600, Math.round(timeoutSeconds)));
   const r = await boatCommandRetry(() => boatApi(`${boatSandboxPath(id)}/commands`, {
     method: "POST", json: { command, timeoutSeconds }, timeoutMs: (timeoutSeconds + 60) * 1000,
   }));

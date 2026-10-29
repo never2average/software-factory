@@ -4,6 +4,7 @@ import { Separator } from '../ui/separator';
 import { Breadcrumbs } from '../breadcrumbs';
 import SearchInput from '../search-input';
 import { DocsButton, McpButton } from './docs-button';
+import { ThemeSwitcher } from './theme-switcher';
 
 export default function Header() {
   return (
@@ -15,11 +16,11 @@ export default function Header() {
       </div>
 
       <div className='flex items-center gap-2 px-4'>
-        <div className='hidden md:flex'>
-          <SearchInput />
-        </div>
+        {/* One height for all of them (top-bar.ts): the search box's, a 44px icon on a phone (mold_v0-177). */}
+        <SearchInput />
         <McpButton />
         <DocsButton />
+        <ThemeSwitcher />
       </div>
     </header>
   );

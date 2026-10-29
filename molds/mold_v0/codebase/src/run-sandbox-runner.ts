@@ -41,6 +41,13 @@ import { httpRunnerClient, runWorkspaceHarness, type HarnessOptions } from "./ru
 import { leaseRunUser, registerSandboxRunUser, RUN_USER_PREFIX, type RunUser } from "./run-users.js";
 import { ENV } from "./env-names.js";
 
+/** The egress setup needs useradd and nft (in /usr/sbin, /sbin); the runner's unit starts with a PATH that lacks them. */
+function withSbin(p: string): string {
+  const have = new Set(p.split(":"));
+  return [...["/usr/local/sbin", "/usr/sbin", "/sbin"].filter((d) => !have.has(d)), p].join(":");
+}
+
+
 const env = ENV;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const log = (m: string) => console.error(`run-sandbox: ${m}`);
@@ -72,7 +79,7 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; 
     // By number: the run's user is leased per run (mold_v0-078), its uid is what the firewall matches.
     writeFileSync(path.join(dir, "egress-setup.sh"), setupScript(dir, { user, uid, sudo: false, systemd: false, strict: true }));
     // A minimal environment: the proxy it starts (an unrestricted user parsing the run's traffic) never holds the token.
-    const set = spawnSync("bash", [path.join(dir, "egress-setup.sh")], { encoding: "utf8", timeout: 120_000, env: { PATH: env.PATH ?? "/usr/sbin:/usr/bin:/sbin:/bin" } });
+    const set = spawnSync("bash", [path.join(dir, "egress-setup.sh")], { encoding: "utf8", timeout: 120_000, env: { PATH: withSbin(env.PATH ?? "/usr/bin:/bin") } });
     if (set.status !== 0) throw new Error(`egress lockdown failed (exit ${set.status}): ${(set.stderr || set.stdout).slice(-600)}`);
     // The local resolver's and the system bus's unix sockets: the run's user may not ask them to resolve names (netfilter
     // never sees a unix socket). Best effort, where setfacl exists (boat); the firewall keeps every packet in either way.

@@ -5,8 +5,11 @@
   --card-foreground: oklch(0.2046 0 0);
   --popover: oklch(0.9911 0 0);
   --popover-foreground: oklch(0.4386 0 0);
-  --primary: oklch(0.8348 0.1302 160.908);
-  --primary-foreground: oklch(0.2626 0.0147 166.4589);
+  /* Light mode (mold_v0-177, the console's theme switcher): the brand green darkened until it reads as text on the light
+     surfaces (6.0:1 on --background, 5.3:1 on --muted and --accent) and carries white text (6.0:1); Supabase's own
+     0.83 green is 1.5:1 there. A branded app's primary replaces it (branding.py palette, AA-guarded). */
+  --primary: oklch(0.48 0.11 160.908);
+  --primary-foreground: oklch(0.9911 0 0);
   --secondary: oklch(0.994 0 0);
   --secondary-foreground: oklch(0.2046 0 0);
   --muted: oklch(0.9461 0 0);
@@ -18,7 +21,7 @@
   --destructive-foreground: oklch(0.9934 0.0032 17.2118);
   --border: oklch(0.9037 0 0);
   --input: oklch(0.9731 0 0);
-  --ring: oklch(0.8348 0.1302 160.908);
+  --ring: oklch(0.48 0.11 160.908);
   --chart-1: oklch(0.8348 0.1302 160.908);
   --chart-2: oklch(0.6231 0.188 259.8145);
   --chart-3: oklch(0.6056 0.2189 292.7172);
@@ -32,7 +35,7 @@
   --sidebar-accent: oklch(0.9461 0 0);
   --sidebar-accent-foreground: oklch(0.2435 0 0);
   --sidebar-border: oklch(0.9037 0 0);
-  --sidebar-ring: oklch(0.8348 0.1302 160.908);
+  --sidebar-ring: oklch(0.48 0.11 160.908);
   --font-sans: Outfit, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
