@@ -305,3 +305,22 @@ cost_month(vm_remote) = server_month + cost_month(inference, sections 1-5)
 
 Re-fetch the price before quoting it, and price the plan the server was actually created on (`infrastructure.vm_remote.provider`).
 
+
+## 8. mold_v0 apps (the MCP product shell): ceilings known, cost not measured yet
+
+This model prices mold_v1 on Cloudflare. A mold_v0 app's model spend is per **run** (an audit, on `maxwell`), metered
+by the shell's own inference gateway for every call a run makes, and shown per run on the console's **Overview**
+(Audit cost) and **FinOps**. What is known on 2026-10-29:
+
+| Figure | Value | Source |
+|---|---|---|
+| ceiling on one audit's model spend (`maxwell`) | US$40 | `state/application/maxwell/application.json` `profile.limits.runs.budget_usd_max`; the operator's brief, `## Budgets`, 2026-10-22 |
+| ceiling per audit kind, per company, per month (`maxwell`) | US$500 | the same file, `profile.limits.runs.kind_month_budget_usd` |
+| the shell's defaults for the same two ceilings | US$25 and US$200 | `molds/mold_v0/codebase/src/rate-limits.ts` `DEFAULTS.runs` |
+| model `maxwell`'s audits run | Claude Opus 5.5 (`claude-opus-5-5`, every alias) | `packs/maxwell` `job_kinds[].agent.env` |
+| what one audit actually costs, by kind | PLACEHOLDER | measured by the first end-to-end audit (ticket mold_v0-030), from the gateway's metered usage |
+| audits per company per month | PLACEHOLDER | no customer usage yet |
+
+Until the two placeholders are measured, the ceilings are the only figures: a company's worst case is at most US$500
+per audit kind per month, and the staff-set monthly allowance (`docs/PRODUCTS.md`, "mold_v0: packaging and pricing")
+caps the whole account below that.
