@@ -10,6 +10,8 @@
 //      guide (a pack's staff_docs beta guide) takes its place.
 //   3. A shared area's samples (src/pack-api.ts RecordAreaSchema): for the lanes only, shared (platform) areas only, each
 //      key once, each data key a declared field.
+//   4. The customer lists (mold_v0-176): a run's row in words (web/src/features/tabs/run-rows.ts), and every customer list
+//      page drawing the console's database table (RecordView), none linking to a staff page.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -82,3 +84,44 @@ assert.match(issues({ ...base, samples: [{ key: "a", data: { nope: 1 } }] }).joi
 assert.match(issues({ ...base, samples: [{ key: "a", data: {} }, { key: "a", data: {} }] }).join("\n"), /samples\.1\.key: sample a is declared twice/);
 assert.ok(issues({ ...base, samples: [{ key: "../x", data: {} }] }).some((i) => i.startsWith("samples.0.key")));
 ok("samples: shared areas only, each key once and a record key, each data key a declared field");
+
+// 4. The customer lists are the same database table (mold_v0-176). A run's row in words (web/src/features/tabs/run-rows.ts),
+// then, from the sources, every customer list page drawing RecordView (directly or through RecordTableView) and none of
+// them linking to a staff page.
+const rr = await web("features/tabs/run-rows.ts");
+assert.deepEqual(rr.RUN_STATUSES.map((s: { value: string }) => s.value), ["queued", "running", "succeeded", "failed", "cancelled"]);
+assert.equal(rr.statusLabel("succeeded"), "Succeeded");
+assert.deepEqual(rr.runTarget({ targets: { asset: { area: "apps", key: "payments" } } }), { area: "apps", key: "payments" });
+assert.equal(rr.runTarget({ targets: {} }), null);
+assert.equal(rr.runTarget({ targets: { asset: { area: "apps" } } }), null, "a target needs its area and its key");
+const t0 = "2026-10-01T10:00:00.000Z";
+assert.equal(rr.runSeconds({ started_at: t0, ended_at: "2026-10-01T10:05:12.000Z", status: "succeeded" }), 312);
+assert.equal(rr.runSeconds({ started_at: t0, ended_at: null, status: "running" }, Date.parse(t0) + 90_000), 90, "a running run: so far");
+assert.equal(rr.runSeconds({ started_at: null, ended_at: null, status: "queued" }), null);
+assert.equal(rr.runSeconds({ started_at: t0, ended_at: null, status: "failed" }), null, "ended with no end time: unknown, never a growing number");
+assert.deepEqual([rr.duration(41), rr.duration(312), rr.duration(4020), rr.duration(null)], ["41s", "5m 12s", "1h 7m", ""]);
+assert.equal(rr.resultCounts({ pass: 3, fail: 1, unknown: 0 }), "1 fail, 3 pass");
+assert.deepEqual(["Applications", "Companies", "Boxes", "Status", "Address", "Control coverage"].map(rr.singular), ["Application", "Company", "Box", "Status", "Address", "Control coverage"]);
+assert.equal(rr.runKindLabel("p", "nightly"), "nightly", "a kind the build does not declare reads as its name");
+assert.equal(rr.targetLabel(), "Target", "no asset area in this build: Target");
+ok("a run's row: its states in order, its target, how long it took (so far while running), its results, the target column's name");
+
+const { readFileSync } = await import("node:fs");
+const src = (rel: string) => readFileSync(path.join(WEB, rel), "utf8");
+const tab = src("features/tabs/tab-page.tsx");
+assert.match(tab, /<RecordTableView area=\{area\} base='app'/, "an area tab's table is the records' database table");
+assert.match(tab, /<RunsTable tab=\{tab\} reports=\{tab\.kind === 'reports'\}/, "runs and reports tabs are the runs' database table");
+assert.doesNotMatch(tab, /<Table[\s>]/, "no table of its own left on the tab page");
+const lists: Record<string, string> = {
+  "features/records/record-pages.tsx": "the record areas' lists (and every area tab's table)",
+  "features/tabs/runs.tsx": "runs and reports",
+  "features/schedules/schedules-page.tsx": "schedules",
+  "features/schedules/notices-page.tsx": "notices",
+  "features/credentials/credentials-page.tsx": "credentials",
+};
+for (const [file, what] of Object.entries(lists)) {
+  const s = src(file);
+  assert.match(s, /<RecordView</, `${what}: the database table`);
+  assert.doesNotMatch(s.replace(/\/\/.*$/gm, ""), /['"`]\/admin\b/, `${what}: no link to a staff page`);
+}
+ok(`the customer lists are the database table, none linking to a staff page: ${Object.values(lists).join(", ")}`);

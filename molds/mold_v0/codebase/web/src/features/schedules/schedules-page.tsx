@@ -1,18 +1,22 @@
 'use client';
 // /app/schedules (mold_v0-035; src/schedule-routes.ts): the workspace's schedules. Each pack's default schedules are
 // copied into the workspace; owners turn them off and on, change when they run (UTC) and over which records, and add
-// their own. Everyone else in the workspace sees them, with the last time each ran.
-import { useState } from 'react';
+// their own. Everyone else in the workspace sees them, with the last time each ran. The list is the console's database
+// table (mold_v0-176): a row opens the schedule beside it, where owners change when it runs or remove one they added.
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Section } from '@/components/layout/section';
+import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
+import { JOB_KINDS } from '@/config/build-facts.generated';
+import { EmptyState } from '@/features/tabs/empty';
+import { ExportRowsButton } from '@/features/tabs/export';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { ErrorState, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 
 interface Schedule {
@@ -48,78 +52,95 @@ export function SchedulesPage() {
 /** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab). */
 export function SchedulesBody() {
   const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
+  const cols = useMemo(() => (data ? columns(data, reload) : []), [data, reload]);
   return (
     <>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
+      {error ? <ErrorState error={error} /> : (
         <div className='flex flex-col gap-10'>
-          <Section title='Schedules' description={data.can_manage ? 'Turn a schedule off or on, or change when it runs.' : 'An owner of this workspace changes these.'}>
-            {data.schedules.length ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Schedule</TableHead>
-                    <TableHead>Runs</TableHead>
-                    <TableHead>When (UTC)</TableHead>
-                    <TableHead>Over</TableHead>
-                    <TableHead>Next</TableHead>
-                    <TableHead>Last</TableHead>
-                    <TableHead>On</TableHead>
-                    {data.can_manage && <TableHead />}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.schedules.map((s) => <ScheduleRow key={s.id} s={s} canManage={data.can_manage} onChanged={reload} />)}
-                </TableBody>
-              </Table>
-            ) : <p className='text-muted-foreground text-sm'>No schedules yet.</p>}
-          </Section>
-          {data.can_manage && data.kinds.length > 0 && <AddSchedule data={data} onAdded={reload} />}
+          {/* The console's database table (mold_v0-176, as on Accounts): a row opens the schedule beside the list. */}
+          <RecordView<Schedule>
+            id='app-schedules' compact noun='schedules' properties
+            rows={data?.schedules ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
+            searchText={(s) => `${s.label ?? ''} ${s.name} ${kindLabel(s)} ${s.cron} ${assetWords(s)}`}
+            searchPlaceholder='Search schedules'
+            filters={data && <span className='text-muted-foreground text-xs'>{data.can_manage ? 'Open a schedule to change when it runs.' : 'An owner of this workspace changes these.'}</span>}
+            primary={data?.schedules.length ? <ExportRowsButton name='schedules' rows={data.schedules} cols={cols} /> : undefined}
+            empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-schedules' empty={{
+              title: 'No schedules yet.',
+              text: data?.can_manage && data.kinds.length ? 'Add one below: pick what runs, and when (UTC).' : 'An owner of this workspace adds them.',
+              cta: null
+            }} /></div>}
+            detailTitle={(s) => s.label ?? s.name}
+            detail={(s) => <ScheduleDetail key={s.id} s={s} canManage={!!data?.can_manage} onChanged={reload} />}
+          />
+          {data?.can_manage && data.kinds.length > 0 && <AddSchedule data={data} onAdded={reload} />}
         </div>
       )}
     </>
   );
 }
 
-function ScheduleRow({ s, canManage, onChanged }: { s: Schedule; canManage: boolean; onChanged: () => unknown }) {
+const kindLabel = (s: Pick<Schedule, 'pack' | 'job_kind'>) => JOB_KINDS.find((k) => k.pack === s.pack && k.name === s.job_kind)?.label ?? s.job_kind;
+const patchOf = (s: Schedule, onChanged: () => unknown) => (body: Record<string, unknown>, done: string) =>
+  call('PATCH', `/${s.id}`, body).then(() => { toast.success(done); return onChanged(); }).catch(fail);
+
+function columns(data: Data, onChanged: () => unknown): RecordCol<Schedule>[] {
+  const kinds = data.kinds.map((k) => ({ value: `${k.pack}/${k.name}`, label: kindLabel({ pack: k.pack, job_kind: k.name }) }));
+  return [
+    {
+      key: 'schedule', label: 'Schedule', title: true, keep: true, type: 'text', className: 'min-w-48', value: (s) => s.label ?? s.name,
+      render: (s) => (
+        <span className='flex min-w-0 flex-col gap-1'>
+          <span className='leading-snug font-medium'>{s.label ?? s.name}</span>
+          <span className='text-muted-foreground text-xs leading-none'>{s.is_default ? (s.customized ? 'Default, changed here' : 'Default') : 'Added here'}</span>
+        </span>
+      )
+    },
+    { key: 'kind', label: 'Runs', type: 'select', options: kinds, value: (s) => `${s.pack}/${s.job_kind}`, render: (s) => kindLabel(s) },
+    { key: 'cron', label: 'When (UTC)', type: 'text', value: (s) => s.cron, render: (s) => <span className='font-mono text-xs'>{s.cron}</span> },
+    { key: 'over', label: 'Over', type: 'text', value: (s) => assetWords(s), render: (s) => <>{assetWords(s)}{s.environment ? <Badge variant='secondary' className='ml-1'>{s.environment}</Badge> : null}</> },
+    { key: 'next', label: 'Next', type: 'date', value: (s) => (s.enabled ? s.next_at : null), render: (s) => (s.enabled ? <When d={s.next_at} /> : <span className='text-muted-foreground'>off</span>) },
+    {
+      key: 'last', label: 'Last', type: 'date', value: (s) => s.last?.slot_at ?? null,
+      render: (s) => (s.last ? (
+        <span className='flex flex-col gap-1'>
+          <span><When d={s.last.slot_at} /> · {s.last.runs.length} run{s.last.runs.length === 1 ? '' : 's'}</span>
+          {s.last.error && <span className='text-destructive text-xs'>{s.last.error}</span>}
+        </span>
+      ) : <span className='text-muted-foreground'>not yet</span>)
+    },
+    {
+      key: 'on', label: 'On', type: 'boolean', keep: true, value: (s) => s.enabled,
+      render: (s) => (
+        // The switch turns the schedule off or on where it is; it does not open the row.
+        <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className='inline-flex'>
+          <Switch checked={s.enabled} disabled={!data.can_manage} aria-label={`${s.label ?? s.name} on`}
+            onCheckedChange={(on: boolean) => void patchOf(s, onChanged)({ enabled: on }, on ? 'Turned on' : 'Turned off')} />
+        </span>
+      )
+    }
+  ];
+}
+
+/** A schedule beside the list: when it runs (owners change it here), what it last did, and Remove for one added here. */
+function ScheduleDetail({ s, canManage, onChanged }: { s: Schedule; canManage: boolean; onChanged: () => unknown }) {
   const [cron, setCron] = useState(s.cron);
-  const patch = (body: Record<string, unknown>, done: string) =>
-    call('PATCH', `/${s.id}`, body).then(() => { toast.success(done); return onChanged(); }).catch(fail);
+  const patch = patchOf(s, onChanged);
   return (
-    <TableRow>
-      <TableCell>
-        <div className='font-medium'>{s.label ?? s.name}</div>
-        <div className='text-muted-foreground text-xs'>{s.is_default ? (s.customized ? 'Default, changed here' : 'Default') : 'Added here'}</div>
-      </TableCell>
-      <TableCell className='font-mono text-xs'>{s.pack}/{s.job_kind}</TableCell>
-      <TableCell>
-        {canManage ? (
-          <form className='flex gap-1' onSubmit={(e) => { e.preventDefault(); void patch({ cron }, 'Time changed'); }}>
-            <Input className='w-36 font-mono text-xs' value={cron} onChange={(e) => setCron(e.target.value)} aria-label={`When ${s.name} runs`} />
-            {cron !== s.cron && <Button type='submit' size='sm' variant='outline'>Save</Button>}
-          </form>
-        ) : <span className='font-mono text-xs'>{s.cron}</span>}
-      </TableCell>
-      <TableCell className='text-sm'>{assetWords(s)}{s.environment ? <Badge variant='secondary' className='ml-1'>{s.environment}</Badge> : null}</TableCell>
-      <TableCell>{s.enabled ? <When d={s.next_at} /> : <span className='text-muted-foreground'>off</span>}</TableCell>
-      <TableCell className='text-sm'>
-        {s.last ? (
-          <>
-            <When d={s.last.slot_at} /> · {s.last.runs.length} run{s.last.runs.length === 1 ? '' : 's'}
-            {s.last.skipped > 0 && <span className='text-muted-foreground'> · {s.last.skipped} missed time{s.last.skipped === 1 ? '' : 's'} not run again</span>}
-            {s.last.error && <div className='text-destructive text-xs'>{s.last.error}</div>}
-          </>
-        ) : <span className='text-muted-foreground'>not yet</span>}
-      </TableCell>
-      <TableCell>
-        <Switch checked={s.enabled} disabled={!canManage} aria-label={`${s.name} on`}
-          onCheckedChange={(on: boolean) => void patch({ enabled: on }, on ? 'Turned on' : 'Turned off')} />
-      </TableCell>
-      {canManage && (
-        <TableCell className='text-right'>
-          {!s.is_default && <Button variant='ghost' size='sm' onClick={() => void call('DELETE', `/${s.id}`).then(() => { toast.success('Removed'); return onChanged(); }).catch(fail)}>Remove</Button>}
-        </TableCell>
-      )}
-    </TableRow>
+    <div className='flex flex-col gap-4'>
+      <dl>
+        {s.last && s.last.skipped > 0 && <Field label='Missed'>{s.last.skipped} missed time{s.last.skipped === 1 ? '' : 's'} not run again</Field>}
+        <Field label='Name'><span className='font-mono text-xs'>{s.name}</span></Field>
+      </dl>
+      {canManage ? (
+        <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void patch({ cron }, 'Time changed'); }}>
+          <Input className='w-44 font-mono text-xs' value={cron} onChange={(e) => setCron(e.target.value)} aria-label={`When ${s.name} runs`} />
+          <Button type='submit' size='sm' variant='outline' disabled={cron === s.cron}>Save</Button>
+          {!s.is_default && <Button type='button' variant='ghost' size='sm' className='text-destructive hover:text-destructive ml-auto'
+            onClick={() => void call('DELETE', `/${s.id}`).then(() => { toast.success('Removed'); return onChanged(); }).catch(fail)}>Remove</Button>}
+        </form>
+      ) : <p className='text-muted-foreground text-xs'>An owner of this workspace changes these.</p>}
+    </div>
   );
 }
 
