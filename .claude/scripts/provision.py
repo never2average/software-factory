@@ -3894,7 +3894,8 @@ def _main(a):
         # server of its own (target compose_remote) or two Vercel projects, its API and its console (mold_v0-029).
         # Nothing below this line applies to it: no mold_v1 projects, no schema chain, no RLS bootstrap, no
         # workspaces. One module owns it (lib/single_service.py).
-        real = ("--deploy-remote" in a or "--deploy" in a) and not dry
+        head = a[:a.index("--")] if "--" in a else a   # what follows `--` is an operator script's (--operator)
+        real = ("--deploy-remote" in head or "--deploy" in head) and not dry and "--operator" not in head
         if real and single_service.applies(app): deploy_gate.require(app_id, app, infra, adir, a, save=save)   # only deploy what passed CI
         rc = single_service.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
         if rc == 0 and real: repo_auto(app_id, adir, "a deploy")

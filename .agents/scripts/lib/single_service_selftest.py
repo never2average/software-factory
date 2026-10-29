@@ -1275,6 +1275,49 @@ def run():
             ok(set(realK["optional"]) | set(realK["required"]) <= {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} and "DATABASE_URL" not in realK["optional"] + realK["required"],
                "the console's own names are its sign-in keys only, never the database")
         except BaseException as e_: ok(False, f"the console project's preflight: crashed: {type(e_).__name__}: {e_}"[:300])
+        # --- 9b. mold_v0-173: --operator on Vercel (the read-only operator:vault-status), and the check's key vault line ----
+        try:
+            import operator_run as OR_
+            calls_ = []
+            real_mf = OR_.main_for
+            OR_.main_for = lambda *a_, **k_: (calls_.append((a_, k_)), 0)[1]
+            try:
+                fp = FakeP()
+                rc = SS.main_for("zz_shop", ["zz_shop", "--operator", "vault-status", "--dry-run", "--", "--deploy", "--json"], dict(va), cp(vi), {}, vdir, fp, say=lambda s: None, root=t)
+                v0 = calls_[-1][1].get("v0") if calls_ else {}
+                ok(rc == 0 and len(calls_) == 1 and v0.get("env_project") == "zz-shop-api" and v0.get("build") == SS.source_for("zz_shop", va, t)
+                   and [c[0] for c in fp.calls] == ["refuse"],
+                   f"--operator on Vercel goes to lib/operator_run.py with the API project's env and the build copy, after the project refusal, before any deploy (even with --deploy after --): {calls_} {fp.calls}")
+                calls_.clear(); fp = FakeP(refuse="zz_shop: vercel.project is a LIVE project. Nothing was written.")
+                rc = SS.main_for("zz_shop", ["zz_shop", "--operator", "vault-status", "--yes"], dict(va), cp(vi), {}, vdir, fp, say=lambda s: None, root=t)
+                ok(rc == 1 and not calls_, "--operator on a LIVE or another app's project is refused before the script is looked at")
+                rec = cp(vi); rec["vercel"]["projects"] = {"api": "zz-shop-api", "web": "zz-shop"}
+                SS.main_for("zz_shop", ["zz_shop", "--operator", "vault-status"], dict(va), rec, {}, vdir, FakeP(), say=lambda s: None, root=t)
+                ok(calls_ and calls_[-1][1]["v0"]["env_project"] == "zz-shop-api", "the recorded api project is the one read")
+            finally:
+                OR_.main_for = real_mf
+            said = []
+            rc = SS.main_for("zz_shop", ["zz_shop", "--operator", "vault-status", "--yes"], dict(va), dict(cp(vi), target="compose_remote"), {}, vdir, FakeP(), say=said.append, root=t)
+            ok(rc == 2 and "Vercel only" in " ".join(said), f"--operator on a compose_remote app says it runs on Vercel only, exit 2: {said}")
+            pk = os.path.join(t, "packs", "vs_fixture", "files", "packs", "vs_fixture"); os.makedirs(pk, exist_ok=True)
+            json.dump({"id": "vs_fixture", "job_kinds": [{"name": "scan", "providers": ["anthropic", "google"], "operator_credentials": ["login"]},
+                                                        {"name": "audit", "providers": ["anthropic"]}, {"name": "tally"}]}, open(os.path.join(pk, "pack.json"), "w"))
+            app_p = dict(va, packs=["vs_fixture", "vs_absent"])
+            rn = SS.run_needs("zz_shop", app_p, "vercel", root=t)
+            ok(rn["kinds"] == 3 and rn["needs"] == {"anthropic": ["vs_fixture.scan", "vs_fixture.audit"], "google": ["vs_fixture.scan"], "pack_credentials": ["vs_fixture.scan"]}
+               and rn["boat"] and rn["unread"] == ["vs_absent"], f"run_needs reads the packs' job kinds: providers, operator credentials, boat on Vercel: {rn}")
+            said = []; SS.say_run_needs("zz_shop", app_p, "vercel", say=said.append, root=t)
+            ok(len(said) == 1 and "anthropic (2 kinds)" in said[0] and "boat (the runs' sandboxes on Vercel)" in said[0]
+               and "python3 .claude/scripts/provision.py zz_shop --operator vault-status --dry-run" in said[0] and "vs_absent" in said[0],
+               f"the check's one line: what the run kinds need and the exact command: {said}")
+            said = []; SS.say_run_needs("zz_shop", app_p, "compose_remote", say=said.append, root=t)
+            ok(len(said) == 1 and "boat" not in said[0] and "--operator" not in said[0] and "Key vault" in said[0], f"on its own server: no boat assumed, the Key vault page: {said}")
+            said = []; SS.say_run_needs("zz_shop", dict(va, packs=[]), "vercel", say=said.append, root=t)
+            ok(said == [], "an app without packs: no line")
+            fp = FakeP(projects=["zz-shop-api", "zz-shop"]); said = []
+            SS.vercel_check("zz_shop", app_p, cp(vi), fp, say=said.append, root=t)
+            ok(any("--operator vault-status --dry-run" in l for l in said), f"provision.py <app> (the check) carries the line for a mold_v0 app on Vercel: {said[-6:]}")
+        except BaseException as e_: ok(False, f"--operator vault-status (mold_v0-173): crashed: {type(e_).__name__}: {e_}"[:400])
         # --- 10. mint's stations ----------------------------------------------------------------------------------------
         os.environ["FACTORY_PRIVATE_DIR"] = os.path.join(t, "private")
         a = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned", "mold_commit": "c" * 40}
