@@ -46,10 +46,15 @@ export const when = (d: string | null) => (d ? new Date(d).toLocaleString(undefi
 /** "Applications" -> "Application": a column of one record each reads in the singular. */
 export const singular = (label: string) =>
   /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');
-/** The target column's name: the build's one asset area in the singular, else "Target". */
-export const targetLabel = () => {
+/**
+ * The target column's name: the area the listed runs ran over, in the singular, when they all ran over one area; with
+ * none listed, the build's one workspace asset area; else "Target".
+ */
+export const targetLabel = (runs: readonly Pick<Run, 'targets'>[] = []) => {
+  const used = [...new Set(runs.map((r) => runTarget(r)?.area).filter((a): a is string => !!a))];
   const assets = recordAreas.filter((a) => a.role === 'asset' && a.scope === 'workspace');
-  return assets.length === 1 ? singular(assets[0]!.label) : 'Target';
+  const one = used.length === 1 ? recordAreas.find((a) => a.name === used[0]) : !used.length && assets.length === 1 ? assets[0] : null;
+  return one ? singular(one.label) : 'Target';
 };
 export const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 

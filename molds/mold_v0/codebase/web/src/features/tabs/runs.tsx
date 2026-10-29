@@ -41,7 +41,7 @@ function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
   // The kinds' options: every kind of the build's packs, then any a listed run has that the build no longer declares.
   const kinds = [...JOB_KINDS.map((k) => ({ value: `${k.pack}/${k.name}`, label: k.label ?? k.name }))];
   for (const r of runs) if (!kinds.some((k) => k.value === `${r.pack}/${r.kind}`)) kinds.push({ value: `${r.pack}/${r.kind}`, label: r.kind });
-  const target = targetLabel();
+  const target = targetLabel(runs);
   const anyTarget = runs.some((r) => runTarget(r)) || recordAreas.some((a) => a.role === 'asset' && a.scope === 'workspace');
   const cols: RecordCol<Run>[] = [
     {
@@ -120,7 +120,7 @@ export function RunsTable({ tab, reports }: { tab: Pick<PackTabSpec, 'pack' | 'i
       detailActions={(r) => {
         const t = runTarget(r);
         return t && findRecordArea('app', t.area)
-          ? <Button variant='outline' size='sm' render={<Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} />}>Open {lowerFirst(targetLabel())}</Button>
+          ? <Button variant='outline' size='sm' render={<Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} />}>Open {lowerFirst(targetLabel([r]))}</Button>
           : null;
       }}
       detail={(r) => (
