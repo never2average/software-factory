@@ -91,7 +91,7 @@ export async function createUpload(run: RunRef, purpose: "workspace" | "completi
 
 /**
  * The content of `run`'s upload `id`, used once: its object read from the store, its size, seal and sha256 checked,
- * then the row and the object removed. 404 when the attempt has no such upload; 409 when its object is not there.
+ * then the row and the object removed. 404 when the attempt has no such upload; 502 (an infrastructure failure, retried) when its object is not there.
  */
 export async function takeUpload(run: RunRef, id: unknown, purpose: "workspace" | "completion"): Promise<Buffer> {
   if (typeof id !== "string" || !/^tr_[0-9a-f]{32}$/.test(id)) throw new PackError("upload: a transfer id from POST .../uploads", 400);
@@ -107,7 +107,7 @@ export async function takeUpload(run: RunRef, id: unknown, purpose: "workspace" 
       await os.remove([row.object_key]).catch(() => {});
     };
     const sealed = await os.get(row.object_key);
-    if (!sealed) throw new PackError("the upload is not in the object store (it was not sent, or its link expired): ask for a new one", 409);
+    if (!sealed) throw new PackError("the upload is not in the object store (it was not sent, or its link expired): ask for a new one", 502);
     const bytes = Number(row.bytes);
     try {
       if (sealed.length !== bytes + TRANSFER_OVERHEAD) throw new PackError(`the upload holds ${sealed.length - TRANSFER_OVERHEAD} bytes, not the ${bytes} announced`, 400);
