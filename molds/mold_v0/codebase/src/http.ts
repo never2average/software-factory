@@ -20,7 +20,7 @@ import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
-import { metricAppRouter, runAppRouter } from "./view-routes.js";
+import { metricAppRouter, runAppRouter, sparklineAppRouter } from "./view-routes.js";
 import { workspaceFileAppRouter } from "./workspace-files.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
@@ -264,6 +264,8 @@ export function createApp() {
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
+  // A list tab's four cards (mold_v0-181): with no list tab nothing is mounted.
+  app.use("/api/sparklines", sparklineAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
 

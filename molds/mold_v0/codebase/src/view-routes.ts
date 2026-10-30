@@ -8,13 +8,17 @@
  *   GET /api/runs                  the workspace's runs, newest first (?limit, at most 200), with each run's result
  *                                  counts by status (the Runs and Reports tabs)
  *   GET /api/runs/:id              one run of the workspace and its results
+ *   GET /api/sparklines/<pack>/<tab>   a list tab's four cards (mold_v0-181, src/sparklines.ts): each card's value and
+ *                                  its weeks, as the person's role may read each (a refusal per card); the tab itself
+ *                                  as the sidebar shows it (its roles; a tab whose list the pack withholds: not found)
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { customerSession, type Session } from "./app.js";
 import { getDb } from "./db.js";
-import { PackError } from "./pack-api.js";
+import { PackError, SPARK_KINDS } from "./pack-api.js";
 import { buildViews, computeMetrics, MAX_METRICS_PER_REQUEST } from "./metrics.js";
-import { packOpWithheld } from "./mcp-withheld.js";
+import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
+import { tabAreas, tabRoles } from "./metric-spec.js";
 import { packs } from "./packs.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -42,6 +46,28 @@ export function metricAppRouter(): Router {
     const held = new Set(buildViews().metrics.filter((m) => packOpWithheld(m.pack, "metrics")).map((m) => m.name));
     if (names.some((n) => held.has(n))) throw new PackError(`no metric ${names.find((n) => held.has(n))}`, 404);
     return { metrics: await computeMetrics(session(res).org, names, actor(res)) };
+  }));
+  r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
+  return r;
+}
+
+/** /api/sparklines: mounted when a pack declares a list tab (area, runs, reports, schedules). */
+export function sparklineAppRouter(): Router {
+  const r = express.Router();
+  const listTab = (kind: string) => (SPARK_KINDS as readonly string[]).includes(kind);
+  if (!buildViews().tabs.some((t) => listTab(t.kind))) return r;
+  r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+  r.use(customerSession);
+  r.get("/:pack/:tab", answer(async (req, res) => {
+    const b = buildViews();
+    const tab = b.tabs.find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && listTab(t.kind));
+    // A tab the sidebar does not show (its area's or its runs' list withheld, mold_v0-067) has no cards either.
+    const withheld = tab && (tab.kind === "area" ? tabAreas(tab).some((a) => areaOpWithheld(a.area, "list")) : (tab.kind === "runs" || tab.kind === "reports") && packOpWithheld(tab.pack, "list_runs"));
+    if (!tab || withheld) throw new PackError("Not found", 404);
+    const role = actor(res).role;
+    if (role !== null && !tabRoles(tab, b).includes(role)) throw new PackError("Your role can't read this tab.", 403);
+    const { computeSparklines } = await import("./sparklines.js");
+    return computeSparklines(session(res).org, tab, actor(res));
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;

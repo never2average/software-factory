@@ -388,7 +388,7 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cells {
  * A sealed area's rows, opened with the workspace's key: its newest MAX_SEALED_ROWS, and no more than MAX_SEALED_BYTES
  * of them (`partial` when either cut). Opened one at a time (the key loaded once), so one request holds one area's rows.
  */
-type Sealed = { rows: Row[]; partial: boolean };
+export type Sealed = { rows: Row[]; partial: boolean };
 async function sealedRows(orgId: number, area: SpecArea): Promise<Sealed> {
   return withTenant(orgId, async () => {
     const rows = await (await getDb()).query<{ data: unknown; created_at: Date | string; updated_at: Date | string; bytes: number }>(
@@ -458,9 +458,18 @@ async function titlesOf(orgId: number, a: NonNullable<ReturnType<typeof findArea
 }
 
 /** One metric for one workspace, as `actor` may read it. `now` fixes "today" (tests pass their own clock). */
-export async function computeMetric(orgId: number, name: string, actor: Actor, now = new Date(), opts: { forceCode?: boolean; sealed?: Map<string, Promise<Sealed>> } = {}): Promise<MetricAnswer> {
+export async function computeMetric(orgId: number, name: string, actor: Actor, now = new Date(), opts: MetricOptions = {}): Promise<MetricAnswer> {
   const m = findMetric(name);
   if (!m) throw new PackError(`no metric ${JSON.stringify(String(name).slice(0, 64))}`, 404);
+  return computeSpec(orgId, m, actor, now, opts);
+}
+export type MetricOptions = { forceCode?: boolean; sealed?: Map<string, Promise<Sealed>> };
+
+/**
+ * A metric given whole (a declared one, or one the shell makes from a declaration: a card's weekly series, its default
+ * cards; src/sparklines.ts), over an area or run source of the build, under the same rules as a declared one.
+ */
+export async function computeSpec(orgId: number, m: SpecMetric, actor: Actor, now = new Date(), opts: MetricOptions = {}): Promise<MetricAnswer> {
   if (actor.role !== null && !metricRoles(m, buildViews().areas).includes(actor.role)) throw new PackError(`Your role can't read ${m.label}.`, 403);
   const src = sourceOf(m);
   const over = overOf(src);

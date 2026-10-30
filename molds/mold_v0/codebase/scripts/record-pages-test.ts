@@ -12,6 +12,9 @@
 //      key once, each data key a declared field.
 //   4. The customer lists (mold_v0-176): a run's row in words (web/src/features/tabs/run-rows.ts), and every customer list
 //      page drawing the console's database table (RecordView), none linking to a staff page.
+//   5. A list tab's four cards (mold_v0-181): a card's number and its trend in words (web/src/features/tabs/spark-words.ts),
+//      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them below its
+//      toolbar.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -125,3 +128,22 @@ for (const [file, what] of Object.entries(lists)) {
   assert.doesNotMatch(s.replace(/\/\/.*$/gm, ""), /['"`]\/admin\b/, `${what}: no link to a staff page`);
 }
 ok(`the customer lists are the database table, none linking to a staff page: ${Object.values(lists).join(", ")}`);
+
+// 5. A list tab's four cards (mold_v0-181).
+const sw = await web("features/tabs/spark-words.ts");
+const fmt = (v: number | null, unit: string) => (v === null ? "—" : unit === "percent" ? `${Math.round(v * 100)}%` : unit === "usd" ? `$${v.toFixed(2)}` : String(v));
+assert.deepEqual([sw.cardValue(0.25, "hours", fmt), sw.cardValue(1.5, "hours", fmt), sw.cardValue(null, "count", fmt)], ["15 min", "1.5", "—"], "an hour under one reads in minutes");
+const W = 12;
+assert.equal(sw.trendWords({ series: [0, 0, 1, 2, 4, 8], unit: "count", mode: "total" }, W, fmt), "Running total: rising over the last 12 weeks, from 0 to 8.");
+assert.equal(sw.trendWords({ series: [null, 0.5, null, 0.25], unit: "percent", mode: "weekly" }, W, fmt), "Week by week: falling over the last 12 weeks, from 50% to 25%.", "weeks with nothing to measure are skipped");
+assert.equal(sw.trendWords({ series: [100, 103], unit: "number", mode: "latest" }, W, fmt), "Week by week: steady over the last 12 weeks, at 103.");
+assert.equal(sw.trendWords({ series: [null, 3, null], unit: "count", mode: "weekly" }, W, fmt), "No trend yet over the last 12 weeks.");
+const cards = src("features/tabs/sparklines.tsx");
+assert.match(cards, /<StatStrip quad items=\{items\} \/>/, "the cards are the console's headline numbers (StatStrip), four across or two by two");
+assert.match(cards, /\/api\/sparklines\//, "numbers from the server, for this workspace and role");
+assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: below its toolbar");
+assert.match(tab, /!table && <TabSparklines tab=\{tab\} \/>/, "a board or a timeline: above it");
+assert.match(tab, /<RunsTable tab=\{tab\} reports=\{tab\.kind === 'reports'\} summary=\{<TabSparklines tab=\{tab\} \/>\} \/>/, "a runs or reports tab");
+assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} \/>/, "a schedules section");
+for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table, below its toolbar`);
+ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them below its toolbar (a board or timeline: above it)");

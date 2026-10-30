@@ -3,7 +3,7 @@
 // copied into the workspace; owners turn them off and on, change when they run (UTC) and over which records, and add
 // their own. Everyone else in the workspace sees them, with the last time each ran. The list is the console's database
 // table (mold_v0-176): a row opens the schedule beside it, where owners change when it runs or remove one they added.
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Section } from '@/components/layout/section';
@@ -49,8 +49,8 @@ export function SchedulesPage() {
   );
 }
 
-/** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab). */
-export function SchedulesBody() {
+/** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab, with its four cards: mold_v0-181). */
+export function SchedulesBody({ summary }: { summary?: ReactNode } = {}) {
   const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
   const cols = useMemo(() => (data ? columns(data, reload) : []), [data, reload]);
   return (
@@ -59,7 +59,7 @@ export function SchedulesBody() {
         <div className='flex flex-col gap-10'>
           {/* The console's database table (mold_v0-176, as on Accounts): a row opens the schedule beside the list. */}
           <RecordView<Schedule>
-            id='app-schedules' compact noun='schedules' properties
+            id='app-schedules' compact noun='schedules' properties summary={summary}
             rows={data?.schedules ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
             searchText={(s) => `${s.label ?? ''} ${s.name} ${kindLabel(s)} ${s.cron} ${assetWords(s)}`}
             searchPlaceholder='Search schedules'

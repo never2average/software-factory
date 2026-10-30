@@ -128,8 +128,10 @@ function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admi
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
+  /** Between the toolbar and the table: a tab's four cards (mold_v0-181, features/tabs/sparklines.tsx). */
+  summary?: ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
   compact?: boolean;
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
@@ -142,7 +144,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
-      id={id} compact={compact} noun='records' properties
+      id={id} compact={compact} noun='records' properties summary={summary}
       rows={data?.records ?? []} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}

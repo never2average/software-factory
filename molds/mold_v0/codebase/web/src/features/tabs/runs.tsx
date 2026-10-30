@@ -7,7 +7,7 @@
 // state. A row opens the run beside the list: its facts, its error and its results (GET /api/runs/:id), with a link to
 // the record it ran over. A reports tab lists the finished runs only, newest result first.
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -98,7 +98,11 @@ export function RunResults({ id }: { id: string }) {
 }
 
 /** The runs (or, `reports`, the finished runs) of the workspace as the database table. */
-export function RunsTable({ tab, reports }: { tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty'>; reports: boolean }) {
+export function RunsTable({ tab, reports, summary }: {
+  tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty'>; reports: boolean;
+  /** Between the toolbar and the table: the tab's four cards (mold_v0-181, ./sparklines.tsx). */
+  summary?: ReactNode;
+}) {
   const { data, error } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=200'), []);
   const runs = useMemo(() => {
     const all = data?.runs ?? [];
@@ -109,7 +113,7 @@ export function RunsTable({ tab, reports }: { tab: Pick<PackTabSpec, 'pack' | 'i
   const noun = lowerFirst(tab.label);
   return (
     <RecordView<Run>
-      id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties
+      id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}
       rows={runs} rowKey={(r) => r.id} cols={cols} loading={!data}
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${statusLabel(r.status)} ${runTarget(r)?.key ?? ''} ${r.id}`}

@@ -2979,6 +2979,15 @@
               "pattern": "^[a-z][a-z0-9-]{0,40}$"
             }
           },
+          "sparklines": {
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
           "charts_title": {
             "type": "string",
             "minLength": 1,
