@@ -52,7 +52,8 @@ import type { Claim, Completion } from "./runs.js";
 import type { RunCredentials } from "./credentials.js";
 import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
-import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
+import { openTransfer, sealTransfer, sha256Hex, sizeInWords } from "./run-transfer-seal.js";
+import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack, writeBackIgnore, type WriteBackIgnore } from "./agent-workspace.js";
 import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, pinCommits, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
@@ -105,6 +106,19 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
   };
 }
 
+/**
+ * The largest body sent to (or taken from) the worker API in one request (mold_v0-182): 4 MiB, under a hosted
+ * function's 4.5 MB (Vercel: FUNCTION_PAYLOAD_TOO_LARGE). Anything larger goes through the object store with a link
+ * the API hands out (src/run-transfers.ts), where the store has links; events go in batches below it.
+ */
+export const INLINE_MAX_BYTES = () => Number(process.env.APP_WORKER_INLINE_MAX_BYTES ?? 4 * 1024 * 1024);
+
+/** A write-back (or a completion) the API or the store refused for its size: the size, the limit when known, and why. */
+export class TooLargeError extends Error {
+  status = 413;
+  constructor(message: string, public bytes: number, public limit: number | null) { super(message); }
+}
+
 /** The engine over HTTP, as a runner elsewhere (a sandbox) reaches it: /api/worker/runs with the fleet token. */
 export function httpRunnerClient(base: string, workerToken: string, workerId: string): RunnerClient {
   const url = (p: string) => `${base.replace(/\/$/, "")}/api/worker/runs${p}`;
@@ -114,22 +128,101 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
         ...(raw ? { "content-type": "application/octet-stream" } : body !== undefined ? { "content-type": "application/json" } : {}) },
       body: raw ? new Uint8Array(raw) : body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) throw Object.assign(new Error(`${method} ${p}: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+    if (!res.ok) {
+      const text = await res.text();
+      let detail: { error?: string; bytes?: number; limit?: number } | null = null;
+      try { detail = JSON.parse(text); } catch { /* the platform's own page, not the API's */ }
+      throw Object.assign(new Error(`${method} ${p}: ${res.status} ${text.slice(0, 300)}`), { status: res.status, detail });
+    }
     return (res.headers.get("content-type") ?? "").includes("json") ? (res.json() as Promise<T>) : (Buffer.from(await res.arrayBuffer()) as unknown as T);
+  };
+  const runPath = (id: string, rest: string) => `/${encodeURIComponent(id)}${rest}`;
+  /**
+   * mold_v0-182: `body` to the object store with the link the API hands out for this run's attempt, sealed with the
+   * key it made for this transfer; the transfer's id, or null where the store gives no links (a local directory).
+   */
+  const upload = async (id: string, lease: string, purpose: "workspace" | "completion", body: Buffer): Promise<string | null> => {
+    const r = await call<{ upload: { id: string; url: string; key: string } | null }>("POST", runPath(id, "/uploads"), lease, { purpose, bytes: body.length, sha256: sha256Hex(body) });
+    if (!r.upload) return null;
+    const sealed = sealTransfer(Buffer.from(r.upload.key, "base64"), r.upload.id, body);
+    let res: Response;
+    try { res = await fetch(r.upload.url, { method: "PUT", body: new Uint8Array(sealed), headers: { "content-type": "application/octet-stream" } }); }
+    catch (e) { throw Object.assign(new Error(`upload to the object store: ${(e as Error).message}`), { status: 503 }); }
+    // The store's own refusal: an infrastructure failure (retried), never the run's.
+    if (!res.ok) throw Object.assign(new Error(`upload to the object store: ${res.status} ${(await res.text()).slice(0, 200)}`), { status: 503 });
+    return r.upload.id;
+  };
+  /** The API refused a body for its size (its own 413, or the platform's in front of it: FUNCTION_PAYLOAD_TOO_LARGE). */
+  const refused = (what: string, bytes: number, e: unknown): TooLargeError => {
+    const d = (e as { detail?: { error?: string; limit?: number } | null }).detail;
+    // The API's own refusal names the size and its limit; the platform's (FUNCTION_PAYLOAD_TOO_LARGE) names neither.
+    if (d?.error && typeof d.limit === "number") return new TooLargeError(d.error, bytes, d.limit);
+    if (d?.error && /at most/.test(d.error)) return new TooLargeError(d.error, bytes, null);
+    return new TooLargeError(`${what} is ${sizeInWords(bytes)} (${bytes} bytes), more than the API takes in one request (it answered: ${(e as Error).message.replace(/\s+/g, " ").slice(0, 160)}; ` +
+      `a hosted API takes at most 4.5 MB), and its object store gave no upload link`, bytes, 4_500_000);
   };
   return {
     claim: async (kinds) => (await call<{ run: Claim | null }>("POST", "/claim", null, { worker_id: workerId, kinds })).run,
-    heartbeat: (id, lease) => call("POST", `/${encodeURIComponent(id)}/heartbeat`, lease, {}),
-    events: async (id, lease, events) => void (await call("POST", `/${encodeURIComponent(id)}/events`, lease, { events })),
-    complete: async (id, lease, c) => (await call<{ run: RunView }>("POST", `/${encodeURIComponent(id)}/complete`, lease, c)).run,
+    heartbeat: (id, lease) => call("POST", runPath(id, "/heartbeat"), lease, {}),
+    events: async (id, lease, events) => {
+      // In batches under the API's request limit (500 events of up to 16 KB each would be 8 MB in one).
+      let batch: typeof events = [], size = 0;
+      const max = Math.max(64 * 1024, Math.floor(INLINE_MAX_BYTES() * 0.75));
+      for (const e of events) {
+        const n = Buffer.byteLength(JSON.stringify(e)) + 1;
+        if (batch.length && size + n > max) { await call("POST", runPath(id, "/events"), lease, { events: batch }); batch = []; size = 0; }
+        batch.push(e); size += n;
+      }
+      if (batch.length) await call("POST", runPath(id, "/events"), lease, { events: batch });
+    },
+    complete: async (id, lease, c) => {
+      const body = Buffer.from(JSON.stringify(c));
+      try {
+        if (body.length > INLINE_MAX_BYTES()) {
+          const up = await upload(id, lease, "completion", body);
+          if (up) return (await call<{ run: RunView }>("POST", runPath(id, "/complete"), lease, { upload: up })).run;
+        }
+        return (await call<{ run: RunView }>("POST", runPath(id, "/complete"), lease, c)).run;
+      } catch (e) { if ((e as { status?: number }).status === 413) throw refused("the run's completion (its results)", body.length, e); throw e; }
+    },
     checkout: async (id, lease, dir) => {
-      const res = await fetch(url(`/${encodeURIComponent(id)}/workspace`), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });
+      const res = await fetch(url(runPath(id, "/workspace")), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease, "x-workspace-transfer": "link" } });
       if (!res.ok) throw Object.assign(new Error(`GET workspace: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+      if ((res.headers.get("content-type") ?? "").includes("json")) {
+        // mold_v0-182: larger than the API answers: from the object store, with the link and the key it made for this checkout.
+        const j = await res.json() as { version: number; manifest_sha256: string; download: { id: string; url: string; key: string; bytes: number; sha256: string } };
+        let got: Response;
+        try { got = await fetch(j.download.url); } catch (e) { throw Object.assign(new Error(`checkout from the object store: ${(e as Error).message}`), { status: 503 }); }
+        if (!got.ok) throw Object.assign(new Error(`checkout from the object store: ${got.status} ${(await got.text()).slice(0, 200)}`), { status: 503 });
+        const bundle = openTransfer(Buffer.from(j.download.key, "base64"), j.download.id, Buffer.from(await got.arrayBuffer()));
+        if (bundle.length !== j.download.bytes || sha256Hex(bundle) !== j.download.sha256) throw Object.assign(new Error("checkout from the object store: not the bundle the API announced"), { status: 503 });
+        unpackBundle(bundle, dir, j.manifest_sha256);
+        return { version: Number(j.version) };
+      }
       unpackBundle(Buffer.from(await res.arrayBuffer()), dir, res.headers.get("x-workspace-manifest-sha256") ?? undefined);
       return { version: Number(res.headers.get("x-workspace-version") ?? 0) };
     },
-    stage: (id, lease, dir) => call("PUT", `/${encodeURIComponent(id)}/workspace`, lease, undefined, packBundle(dir).bundle),
-    credentials: (id, lease) => call("GET", `/${encodeURIComponent(id)}/credentials`, lease),
+    stage: async (id, lease, dir) => {
+      const { bundle } = packBundle(dir);
+      type Staged = { manifest_sha256: string; files: number; unchanged: boolean };
+      const viaStore = async () => {
+        const up = await upload(id, lease, "workspace", bundle);
+        return up ? call<Staged>("POST", runPath(id, "/workspace/commit"), lease, { upload: up }) : null;
+      };
+      try {
+        // mold_v0-182: larger than the API takes in one request: straight to the object store (where it has links).
+        if (bundle.length > INLINE_MAX_BYTES()) { const r = await viaStore(); if (r) return r; }
+        try { return await call<Staged>("PUT", runPath(id, "/workspace"), lease, undefined, bundle); }
+        catch (e) {
+          // The platform in front of the API refused it below our own threshold (not the API's own limit): the store, once.
+          if ((e as { status?: number }).status === 413 && bundle.length <= INLINE_MAX_BYTES() && !(e as { detail?: { limit?: number } }).detail?.limit) {
+            const r = await viaStore(); if (r) return r;
+          }
+          throw e;
+        }
+      } catch (e) { if ((e as { status?: number }).status === 413) throw refused("the workspace's write-back", bundle.length, e); throw e; }
+    },
+    credentials: (id, lease) => call("GET", runPath(id, "/credentials"), lease),
   };
 }
 
@@ -389,6 +482,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   let cache: CheckoutCache | null = null;
   const mounts: { at: string; target: string }[] = [];
   let toolBin: string | null = null;
+  /** mold_v0-182: what the write-back leaves out (the agent repository's .gitignore, the kind's write_back_ignore). */
+  let wbIgnore: WriteBackIgnore | null = null;
   const flush = async () => {
     if (!pending.length || leaseLost) return;
     const batch = pending.splice(0, 500).map((e) => ({ type: redactText(e.type, secrets) === e.type ? e.type : "redacted", data: redactJson(e.data, secrets) }));
@@ -544,6 +639,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         const got = await fetchPinned(agent.repository, agent.commit, work, { allowFile: opts.allowFileUpstream, allowHttp: opts.allowHttpUpstream, home: path.join(scratch, "git-home") });
         const stripped = stripPaths(work, [".git", ...agent.strip]);
         pending.push({ type: "agent_checkout", data: { commit: got.commit, files: got.files, stripped: stripped.length } });
+        // mold_v0-182: what is never written back, read from the pinned tree now (before anything of the run's runs).
+        const a = agent as typeof agent & { write_back_ignore?: string[]; write_back_gitignore?: boolean };
+        wbIgnore = writeBackIgnore(work, a.write_back_ignore ?? [], a.write_back_gitignore ?? true);
         await client.checkout(run.id, lease, snap);
         chmodSync(snap, 0o700);
         // mold_v0-079: `strip` is the pinned tree's (its samples, its own data), applied at checkout only. What the
@@ -825,13 +923,18 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
           } catch { /* gone */ }
         }
         // Written back as the run left it (mold_v0-079: strip is applied at checkout only, never to the workspace).
-        const wb = collectWriteBack(work, snap, stageDir, agent.write_back);
+        const wb = collectWriteBack(work, snap, stageDir, agent.write_back, wbIgnore);
         if (wb.skipped.length) pending.push({ type: "workspace_skipped", data: { skipped: wb.skipped } });
+        if (wb.ignored.paths) pending.push({ type: "workspace_ignored", data: { paths: wb.ignored.paths, sample: wb.ignored.sample,
+          why: "ignored by the agent repository's .gitignore or the kind's write_back_ignore: never written back" } });
         cpSync(pristine, vdir, { recursive: true, dereference: false, verbatimSymlinks: true });
         restoreInto(stageDir, vdir, agent.write_back);
         if (as) { chownTree(vdir, as.uid, as.gid); }
       } catch (e) {
         if (e instanceof HarnessConfigError) return await complete({ outcome: "failed", error_kind: "infrastructure", error: e.message });
+        // The store's own limits (files, bytes), met while the write-back was collected: refused, naming the limit.
+        const lim = /more than (\d+) (files|bytes)/.exec((e as Error).message);
+        if (lim) pending.push({ type: "workspace_write_back_refused", data: { bytes: null, limit: Number(lim[1]), unit: lim[2], reason: (e as Error).message.slice(0, 1000) } });
         return await complete({ outcome: "failed", error_kind: "run", error: `write back: ${(e as Error).message}`.slice(0, 1000) });
       }
     }
@@ -895,6 +998,11 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       catch (e) {
         const status = (e as { status?: number }).status;
         if (status === 409) return null;
+        // mold_v0-182: refused for its size: an event naming the size and the limit, and the run's error says the same.
+        if (status === 413) {
+          const t = e as Partial<TooLargeError>;
+          pending.push({ type: "workspace_write_back_refused", data: { bytes: t.bytes ?? null, limit: t.limit ?? null, reason: String((e as Error).message).slice(0, 1000) } });
+        }
         // A workspace the run left unpackable (a symbolic link, a special file, too big) is the run's failure, not the infrastructure's.
         return await complete({ outcome: "failed", error_kind: status === 400 || status === 413 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
       }
