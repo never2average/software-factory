@@ -344,6 +344,36 @@ try {
     console.log(`✓ a sections tab (mold_v0-175): ${m} malformed ones refused (none named, on another kind, twice, one, undeclared, a kind it cannot show, in two pages, a filter on a merged tab or over an unknown field); built: its in-page tabs at ?tab=, out of the sidebar, their old addresses redirected, a filtered tab flagged`);
   }
 
+  // ---------- 2f. a list tab's four cards (mold_v0-181: sparklines) ----------
+  {
+    let m = 0;
+    const no = (what: string, json: unknown, re: RegExp) => { refused(`sparklines: ${what}`, tryPack(json), re); m++; };
+    const four = ["open_count", "found_weekly", "score_avg", "fix_share"];
+    const cards = (tabs: Record<string, unknown>[]) => variant((j) => {
+      j.metrics.push(
+        { name: "open_count", label: "Open", over: "tracker_findings", where: [{ field: "state", op: "eq", value: "open" }] },
+        { name: "found_weekly", label: "Found", over: "tracker_findings", by_time: { at: "created", every: "week", last: 8 } },
+        { name: "score_avg", label: "Average score", over: "tracker_findings", measure: "average", field: "score" },
+        { name: "fix_share", label: "Fixed", over: "tracker_findings", measure: "rate", rate: { where: [{ field: "state", op: "eq", value: "fixed" }] } });
+      j.tabs = tabs;
+    });
+    const findings = (x: Record<string, unknown> = {}) => ({ id: "findings", kind: "area", area: "tracker_findings", label: "Findings", ...x });
+    no("three cards", cards([findings({ sparklines: four.slice(0, 3) })]), /tabs\[0\]\.sparklines: exactly 4 metric names/);
+    no("five cards", cards([findings({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: exactly 4 metric names/);
+    no("a metric twice", cards([findings({ sparklines: ["open_count", "open_count", "score_avg", "fix_share"] })]), /tabs\[0\]\.sparklines: a metric is listed twice/);
+    no("a name that is not a plain word", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "x'); --"] })]), /tabs\[0\]\.sparklines\[3\]: lowercase letters/);
+    no("cards on an overview", cards([{ id: "over", kind: "overview", charts: ["severity"], sparklines: four }]), /tabs\[0\]\.sparklines: sparklines are for a list tab: area, runs, reports, schedules/);
+    no("an undeclared metric", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "nope"] })]), /tab findings: sparklines names metric nope, which this pack does not declare/);
+    no("a grouped metric", cards([findings({ sparklines: ["open_count", "found_weekly", "score_avg", "open_by_severity"] })]), /tab findings: sparklines: metric open_by_severity: a card shows one number, and a metric with group_by shows one per group/);
+    no("the shell's cards under a filter they cannot apply", cards([findings({ filter: { title: { prefix: "Leak" } } })]), /tab findings: the shell's cards would count rows its filter hides \(title prefix has no metric equivalent\): declare its sparklines/);
+    const ok = tryPack(cards([findings({ sparklines: four }), { id: "open", kind: "area", area: "tracker_findings", label: "Open", filter: { state: { in: ["open", "triaged"] } } },
+      { id: "scans", kind: "runs", label: "Scans", sparklines: four }, { id: "plan", kind: "schedules", label: "Schedule" }]));
+    assert.equal(ok.r.status, 0, `cards build (declared, and the shell's under a filter they apply): ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    assert.doesNotMatch(nav, /sparklines/, "the console asks the server for a tab's cards: the registry is unchanged");
+    console.log(`✓ a list tab's cards (mold_v0-181): ${m} malformed ones refused (three, five, twice, not a word, on an overview, undeclared, grouped, the shell's under a filter they cannot apply); declared ones and the shell's build, the registry unchanged`);
+  }
+
   // ---------- 2d. flat console URLs (mold_v0-132) ----------
   {
     let m = 0;

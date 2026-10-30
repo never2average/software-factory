@@ -1024,6 +1024,9 @@ export type Chart = z.output<typeof ChartSchema>;
  * ({field: value} or {field: {op: value}}), applied by the server (/api/records/tabs/<pack>/<tab>), never by the page.
  *   files         the pack's workspace store in the console's file viewer (mold_v0-056; /app/files): versions, files,
  *                 diffs, for the roles that may read every one of the pack's record areas
+ * A list tab (area, runs, reports, schedules; mold_v0-181) shows four cards between its toolbar and its table, each a
+ * metric's label, value and a sparkline of its last weeks: `sparklines` names exactly 4 of the pack's metrics (a single
+ * number or a series, never grouped); without it the shell's four for the kind (src/metric-spec.ts sparkPlan).
  * `label` is the tab's name in the app's words (default: the area's label, else the shell's word), `icon` one of
  * TAB_ICONS, `roles` who sees it (narrowing what its data allows: an area tab is never shown to a role that may not read
  * the area, an overview never to one that may read none of its metrics).
@@ -1032,6 +1035,8 @@ export type Chart = z.output<typeof ChartSchema>;
 // sections (mold_v0-175): one page of several of the pack's area tabs, as in-page tabs.
 /** The kinds of tab a sections tab shows as its in-page tabs (mold_v0-175). */
 export const SECTION_KINDS = ["area", "runs", "reports", "schedules"] as const;
+/** The kinds of tab drawn as a list with four sparkline cards below its toolbar (mold_v0-181: `sparklines`). */
+export const SPARK_KINDS = ["area", "runs", "reports", "schedules"] as const;
 export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections"] as const;
 /** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
 export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
@@ -1121,6 +1126,11 @@ export const TabSchema = z.object({
     .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
   /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
   sections: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a tab id of this pack")).min(2).max(6).optional(),
+  /**
+   * The four cards below a list's toolbar (mold_v0-181): exactly 4 of the pack's metrics, each a label, its value and a
+   * sparkline of its last SPARK_WEEKS weeks (src/sparklines.ts). Absent: the shell's four for the tab's kind.
+   */
+  sparklines: z.array(name).length(4, "exactly 4 metric names: the tab's four cards").optional(),
   /** A home tab's heading above its charts, below both columns (mold_v0-175); none by default. */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
@@ -1151,6 +1161,8 @@ export const TabSchema = z.object({
   if (t.charts_title !== undefined && (!(t.include ?? []).includes("setup") || !t.charts?.length)) bad("charts_title is for a home tab with charts: an overview tab that includes setup and lists charts", "charts_title");
   if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
+  if (t.sparklines && !(SPARK_KINDS as readonly string[]).includes(t.kind)) bad(`sparklines are for a list tab: ${SPARK_KINDS.join(", ")}`, "sparklines");
+  if (t.sparklines && new Set(t.sparklines).size !== t.sparklines.length) bad("a metric is listed twice", "sparklines");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
   if (t.empty && t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") bad("empty is for an area, runs or reports tab", "empty");

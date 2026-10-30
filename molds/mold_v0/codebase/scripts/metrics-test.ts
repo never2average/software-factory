@@ -16,6 +16,8 @@
 //    record's key, not its title; a hostile condition value is data; 20,000 rows in a third workspace stay bounded.
 // 3. Moves stamp when a record entered each state ($state_at, never shown as a field nor writable).
 // 4. HTTP: /api/metrics per workspace and role, /api/runs and /api/runs/:id per workspace; nothing mounted with no packs.
+// 5. A list tab's four cards (mold_v0-181, src/sparklines.ts): a tab's declared metrics and the shell's defaults (an area
+//    tab's, a runs tab's), each value and its 12 weeks worked out by hand; per workspace and role, on /api/sparklines too.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -223,6 +225,19 @@ try {
     console.log("✓ a condition value carrying SQL is data (0 rows); groups beyond the limit are cut and flagged");
   }
 
+  // A list tab's four cards (mold_v0-181; section 5 below, and the runs tab's with the adoption set).
+  const spark = await import("../src/sparklines.js");
+  const withCards = () => vulns((j) => {
+    j.metrics.push({ name: "apps_total", label: "Applications", over: "audit_apps" });
+    j.tabs.find((t: any) => t.id === "reports").sparklines = ["open_findings", "opened_per_week", "time_to_fix", "fix_rate"];
+    j.tabs.find((t: any) => t.id === "applications").sparklines = ["apps_total", "open_findings", "fix_rate", "opened_per_week"];
+    j.tabs.find((t: any) => t.id === "audits").label = "Audits";
+  });
+  const cardsOf = async (org: typeof A, id: string, actor: { role: any; userId: any } = API) => {
+    const t = met.buildViews().tabs.find((x) => x.pack === "fixture_vulns" && x.id === id)!;
+    return spark.computeSparklines(org.orgId, t, actor, NOW);
+  };
+  const said = (c: { id: string; label: string; value: number | null; series: (number | null)[]; mode: string; status?: number }) => [c.id, c.label, c.mode, c.status ?? c.value, c.series];
   // Adoption: run results and runs (inserted as the run engine stores them; the engine is not this test's).
   {
     for (const [k, t, cat] of [["t1", "Install the SDK", "setup"], ["t2", "Call the API", "api"], ["t3", "Fix a failing call", "debugging"]] as const)
@@ -255,6 +270,60 @@ try {
     assert.deepEqual([(await get(B, "pick_rate")).value, (await get(B, "run_spend")).value, (await get(B, "run_hours")).value], [0.5, 9, 10], "B's own runs only (2 picks of 4: two findings on one check count twice)");
     assert.deepEqual(groups(await get(B, "results_by_status")).slice(0, 2), [["pass", "Pass", 2], ["fail", "Fail", 2]], "findings, not check x asset pairs");
     console.log("✓ the adoption set from the same code: pick rate 60% (per week, per task, per agent), results by status, runs per week, spend $2.25, 1.5 h per run; B's apart");
+    // The shell's cards for a runs tab (mold_v0-181): this week's runs, the share that succeeded, the average duration, the spend.
+    install(withCards());
+    const runs = await cardsOf(A, "audits");
+    const n = null;
+    assert.deepEqual(runs.cards.map(said), [
+      ["_runs_week", "Audits this week", "latest", 2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]],
+      ["_succeeded", "Succeeded", "weekly", 0.666667, [n, n, n, n, n, n, n, n, n, n, 1, 0.5]],
+      ["_duration", "Average duration", "weekly", 1.027778, [n, n, n, n, n, n, n, n, n, n, 2, 0.541667]],
+      ["_spend", "Spend", "total", 2.25, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.5, 2.25]],
+    ], "2 this week (a2 a3); 2 of 3 succeeded; (2 h + 1 h + 5 min) / 3; $2.25 in all, $1.50 by the week of 10-12");
+    assert.deepEqual(runs.cards.map((c) => c.unit), ["count", "percent", "hours", "usd"]);
+    assert.deepEqual((await cardsOf(B, "audits")).cards.map((c) => c.value), [1, 1, 10, 9], "B's own run only");
+    install();
+    console.log("✓ a runs tab's cards from the shell: audits this week 2, succeeded 66.7%, 1.03 h on average, spend $2.25 (a running total); B's apart");
+  }
+
+  // ---------- 5. a list tab's four cards (mold_v0-181) ----------
+  {
+    install(withCards());
+    // The 12 weeks up to NOW's (Monday 2026-10-19), oldest first.
+    const W12 = ["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24", ...WEEKS];
+    const n = null;
+    const declared = await cardsOf(A, "reports");
+    assert.deepEqual([declared.weeks, declared.buckets], [12, W12], "12 weeks, from Monday");
+    assert.deepEqual(declared.cards.map(said), [
+      // Open now, f1 f2 f4 f7; a running total of those by the week each was added (f7 09-15, f1 10-01, f2 10-14, f4 10-20).
+      ["open_findings", "Open vulnerabilities", "total", 4, [0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 4]],
+      // A series metric: this week's bucket, and its weeks (8 declared, 12 drawn).
+      ["opened_per_week", "Found this week", "latest", 1, [0, 0, 0, 0, 0, 0, 1, 1, 2, 1, 2, 1]],
+      // Average days to fix (10 + 4 + 2) / 3, and week by week by when each was fixed: f3 and f5 (10 and 4) that of 09-28, f8 (2) that of 10-12.
+      ["time_to_fix", "Average time to fix", "weekly", Math.round((16 / 3) * 1e6) / 1e6, [n, n, n, n, n, n, n, n, 7, n, 2, n]],
+      // 3 of 8 fixed; week by week by when each was added: f7 0, f3 1, f1 f5 1/2, f6 0, f2 f8 1/2, f4 0.
+      ["fix_rate", "Fixed", "weekly", 0.375, [n, n, n, n, n, n, 0, 1, 0.5, 0, 0.5, 0]],
+    ], "a tab's declared cards, each as worked out by hand");
+    assert.deepEqual(declared.cards.map((c) => c.unit), ["count", "count", "days", "percent"]);
+    // The shell's cards for an area tab: the rows, new in 7 days, then the pack's first two metrics over the area.
+    const area = await cardsOf(A, "vulnerabilities");
+    assert.deepEqual(area.cards.map((c) => [c.id, c.mode, c.value]), [["_records", "total", 8], ["_new_7d", "weekly", 1], ["open_findings", "total", 4], ["overdue_findings", "total", 2]],
+      "8 vulnerabilities, 1 added since 10-14 noon (f4), open 4, overdue 2");
+    assert.deepEqual(area.cards.slice(0, 2).map((c) => c.series), [[0, 0, 0, 0, 0, 0, 1, 2, 4, 5, 7, 8], [0, 0, 0, 0, 0, 0, 1, 1, 2, 1, 2, 1]], "all rows as a running total; new ones per week");
+    // Without pack metrics over the area: changed in 7 days and the main enum's most common value (the lifecycle's).
+    install(vulns((j) => { j.metrics = j.metrics.filter((m: any) => m.over !== "audit_findings"); j.charts = []; for (const t of j.tabs) t.charts = []; j.tabs = j.tabs.filter((t: any) => t.kind !== "overview"); }));
+    const bare = await cardsOf(A, "vulnerabilities");
+    assert.deepEqual(bare.cards.map((c) => [c.id, c.value]), [["_records", 8], ["_new_7d", 1], ["_changed_7d", 8], ["_top", 3]], "no own metrics: every row was written this week (the test wrote them), and the commonest state");
+    assert.match(bare.cards[3]!.label, /^State: (Fixed|fixed)$/, "named by the field and its value (3 fixed: f3 f5 f8)");
+    assert.deepEqual(bare.cards[3]!.series, [0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 3, 3], "the fixed ones by the week each was added (f3 09-22, f5 09-29, f8 10-13)");
+    install(withCards());
+    // Two workspaces: B's own rows only.
+    assert.deepEqual((await cardsOf(B, "reports")).cards.map((c) => c.value), [3, 3, null, 0], "B: 3 open, 3 found this week, nothing fixed");
+    // Roles: a card the person may not read says so alone; the rest are theirs.
+    const v = await cardsOf(A, "applications", VIEWER);
+    assert.deepEqual(v.cards.map((c) => c.status ?? "ok"), [403, "ok", "ok", "ok"], "a viewer may not read applications: that card alone is refused");
+    assert.equal((await cardsOf(A, "applications", MEMBER)).cards[0]!.value, 3, "a member reads it (a sealed area, opened)");
+    console.log("✓ a list tab's cards: declared (a running total, a series' current week, a duration and a rate week by week) and the shell's for an area (rows, new in 7 days, the pack's metrics; else changed and the commonest value), each worked out by hand; B's apart; a card a role may not read refused alone");
   }
 
   // 20,000 rows: bounded queries (one aggregate each, a group limit, a window, a statement timeout).
@@ -326,24 +395,37 @@ try {
     const one = await getJ(`/api/runs/run_a1_${STAMP}`, va);
     assert.deepEqual([one.status, one.body.results.length], [200, 3], "a viewer reads a run's results");
     console.log("✓ HTTP: /api/metrics per workspace and role (401 signed out, one metric refused alone, names checked); /api/runs and /api/runs/:id per workspace");
+    // A list tab's cards (mold_v0-181): per workspace and role, the tab's own rules, nothing but a list tab.
+    install(withCards());
+    assert.equal((await getJ("/api/sparklines/fixture_vulns/reports")).status, 401, "signed out: 401");
+    const ca = await getJ("/api/sparklines/fixture_vulns/reports", ma);
+    assert.deepEqual([ca.status, ca.body.cards.length, ca.body.cards[0].id, ca.body.cards[0].value, ca.body.buckets.length], [200, 4, "open_findings", 4, 12], "A's member: A's four cards");
+    assert.equal((await getJ("/api/sparklines/fixture_vulns/reports", mb)).body.cards[0].value, 3, "B's member: B's");
+    assert.deepEqual((await getJ("/api/sparklines/fixture_vulns/applications", va)).status, 403, "a tab the role may not see: 403");
+    assert.equal((await getJ("/api/sparklines/fixture_vulns/overview", ma)).status, 404, "not a list tab: 404");
+    assert.equal((await getJ("/api/sparklines/fixture_vulns/nope", ma)).status, 404, "no such tab: 404");
+    assert.equal((await getJ("/api/sparklines/fixture_adoption/reports", ma)).status, 404, "another pack's tab id: 404");
+    install();
+    console.log("✓ HTTP: /api/sparklines/<pack>/<tab> per workspace and role (401 signed out, 403 for a tab the role does not see, 404 for anything but a list tab)");
   } finally {
     await http.close();
   }
   {
     // No packs: the routers mount nothing.
     setPacksForTest([]);
-    const { metricAppRouter, runAppRouter } = await import("../src/view-routes.js");
+    const { metricAppRouter, runAppRouter, sparklineAppRouter } = await import("../src/view-routes.js");
     const express = (await import("express")).default;
     const app = express();
     app.use("/api/metrics", metricAppRouter());
     app.use("/api/runs", runAppRouter());
+    app.use("/api/sparklines", sparklineAppRouter());
     app.use((_req, res) => void res.status(418).end());
     const srv = app.listen(0, "127.0.0.1");
     await new Promise((r) => srv.once("listening", r));
     const port = (srv.address() as import("node:net").AddressInfo).port;
-    for (const p of ["/api/metrics?names=open_findings", "/api/runs"]) assert.equal((await fetch(`http://127.0.0.1:${port}${p}`)).status, 418, `${p}: nothing answers with no packs`);
+    for (const p of ["/api/metrics?names=open_findings", "/api/runs", "/api/sparklines/fixture_vulns/reports"]) assert.equal((await fetch(`http://127.0.0.1:${port}${p}`)).status, 418, `${p}: nothing answers with no packs`);
     srv.close();
-    console.log("✓ with no packs, /api/metrics and /api/runs are not mounted");
+    console.log("✓ with no packs, /api/metrics, /api/runs and /api/sparklines are not mounted");
   }
 } finally {
   cleanup();

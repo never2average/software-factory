@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -363,6 +363,20 @@ export function checkViews(b: BuildViews): string[] {
     if (act?.startsWith("run:") && b.kinds && !b.kinds.some((k) => k.pack === p && k.name === act.slice(4))) at(p, `${w}: empty.cta.action names job kind ${act.slice(4)}, which this pack does not declare`);
     if (tabRoles(t, b).length === 0) at(p, `${w}: no role may read what it shows (its roles, its area's read permission or its metrics' roles leave none)`);
     for (const n of t.charts ?? []) if (!chart(p, n)) at(p, `${w} shows chart ${n}, which the pack does not declare`);
+    // Its four cards (mold_v0-181): the pack's own metrics, each one number with weeks to draw.
+    for (const n of t.sparklines ?? []) {
+      const m = b.metrics.find((x) => x.pack === p && x.name === n);
+      if (!m) { at(p, `${w}: sparklines names metric ${n}, which this pack does not declare`); continue; }
+      const over = overOf(m);
+      const why = over && sparkProblem(m, over);
+      if (why) at(p, `${w}: sparklines: metric ${n}: ${why}`);
+    }
+    // The shell's cards count the rows the table shows: a filter they cannot apply is refused, not ignored.
+    if (!t.sparklines && t.kind === "area" && t.filter && !t.areas) {
+      const a = area(t.area!);
+      const wh = a && filterWhere(t.filter, a);
+      if (typeof wh === "string") at(p, `${w}: the shell's cards would count rows its filter hides (${wh}): declare its sparklines`);
+    }
   }
   // Tabs from several packs make one sidebar: an id is a page path per pack, a label must not repeat in a group.
   const seen = new Map<string, string>();
@@ -489,4 +503,125 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
     ...(pages ? { pages } : {}),
   };
+}
+
+// ---------- sparkline cards (mold_v0-181) ----------
+
+/** The weeks a card's sparkline draws, up to this one (weeks start on Monday, UTC). */
+export const SPARK_WEEKS = 12;
+/**
+ * How a card reads its metric:
+ *   total    the value is the metric now (a count or a sum); the line is a running total of the rows it reads today by
+ *            the week each was added, so it ends at the value
+ *   weekly   the value is the metric now (or over its own window); the line is the same measure week by week
+ *   latest   a series metric (by_time): the value is its current bucket (this week, this month, today), the line its weeks
+ */
+export type SparkMode = "total" | "weekly" | "latest";
+export interface SparkCard {
+  id: string;
+  label: string;
+  /** The value's metric, and the weekly series' (by_time every week, the last SPARK_WEEKS). */
+  value: SpecMetric;
+  series: SpecMetric;
+  mode: SparkMode;
+  /** The shell's "most common value" card: the value's metric groups by this enum; the largest group is the card. */
+  top?: { field: string; label: string };
+}
+
+/** The point in time a card's weeks are counted by: its by_time.at, else a duration's end, else when the row was added. */
+export const sparkPoint = (m: Pick<Metric, "by_time" | "duration">): string => m.by_time?.at ?? m.duration?.to ?? "created";
+/** Why a metric can not be a card (null: it can). */
+export function sparkProblem(m: Metric, over: SpecArea | RunSource): string | null {
+  if (m.group_by !== undefined) return "a card shows one number, and a metric with group_by shows one per group: drop group_by, or declare another metric";
+  const c = pointOf(over, sparkPoint(m));
+  return typeof c === "string" ? `its weeks are counted by ${sparkPoint(m)}: ${c}` : null;
+}
+/** A metric as a card's weekly series. */
+export const sparkSeries = (m: SpecMetric): SpecMetric => ({ ...m, by_time: { at: sparkPoint(m), every: "week", last: SPARK_WEEKS } });
+const PERIOD: Record<NonNullable<Metric["by_time"]>["every"], string> = { day: "today", week: "this week", month: "this month" };
+/** A declared metric as a card: its label (a series': "<label> this week"), what reads its value and its weeks. */
+export function sparkCardOf(m: SpecMetric): SparkCard {
+  const mode: SparkMode = m.by_time ? "latest" : m.measure === "count" || m.measure === "sum" ? "total" : "weekly";
+  return { id: m.name, label: m.by_time ? `${m.label} ${PERIOD[m.by_time.every]}` : m.label, value: m, series: sparkSeries(m), mode };
+}
+
+/**
+ * A tab's list filter (mold_v0-175, src/record-query.ts) as a metric's conditions, so the shell's cards count the rows
+ * the table shows; a reason when one of its conditions has no metric equivalent (a key, a title, a prefix, text).
+ */
+export function filterWhere(filter: Record<string, unknown>, area: SpecArea): NonNullable<Metric["where"]> | string {
+  const out: NonNullable<Metric["where"]> = [];
+  const RANGE = ["lt", "lte", "gt", "gte"];
+  for (const [name, spec] of Object.entries(filter)) {
+    const ops: [string, unknown][] = spec !== null && typeof spec === "object" && !Array.isArray(spec) ? Object.entries(spec as Record<string, unknown>) : [["eq", spec]];
+    for (const [op, value] of ops) {
+      if (name === "key" || name === "title") return `${name} ${op} has no metric equivalent`;
+      if (name === "updated_at") {
+        if (!RANGE.includes(op) || typeof value !== "string") return `updated_at ${op} has no metric equivalent`;
+        out.push({ field: "updated", op: op as "lt", value });
+        continue;
+      }
+      const f = area.fields.find((x) => x.name === name);
+      if (!f) return `${name} is not a field a metric reads`;
+      const list = !!f.multiple || f.type === "link";
+      if (op === "exists") out.push({ field: name, op: value === false ? "empty" : "not_empty" });
+      else if (op === "contains" && list) out.push({ field: name, op: "in", value: [value] as string[] });
+      else if ((op === "eq" || op === "ne" || op === "in") && !list) out.push({ field: name, op, value: value as string });
+      else if (RANGE.includes(op) && (f.type === "number" || f.type === "date")) out.push({ field: name, op: op as "lt", value: value as string });
+      else return `${name} ${op} has no metric equivalent`;
+    }
+  }
+  return out;
+}
+
+/**
+ * A list tab's four cards (mold_v0-181): its `sparklines` (the pack's metrics, in order), else the shell's for its kind.
+ *   area      the rows (the tab's label), new in the last 7 days, then two of the pack's own metrics over the area that
+ *             the person may read (`readable`), else changed in the last 7 days and the main enum's most common value
+ *             (its lifecycle's field, else the first single-choice enum of the table's columns, then of the area); a
+ *             filtered tab's cards count the rows its filter shows; a merged tab's, its own area's (the first)
+ *   runs, reports, schedules   {Runs} this week (reports: finished this week), the share that succeeded, the
+ *             average duration and the spend, over the workspace's runs
+ * Cards a build can not draw (an area with a field named created or updated hides the row's own times) are left out.
+ */
+export function sparkPlan(t: SpecTab, b: Pick<BuildViews, "areas" | "metrics">, o: { readable: (m: SpecMetric) => boolean; fill: (text: string) => string; label: string }): SparkCard[] {
+  if (t.sparklines) return t.sparklines.map((n) => b.metrics.find((m) => m.pack === t.pack && m.name === n)).filter((m): m is SpecMetric => !!m).map(sparkCardOf);
+  if (!(SPARK_KINDS as readonly string[]).includes(t.kind)) return [];
+  const synth = (over: string, name: string, label: string, m: Partial<Metric>): SpecMetric =>
+    ({ name, label, over, measure: "count", limit: 12, pack: t.pack, ...m }) as SpecMetric;
+  const weekly = (m: SpecMetric, at: string): SpecMetric => ({ ...m, by_time: { at, every: "week", last: SPARK_WEEKS } });
+  const cards: SparkCard[] = [];
+  if (t.kind === "area") {
+    const a = b.areas.find((x) => x.name === tabArea(t));
+    if (!a) return [];
+    const wh = t.filter && !t.areas ? filterWhere(t.filter, a) : [];
+    const where = typeof wh === "string" ? [] : wh;
+    const ok = (p: string) => typeof pointOf(a, p) !== "string";
+    const all = synth(a.name, "_records", o.label, { where });
+    if (ok("created")) {
+      cards.push({ id: "_records", label: o.label, value: all, series: weekly(all, "created"), mode: "total" });
+      cards.push({ id: "_new_7d", label: "New in 7 days", value: synth(a.name, "_new_7d", "New in 7 days", { where: [...where, { field: "created", op: "gte", value: "now-7" }] }), series: weekly(all, "created"), mode: "weekly" });
+    }
+    const own = b.metrics.filter((m) => m.pack === t.pack && m.over === a.name && !sparkProblem(m, a) && o.readable(m)).slice(0, 2).map(sparkCardOf);
+    cards.push(...own);
+    if (ok("updated")) cards.push({ id: "_changed_7d", label: "Changed in 7 days", value: synth(a.name, "_changed_7d", "Changed in 7 days", { where: [...where, { field: "updated", op: "gte", value: "now-7" }] }), series: weekly(all, "updated"), mode: "weekly" });
+    const single = (n: string | undefined) => { const f = n ? a.fields.find((x) => x.name === n) : undefined; return f && f.type === "enum" && !f.multiple ? f : undefined; };
+    const main = single(a.lifecycle?.field) ?? tabColumns(t, b.areas).map(single).find((f) => !!f) ?? a.fields.map((f) => single(f.name)).find((f) => !!f);
+    if (main && ok("created")) cards.push({ id: "_top", label: main.label, value: synth(a.name, "_top", main.label, { where, group_by: main.name, limit: 50 }), series: weekly(all, "created"), mode: "total", top: { field: main.name, label: main.label } });
+    if (ok("updated")) cards.push({ id: "_changed_30d", label: "Changed in 30 days", value: synth(a.name, "_changed_30d", "Changed in 30 days", { where: [...where, { field: "updated", op: "gte", value: "now-30" }] }), series: weekly(all, "updated"), mode: "weekly" });
+    return cards.slice(0, 4);
+  }
+  const finished: NonNullable<Metric["where"]> = [{ field: "status", op: "in", value: ["succeeded", "failed"] }];
+  const reports = t.kind === "reports";
+  const count = synth("runs", "_runs_week", "", { ...(reports ? { where: finished } : {}), by_time: { at: reports ? "ended" : "created", every: "week", last: SPARK_WEEKS } });
+  const label = `${t.kind === "schedules" ? o.fill("{Runs}") : o.label} this week`;
+  const rate = synth("runs", "_succeeded", "Succeeded", { measure: "rate", where: finished, rate: { where: [{ field: "status", op: "eq", value: "succeeded" }] } });
+  const took = synth("runs", "_duration", "Average duration", { measure: "duration", where: finished, duration: { from: "started", to: "ended", stat: "average", unit: "hours" } });
+  const spend = synth("runs", "_spend", "Spend", { measure: "sum", field: "cost_usd" });
+  return [
+    { id: "_runs_week", label, value: count, series: count, mode: "latest" },
+    { id: "_succeeded", label: "Succeeded", value: rate, series: weekly(rate, "ended"), mode: "weekly" },
+    { id: "_duration", label: "Average duration", value: took, series: weekly(took, "ended"), mode: "weekly" },
+    { id: "_spend", label: "Spend", value: spend, series: weekly(spend, "created"), mode: "total" },
+  ];
 }
