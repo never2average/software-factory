@@ -1105,6 +1105,26 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   bucket (mold_v0-181). `npm run test:vault-status`
   proves set and unset, no seeded secret or its hint in any output, a write inside its transaction refused (25006) and
   the database unchanged after it ran.
+- **A run's events from the factory, read-only** (mold_v0-183, built): `npm run audit:run-events -- <run_id> [--type
+  <type>]... [--attempt n] [--limit n] [--full] [--json]`, or `-- --recent [n] [--pack <id>]` for the latest runs' ids
+  (`scripts/operator/run-events.ts`, `src/run-events.ts`): the run's state, cost and error, how many events of each type
+  it has, and its events in order: the steps' output lines (`step_log`, `log`, `stderr`), the program's output files
+  (`agent_output`, with the JSON of a small one), `workspace_ignored`, `workspace_written` (`unchanged` says the run wrote
+  nothing), `workspace_indexed`. It is read-only exactly as vault-status is (one `READ ONLY` transaction, always rolled
+  back, never `getDb`); it reads `runs`, `run_events` and the workspace's slug only (the scope's keys, never its values),
+  and masks shapes of secrets (a URL's password, well-known token prefixes) in what it prints, on top of the redaction
+  each event got when it was written. As an `audit:` script the factory runs it with no yes
+  (`provision.py <app> --operator audit:run-events -- <run_id>`). `npm run test:run-events`.
+- **A kind that always writes** (mold_v0-183, built): an agent-workspace kind's `write_back_required: true` fails a run
+  ("run": it changed nothing in its workspace) that exited 0 and validated but left every write-back path as it found
+  it, instead of letting it succeed silently (Maxwell's seed-company stopped to ask a question; its refresh-apps was
+  refused its writes; both "succeeded"). The harness learns it from the store's answer to the staged write-back
+  (`unchanged`) and records `workspace_unchanged`. `npm run test:agent-runner` (11).
+- **Checkouts as directories** (mold_v0-183, built): a checkout step's `mount_as: "directory"` places each repository
+  as a read-only copy of the cache's tree (directories 0555, files without write bits, the runner's) instead of a link,
+  for programs whose file search does not follow links: Claude Code's Glob and Grep run ripgrep without `--follow`, so
+  a linked checkout looks empty to them. The copy is removed (only if it is still the one placed, by its identity)
+  before the write-back is collected, as the links are. `npm run test:agent-steps` (183).
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a

@@ -107,6 +107,8 @@
     "keyvault": "tsx --env-file-if-exists=.env scripts/keyvault.ts",
     "operator:vault-status": "node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts",
     "test:vault-status": "tsx scripts/vault-status-test.ts",
+    "audit:run-events": "node --env-file-if-exists=.env --import=tsx scripts/operator/run-events.ts",
+    "test:run-events": "tsx scripts/run-events-test.ts",
     "test:object-storage": "tsx scripts/object-storage-test.ts",
     "test:large-writeback": "tsx scripts/large-writeback-test.ts",
     "usage": "tsx --env-file-if-exists=.env scripts/usage.ts",

@@ -1507,6 +1507,10 @@
                     "default": true,
                     "type": "boolean"
                   },
+                  "write_back_required": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "results": {
                     "type": "string",
                     "minLength": 1,
@@ -1872,6 +1876,14 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 300
+                            },
+                            "mount_as": {
+                              "default": "link",
+                              "type": "string",
+                              "enum": [
+                                "link",
+                                "directory"
+                              ]
                             },
                             "hosts": {
                               "minItems": 1,

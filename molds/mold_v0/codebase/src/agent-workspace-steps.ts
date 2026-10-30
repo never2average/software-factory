@@ -18,7 +18,7 @@
  *                     (least recently used go first), unused entries and unfinished fetches cleaned
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, chownSync, closeSync, fchownSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, closeSync, cpSync, fchownSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AgentRunError } from "./agent-workspace.js";
 import { globRegex } from "./agent-workspace-paths.js";
@@ -419,6 +419,45 @@ export function mountInto(checkout: string, rel: string, target: string, owner: 
   try { const st = lstatSync(at); replaced = true; if (st.isDirectory()) rmSync(at, { recursive: true, force: true }); else unlinkSync(at); } catch { /* absent */ }
   symlinkSync(target, at);
   return { replaced };
+}
+
+/**
+ * mold_v0-183: a read-only copy of `target` at `rel` of the checkout (mount_as "directory"), for programs that do not
+ * follow links. Parents as mountInto makes them; the copy is the runner's (root's when the run has a user of its own):
+ * directories 0555 and files without write bits, so the run's user reads it and cannot change it. Returns the copy's
+ * identity, so that only this copy is removed before the write-back (removeCopy).
+ */
+export function copyInto(checkout: string, rel: string, target: string, owner: { uid: number; gid: number } | null): { replaced: boolean; dev: number; ino: number } {
+  let cur = checkout;
+  for (const p of rel.split("/").slice(0, -1)) {
+    cur = path.join(cur, p);
+    let st; try { st = lstatSync(cur); } catch { st = null; }
+    if (st && !st.isDirectory()) throw new AgentRunError(`checkout: ${path.relative(checkout, cur)} is not a directory (a link or a file stands there)`);
+    if (!st) { mkdirSync(cur, { mode: 0o755 }); if (owner) chownSync(cur, owner.uid, owner.gid); }
+  }
+  const at = path.join(checkout, rel);
+  let replaced = false;
+  try { const st = lstatSync(at); replaced = true; if (st.isDirectory()) rmSync(at, { recursive: true, force: true }); else unlinkSync(at); } catch { /* absent */ }
+  cpSync(target, at, { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false });
+  const seal = (p: string) => {
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) return;
+    if (st.isDirectory()) { for (const n of readdirSync(p)) seal(path.join(p, n)); chmodSync(p, 0o555); }
+    else chmodSync(p, st.mode & 0o555);
+  };
+  seal(at);
+  const st = lstatSync(at);
+  return { replaced, dev: st.dev, ino: st.ino };
+}
+
+/** Remove a copy copyInto made, if it is still the one at `at` (its identity); a directory the run put there instead stays. */
+export function removeCopy(at: string, id: { dev: number; ino: number }): boolean {
+  let st; try { st = lstatSync(at); } catch { return false; }
+  if (!st.isDirectory() || st.dev !== id.dev || st.ino !== id.ino) return false;
+  const open = (p: string) => { const s = lstatSync(p); if (s.isDirectory() && !s.isSymbolicLink()) { chmodSync(p, 0o700); for (const n of readdirSync(p)) open(path.join(p, n)); } };
+  open(at);
+  rmSync(at, { recursive: true, force: true });
+  return true;
 }
 
 /** Each manifest file of the checkout matching `glob` (plain files only, at most `max`, each at most 64 KB, never through a link). */

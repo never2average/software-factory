@@ -14,8 +14,11 @@ say({ event: "seen", company, notes, data: existsSync("data") ? readdirSync("dat
   uid: process.getuid?.(), argv: process.argv.slice(2) });
 say({ event: "env", has_gateway_token: !!process.env.ANTHROPIC_AUTH_TOKEN, base_url: process.env.ANTHROPIC_BASE_URL ?? null, fixed: process.env.AGENT_FIXED ?? null,
   token_cred: process.env.FIXTURE_AGENT_TOKEN ? "set" : "unset", cred_file: process.env.RUN_CREDENTIALS_DIR && existsSync(`${process.env.RUN_CREDENTIALS_DIR}/agent_key.pem`) ? "set" : "unset" });
-mkdirSync(`data/${company}`, { recursive: true });
-writeFileSync(file, JSON.stringify({ notes: [...(notes ?? []), process.env.RUN_ID] }));
+// "idle": does its work but writes nothing into the workspace, and exits 0 (an agent that stopped to ask a question).
+if (mode !== "idle") {
+  mkdirSync(`data/${company}`, { recursive: true });
+  writeFileSync(file, JSON.stringify({ notes: [...(notes ?? []), process.env.RUN_ID] }));
+}
 mkdirSync("sessions", { recursive: true });
 writeFileSync(`sessions/${process.env.RUN_ID}.summary.json`, JSON.stringify({ run: process.env.RUN_ID, turns: 3, cost_usd: 0.01 }));
 mkdirSync("out", { recursive: true });

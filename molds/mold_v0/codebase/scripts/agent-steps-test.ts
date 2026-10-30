@@ -261,6 +261,8 @@ try {
       kind("steps", { inputs, steps, credentials: ["agent_token"] }),
       // The checkout reads the workspace as restored (the default), and the command names no credentials.
       kind("steps_ws", { inputs, steps: steps.map((st) => st.checkout ? { ...st, checkout: { ...checkout, source: undefined } } : st) }),
+      // mold_v0-183: the checkout as a read-only directory, for programs whose search does not follow links.
+      kind("steps_dir", { inputs, steps: steps.map((st) => st.checkout ? { ...st, checkout: { ...checkout, mount_as: "directory" } } : st), credentials: ["agent_token"] }),
       kind("steps_slow", { steps: [{ name: "slow", command: ["sleep", "30"], timeout_seconds: 10 }] }),
       kind("clobber", { inputs: { spec: { ...inputs.spec, path: "steps.mjs" } } }),
       kind("through_link", { inputs: { spec: { ...inputs.spec, path: "linkdir/spec.json" } } }),
@@ -438,6 +440,34 @@ try {
       if (asRoot) assert.equal((await stepLine(rb.claim.run.id, "read")).readrepo.other, "EACCES", "B's run cannot read A's cache, even by its exact path");
       assert.deepEqual(await filesOf(B.orgId), ["data/b-co/notes.json", "data/b-co/repos/one.json"]);
       console.log(`✓ 073 + 074: the spec input reaches the step that reads it; each step gets only its credentials; git gets its token through the helper for the declared host only (never a variable or an argument, gone after the step); the checkout step fetches the manifests' repositories at their pins (one behind a token) into the workspace's cache, linked read-only${asRoot ? " (EACCES for the run's user)" : ""}, never written back; a second run uses the cache; another workspace has its own and cannot read this one's`);
+    }
+    if (want("074")) {
+      // mold_v0-183: mount_as "directory": the same repositories, as a real read-only directory (Claude Code's Glob and
+      // Grep do not follow a link), never written back, and gone before the write-back is collected.
+      await start(ca, "steps_dir", "a-co", { spec: spec([{ repoId: "one", url: one.url, pinnedCommit: one.commit }]) });
+      const r = await runNext("steps_dir");
+      assert.equal(r.view?.status, "succeeded", JSON.stringify(r.view) + JSON.stringify(await ev(r.claim.run.id, "stderr")));
+      const co = (await ev(r.claim.run.id, "agent_checkout_repos"))[0];
+      assert.ok(co.repos.length >= 2 && co.repos.every((x: any) => x.as === "directory" && x.mount === `data/a-co/repos/${x.name}`), JSON.stringify(co.repos));
+      const mounted = co.repos.map((x: any) => x.name as string);
+      const rd = await stepLine(r.claim.run.id, "read");
+      assert.deepEqual([rd.readrepo.link, rd.readrepo.readme, rd.readrepo.files], [false, "repo one", ["README.md"]], "a real directory, not a link, with the repository's files");
+      assert.equal(rd.readrepo.write, "EACCES", "read-only: the run cannot add a file to it");
+      const rg = spawnSync("rg", ["--version"]);
+      if (rg.status === 0) {
+        // What Claude Code's Glob runs (rg --files --glob, no --follow) finds the files only in a directory, never through a link.
+        const t = mkdtempSync(path.join(TMP, "rg-"));
+        mkdirSync(path.join(t, "src", "sub"), { recursive: true }); writeFileSync(path.join(t, "src", "sub", "main.tf"), "x");
+        mkdirSync(path.join(t, "ws", "repos"), { recursive: true });
+        symlinkSync(path.join(t, "src"), path.join(t, "ws", "repos", "linked"));
+        const steps = await import("../src/agent-workspace-steps.js");
+        steps.copyInto(path.join(t, "ws"), "repos/copied", path.join(t, "src"), null);
+        const list = (g: string) => spawnSync("rg", ["--files", "--null", "--glob", g], { cwd: path.join(t, "ws"), encoding: "utf8" }).stdout.split("\0").filter(Boolean);
+        assert.deepEqual([list("repos/linked/**"), list("repos/copied/**")], [[], ["repos/copied/sub/main.tf"]], "ripgrep without --follow: nothing through the link, the files in the copy");
+      }
+      assert.deepEqual((await filesOf(A.orgId)).filter((f) => mounted.some((n: string) => f.startsWith(`data/a-co/repos/${n}/`))), [], "the copies are never written back");
+      assert.equal((await ev(r.claim.run.id, "workspace_skipped")).length, 0);
+      console.log("✓ 183: a checkout mounted as a directory: a real read-only copy at its mount (what a search without --follow sees), never written back");
     }
     if (want("073")) {
       // Inputs refused.
