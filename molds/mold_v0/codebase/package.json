@@ -108,6 +108,7 @@
     "operator:vault-status": "node --env-file-if-exists=.env --import=tsx scripts/operator/vault-status.ts",
     "test:vault-status": "tsx scripts/vault-status-test.ts",
     "test:object-storage": "tsx scripts/object-storage-test.ts",
+    "test:large-writeback": "tsx scripts/large-writeback-test.ts",
     "usage": "tsx --env-file-if-exists=.env scripts/usage.ts",
     "mcp:check": "tsx scripts/mcp-check.ts",
     "web:build": "npm --prefix web ci && npm --prefix web run build",
