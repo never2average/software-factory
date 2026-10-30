@@ -54,7 +54,7 @@ import { findSecret, redactJson, redactText, type Secret } from "./credential-re
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { openTransfer, sealTransfer, sha256Hex, sizeInWords } from "./run-transfer-seal.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack, writeBackIgnore, type WriteBackIgnore } from "./agent-workspace.js";
-import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, pinCommits, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
+import { checkInput, CheckoutCache, copyInto, field, gitCredentialFiles, mapResults, mountInto, pinCommits, removeCopy, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
@@ -480,7 +480,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   const dropSecrets = () => { liveFiles = []; if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
   /** mold_v0-074: the checkout cache (entered for this run's workspace only) and the links it put into the checkout. */
   let cache: CheckoutCache | null = null;
-  const mounts: { at: string; target: string }[] = [];
+  const mounts: { at: string; target: string; copy?: { dev: number; ino: number } }[] = [];
   let toolBin: string | null = null;
   /** mold_v0-182: what the write-back leaves out (the agent repository's .gitignore, the kind's write_back_ignore). */
   let wbIgnore: WriteBackIgnore | null = null;
@@ -621,6 +621,13 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         } finally { if (helperDir) rmSync(helperDir, { recursive: true, force: true }); }
       });
       const target = entry.tree;
+      // mold_v0-183: "directory", a read-only copy (for programs whose file search does not follow links); else a link.
+      if (c.mount_as === "directory") {
+        const { replaced, dev, ino } = copyInto(work, r.mount, target, as);
+        mounts.push({ at: path.join(work, r.mount), target, copy: { dev, ino } });
+        report.push({ name: r.name, url: r.url, commit: r.commit, mount: r.mount, as: "directory", cached: entry.hit, bytes: entry.bytes, files: entry.files, ...(replaced ? { replaced: true } : {}) });
+        continue;
+      }
       const { replaced } = mountInto(work, r.mount, target, as);
       mounts.push({ at: path.join(work, r.mount), target });
       report.push({ name: r.name, url: r.url, commit: r.commit, mount: r.mount, cached: entry.hit, bytes: entry.bytes, files: entry.files, ...(replaced ? { replaced: true } : {}) });
@@ -919,7 +926,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
             const rel = path.relative(work, m.at).split(path.sep);
             let cur = work, real = true;
             for (const p of rel.slice(0, -1)) { cur = path.join(cur, p); if (!lstatSync(cur).isDirectory()) { real = false; break; } }
-            if (real && lstatSync(m.at).isSymbolicLink()) rmSync(m.at, { force: true });
+            if (real && m.copy) removeCopy(m.at, m.copy);
+            else if (real && lstatSync(m.at).isSymbolicLink()) rmSync(m.at, { force: true });
           } catch { /* gone */ }
         }
         // Written back as the run left it (mold_v0-079: strip is applied at checkout only, never to the workspace).
@@ -994,7 +1002,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       // A credential written into the workspace would outlive the run in its store: such a workspace is not written back.
       const leaked = secrets.length ? secretIn(dir, secrets) : null;
       if (leaked) return await complete({ outcome: "failed", error_kind: "run", error: `the workspace holds the value of credential ${leaked}: it is not written back` });
-      try { await client.stage(run.id, lease, dir); }
+      let staged: { unchanged: boolean } | null = null;
+      try { staged = await client.stage(run.id, lease, dir); }
       catch (e) {
         const status = (e as { status?: number }).status;
         if (status === 409) return null;
@@ -1005,6 +1014,15 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         }
         // A workspace the run left unpackable (a symbolic link, a special file, too big) is the run's failure, not the infrastructure's.
         return await complete({ outcome: "failed", error_kind: status === 400 || status === 413 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
+      }
+      // mold_v0-183: a kind that always writes when it works (write_back_required) and changed nothing did not work,
+      // whatever its exit code said: Maxwell's seed-company stopped to ask a question and refresh-apps was refused its
+      // writes, and both "succeeded". Failed, saying so; the program's own account is in the run's events.
+      if (agent?.write_back_required && staged?.unchanged) {
+        pending.push({ type: "workspace_unchanged", data: { write_back: agent.write_back, required: true } });
+        return await complete({ outcome: "failed", error_kind: "run",
+          error: `the run changed nothing in its workspace (${agent.write_back.join(", ")}), and this kind always does when it works: `
+            + "nothing was written; what the program said is in the run's events" });
       }
     }
     return await complete({ outcome: "succeeded", results });
