@@ -3,6 +3,26 @@
 One private R2 bucket (`R2_BUCKET`, one per app) holds everything that must survive the machine and the
 managed services. There is one prefix per kind of data, and `src/storage.ts` is the only code that builds keys.
 
+## Where the bucket's settings come from
+
+In this order (mold_v0-181):
+
+1. **The environment**, when all four of `R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+   are set on the server. Nothing else is read then.
+2. **The key vault**: a platform owner adds **Object storage (R2 / S3)** on the console's Key vault page (`/admin/keys`,
+   category Storage) with the same four fields: the bucket's name, the endpoint (an `https://` address, e.g.
+   `https://<account id>.r2.cloudflarestorage.com`), the access key id and the secret access key. The entry is sealed
+   like every vault value; the page shows the bucket, the endpoint's host and "set", never the keys. Editing it keeps
+   the access key id and the secret unless new ones are typed; deleting it is the row's ⋯ menu. **Test** writes one
+   small object under `ops/key-vault-test/`, reads it back and deletes it, and says what went wrong in words (no such
+   bucket, a key the service does not know, a secret that does not match, no access, an address that cannot be
+   reached). The server reads the entry at most once a minute per instance, and at once on the instance that saved it.
+   Any S3-compatible service works (path-style requests; the region is taken from an AWS address, else `auto`).
+3. **`APP_STORAGE_DIR`**: a directory on one machine (tests, a single server). Only the workspace store uses it.
+
+None of them: a feature that needs the store refuses with the message naming all three ways. `npm run
+operator:vault-status` reports "needs Object storage" for a build whose runs keep their workspace between runs.
+
 | Prefix | What | Written by | Kept |
 |---|---|---|---|
 | `postgres/` | daily `pg_dump` of the database, copied hourly | `pg-backup-offsite` service (rclone) | newest 10 (`OFFSITE_KEEP`; the volume keeps `BACKUP_KEEP`, 10) |
@@ -12,7 +32,7 @@ managed services. There is one prefix per kind of data, and `src/storage.ts` is 
 | `diffs/org-<id>/<simulation>/<session>.diff.gz` | workspace diffs | reserved | — |
 | `exports/org-<id>/…` | customer data exports | reserved | — |
 | `workspaces/org-<id>/<store>/<snapshot>.wse` | workspace store snapshots, sealed with the org's data key (mold_v0-033) | `src/workspace-store.ts` | per the pack's retention, under the platform's ceiling (mold_v0-056, `src/workspace-retention.ts`: daily; the latest and every version a result or a report references are always kept) |
-| `ops/…` | internal one-offs | by hand | — |
+| `ops/…` | internal one-offs (`ops/key-vault-test/`: the Key vault's Test, deleted by the Test itself) | by hand | — |
 
 Customer data always sits under its org's prefix (`org-<id>`, the id, because slugs can be renamed), so access can be
 scoped per org by construction. Links handed out are signed, path-style and expire in at most 7 days.
@@ -30,7 +50,7 @@ following line is one stored event, exactly as the transcript store returns it (
 - **Tracking:** `agent_sessions.archive_key`, `archived_at`, `archive_events`; `product_research.archive_key`,
   `archived_at`. An infrastructure retry that wipes a transcript also clears its archive key, so the retry is
   archived afresh.
-- **Off switch:** `APP_ARCHIVE=off`, or leave `R2_BUCKET` unset.
+- **Off switch:** `APP_ARCHIVE=off`, or configure no bucket (neither `R2_*` nor Key vault › Object storage).
 
 ## If ClickHouse goes away
 

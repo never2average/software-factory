@@ -22,21 +22,37 @@ export const PROVIDER_NAME: Record<string, string> = {
   anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", cloudflare: "Cloudflare Workers AI", dashscope: "Alibaba DashScope",
   vertex: "Vertex AI (Google Cloud)", boat: "boat.dev", exa: "Exa", libraries_io: "Libraries.io", resend: "Resend", amp: "Amp", cursor: "Cursor",
   factory: "Factory", github_copilot: "GitHub Copilot", oauth_clients: "OAuth app clients", pack_credentials: "Staff-held run credentials",
+  object_storage: "Object storage (R2 / S3)",
 };
 export const PROVIDER_CATEGORY: Record<string, string> = {
   anthropic: "Inference", openai: "Inference", google: "Inference", cloudflare: "Inference", dashscope: "Inference", vertex: "Inference",
   boat: "Sandbox", exa: "Search", libraries_io: "Search", resend: "Email",
   amp: "Coding agent", cursor: "Coding agent", factory: "Coding agent", github_copilot: "Coding agent",
-  oauth_clients: "Connection", pack_credentials: "Run credential",
+  oauth_clients: "Connection", pack_credentials: "Run credential", object_storage: "Storage",
 };
 export const providerName = (slug: string) => PROVIDER_NAME[slug] ?? slug;
 export const providerCategory = (slug: string) => PROVIDER_CATEGORY[slug] ?? "Other";
+
+/** The vault provider of the object store's settings (src/keyvault.ts OBJECT_STORAGE_PROVIDER, src/storage.ts). */
+const OBJECT_STORAGE = "object_storage";
+/** The job kinds (`<pack>.<kind>`) that keep a workspace store between runs (src/workspace-retention.ts storePacks):
+ * the object store holds their snapshots. */
+async function storeKinds(): Promise<string[]> {
+  const { packs } = await import("./packs.js");
+  return packs().flatMap((p) => [
+    ...(p.definition.agentJobKinds ?? []).map((k) => `${p.id}.${(k as { name: string }).name}`),
+    ...(p.definition.jobKinds ?? []).filter((k) => (k as { workspace?: boolean }).workspace).map((k) => `${p.id}.${(k as { name: string }).name}`),
+  ]);
+}
+/** Whether the deployment's settings read here give the store a home without the vault: all four R2_* or APP_STORAGE_DIR. */
+export const storeOutsideVault = () => Boolean((ENV.R2_BUCKET && ENV.R2_ENDPOINT && ENV.R2_ACCESS_KEY_ID && ENV.R2_SECRET_ACCESS_KEY) || ENV.APP_STORAGE_DIR);
 
 /**
  * Whether this build reads a vault provider: one holding a key always (nothing a staff member stored is hidden); the
  * shell's own; a gateway provider some pack's job kind names; the packs' operator credentials and OAuth clients only when
  * a pack declares them; boat when the session engine runs orchestrators on it or the packs' runs may go there
- * (boatForRuns); the engine's when the build has the engine; a provider staff added by hand.
+ * (boatForRuns); object storage with the engine (its trace archive) or a pack whose runs keep a workspace store; the
+ * engine's when the build has the engine; a provider staff added by hand.
  */
 export async function providerInBuild(slug: string, keys: number): Promise<boolean> {
   if (keys > 0 || SHELL_PROVIDERS.has(slug)) return true;
@@ -45,6 +61,7 @@ export async function providerInBuild(slug: string, keys: number): Promise<boole
   if (slug === "oauth_clients") return (await import("./oauth-connections.js")).oauthProviders().length > 0;
   const kinds = (await import("./runs.js")).jobKinds();
   if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
+  if (slug === OBJECT_STORAGE) return sessionEngine() || (await storeKinds()).length > 0;
   if (kinds.some((k) => k.providers.includes(slug))) return true;
   return ENGINE_PROVIDERS.has(slug) ? sessionEngine() : true;
 }
@@ -56,12 +73,16 @@ export interface RunNeed {
   labels?: string[];
   kinds: string[];
   sandbox?: boolean;
+  /** For object_storage: the kinds' workspace store needs a bucket, and the deployment's settings give none. */
+  store?: boolean;
 }
 
 /**
  * What the build's run kinds need from the vault, by the same rules the console uses: each kind's gateway `providers`,
  * its `operator_credentials` (provider pack_credentials, label `<pack>.<name>`), and boat when the runs get their
- * sandbox there (src/run-sandboxes.ts boatForRuns, with the deployment's APP_RUN_SANDBOX, default auto).
+ * sandbox there (src/run-sandboxes.ts boatForRuns, with the deployment's APP_RUN_SANDBOX, default auto), and object
+ * storage when kinds keep a workspace store and the deployment's settings seen here give it no bucket (no R2_*, no
+ * APP_STORAGE_DIR).
  */
 export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sandbox_mode: string; boat_for_runs: boolean; needs: RunNeed[] }> {
   const kinds = (await import("./runs.js")).jobKinds();
@@ -81,6 +102,9 @@ export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sand
     }
   }
   if (boat) need("boat").sandbox = true;
+  // The workspace store's snapshots go to the bucket: from the vault when the environment names none (mold_v0-181).
+  const stores = await storeKinds();
+  if (stores.length && !storeOutsideVault()) { const n = need(OBJECT_STORAGE); n.store = true; n.kinds.push(...stores); }
   for (const n of bySlug.values()) n.kinds = [...new Set(n.kinds)];
   return { kinds: kinds.length, packs: [...new Set(kinds.map((k) => k.pack))], sandbox_mode: mode, boat_for_runs: boat,
            needs: [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug)) };

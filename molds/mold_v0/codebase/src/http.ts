@@ -64,7 +64,7 @@ import { autoscalerStatus, kickAutoscaler, startAutoscaler, stopAutoscaler } fro
 const serverlessTick = (force = false) => { if (process.env.VERCEL) telemetry.keepAlive(kickAutoscaler({ force }).catch((e) => console.error("autoscaler kick:", (e as Error).message))); };
 import { startArchiver, stopArchiver } from "./archive.js";
 import { startCatalogIndexing } from "./repository-index.js";
-import { storageEnabled } from "./storage.js";
+import { storageInEnv } from "./storage.js";
 import { brokerOrchestratorCredentials, brokerSessionCredentials, gatewayHandler } from "./gateway.js";
 import { usageReport } from "./usage.js";
 import * as kv from "./keyvault.js";
@@ -739,6 +739,10 @@ export function createApp() {
   ob.post("/compute/keys", need("keys"), async (req, res) => void res.status(201).json(await platformKeys.addModelKey(adminActor(req, res), req.body ?? {})));
   ob.post("/compute/keys/:id/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setModelKeyEnabled(adminActor(req, res), Number(req.params.id), req.body?.enabled)));
   ob.delete("/compute/keys/:id", need("keys"), async (req, res) => done(res, await platformKeys.deleteModelKey(adminActor(req, res), Number(req.params.id))));
+  // Object storage (mold_v0-181): the bucket's four settings as one vault entry, its edit (blank keeps a field) and Test.
+  ob.get("/compute/object-storage", async (_req, res) => void res.json(await platformKeys.objectStorage()));
+  ob.post("/compute/object-storage", need("keys"), async (req, res) => void res.json(await platformKeys.saveObjectStorage(adminActor(req, res), req.body ?? {})));
+  ob.post("/compute/object-storage/test", need("keys"), async (req, res) => void res.json(await platformKeys.testObjectStorage(adminActor(req, res))));
   ob.post("/compute/providers/:slug/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setProviderEnabled(adminActor(req, res), slug(req), req.body?.enabled)));
   // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
   // declares a credential field that asks for one.
@@ -851,11 +855,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       startAutoscaler();
       console.error("  autoscaler    on (orchestrators on demand; APP_AUTOSCALE=off to disable)");
     } else console.error(`  autoscaler    off (${autoscale ? "needs an https PUBLIC_URL and APP_WORKER_TOKEN" : "APP_AUTOSCALE=off"})`);
-    // Off-machine archive of traces and research to R2 (src/archive.ts): backfills, then keeps up every 5 minutes.
-    startArchiver();
+    // Off-machine archive of traces and research to the bucket (src/archive.ts): backfills, then keeps up every 5 minutes.
+    const archiving = startArchiver();
     // The upstream catalogs (mold_v0-128): indexed at their pin in the background, without waiting for a request.
     startCatalogIndexing();
-    console.error(`  archive       ${storageEnabled() ? "on (traces + research to R2)" : "off (R2_* not set)"}`);
+    console.error(`  archive       ${!archiving ? "off" : storageInEnv() ? "on (traces + research to the bucket in R2_*)" : "on while Key vault › Object storage is set (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");
     // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.

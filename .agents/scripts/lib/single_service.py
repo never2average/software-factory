@@ -889,8 +889,10 @@ def run_needs(app_id, app, target, root=None):
     """{"kinds": n, "needs": {slug: [<pack>.<kind>, ...]}, "boat": bool, "unread": [pack ids]} from the job kinds the
     packs' pack.json declare: each kind's gateway `providers`, its `operator_credentials` (the vault's pack_credentials),
     and boat for their sandboxes on Vercel (APP_RUN_SANDBOX auto, the only hosted sandbox there; src/run-sandboxes.ts
-    boatForRuns). Kinds a pack adds in code (definePack) are not seen here; the operator script reads the build itself."""
-    needs, n, unread = {}, 0, []
+    boatForRuns). "store": the kinds that keep a workspace store between runs (workspace: true, or runner agent-workspace),
+    whose snapshots need a bucket (mold_v0-181: R2_* on the server, else the Key vault's Object storage). Kinds a pack adds
+    in code (definePack) are not seen here; the operator script reads the build itself."""
+    needs, n, unread, store = {}, 0, [], []
     for pid in app.get("packs") or []:
         doc = pack_json(app_id, app, pid, root)
         if doc is None: unread.append(pid); continue
@@ -899,16 +901,22 @@ def run_needs(app_id, app, target, root=None):
             n += 1; kid = f"{pid}.{k.get('name', '?')}"
             for slug in k.get("providers") or []: needs.setdefault(slug, []).append(kid)
             if k.get("operator_credentials"): needs.setdefault("pack_credentials", []).append(kid)
+            if k.get("workspace") is True or k.get("runner") == "agent-workspace": store.append(kid)
     boat = target == "vercel" and n > 0
-    return {"kinds": n, "needs": needs, "boat": boat, "unread": unread}
+    return {"kinds": n, "needs": needs, "boat": boat, "unread": unread, "store": store}
 
 def say_run_needs(app_id, app, target, say=print, root=None):
     """One line for the offline check: what the run kinds need from the key vault and the command that says whether it is
     set. Never contacts anything: whether a key is set is in the app's database, which only that command reads."""
     if not (app.get("packs") or []): return
     r = run_needs(app_id, app, target, root)
-    parts = [f"{slug} ({len(ks)} kind{'s' if len(ks) > 1 else ''})" for slug, ks in sorted(r["needs"].items())]
+    # Claude runs on Vertex AI when the vault has no Anthropic key but a Vertex AI service-account key (src/gateway.ts):
+    # either one serves the anthropic need (operator:vault-status says "set (via Vertex AI ...)").
+    plural = lambda ks: f"{len(ks)} kind{'s' if len(ks) > 1 else ''}"
+    parts = [f"{slug} ({plural(ks)}{'; or a Vertex AI service-account key: Claude then runs on Vertex AI' if slug == 'anthropic' else ''})"
+             for slug, ks in sorted(r["needs"].items())]
     if r["boat"]: parts.append("boat (the runs' sandboxes on Vercel)")
+    if r.get("store"): parts.append(f"object_storage (the workspace store of {plural(r['store'])}, unless the server sets R2_*)")
     what = (f"the run kinds ({r['kinds']}, from the packs' pack.json) need from the key vault: {', '.join(parts)}" if parts
             else f"the run kinds ({r['kinds']}, from the packs' pack.json) need no key from the key vault")
     if r["unread"]: what += f" (pack.json not on disk for {', '.join(r['unread'])})"

@@ -59,7 +59,7 @@ export async function endAttempt(tx: Queryable, runId: string): Promise<string[]
   return rows.map((r) => r.object_key).filter(Boolean);
 }
 export async function removeObjects(list: string[]): Promise<void> {
-  if (list.length) await objectStore().remove(list).catch((e) => console.error(`workspace store: could not remove ${list.length} discarded object(s): ${(e as Error).message}`));
+  if (list.length) await objectStore().then((os) => os.remove(list)).catch((e) => console.error(`workspace store: could not remove ${list.length} discarded object(s): ${(e as Error).message}`));
 }
 const holdsLease = async (q: Queryable, orgId: number, store: string, runId: string) =>
   (await q.query<{ base_version: number | null }>("SELECT base_version FROM workspace_leases WHERE org_id = $1 AND store = $2 AND run_id = $3 AND expires_at > now()",
@@ -99,7 +99,7 @@ export async function listSnapshots(orgId: number, store: string): Promise<Omit<
 
 /** A snapshot's files, opened with its workspace's key and checked against its manifest. */
 export async function openSnapshot(s: Snapshot): Promise<Buffer> {
-  const sealed = await objectStore().get(s.object_key);
+  const sealed = await (await objectStore()).get(s.object_key);
   if (!sealed) throw new Error(`snapshot ${s.id}: its object is missing`);
   const bundle = await openBytes(s.org_id, sealed, aad(s));
   const read = readBundle(bundle);
@@ -159,7 +159,7 @@ export async function stageBundle(run: LeasedRun, bundle: Buffer): Promise<{ man
       [run.org_id, store, lease.base_version, run.id, run.attempt, JSON.stringify(read.manifest), read.manifest_sha256, files, bytes]);
     const key = keys.workspace(run.org_id, store, row!.id);
     try {
-      await objectStore().put(key, await sealBytes(run.org_id, bundle, aad(row!)), "application/octet-stream");
+      await (await objectStore()).put(key, await sealBytes(run.org_id, bundle, aad(row!)), "application/octet-stream");
     } catch (e) {
       await db.query("DELETE FROM workspace_snapshots WHERE org_id = $1 AND id = $2", [run.org_id, row!.id]);
       throw e;

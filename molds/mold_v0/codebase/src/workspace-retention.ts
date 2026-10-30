@@ -119,7 +119,7 @@ export async function sweepStore(orgId: number, store: string, now = new Date())
   // without its object. Only keys under this store's own prefix are removed.
   const ours = gone.filter((k) => underPrefix(orgId, store, k));
   if (ours.length !== gone.length) console.error(`workspace retention: workspace ${orgId} store ${store}: ${gone.length - ours.length} row(s) named an object outside the store's prefix; not removed`);
-  const os = objectStore();
+  const os = await objectStore();
   if (ours.length) { await os.remove(ours); out.objects_removed += ours.length; }
   out.objects_removed += await removeOrphans(orgId, store);
   return out;
@@ -130,7 +130,7 @@ export async function sweepStore(orgId: number, store: string, now = new Date())
  * rows after: a stage's row is written before its object, so an object listed with no row is never one being written.
  */
 async function removeOrphans(orgId: number, store: string): Promise<number> {
-  const os = objectStore();
+  const os = await objectStore();
   const listed = (await os.list(prefixOf(orgId, store))).filter((k) => underPrefix(orgId, store, k));
   if (!listed.length) return 0;
   const ids = listed.map((k) => k.slice(prefixOf(orgId, store).length).replace(/\.wse$/, ""));
