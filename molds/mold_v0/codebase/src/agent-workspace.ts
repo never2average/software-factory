@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, copyFileSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AgentWorkspaceConfig } from "./agent-workspace-config.js";
-import { globRegex, placeholders } from "./agent-workspace-paths.js";
+import { globRegex, ignoreMatcher, parseIgnore, placeholders, type IgnoreRule } from "./agent-workspace-paths.js";
 import { ENV } from "./env-names.js";
 
 export class AgentRunError extends Error {
@@ -252,10 +252,17 @@ export function restoreInto(snap: string, checkout: string, writeBack: string[])
  * The next snapshot's directory `stage`: the checkout's write-back paths after the run (regular files only, each opened
  * without following a link and checked to be a plain file with one name), and the snapshot's files outside them.
  * Returns what was left out and why.
+ *
+ * mold_v0-182: `ignore` (writeBackIgnore) leaves out what is not the workspace's own records: a repository the run
+ * cloned under a write-back path (Maxwell's applications/<app>/repos/<repo>/, with its .git), decrypted credentials,
+ * anything the agent repository's .gitignore or the kind's write_back_ignore names. Those paths never leave the sandbox.
  */
-export function collectWriteBack(checkout: string, snap: string | null, stage: string, writeBack: string[]): { files: number; skipped: { path: string; why: string }[] } {
+export function collectWriteBack(checkout: string, snap: string | null, stage: string, writeBack: string[], ignore?: WriteBackIgnore | null):
+  { files: number; skipped: { path: string; why: string }[]; ignored: { paths: number; sample: string[] } } {
   mkdirSync(stage, { recursive: true });
   const skipped: { path: string; why: string }[] = [];
+  const ignored = { paths: 0, sample: [] as string[] };
+  const leaveOut = (rel: string) => { ignored.paths++; if (ignored.sample.length < 20) ignored.sample.push(rel); };
   let files = 0, bytes = 0;
   const count = (size: number) => {
     files++; bytes += size;
@@ -291,10 +298,13 @@ export function collectWriteBack(checkout: string, snap: string | null, stage: s
     if (!ok) continue;
     let st; try { st = lstatSync(path.join(checkout, w)); } catch { continue; }
     if (st.isSymbolicLink()) { skipped.push({ path: w, why: "a symbolic link" }); continue; }
+    const out = ignore ? ignore.under(w, st.isDirectory()) : null;
+    if (out && out(w, st.isDirectory())) { leaveOut(w); continue; }
     if (st.isFile()) { copyOut(w, checkout); continue; }
     if (!st.isDirectory()) { skipped.push({ path: w, why: "not a regular file" }); continue; }
     walk(path.join(checkout, w), (rel, s) => {
       const full = `${w}/${rel}`;
+      if (out && !s.isSymbolicLink() && out(full, s.isDirectory())) { leaveOut(full); return "skip"; }
       if (s.isSymbolicLink()) { skipped.push({ path: full, why: "a symbolic link" }); return "skip"; }
       if (s.isDirectory()) return;
       copyOut(full, checkout);
@@ -302,7 +312,52 @@ export function collectWriteBack(checkout: string, snap: string | null, stage: s
   }
   // What the snapshot held outside the write-back paths (a path the configuration no longer writes back) is kept.
   if (snap) walk(snap, (rel, s) => { if (s.isFile() && !underWriteBack(rel, writeBack)) { count(s.size); realParents(stage, rel); copyFileSync(path.join(snap, rel), path.join(stage, rel), constants.COPYFILE_EXCL); } });
-  return { files, skipped: skipped.slice(0, 200) };
+  return { files, skipped: skipped.slice(0, 200), ignored };
+}
+
+/** What a write-back leaves out (mold_v0-182): `under(w)` is the test for the paths under the write-back path w, or null. */
+export interface WriteBackIgnore { rules: number; under(w: string, isDir: boolean): ((rel: string, isDir: boolean) => boolean) | null }
+
+/**
+ * The agent repository's own ignore rules, read from the pinned tree (every .gitignore in it, as committed at the pin,
+ * read before anything of the run's runs: the run cannot change them), and the kind's write_back_ignore patterns (git's
+ * syntax, from the checkout's root).
+ *
+ * The kind's own patterns apply everywhere. The repository's apply below a write-back path, never to the path itself:
+ * a kind that writes back a path the repository ignores (a data directory kept out of git upstream, say) declared
+ * that path its workspace, so the repository's rules are not applied inside it at all.
+ */
+export function writeBackIgnore(pinned: string | null, kindPatterns: string[], useGitignore = true): WriteBackIgnore {
+  const git: IgnoreRule[] = [];
+  if (pinned && useGitignore) {
+    const files: string[] = [];
+    walk(pinned, (rel, st) => {
+      if (st.isSymbolicLink()) return "skip";
+      if (st.isFile() && path.basename(rel) === ".gitignore" && st.size <= 256 * 1024) files.push(rel);
+    });
+    // Shallower files first: a deeper file's rules come later, so they win (git's precedence).
+    files.sort((a, b) => a.split("/").length - b.split("/").length || (a < b ? -1 : 1));
+    for (const f of files) {
+      let text = "";
+      try {
+        const fd = openSync(path.join(pinned, f), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try { if (fstatSync(fd).isFile()) text = readFileSync(fd, "utf8"); } finally { closeSync(fd); }
+      } catch { continue; }
+      const dir = path.posix.dirname(f);
+      git.push(...parseIgnore(text, dir === "." ? "" : dir, f));
+    }
+  }
+  const own = parseIgnore(kindPatterns.join("\n"), "", "write_back_ignore");
+  const repo = ignoreMatcher(git), kind = ignoreMatcher(own);
+  return {
+    rules: git.length + own.length,
+    under: (w, isDir) => {
+      if (!git.length && !own.length) return null;
+      // The write-back path itself (or a directory on its way) ignored upstream: the kind claims it, the repository's rules stay out.
+      const claimed = git.length > 0 && repo(w, isDir);
+      return (rel, d) => kind(rel, d) || (!claimed && rel !== w && repo(rel, d));
+    },
+  };
 }
 
 /** Files of the checkout matching the `record` globs (regular files only, at most 50, never through a link). */
