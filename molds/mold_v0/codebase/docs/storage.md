@@ -32,6 +32,7 @@ operator:vault-status` reports "needs Object storage" for a build whose runs kee
 | `diffs/org-<id>/<simulation>/<session>.diff.gz` | workspace diffs | reserved | — |
 | `exports/org-<id>/…` | customer data exports | reserved | — |
 | `workspaces/org-<id>/<store>/<snapshot>.wse` | workspace store snapshots, sealed with the org's data key (mold_v0-033) | `src/workspace-store.ts` | per the pack's retention, under the platform's ceiling (mold_v0-056, `src/workspace-retention.ts`: daily; the latest and every version a result or a report references are always kept) |
+| `workspaces/org-<id>/.transfers/<transfer>.wst` | a run's write-back, checkout or completion too large for the worker API (a hosted function takes at most 4.5 MB per request and answer), sealed with a key made for that one transfer (itself sealed with the org's data key in `run_transfers`); the runner reaches it with a 15-minute presigned PUT or GET for that key only (mold_v0-182) | `src/run-transfers.ts` | until used (checked: size, seal, sha256) or the run's attempt ends |
 | `ops/…` | internal one-offs (`ops/key-vault-test/`: the Key vault's Test, deleted by the Test itself) | by hand | — |
 
 Customer data always sits under its org's prefix (`org-<id>`, the id, because slugs can be renamed), so access can be

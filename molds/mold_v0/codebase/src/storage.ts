@@ -16,6 +16,8 @@ import { ENV } from "./env-names.js";
  *   diffs/org-<id>/<simulation>/<session>.diff.gz  reserved: workspace diffs
  *   exports/org-<id>/...                           reserved: customer data exports
  *   workspaces/org-<id>/<store>/<snapshot>.wse     workspace snapshots, sealed with the org's data key (mold_v0-033)
+ *   workspaces/org-<id>/.transfers/<id>.wst        a run's request or answer too large for the API (mold_v0-182), sealed
+ *                                                  with a key of its own, gone once used or when the run's attempt ends
  *   ops/...                                        internal one-offs (ops/key-vault-test/: the Key vault's Test)
  *
  * Customer data always sits under its org's prefix, so access can be scoped per org by construction. The org id (not
@@ -127,6 +129,7 @@ export const keys = {
   report: (orgId: number, simulationId: string, at: Date, ext: "pdf" | "html") => `reports/org-${Math.trunc(orgId)}/${safe(simulationId)}/${stamp(at)}.${ext}`,
   diff: (orgId: number, simulationId: string, sessionId: string) => `diffs/org-${Math.trunc(orgId)}/${safe(simulationId)}/${safe(sessionId)}.diff.gz`,
   workspace: (orgId: number, store: string, snapshotId: number) => `workspaces/org-${Math.trunc(orgId)}/${safe(store)}/${Math.trunc(snapshotId)}.wse`,
+  transfer: (orgId: number, transferId: string) => `workspaces/org-${Math.trunc(orgId)}/.transfers/${safe(transferId)}.wst`,
 };
 
 export async function putObject(key: string, body: Buffer | string, contentType: string, meta: Record<string, string> = {}): Promise<void> {
@@ -174,6 +177,16 @@ export async function signedUrl(key: string, seconds = 3600, filename?: string):
   return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key,
     ...(filename ? { ResponseContentDisposition: `attachment; filename="${filename.replace(/["\\]/g, "")}"` } : {}) }),
     { expiresIn: Math.min(Math.max(60, seconds), 7 * 24 * 3600) });
+}
+
+/**
+ * A time-limited upload link for one key (mold_v0-182): a PUT of the object's bytes, signed for that key only, valid
+ * `seconds` (at least 60, at most an hour). A runner sends a body larger than its API accepts (Vercel: 4.5 MB per request)
+ * straight to the bucket with it; nothing but that key can be written with it.
+ */
+export async function signedPutUrl(key: string, seconds = 900): Promise<string> {
+  const { client, bucket } = await s3();
+  return getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: Math.min(Math.max(60, seconds), 3600) });
 }
 
 // ---------- the Key vault's Test (mold_v0-181) ----------
@@ -257,6 +270,11 @@ export interface ObjectStore {
   get(key: string): Promise<Buffer | null>;
   list(prefix: string): Promise<string[]>;
   remove(keys: string[]): Promise<void>;
+  /**
+   * Time-limited links for one key (mold_v0-182), where the store is a bucket: an upload (PUT) and a download (GET).
+   * A local directory has none (its API has no request size limit to go around).
+   */
+  links?: { put(key: string, seconds: number): Promise<string>; get(key: string, seconds: number): Promise<string> };
 }
 
 const localDir = () => (env.APP_STORAGE_DIR ? pathResolve(env.APP_STORAGE_DIR) : null);
@@ -273,6 +291,7 @@ export async function objectStore(): Promise<ObjectStore> {
     get: (key) => getObject(key),
     list: async (prefix) => (await listKeys(prefix)).map((o) => o.key),
     remove: (list) => deleteKeys(list),
+    links: { put: (key, seconds) => signedPutUrl(key, seconds), get: (key, seconds) => signedUrl(key, seconds) },
   };
   const root = localDir();
   if (!root) throw new Error(NOT_CONFIGURED);

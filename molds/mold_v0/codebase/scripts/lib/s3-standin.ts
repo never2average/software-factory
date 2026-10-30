@@ -9,13 +9,16 @@
 //   GET    /<bucket>?list-type=2&prefix=...   ListObjectsV2 (one page)
 //   POST   /<bucket>?delete                   DeleteObjects
 //
+// Presigned links (getSignedUrl: the signature in the query string, mold_v0-182) are checked the same way, and refused
+// once expired.
+//
 // Errors are S3's XML (<Error><Code>...</Code>), so the SDK raises them by name. Every request is recorded (method,
 // path, the access key id it was signed with, its headers) so a test can say what was asked and that no secret was sent.
 import { createHash, createHmac } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-export interface S3Call { method: string; bucket: string; key: string; query: string; accessKeyId: string | null; headers: Record<string, string | string[] | undefined>; body: Buffer; status: number }
+export interface S3Call { method: string; bucket: string; key: string; query: string; accessKeyId: string | null; headers: Record<string, string | string[] | undefined>; body: Buffer; status: number; presigned?: boolean }
 
 const sha256 = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 const hmac = (k: Buffer | string, s: string) => createHmac("sha256", k).update(s).digest();
@@ -34,8 +37,40 @@ export async function startS3Standin(opts: { buckets: string[]; keys: Record<str
     return status;
   };
 
+  /**
+   * A presigned request's SigV4 (mold_v0-182): the signature in the query (X-Amz-Signature) over the other query
+   * parameters, the signed headers and UNSIGNED-PAYLOAD, as a link from getSignedUrl carries it; refused once
+   * X-Amz-Date + X-Amz-Expires has passed (AccessDenied, "Request has expired"), as S3 and R2 do.
+   */
+  const verifyPresigned = (req: IncomingMessage, rawPath: string, rawQuery: string): { id: string | null; error: string | null } => {
+    const pairs = rawQuery.split("&").filter(Boolean).map((kv) => {
+      const i = kv.indexOf("=");
+      return [decodeURIComponent(i < 0 ? kv : kv.slice(0, i)), i < 0 ? "" : decodeURIComponent(kv.slice(i + 1).replace(/\+/g, "%20"))] as const;
+    });
+    const q = new Map(pairs);
+    const cred = /^([^/]+)\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request$/.exec(q.get("X-Amz-Credential") ?? "");
+    if (q.get("X-Amz-Algorithm") !== "AWS4-HMAC-SHA256" || !cred) return { id: null, error: "AccessDenied" };
+    const [, id, date, region, service] = cred as unknown as string[];
+    const secret = keys.get(id!);
+    if (!secret) return { id: id!, error: "InvalidAccessKeyId" };
+    const at = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(q.get("X-Amz-Date") ?? "");
+    if (!at) return { id: id!, error: "AccessDenied" };
+    const signedAt = Date.UTC(+at[1]!, +at[2]! - 1, +at[3]!, +at[4]!, +at[5]!, +at[6]!);
+    if (Date.now() > signedAt + Number(q.get("X-Amz-Expires") ?? 0) * 1000) return { id: id!, error: "AccessDenied:expired" };
+    const query = pairs.filter(([k]) => k !== "X-Amz-Signature").map(([k, v]) => [enc(k), enc(v)] as const)
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join("&");
+    const signed = q.get("X-Amz-SignedHeaders") ?? "host";
+    const headers = signed.split(";").map((n) => `${n}:${String(req.headers[n] ?? "").trim().replace(/\s+/g, " ")}\n`).join("");
+    const canonical = [req.method, rawPath, query, headers, signed, "UNSIGNED-PAYLOAD"].join("\n");
+    const scope = `${date}/${region}/${service}/aws4_request`;
+    const toSign = ["AWS4-HMAC-SHA256", q.get("X-Amz-Date")!, scope, sha256(canonical)].join("\n");
+    const key = hmac(hmac(hmac(hmac(`AWS4${secret}`, date!), region!), service!), "aws4_request");
+    return { id: id!, error: createHmac("sha256", key).update(toSign).digest("hex") === q.get("X-Amz-Signature") ? null : "SignatureDoesNotMatch" };
+  };
+
   /** The request's SigV4: null when it holds, else the S3 error code. */
   const verify = (req: IncomingMessage, rawPath: string, rawQuery: string): { id: string | null; error: string | null } => {
+    if (/(^|&)X-Amz-Signature=/.test(rawQuery)) return verifyPresigned(req, rawPath, rawQuery);
     const auth = String(req.headers.authorization ?? "");
     const m = /^AWS4-HMAC-SHA256 Credential=([^/]+)\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request, ?SignedHeaders=([^,]+), ?Signature=([0-9a-f]{64})$/.exec(auth);
     if (!m) return { id: null, error: "AccessDenied" };
@@ -72,6 +107,8 @@ export async function startS3Standin(opts: { buckets: string[]; keys: Record<str
       calls.push(call);
       const v = verify(req, rawPath, rawQuery);
       call.accessKeyId = v.id;
+      call.presigned = /(^|&)X-Amz-Signature=/.test(rawQuery);
+      if (v.error === "AccessDenied:expired") { call.status = fail(res, 403, "AccessDenied", "Request has expired"); return; }
       if (v.error) { call.status = fail(res, 403, v.error, v.error === "SignatureDoesNotMatch" ? "The request signature we calculated does not match the signature you provided." : "Access denied."); return; }
       const store = buckets.get(bucket);
       if (!store) { call.status = fail(res, 404, "NoSuchBucket", "The specified bucket does not exist."); return; }

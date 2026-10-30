@@ -22,6 +22,7 @@ import { openBytes, sealBytes } from "./orgcrypto.js";
 import { PackError } from "./pack-api.js";
 import { keys, objectStore } from "./storage.js";
 import { asPlatform } from "./tenant-scope.js";
+import { endTransfers, takeUpload } from "./run-transfers.js";
 import { BundleError, EMPTY_MANIFEST_SHA256, packBundle, readBundle, unpackBundle, type Manifest } from "./workspace-bundle.js";
 
 export interface Snapshot {
@@ -56,7 +57,9 @@ export async function endAttempt(tx: Queryable, runId: string): Promise<string[]
   await tx.query("/* tenant: the ending run's own store lease */ DELETE FROM workspace_leases WHERE run_id = $1", [runId]);
   const rows = await tx.query<{ object_key: string }>(
     "/* tenant: the ending run's own staged snapshots, by run id */ UPDATE workspace_snapshots SET status = 'discarded' WHERE run_id = $1 AND status = 'staged' RETURNING object_key", [runId]);
-  return rows.map((r) => r.object_key).filter(Boolean);
+  // mold_v0-182: the attempt's transfers through object storage (an upload never committed, a checkout's download).
+  const transfers = await endTransfers(tx, runId);
+  return [...rows.map((r) => r.object_key).filter(Boolean), ...transfers];
 }
 export async function removeObjects(list: string[]): Promise<void> {
   if (list.length) await objectStore().then((os) => os.remove(list)).catch((e) => console.error(`workspace store: could not remove ${list.length} discarded object(s): ${(e as Error).message}`));
@@ -167,6 +170,25 @@ export async function stageBundle(run: LeasedRun, bundle: Buffer): Promise<{ man
     await db.query("UPDATE workspace_snapshots SET object_key = $3 WHERE org_id = $1 AND id = $2", [run.org_id, row!.id, key]);
     return { manifest_sha256: read.manifest_sha256, files, unchanged };
   });
+}
+
+/**
+ * Before a write-back is uploaded to the object store (mold_v0-182): the run holds its store's lease and checked the
+ * workspace out, as stageBundle requires, so a write-back that would be refused is never sent.
+ */
+export async function assertWriteBackLease(run: LeasedRun): Promise<void> {
+  const store = storeOf(run);
+  await asPlatform(async () => {
+    const lease = await holdsLease(await getDb(), run.org_id, store, run.id);
+    if (!lease) throw new PackError("this run does not hold its workspace's lease", 409);
+    if (lease.base_version === null) throw new PackError("check the workspace out before writing it back", 409);
+  });
+}
+
+/** A write-back uploaded to the object store (mold_v0-182, src/run-transfers.ts): taken, checked, and staged as stageBundle stages one. */
+export async function stageUpload(run: LeasedRun, uploadId: unknown) {
+  await assertWriteBackLease(run);
+  return stageBundle(run, await takeUpload(run, uploadId, "workspace"));
 }
 
 /**

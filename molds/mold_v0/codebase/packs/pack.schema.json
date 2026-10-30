@@ -1493,6 +1493,20 @@
                       "maxLength": 300
                     }
                   },
+                  "write_back_ignore": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "write_back_gitignore": {
+                    "default": true,
+                    "type": "boolean"
+                  },
                   "results": {
                     "type": "string",
                     "minLength": 1,

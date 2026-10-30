@@ -24,6 +24,11 @@
  *                agent could change): the workspace is written back only when it exits 0
  *   write_back   the paths of the checkout that are the workspace: restored from its latest snapshot before the run,
  *                written back (as a new snapshot) after a valid run
+ *   write_back_ignore  (mold_v0-182) patterns in git's ignore syntax, from the checkout's root, never written back
+ *                (a repository the run clones under a write-back path, a cache, a decrypted file)
+ *   write_back_gitignore  (mold_v0-182, default true) the agent repository's own .gitignore files, as committed at the
+ *                pin, are applied below each write-back path too (never to a write-back path the repository itself
+ *                ignores: the kind declared that one its workspace). What either leaves out never leaves the sandbox
  *   results      a JSON list in the checkout, the run's results (src/runs.ts); default <RUN_OUT>/results.json
  *   record       files of the checkout recorded in the run's events after the run (a session summary, usage): path,
  *                size, sha256 and, for a small JSON file, its content, redacted like everything else
@@ -228,6 +233,8 @@ export const AgentWorkspaceSchema = z.object({
   env: z.record(envName, z.string().max(1000)).default({}),
   validate: z.object({ command: commandSchema, timeout_seconds: timeout(600) }).strict(),
   write_back: z.array(relPath).min(1).max(50),
+  write_back_ignore: z.array(z.string().min(1).max(300).refine((p) => !/[\u0000-\u001f]/.test(p) && !p.split("/").includes(".."), "a pattern in git's ignore syntax (no .., no control characters)")).max(100).default([]),
+  write_back_gitignore: z.boolean().default(true),
   results: relPath.optional(),
   record: z.array(glob).max(20).default([]),
   timeout_seconds: timeout(3600),

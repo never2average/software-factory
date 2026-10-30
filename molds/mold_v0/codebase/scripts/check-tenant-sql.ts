@@ -32,7 +32,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // Sign-ins in flight (any kind), OAuth connections and the access tokens runs received (mold_v0-014, 0023).
   "oauth_states", "workspace_oauth_connections", "run_oauth_tokens",
   // mold_v0-036 on-premises runners and a workspace's runner location
-  "onprem_runners", "workspace_runner_settings"];
+  "onprem_runners", "workspace_runner_settings",
+  // mold_v0-182 a run's transfers through object storage
+  "run_transfers"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
