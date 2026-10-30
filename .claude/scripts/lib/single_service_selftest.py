@@ -1301,13 +1301,14 @@ def run():
             ok(rc == 2 and "Vercel only" in " ".join(said), f"--operator on a compose_remote app says it runs on Vercel only, exit 2: {said}")
             pk = os.path.join(t, "packs", "vs_fixture", "files", "packs", "vs_fixture"); os.makedirs(pk, exist_ok=True)
             json.dump({"id": "vs_fixture", "job_kinds": [{"name": "scan", "providers": ["anthropic", "google"], "operator_credentials": ["login"]},
-                                                        {"name": "audit", "providers": ["anthropic"]}, {"name": "tally"}]}, open(os.path.join(pk, "pack.json"), "w"))
+                                                        {"name": "audit", "providers": ["anthropic"]}, {"name": "tally", "workspace": True}]}, open(os.path.join(pk, "pack.json"), "w"))
             app_p = dict(va, packs=["vs_fixture", "vs_absent"])
             rn = SS.run_needs("zz_shop", app_p, "vercel", root=t)
             ok(rn["kinds"] == 3 and rn["needs"] == {"anthropic": ["vs_fixture.scan", "vs_fixture.audit"], "google": ["vs_fixture.scan"], "pack_credentials": ["vs_fixture.scan"]}
-               and rn["boat"] and rn["unread"] == ["vs_absent"], f"run_needs reads the packs' job kinds: providers, operator credentials, boat on Vercel: {rn}")
+               and rn["boat"] and rn["unread"] == ["vs_absent"] and rn["store"] == ["vs_fixture.tally"], f"run_needs reads the packs' job kinds: providers, operator credentials, boat on Vercel: {rn}")
             said = []; SS.say_run_needs("zz_shop", app_p, "vercel", say=said.append, root=t)
-            ok(len(said) == 1 and "anthropic (2 kinds)" in said[0] and "boat (the runs' sandboxes on Vercel)" in said[0]
+            ok(len(said) == 1 and "anthropic (2 kinds; or a Vertex AI service-account key: Claude then runs on Vertex AI)" in said[0] and "boat (the runs' sandboxes on Vercel)" in said[0]
+               and "object_storage (the workspace store of 1 kind, unless the server sets R2_*)" in said[0]
                and "python3 .claude/scripts/provision.py zz_shop --operator vault-status --dry-run" in said[0] and "vs_absent" in said[0],
                f"the check's one line: what the run kinds need and the exact command: {said}")
             said = []; SS.say_run_needs("zz_shop", app_p, "compose_remote", say=said.append, root=t)

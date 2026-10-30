@@ -112,7 +112,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     }
     const store = facts?.object_store;
     const usesStore = list_.some((p) => (p.definition.agentJobKinds ?? []).length || (p.definition.jobKinds ?? []).some((k) => k.workspace));
-    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else a directory named by APP_STORAGE_DIR${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
+    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else the bucket a platform owner saved in Key vault › Object storage (sealed in the key vault), else a directory named by APP_STORAGE_DIR${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
     sections.push({ id: "data", title: "Where data is stored", rows });
   }
 
