@@ -29,6 +29,10 @@
  *   write_back_gitignore  (mold_v0-182, default true) the agent repository's own .gitignore files, as committed at the
  *                pin, are applied below each write-back path too (never to a write-back path the repository itself
  *                ignores: the kind declared that one its workspace). What either leaves out never leaves the sandbox
+ *   write_back_required  (mold_v0-183, default false) the kind always changes its workspace when it works (a profile it
+ *                creates, a record it refreshes, a ledger it appends to): a run that exits 0 and validates but leaves
+ *                every write-back path exactly as it found it fails ("run": it changed nothing in its workspace) instead
+ *                of succeeding silently. The program's own account of why is in its events (step output, agent_output)
  *   results      a JSON list in the checkout, the run's results (src/runs.ts); default <RUN_OUT>/results.json
  *   record       files of the checkout recorded in the run's events after the run (a session summary, usage): path,
  *                size, sha256 and, for a small JSON file, its content, redacted like everything else
@@ -235,6 +239,7 @@ export const AgentWorkspaceSchema = z.object({
   write_back: z.array(relPath).min(1).max(50),
   write_back_ignore: z.array(z.string().min(1).max(300).refine((p) => !/[\u0000-\u001f]/.test(p) && !p.split("/").includes(".."), "a pattern in git's ignore syntax (no .., no control characters)")).max(100).default([]),
   write_back_gitignore: z.boolean().default(true),
+  write_back_required: z.boolean().default(false),
   results: relPath.optional(),
   record: z.array(glob).max(20).default([]),
   timeout_seconds: timeout(3600),

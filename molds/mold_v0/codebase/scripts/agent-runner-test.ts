@@ -23,6 +23,9 @@
 //     written back.
 //  8. Egress: the run's proxy lets the kind's host past its list and refuses any other.
 //  9. Two workspaces: each run sees only its own workspace's files; each store holds only its own.
+// 11. (mold_v0-183) A run that exits 0 and validates but changes nothing in its workspace: it succeeds as before for a
+//     kind that may (its workspace_written event says unchanged), and FAILS for a kind with write_back_required, saying
+//     it changed nothing (Maxwell's seed-company that stopped to ask a question, its refresh-apps refused its writes).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -155,7 +158,7 @@ try {
     ],
     agentJobKinds: [kind("audit"), kind("audit_short", {}, { timeout_seconds: 10 }), kind("audit_badpin", {}, { commit: "1".repeat(40) }),
       kind("audit_quiet", { credentials: [], providers: [], egress: [] }, { env: { AGENT_FIXED: "1" } }),
-      kind("audit_default", {}, { results: undefined })] as never,
+      kind("audit_default", {}, { results: undefined }), kind("audit_must_write", {}, { write_back_required: true })] as never,
     tools: [
       defineTool({ name: "fixture_agent_run", description: "Start a run (test).", inputSchema: { kind: z.string(), mode: z.string().optional(), company: z.string() },
         handler: async (_ws, { kind: k, mode, company }, { runs: r }) => r.start(k, { scope: mode ? { mode } : {}, targets: { company } }) }),
@@ -376,6 +379,32 @@ try {
       const d = await runNext("audit");
       assert.match(d.view!.error!, /a value may not hold a "\.\." path part/);
       console.log("✓ review fixes: a validator the agent rewrote is not the one run; a pipe for results is refused without hanging; strip applies at checkout only (the workspace's own files at a stripped path are kept); the size limit holds before reading; no \"..\" in an argument");
+    }
+    // ---------- 11. a run that changed nothing in its workspace (mold_v0-183) ----------
+    {
+      const before = (await latest(A.orgId))!.version;
+      // As it was: exit 0, valid, nothing written; "succeeded", and only the workspace_written event tells.
+      await start(ca, "audit", "a-co", "idle");
+      const quiet = await runNext("audit");
+      assert.equal(quiet.view?.status, "succeeded", JSON.stringify(quiet.view));
+      assert.deepEqual((await ev(quiet.claim.run.id, "workspace_written"))[0], { version: before, unchanged: true }, "the silent success: nothing was written");
+      assert.equal((await latest(A.orgId))!.version, before);
+      // A kind that always writes when it works: the same run fails, and says why.
+      await start(ca, "audit_must_write", "a-co", "idle");
+      const idle = await runNext("audit_must_write");
+      assert.equal(idle.view?.status, "failed", JSON.stringify(idle.view));
+      assert.equal(idle.view?.error_kind, "run");
+      assert.match(idle.view!.error!, /changed nothing in its workspace \(data\), and this kind always does when it works/);
+      assert.deepEqual((await ev(idle.claim.run.id, "workspace_unchanged"))[0], { write_back: ["data"], required: true });
+      assert.equal((await ev(idle.claim.run.id, "workspace_written")).length, 0, "nothing committed");
+      assert.equal((await latest(A.orgId))!.version, before);
+      assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM run_results WHERE run_id = $1", [idle.claim.run.id]))[0]!.n, 0, "and its results are not taken");
+      // When it does write, it succeeds as any other run.
+      await start(ca, "audit_must_write", "a-co");
+      const wrote = await runNext("audit_must_write");
+      assert.equal(wrote.view?.status, "succeeded", JSON.stringify(wrote.view));
+      assert.equal((await latest(A.orgId))!.version, before + 1);
+      console.log("✓ a run that changed nothing in its workspace: succeeds for a kind that may (workspace_written says unchanged); fails, saying so, for a kind with write_back_required, and succeeds once it writes");
     }
   } finally {
     await ca.close(); await cb.close();

@@ -1507,6 +1507,10 @@
                     "default": true,
                     "type": "boolean"
                   },
+                  "write_back_required": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "results": {
                     "type": "string",
                     "minLength": 1,

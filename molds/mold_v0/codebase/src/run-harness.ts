@@ -994,7 +994,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       // A credential written into the workspace would outlive the run in its store: such a workspace is not written back.
       const leaked = secrets.length ? secretIn(dir, secrets) : null;
       if (leaked) return await complete({ outcome: "failed", error_kind: "run", error: `the workspace holds the value of credential ${leaked}: it is not written back` });
-      try { await client.stage(run.id, lease, dir); }
+      let staged: { unchanged: boolean } | null = null;
+      try { staged = await client.stage(run.id, lease, dir); }
       catch (e) {
         const status = (e as { status?: number }).status;
         if (status === 409) return null;
@@ -1005,6 +1006,15 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         }
         // A workspace the run left unpackable (a symbolic link, a special file, too big) is the run's failure, not the infrastructure's.
         return await complete({ outcome: "failed", error_kind: status === 400 || status === 413 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
+      }
+      // mold_v0-183: a kind that always writes when it works (write_back_required) and changed nothing did not work,
+      // whatever its exit code said: Maxwell's seed-company stopped to ask a question and refresh-apps was refused its
+      // writes, and both "succeeded". Failed, saying so; the program's own account is in the run's events.
+      if (agent?.write_back_required && staged?.unchanged) {
+        pending.push({ type: "workspace_unchanged", data: { write_back: agent.write_back, required: true } });
+        return await complete({ outcome: "failed", error_kind: "run",
+          error: `the run changed nothing in its workspace (${agent.write_back.join(", ")}), and this kind always does when it works: `
+            + "nothing was written; what the program said is in the run's events" });
       }
     }
     return await complete({ outcome: "succeeded", results });
