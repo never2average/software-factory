@@ -76,6 +76,20 @@ export interface RunnerClient {
   credentials(runId: string, lease: string): Promise<RunCredentials>;
 }
 
+/**
+ * Keep a claimed run's lease, and with it its workspace store's (src/runs.ts heartbeatRun), from the claim until the
+ * harness's own heartbeat takes over (mold_v0-179). A sandbox's runner sets the run's user and its lockdown up between
+ * the two, which took longer than a 120 s lease on boat: the store's lease lapsed and the checkout was refused ("this
+ * run does not hold its workspace's lease"). Heartbeats every lease_seconds / 3; `onLost` once the engine answers 409.
+ */
+export function keepLease(client: RunnerClient, runId: string, lease: string, leaseSeconds: number, onLost: () => void = () => {}): { stop: () => void } {
+  let lost = false;
+  const t = setInterval(() => {
+    client.heartbeat(runId, lease).catch((e) => { if ((e as { status?: number }).status === 409 && !lost) { lost = true; onLost(); } });
+  }, Math.max(1000, (leaseSeconds * 1000) / 3));
+  return { stop: () => clearInterval(t) };
+}
+
 /** The engine in this process (a runner on the server itself, and the offline tests). */
 export async function localRunnerClient(workerId: string): Promise<RunnerClient> {
   const runs = await import("./runs.js");

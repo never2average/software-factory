@@ -16,7 +16,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BOAT } from "../core/config.js";
-import { boatApi, boatCreate, boatExec, BoatError } from "../core/boat.js";
+import { boatApi, boatCreate, boatExec, BoatError, BoatNetworkError } from "../core/boat.js";
 import { sleep } from "../core/util.js";
 import { boatNamespace, boatNamespaces } from "../core/boat-namespace.js";
 
@@ -123,7 +123,7 @@ export async function listSandboxes(): Promise<Sb[]> {
   const all: Sb[] = [];
   let cursor: string | null = null;
   for (let i = 0; i < 50; i++) {
-    const r = await boatApi(`/sandboxes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const r = await boatApi(`/sandboxes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { timeoutMs: 30_000 });
     all.push(...(r?.sandboxes ?? []));
     cursor = r?.pageInfo?.nextCursor ?? null;
     if (!cursor) break;
@@ -143,16 +143,20 @@ export const isWorkerOf = (name: string | undefined, orchId: string) => !!name &
 
 export async function waitReady(id: string, timeoutMs = 300_000) {
   for (const t0 = Date.now(); Date.now() - t0 < timeoutMs; await sleep(2000)) {
-    const st = (await boatApi(`/sandboxes/${id}`)).sandbox.state;
+    const st = (await boatApi(`/sandboxes/${id}`, { timeoutMs: 20_000 })).sandbox.state;
     if (["ready", "idle", "running"].includes(st)) return;
     if (["error", "cancelled"].includes(st)) throw new Error(`sandbox ${id} is ${st}`);
   }
   throw new Error(`sandbox ${id} not ready after ${timeoutMs / 1000}s`);
 }
 
-/** A boat failure worth another try: gateway errors (502/503/504, e.g. "sandbox_direct_failed: Socket is closed"), rate limits, dropped connections. */
-const transient = (e: unknown) => e instanceof BoatError ? [429, 502, 503, 504].includes(e.status)
-  : e instanceof Error && /fetch failed|socket|ECONNRESET|ETIMEDOUT|UND_ERR|aborted|timeout/i.test(`${e.message} ${(e as { cause?: Error }).cause?.message ?? ""}`);
+/**
+ * A boat failure worth another try: gateway errors (502/503/504, e.g. "sandbox_direct_failed: Socket is closed") and rate
+ * limits. A dropped connection or a request with no answer (BoatNetworkError) was already tried again by boatApi itself
+ * (core/boat.ts): trying it here too would multiply the waits (mold_v0-179: 5 x 3 tries of 60 s outlived a function).
+ */
+const transient = (e: unknown) => e instanceof BoatError && [429, 502, 503, 504].includes(e.status);
+export const isBoatNetworkError = (e: unknown): e is BoatNetworkError => e instanceof BoatNetworkError;
 
 /** Writes a file. Writing the same content to the same path twice is harmless, so transient failures retry: 5 tries, 1, 2, 4, 8 s apart. */
 export async function put(id: string, p: string, content: string, encoding: "utf8" | "base64" = "utf8") {
@@ -165,8 +169,9 @@ export async function put(id: string, p: string, content: string, encoding: "utf
   }
 }
 
-export async function run(id: string, cmd: string, timeout = 300): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const r = await boatExec(id, cmd, timeout);
+/** A command in the sandbox (at most 600 s, boat's limit). `repeatable`: it may run twice, so a dropped connection is tried again. */
+export async function run(id: string, cmd: string, timeout = 300, opts: { repeatable?: boolean } = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const r = await boatExec(id, cmd, timeout, opts);
   return { code: r.exitCode, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -275,16 +280,26 @@ function tarHeader(name: string, size: number, mode: number): Buffer {
   return h;
 }
 
-export async function uploadCode(id: string, root = REPO_ROOT, files?: string[]): Promise<number> {
+/**
+ * The code's tarball, sent as parts (`${HOME}/code.tgz.partNNN`) and not unpacked: uploadCode unpacks and installs at
+ * once; a run sandbox's set-up script does it in the sandbox, after the call that launched it has returned (mold_v0-179).
+ * Returns the tarball's size in bytes and how many parts it was sent as.
+ */
+export async function uploadParts(id: string, root = REPO_ROOT, files?: string[]): Promise<{ bytes: number; parts: number }> {
   const tgz = tarball(root, files);
-  await run(id, `install -d -m 700 ${HOME} && rm -rf ${HOME}/code.tgz.part*`, 30);
+  await run(id, `install -d -m 700 ${HOME} && rm -rf ${HOME}/code.tgz.part*`, 30, { repeatable: true });
   const parts = Math.ceil(tgz.length / CHUNK);
   for (let i = 0; i < parts; i++) await put(id, `${HOME}/code.tgz.part${String(i).padStart(3, "0")}`, tgz.subarray(i * CHUNK, (i + 1) * CHUNK).toString("base64"), "base64");
+  return { bytes: tgz.length, parts };
+}
+
+export async function uploadCode(id: string, root = REPO_ROOT, files?: string[]): Promise<number> {
+  const { bytes } = await uploadParts(id, root, files);
   const r = await run(id, `set -e; cd ${HOME}; cat code.tgz.part* > code.tgz; rm -f code.tgz.part*; rm -rf app.new; mkdir app.new; tar -xzf code.tgz -C app.new; rm code.tgz
 cd app.new/orchestrator && npm ci --omit=dev --no-audit --no-fund >/dev/null 2>npm.err || { tail -20 npm.err >&2; exit 1; }
 cd ${HOME}; rm -rf app.old; [ -d app ] && mv app app.old; mv app.new app; rm -rf app.old`, 600);
   if (r.code !== 0) throw new Error(`code deploy failed: ${r.stderr.slice(-800)}`);
-  return tgz.length;
+  return bytes;
 }
 
 // ---------------------------------------------------------------- configure / preflight / service

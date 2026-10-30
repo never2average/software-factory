@@ -41,6 +41,16 @@ export function keepAlive(p: Promise<unknown>): void {
   void import("@vercel/functions").then((m) => m.waitUntil(p.catch(() => {}))).catch(() => {});
 }
 
+/**
+ * On Vercel, when this invocation is cut off (ms since the epoch; @vercel/functions getDeadline), else null: work begun
+ * in it (a run sandbox's launch, mold_v0-179) must be over by then, or it is frozen half done.
+ */
+export async function invocationDeadline(): Promise<number | null> {
+  if (!process.env.VERCEL) return null;
+  try { const d = (await import("@vercel/functions")).getDeadline?.(); return d && Number.isFinite(d.getTime()) ? d.getTime() : null; }
+  catch { return null; }
+}
+
 /** An account-level event when only the org id is at hand (workers, research): looks up the slug. Best effort. */
 export async function orgEvent(orgId: number, event: string, properties: Record<string, unknown> = {}): Promise<void> {
   if (!posthogEnabled()) return;

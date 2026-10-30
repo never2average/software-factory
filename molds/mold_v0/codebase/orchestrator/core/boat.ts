@@ -60,9 +60,11 @@ export async function boatCreate(json: Record<string, unknown>, opts: { maxTries
   for (let i = 0; ; i++) {
     await startGate.acquire();
     try {
-      return await boatApi("/sandboxes", { method: "POST", headers: { "Idempotency-Key": idem }, json, timeoutMs: 120_000 });
+      // The same Idempotency-Key on every try: a lost answer never creates a second sandbox.
+      return await boatApi("/sandboxes", { method: "POST", headers: { "Idempotency-Key": idem }, json, timeoutMs: 120_000, repeatable: true });
     } catch (e) {
-      const retryable = e instanceof BoatError && (e.status === 429 || e.status >= 500 || e.code === "idempotency_in_progress" || e.code === "no_ready_machine");
+      const retryable = (e instanceof BoatError && (e.status === 429 || e.status >= 500 || e.code === "idempotency_in_progress" || e.code === "no_ready_machine"))
+        || e instanceof BoatNetworkError;
       if (!retryable || i >= maxTries - 1) throw e;
       const base = Math.min(5000 * 2 ** i, 120_000);
       const ms = Math.max((e as BoatError).retryAfterMs ?? 0, base) + Math.floor(Math.random() * 1000);
@@ -76,14 +78,57 @@ export async function boatCreate(json: Record<string, unknown>, opts: { maxTries
 let refreshBoatKey: (() => Promise<boolean>) | null = null;
 export function onBoatUnauthorized(fn: () => Promise<boolean>) { refreshBoatKey = fn; }
 
-export async function boatApi(path: string, init: { method?: string; json?: unknown; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal } = {}, retried = false): Promise<any> {
+/**
+ * A request that never got an answer (mold_v0-179): no connection, a reset, a dropped keep-alive socket, DNS, or no
+ * answer in time. Its message names the request and the reason, which undici's bare "fetch failed" keeps in its cause.
+ */
+export class BoatNetworkError extends Error {
+  constructor(public what: string, public reason: string, public timedOut: boolean, options?: { cause?: unknown }) {
+    super(`boat ${what}: ${timedOut ? `no answer (timed out: ${reason})` : `fetch failed (${reason})`}`, options);
+  }
+}
+/** Why a fetch failed, from its cause chain: "UND_ERR_SOCKET: other side closed", "ECONNRESET", "ENOTFOUND api.example". */
+export function fetchFailureReason(e: unknown): string {
+  const parts: string[] = [];
+  for (let c: any = e, i = 0; c && i < 4; c = c.cause, i++) {
+    const bit = [c.code, c.message].filter((x) => typeof x === "string" && x).join(": ");
+    if (bit && !parts.some((p) => p.includes(bit))) parts.push(bit);
+  }
+  // undici's own "fetch failed" says nothing the request's name does not: the causes say why.
+  if (parts.length > 1 && /^fetch failed$/i.test(parts[0]!)) parts.shift();
+  return parts.join(" <- ") || String(e);
+}
+
+/**
+ * Methods whose repeat is harmless: a read, a file written whole, a delete, a rename. On Vercel a function's instance is
+ * frozen between invocations, and a keep-alive socket it pooled is often dead when it thaws ("fetch failed": the first
+ * request on it fails, the pool drops it). These are tried again on a fresh connection; a POST only when the caller says
+ * it is safe (an idempotency key, a command that may run twice).
+ */
+const REPEATABLE = new Set(["GET", "HEAD", "PUT", "DELETE", "PATCH"]);
+export const BOAT_NETWORK_TRIES = 3;
+
+export async function boatApi(path: string, init: { method?: string; json?: unknown; headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal; repeatable?: boolean } = {}, retried = false): Promise<any> {
   const method = init.method ?? "GET";
   const headers = boatHeaders(init.headers);
   let body: string | undefined;
   if (init.json !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(init.json); }
-  const signals = [AbortSignal.timeout(init.timeoutMs ?? 60_000)];
-  if (init.signal) signals.push(init.signal);
-  const res = await fetch(BOAT.apiUrl + path, { method, headers, body, signal: AbortSignal.any(signals) });
+  const timeoutMs = init.timeoutMs ?? 60_000;
+  const repeatable = init.repeatable ?? REPEATABLE.has(method);
+  let res: Response;
+  for (let i = 0; ; i++) {
+    const signals = [AbortSignal.timeout(timeoutMs)];
+    if (init.signal) signals.push(init.signal);
+    try { res = await fetch(BOAT.apiUrl + path, { method, headers, body, signal: AbortSignal.any(signals) }); break; }
+    catch (e) {
+      if (init.signal?.aborted) throw e; // the caller's own abort: never retried, never renamed
+      const timedOut = (e as Error)?.name === "TimeoutError";
+      const err = new BoatNetworkError(`${method} ${path.split("?")[0]}`, timedOut ? `${Math.round(timeoutMs / 1000)} s` : fetchFailureReason(e), timedOut, { cause: e });
+      // A request that timed out may still be carried out: tried again only when a repeat is harmless.
+      if (!repeatable || i >= BOAT_NETWORK_TRIES - 1) throw err;
+      await sleep(500 * 3 ** i);
+    }
+  }
   if (res.status === 401 && !retried && refreshBoatKey && await refreshBoatKey().catch(() => false)) return boatApi(path, init, true);
   if (!res.ok) throw await boatErrorFrom(res, `${method} ${path}`);
   const text = await res.text();
@@ -104,10 +149,11 @@ export async function boatCommandRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Synchronous command (<= 600s: boat refuses a longer timeoutSeconds with 400 invalid_timeout). Boat may truncate long output. */
-export async function boatExec(id: string, command: string, timeoutSeconds = 120): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+export async function boatExec(id: string, command: string, timeoutSeconds = 120, opts: { repeatable?: boolean } = {}): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   timeoutSeconds = Math.max(1, Math.min(600, Math.round(timeoutSeconds)));
+  // `repeatable`: the command may run twice (a read, an idempotent set-up step): a dropped connection is tried again.
   const r = await boatCommandRetry(() => boatApi(`${boatSandboxPath(id)}/commands`, {
-    method: "POST", json: { command, timeoutSeconds }, timeoutMs: (timeoutSeconds + 60) * 1000,
+    method: "POST", json: { command, timeoutSeconds }, timeoutMs: (timeoutSeconds + 60) * 1000, repeatable: !!opts.repeatable,
   }));
   return { exitCode: r?.exitCode ?? null, stdout: r?.stdout ?? "", stderr: r?.stderr ?? "" };
 }

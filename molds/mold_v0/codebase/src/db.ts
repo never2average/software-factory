@@ -38,7 +38,11 @@ async function createDb(): Promise<Db> {
     // Return NUMERIC and BIGINT (e.g. count(*)) as JS numbers.
     pg.types.setTypeParser(pg.types.builtins.NUMERIC, Number);
     pg.types.setTypeParser(pg.types.builtins.INT8, Number);
-    const pool = new pg.Pool({ connectionString: url });
+    // On Vercel an instance is frozen between invocations: a pooled connection the database (or its pooler) closed
+    // meanwhile fails the next query on it ("Connection terminated unexpectedly", mold_v0-179). Idle connections are
+    // closed after 5 s there, and attachDatabasePool keeps the instance up until they are, before it is frozen.
+    const pool = new pg.Pool({ connectionString: url, ...(process.env.VERCEL ? { idleTimeoutMillis: 5_000 } : {}) });
+    if (process.env.VERCEL) await import("@vercel/functions").then((m) => m.attachDatabasePool(pool)).catch((e) => console.error("database: attachDatabasePool:", (e as Error).message));
     // An idle pooled connection the server ends (a restart, a dropped database, a pooler recycling) must not crash the
     // process: node-pg emits it on the pool, and an unhandled 'error' event is fatal.
     pool.on("error", (err) => console.error("database: idle connection error:", err.message));

@@ -35,7 +35,7 @@ import { asPlatform } from "./tenant-scope.js";
 import { claimableRuns, claimRun, failUnlaunchedRun, findKind, noteRunsWaiting, queuedRunsByKind, sweepRuns, type Claim, type ClaimableRun } from "./runs.js";
 import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
-import { keepAlive } from "./telemetry.js";
+import { invocationDeadline, keepAlive } from "./telemetry.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
@@ -58,6 +58,8 @@ export const RUN_SANDBOXES = {
   bootMinutes: () => Math.max(1, num(env.APP_RUN_BOOT_MINUTES, 10)),
   launchAttempts: () => Math.max(1, num(env.APP_RUN_LAUNCH_ATTEMPTS, 3)),
   backoffSeconds: () => Math.max(0, num(env.APP_RUN_LAUNCH_BACKOFF_SECONDS, 30)),
+  /** How old a launched sandbox is before a tick asks where its set-up stands (mold_v0-179). */
+  setupCheckSeconds: () => Math.max(0, num(env.APP_RUN_SETUP_CHECK_SECONDS, 20)),
   unsandboxedAllowed: () => env.APP_ALLOW_UNSANDBOXED_RUNS === "yes",
 };
 /**
@@ -70,6 +72,86 @@ export const boatForRuns = (mode: string, hasKinds: boolean) => mode === "boat" 
 export const sandboxWorkerId = (rowId: number) => `sbx-${rowId}`;
 /** What a boat run sandbox gets besides the runner's code (mold_v0-072): the run tools' installer and the build's list. */
 export const RUN_TOOL_INSTALL_FILES = ["scripts/install-run-tools.ts", "src/run-tools.generated.json"];
+/** A launch needs at least this much of its function call left to start (on Vercel; mold_v0-179). */
+export const LAUNCH_MIN_MS = 90_000;
+
+/**
+ * A boat run sandbox's set-up (mold_v0-179): its files in the sandbox's working directory, and its systemd unit. The
+ * launch only uploads the code and starts this script, detached; unpacking, `npm ci`, the run user, packages, the run
+ * tools and the runner's start happen in the sandbox after the launching call has returned, so no function call waits
+ * on them (on Vercel one did, past its 300 s, and was frozen mid-upload). The script writes its state to `status`
+ * ("running <step>", then "started runner" or "failed <step>") and its errors to `log`; the next tick reads both.
+ */
+export const RUN_SETUP = { script: "run-setup.sh", status: "run-setup.status", log: "run-setup.err", unit: "app-run-setup" } as const;
+/** The runner's PATH in the sandbox: the system's own directories, sbin too (useradd, nft: mold_v0-174). */
+const SANDBOX_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/** The set-up script for a run sandbox whose working directory is `home` (orchestrator/deploy/boat-lib.ts HOME). */
+export function runSetupScript(home: string): string {
+  if (!/^\/[A-Za-z0-9._\/-]+$/.test(home)) throw new Error(`not a plain absolute directory: ${home}`);
+  const S = `${home}/${RUN_SETUP.status}`, apt = "sudo -n env DEBIAN_FRONTEND=noninteractive timeout 600 apt-get";
+  return `#!/bin/bash
+# A run sandbox's set-up (mold_v0-179; written by src/run-sandboxes.ts boatProvider, started detached by its launch).
+set -u
+H=${home}
+cd "$H" || exit 1
+exec </dev/null 2>>"$H/${RUN_SETUP.log}"
+step=""
+at() { step="$1"; printf 'running %s\\n' "$1" > "${S}.new" && mv -f "${S}.new" "${S}"; echo "--- $1 ($(date -u +%H:%M:%S))" >&2; }
+fail() { echo "$1" >&2; printf 'failed %s\\n' "$step" > "${S}.new" && mv -f "${S}.new" "${S}"; exit 1; }
+
+at unpack
+{ cat code.tgz.part* > code.tgz && rm -f code.tgz.part* && rm -rf app.new && mkdir app.new && tar -xzf code.tgz -C app.new && rm -f code.tgz; } || fail "the code did not unpack"
+
+at npm
+# The orchestrator's tsx, which runs the runner (nothing else is installed).
+( cd app.new/orchestrator && timeout 600 npm ci --omit=dev --no-audit --no-fund >/dev/null 2>"$H/npm.err" ) || { tail -20 "$H/npm.err" >&2; fail "npm ci failed"; }
+{ rm -rf app.old; if [ -d app ]; then mv app app.old; fi; mv app.new app && rm -rf app.old; } || fail "the code could not be put in place"
+
+at configure
+{ sudo -n install -d -m 700 -o root -g root /etc/${NS} && sudo -n install -m 600 -o root -g root runner.env.new /etc/${NS}/runner.env && rm -f runner.env.new; } || fail "the runner's environment file could not be installed"
+# The run's user: no sudo, no login. The egress proxy's user is made by the runner's lockdown.
+id ${RUN_USER} >/dev/null 2>&1 || sudo -n useradd -r -M -s /usr/sbin/nologin ${RUN_USER} || fail "the run user could not be made"
+# The provider's node is a link into the default user's home (0750): the run's user could not execute it. A real,
+# world-executable copy, as the orchestrators' worker sandboxes make (orchestrator/core/runners.ts).
+real="$(readlink -f /usr/local/bin/node 2>/dev/null || true)"
+case "$real" in /home/*|/root/*) { sudo -n cp --remove-destination "$real" /usr/local/bin/node && sudo -n chmod 0755 /usr/local/bin/node; } || fail "node could not be copied for the run user" ;; esac
+
+at packages
+# What agent-workspace runs need (git) and the firewall the lockdown sets (nft or iptables), and setfacl (the runner's
+# lockdown denies the local resolver's and the system bus's sockets to the run's user with it): installed when missing.
+command -v setfacl >/dev/null 2>&1 || ${apt} install -y -qq acl >/dev/null 2>&1 || true
+command -v git >/dev/null 2>&1 || { ${apt} update -qq && ${apt} install -y -qq git; } >/dev/null 2>&1 || true
+command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || ${apt} install -y -qq nftables >/dev/null 2>&1 || true
+command -v git >/dev/null 2>&1 || fail "git is missing in the run sandbox"
+command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || fail "neither nft nor iptables in the run sandbox"
+
+at tools
+# The run tools the packs' agent kinds declare (mold_v0-072), as the runner image has them: each artifact checked against
+# its pinned sha256 before it is unpacked (root's, /opt/app-tools). Before the runner starts: a run never downloads one.
+cd "$H/app" || fail "no code directory"
+if grep -q '"aws"' src/run-tools.generated.json; then command -v unzip >/dev/null 2>&1 || ${apt} install -y -qq unzip >/dev/null 2>&1 || true; fi
+sudo -n env PATH=/usr/local/bin:/usr/bin:/bin $H/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>"$H/tools.err" || { tail -5 "$H/tools.err" >&2; fail "the run tools could not be installed"; }
+
+at start
+# As root (the runner switches to the run's user for the run itself), as a unit of its own.
+sudo -n systemd-run --quiet --unit=app-runner --property=EnvironmentFile=/etc/${NS}/runner.env --property=WorkingDirectory=$H/app \\
+  --property=Environment=PATH=${SANDBOX_PATH} $H/app/orchestrator/node_modules/.bin/tsx src/run-sandbox-runner.ts || fail "the runner did not start"
+printf 'started runner\\n' > "${S}.new" && mv -f "${S}.new" "${S}"
+`;
+}
+
+/** What a sandbox's set-up says (the status line and the log's tail, as boatProvider.bootStatus reads them). */
+export interface BootStatus { state: "none" | "running" | "failed" | "started" | "unknown"; step: string; detail: string }
+export function parseBootStatus(out: string): BootStatus {
+  const [head = "", ...rest] = out.split("\n---\n");
+  const line = head.trim().split("\n").pop() ?? "";
+  const m = /^(running|failed|started)\s+(\S+)/.exec(line);
+  // The log's last lines, without the step markers: what went wrong, in the sandbox's own words.
+  const detail = rest.join("\n---\n").split("\n").filter((l) => l.trim() && !l.startsWith("--- ")).slice(-6).join(" | ").slice(-600);
+  if (!m) return { state: line === "none" ? "none" : "unknown", step: "", detail };
+  return { state: m[1] as BootStatus["state"], step: m[2]!, detail };
+}
 
 // ---------- providers ----------
 
@@ -82,6 +164,8 @@ export interface RunSandboxSpec {
   /** Pack directories (relative to the code) the sandbox needs. */
   packDirs: string[];
   log: (m: string) => void;
+  /** When the call launching it is cut off (ms since the epoch; Vercel), else null: the launch is over by then. */
+  deadlineAt?: number | null;
 }
 export interface ListedSandbox { id: string; name: string; live: boolean; state: string }
 export interface RunSandboxProvider {
@@ -95,6 +179,8 @@ export interface RunSandboxProvider {
   /** This deployment's run sandboxes (by name prefix or label), live or not. */
   list(): Promise<ListedSandbox[]>;
   remove(id: string): Promise<void>;
+  /** Where a launched sandbox's set-up stands (a provider whose set-up goes on after its launch returned: boat). */
+  bootStatus?(id: string): Promise<BootStatus>;
 }
 
 /** What a launch step threw, with the step (the Compute page's launch failures). */
@@ -116,55 +202,52 @@ export function boatProvider(apiUrl: string): RunSandboxProvider {
       const { boatCreate, boatApi } = await import("../orchestrator/core/boat.js");
       let step = "create";
       let id = "";
+      // On Vercel the call this runs in is cut off at its deadline: each step starts only with time left for it, so the
+      // launch ends (and cleans up) inside the call rather than being frozen half done (mold_v0-179).
+      const left = () => (spec.deadlineAt ? spec.deadlineAt - Date.now() : Infinity);
+      const need = (s: string, ms: number) => {
+        step = s;
+        if (left() < ms) throw new Error(`the call launching it had ${Math.max(0, Math.round(left() / 1000))} s left, too little to ${s}: tried again from a later one`);
+      };
       try {
+        need("create", 45_000);
         const size = env.BOAT_RUN_SANDBOX_SIZE || "small";
-        const c = await boatCreate({ type: size, ttlSeconds: Math.min(spec.ttlSeconds, lib.MAX_TTL_SECONDS), noEnv: true, snapshots: false });
+        const c = await boatCreate({ type: size, ttlSeconds: Math.min(spec.ttlSeconds, lib.MAX_TTL_SECONDS), noEnv: true, snapshots: false }, spec.deadlineAt ? { maxTries: 3 } : {});
         id = c.sandbox.id;
         step = "name";
         await onCreated(id);
         await boatApi(`/sandboxes/${id}`, { method: "PATCH", json: { name: spec.name } });
-        step = "ready";
-        await lib.waitReady(id);
-        step = "code upload";
-        // The runner's code, and the run tools' installer with the build's list (mold_v0-072): the sandbox is set up with them below.
-        await lib.uploadCode(id, ROOT, [...lib.runnerCodeFiles(ROOT, spec.packDirs), ...RUN_TOOL_INSTALL_FILES]);
+        need("ready", 30_000);
+        await lib.waitReady(id, Math.min(300_000, left() - 25_000));
+        need("code upload", 20_000);
+        // The runner's code, and the run tools' installer with the build's list (mold_v0-072). Only sent here: the set-up
+        // script below unpacks and installs it in the sandbox.
+        const files = [...lib.runnerCodeFiles(ROOT, spec.packDirs), ...RUN_TOOL_INSTALL_FILES];
+        const up = await lib.uploadParts(id, ROOT, files);
+        spec.log(`run sandbox ${spec.name}: ${files.length} files, ${up.bytes} bytes (${up.parts} part${up.parts === 1 ? "" : "s"})`);
         step = "configure";
         const envBody = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
         if (/[\r]/.test(envBody) || Object.values(spec.env).some((v) => v.includes("\n"))) throw new Error("an environment value spans lines");
         await lib.put(id, `${lib.HOME}/runner.env.new`, envBody);
-        const conf = await lib.run(id, `set -e; cd ${lib.HOME}
-sudo -n install -d -m 700 -o root -g root /etc/${NS}
-sudo -n install -m 600 -o root -g root runner.env.new /etc/${NS}/runner.env; rm -f runner.env.new
-# The run's user: no sudo, no login. The egress proxy's user is made by the runner's lockdown.
-id ${RUN_USER} >/dev/null 2>&1 || sudo -n useradd -r -M -s /usr/sbin/nologin ${RUN_USER}
-# The provider's node is a link into the default user's home (0750): the run's user could not execute it. A real,
-# world-executable copy, as the orchestrators' worker sandboxes make (orchestrator/core/runners.ts).
-real="$(readlink -f /usr/local/bin/node 2>/dev/null || true)"
-case "$real" in /home/*|/root/*) sudo -n cp --remove-destination "$real" /usr/local/bin/node && sudo -n chmod 0755 /usr/local/bin/node ;; esac
-# What agent-workspace runs need (git) and the firewall the lockdown sets (nft or iptables), and setfacl for the step below: installed when missing.
-command -v setfacl >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq acl >/dev/null 2>&1 || true
-# The local resolver's and the system bus's sockets are denied to the run's user by the runner's lockdown, once it has
-# leased the run's uid (mold_v0-078; src/run-sandbox-runner.ts), with the setfacl installed above.
-command -v git >/dev/null 2>&1 || { sudo -n apt-get update -qq && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; } >/dev/null 2>&1 || true
-command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables >/dev/null 2>&1 || true
-command -v git >/dev/null 2>&1 || { echo "git is missing in the run sandbox" >&2; exit 30; }
-command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || { echo "neither nft nor iptables in the run sandbox" >&2; exit 31; }
-# The run tools the packs' agent kinds declare (mold_v0-072), as the runner image has them: each artifact checked against
-# its pinned sha256 before it is unpacked (root's, /opt/app-tools). Before the runner starts: a run never downloads one.
-cd ${lib.HOME}/app
-grep -q '"aws"' src/run-tools.generated.json && { command -v unzip >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null 2>&1 || true; }
-sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 600);
-        if (conf.code !== 0) throw new Error(`configure failed: ${conf.stderr.slice(-500)}`);
-        step = "start";
-        // As root (the runner switches to the run's user for the run itself), as a unit that outlives this command.
-        const st = await lib.run(id, `sudo -n systemd-run --quiet --unit=app-runner --property=EnvironmentFile=/etc/${NS}/runner.env --property=WorkingDirectory=${lib.HOME}/app \
---property=Environment=PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx src/run-sandbox-runner.ts`, 60);
-        if (st.code !== 0) throw new Error(`the runner did not start: ${st.stderr.slice(-300)}`);
+        await lib.put(id, `${lib.HOME}/${RUN_SETUP.script}`, runSetupScript(lib.HOME));
+        need("start", 10_000);
+        // Detached, as a unit of its own (as root, as the runner it starts; its sudo calls are then no-ops), with this
+        // command's PATH (where the provider's node and npm are): the command returns at once, the set-up goes on.
+        const st = await lib.run(id, `set -e; cd ${lib.HOME}; rm -f ${RUN_SETUP.status} ${RUN_SETUP.log}; chmod 700 ${RUN_SETUP.script}
+sudo -n systemd-run --quiet --collect --unit=${RUN_SETUP.unit} --setenv=HOME=/root --setenv=PATH="$PATH" \\
+  --property=WorkingDirectory=${lib.HOME} /bin/bash ${lib.HOME}/${RUN_SETUP.script}`, 60);
+        if (st.code !== 0) throw new Error(`the set-up did not start: ${(st.stderr || st.stdout).slice(-300)}`);
         return { sandboxId: id };
       } catch (e) {
-        if (id) await lib.deleteSandbox(id).catch(() => {});
+        // Deleted before the call ends; one that cannot be deleted now is an orphan the next tick deletes (named ours).
+        if (id) await lib.deleteSandbox(id).catch((d) => spec.log(`run sandbox ${id} could not be deleted after its failed launch: ${(d as Error).message}`));
         throw stepError(step, e);
       }
+    },
+    async bootStatus(id) {
+      const lib = await libP;
+      const r = await lib.run(id, `cat ${lib.HOME}/${RUN_SETUP.status} 2>/dev/null || echo none; echo ---; tail -c 2000 ${lib.HOME}/${RUN_SETUP.log} 2>/dev/null || true`, 30, { repeatable: true });
+      return parseBootStatus(r.stdout);
     },
     async list() {
       const lib = await libP;
@@ -432,13 +515,14 @@ export class RunScaler {
       st.reaped = []; st.launched = []; st.failed = [];
       /** `failedStart`: the sandbox never started its attempt (died, never claimed, or claimed nothing): it counts toward
        *  the run's failed starts, as a launch error does, so the back-off and the give-up apply (no relaunch forever). */
-      const reap = async (row: Row, reason: string, failedStart = false) => {
+      const reap = async (row: Row, reason: string, failedStart = false, step = "boot") => {
         // Deleted whenever it has an id, listed or not (an unnamed sandbox of a launch cut short is not listed); a
         // delete of one already gone is harmless.
         if (row.sandbox_id && row.provider === p.name) await p.remove(row.sandbox_id).catch((e) => this.log(`remove ${row.sandbox_id}: ${(e as Error).message}`));
         await db.query(`UPDATE run_sandboxes SET state = 'deleted', deleted_at = now(), reap_reason = coalesce(reap_reason, $2),
-                          launch_step = CASE WHEN $3 THEN coalesce(launch_step, 'boot') ELSE launch_step END,
-                          launch_error = CASE WHEN $3 THEN coalesce(launch_error, $2) ELSE launch_error END WHERE id = $1`, [row.id, reason, failedStart]);
+                          launch_step = CASE WHEN $3 THEN coalesce(launch_step, $4) ELSE launch_step END,
+                          launch_error = CASE WHEN $3 THEN coalesce(launch_error, $2) ELSE launch_error END WHERE id = $1`, [row.id, reason.slice(0, 500), failedStart, step]);
+        if (failedStart) await this.noteWaiting(row.run_id, `its sandbox did not start (${step}: ${reason})`);
         await revokeRunSandboxTokens(row.id);
         await recordComputeEvent({ kind: "reaped", sandbox_id: row.sandbox_id, job_id: row.run_id, reason: `run sandbox: ${reason}` });
         st.reaped!.push({ row: row.id, run: row.run_id, reason });
@@ -470,7 +554,20 @@ export class RunScaler {
         // queued
         // Claimed, but the run never reached the attempt this sandbox was for: the claim itself failed (a failed start).
         if (row.claimed_at) { await reap(row, run.attempt < row.attempt ? "its claim did not start the run" : "its attempt ended and the run was queued again", run.attempt < row.attempt); continue; }
-        if (age > RUN_SANDBOXES.bootMinutes() * min) await reap(row, `no claim within ${RUN_SANDBOXES.bootMinutes()} minutes`, true);
+        // mold_v0-179: the sandbox's set-up goes on after its launch returned. A failed one is reaped at once, with its
+        // step and the sandbox's own error (a failed start: back-off, then the run fails with it); one still going is
+        // said on the run, so a queued run says what it waits for.
+        let boot: BootStatus | null = null;
+        if (row.state === "running" && p.bootStatus && age >= RUN_SANDBOXES.setupCheckSeconds() * 1000) {
+          boot = await p.bootStatus(row.sandbox_id).catch((e) => ({ state: "unknown" as const, step: "", detail: (e as Error).message }));
+          if (boot.state === "failed") { await reap(row, `its set-up failed at ${boot.step}${boot.detail ? `: ${boot.detail}` : ""}`, true, `setup ${boot.step}`); continue; }
+        }
+        if (age > RUN_SANDBOXES.bootMinutes() * min) {
+          const where = boot?.state === "running" ? ` (its set-up was at ${boot.step})` : boot?.state === "started" ? " (its runner started and did not claim)" : boot?.state === "none" ? " (its set-up never ran)" : "";
+          await reap(row, `no claim within ${RUN_SANDBOXES.bootMinutes()} minutes${where}`, true, boot?.state === "running" ? `setup ${boot.step}` : "boot");
+        } else if (boot && boot.state !== "unknown") {
+          await this.noteWaiting(row.run_id, boot.state === "started" ? "its sandbox is up; its runner is starting" : `its sandbox is being set up (${boot.state === "running" ? boot.step : "starting"})`);
+        }
       }
       // Orphans: this deployment's run sandboxes with no live row (a launch cut short by a restart, a row reaped while
       // the provider was not answering).
@@ -490,10 +587,14 @@ export class RunScaler {
       // On-premises runners' sandboxes (mold_v0-036, provider "onprem") are on customers' machines: not counted here.
       const live = await db.query<{ run_id: string }>("SELECT run_id FROM run_sandboxes WHERE state <> 'deleted' AND provider <> 'onprem'");
       const served = new Set(live.map((r) => r.run_id));
-      const free = await p.free().catch(() => 0);
+      let freeError = "";
+      const free = await p.free().catch((e) => { freeError = (e as Error).message; return 0; });
       const cap = Math.max(0, Math.min(RUN_SANDBOXES.maxSandboxes(), live.length + (free ?? Infinity)));
       st.live = live.length; st.cap = cap;
       const notes: string[] = [];
+      if (freeError) notes.push(`the provider's limits could not be read (${freeError.slice(0, 200)}): nothing launched`);
+      // On Vercel this tick's call is cut off at its deadline: a launch starts only with time left to finish in it.
+      const deadline = await invocationDeadline();
       let n = live.length;
       for (const run of claimable) {
         if (served.has(run.id)) continue;
@@ -509,7 +610,8 @@ export class RunScaler {
         if (fails && f?.last && now - new Date(f.last).getTime() < RUN_SANDBOXES.backoffSeconds() * 1000 * 2 ** (fails - 1)) { notes.push(`${run.id} waits before another start`); continue; }
         if (st.launched.length >= RUN_SANDBOXES.launchesPerTick()) { notes.push(`at ${RUN_SANDBOXES.launchesPerTick()} launches a tick`); break; }
         if (n >= cap) { notes.push(`at ${cap} run sandboxes (APP_MAX_RUN_SANDBOXES ${RUN_SANDBOXES.maxSandboxes()}${free === null ? "" : `, ${free} free on the plan`})`); break; }
-        const launched = await this.launch(p, run);
+        if (deadline !== null && deadline - Date.now() < LAUNCH_MIN_MS) { notes.push(`this call has ${Math.max(0, Math.round((deadline - Date.now()) / 1000))} s left, too little for a launch: the next tick launches`); break; }
+        const launched = await this.launch(p, run, deadline);
         if (launched) st.launched.push({ row: launched, run: run.id });
         n++;
       }
@@ -521,8 +623,13 @@ export class RunScaler {
     return st;
   }
 
+  /** Say on a queued run why it waits (a `waiting` event, once per reason). Never fails the tick. */
+  private async noteWaiting(runId: string, reason: string) {
+    await noteRunsWaiting(reason.slice(0, 500), 1, [runId]).catch((e) => this.log(`note on ${runId}: ${(e as Error).message}`));
+  }
+
   /** Insert the row (it counts at once), then create and start the sandbox in the background. Returns the row's id. */
-  private async launch(p: RunSandboxProvider, run: ClaimableRun): Promise<number> {
+  private async launch(p: RunSandboxProvider, run: ClaimableRun, deadline: number | null = null): Promise<number> {
     const db = await getDb();
     // One live sandbox per run (a unique index): a second leader's insert for the same run does nothing.
     const [row] = await db.query<{ id: number }>("INSERT INTO run_sandboxes (run_id, attempt, provider) VALUES ($1, $2, $3) ON CONFLICT (run_id) WHERE state <> 'deleted' DO NOTHING RETURNING id", [run.id, run.attempt + 1, p.name]);
@@ -543,12 +650,15 @@ export class RunScaler {
       env: { APP_URL: p.apiUrl(), APP_WORKER_TOKEN: token, APP_RUN_ID: run.id, APP_RUN_UIDS: runUids(),
              APP_RUN_PACK_DIR: packRel, APP_RUN_LOCKDOWN: "on" },
       ttlSeconds: life + 1800, packDirs: packRel ? [packRel] : [], log: (m) => this.log(m),
+      // A margin before the call's own deadline: the failure path (a delete, the row) must fit in it too.
+      deadlineAt: deadline === null ? null : deadline - 15_000,
     };
     let created = "";
     const job = p.launch(spec, async (sandboxId) => { created = sandboxId; this.inflightIds.add(sandboxId); await db.query("UPDATE run_sandboxes SET sandbox_id = $2 WHERE id = $1", [id, sandboxId]); })
       .then(async () => {
         await db.query("UPDATE run_sandboxes SET state = 'running', ready_at = now() WHERE id = $1 AND state = 'booting'", [id]);
         this.log(`launched run sandbox ${id} for ${run.id}`);
+        await this.noteWaiting(run.id, "its sandbox is being set up");
       })
       .catch(async (e) => {
         const step = String((e as { launchStep?: string }).launchStep ?? "unknown"), err = String((e as { launchError?: string }).launchError ?? (e as Error).message);
@@ -557,6 +667,7 @@ export class RunScaler {
         await revokeRunSandboxTokens(id);
         await recordComputeEvent({ kind: "launch_failed", sandbox_id: r?.sandbox_id, job_id: run.id, step, reason: `run sandbox: ${err}` });
         this.log(`run sandbox ${id} for ${run.id} failed at ${step}: ${err}`);
+        await this.noteWaiting(run.id, `its sandbox did not start (${step}: ${err})`);
       })
       .finally(() => { this.inflight.delete(id); this.inflightIds.delete(created); });
     this.inflight.set(id, job);
