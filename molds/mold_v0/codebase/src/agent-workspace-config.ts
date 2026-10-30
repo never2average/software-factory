@@ -55,7 +55,8 @@
  *                reads a file on tmpfs (never an argument, a variable or a URL); a `checkout` step is the runner's own:
  *                repositories named by the checkout's manifest files fetched at their pinned commits into a cache
  *                outside the workspace store (per workspace, per repository and commit, size-capped, cleaned) and
- *                linked read-only into the checkout for the later steps; the links are never written back
+ *                linked read-only into the checkout for the later steps (or copied there read-only: mount_as
+ *                "directory", mold_v0-183); the links and copies are never written back
  *   credentials  (mold_v0-074) the kind's credentials `command` receives (default: all of them); `git_credentials`
  *                as for a step
  */
@@ -195,6 +196,12 @@ export const CheckoutStepSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,3}$/).default("name"),
   /** Where each repository appears in the checkout, read-only: a path with {name} and {argument} placeholders. */
   mount: z.string().min(1).max(300),
+  /**
+   * How it appears there (mold_v0-183): "link" (default), a link to the cache's tree; "directory", a read-only copy of
+   * it, for programs whose file search does not follow links (Claude Code's Glob and Grep run ripgrep without --follow:
+   * a linked checkout looks empty to them). Either is gone before the write-back is collected.
+   */
+  mount_as: z.enum(["link", "directory"]).default("link"),
   /** The hosts a manifest's repository may be on, exactly (no subdomain; each must also be in the kind's egress). */
   hosts: z.array(gitHost).min(1).max(10),
   /**

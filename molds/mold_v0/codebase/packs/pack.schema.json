@@ -1877,6 +1877,14 @@
                               "minLength": 1,
                               "maxLength": 300
                             },
+                            "mount_as": {
+                              "default": "link",
+                              "type": "string",
+                              "enum": [
+                                "link",
+                                "directory"
+                              ]
+                            },
                             "hosts": {
                               "minItems": 1,
                               "maxItems": 10,
