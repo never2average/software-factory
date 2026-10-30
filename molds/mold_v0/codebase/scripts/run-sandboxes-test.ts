@@ -443,6 +443,20 @@ try {
 
   // ---------- 5b. mold_v0-179: launches that fit their call, set-up failures said, dropped connections tried again ----------
   {
+    // mold_v0-179b: a program that exits 0 while a process it started keeps its stdout open (the egress proxy's launcher)
+    // is done at its exit, with its output and its status, not killed at the time limit as "exit null".
+    const { runAsync } = await import("../src/run-sandbox-runner.js");
+    const held = Date.now();
+    const ra = await runAsync("bash", ["-c", "sleep 30 & echo 'egress: locked down'; exit 0"], { timeoutMs: 10_000 });
+    assert.deepEqual([ra.status, ra.stdout.trim()], [0, "egress: locked down"], JSON.stringify(ra));
+    assert.ok(Date.now() - held < 5_000, `done at its exit, not its pipes' (${Date.now() - held} ms)`);
+    assert.equal((await runAsync("bash", ["-c", "echo no >&2; exit 3"], { timeoutMs: 10_000 })).status, 3);
+    assert.equal((await runAsync("sleep", ["5"], { timeoutMs: 500 })).status, null, "past its time limit: killed, no status");
+    // And the lockdown's proxy launcher (no systemd: a run sandbox's runner) holds none of the script's stdio.
+    const { setupScript } = await import("../orchestrator/core/egress.js");
+    const launch = setupScript("/tmp/x", { user: "apprun", uid: 64000, sudo: false, systemd: false, strict: true }).split("\n").find((l) => l.includes("setsid sh -c"))!;
+    assert.match(launch, /<\/dev\/null >\/dev\/null 2>>\/var\/log\/app-egress\.err &$/, launch);
+
     // The set-up script itself, run with stand-ins for sudo, npm and apt-get: its steps, its status line and its log.
     assert.deepEqual(sbx.parseBootStatus("running npm\n---\n--- npm (12:00:00)\nslow\n"), { state: "running", step: "npm", detail: "slow" });
     assert.deepEqual(sbx.parseBootStatus("none\n---\n\n"), { state: "none", step: "", detail: "" });

@@ -413,7 +413,9 @@ if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   sudo -n systemd-run --quiet --unit=app-egress-proxy --uid=appproxy --property=Restart=on-failure --property=StandardOutput=null \\
     --property=StandardError=append:/var/log/app-egress.err "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/app-egress.log
 else
-  sudo -n -u appproxy setsid sh -c 'exec nohup "$0" "$@" >/dev/null 2>/var/log/app-egress.err' "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/app-egress.log </dev/null &
+  # The launcher (sudo / runuser, which waits on its child) gets no stdio of this script's: a caller reading this script's
+  # output to its end would otherwise wait as long as the proxy lives (mold_v0-179b: "exit null" after a lockdown that worked).
+  sudo -n -u appproxy setsid sh -c 'exec nohup "$0" "$@" >/dev/null 2>/var/log/app-egress.err' "$NODE" "$D/proxy.mjs" "$D/allow.json" /var/log/app-egress.log </dev/null >/dev/null 2>>/var/log/app-egress.err &
 fi
 up=0; for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/${EGRESS_PROXY_PORT}) 2>/dev/null && { up=1; break; }; sleep 0.25; done
 # All three listeners must be up: the proxy port, the transparent TLS port and the DNS responder.

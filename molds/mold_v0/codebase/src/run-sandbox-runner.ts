@@ -66,8 +66,11 @@ function namedRunUser(): { uid: number; gid: number; name: string } | null {
 /**
  * A program run to its end without blocking this process (mold_v0-179): the run's lease is kept by timers meanwhile, which
  * a spawnSync would hold up for as long as the program runs. Killed at `timeoutMs` (status null, as spawnSync's).
+ * Done when the program EXITS, not when its output pipes close (mold_v0-179b): a process it leaves running (the egress
+ * proxy's launcher) may hold them open for as long as it lives, and waiting on them turned a lockdown that worked into
+ * a timeout ("egress lockdown failed (exit null): egress: locked down ..."). What arrives shortly after the exit is kept.
  */
-function runAsync(cmd: string, args: string[], opts: SpawnOptions & { timeoutMs: number }): Promise<{ status: number | null; stdout: string; stderr: string }> {
+export function runAsync(cmd: string, args: string[], opts: SpawnOptions & { timeoutMs: number }): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const { timeoutMs, ...o } = opts;
     let stdout = "", stderr = "", done = false;
@@ -77,7 +80,11 @@ function runAsync(cmd: string, args: string[], opts: SpawnOptions & { timeoutMs:
     child.stdout!.setEncoding("utf8").on("data", (d: string) => { if (stdout.length < 1e6) stdout += d; });
     child.stderr!.setEncoding("utf8").on("data", (d: string) => { if (stderr.length < 1e6) stderr += d; });
     child.on("error", (e) => { stderr += String(e.message); finish(null); });
-    child.on("close", (code) => finish(code));
+    child.on("exit", (code, signal) => {
+      clearTimeout(t);
+      // Output already written is read (a short grace), then the pipes are let go whoever else holds them.
+      setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); finish(signal ? null : code); }, 200);
+    });
   });
 }
 
