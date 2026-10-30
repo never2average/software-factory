@@ -26,7 +26,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
@@ -42,7 +42,7 @@ const PUBLIC = "https://api.example";
 const BOAT_KEY = `boat_mock_${randomBytes(6).toString("hex")}`;
 Object.assign(process.env, {
   PUBLIC_URL: PUBLIC, APP_AUTOSCALE: "on", APP_ORCH_PER_JOB: "off", APP_RUN_SANDBOX: "auto",
-  APP_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), APP_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
+  APP_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), APP_STORAGE_DIR: path.join(TMP, "objects"), APP_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
 });
 delete process.env.APP_ALLOW_UNSANDBOXED_RUNS;
 
@@ -52,11 +52,13 @@ const kids = new Set<ChildProcess>();
 // Each stand-in's runner leases a run user of its own (mold_v0-078: a uid per run from APP_RUN_UIDS, as a real
 // sandbox's runner does; these stand-ins share this machine, so the leases keep their runs apart).
 /** Start the runner as a sandbox would, from `cwd`'s code, with `env` (as written for the sandbox), and no firewall. */
+/** mold_v0-179: how long the stand-ins' runners take to prepare (a real sandbox's lockdown can outlast a lease). */
+let prepareMs = 0;
 function startRunner(cwd: string, bin: string[], env: Record<string, string>, tag: string): ChildProcess {
   const { APP_RUN_USER: _u, ...rest } = env;
   const child = spawn(bin[0]!, [...bin.slice(1), "src/run-sandbox-runner.ts"], { cwd, detached: true, stdio: ["ignore", "ignore", "pipe"],
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...rest, APP_URL: rest.APP_URL === PUBLIC ? base : rest.APP_URL!,
-           APP_RUN_LOCKDOWN: "off", APP_ALLOW_UNSANDBOXED_RUNS: "yes",
+           APP_RUN_LOCKDOWN: "off", APP_ALLOW_UNSANDBOXED_RUNS: "yes", ...(prepareMs ? { APP_RUN_TEST_PREPARE_MS: String(prepareMs) } : {}),
            ...(asRoot ? {} : { APP_RUN_SAME_USER: "yes" }) } });
   let err = "";
   child.stderr!.on("data", (d) => { err += d; if (process.env.SBX_DEBUG) process.stderr.write(`[${tag}] ${d}`); });
@@ -67,9 +69,13 @@ function startRunner(cwd: string, bin: string[], env: Record<string, string>, ta
 }
 const killTree = (c: ChildProcess | undefined) => { if (c?.pid && c.exitCode === null && c.signalCode === null) { try { process.kill(-c.pid, "SIGKILL"); } catch { /* gone */ } } };
 
-interface Sb { id: string; name: string; state: string; createdAt: string; files: Map<string, string>; dir: string; child?: ChildProcess; create: Record<string, unknown>; commands: string[] }
+interface Sb { id: string; name: string; state: string; createdAt: string; files: Map<string, string>; dir: string; child?: ChildProcess; create: Record<string, unknown>; commands: string[]; setup?: string; setupErr?: string }
 const sbs = new Map<string, Sb>();
 let creates = 0, failCreates = false;
+/** mold_v0-179: the set-up script fails at this step (its status file says so, its log has the error). */
+let failSetupAt = "";
+/** mold_v0-179: drop this many listing requests without an answer (a dead keep-alive socket, as on Vercel after a freeze). */
+let dropListings = 0, dropped = 0;
 const envFiles: Record<string, Record<string, string>> = {};
 const parseEnv = (t: string) => Object.fromEntries(t.split("\n").filter((l) => l.includes("=")).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
 const json = (res: http.ServerResponse, s: number, b: unknown) => { res.writeHead(s, { "content-type": "application/json" }); res.end(JSON.stringify(b)); };
@@ -80,6 +86,7 @@ const boat = http.createServer((req, res) => {
     if (req.headers.authorization !== `Bearer ${BOAT_KEY}`) return json(res, 401, { ok: false, code: "unauthorized" });
     const b = raw ? JSON.parse(raw) : {};
     const u = String(req.url).replace(/^\/api\/v1/, "").split("?")[0]!;
+    if (u === "/sandboxes" && req.method === "GET" && dropListings > 0) { dropListings--; dropped++; return void req.socket.destroy(); }
     if (u === "/limits") return json(res, 200, { ok: true, currentLimits: { activeSandboxes: 100 }, startLimits: { perMinute: 100, perHour: 1000, perDay: 2000 }, activeSandboxes: [...sbs.values()].filter((s) => s.state === "ready").length });
     if (u === "/sandboxes" && req.method === "GET") return json(res, 200, { ok: true, sandboxes: [...sbs.values()].map((s) => ({ id: s.id, name: s.name, state: s.state, createdAt: s.createdAt })), pageInfo: { nextCursor: null } });
     if (u === "/sandboxes" && req.method === "POST") {
@@ -113,6 +120,23 @@ const boat = http.createServer((req, res) => {
         symlinkSync(path.join(ROOT, "orchestrator", "node_modules"), path.join(sb.dir, "app", "orchestrator", "node_modules"));
         return json(res, 200, { ok: true, exitCode: 0, stdout: "", stderr: "" });
       }
+      if (cmd.includes("--unit=app-run-setup")) {
+        // mold_v0-179: the set-up script, started detached: what it does in a sandbox, done here (unpack the parts, the
+        // orchestrator's tsx, the env file, then the runner), and its status file as the script writes it.
+        const parts = [...sb.files.keys()].filter((k) => /code\.tgz\.part\d+$/.test(k)).sort();
+        writeFileSync(path.join(sb.dir, "code.tgz"), Buffer.concat(parts.map((k) => Buffer.from(sb.files.get(k)!, "base64"))));
+        if (failSetupAt) { sb.setup = `failed ${failSetupAt}`; sb.setupErr = `--- ${failSetupAt} (12:00:00)\nnpm ERR! code E404 (test)\nnpm ci failed`; return json(res, 200, { ok: true, exitCode: 0, stdout: "", stderr: "" }); }
+        mkdirSync(path.join(sb.dir, "app"), { recursive: true });
+        const t = spawnSync("tar", ["-xzf", path.join(sb.dir, "code.tgz"), "-C", path.join(sb.dir, "app")]);
+        if (t.status !== 0) { sb.setup = "failed unpack"; sb.setupErr = String(t.stderr); return json(res, 200, { ok: true, exitCode: 0, stdout: "", stderr: "" }); }
+        symlinkSync(path.join(ROOT, "orchestrator", "node_modules"), path.join(sb.dir, "app", "orchestrator", "node_modules"));
+        const e = parseEnv([...sb.files].find(([k]) => k.endsWith("/runner.env.new"))?.[1] ?? "");
+        envFiles[sb.id] = e;
+        sb.child = startRunner(path.join(sb.dir, "app"), [path.join(sb.dir, "app", "orchestrator", "node_modules", ".bin", "tsx")], e, sb.name);
+        sb.setup = "started runner";
+        return json(res, 200, { ok: true, exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (cmd.includes("run-setup.status")) return json(res, 200, { ok: true, exitCode: 0, stdout: `${sb.setup ?? "none"}\n---\n${sb.setupErr ?? ""}\n`, stderr: "" });
       if (cmd.includes("--unit=app-runner")) {
         const envText = [...sb.files].find(([k]) => k.endsWith("/runner.env.new"))?.[1] ?? "";
         const e = parseEnv(envText);
@@ -185,6 +209,8 @@ try {
   const kinds = [
     { name: "plain", runner: "workspace-harness", entry: "ok.mjs", lease_seconds: 15, egress: ["api.allowed.example"] },
     { name: "stall_once", runner: "workspace-harness", entry: "stall-once.mjs", lease_seconds: 15, max_attempts: 3 },
+    // mold_v0-179: the workspace store, with the shortest lease (its preparation in the sandbox outlasts it).
+    { name: "slow_ws", runner: "workspace-harness", entry: "ok.mjs", lease_seconds: 15, max_attempts: 1, workspace: true },
   ];
   const fixture = definePack({
     id: "fixture_sbx",
@@ -220,8 +246,8 @@ try {
     throw new Error(`timed out waiting for ${what}`);
   };
   const ended = (id: string) => async () => ["succeeded", "failed", "cancelled"].includes((await runRow(id)).status);
-  const rows = (runId: string) => db.query<{ id: number; state: string; sandbox_id: string | null; claimed_at: Date | null; reap_reason: string | null; launch_error: string | null; provider: string }>(
-    "SELECT id, state, sandbox_id, claimed_at, reap_reason, launch_error, provider FROM run_sandboxes WHERE run_id = $1 ORDER BY id", [runId]);
+  const rows = (runId: string) => db.query<{ id: number; state: string; sandbox_id: string | null; claimed_at: Date | null; reap_reason: string | null; launch_error: string | null; launch_step: string | null; provider: string }>(
+    "SELECT id, state, sandbox_id, claimed_at, reap_reason, launch_error, launch_step, provider FROM run_sandboxes WHERE run_id = $1 ORDER BY id", [runId]);
   const worker = (tok: string, method: string, p: string, body?: unknown, lease?: string) => fetch(`${base}/api/worker${p}`, { method,
     headers: { authorization: `Bearer ${tok}`, ...(lease ? { "x-run-lease": lease } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -277,9 +303,13 @@ try {
     for (const f of ["src/run-sandbox-runner.ts", "src/run-harness.ts", "orchestrator/core/egress.ts", "scripts/fixtures/runs/ok.mjs"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
     // mold_v0-072: the run tools' installer and the build's list go too, and the set-up runs it (as root, before the runner).
     for (const f of ["src/run-tools.ts", "scripts/install-run-tools.ts", "src/run-tools.generated.json"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
-    assert.ok(sb.commands.some((c) => /sudo -n env PATH=\S+ \S+\/tsx scripts\/install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/app-tools/.test(c)), "the set-up installs the run tools");
+    const setupScript = [...sb.files].find(([k]) => k.endsWith("/run-setup.sh"))?.[1] ?? "";
+    assert.match(setupScript, /sudo -n env PATH=\S+ \S+\/tsx scripts\/install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/app-tools/, "the set-up installs the run tools");
+    // mold_v0-179: the launch only uploads and starts the set-up, detached; nothing it runs waits on npm ci or apt-get.
+    assert.ok(sb.commands.some((c) => c.includes("--unit=app-run-setup")) && !sb.commands.some((c) => /npm ci|apt-get/.test(c)), sb.commands.join("\n---\n"));
     for (const f of ["src/db.ts", "src/runs.ts", "src/keyvault.ts", "src/http.ts", ".env"]) assert.ok(!uploaded.includes(f), `${f} not uploaded`);
     await waitFor("the run to end", ended(id));
+    assert.ok((await events(id)).some((x) => x.type === "sandbox_prepared" && Number.isFinite(x.data.prepared_ms)), "the runner says how long its sandbox took to prepare");
     const r1 = await runRow(id);
     assert.equal(r1.status, "succeeded", `${r1.error} :: ${(sb.child as any)?.err?.()}`);
     assert.equal(r1.worker_id, null);
@@ -409,6 +439,97 @@ try {
     assert.deepEqual(kinds, [["orchestrator", null, null], ["orchestrator", null, null], ["worker", "orch-b", null], ["image", null, null],
       ["image_builder", null, null], ["other", null, "appv"]], "ours under either name; another deployment's as other");
     console.log("✓ cost: at most APP_MAX_RUN_SANDBOXES; a sandbox that cannot start is tried 3 times, then the run fails; orphans of this deployment deleted, another's kept");
+  }
+
+  // ---------- 5b. mold_v0-179: launches that fit their call, set-up failures said, dropped connections tried again ----------
+  {
+    // The set-up script itself, run with stand-ins for sudo, npm and apt-get: its steps, its status line and its log.
+    assert.deepEqual(sbx.parseBootStatus("running npm\n---\n--- npm (12:00:00)\nslow\n"), { state: "running", step: "npm", detail: "slow" });
+    assert.deepEqual(sbx.parseBootStatus("none\n---\n\n"), { state: "none", step: "", detail: "" });
+    assert.equal(sbx.parseBootStatus("garbage\n---\nx").state, "unknown");
+    for (const failNpm of [false, true]) {
+      const h = path.join(TMP, `setup-${failNpm ? "fail" : "ok"}`), bin = path.join(TMP, `setup-bin-${failNpm ? "fail" : "ok"}`), tree = path.join(TMP, `setup-tree-${failNpm}`);
+      for (const d of [h, bin, path.join(tree, "orchestrator"), path.join(tree, "src")]) mkdirSync(d, { recursive: true });
+      writeFileSync(path.join(tree, "orchestrator", "package.json"), "{}");
+      writeFileSync(path.join(tree, "src", "run-tools.generated.json"), "{}");
+      spawnSync("tar", ["-czf", path.join(h, "code.tgz.part000"), "-C", tree, "."]);
+      writeFileSync(path.join(h, "runner.env.new"), "APP_URL=https://api.example\n");
+      const stub = (name: string, body: string) => { writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`); chmodSync(path.join(bin, name), 0o755); };
+      stub("sudo", `echo "sudo $*" >> ${h}/sudo.log; exit 0`);
+      stub("npm", failNpm ? `echo "npm ERR! code E404 (stand-in)" >&2; exit 1` : "exit 0");
+      stub("apt-get", "exit 0"); stub("git", "exit 0"); stub("nft", "exit 0");
+      const script = sbx.runSetupScript(h);
+      assert.equal(spawnSync("bash", ["-n"], { input: script }).status, 0, "the set-up script parses");
+      writeFileSync(path.join(h, "run-setup.sh"), script);
+      const r = spawnSync("bash", [path.join(h, "run-setup.sh")], { encoding: "utf8", timeout: 60_000, env: { PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`, HOME: h } });
+      const status = readFileSync(path.join(h, "run-setup.status"), "utf8").trim(), log = readFileSync(path.join(h, "run-setup.err"), "utf8");
+      const st = sbx.parseBootStatus(`${status}\n---\n${log}`);
+      if (failNpm) {
+        assert.equal(r.status, 1);
+        assert.deepEqual([st.state, st.step], ["failed", "npm"], status);
+        assert.match(st.detail, /npm ERR! code E404 \(stand-in\) \| npm ci failed/);
+        assert.ok(!existsSync(path.join(h, "sudo.log")) || !readFileSync(path.join(h, "sudo.log"), "utf8").includes("app-runner"), "no runner after a failed step");
+      } else {
+        assert.equal(r.status, 0, log);
+        assert.equal(status, "started runner", log);
+        const sudo = readFileSync(path.join(h, "sudo.log"), "utf8");
+        assert.match(sudo, /install -m 600 -o root -g root runner\.env\.new \/etc\/\S+\/runner\.env/);
+        assert.match(sudo, /systemd-run --quiet --unit=app-runner .*src\/run-sandbox-runner\.ts/);
+        assert.ok(existsSync(path.join(h, "app", "orchestrator", "package.json")) && !existsSync(path.join(h, "runner.env.new")), "the code in place, the env file installed");
+      }
+    }
+
+    // A dropped connection on a read (a keep-alive socket dead after a Vercel freeze) is tried again on a fresh one.
+    dropListings = 1; dropped = 0;
+    const t0 = await rs.tick();
+    assert.equal(t0.error, undefined, String(t0.error));
+    assert.equal(dropped, 1, "the first listing was dropped, the tick went on");
+    // One that keeps failing says which request failed and why (undici's bare "fetch failed" hid both).
+    dropListings = 10;
+    const t1 = await rs.tick();
+    assert.match(t1.error ?? "", /^boat GET \/sandboxes: fetch failed \(.+\)$/, String(t1.error));
+    dropListings = 0;
+
+    // A set-up that fails in the sandbox: reaped at the next tick with its step and the sandbox's own error, the run told
+    // why it waits; three such starts, then the run fails with that error. No sandbox is left.
+    process.env.APP_RUN_SETUP_CHECK_SECONDS = "0";
+    failSetupAt = "npm";
+    const f = await start(ca, "plain", { asset: "app-a" });
+    for (let i = 0; i < 12 && (await runRow(f)).status === "queued"; i++) { await rs.tick(); await rs.settle(); }
+    failSetupAt = "";
+    const fr = await rows(f);
+    assert.equal(fr.length, 3, JSON.stringify(fr));
+    for (const r of fr) {
+      assert.equal(r.state, "deleted");
+      assert.equal(r.launch_step, "setup npm");
+      assert.match(r.launch_error ?? "", /^its set-up failed at npm: npm ERR! code E404 \(test\) \| npm ci failed$/, r.launch_error ?? "");
+      assert.ok(!sbs.has(r.sandbox_id!), "its sandbox is deleted");
+    }
+    const rf = await runRow(f);
+    assert.equal(rf.status, "failed");
+    assert.match(rf.error ?? "", /its sandbox could not be started \(3 tries; last: its set-up failed at npm: npm ERR!/);
+    assert.ok((await events(f)).some((x) => x.type === "waiting" && /^its sandbox did not start \(setup npm: its set-up failed at npm/.test(x.data.reason)), "the run says why it waits");
+    delete process.env.APP_RUN_SETUP_CHECK_SECONDS;
+
+    // A launch with too little of its call left does not start (on Vercel it would be frozen half done).
+    const before = creates;
+    await assert.rejects(sbx.boatProvider(PUBLIC).launch({ rowId: 0, runId: "run_x", name: "app-run-0-x", env: {}, ttlSeconds: 600, packDirs: [], log: () => {}, deadlineAt: Date.now() + 5_000 }, async () => {}),
+      (e: Error & { launchStep?: string }) => e.launchStep === "create" && /too little to create/.test(e.message));
+    assert.equal(creates, before, "nothing created");
+
+    // A runner whose preparation outlasts the run's lease (15 s here; a lockdown on boat took longer than 120 s) keeps the
+    // lease, and the workspace store's: its checkout is still its own.
+    prepareMs = 20_000;
+    const w = await start(ca, "slow_ws", { asset: "app-a" });
+    await rs.tick(); await rs.settle();
+    await waitFor("the slowly prepared run", ended(w), 120_000);
+    prepareMs = 0;
+    const rw = await runRow(w);
+    assert.equal(rw.status, "succeeded", rw.error ?? "");
+    const prep = (await events(w)).find((x) => x.type === "sandbox_prepared");
+    assert.ok(prep && prep.data.prepared_ms >= 20_000, JSON.stringify(prep));
+    await rs.tick();
+    console.log("✓ mold_v0-179: a dropped read is tried again, a failing one names itself; a set-up that fails in the sandbox is reaped with its step and error (3, then the run fails with it); no launch without time left in its call; a slow preparation keeps the run's and its store's lease");
   }
 
   // ---------- 6. the server's own Docker (the compose runner service) ----------

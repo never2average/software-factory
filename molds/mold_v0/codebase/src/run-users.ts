@@ -313,7 +313,9 @@ export async function leaseRunUser(run: string, o: LeaseOptions = {}): Promise<R
  */
 export function registerSandboxRunUser(uid: number): boolean {
   const name = `${RUN_USER_PREFIX}${uid}`;
-  if (spawnSync("id", ["-u", name], { stdio: "ignore" }).status === 0) return true;
-  spawnSync("groupadd", ["-g", String(uid), name], { stdio: "ignore", timeout: 10_000 });
-  return spawnSync("useradd", ["-M", "-N", "-u", String(uid), "-g", String(uid), "-d", "/nonexistent", "-s", "/usr/sbin/nologin", name], { stdio: "ignore", timeout: 10_000 }).status === 0;
+  // groupadd and useradd live in /usr/sbin, which a runner unit's PATH may lack (mold_v0-179; mold_v0-174 for the egress).
+  const env = { PATH: `/usr/local/sbin:/usr/sbin:/sbin:${process.env.PATH ?? "/usr/bin:/bin"}` };
+  if (spawnSync("id", ["-u", name], { stdio: "ignore", env }).status === 0) return true;
+  spawnSync("groupadd", ["-g", String(uid), name], { stdio: "ignore", timeout: 10_000, env });
+  return spawnSync("useradd", ["-M", "-N", "-u", String(uid), "-g", String(uid), "-d", "/nonexistent", "-s", "/usr/sbin/nologin", name], { stdio: "ignore", timeout: 10_000, env }).status === 0;
 }

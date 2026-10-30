@@ -31,13 +31,13 @@
  * keep it that way (orchestrator/deploy/boat-lib.ts runnerCodeFiles walks the imports; npm run test:run-sandboxes runs
  * the runner from exactly those files).
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parsePrivateAllow, privateAllowText, probeSource, proxySource, setupScript, type PrivateAllow } from "../orchestrator/core/egress.js";
-import { httpRunnerClient, runWorkspaceHarness, type HarnessOptions } from "./run-harness.js";
+import { httpRunnerClient, keepLease, runWorkspaceHarness, type HarnessOptions } from "./run-harness.js";
 import { leaseRunUser, registerSandboxRunUser, RUN_USER_PREFIX, type RunUser } from "./run-users.js";
 import { ENV } from "./env-names.js";
 
@@ -63,8 +63,26 @@ function namedRunUser(): { uid: number; gid: number; name: string } | null {
   return { uid, gid, name };
 }
 
+/**
+ * A program run to its end without blocking this process (mold_v0-179): the run's lease is kept by timers meanwhile, which
+ * a spawnSync would hold up for as long as the program runs. Killed at `timeoutMs` (status null, as spawnSync's).
+ */
+function runAsync(cmd: string, args: string[], opts: SpawnOptions & { timeoutMs: number }): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const { timeoutMs, ...o } = opts;
+    let stdout = "", stderr = "", done = false;
+    const child = spawn(cmd, args, { ...o, stdio: ["ignore", "pipe", "pipe"] });
+    const finish = (status: number | null) => { if (!done) { done = true; clearTimeout(t); resolve({ status, stdout, stderr }); } };
+    const t = setTimeout(() => { child.kill("SIGKILL"); finish(null); }, timeoutMs);
+    child.stdout!.setEncoding("utf8").on("data", (d: string) => { if (stdout.length < 1e6) stdout += d; });
+    child.stderr!.setEncoding("utf8").on("data", (d: string) => { if (stderr.length < 1e6) stderr += d; });
+    child.on("error", (e) => { stderr += String(e.message); finish(null); });
+    child.on("close", (code) => finish(code));
+  });
+}
+
 /** The firewall and proxy for the run's user, with the run's hosts; then the probe as that user. Throws when anything fails. */
-export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
+export async function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
   const allow: { hosts: string[]; exact?: string[]; private?: PrivateAllow[] } = Array.isArray(hosts) ? { hosts }
     : { hosts: hosts.hosts, exact: hosts.exact ?? [], ...(hosts.private?.length ? { private: hosts.private } : {}) };
   if (process.getuid?.() !== 0) throw new Error("the lockdown needs the runner to be root in the sandbox");
@@ -79,14 +97,14 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; 
     // By number: the run's user is leased per run (mold_v0-078), its uid is what the firewall matches.
     writeFileSync(path.join(dir, "egress-setup.sh"), setupScript(dir, { user, uid, sudo: false, systemd: false, strict: true }));
     // A minimal environment: the proxy it starts (an unrestricted user parsing the run's traffic) never holds the token.
-    const set = spawnSync("bash", [path.join(dir, "egress-setup.sh")], { encoding: "utf8", timeout: 120_000, env: { PATH: withSbin(env.PATH ?? "/usr/bin:/bin") } });
+    const set = await runAsync("bash", [path.join(dir, "egress-setup.sh")], { timeoutMs: 120_000, env: { PATH: withSbin(env.PATH ?? "/usr/bin:/bin") } });
     if (set.status !== 0) throw new Error(`egress lockdown failed (exit ${set.status}): ${(set.stderr || set.stdout).slice(-600)}`);
     // The local resolver's and the system bus's unix sockets: the run's user may not ask them to resolve names (netfilter
     // never sees a unix socket). Best effort, where setfacl exists (boat); the firewall keeps every packet in either way.
     for (const s of ["/run/systemd/resolve/io.systemd.Resolve", "/run/systemd/resolve/io.systemd.Resolve.Monitor", "/run/dbus/system_bus_socket"])
-      if (existsSync(s)) spawnSync("setfacl", ["-m", `u:${uid}:---`, s], { stdio: "ignore", timeout: 10_000 });
+      if (existsSync(s)) await runAsync("setfacl", ["-m", `u:${uid}:---`, s], { timeoutMs: 10_000, env: { PATH: withSbin(env.PATH ?? "/usr/bin:/bin") } });
     // The probe reads its program from the proxy's install directory (root-owned, world-readable), as the run's user.
-    const probe = spawnSync(process.execPath, ["/opt/app-egress/probe.mjs"], { encoding: "utf8", timeout: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
+    const probe = await runAsync(process.execPath, ["/opt/app-egress/probe.mjs"], { timeoutMs: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
     if (probe.status !== 0) throw new Error(`egress probe failed, the run is not started: ${(probe.stdout || probe.stderr).slice(-800)}`);
     const priv = allow.private ?? [];
     log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts${priv.length ? `, private: ${privateAllowText(priv).join(" ")}` : ""}, probe ok`);
@@ -112,11 +130,16 @@ async function main(): Promise<number> {
   const claim = await client.claim();
   if (!claim) { log(`nothing to claim (run ${env.APP_RUN_ID ?? "?"} was taken, ended or is not claimable now)`); return 0; }
   log(`claimed ${claim.run.id} (attempt ${claim.run.attempt})`);
+  // The run's lease (and its workspace store's) is kept from here: the set-up below can outlast it (mold_v0-179).
+  const keeper = keepLease(client, claim.run.id, claim.lease_token, claim.lease_seconds, () => log("the run's lease was lost while the sandbox was being prepared"));
+  const t0 = Date.now(), timings: Record<string, number> = {};
+  const lap = (k: string) => { timings[k] = Date.now() - t0; };
   // mold_v0-078: the run's own user, leased for this run (a named one only from an older autoscaler); locked down by uid.
   let leased: RunUser | null = null;
   if (root && !(unsandboxed && env.APP_RUN_SAME_USER === "yes")) {
-    try { leased = await leaseRunUser(claim.run.id, named ? { fixed: { uid: named.uid, gid: named.gid } } : {}); }
+    try { leased = await leaseRunUser(claim.run.id, named ? { fixed: { uid: named.uid, gid: named.gid } } : {}); lap("run_user_ms"); }
     catch (e) {
+      keeper.stop();
       await client.complete(claim.run.id, claim.lease_token, { outcome: "failed", error_kind: "infrastructure", error: `the run's user: ${String((e as Error).message)}`.slice(0, 2000) }).catch(() => {});
       log(String((e as Error).message));
       return 1;
@@ -124,13 +147,17 @@ async function main(): Promise<number> {
   }
   const iso: HarnessOptions = leased ? { runUser: leased } : unsandboxed && env.APP_RUN_SAME_USER === "yes" ? { allowSameUser: true } : {};
   try {
+    // Test stand-ins only (APP_ALLOW_UNSANDBOXED_RUNS=yes): a preparation as slow as a real sandbox's can be.
+    const slow = unsandboxed ? Number(env.APP_RUN_TEST_PREPARE_MS ?? 0) : 0;
+    if (slow > 0) await new Promise((r) => setTimeout(r, slow));
     if (lockdown) {
       // The sandbox lives one run: its run user gets an account (tools that look their user up find one).
       const name = named?.name ?? (registerSandboxRunUser(leased!.uid) ? `${RUN_USER_PREFIX}${leased!.uid}` : "apprun");
       // The private allow list only for a run that needs the private network; every other run gets exactly the hosted one.
       const priv = (claim.run.spec as { private_network?: boolean }).private_network ? privateAllow : [];
-      try { lockDown({ ...claim.egress, private: priv }, claim.gateway.gateway_url, name.length <= 32 ? name : "apprun", leased!.uid, leased!.gid); }
+      try { await lockDown({ ...claim.egress, private: priv }, claim.gateway.gateway_url, name.length <= 32 ? name : "apprun", leased!.uid, leased!.gid); lap("lockdown_ms"); }
       catch (e) {
+        keeper.stop();
         // Nothing of the run has started: an infrastructure failure, retried in a new sandbox while attempts remain.
         await client.complete(claim.run.id, claim.lease_token, { outcome: "failed", error_kind: "infrastructure", error: String((e as Error).message).slice(0, 2000) }).catch(() => {});
         log(String((e as Error).message));
@@ -143,10 +170,16 @@ async function main(): Promise<number> {
       if (!packRel || (p !== ROOT && !p.startsWith(ROOT + path.sep))) throw new Error("this sandbox has no pack directory for the run");
       return p;
     };
+    // How long the sandbox took to prepare, on the run (its events): what to look at when a sandbox is slow to start.
+    lap("prepared_ms");
+    log(`prepared in ${timings.prepared_ms} ms: ${JSON.stringify(timings)}`);
+    await client.events(claim.run.id, claim.lease_token, [{ type: "sandbox_prepared", data: timings }]).catch(() => {});
+    // The harness heartbeats from its start (every lease_seconds / 3 too): the lease is never left longer than that.
+    keeper.stop();
     const view = await runWorkspaceHarness(client, claim, { ...iso, egress: lockdown ? "system" : "proxy", packDir, noNewPrivs: lockdown });
     log(`run ${claim.run.id}: ${view?.status ?? "lease lost"}`);
     return 0;
-  } finally { await leased?.release().catch(() => false); }
+  } finally { keeper.stop(); await leased?.release().catch(() => false); }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
