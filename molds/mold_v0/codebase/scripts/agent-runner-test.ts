@@ -403,7 +403,7 @@ try {
       await start(ca, "audit_must_write", "a-co");
       const wrote = await runNext("audit_must_write");
       assert.equal(wrote.view?.status, "succeeded", JSON.stringify(wrote.view));
-      assert.equal((await latest(A.orgId))!.version, before + 1);
+      assert.equal((await latest(A.orgId))!.version, before! + 1);
       console.log("✓ a run that changed nothing in its workspace: succeeds for a kind that may (workspace_written says unchanged); fails, saying so, for a kind with write_back_required, and succeeds once it writes");
     }
   } finally {
