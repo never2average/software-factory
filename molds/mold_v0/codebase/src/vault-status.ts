@@ -81,6 +81,13 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
       return via ? { set: "yes", note: "through Vertex AI (a service-account key)" }
                  : { set: "no", note: "set to run on Vertex AI, which has no service-account key" };
     }
+    if (p.slug === "anthropic") {
+      // The gateway's fallback (src/gateway.ts): Claude with no Anthropic key of its own (other than a "vertex"-labelled
+      // one) runs on Vertex AI when the vault holds a Vertex key (anthropic's own "vertex" key, else the Vertex AI provider's).
+      if (en.some((c) => c.label !== "vertex")) return { set: "yes", note: null };
+      if (on("anthropic", "vertex") || on("vertex"))
+        return { set: "yes", note: "via Vertex AI: no Anthropic key, the vault's Vertex AI service-account key is used" };
+    }
     if (en.length) return { set: "yes", note: null };
     return { set: "no", note: ks.length ? `${ks.length} key${ks.length > 1 ? "s" : ""}, all turned off` : null };
   };
@@ -100,7 +107,8 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
   const bySlug = new Map(list.map((p) => [p.slug, p]));
   const needs = rn.needs.map((n) => {
     const p = bySlug.get(n.slug);
-    const why = [n.sandbox ? "the runs' sandboxes" : "", n.kinds.length ? `${n.kinds.length} run kind${n.kinds.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
+    const why = n.store ? `the workspace store of ${n.kinds.length} run kind${n.kinds.length > 1 ? "s" : ""} (no R2_* in this run's environment)`
+      : [n.sandbox ? "the runs' sandboxes" : "", n.kinds.length ? `${n.kinds.length} run kind${n.kinds.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
     let set: "yes" | "no" = p ? p.set : "no", note = p ? p.note : "no such provider in the vault";
     let missing_labels: string[] | undefined;
     if (n.slug === "pack_credentials" && n.labels) {

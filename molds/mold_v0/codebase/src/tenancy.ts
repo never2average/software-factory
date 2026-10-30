@@ -15,7 +15,7 @@
 import { forgetOrgKey } from "./orgcrypto.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
-import { keys, listKeys, deleteKeys, objectStore, storageEnabled } from "./storage.js";
+import { keys, listKeys, deleteKeys, objectStore, s3Ready } from "./storage.js";
 import { baseTranscripts } from "./transcripts.js";
 import { forgetArchivedOrg } from "./archive.js";
 import { ENV } from "./env-names.js";
@@ -35,7 +35,8 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   orgId = Math.trunc(orgId);
   const [org] = await db.query<{ id: number }>("SELECT id FROM organizations WHERE id = $1", [orgId]);
   const count = async (sql: string) => Number((await db.query<{ n: number }>(sql, [orgId]))[0]?.n ?? 0);
-  const objects = storageEnabled()
+  const bucket = await s3Ready();
+  const objects = bucket
     ? (await Promise.all(PREFIX_KINDS.map((k) => listKeys(keys.orgPrefix(k, orgId))))).flat()
     : [];
   // The session engine's tables are a host pack's (mold_v0-049): with none in this build there is none of its work.
@@ -85,14 +86,14 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
 
   // 4. Object storage.
   if (objects.length) await deleteKeys(objects.map((o) => o.key));
-  if (storageEnabled()) {
+  if (bucket) {
     const left = (await Promise.all(PREFIX_KINDS.map((k) => listKeys(keys.orgPrefix(k, orgId))))).flat();
-    if (left.length) throw new Error(`org ${orgId}: ${left.length} object(s) still in R2 after the purge; re-run deleteOrg`);
+    if (left.length) throw new Error(`org ${orgId}: ${left.length} object(s) still in the bucket after the purge; re-run deleteOrg`);
   }
-  log(`org ${orgId}: ${objects.length} object(s) purged from R2`);
+  log(`org ${orgId}: ${objects.length} object(s) purged from the bucket`);
   // Workspace snapshots kept in a local directory instead (mold_v0-033, APP_STORAGE_DIR without R2).
-  if (!storageEnabled() && ENV.APP_STORAGE_DIR) {
-    const local = objectStore();
+  if (!bucket && ENV.APP_STORAGE_DIR) {
+    const local = await objectStore();
     const mine = await local.list(keys.orgPrefix("workspaces", orgId));
     await local.remove(mine);
     log(`org ${orgId}: ${mine.length} workspace snapshot(s) removed from ${ENV.APP_STORAGE_DIR}`);

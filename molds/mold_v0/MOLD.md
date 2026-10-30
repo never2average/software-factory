@@ -796,7 +796,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   snapshot out before the program runs (each file checked against the sha256 manifest), and writes the directory back
   only when the program and the validator exited 0: it is staged, and becomes the next version inside the run's
   completion as succeeded; any other end discards it. Objects live in the product's storage (`src/storage.ts`
-  `objectStore()`: the R2 bucket, or `APP_STORAGE_DIR` on one machine and in tests) under
+  `objectStore()`: the bucket the environment's `R2_*` names, else the one in Key vault › Object storage (mold_v0-181,
+  `docs/storage.md`; a platform owner adds and tests it on `/admin/keys`), else `APP_STORAGE_DIR` on one machine and in
+  tests) under
   `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
   the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
   a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
@@ -1073,7 +1075,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   a pack declares operator credentials or OAuth providers, boat with the engine or when the packs' runs may get their
   sandbox there (`src/run-sandboxes.ts` `boatForRuns`: job kinds and `APP_RUN_SANDBOX` auto, the default and on Vercel
   the only hosted sandbox, or boat; not when the deployment names docker or off), the engine's (coding agents, research
-  search, Gemini, DashScope) with the engine, and any provider that holds a key. Compute's boat rows follow the same
+  search, Gemini, DashScope) with the engine, "Object storage (R2 / S3)" (mold_v0-181: the bucket's four settings,
+  when the environment has no `R2_*`; with the engine or a pack whose runs keep a workspace store), and any provider
+  that holds a key. Compute's boat rows follow the same
   rule (`uses_boat`, also true in auto with a boat key). Data repositories names each repository by its pack's `label` (pack.json `repositories.<id>.label`), else
   its id in words, and its pack by name, and says catalogs that do not index on their own in words for staff. Agent
   configuration's help wraps, so its Value, From and Variable columns stay on the page at 1440 px. `npm run
@@ -1094,7 +1098,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   factory's `provision.py <app> --operator vault-status [--dry-run|--yes]` reads to say so when it asks for the yes
   (`.claude/scripts/lib/operator_run.py`: a mold_v0 app on Vercel runs it from its build copy with `DATABASE_URL` and
   `APP_RUN_SANDBOX` read from its `<project>-api` production environment for the run only), and `provision.py <app>`
-  (the check, offline) names the providers the packs' job kinds need with that command. `npm run test:vault-status`
+  (the check, offline) names the providers the packs' job kinds need with that command. Claude needed with no Anthropic
+  key but a Vertex AI service-account key in the vault is "set (via Vertex AI ...)", as the gateway runs it there
+  (`src/gateway.ts`); a kind that keeps a workspace store needs Object storage when the run's environment names no
+  bucket (mold_v0-181). `npm run test:vault-status`
   proves set and unset, no seeded secret or its hint in any output, a write inside its transaction refused (25006) and
   the database unchanged after it ran.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.

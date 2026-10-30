@@ -79,6 +79,11 @@ either id, as always.
 |---|---|
 | `npm run db:rehearse -- [--dry-run] [--json]` | applies what is pending to the database it is given and reports, measured from the database: pending, applied or adopted, every relation created, changed or dropped, the adopted tables' rows and catalog rows before and after (equal catalog stamps: no DDL reached the table), every row count, and `check:rls`. It changes that database: give it a copy |
 
+Rolling back to a release from before 0028 (object storage in the key vault, mold_v0-181):
+`sql/rollback/0028_object_storage_vault.sql` first. It refuses, changing nothing, while the vault holds an Object storage
+entry (the older release reads the bucket from `R2_*` only: set those on the server and delete the entry first);
+otherwise it removes the provider row.
+
 Rolling back to a release from before 0027 (on-premises runners, mold_v0-036): `sql/rollback/0027_on_premises_runners.sql`
 first. It refuses, changing nothing, while a workspace has a runner that is not revoked or a run routed on premises that
 has not ended (revoke them and switch the workspaces back to hosted); otherwise it drops the two tables and two columns

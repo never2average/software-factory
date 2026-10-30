@@ -39,6 +39,14 @@ function masterKeys() {
 export const vaultUnlocked = () => Boolean(ENV.APP_VAULT_KEY);
 
 /**
+ * Bumped by every change this process makes to the vault (a key stored, replaced, turned on or off, deleted; a provider
+ * changed; a rekey). A cache of something read from the vault (src/storage.ts: the object store's client) compares it
+ * and drops itself when it moved, so a change on /admin takes effect at once on this instance (others: their TTL).
+ */
+let generation = 0;
+export const vaultGeneration = () => generation;
+
+/**
  * A key for one purpose derived from the current master key (mold_v0-014: the signed state of a sign-in in flight). Never
  * stored; rotating APP_VAULT_KEY changes it (states in flight then fail and are started again).
  */
@@ -95,6 +103,58 @@ export function checkServiceAccount(secret: string): ServiceAccountInfo {
   return { project_id: j.project_id as string, client_email: j.client_email as string };
 }
 
+/** The vault provider that holds the object store's settings (src/storage.ts): one entry, four fields. */
+export const OBJECT_STORAGE_PROVIDER = "object_storage";
+/** Its one entry's label. */
+export const OBJECT_STORAGE_LABEL = "default";
+export const OBJECT_STORAGE_FIELDS = ["bucket", "endpoint", "access_key_id", "secret_access_key"] as const;
+export interface ObjectStorageSettings { bucket: string; endpoint: string; access_key_id: string; secret_access_key: string }
+export interface ObjectStorageInfo { bucket: string; endpoint: string; access_key_hint: string }
+
+/**
+ * "https://<account>.r2.cloudflarestorage.com" from what was pasted: a trailing slash dropped, and the bucket's own name
+ * after it (Cloudflare's dashboard shows the S3 API address with the bucket at the end); throws in words.
+ */
+export function checkEndpoint(v: string, bucket?: string): string {
+  let u: URL;
+  try { u = new URL(v.trim()); } catch { throw new Error("endpoint: the bucket service's address, e.g. https://<account id>.r2.cloudflarestorage.com"); }
+  // Plain http only on this machine (a test stand-in): the keys must never cross a network in the clear.
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) throw new Error("endpoint: must start with https://");
+  if (u.username || u.password) throw new Error("endpoint: give the address without a user name or password in it");
+  if (u.search || u.hash) throw new Error("endpoint: give the address without ? or # parts");
+  const path = u.pathname.replace(/\/+$/, "");
+  if (path && !(bucket && path === `/${bucket}`)) throw new Error("endpoint: give the service's address only, without the bucket or a path (e.g. https://<account id>.r2.cloudflarestorage.com)");
+  return `${u.protocol}//${u.host}`;
+}
+
+/**
+ * The object store's settings, checked: a bucket name as S3 and R2 allow it, an https endpoint, an access key id and a
+ * secret access key. Accepts the JSON the vault stores or an object. Errors name the field, never quote a key.
+ */
+export function checkObjectStorage(input: unknown): ObjectStorageSettings {
+  let j: Record<string, unknown>;
+  if (typeof input === "string") {
+    try { j = JSON.parse(input); } catch { throw new Error("Object storage takes four fields: bucket, endpoint, access_key_id and secret_access_key"); }
+  } else j = (input ?? {}) as Record<string, unknown>;
+  if (!j || typeof j !== "object" || Array.isArray(j)) throw new Error("Object storage takes four fields: bucket, endpoint, access_key_id and secret_access_key");
+  const extra = Object.keys(j).filter((k) => !(OBJECT_STORAGE_FIELDS as readonly string[]).includes(k));
+  if (extra.length) throw new Error(`Object storage has no field ${extra[0]!.slice(0, 40)}`);
+  const text = (k: string) => (typeof j[k] === "string" ? (j[k] as string).trim() : "");
+  const bucket = text("bucket"), endpoint = text("endpoint"), id = text("access_key_id"), secret = text("secret_access_key");
+  if (!bucket) throw new Error("bucket: the bucket's name is required");
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket) || bucket.includes("..")) throw new Error("bucket: 3 to 63 lowercase letters, digits, dots and dashes (the bucket's name, not its address)");
+  if (!endpoint) throw new Error("endpoint: the bucket service's address is required");
+  if (!id) throw new Error("access_key_id: the access key id is required");
+  if (id.length < 8 || id.length > 256 || /\s/.test(id)) throw new Error("access_key_id: 8 to 256 characters, no spaces");
+  if (!secret) throw new Error("secret_access_key: the secret access key is required");
+  if (secret.length < 8 || secret.length > 1024 || /\s/.test(secret)) throw new Error("secret_access_key: 8 to 1024 characters, no spaces");
+  return { bucket, endpoint: checkEndpoint(endpoint, bucket), access_key_id: id, secret_access_key: secret };
+}
+/** What may be shown of the settings: the bucket, the endpoint and the access key id's hint. Never the secret. */
+export const objectStorageInfo = (c: ObjectStorageSettings): ObjectStorageInfo => ({ bucket: c.bucket, endpoint: c.endpoint, access_key_hint: hint(c.access_key_id) });
+const objectStorageHint = (c: ObjectStorageSettings) => `${c.bucket} at ${new URL(c.endpoint).host}`;
+
 // ---------- providers ----------
 
 export async function listProviders(): Promise<ProviderRow[]> {
@@ -138,6 +198,7 @@ export async function upsertProvider(p: Partial<ProviderRow> & { slug: string })
     [p.slug, p.mode ?? null, p.upstream_url ?? null, p.auth_header?.toLowerCase() ?? null, p.auth_prefix ?? null, p.env_vars ?? null, p.enabled ?? null,
      p.backend ?? null, p.backend_config ? JSON.stringify(p.backend_config) : null],
   );
+  generation++;
   return getProvider(p.slug);
 }
 
@@ -155,7 +216,7 @@ export async function providersForEnv(envVars: string[]): Promise<ProviderRow[]>
 
 // ---------- credentials ----------
 
-export interface SavedCredential { id: number; provider: string; label: string; hint: string; project_id?: string; client_email?: string }
+export interface SavedCredential { id: number; provider: string; label: string; hint: string; project_id?: string; client_email?: string; bucket?: string; endpoint?: string }
 
 /** Store a key (the same provider + label replaces that key). */
 export async function setCredential(provider: string, secret: string, opts: { label?: string; priority?: number } = {}): Promise<SavedCredential> {
@@ -173,9 +234,18 @@ async function storeCredential(provider: string, secret: string, opts: { label?:
   if (p.mode === "direct" && provider !== "boat" && p.env_vars.length && ENV.APP_DIRECT_KEYS !== "allow")
     throw new Error(`${provider} is a direct-mode provider: its real key would be handed to agent sessions. ` +
                     "Set APP_DIRECT_KEYS=allow only once those sessions run without customer-written tasks (docs/security.md)");
-  const s = secret.trim();
+  let s = secret.trim();
   if (s.length < 8) throw new Error("That does not look like a credential");
-  const label = opts.label ?? (provider === VERTEX_PROVIDER ? VERTEX_LABEL : "default");
+  let label = opts.label ?? (provider === VERTEX_PROVIDER ? VERTEX_LABEL : "default");
+  // Object storage: one entry of four fields (src/storage.ts), stored as their JSON, checked, under its one label.
+  let objectInfo: ObjectStorageInfo | null = null, display: string | null = null;
+  if (provider === OBJECT_STORAGE_PROVIDER) {
+    const c = checkObjectStorage(s);
+    s = JSON.stringify(c);
+    label = OBJECT_STORAGE_LABEL;
+    objectInfo = objectStorageInfo(c);
+    display = objectStorageHint(c);
+  }
   // Service-account keys: the Vertex provider's are checked in full; another provider's "vertex" key at least parses.
   let meta: ServiceAccountInfo | null = null;
   if (provider === VERTEX_PROVIDER) meta = checkServiceAccount(s);
@@ -186,6 +256,7 @@ async function storeCredential(provider: string, secret: string, opts: { label?:
     meta = { project_id: j.project_id ?? "", client_email: j.client_email };
   }
   const enc = encrypt(s);
+  const shown = display ?? hint(s), metaJson = meta ? JSON.stringify(meta) : objectInfo ? JSON.stringify(objectInfo) : null;
   const db = await getDb();
   const [row] = await db.query<{ id: number }>(
     `INSERT INTO vault_credentials (provider, label, ciphertext, iv, tag, key_id, hint, priority, meta)
@@ -193,10 +264,12 @@ async function storeCredential(provider: string, secret: string, opts: { label?:
      ON CONFLICT (provider, label) DO ${insertOnly ? "NOTHING" : `UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, tag = excluded.tag,
        key_id = excluded.key_id, hint = excluded.hint, priority = excluded.priority, meta = excluded.meta, enabled = true, rotated_at = now()`}
      RETURNING id`,
-    [provider, label, enc.ciphertext, enc.iv, enc.tag, enc.key_id, hint(s), opts.priority ?? 0, meta ? JSON.stringify(meta) : null],
+    [provider, label, enc.ciphertext, enc.iv, enc.tag, enc.key_id, shown, opts.priority ?? 0, metaJson],
   );
   if (!row) return null; // insertOnly and that label already exists: left alone
-  return { id: row.id, provider, label, hint: hint(s), ...(meta ? { project_id: meta.project_id, client_email: meta.client_email } : {}) };
+  generation++;
+  return { id: row.id, provider, label, hint: shown, ...(meta ? { project_id: meta.project_id, client_email: meta.client_email } : {}),
+           ...(objectInfo ? { bucket: objectInfo.bucket, endpoint: objectInfo.endpoint } : {}) };
 }
 
 export async function listCredentials() {
@@ -209,11 +282,25 @@ export async function listCredentials() {
 export async function setCredentialEnabled(id: number, enabled: boolean) {
   const [row] = await (await getDb()).query("UPDATE vault_credentials SET enabled = $2 WHERE id = $1 RETURNING id", [id, enabled]);
   if (!row) throw new Error(`No credential ${id}`);
+  generation++;
 }
 
 export async function deleteCredential(id: number) {
   const [row] = await (await getDb()).query("DELETE FROM vault_credentials WHERE id = $1 RETURNING id", [id]);
   if (!row) throw new Error(`No credential ${id}`);
+  generation++;
+}
+
+/**
+ * One entry's secret, opened without counting it as a use (an edit that keeps the fields it was not given, a Test).
+ * Null when there is none. Turned-off entries too unless `enabledOnly`.
+ */
+export async function readCredential(provider: string, label: string, opts: { enabledOnly?: boolean } = {}): Promise<{ id: number; enabled: boolean; secret: string } | null> {
+  return asPlatform(async () => {
+    const [row] = await (await getDb()).query<{ id: number; enabled: boolean; ciphertext: string; iv: string; tag: string; key_id: string }>(
+      `SELECT id, enabled, ciphertext, iv, tag, key_id FROM vault_credentials WHERE provider = $1 AND label = $2${opts.enabledOnly ? " AND enabled" : ""}`, [provider, label]);
+    return row ? { id: row.id, enabled: row.enabled, secret: decrypt(row) } : null;
+  });
 }
 
 /**
@@ -270,6 +357,7 @@ export async function rekey() {
     const enc = encrypt(decrypt(r));
     await db.query("UPDATE vault_credentials SET ciphertext = $2, iv = $3, tag = $4, key_id = $5 WHERE id = $1", [r.id, enc.ciphertext, enc.iv, enc.tag, enc.key_id]);
   }
+  generation++;
   // Organizations' data keys (src/orgcrypto.ts) are wrapped by the master key too.
   await (await import("./orgcrypto.js")).rewrapOrgKeys();
   return rows.length;

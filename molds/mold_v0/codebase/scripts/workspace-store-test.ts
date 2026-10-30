@@ -94,7 +94,7 @@ try {
     // ---------- 2. nothing is written back unless the run and its validation succeed ----------
     {
       const before = (await latest(A.orgId))!;
-      const objects = async () => (await (await import("../src/storage.js")).objectStore().list(`workspaces/org-${A.orgId}/`)).length;
+      const objects = async () => (await (await (await import("../src/storage.js")).objectStore()).list(`workspaces/org-${A.orgId}/`)).length;
       const n0 = await objects();
       await start(ca, "notes_rejected", { text: "never" });
       const bad = await runNext(["fixture_store/notes_rejected"]);

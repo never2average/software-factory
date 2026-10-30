@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
-import { getObject, keys, putObject, storageEnabled } from "./storage.js";
+import { getObject, keys, putObject, s3Ready } from "./storage.js";
 import { baseTranscripts, type StoredEvent } from "./transcripts.js";
 import { ENV } from "./env-names.js";
 
@@ -69,7 +69,7 @@ export async function archiveResearch(researchId: string): Promise<string | null
 /** One sweep: claim and archive up to BATCH sessions and research jobs. Returns what it archived. */
 export async function archiveSweep(): Promise<{ sessions: number; research: number; failed: number }> {
   // The session engine's tables are a host pack's (mold_v0-049): with none, nothing of it to archive.
-  if (!storageEnabled() || !sessionEngine()) return { sessions: 0, research: 0, failed: 0 };
+  if (!sessionEngine() || !(await s3Ready())) return { sessions: 0, research: 0, failed: 0 };
   const db = await getDb();
   const sessions = await db.query<{ id: string }>(
     `/* tenant: internal archive sweep across all orgs (rows keep their org_id) */ UPDATE agent_sessions SET archive_claimed_at = now()
@@ -98,15 +98,20 @@ export async function archiveSweep(): Promise<{ sessions: number; research: numb
 }
 
 let timer: NodeJS.Timeout | null = null;
-/** Background sweeper (every APP_ARCHIVE_INTERVAL_SECONDS, 300). Off when R2 is not configured. */
-export function startArchiver(log: (m: string) => void = (m) => console.error(m)) {
-  if (timer || !storageEnabled() || (ENV.APP_ARCHIVE ?? "on").toLowerCase() === "off") return;
+/**
+ * Background sweeper (every APP_ARCHIVE_INTERVAL_SECONDS, 300), in a build with the session engine unless APP_ARCHIVE=off.
+ * Each sweep archives only while a bucket is configured (the environment's R2_* or the key vault's Object storage,
+ * src/storage.ts), so one added on Key vault later is picked up without a restart. Returns whether it runs.
+ */
+export function startArchiver(log: (m: string) => void = (m) => console.error(m)): boolean {
+  if (timer) return true;
+  if (!sessionEngine() || (ENV.APP_ARCHIVE ?? "on").toLowerCase() === "off") return false;
   const loop = async () => {
     try {
       // Keep sweeping while a sweep is full (the backfill), then fall back to the interval.
       for (let i = 0; i < 40; i++) {
         const r = await archiveSweep();
-        if (r.sessions || r.research || r.failed) log(`archive: ${r.sessions} session(s), ${r.research} research job(s) to R2${r.failed ? `, ${r.failed} failed (retried later)` : ""}`);
+        if (r.sessions || r.research || r.failed) log(`archive: ${r.sessions} session(s), ${r.research} research job(s) to the bucket${r.failed ? `, ${r.failed} failed (retried later)` : ""}`);
         if (r.sessions < BATCH() && r.research < BATCH()) break;
       }
     } catch (e) { log(`archive: sweep failed: ${(e as Error).message}`); }
@@ -115,6 +120,7 @@ export function startArchiver(log: (m: string) => void = (m) => console.error(m)
   };
   timer = setTimeout(loop, 20_000);
   timer.unref();
+  return true;
 }
 export function stopArchiver() { if (timer) clearTimeout(timer); timer = null; }
 
@@ -140,7 +146,7 @@ export function forgetArchivedOrg(orgId: number): void {
 }
 /** The archived events of a session (org-checked), or null when it has no archive. Small LRU of 20 sessions. */
 export async function archivedEvents(orgId: number, sessionId: string): Promise<StoredEvent[] | null> {
-  if (!storageEnabled() || !sessionEngine()) return null;
+  if (!sessionEngine() || !(await s3Ready())) return null;
   const ck = `${orgId}:${sessionId}`; // org in the key: the cache must never answer another org
   const hit = cache.get(ck);
   if (hit) { cache.delete(ck); cache.set(ck, hit); return hit; }

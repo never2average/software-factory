@@ -139,6 +139,48 @@ try {
   assert.ok(!dr.runs.needs.some((n) => n.slug === "boat") && dr.runs.sandbox_mode_from === "deployment", "APP_RUN_SANDBOX=docker: boat is not needed");
   delete process.env.APP_RUN_SANDBOX;
 
+  // Object storage (mold_v0-181): a kind that keeps a workspace store needs a bucket; from the vault when this run's
+  // environment names none (no R2_*, no APP_STORAGE_DIR). Not needed while the fixture has no such kind (above).
+  assert.ok(!r.runs.needs.some((n) => n.slug === "object_storage") && !p("object_storage"), "no workspace store: Object storage neither needed nor listed");
+  const R2 = ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"];
+  for (const k of [...R2, "APP_STORAGE_DIR"]) delete process.env[k];
+  const withStore = definePack({ ...fixture, id: "fixture_vs", jobKinds: [...(fixture.jobKinds ?? []), { name: "notes", label: "Notes", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15, workspace: true }] as never });
+  setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
+                                 dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: withStore } as never]);
+  const sr = await vaultStatus(lite as never);
+  const store = sr.runs.needs.find((n) => n.slug === "object_storage");
+  assert.deepEqual([store?.set, store?.kinds, store?.category], ["no", ["fixture_vs.notes"], "Storage"], "a workspace store with no bucket anywhere: Object storage needed, not set");
+  assert.ok(sr.runs.missing.includes("object_storage"));
+  assert.ok(sr.providers.some((x) => x.slug === "object_storage" && x.in_build && x.set === "no"), "and listed on the vault (in the build)");
+  assert.match(formatVaultStatus(sr), /needs Object storage \(R2 \/ S3\) \(object_storage\) for the workspace store of 1 run kind \(no R2_\* in this run's environment\) \(fixture_vs\.notes\): MISSING/);
+  for (const env of [Object.fromEntries(R2.map((k) => [k, "x"])), { APP_STORAGE_DIR: "/tmp/x" }]) {
+    Object.assign(process.env, env);
+    assert.ok(!(await vaultStatus(lite as never)).runs.needs.some((n) => n.slug === "object_storage"), `${Object.keys(env)[0]}: the deployment has a store, not needed from the vault`);
+    for (const k of Object.keys(env)) delete process.env[k];
+  }
+  setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
+                                 dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: fixture } as never]);
+  console.log("✓ a workspace store with no bucket in the environment: 'needs Object storage: MISSING'; R2_* or APP_STORAGE_DIR: not needed");
+
+  // Claude through Vertex AI (src/gateway.ts): no Anthropic key, but a Vertex AI service-account key: set, via Vertex AI.
+  // Done on this connection and undone after, so the rows are as they were for the final check.
+  await lite.query("UPDATE vault_credentials SET enabled = false WHERE provider = 'anthropic'");
+  const noKey = await vaultStatus(lite as never);
+  assert.equal(noKey.runs.needs.find((n) => n.slug === "anthropic")?.set, "no", "no Anthropic key and no Vertex key: MISSING");
+  assert.match(formatVaultStatus(noKey), /needs Anthropic \(anthropic\) for 2 run kinds .*: MISSING/);
+  for (const [provider, label] of [["vertex", "default"], ["anthropic", "vertex"]]) {
+    await lite.query(`INSERT INTO vault_credentials (provider, label, ciphertext, iv, tag, key_id, hint) VALUES ($1, $2, 'x', 'x', 'x', 'x', 'sa@example.iam.gserviceaccount.com')`, [provider, label]);
+    const viaVertex = await vaultStatus(lite as never);
+    const a = viaVertex.runs.needs.find((n) => n.slug === "anthropic");
+    assert.deepEqual([a?.set, a?.note?.startsWith("via Vertex AI")], ["yes", true], `${provider}/${label}: set, via Vertex AI`);
+    assert.ok(!viaVertex.runs.missing.includes("anthropic"));
+    assert.match(formatVaultStatus(viaVertex), /needs Anthropic \(anthropic\) for 2 run kinds \(fixture_vs\.scan, fixture_vs\.audit\): set \(via Vertex AI: no Anthropic key/);
+    await lite.query("DELETE FROM vault_credentials WHERE provider = $1 AND label = $2", [provider, label]);
+  }
+  await lite.query("UPDATE vault_credentials SET enabled = true WHERE provider = 'anthropic'");
+  assert.equal((await vaultStatus(lite as never)).runs.needs.find((n) => n.slug === "anthropic")?.note, null, "its own key again: set, no note");
+  console.log("✓ Claude through Vertex AI: no Anthropic key but a Vertex AI key (the provider's, or anthropic's own \"vertex\" key): 'set (via Vertex AI)', not MISSING");
+
   // mutation: a connection on which the transaction would not become read-only is refused before anything is read
   const lax = { query: (sql: string, params?: unknown[]) => (sql === "SET TRANSACTION READ ONLY" ? Promise.resolve({ rows: [] }) : lite.query(sql, params) as Promise<{ rows: any[] }>) };
   await assert.rejects(vaultStatus(lax), /could not be made read-only/);

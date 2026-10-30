@@ -191,7 +191,7 @@ export const ADMIN_TOOLS = {
     run: async () => {
       const k = await modelKeys();
       return { unlocked: k.unlocked, providers: k.providers,
-        credentials: k.credentials.map((c: any) => pick(c, ["id", "provider", "label", "hint", "priority", "enabled", "uses", "last_used_at", "created_at", "rotated_at", "project_id", "client_email"])) };
+        credentials: k.credentials.map((c: any) => pick(c, ["id", "provider", "label", "hint", "priority", "enabled", "uses", "last_used_at", "created_at", "rotated_at", "project_id", "client_email", "bucket", "endpoint"])) };
     },
     summary: (d) => `${d.unlocked ? "Unlocked" : "LOCKED (APP_VAULT_KEY unset)"}; ${d.providers.length} provider(s), ${d.credentials.length} key(s), ${d.providers.filter((p: any) => p.enabled && !p.enabled_keys).length} enabled provider(s) without a key.`,
   },
