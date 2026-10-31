@@ -55,7 +55,7 @@ import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { openTransfer, sealTransfer, sha256Hex, sizeInWords } from "./run-transfer-seal.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack, writeBackIgnore, type WriteBackIgnore } from "./agent-workspace.js";
 import { checkInput, CheckoutCache, copyInto, field, gitCredentialFiles, mapResults, mountInto, pinCommits, removeCopy, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
-import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
+import { linkToolData, linkTools, RUN_TOOL_CATALOG, RunToolError, verifyToolSet, type ToolCatalog } from "./run-tools.js";
 import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { now as clockNow, REFRESH_MARGIN_MS } from "./clock.js";
@@ -482,6 +482,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   let cache: CheckoutCache | null = null;
   const mounts: { at: string; target: string; copy?: { dev: number; ino: number } }[] = [];
   let toolBin: string | null = null;
+  let toolData: string | null = null;
   /** mold_v0-182: what the write-back leaves out (the agent repository's .gitignore, the kind's write_back_ignore). */
   let wbIgnore: WriteBackIgnore | null = null;
   const flush = async () => {
@@ -659,7 +660,12 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         // mold_v0-072: the kind's tools, as pinned, from the image (never downloaded now), first on the run's PATH.
         if (agent.tools.length) {
           const catalog = opts.runTools?.catalog ?? RUN_TOOL_CATALOG;
-          try { toolBin = linkTools(verifyTools(agent.tools, { dir: opts.runTools?.dir, catalog }), path.join(scratch, "tools-bin")); }
+          try {
+            const set = verifyToolSet(agent.tools, { dir: opts.runTools?.dir, catalog });
+            toolBin = linkTools(set.bins, path.join(scratch, "tools-bin"));
+            // mold_v0-184: a data tool's directory (AWS's Guard rule sets), checked file by file, at RUN_TOOLS_DATA/<name>.
+            if (Object.keys(set.data).length) toolData = linkToolData(set.data, path.join(scratch, "tools-data"));
+          }
           catch (e) { throw e instanceof RunToolError ? new AgentRunError(`${e.message}: the runner image is not built for this kind (scripts/install-run-tools.ts)`) : e; }
           pending.push({ type: "agent_tools", data: { tools: agent.tools.map((t) => `${t} ${catalog[t]?.version ?? "?"}`) } });
         }
@@ -698,6 +704,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     const runEnv: Record<string, string> = {
       PATH: `${toolBin ? `${toolBin}:` : ""}${process.env.PATH ?? "/usr/bin:/bin"}`, HOME: home, LANG: "C.UTF-8",
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
+      ...(toolData ? { RUN_TOOLS_DATA: toolData } : {}),
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
     };
     // mold_v0-079: a gated write is given the preview's output that was approved (its run, results and recorded files,

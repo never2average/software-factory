@@ -14,6 +14,9 @@
 //     own, not one resolving to a private address); set by an owner only, for the workspace or one of its own assets;
 //     a run of a kind with company_egress reaches its workspace's hosts and those of the asset it targets, each exactly
 //     (not a subdomain), through its proxy; never another workspace's or another asset's; a kind without it, none.
+//  5. Hosts reached only with a credential (mold_v0-184, credential_egress): declared with the kind's own credentials
+//     only; a run whose workspace holds no value of that credential gets the kind's egress alone; one whose workspace
+//     set it gets the declared hosts too (with subdomains, as egress); another workspace's value opens nothing.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -62,6 +65,7 @@ try {
     assert.throws(() => pack({ jobKinds: [k({ operator_credentials: ["catalogue_login"] })] }), /names operator credential catalogue_login/);
     assert.throws(() => pack({ operatorCredentials: [op], credentials: [{ name: "catalogue_login", label: "x", bound_to: "workspace", deliver_as: { env: "OTHER_X" } }] }), /both as a workspace's and as an operator's/);
     assert.throws(() => pack({ operatorCredentials: [op], credentials: [{ name: "tok", label: "x", bound_to: "workspace", deliver_as: { env: "CATALOGUE_LOGIN" } }] }), /both deliver to env CATALOGUE_LOGIN/);
+    assert.throws(() => pack({ jobKinds: [k({ credential_egress: [{ credentials: ["nope"], hosts: ["amazonaws.com"] }] })] }), /credential_egress names a credential that is not one of the kind's credentials/);
     console.log("✓ declarations: path_env is a variable like any other (never the shell's, never shared); operator credentials declared by the pack, named by the kind; a name is one or the other");
   }
 
@@ -77,6 +81,7 @@ try {
     credentials: [
       { name: "kubeconfig_ro", label: "Kubeconfig", bound_to: "workspace", deliver_as: { file: "kubeconfig", path_env: "KUBECONFIG" } },
       { name: "prod_kubeconfig", label: "Production kubeconfig", bound_to: "asset", area: "access_apps", deliver_as: { file: "prod.yaml", path_env: "PROD_RO_KUBECONFIG" } },
+      { name: "cloud_key", label: "Cloud read-only key", bound_to: "workspace", deliver_as: { env: "CLOUD_RO_KEY" } },
     ],
     operatorCredentials: [opCred],
     jobKinds: [
@@ -86,6 +91,7 @@ try {
       kind("plain"),
       kind("company", { egress: ["kind.agent-allowed.example"], company_egress: true }),
       kind("company_off", { egress: ["kind.agent-allowed.example"] }),
+      kind("cloud", { egress: ["kind.agent-allowed.example"], credentials: ["cloud_key"], credential_egress: [{ credentials: ["cloud_key"], hosts: ["cloud-api.example"] }] }),
     ] as never,
   });
   // Another pack with an operator credential of the same name: the vault's label is per pack, so it gets none of ours.
@@ -216,6 +222,27 @@ try {
       const again = await runIt(A.orgId, "fixture_access", "company", { scope: { mode: "egress", hosts: [] } });
       assert.deepEqual(again.claim.egress.exact, ["api.company-a.example"], "an address or internal name in the table is dropped; no asset targeted: the workspace's only");
       console.log("✓ per-company egress: hosts validated (no address in any notation, no local or internal name, none resolving to a private address); set by owners for their own workspace and assets; a run reaches its workspace's and its asset's hosts exactly, never a subdomain, another asset's or another workspace's");
+    }
+    // ---------- 5. hosts reached only with a credential (mold_v0-184) ----------
+    {
+      let log = "";
+      const hosts = ["api.cloud-api.example", "x.kind.agent-allowed.example"];
+      const without = await runIt(A.orgId, "fixture_access", "cloud", { scope: { mode: "egress", hosts } }, { egress: "proxy", onProxyLog: (l: string) => (log = l) });
+      const why = (h: string) => log.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((d) => d.deny?.startsWith(`${h}:`) || d.allow === h)?.why;
+      assert.ok(!without.claim.egress.hosts.includes("cloud-api.example"), "no value of the credential: the kind's egress alone");
+      assert.equal(why("api.cloud-api.example"), "host not allowed", "and its proxy refuses the cloud's host");
+      assert.equal((await ev(without.id, "claimed"))[0].credential_hosts, undefined);
+      await creds.setCredential(B.orgId, null, { pack: "fixture_access", name: "cloud_key", value: `cloud-${STAMP}-B` });
+      const other = await runIt(A.orgId, "fixture_access", "cloud", { scope: { mode: "egress", hosts } });
+      assert.ok(!other.claim.egress.hosts.includes("cloud-api.example"), "another workspace's value opens nothing");
+      await creds.setCredential(A.orgId, null, { pack: "fixture_access", name: "cloud_key", value: `cloud-${STAMP}-A` });
+      const withKey = await runIt(A.orgId, "fixture_access", "cloud", { scope: { mode: "egress", hosts } }, { egress: "proxy", onProxyLog: (l: string) => (log = l) });
+      assert.ok(withKey.claim.egress.hosts.includes("cloud-api.example"), `the workspace set it: the declared host too (${withKey.claim.egress.hosts.join(", ")})`);
+      assert.equal(why("api.cloud-api.example"), "dns", "its subdomain passes the allowlist (then offline, no such name)");
+      assert.deepEqual((await ev(withKey.id, "claimed"))[0].credential_hosts, ["cloud-api.example"], "the claim's event names the hosts it added");
+      const plain = await runIt(A.orgId, "fixture_access", "company_off", { scope: { mode: "egress", hosts: [] } });
+      assert.ok(!plain.claim.egress.hosts.includes("cloud-api.example"), "a kind without credential_egress: never");
+      console.log("✓ credential_egress: a kind's cloud host joins the run's allowlist only when the run's own workspace holds a value of its credential (never another workspace's), with subdomains as egress");
     }
   } finally { await http.close(); }
   await db.close();

@@ -237,6 +237,31 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
 }
 
 /**
+ * mold_v0-184: whether the run's own slot (its workspace, and the asset and environment it targets, exactly as
+ * runCredentials looks it up) holds a stored value of any of `names` (each one of the run's frozen kind's credentials).
+ * Nothing is opened or minted: a kind's `credential_egress` hosts are added to the run's allowlist at claim only when
+ * this is true (a GitHub App or OAuth field counts when a value was pasted; such a field is never named there).
+ */
+export async function runHasCredential(run: RunForCredentials, names: string[]): Promise<boolean> {
+  const own = new Set(Array.isArray(run.spec?.credentials) ? run.spec!.credentials : []);
+  const { asset, area, environment } = targetOf(run.targets);
+  for (const name of names) {
+    if (!own.has(name)) continue;
+    const spec = findCredential(run.pack, name);
+    if (!spec) continue;
+    const s: Slot = { spec, asset: spec.bound_to === "workspace" ? null : asset, environment: spec.bound_to === "environment" ? environment : null };
+    if ((spec.bound_to !== "workspace" && !s.asset) || (spec.bound_to === "environment" && !s.environment)) continue;
+    if (spec.bound_to !== "workspace" && area !== null && area !== spec.area) continue;
+    const [r] = await asPlatform(async () => (await getDb()).query<{ one: number }>(
+      `SELECT 1 AS one FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = $4
+          AND coalesce(asset_key, '') = $5 AND coalesce(environment, '') = $6`,
+      [run.org_id, spec.pack, spec.name, spec.bound_to, s.asset ?? "", s.environment ?? ""]));
+    if (r) return true;
+  }
+  return false;
+}
+
+/**
  * One workspace-bound value of a pack's field, for the shell's own use on the server (mold_v0-059: an external API
  * repository's credential, sent only in its request header). Never reaches pack code or an answer. Null when unset.
  */

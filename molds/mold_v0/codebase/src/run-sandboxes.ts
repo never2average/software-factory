@@ -130,7 +130,7 @@ at tools
 # The run tools the packs' agent kinds declare (mold_v0-072), as the runner image has them: each artifact checked against
 # its pinned sha256 before it is unpacked (root's, /opt/app-tools). Before the runner starts: a run never downloads one.
 cd "$H/app" || fail "no code directory"
-if grep -q '"aws"' src/run-tools.generated.json; then command -v unzip >/dev/null 2>&1 || ${apt} install -y -qq unzip >/dev/null 2>&1 || true; fi
+if grep -q -E '"(aws|aws-guard-rules)"' src/run-tools.generated.json; then command -v unzip >/dev/null 2>&1 || ${apt} install -y -qq unzip >/dev/null 2>&1 || true; fi
 sudo -n env PATH=/usr/local/bin:/usr/bin:/bin $H/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/app-tools >/dev/null 2>"$H/tools.err" || { tail -5 "$H/tools.err" >&2; fail "the run tools could not be installed"; }
 
 at start
