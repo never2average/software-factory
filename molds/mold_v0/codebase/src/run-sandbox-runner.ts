@@ -32,7 +32,7 @@
  * the runner from exactly those files).
  */
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,10 +88,30 @@ export function runAsync(cmd: string, args: string[], opts: SpawnOptions & { tim
   });
 }
 
+/** mold_v0-184: whether any socket listens on TCP `port` (IPv4 or IPv6, any address), read from /proc/net/tcp{,6}. */
+export function listeningOn(port: number, files = ["/proc/net/tcp", "/proc/net/tcp6"]): boolean {
+  const hex = port.toString(16).toUpperCase().padStart(4, "0");
+  for (const f of files) {
+    let text = "";
+    try { text = readFileSync(f, "utf8"); } catch { continue; }
+    for (const line of text.split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      // local_address is ADDR:PORT in hex; state 0A is LISTEN.
+      if (cols.length > 3 && cols[1]!.endsWith(`:${hex}`) && cols[3] === "0A") return true;
+    }
+  }
+  return false;
+}
+
 /** The firewall and proxy for the run's user, with the run's hosts; then the probe as that user. Throws when anything fails. */
-export async function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
+export async function lockDown(hosts: string[] | { hosts: string[]; exact?: string[]; private?: PrivateAllow[]; loopback_ports?: number[] }, gatewayUrl: string, user: string, uid: number, gid: number) {
   const allow: { hosts: string[]; exact?: string[]; private?: PrivateAllow[] } = Array.isArray(hosts) ? { hosts }
     : { hosts: hosts.hosts, exact: hosts.exact ?? [], ...(hosts.private?.length ? { private: hosts.private } : {}) };
+  // mold_v0-184: the kind's loopback ports, for the run's own programs only. Nothing may listen on one yet (no program of
+  // the run has started): a daemon of the sandbox's there would otherwise be reachable by the run's user.
+  const loopbackPorts = Array.isArray(hosts) ? [] : [...new Set((hosts.loopback_ports ?? []).filter((p) => Number.isInteger(p) && p >= 1024 && p <= 65535))];
+  const taken = loopbackPorts.filter((p) => listeningOn(p));
+  if (taken.length) throw new Error(`the kind's loopback port${taken.length > 1 ? "s" : ""} ${taken.join(", ")} already ha${taken.length > 1 ? "ve" : "s"} a listener in this sandbox: the run is not started`);
   if (process.getuid?.() !== 0) throw new Error("the lockdown needs the runner to be root in the sandbox");
   const gatewayHost = (() => { try { return new URL(gatewayUrl).hostname.toLowerCase(); } catch { return ""; } })();
   if (!gatewayHost) throw new Error("the lockdown needs the gateway's host for its probe");
@@ -102,7 +122,7 @@ export async function lockDown(hosts: string[] | { hosts: string[]; exact?: stri
     writeFileSync(path.join(dir, "egress-allow.json"), JSON.stringify(allow));
     writeFileSync(path.join(dir, "egress-probe.mjs"), probeSource(gatewayHost));
     // By number: the run's user is leased per run (mold_v0-078), its uid is what the firewall matches.
-    writeFileSync(path.join(dir, "egress-setup.sh"), setupScript(dir, { user, uid, sudo: false, systemd: false, strict: true }));
+    writeFileSync(path.join(dir, "egress-setup.sh"), setupScript(dir, { user, uid, sudo: false, systemd: false, strict: true, loopbackPorts }));
     // A minimal environment: the proxy it starts (an unrestricted user parsing the run's traffic) never holds the token.
     const set = await runAsync("bash", [path.join(dir, "egress-setup.sh")], { timeoutMs: 120_000, env: { PATH: withSbin(env.PATH ?? "/usr/bin:/bin") } });
     if (set.status !== 0) throw new Error(`egress lockdown failed (exit ${set.status}): ${(set.stderr || set.stdout).slice(-600)}`);
@@ -114,7 +134,7 @@ export async function lockDown(hosts: string[] | { hosts: string[]; exact?: stri
     const probe = await runAsync(process.execPath, ["/opt/app-egress/probe.mjs"], { timeoutMs: 120_000, uid, gid, cwd: "/", env: { PATH: env.PATH ?? "/usr/bin:/bin" } });
     if (probe.status !== 0) throw new Error(`egress probe failed, the run is not started: ${(probe.stdout || probe.stderr).slice(-800)}`);
     const priv = allow.private ?? [];
-    log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts${priv.length ? `, private: ${privateAllowText(priv).join(" ")}` : ""}, probe ok`);
+    log(`egress locked down for ${user} (uid ${uid}): ${allow.hosts.length + (allow.exact?.length ?? 0)} allowed hosts${priv.length ? `, private: ${privateAllowText(priv).join(" ")}` : ""}${loopbackPorts.length ? `, its own loopback ports ${loopbackPorts.join(" ")}` : ""}, probe ok`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 

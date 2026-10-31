@@ -339,7 +339,7 @@ process.exit(bad ? 1 : 0);
  * systemd's). `proxyUser`, `installDir`, `logDir`: the proxy's user and files elsewhere than the defaults (the offline
  * firewall test, which must not add a user or files to the machine it runs on).
  */
-export function setupScript(dir: string, opts: { user?: string; uid?: number; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean } = {}): string {
+export function setupScript(dir: string, opts: { user?: string; uid?: number; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean; loopbackPorts?: number[] } = {}): string {
   const user = opts.user ?? "agent", proxyUser = opts.proxyUser ?? "appproxy";
   const name = /^[a-z_][a-z0-9_-]{0,31}$/, dirOk = /^\/[A-Za-z0-9._\/-]{1,200}$/;
   if (!name.test(user) || !name.test(proxyUser)) throw new Error(`egress: not a user name: ${user} / ${proxyUser}`);
@@ -348,7 +348,12 @@ export function setupScript(dir: string, opts: { user?: string; uid?: number; su
   if (opts.uid !== undefined && !(Number.isSafeInteger(opts.uid) && opts.uid > 0 && opts.uid < 2 ** 31 - 1)) throw new Error("egress: uid is a number other than root");
   let body = setupBody(dir, user);
   if (opts.uid !== undefined) body = body.replace(`AUID="$(id -u ${user})"`, `AUID=${opts.uid}`);
-  if (opts.strict) body = strictRules(body);
+  // mold_v0-184: ports on 127.0.0.1 the run's own programs serve each other on (strict rules only).
+  const ports = [...new Set(opts.loopbackPorts ?? [])];
+  if (ports.some((p) => !Number.isInteger(p) || p < 1024 || p > 65535 || [EGRESS_PROXY_PORT, EGRESS_TRANSPARENT_PORT, EGRESS_DNS_PORT].includes(p)))
+    throw new Error("egress: a loopback port is a number above 1023, never the proxy's own");
+  if (ports.length && !opts.strict) throw new Error("egress: loopback ports are a run sandbox's (strict) rules");
+  if (opts.strict) body = strictRules(body, ports);
   if (opts.systemd === false) body = body.replace("if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then", "if false; then");
   if (opts.installDir) body = body.replace(`D=${EGRESS_DIR};`, `D=${opts.installDir};`);
   if (opts.logDir) body = body.replaceAll("/var/log/app-egress.", `${opts.logDir}/app-egress.`);
@@ -363,7 +368,16 @@ export function setupScript(dir: string, opts: { user?: string; uid?: number; su
  * chain that runs before Docker's own (priority -150), DNS over TCP is dropped; IPv6 is dropped, and the iptables form
  * fails closed when ip6tables is missing.
  */
-function strictRules(body: string): string {
+function strictRules(body: string, ports: number[] = []): string {
+  // mold_v0-184: the run user's own connections to a declared loopback port, and the answers of its server there (the
+  // reply direction of a connection it opened: a program bound to that port as its source opens nothing new).
+  const set = ports.length ? `{ ${ports.join(", ")} }` : "";
+  const nftPorts = ports.length ? `
+    meta skuid $AUID ip daddr 127.0.0.1 tcp dport ${set} accept
+    meta skuid $AUID ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport ${set} ct direction reply accept` : "";
+  const iptPorts = ports.map((p) => `
+  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p tcp --dport ${p} -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -s 127.0.0.1 -d 127.0.0.1 -p tcp --sport ${p} -m conntrack --ctdir REPLY -m owner --uid-owner "$AUID" -j ACCEPT`).join("");
   const nftStart = body.indexOf("table inet app_egress {"), nftEnd = body.indexOf("\nEOF\n", nftStart);
   const nft = `table inet app_egress {
   chain nat_out {
@@ -374,7 +388,7 @@ function strictRules(body: string): string {
   chain out {
     type filter hook output priority 0; policy accept;
     meta skuid $AUID ip daddr 127.0.0.1 tcp dport { ${EGRESS_PROXY_PORT}, ${EGRESS_TRANSPARENT_PORT} } accept
-    meta skuid $AUID ip daddr 127.0.0.1 udp dport ${EGRESS_DNS_PORT} accept
+    meta skuid $AUID ip daddr 127.0.0.1 udp dport ${EGRESS_DNS_PORT} accept${nftPorts}
     meta skuid $AUID counter drop
   }
 }`;
@@ -385,14 +399,14 @@ function strictRules(body: string): string {
   sudo -n iptables -t nat -I OUTPUT 2 -m owner --uid-owner "$AUID" -p tcp --dport 443 -j REDIRECT --to-ports ${EGRESS_TRANSPARENT_PORT}
   sudo -n iptables -A OUTPUT -d 127.0.0.1 -p tcp --dport ${EGRESS_PROXY_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
   sudo -n iptables -A OUTPUT -d 127.0.0.1 -p tcp --dport ${EGRESS_TRANSPARENT_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
-  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p udp --dport ${EGRESS_DNS_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p udp --dport ${EGRESS_DNS_PORT} -m owner --uid-owner "$AUID" -j ACCEPT${iptPorts}
   sudo -n iptables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
   sudo -n ip6tables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
 elif command -v iptables >/dev/null 2>&1; then
   echo "egress: iptables without ip6tables would leave IPv6 open" >&2; exit 23
 `;
   out = out.slice(0, ipStart) + ipt + out.slice(ipEnd);
-  if (!out.includes("priority -150") || !out.includes("exit 23")) throw new Error("egress: strict rules not applied");
+  if (!out.includes("priority -150") || !out.includes("exit 23") || (ports.length && !out.includes("ct direction reply"))) throw new Error("egress: strict rules not applied");
   return out;
 }
 
