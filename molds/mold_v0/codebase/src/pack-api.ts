@@ -451,6 +451,16 @@ const jobKindBase = {
    */
   company_egress: z.boolean().default(false),
   /**
+   * Hosts reached only with a credential (mold_v0-184): each entry's `hosts` (the pack's own, like `egress`: a subdomain
+   * is reached too) join the run's allowlist at claim only when the run's own slot holds a value of one of its
+   * `credentials` (the kind's workspace credentials). An optional read-only cloud key opens that cloud's API; a run whose
+   * workspace never set it reaches only `egress`. None by default.
+   */
+  credential_egress: z.array(z.object({
+    credentials: z.array(name).min(1).max(10),
+    hosts: z.array(host).min(1).max(10),
+  }).strict()).max(5).default([]),
+  /**
    * The run may need the workspace's own private network (mold_v0-036; src/onprem-runners.ts): when the workspace chose
    * to run such runs on premises and has enrolled a runner there, a run of this kind is routed to one of that
    * workspace's own runners (never another workspace's), which carries it out in a run sandbox with the same lockdown,
@@ -494,6 +504,8 @@ const jobKindBase = {
  * workspace's owner could list a host of their own and have the run send the operator's value there).
  */
 const OP_EGRESS = "a kind with operator_credentials cannot take company_egress (a host the workspace chose would reach the operator's credential)";
+/** mold_v0-184: a credential_egress entry names the kind's own workspace credentials. */
+const CRED_EGRESS = "credential_egress names a credential that is not one of the kind's credentials";
 /** A gated write runs once per approval (mold_v0-079 review: a retried attempt would write again on one yes). */
 const ONE_ATTEMPT = "a kind that waits for an approval runs once per approval: max_attempts must be 1";
 export const JobKindSchema = z.object({
@@ -506,6 +518,7 @@ export const JobKindSchema = z.object({
   .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice")
   .refine((k) => k.approval?.preview !== k.name, { message: "a kind is not its own preview", path: ["approval", "preview"] })
   .refine((k) => !(k.operator_credentials.length && k.company_egress), { message: OP_EGRESS, path: ["company_egress"] })
+  .refine((k) => k.credential_egress.every((r) => r.credentials.every((c) => k.credentials.includes(c))), { message: CRED_EGRESS, path: ["credential_egress"] })
   .refine((k) => !k.approval || k.max_attempts === 1, { message: ONE_ATTEMPT, path: ["max_attempts"] })
   .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] });
 
@@ -542,6 +555,8 @@ export const AgentJobKindSchema = z.object({
   for (const n of k.agent.credentials ?? []) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "credentials");
   if (k.approval?.preview === k.name) ctx.addIssue({ code: "custom", message: "a kind is not its own preview", path: ["approval", "preview"] });
   if (k.operator_credentials.length && k.company_egress) ctx.addIssue({ code: "custom", message: OP_EGRESS, path: ["company_egress"] });
+  for (const [i, r] of k.credential_egress.entries()) for (const c of r.credentials)
+    if (!k.credentials.includes(c)) ctx.addIssue({ code: "custom", message: `${c}: ${CRED_EGRESS}`, path: ["credential_egress", i, "credentials"] });
   if (k.approval && k.max_attempts !== 1) ctx.addIssue({ code: "custom", message: ONE_ATTEMPT, path: ["max_attempts"] });
   for (const n of k.operator_credentials) if (k.credentials.includes(n)) ctx.addIssue({ code: "custom", message: `${n} is both a workspace and an operator credential`, path: ["operator_credentials"] });
   for (const [j, g] of k.agent.git_credentials.entries()) {

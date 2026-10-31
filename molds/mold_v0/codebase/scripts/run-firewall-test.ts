@@ -14,6 +14,8 @@
 //  3. Root in the sandbox (the runner) still reaches the outside: the rules hold for the run's user, by uid.
 // The run user is one leased per run (mold_v0-078, src/run-users.ts): a uid no account names, locked down by number;
 // the run's allowlist has a company's own host (mold_v0-075), allowed exactly: never its subdomains.
+// mold_v0-184: the kind's loopback port (45660): the run user's own server there answers the run user's own client;
+// a client bound to that port as its source still reaches no local daemon, and root's daemons stay out of reach.
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -65,7 +67,7 @@ fs.writeFileSync(${JSON.stringify(path.join(dir, "outside.up"))}, "up");`);
   // In the sandbox: daemons of root's on loopback, a local resolver (as systemd-resolved's 127.0.0.53, over TCP) and on
   // the sandbox's own address, which the run user must not reach either (strict rules).
   writeFileSync(path.join(dir, "local.mjs"), `import net from "node:net"; import fs from "node:fs";
-for (const [h, p] of [["127.0.0.1", 7777], ["127.0.0.53", 53], [${JSON.stringify(IN)}, 7778]]) net.createServer((s) => s.end("local\\n")).listen(p, h);
+for (const [h, p] of [["127.0.0.1", 7777], ["127.0.0.53", 53], [${JSON.stringify(IN)}, 7778], ["127.0.0.1", 45661]]) net.createServer((s) => s.end("local\\n")).listen(p, h);
 fs.writeFileSync(${JSON.stringify(path.join(dir, "local.up"))}, "up");`);
   kids.push(spawn("ip", ["netns", "exec", nsS, process.execPath, path.join(dir, "local.mjs")], { stdio: "ignore" }));
   for (let i = 0; i < 100 && !readdirSync(dir).includes("local.up"); i++) await new Promise((r) => setTimeout(r, 100));
@@ -95,6 +97,16 @@ const out = mode === "baseline" ? { direct8080: await tcp(OUT, 8080), local_daem
       local_resolver_tcp: await tcp("127.0.0.53", 53), own_address: await tcp(${JSON.stringify(IN)}, 7778), ipv6_loopback: await tcp("::1", 7777), tls443_unlisted: await tls443("example.com"), tls443_listed_no_dns: await tls443("allowed.test"),
       dns: await dns("example.com"), proxy_ip: await viaProxy(OUT + ":443"), proxy_unlisted: await viaProxy("example.com:443") };
 if (mode === "after") Object.assign(out, { company_exact: await viaProxy("company.test:443"), company_sub: await viaProxy("x.company.test:443") });
+if (mode === "after") {
+  // mold_v0-184: a server of the run's own on its declared loopback port, and its own client: an answer comes back.
+  const srv = net.createServer((s) => s.end("own\\n"));
+  await new Promise((r) => srv.listen(45660, "127.0.0.1", r));
+  out.own_loopback = await new Promise((r) => { const s = net.connect({ host: "127.0.0.1", port: 45660, timeout: T }); let got = ""; s.on("data", (d) => (got += d)); s.on("close", () => r(got.trim())); s.on("timeout", () => { s.destroy(); r("timeout"); }); s.on("error", (e) => r("error " + e.code)); });
+  await new Promise((r) => srv.close(r));
+  // Bound to the declared port as its source, a connection to a local daemon opens nothing (only replies pass).
+  out.srcport_daemon = await new Promise((r) => { const s = net.connect({ host: "127.0.0.1", port: 7777, localAddress: "127.0.0.1", localPort: 45660, timeout: T }); s.on("connect", () => { s.destroy(); r(true); }); s.on("timeout", () => { s.destroy(); r(false); }); s.on("error", () => r(false)); });
+  out.undeclared_port_daemon = await tcp("127.0.0.1", 45661);
+}
 console.log(JSON.stringify(out));`);
   const asRunUser = (mode: string) => JSON.parse(sh(["setpriv", `--reuid=${RUID}`, `--regid=${RUID}`, "--clear-groups", process.execPath, path.join(dir, "try.mjs"), mode], { ns: nsS }).trim());
 
@@ -110,7 +122,7 @@ console.log(JSON.stringify(out));`);
     writeFileSync(path.join(dir, f), body);
   const inst = path.join(dir, "inst"), logs = path.join(dir, "log");
   sh(["install", "-d", "-m", "755", logs]);
-  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "apprun", uid: RUID, sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs }));
+  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "apprun", uid: RUID, sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs, loopbackPorts: [45660] }));
   const set = spawnSync("ip", ["netns", "exec", nsS, "bash", path.join(dir, "setup.sh")], { encoding: "utf8", timeout: 60_000 });
   assert.equal(set.status, 0, `lockdown: ${set.stderr}`);
   assert.match(set.stdout, new RegExp(`egress: locked down \\(apprun uid ${RUID};`), "the run's own uid, by number (it has no account)");
@@ -141,6 +153,10 @@ console.log(JSON.stringify(out));`);
   assert.match(after.company_exact, /403/); assert.match(after.company_sub, /403/);
   assert.match(plog, /"deny":"company.test:443","why":"dns"/, "the company's host passed the allowlist");
   assert.match(plog, /"deny":"x.company.test:443","why":"host not allowed"/, "its subdomain did not");
+  assert.equal(after.own_loopback, "own", `the run's own server on its declared loopback port answers its own client: ${after.own_loopback}`);
+  assert.equal(after.srcport_daemon, false, "a client bound to the declared port as its source reaches no local daemon");
+  assert.equal(after.undeclared_port_daemon, false, "a daemon on another loopback port stays out of reach");
+  console.log("✓ mold_v0-184: the kind's loopback port: the run's own server answers its own client there; a source-port trick and other loopback ports reach nothing");
   console.log("✓ after the lockdown, as the run user: direct TCP dropped (any port, DNS over TCP), no local daemon, local resolver, own address or IPv6; 443 and DNS go to the sandbox's proxy, which refuses unlisted names and addresses; nothing reached the outside");
 
   // 3. root (the runner) is not the run user

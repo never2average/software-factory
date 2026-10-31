@@ -32,7 +32,7 @@ import type { Secret } from "./credential-redact.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
-import { runCompanyHosts } from "./egress-hosts.js";
+import { credentialEgressHosts, runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
 import { ENV } from "./env-names.js";
@@ -225,7 +225,7 @@ export interface Claim {
    * Hosts the run's egress proxy allows: the gateway's (when it is a public HTTPS host) and the kind's (each with its
    * subdomains); `exact`, the company's own hosts (mold_v0-075, src/egress-hosts.ts), each exactly.
    */
-  egress: { hosts: string[]; exact?: string[] };
+  egress: { hosts: string[]; exact?: string[]; loopback_ports?: number[] };
   /** A gated write (mold_v0-079): its approval and the preview's output that was approved (what it is to write). */
   approval?: { id: string; preview_run_id: string; sha256: string; approved_by: string; role: string; output: Record<string, unknown> | null } | null;
 }
@@ -347,13 +347,21 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   }
   // mold_v0-075: the company's own hosts (the run row's workspace, the asset it targets), each allowed exactly.
   const exact = await runCompanyHosts(row);
+  // mold_v0-184: a kind's hosts reached only when the run's slot holds a value of the credential that needs them (a
+  // cloud's API for an optional read-only key, say): without it the run's allowlist is the kind's egress alone.
+  const credHosts = await credentialEgressHosts(row);
   const approval = row.approval_id ? await asPlatform(async () => approvedPreview(await getDb(), row)) : null;
-  await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at), ...(exact.length ? { company_hosts: exact } : {}) });
+  await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at), ...(exact.length ? { company_hosts: exact } : {}),
+    ...(credHosts.length ? { credential_hosts: credHosts } : {}) });
+  // mold_v0-184: the ports on loopback the run's own programs serve each other on (an emulator the run starts), opened
+  // for the run's user only by the sandbox's lockdown.
+  const loopback = (row.spec as { agent?: { loopback_ports?: unknown } } | null)?.agent?.loopback_ports;
+  const loopbackPorts = Array.isArray(loopback) ? loopback.filter((p): p is number => Number.isInteger(p) && p >= 1024 && p <= 65535) : [];
   return {
     run: { ...view(row), org_id: row.org_id, spec: row.spec },
     lease_token: lease, lease_seconds: row.lease_seconds, lease_expires_at: iso(row.lease_expires_at)!, deadline_at: iso(row.deadline_at)!,
     gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
-    egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url), exact },
+    egress: { hosts: runEgressHosts([...(row.egress ?? []), ...credHosts], gateway.gateway_url), exact, ...(loopbackPorts.length ? { loopback_ports: loopbackPorts } : {}) },
     ...(approval ? { approval } : {}),
   };
 }

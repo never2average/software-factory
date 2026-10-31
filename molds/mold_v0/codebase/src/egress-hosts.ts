@@ -147,3 +147,23 @@ export async function runCompanyHosts(run: { org_id: number; pack: string; spec:
     [run.org_id, run.pack, key, area, MAX_HOSTS_PER_SLOT * 2]));
   return rows.map((r) => r.host).filter((h) => HOST.test(h) && !net.isIP(h) && !LOCAL_SUFFIXES.some((s) => h === s || h.endsWith(`.${s}`)));
 }
+
+/**
+ * mold_v0-184: the hosts a kind reaches only with one of its credentials (`credential_egress`: {credentials, hosts}),
+ * for a run whose own slot holds a value of one of those credentials (src/credentials.ts runHasCredential; nothing is
+ * opened). The kind's own hosts, declared in its pack like `egress` (a subdomain is reached too), never a workspace's.
+ * Without such a value the run's allowlist is the kind's egress alone: an optional cloud key that is not set never
+ * opens that cloud's API to the run.
+ */
+export async function credentialEgressHosts(run: { org_id: number; pack: string; spec: { credentials?: string[]; credential_egress?: { credentials?: string[]; hosts?: string[] }[] } | null; targets: Record<string, unknown> | null }): Promise<string[]> {
+  const rules = Array.isArray(run.spec?.credential_egress) ? run.spec!.credential_egress : [];
+  if (!rules.length) return [];
+  const { runHasCredential } = await import("./credentials.js");
+  const out = new Set<string>();
+  for (const r of rules) {
+    const names = (r.credentials ?? []).filter((n): n is string => typeof n === "string");
+    if (!names.length || !(await runHasCredential(run, names))) continue;
+    for (const h of r.hosts ?? []) if (typeof h === "string") out.add(h.replace(/^\*\./, "").toLowerCase());
+  }
+  return [...out].sort();
+}
