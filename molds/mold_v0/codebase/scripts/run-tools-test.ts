@@ -45,7 +45,7 @@ try {
         assert.ok(art, `${n}: an artifact for ${a}`);
         assert.match(art!.url, /^https:\/\//, `${n} ${a}: https`);
         // A Python tool's artifact is its interpreter: the tool's own version is in its wheel.
-        const named = t.format === "python" ? (t.python?.wheels[a] ?? []).map((w) => w.url) : [art!.url];
+        const named: string[] = t.format === "python" ? (t.python?.wheels[a] ?? []).map((w) => w.url) : [art!.url];
         assert.ok(named.some((u) => u.includes(t.version)), `${n} ${a}: an artifact's URL names the pinned version`);
         assert.match(art!.sha256, /^[0-9a-f]{64}$/, `${n} ${a}: a sha256`);
         assert.ok(art!.bytes > 1000, `${n} ${a}: its size`);
