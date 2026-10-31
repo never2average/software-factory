@@ -437,8 +437,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     as text first. Instead of `results`. **Every file the run writes under `<RUN_OUT>`** is recorded in its events
     (`agent_output`: path, size, sha256, a small JSON file's content, redacted), whatever the run's outcome.
   - `tools` (072): tools from a fixed catalogue (`src/run-tools.ts`: claude-code 2.1.295, sops 3.13.3, age 1.3.2,
-    kubectl 1.37.1, aws 2.37.5, each with its release artifact's sha256 for x64 and arm64, measured when pinned; git is
-    the image's distribution package). `gen-packs` writes the union across the build's kinds
+    kubectl 1.37.1, aws 2.37.5, cfn-lint 1.56.3, cfn-guard 3.2.1, aws-guard-rules 1.0.2, moto 5.2.4, each with its
+    release artifact's sha256 for x64 and arm64, measured when pinned; git is the image's distribution package; the
+    last four since mold_v0-184, below). `gen-packs` writes the union across the build's kinds
     (`src/run-tools.generated.json`, `check:packs` keeps it current; an unknown tool is refused at build); the Dockerfile
     installs exactly those (`scripts/install-run-tools.ts`: each artifact's sha256 checked before it is unpacked into
     `/opt/app-tools`, root's, with a manifest) and checks them last (`--verify`: an image that lacks a tool the build
@@ -502,6 +503,45 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   a checkout step between repositories, not inside one fetch (each fetch has the step's time limit); the hosts' names
   are not resolved and checked for private addresses before the fetch (literal addresses and local names are refused);
   no cap on the cache across workspaces (per workspace only).
+- **CloudFormation checked with AWS's own tools, offline (mold_v0-184, built)**: four catalogue entries, two loopback
+  ports and one conditional egress, so a pack's kind can lint, rule-check and run CloudFormation templates in its
+  sandbox and, only with a workspace's read-only cloud key, reach that cloud's API.
+  - **Python tools** (`format: "python"`: cfn-lint, moto[server]): the artifact is a pinned relocatable CPython
+    (python-build-standalone 3.12.15, asset digests matched), `python.wheels` one wheel per package per architecture
+    (`src/run-tools-wheels.ts`, chosen by `scripts/run-tools-resolve-wheels.py` from the hash-locked
+    `scripts/run-tools-locks/<tool>.txt`, compiled with `uv pip compile --universal --generate-hashes --exclude-newer`;
+    each wheel's sha256 one of its lock's). The installer downloads and checks the interpreter and every wheel before
+    anything is unpacked, installs the wheels into that interpreter alone (`pip install --no-index --no-deps
+    --only-binary=:all:` from those files: nothing fetched or built), removes pip's own scripts and writes a launcher
+    per `python.entry_points` that runs the interpreter isolated (`-I`). The manifest's pin is one digest over the
+    interpreter's and every wheel's sha256 (`pinDigest`); the interpreter is re-hashed at every run beside the launcher.
+    cfn-lint's lock carries its `sarif` extra (`-f sarif` needs sarif-om).
+  - **A data tool** (`format: "zip"` with `data`, `exclude`: aws-guard-rules, AWS's Guard rule sets per framework from
+    the aws-guard-rules-registry release, measured at pin): no program; its directory's files are hashed into the
+    manifest (`treeDigest`: every file's path and sha256, no link or special file) and checked file by file at every
+    run (`verifyToolSet`), then linked at `RUN_TOOLS_DATA/<name>`. A bin path may name the release's architecture
+    (`<arch>`: cfn-guard's static `cfn-guard-v3-x86_64-linux-latest/cfn-guard`).
+  - **`agent.loopback_ports`** (at most 4, above 1023, never the egress proxy's): ports on 127.0.0.1 the run's own
+    programs serve each other on (an emulator one starts and the AWS CLI calls). The claim carries them
+    (`egress.loopback_ports`); the sandbox's strict rules (`orchestrator/core/egress.ts`) accept the run user's
+    connections to them and the reply direction of its server's answers, nothing else on loopback (a client bound to
+    such a port as its source opens nothing new); the runner refuses the run when anything already listens on one
+    (`listeningOn`, /proc/net/tcp{,6}): a daemon of the sandbox's there would be reachable.
+  - **`credential_egress`** (`[{credentials, hosts}]`, the kind's own workspace credentials): the hosts (with
+    subdomains, as `egress`) join the run's allowlist at claim only when the run's own slot holds a stored value of one
+    of those credentials (`src/credentials.ts` runHasCredential: nothing opened or minted; `src/egress-hosts.ts`
+    credentialEgressHosts); the claim's event names them (`credential_hosts`). Another workspace's value opens nothing.
+  - The boat set-up installs unzip for the rule sets too; a build with these tools grows its runner image by about
+    1.2 GB (each Python tool its own interpreter) and a boat run sandbox downloads about 300 MB in its set-up.
+  Proof: `npm run test:run-tools` (stand-ins: a Python tool's interpreter and wheels, a changed wheel refused, the
+  interpreter re-hashed; a data tool changed, added to or linked refused; offline after install), `npm run
+  test:run-firewall` (the declared port answers the run user's own client; a source-port trick and other loopback
+  ports reach nothing), `npm run test:run-credentials` (credential_egress), and `npm run test:run-tools-real` (not
+  in CI: the real artifacts downloaded and checked, then with no network at all cfn-lint and cfn-guard find the known
+  issues of `scripts/fixtures/cfn/insecure.yaml`, moto creates it on 127.0.0.1 and the security group reads back open
+  to 0.0.0.0/0). **Not covered:** LocalStack is not in the catalogue: it needs Docker (root's in a run sandbox: never
+  the run user's) and, since 2026-03, an auth token with online activation; a pack runs moto in the sandbox and may
+  use LocalStack only where its program has Docker of its own.
 - **Runs in sandboxes** (mold_v0-055, built; `src/run-sandboxes.ts`, the runner `src/run-sandbox-runner.ts`, the
   compose runner service `src/run-fleet.ts`; operator decision D4: runs go to the sandbox provider the product already
   uses for its orchestrators). The autoscaler's demand counts queued runs per kind (`demand.runs`), and each tick (on a
