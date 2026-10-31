@@ -860,6 +860,39 @@
                 "default": false,
                 "type": "boolean"
               },
+              "credential_egress": {
+                "default": [],
+                "maxItems": 5,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "credentials": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      }
+                    },
+                    "hosts": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(\\*\\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "credentials",
+                    "hosts"
+                  ],
+                  "additionalProperties": false
+                }
+              },
               "private_network": {
                 "default": false,
                 "type": "boolean"
@@ -1186,6 +1219,39 @@
               "company_egress": {
                 "default": false,
                 "type": "boolean"
+              },
+              "credential_egress": {
+                "default": [],
+                "maxItems": 5,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "credentials": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      }
+                    },
+                    "hosts": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(\\*\\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "credentials",
+                    "hosts"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "private_network": {
                 "default": false,
@@ -1724,7 +1790,7 @@
                   },
                   "tools": {
                     "default": [],
-                    "maxItems": 6,
+                    "maxItems": 10,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -1734,8 +1800,22 @@
                         "sops",
                         "age",
                         "kubectl",
-                        "aws"
+                        "aws",
+                        "cfn-lint",
+                        "cfn-guard",
+                        "aws-guard-rules",
+                        "moto"
                       ]
+                    }
+                  },
+                  "loopback_ports": {
+                    "default": [],
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1024,
+                      "maximum": 65535
                     }
                   },
                   "inputs": {

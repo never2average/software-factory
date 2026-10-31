@@ -104,7 +104,7 @@ export const GitCredentialSchema = z.object({
 const gitCredentials = z.array(GitCredentialSchema).max(5).default([]);
 
 /** The tools a kind may declare (mold_v0-072): the catalogue's names (src/run-tools.ts RUN_TOOL_NAMES). */
-export const RUN_TOOL_NAMES = ["git", "claude-code", "sops", "age", "kubectl", "aws"] as const;
+export const RUN_TOOL_NAMES = ["git", "claude-code", "sops", "age", "kubectl", "aws", "cfn-lint", "cfn-guard", "aws-guard-rules", "moto"] as const;
 
 /** A dotted field of a result item, the run's arguments ($args.<name>) or the result file's root ($root.<path>). */
 const TEMPLATE_PART = /^(\$args\.[a-z][a-z0-9_]{0,39}|(\$root\.)?[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,7})$/;
@@ -252,6 +252,13 @@ export const AgentWorkspaceSchema = z.object({
   timeout_seconds: timeout(3600),
   results_from: ResultsFromSchema.optional(),
   tools: z.array(z.enum(RUN_TOOL_NAMES)).max(RUN_TOOL_NAMES.length).default([]),
+  /**
+   * mold_v0-184: TCP ports on 127.0.0.1 the run's own programs serve each other on (a local emulator one of them starts
+   * and another calls), opened for the run's user alone by a run sandbox's lockdown (src/run-sandbox-runner.ts): its
+   * connections to them and their answers, nothing else on loopback. Above 1023, never the egress proxy's. None by default.
+   */
+  loopback_ports: z.array(z.number().int().min(1024).max(65535)
+    .refine((p) => ![3128, 3129, 15353].includes(p), "the egress proxy's own ports (orchestrator/core/egress.ts)")).max(4).default([]),
   inputs: z.record(argName, AgentInputSchema).refine((i) => Object.keys(i).length <= 10, "at most 10 inputs").default({}),
   steps: z.array(AgentStepSchema).max(10).default([]),
   /** The kind's credentials `command` receives; absent: all of them (as before mold_v0-074). */
@@ -279,6 +286,7 @@ export const AgentWorkspaceSchema = z.object({
     for (const [where, t] of temps) for (const p of placeholders(t)) if (p.startsWith("$args.") && !declared.has(p.slice(6))) bad(`{${p}} is not a declared argument (args)`, "results_from", ...where.split("."));
   }
   if (new Set(a.tools).size !== a.tools.length) bad("a tool is listed twice", "tools");
+  if (new Set(a.loopback_ports).size !== a.loopback_ports.length) bad("a port is listed twice", "loopback_ports");
   // mold_v0-073: inputs are files of this run only, never part of the workspace nor over the pinned tree's own files.
   for (const [name, i] of Object.entries(a.inputs)) {
     if (underWb(i.path, a.write_back)) bad(`input ${name}: ${i.path} is under a write-back path (an input is the run's, never the workspace's)`, "inputs", name, "path");
