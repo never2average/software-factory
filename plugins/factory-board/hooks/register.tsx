@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AppRow, Board, Build, Check, DbUsage, Tab, Ticket, Uptime, Usage } from '../types'
+import type { AppRow, Board, Build, Check, DbUsage, Spend, Tab, Ticket, Uptime, Usage } from '../types'
 import {
   STAGES,
   STAGE_WORDS,
@@ -37,6 +37,15 @@ import {
   ticketsForApp,
   uptimeBanner,
   verdict,
+  allowanceBar,
+  allowanceText,
+  monthWord,
+  parseHeartbeat,
+  SPEND_EVERY_MS,
+  spendBanner,
+  spendColor,
+  spendStatus,
+  withLive,
 } from './board'
 
 const PANE = 'factory-board'
@@ -68,6 +77,10 @@ const computeError = atom({ plugin: 'factory-board', key: 'computeError' } as co
 const uptime = atom({ plugin: 'factory-board', key: 'uptime' } as const, null)
 const dbUsage = atom({ plugin: 'factory-board', key: 'dbUsage' } as const, {})
 const dbError = atom({ plugin: 'factory-board', key: 'dbError' } as const, '')
+const spend = atom({ plugin: 'factory-board', key: 'spend' } as const, {})
+const spendError = atom({ plugin: 'factory-board', key: 'spendError' } as const, '')
+/** app_usage.py --spend reads at most a few apps' databases (only the active ones) and the new lines of live sessions. */
+const SPEND_MS = 50_000
 
 type $ = EngineInterface
 
@@ -80,6 +93,11 @@ let refreshing = false
 let collecting = false
 let computing = false
 let measuringDb = false
+let beating = false
+/** The heartbeat queries apps only once the board was opened in this session; before that the status line reads the
+ * last beat (the next /factory starts it). */
+let boardOpened = false
+let spendAt = ''
 const STORE_KEY = 'last-board'
 
 async function readJson($: $, path: string): Promise<any> {
@@ -155,7 +173,8 @@ async function refresh($: $): Promise<void> {
     await update($, board, current => (current ? { ...current, apps, checkedAt } : current))
     // the last board, kept across sessions, so the next /factory opens on it at once while it refreshes
     void $.store.set(STORE_KEY, { ...loaded, apps, checkedAt }).catch(() => undefined)
-    $.ui.status(downPrefix(await readUptime($)) + summary(apps, loaded.tickets.length))
+    await readSpend($)
+    $.ui.status(downPrefix(await readUptime($)) + summary(apps, loaded.tickets.length) + (await spendSuffix($)))
     if (!(await read($, selectedApp))) {
       const first = apps.find(a => a.status !== 'retired')
       if (first) await update($, selectedApp, () => first.id)
@@ -194,7 +213,44 @@ function downPrefix(u: Uptime | null): string {
 async function tickUptime($: $): Promise<void> {
   const u = await readUptime($)
   const current = await read($, board)
-  if (current && current.checkedAt) $.ui.status(downPrefix(u) + summary(current.apps, current.tickets.length))
+  if (current && current.checkedAt) $.ui.status(downPrefix(u) + summary(current.apps, current.tickets.length) + (await spendSuffix($)))
+}
+
+/* ---- spend heartbeat: reports/spend/heartbeat.json, written by .claude/scripts/app_usage.py --spend -------------------- */
+
+/** Reads the last beat into the board. */
+async function readSpend($: $): Promise<Record<string, Spend>> {
+  const beat = parseHeartbeat(await readJson($, `${root}/reports/spend/heartbeat.json`).catch(() => null))
+  spendAt = beat.at
+  await update($, spend, () => beat.apps)
+  return beat.apps
+}
+
+/** " · maxwell $3.12 today · $52.03 Oct" for the status line; '' when no app is active. */
+async function spendSuffix($: $): Promise<string> {
+  const text = spendStatus(await read($, spend), await $.clock.now(), spendAt)
+  return text ? ` · ${text}` : ''
+}
+
+/** One beat: app_usage.py --spend (it decides which apps are due), then the board reads what it wrote. At an
+ * allowance reached it files one factory ticket (--file-tickets), as the database check does at 80% of a plan limit. */
+async function beat($: $): Promise<void> {
+  if (beating || !boardOpened) return
+  beating = true
+  try {
+    const script = `${root}/.claude/scripts/app_usage.py`
+    if (!(await $.fs.exists(script))) return
+    const ran = await $.process.run(['python3', script, '--spend', '--json', '--file-tickets'], { cwd: root, timeoutMs: SPEND_MS })
+    const why = (ran.stderr || ran.stdout).trim().split('\n').slice(-1)[0] ?? ''
+    await update($, spendError, () => (ran.exitCode === 0 ? '' : `The spend heartbeat stopped (exit ${ran.exitCode}). ${why}`.trim()))
+    await readSpend($)
+    const current = await read($, board)
+    if (current && current.checkedAt) $.ui.status(downPrefix(await read($, uptime)) + summary(current.apps, current.tickets.length) + (await spendSuffix($)))
+  } catch (error) {
+    await update($, spendError, () => (error instanceof Error ? error.message : String(error)))
+  } finally {
+    beating = false
+  }
 }
 
 /* ---- usage analytics: reports/usage/<app>.json, written by .claude/scripts/app_usage.py -------------------------- */
@@ -355,6 +411,7 @@ export const register: Register = on => {
     $.clock.every(BUILD_EVERY_MS, () => void computeBuilds($))
     $.clock.every(UPTIME_EVERY_MS, () => void tickUptime($))
     $.clock.every(DB_EVERY_MS, () => void measureDb($))
+    $.clock.every(SPEND_EVERY_MS, () => void beat($))
     return started
   })
 
@@ -369,7 +426,9 @@ export const register: Register = on => {
       await update($, tab, () => 'tickets')
     }
     await $.ui.open({ id: PANE, title: 'Factory board' })
+    boardOpened = true
     void refresh($)
+    void beat($)
     if (arg === 'analytics' && Object.keys(await read($, usage)).length === 0) void collect($)
     if (arg === 'refresh') void measureDb($)
     else void measureDbIfStale($)
@@ -387,6 +446,9 @@ export const register: Register = on => {
     const dbReports = await read($, dbUsage)
     const dbWarn = dbBanner(dbReports, now)
     const dbProblem = await read($, dbError)
+    const spends = await read($, spend)
+    const spendWarn = spendBanner(spends)
+    const spendProblem = await read($, spendError)
 
     if (!current) return <Text dimColor>{busy ? 'Reading the factory state…' : 'No data yet. Run /factory refresh.'}</Text>
 
@@ -472,7 +534,7 @@ export const register: Register = on => {
               {app.url}
             </Text>
           )}
-          {buildLine(`build-${app.id}`, buildsByApp[app.id])}
+          {buildLine(`build-${app.id}`, withLive(buildsByApp[app.id], spends[app.id]?.build, spendAt))}
         </Box>
       )
     }
@@ -523,7 +585,7 @@ export const register: Register = on => {
               {p.appIds.length > 0 &&
                 buildLine(
                   `pbuild-${p.id}`,
-                  sumBuilds(p.appIds.map(id => buildsByApp[id]).filter((b): b is Build => b !== undefined)),
+                  sumBuilds(p.appIds.map(id => withLive(buildsByApp[id], spends[id]?.build, spendAt)).filter((b): b is Build => b !== undefined)),
                   0,
                 )}
               {!soon && (
@@ -730,6 +792,7 @@ export const register: Register = on => {
     const chosenId = (await read($, selectedApp)) || liveApps[0]?.id || ''
     const chosen = reports[chosenId]
     const factoryTickets = ticketsForApp(current.tickets, chosenId)
+    const chosenSpend: Spend | undefined = spends[chosenId]
 
     const analyticsTab = (
       <Box flexDirection="column" gap={1}>
@@ -744,6 +807,69 @@ export const register: Register = on => {
           ))}
         </Box>
 
+        {chosenSpend && (
+          <Box key="spend-section" flexDirection="column">
+            <Text bold>Spend now</Text>
+            {chosenSpend.error ? (
+              <Box key="spend-error">
+                <Text dimColor wrap="wrap">
+                  not measured: {chosenSpend.error}
+                </Text>
+              </Box>
+            ) : (
+              <Box flexDirection="column">
+                <Box key="spend-line">
+                <Text wrap="wrap">
+                  <Text color="suggestion">{money(chosenSpend.todayUsd)}</Text> today ·{' '}
+                  <Text color="suggestion">{money(chosenSpend.monthUsd)}</Text> in {monthWord(chosenSpend.month)}
+                  {chosenSpend.monthRecordedUsd !== null && chosenSpend.monthRecordedUsd !== chosenSpend.monthUsd
+                    ? ` (runs recorded ${money(chosenSpend.monthRecordedUsd)})`
+                    : ''}
+                  {chosenSpend.lastRun
+                    ? ` · last run ${chosenSpend.lastRun.kind} ${money(chosenSpend.lastRun.costUsd)} ${chosenSpend.lastRun.status} ${ago(chosenSpend.lastRun.at, now)}`
+                    : ' · no run yet'}
+                </Text>
+                </Box>
+                <Text dimColor>
+                  measured {ago(chosenSpend.measuredAt, now)} · {chosenSpend.active ? 'active: read every minute' : 'idle: read every 15 min'}
+                </Text>
+              </Box>
+            )}
+            {chosenSpend.accounts.length > 0 && (
+              <Box key="allowances" flexDirection="column">
+                <Text bold>Allowances</Text>
+                {chosenSpend.accounts.map(a => (
+                  <Box key={`allowance-${a.workspace}`} flexDirection="row" gap={1}>
+                    <Text>{fit(a.workspace, 22).padEnd(22)}</Text>
+                    <Text color={spendColor(a.level)}>{allowanceBar(a)}</Text>
+                    <Text color={spendColor(a.level)} dimColor={!spendColor(a.level)}>
+                      {allowanceText(a, chosenSpend.month)}
+                    </Text>
+                    {a.prev && a.prev.usedUsd ? (
+                      <Text dimColor>
+                        · {monthWord(a.prev.month)} {money(a.prev.usedUsd)}
+                        {a.prev.level === 'limit' ? ' (reached)' : ''}
+                      </Text>
+                    ) : null}
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {chosenSpend.kinds.length > 0 && (
+              <Box key="kind-budgets" flexDirection="column">
+                <Text bold>Month budget per kind</Text>
+                {chosenSpend.kinds.slice(0, 8).map(k => (
+                  <Box key={`kind-${k.workspace}-${k.kind}`}>
+                    <Text color={spendColor(k.level)} dimColor={!spendColor(k.level)}>
+                      {fit(k.kind, 30).padEnd(30)} {money(k.usedUsd)} of {money(k.limitUsd)} · {short(k.monthRuns)} runs
+                      {chosenSpend.accounts.length > 1 ? ` · ${k.workspace}` : ''}
+                    </Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
         {!chosen && (
           <Text dimColor>
             {collecting ? 'Collecting usage from the apps…' : 'No usage report for this app yet. Press Collect usage.'}
@@ -776,7 +902,17 @@ export const register: Register = on => {
               </Text>
             </Box>
 
-            {chosen.daily.length > 0 && (
+            {chosen.daily.length > 0 && chosen.daily.every(d => d.chat_turns === null) && chosen.daily.some(d => d.cost_usd !== undefined) && (
+              <Box key="run-cost-days" flexDirection="column">
+                <Text bold>Run cost per day</Text>
+                <Text color="suggestion">{sparkline(chosen.daily.map(d => d.cost_usd ?? null))}</Text>
+                <Text dimColor>
+                  {chosen.daily[0]?.date} → {chosen.daily[chosen.daily.length - 1]?.date} · costliest day{' '}
+                  {money(Math.max(0, ...chosen.daily.map(d => d.cost_usd ?? 0)))}
+                </Text>
+              </Box>
+            )}
+            {chosen.daily.length > 0 && chosen.daily.some(d => d.chat_turns !== null) && (
               <Box flexDirection="column">
                 <Text bold>Chat turns per day</Text>
                 <Text color="suggestion">{sparkline(chosen.daily.map(d => d.chat_turns))}</Text>
@@ -854,6 +990,7 @@ export const register: Register = on => {
         </Box>
 
         {collectProblem && <Text color="error">{collectProblem}</Text>}
+        {spendProblem && <Text color="error">{spendProblem}</Text>}
       </Box>
     )
 
@@ -878,6 +1015,18 @@ export const register: Register = on => {
             </Text>
             {dbWarn.lines.map((line, i) => (
               <Text key={`db-line-${i}`} color={dbWarn.level === 'limit' ? 'error' : 'warning'} wrap="wrap">
+                {line}
+              </Text>
+            ))}
+          </Box>
+        )}
+        {spendWarn.level === 'limit' && (
+          <Box key="spend-banner" flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
+            <Text bold color="error">
+              ✕ An account has used its whole allowance: its runs are refused until it is raised.
+            </Text>
+            {spendWarn.lines.map((line, i) => (
+              <Text key={`spend-line-${i}`} color="error" wrap="wrap">
                 {line}
               </Text>
             ))}

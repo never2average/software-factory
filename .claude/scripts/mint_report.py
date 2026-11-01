@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mint_report.py <app_id> [--json]   |   --all [--json]   |   --self-test          (also: mint.py <app_id> report)
+"""mint_report.py <app_id> [--json]   |   --all [--json]   |   --live [--json]   |   --self-test          (also: mint.py <app_id> report)
 
 What it took to mint one application: time and money, each figure labelled by how it is known.
 
@@ -33,6 +33,11 @@ tool time and active time. So the figures of all apps sharing a session add up t
 each product's sum over its app_ids (state/products.json). It does not go online.
 
 Writes reports/mint/<app_id>.md (and .json) and prints the markdown.
+
+--live (mold_v0-185) brings the "built" figure up to the minute without the full recompute: the hourly --all report,
+with every session whose transcript changed in the last hour read incrementally (only its new lines; a byte offset per
+transcript is kept in reports/mint/live-cache.json, at most LIVE_BUDGET_S of reading per call). See live_builds. Writes
+reports/mint/live.json. Offline, like --all.
 """
 import datetime as dt, glob, json, os, re, subprocess, sys
 
@@ -197,7 +202,8 @@ def read_session(path, app_id, apps=None):
         share = sb.get(app_id, 0.0); share_after = sa.get(app_id, 0.0) if sa else share; factory = max(0.0, 1.0 - sum(sb.values()))
     act = active_seconds(sc["stamps"]); named = [p["first"] for p in sc["main"] + sc["sub"] if app_id in p["names"] and p["first"]]
     sh = lambda v: None if v is None else v * share
-    return dict(session=sc["session"], first=sc["first"], last=sc["last"], first_named=min(named) if named else sc["first"],
+    return dict(session=sc["session"], file=os.path.basename(path), run_costs={str(k): rec.get("totalCostUSD") or 0 for k, rec in sc["runs"].items()},
+                first=sc["first"], last=sc["last"], first_named=min(named) if named else sc["first"],
                 basis="own" if own else "apportioned", share=round(share, 4), share_uncounted=round(share_after, 4),
                 factory_share=None if factory is None else round(factory, 4), names=sc["names"],
                 active_s=act * share, operator_messages=sc["human"], assistant_messages=sc["turns"], tool_calls=sc["tools"], subagents=sc["subagents"],
@@ -425,7 +431,209 @@ def self_test():
         pt = product_totals({"app_a": sa, "app_b": sb}, [dict(product_id="p", app_ids=["app_a", "app_b", "gone"])])["p"]
         assert pt["build_cost_usd"] == 39 and pt["build_cost_basis"] == "apportioned" and pt["not_reported"] == ["gone"] and pt["sessions"] == 3 and pt["deploys"] == 2, pt
         assert pt["build_cost_usd"] <= 50 + 9   # the sum over apps never exceeds what the sessions cost
-    print("mint_report: 22 checks passed"); return 0
+    n = live_self_test()
+    print(f"mint_report: {22 + n} checks passed"); return 0
+
+# ---------------------------------------------------------------------------------------------------------------------
+# --live: the "built" figure within a minute (mold_v0-185)
+# ---------------------------------------------------------------------------------------------------------------------
+LIVE_WINDOW_S = 3600          # a session is live when its transcript changed within the last hour
+LIVE_BUDGET_S = 20            # at most this long reading per call; the next call carries on where this one stopped
+LIVE_CACHE = os.path.join(ROOT, "reports", "mint", "live-cache.json")
+LIVE_OUT = os.path.join(ROOT, "reports", "mint", "live.json")
+KEEP_BEFORE_IDS = 400         # message ids just before the last cost record, so a repeated id is not counted again
+
+def live_read(path, st, rx, alias, budget_s=LIVE_BUDGET_S, clock=None):
+    """Reads what a transcript gained since `st` (its byte offset), complete lines only, and keeps per program run the
+    highest cost counters (`cost-state` records), the priced token weight of the agent's messages before the last such
+    record (`before_w`) and after it (`later`: id -> weight, the estimate's base), and how often each app is named.
+    Returns the new state; `done` is False while a long file is still being caught up on (the offset says where)."""
+    import time
+    clock = clock or time.monotonic
+    st = dict(st or {}); st.setdefault("offset", 0); st.setdefault("runs", {}); st.setdefault("before_w", 0.0); st.setdefault("later", {})
+    st.setdefault("names", {}); st.setdefault("named_at", {}); st.setdefault("recent_before", []); st.setdefault("cut_ts", ""); st.setdefault("last_ts", "")
+    size = os.path.getsize(path)
+    if size < st["offset"]: st = live_read(path, {}, rx, alias, budget_s, clock); return st   # rewritten: start over
+    start = clock(); done = True
+    with open(path, "rb") as f:
+        f.seek(st["offset"])
+        while True:
+            line = f.readline()
+            if not line: break
+            if not line.endswith(b"\n"): break                 # a line still being written: next time
+            st["offset"] += len(line)
+            if b'"totalCostUSD"' in line:
+                try: d = json.loads(line)
+                except ValueError: continue
+                k = str(d.get("startTime") or "?"); cur = st["runs"].get(k) or {}
+                if (d.get("totalCostUSD") or 0) >= (cur.get("cost") or 0):
+                    st["runs"][k] = {"cost": d.get("totalCostUSD") or 0, "model_ms": d.get("totalAPIDuration") or 0, "tool_ms": d.get("totalToolDuration") or 0}
+                st["before_w"] += sum(v for v in st["later"].values())
+                st["recent_before"] = (st["recent_before"] + list(st["later"]))[-KEEP_BEFORE_IDS:]; st["later"] = {}
+                st["cut_ts"] = d.get("timestamp") or st["last_ts"]
+            elif b'"assistant"' in line or b'"user"' in line:   # a cheap filter before parsing; the type is checked below
+                try: d = json.loads(line)
+                except ValueError: continue
+                if d.get("timestamp"): st["last_ts"] = d["timestamp"]
+                m = d.get("message") or {}
+                if not isinstance(m, dict): continue
+                if d.get("type") == "assistant" and m.get("usage") and m.get("id") and m["id"] not in st["recent_before"] and not d.get("isSidechain"):
+                    st["later"][m["id"]] = weighted(m["usage"])
+                if d.get("type") in ("user", "assistant") and not d.get("isMeta") and not d.get("isCompactSummary") and m.get("content"):
+                    c = m["content"]
+                    for x in rx.findall(c if isinstance(c, str) else json.dumps(c)):
+                        a = alias[x]; st["names"][a] = st["names"].get(a, 0) + 1; st["named_at"][a] = st["last_ts"]
+            if clock() - start > budget_s: done = st["offset"] >= size; break
+    st["size"] = size; st["done"] = done
+    return st
+
+def live_builds(apps=None, tdir=None, reports_dir=None, cache_path=None, now=None, budget_s=LIVE_BUDGET_S):
+    """Each app's build figure now: its hourly report (reports/mint/<app>.json), with every session that is live (its
+    transcript changed in the last hour) brought up to date from the transcript's new lines.
+      measured   the session's cost counters as they stand now (per program run, the highest value), less what the
+                 hourly report already counted (its run_costs), times the app's share in that report
+      estimated  the work after the session's last cost record, priced as the report prices it (the session's cost per
+                 token weight), times the app's share of it; and a live session the hourly report does not have yet,
+                 split by how often it names each app: all of it ~ est. until the next hourly report measures it
+    A report from before run_costs were recorded keeps its figure until the next hourly recompute (live_from says so).
+    -> {"generated_at", "apps": {app: {...}}, "active_apps": [...], "catching_up": [...]}"""
+    import time
+    now = now or time.time(); apps = apps or known_apps(); tdir = tdir or transcripts_dir()
+    reports_dir = reports_dir or os.path.join(ROOT, "reports", "mint"); cache_path = cache_path or os.path.join(reports_dir, "live-cache.json")
+    rx, alias = name_pattern(apps)
+    try: cache = load(cache_path)
+    except (OSError, ValueError): cache = {}
+    files = cache.get("files") or {}
+    live = sorted(p for p in glob.glob(os.path.join(tdir, "*.jsonl")) if now - os.path.getmtime(p) <= LIVE_WINDOW_S)
+    t0 = time.monotonic(); behind = []
+    for p in live:
+        b = os.path.basename(p); st = files.get(b) or {}
+        if st.get("size") == os.path.getsize(p) and st.get("done"): continue
+        left = max(1.0, budget_s - (time.monotonic() - t0))
+        files[b] = live_read(p, st, rx, alias, left)
+        if not files[b].get("done"): behind.append(b[:8])
+    files = {b: v for b, v in files.items() if os.path.exists(os.path.join(tdir, b))}
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path + ".tmp", "w") as f: json.dump({"files": files}, f)
+    os.replace(cache_path + ".tmp", cache_path)
+    live_names = {os.path.basename(p) for p in live}
+    out, active = {}, set()
+    for b in live_names:   # an app is being built when a live session named it within the last hour
+        for a, at in ((files.get(b) or {}).get("named_at") or {}).items():
+            try:
+                if now - ts(at).timestamp() <= LIVE_WINDOW_S: active.add(a)
+            except (ValueError, AttributeError): pass
+    for app_id in apps:
+        try: rep = load(os.path.join(reports_dir, app_id + ".json"))
+        except (OSError, ValueError): rep = None
+        if rep is None and not any(app_id in (files.get(b) or {}).get("names", {}) for b in live_names): continue
+        sm = (rep or {}).get("summary") or {}
+        cost = sm.get("build_cost_usd"); est = sm.get("build_cost_uncounted_est_usd") or 0.0
+        e = {"cost_usd": cost, "basis": sm.get("build_cost_basis"), "uncounted_est_usd": None, "live_sessions": [], "unreported_sessions": [],
+             "report_at": (rep or {}).get("generated_at"), "live_from": None}
+        seen = set()
+        for s in (rep or {}).get("sessions") or []:
+            b = s.get("file") or ""; seen.add(b)
+            if b not in live_names: continue
+            st = files.get(b) or {}
+            if not st.get("done"): e["live_from"] = "catching up on the session's transcript"; continue
+            if "run_costs" not in s: e["live_from"] = "the next hourly recompute (this report predates live figures)"; continue
+            runs = st.get("runs") or {}
+            if not runs and s.get("cost_usd") is None: continue   # no cost record yet, live or hourly: still not measured, never $0
+            delta = sum(max(0.0, (v.get("cost") or 0) - (s["run_costs"].get(k) or 0)) for k, v in runs.items())
+            whole = (s.get("session_cost_usd") or 0) + delta
+            # the report's own split, unrounded where it can be worked back (share and share_uncounted are kept to 4 places)
+            share = s["cost_usd"] / s["session_cost_usd"] if s.get("cost_usd") is not None and s.get("session_cost_usd") else (s.get("share") or 0)
+            share_after = (s["cost_uncounted_est_usd"] / s["session_cost_uncounted_est_usd"] if s.get("cost_uncounted_est_usd") is not None and s.get("session_cost_uncounted_est_usd")
+                           else s.get("share_uncounted") if s.get("share_uncounted") is not None else share)
+            later = sum((st.get("later") or {}).values()); before = st.get("before_w") or 0
+            s_est = whole * later / before if before else 0.0
+            cost = (cost or 0) - (s.get("cost_usd") or 0) + share * whole
+            est = est - (s.get("cost_uncounted_est_usd") or 0) + share_after * s_est
+            e["live_sessions"].append(s.get("session"))
+        for b in live_names - seen:   # a live session the hourly report has not seen: all of it an estimate
+            st = files.get(b) or {}; names = st.get("names") or {}
+            if not st.get("done") or not names.get(app_id): continue
+            if set(names) != {app_id}:
+                # it names other apps too: its split needs the hourly report's pieces of work (a name count would
+                # charge the factory's own work to the apps), so it is counted there, not guessed here
+                e["live_from"] = "the next hourly recompute (a new session that also names other apps)"; e["unreported_sessions"].append(b[:8]); continue
+            whole = sum((v.get("cost") or 0) for v in (st.get("runs") or {}).values())
+            later = sum((st.get("later") or {}).values()); before = st.get("before_w") or 0
+            whole += whole * later / before if before else 0.0
+            est += whole
+            e["unreported_sessions"].append(b[:8])
+            if e["basis"] is None: e["basis"] = "own"
+        e["cost_usd"] = None if cost is None else round(cost, 2)
+        e["uncounted_est_usd"] = round(est, 2) if est else None
+        out[app_id] = e
+    res = {"generated_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds"), "apps": out,
+           "active_apps": sorted(active), "catching_up": behind}
+    with open(os.path.join(reports_dir, "live.json.tmp"), "w") as f: json.dump(res, f, indent=2)
+    os.replace(os.path.join(reports_dir, "live.json.tmp"), os.path.join(reports_dir, "live.json"))
+    return res
+
+def live_self_test():
+    """--live against the fixture sessions: a counter that moves after the hourly report moves the figure; the work
+    after it stays an estimate; a session the report has not seen is all estimate; a long file is read in steps."""
+    import tempfile, time
+    apps = ["app_a", "app_b", "app_a_vm"]
+    with tempfile.TemporaryDirectory() as d:
+        tdir = os.path.join(d, "t"); rdir = os.path.join(d, "r"); os.makedirs(tdir); os.makedirs(rdir)
+        fixture_sessions(tdir); P = lambda n: os.path.join(tdir, n)
+        a1, a2, a3 = (read_session(P(n), "app_a", apps) for n in ("s1.jsonl", "s2.jsonl", "s3.jsonl"))
+        assert a1["file"] == "s1.jsonl" and a1["run_costs"] == {"1": 40, "2": 10}, a1["run_costs"]
+        rep = dict(app_id="app_a", generated_at="2026-01-01T01:00:00+00:00", sessions=[a1, a2, a3], summary=summary(dict(sessions=[a1, a2, a3], calendar=dict(deploys=[]))))
+        json.dump(rep, open(os.path.join(rdir, "app_a.json"), "w"))
+        old = time.time() - 2 * LIVE_WINDOW_S
+        for n in ("s1.jsonl", "s2.jsonl", "s3.jsonl"): os.utime(P(n), (old, old))
+        r0 = live_builds(apps, tdir, rdir)
+        assert r0["apps"]["app_a"]["cost_usd"] == 29 and r0["apps"]["app_a"]["live_sessions"] == [] and r0["active_apps"] == [], r0
+        # s2 goes on: its run 3 reaches $12 (it was $7 in the report) and 50 more output tokens come after that record
+        with open(P("s2.jsonl"), "a") as f:
+            f.write(json.dumps(dict(type="user", timestamp="2026-01-01T00:40:00Z", message=dict(role="user", content="app_a again"))) + "\n")
+            f.write(json.dumps(dict(type="cost-state", timestamp="2026-01-01T00:41:00Z", startTime=3, totalCostUSD=12, totalAPIDuration=12000, totalToolDuration=0)) + "\n")
+            f.write(json.dumps(dict(type="assistant", timestamp="2026-01-01T00:42:00Z", message=dict(id="m9", model="X[1m]", content=[dict(type="text", text="ok")], usage=dict(input_tokens=0, output_tokens=50)))) + "\n")
+            f.write('{"type":"assistant","partial')                       # a line still being written is left for later
+        r1 = live_builds(apps, tdir, rdir)["apps"]["app_a"]
+        # measured: 29 + (12 - 7) = 34; estimated: s2's 50 tokens after its record, at its 12 per 100 weighted tokens... priced by the session's own rate
+        assert r1["cost_usd"] == 34 and r1["live_sessions"] == [a2["session"]] and r1["uncounted_est_usd"] is not None and r1["uncounted_est_usd"] > 0, r1
+        # a new session the report has not seen that names only app_a: all of it ~ est. for app_a
+        stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+        with open(P("s4.jsonl"), "w") as f:
+            f.write(json.dumps(dict(type="user", timestamp=stamp, message=dict(role="user", content="app_a only"))) + "\n")
+            f.write(json.dumps(dict(type="cost-state", timestamp=stamp, startTime=9, totalCostUSD=8, totalAPIDuration=1, totalToolDuration=0)) + "\n")
+        r2 = live_builds(apps, tdir, rdir)
+        assert r2["apps"]["app_a"]["cost_usd"] == 34 and abs(r2["apps"]["app_a"]["uncounted_est_usd"] - (r1["uncounted_est_usd"] + 8)) < 0.011 and r2["apps"]["app_a"]["unreported_sessions"] == ["s4.jsonl"[:8]], r2
+        assert r2["active_apps"] == ["app_a"], r2["active_apps"]   # named just now; s2's mention is from 2026-01-01, long ago
+        # one that also names app_b: not split by a name count (that would charge factory work to the apps), said
+        with open(P("s5.jsonl"), "w") as f:
+            f.write(json.dumps(dict(type="user", timestamp=stamp, message=dict(role="user", content="app_a and app_b"))) + "\n")
+            f.write(json.dumps(dict(type="cost-state", timestamp=stamp, startTime=10, totalCostUSD=100, totalAPIDuration=1, totalToolDuration=0)) + "\n")
+        r2b = live_builds(apps, tdir, rdir)["apps"]
+        assert r2b["app_a"]["uncounted_est_usd"] == r2["apps"]["app_a"]["uncounted_est_usd"] and "hourly" in r2b["app_a"]["live_from"] and r2b["app_b"]["cost_usd"] is None and r2b["app_b"]["uncounted_est_usd"] is None, r2b
+        # a live session with no cost record anywhere stays not measured (never $0)
+        with open(P("s6.jsonl"), "w") as f:
+            f.write(json.dumps(dict(type="user", timestamp=stamp, message=dict(role="user", content="app_a_vm only"))) + "\n")
+        s6 = read_session(P("s6.jsonl"), "app_a_vm", apps)
+        json.dump(dict(app_id="app_a_vm", sessions=[s6], summary=summary(dict(sessions=[s6], calendar=dict(deploys=[])))), open(os.path.join(rdir, "app_a_vm.json"), "w"))
+        r6 = live_builds(apps, tdir, rdir)["apps"]["app_a_vm"]
+        assert r6["cost_usd"] is None and r6["uncounted_est_usd"] is None and r6["live_sessions"] == [], r6
+        # a report from before run_costs: its figure stands, and says when it goes live
+        for s in rep["sessions"]: s.pop("run_costs")
+        json.dump(rep, open(os.path.join(rdir, "app_a.json"), "w"))
+        r3 = live_builds(apps, tdir, rdir)["apps"]["app_a"]
+        assert r3["cost_usd"] == 29 and "hourly" in (r3["live_from"] or ""), r3
+        # read in steps: a clock that runs out after every line still gets there, line by line, across calls
+        ticks = iter(range(10 ** 6))
+        st = {}
+        rx, alias = name_pattern(apps)
+        for _ in range(20):
+            st = live_read(P("s1.jsonl"), st, rx, alias, budget_s=0.5, clock=lambda: next(ticks))
+            if st["done"]: break
+        full = live_read(P("s1.jsonl"), {}, rx, alias)
+        assert st["done"] and st["runs"] == full["runs"] and st["offset"] == full["offset"] and st["names"] == full["names"], (st, full)
+    return 6
 
 def all_reports(as_json):
     """--all: one report per application that is not retired, each written to reports/mint/<app>.json and .md as a
@@ -458,6 +666,16 @@ def all_reports(as_json):
 
 def main(a):
     if "--self-test" in a: return self_test()
+    if "--live" in a:
+        r = live_builds()
+        if "--json" in a: print(json.dumps(r, indent=2)); return 0
+        money = lambda v: "not measured" if v is None else f"${v:,.2f}"
+        for k, v in sorted(r["apps"].items()):
+            print(f"{k}: built {money(v['cost_usd'])}" + (f" + ~{money(v['uncounted_est_usd'])} est." if v["uncounted_est_usd"] else "") +
+                  (f" · live sessions {', '.join(v['live_sessions'] + v['unreported_sessions'])}" if v["live_sessions"] or v["unreported_sessions"] else "") +
+                  (f" · live from {v['live_from']}" if v["live_from"] else ""))
+        if r["catching_up"]: print("still reading: " + ", ".join(r["catching_up"]) + " (the next call carries on)")
+        return 0
     if "--all" in a: return all_reports("--json" in a)
     if not a: sys.exit(__doc__)
     r = build(a[0]); out = os.path.join(ROOT, "reports", "mint"); os.makedirs(out, exist_ok=True)

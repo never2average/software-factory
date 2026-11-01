@@ -112,7 +112,8 @@ export type Usage = {
   days: number
   totals: UsageNumbers
   workspaces: (UsageNumbers & { org_id: string; name: string })[]
-  daily: { date: string; chat_turns: Measured; people_active: Measured }[]
+  /** runs / cost_usd: a mold_v0 app's runs per day (it has no chat turns); absent elsewhere. */
+  daily: { date: string; chat_turns: Measured; people_active: Measured; runs?: Measured; cost_usd?: Measured }[]
   not_measured: string[]
   by_agent: AgentUsage[]
   by_user: UserUsage[]
@@ -142,7 +143,60 @@ export type Build = {
   /** Each session's share of it, when apportioned. */
   shares: { session: string; basis: BuildBasis | null; share: Measured }[]
   generated_at: string
+  /** Set when the heartbeat brought it up to the minute (mint_report.py --live): the sessions it read live, and when. */
+  live?: { at: string; sessions: number; from: string | null }
 }
+
+/** mint_report.py --live's figure for one app, as the heartbeat carries it. */
+export type LiveBuild = {
+  cost_usd: Measured
+  uncounted_est_usd: Measured
+  basis: BuildBasis | null
+  live_sessions: string[]
+  unreported_sessions: string[]
+  /** Why part of it is not live yet (the next hourly recompute, catching up on a transcript); null when all of it is. */
+  live_from: string | null
+}
+
+/** ok; warn: 80% or more; limit: reached; none: no allowance at all (no runs). null: not measured. */
+export type SpendLevel = 'ok' | 'warn' | 'limit' | 'none'
+
+/** One account's (workspace's) allowance this month: used/limit. */
+export type Allowance = {
+  workspace: string
+  usedUsd: Measured
+  limitUsd: Measured
+  /** override (an admin set it), plan (its billing plan's: not readable here), default (the deployment's). */
+  source: string
+  pct: Measured
+  level: SpendLevel | null
+  prev: { month: string; usedUsd: Measured; level: SpendLevel | null } | null
+}
+
+export type KindBudget = { workspace: string; kind: string; monthRuns: Measured; usedUsd: Measured; limitUsd: Measured; pct: Measured; level: SpendLevel | null }
+
+/** One app's entry in reports/spend/heartbeat.json (.claude/scripts/app_usage.py --spend). */
+export type Spend = {
+  appId: string
+  measuredAt: string
+  month: string
+  todayUsd: Measured
+  monthUsd: Measured
+  /** The runs' recorded cost alone (what audit:run-events shows); monthUsd is what the allowance check counts. */
+  monthRecordedUsd: Measured
+  lastRun: { kind: string; workspace: string; status: string; costUsd: Measured; at: string } | null
+  accounts: Allowance[]
+  kinds: KindBudget[]
+  active: boolean
+  building: boolean
+  cached: boolean
+  notMeasured: string[]
+  warnings: { workspace: string; level: 'warn' | 'limit'; text: string; kind?: string }[]
+  build: LiveBuild | null
+  error?: string
+}
+
+export type SpendBanner = { level: 'ok' | 'limit'; lines: string[] }
 
 export type Tab = 'products' | 'molds' | 'tickets' | 'analytics'
 
@@ -208,6 +262,8 @@ declare module 'claude-code' {
       uptime: Uptime | null
       dbUsage: Record<string, DbUsage>
       dbError: string
+      spend: Record<string, Spend>
+      spendError: string
     }
   }
 }
