@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import type { Request, Response } from "express";
-import { getDb } from "./db.js";
+import { getDb, type Queryable } from "./db.js";
 import { settingText } from "./settings.js";
 import { findAgent } from "./agents.js";
 import { getProvider, providersForEnv, useCredential, useVertexCredential, VERTEX_LABEL, type ProviderRow } from "./keyvault.js";
@@ -12,6 +12,7 @@ import { sessionEngine } from "./host-tables.js";
 import { ENV } from "./env-names.js";
 import { PROFILE } from "./profile.js";
 import { NS } from "./namespace.js";
+import { anthropicFirstParty, providerSafeEnv, type AttemptUsage } from "./provider-safe-env.js";
 /** The error type a request over its budget gets (the namespace's, src/namespace.ts). */
 const BUDGET_EXCEEDED = `${NS}_budget_exceeded`;
 
@@ -79,12 +80,35 @@ export async function brokerRunCredentials(runId: string, providers: string[], e
   const token = usable.length ? await mintToken("run", usable.map((p) => p.slug), expiresAt, { runId }) : null;
   const env: Record<string, string> = {};
   const out: Record<string, { base_url: string }> = {};
+  // mold_v0-189: the CLI's provider-safe settings (src/provider-safe-env.ts), non-secret, for what serves each provider.
+  const harnessEnv: Record<string, string> = {};
   for (const p of usable) {
     const base = `${PUBLIC_URL()}/gw/${p.slug}`;
     out[p.slug] = { base_url: base };
     Object.assign(env, GATEWAY_ENV[p.slug]?.(base, token!) ?? Object.fromEntries(p.env_vars.map((v) => [v, token!])));
+    if (p.slug === "anthropic") Object.assign(harnessEnv, providerSafeEnv(p.slug, anthropicFirstParty(p, await hasDirectKey(p.slug))));
   }
-  return { expires_at: expiresAt.toISOString(), providers: out, env, token, gateway_url: PUBLIC_URL() };
+  return { expires_at: expiresAt.toISOString(), providers: out, env: { ...harnessEnv, ...env }, harness_env: harnessEnv, token, gateway_url: PUBLIC_URL() };
+}
+
+/** Whether the vault holds a usable key of the provider's own (not its Vertex service-account key); nothing is opened. */
+async function hasDirectKey(slug: string): Promise<boolean> {
+  const rows = await (await getDb()).query("/* tenant: platform: the vault's own rows, no secret read */ SELECT 1 FROM vault_credentials WHERE provider = $1 AND enabled AND label <> $2 LIMIT 1", [slug, VERTEX_LABEL]);
+  return rows.length > 0;
+}
+
+/**
+ * The gateway usage of a run's current attempt (mold_v0-189): of its tokens not yet revoked (the attempt's own; its
+ * tokens are revoked as the attempt ends), with how many requests the upstream refused.
+ */
+export async function attemptGatewayUsage(runId: string, q?: Queryable): Promise<AttemptUsage> {
+  const db = q ?? (await getDb());
+  const [u] = await db.query<{ requests: number; errors: number; tokens: number; cost_usd: number }>(
+    `/* tenant: by run id, the leased run's own attempt */ SELECT coalesce(sum(g.requests), 0) AS requests, coalesce(sum(g.errors), 0) AS errors,
+            coalesce(sum(g.input_tokens + g.output_tokens), 0) AS tokens, coalesce(sum(g.cost_usd), 0) AS cost_usd
+       FROM gateway_usage g JOIN gateway_tokens t ON t.token_hash = g.token_hash
+      WHERE g.run_id = $1 AND t.run_id = $1 AND t.revoked_at IS NULL`, [runId]);
+  return { requests: Number(u?.requests ?? 0), errors: Number(u?.errors ?? 0), tokens: Number(u?.tokens ?? 0), cost_usd: Number(u?.cost_usd ?? 0) };
 }
 
 /** Revoke a run's gateway tokens; `q` is the transaction that ends the attempt (so a later attempt's token is never touched). */

@@ -21,7 +21,8 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
-import { brokerRunCredentials, revokeRunTokens, runGatewayUsage } from "./gateway.js";
+import { attemptGatewayUsage, brokerRunCredentials, revokeRunTokens, runGatewayUsage } from "./gateway.js";
+import { REFUSED_RETRY_EVENT, refusedBeforeSpend } from "./provider-safe-env.js";
 import { AgentJobKindSchema, JobKindSchema, PackError, z, type RunResultRow, type RunView, type WorkspaceCommitContext, type WorkspaceFile, type WorkspaceRuns } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { findArea } from "./record-areas.js";
@@ -220,7 +221,9 @@ export interface Claim {
   lease_expires_at: string;
   deadline_at: string;
   /** `token`: the run's gateway token itself (also in `env`), for an agent-workspace kind's declared variables (mold_v0-061). */
-  gateway: { expires_at: string; env: Record<string, string>; providers: Record<string, { base_url: string }>; gateway_url: string; token: string | null };
+  gateway: { expires_at: string; env: Record<string, string>; providers: Record<string, { base_url: string }>; gateway_url: string; token: string | null;
+    /** mold_v0-189: the agent CLI's provider-safe settings (src/provider-safe-env.ts; also in `env`), non-secret. */
+    harness_env?: Record<string, string> };
   /**
    * Hosts the run's egress proxy allows: the gateway's (when it is a public HTTPS host) and the kind's (each with its
    * subdomains); `exact`, the company's own hosts (mold_v0-075, src/egress-hosts.ts), each exactly.
@@ -360,7 +363,8 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   return {
     run: { ...view(row), org_id: row.org_id, spec: row.spec },
     lease_token: lease, lease_seconds: row.lease_seconds, lease_expires_at: iso(row.lease_expires_at)!, deadline_at: iso(row.deadline_at)!,
-    gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
+    gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null,
+      harness_env: gateway.harness_env },
     egress: { hosts: runEgressHosts([...(row.egress ?? []), ...credHosts], gateway.gateway_url), exact, ...(loopbackPorts.length ? { loopback_ports: loopbackPorts } : {}) },
     ...(approval ? { approval } : {}),
   };
@@ -726,6 +730,29 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
   }
 }
 
+/**
+ * mold_v0-189: a failed attempt that the model API refused before it spent anything (a request of it refused, no
+ * token metered: src/provider-safe-env.ts refusedBeforeSpend) is queued once more, whatever its kind's max_attempts: its
+ * work never started (Maxwell's hosted run of 2026-11-01 10:06, "400 context_management: Extra inputs are not
+ * permitted" in 3 s, cost 0). Once per run: the retry is the event REFUSED_RETRY_EVENT, and a run that has it fails as
+ * before. Not a cancelled run, one past its deadline, a timeout, nor a gated write (one attempt per approval).
+ * Records the event and gives the run its extra attempt; the caller queues it.
+ */
+async function refusedRetry(tx: Queryable, run: RunRow): Promise<boolean> {
+  // A gated write runs once per approval (pack-api ONE_ATTEMPT): never again on the same approval.
+  if (run.cancel_requested_at || run.approval_id || (run.deadline_at && new Date(run.deadline_at).getTime() <= Date.now())) return false;
+  const usage = await attemptGatewayUsage(run.id, tx);
+  if (!refusedBeforeSpend(usage)) return false;
+  const before = await tx.query("/* tenant: the leased run's own events, by run id */ SELECT 1 FROM run_events WHERE run_id = $1 AND type = $2 LIMIT 1", [run.id, REFUSED_RETRY_EVENT]);
+  if (before.length) return false;
+  await tx.query("/* tenant: the leased run, by id */ UPDATE runs SET max_attempts = max_attempts + 1 WHERE id = $1", [run.id]);
+  await event(run.id, run.org_id, run.attempt, REFUSED_RETRY_EVENT, {
+    reason: "the model API refused every request of this attempt before any token was spent: queued once more",
+    requests: usage.requests, refused: usage.errors, cost_usd: 0,
+  }, tx);
+  return true;
+}
+
 async function complete(runId: string, leaseToken: string, c0: Completion): Promise<RunView> {
   if (c0?.outcome !== "succeeded" && c0?.outcome !== "failed") throw new PackError("outcome: succeeded or failed", 400);
   // Nor in its results or its error (mold_v0-034): redacted before they are checked and written.
@@ -792,6 +819,7 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
       error = String(c.error ?? "").slice(0, 2000) || null;
       status = kind === "infrastructure" && run.attempt < run.max_attempts ? "queued" : "failed";
     }
+    if (status === "failed" && kind !== "timeout" && (await refusedRetry(tx, run))) status = "queued";
     const [u] = await tx.query<RunRow>(
       `/* tenant: the leased run, by id */ UPDATE runs SET status = $2, error_kind = $3, error = $4, cost_usd = $5,
               ended_at = CASE WHEN $2 = 'queued' THEN NULL ELSE now() END,
