@@ -47,6 +47,8 @@ export const fieldSummary = (c: CredentialSpec) => ({
   // mold_v0-014: runs get a GitHub App installation token instead when the workspace has connected one.
   ...(c.github_app ? { github_app: true } : {}),
   ...(c.oauth ? { oauth: c.oauth } : {}),
+  // mold_v0-186: the runs go ahead without a value; the console tags the field Optional and says what a value adds.
+  ...(c.optional ? { optional: true, adds: c.adds ?? null } : {}),
 });
 /** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
 const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>
