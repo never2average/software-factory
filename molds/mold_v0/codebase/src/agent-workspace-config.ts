@@ -33,6 +33,11 @@
  *                creates, a record it refreshes, a ledger it appends to): a run that exits 0 and validates but leaves
  *                every write-back path exactly as it found it fails ("run": it changed nothing in its workspace) instead
  *                of succeeding silently. The program's own account of why is in its events (step output, agent_output)
+ *   required_outputs  (mold_v0-188) globs of write-back files ("{name}" a declared argument) the kind always writes when
+ *                it works (a report): a run that would succeed but added or changed no file matching one fails with
+ *                error_kind "output_missing", naming it, and nothing is written back (src/required-outputs.ts)
+ *   required_outputs_when  (mold_v0-188) "always" (default), or "workspace_changed": checked only when the run changed
+ *                something in its workspace (a program's quiet exit, "nothing to do", writes nothing and succeeds)
  *   results      a JSON list in the checkout, the run's results (src/runs.ts); default <RUN_OUT>/results.json
  *   record       files of the checkout recorded in the run's events after the run (a session summary, usage): path,
  *                size, sha256 and, for a small JSON file, its content, redacted like everything else
@@ -62,6 +67,7 @@
  */
 import { z } from "zod";
 import { globRegex, placeholders } from "./agent-workspace-paths.js";
+import { REQUIRED_OUTPUTS_WHEN, type RequiredOutputsWhen } from "./required-outputs.js";
 
 // Plain helpers with no dependency, so the sandbox runner (src/run-sandbox-runner.ts) loads without zod (mold_v0-055).
 export { globRegex, placeholders } from "./agent-workspace-paths.js";
@@ -247,6 +253,8 @@ export const AgentWorkspaceSchema = z.object({
   write_back_ignore: z.array(z.string().min(1).max(300).refine((p) => !/[\u0000-\u001f]/.test(p) && !p.split("/").includes(".."), "a pattern in git's ignore syntax (no .., no control characters)")).max(100).default([]),
   write_back_gitignore: z.boolean().default(true),
   write_back_required: z.boolean().default(false),
+  required_outputs: z.array(z.string().min(1).max(300)).max(20).default([]),
+  required_outputs_when: z.enum(REQUIRED_OUTPUTS_WHEN as [RequiredOutputsWhen, ...RequiredOutputsWhen[]]).default("always"),
   results: relPath.optional(),
   record: z.array(glob).max(20).default([]),
   timeout_seconds: timeout(3600),
@@ -285,6 +293,14 @@ export const AgentWorkspaceSchema = z.object({
       ["evidence", rf.evidence ?? ""], ...Object.entries(rf.detail).map(([k, v]) => [`detail.${k}`, v] as [string, string])];
     for (const [where, t] of temps) for (const p of placeholders(t)) if (p.startsWith("$args.") && !declared.has(p.slice(6))) bad(`{${p}} is not a declared argument (args)`, "results_from", ...where.split("."));
   }
+  // mold_v0-188: a required output is a file of the write-back, its placeholders declared arguments.
+  for (const [i, o] of a.required_outputs.entries()) {
+    for (const p of placeholders(o)) if (!declared.has(p)) bad(`{${p}} is not a declared argument (args)`, "required_outputs", i);
+    const filled = o.replace(/\{[^{}]*\}/g, "x");
+    if (!globOk(filled)) bad("a relative glob inside the checkout (no .., no leading /, no [ ] { })", "required_outputs", i);
+    else if (!a.write_back.some((w) => filled.startsWith(`${w}/`))) bad(`${o} is not a file under a write-back path (${a.write_back.join(", ")}): only what is written back is checked`, "required_outputs", i);
+  }
+  if (new Set(a.required_outputs).size !== a.required_outputs.length) bad("a required output is listed twice", "required_outputs");
   if (new Set(a.tools).size !== a.tools.length) bad("a tool is listed twice", "tools");
   if (new Set(a.loopback_ports).size !== a.loopback_ports.length) bad("a port is listed twice", "loopback_ports");
   // mold_v0-073: inputs are files of this run only, never part of the workspace nor over the pinned tree's own files.

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { ago, appRow, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, parseUptime, productRows, since, uptimeBanner, verdict } from './board'
 
-import { allowanceBar, allowanceText, buildParts as partsOf, monthWord, parseBuild as buildOf, parseHeartbeat, parseSpend, spendBanner, spendColor, spendStatus, withLive } from './board'
+import { allowanceBar, allowanceText, buildParts as partsOf, monthWord, parseBuild as buildOf, parseHeartbeat, parseSpend, runStatusWord, spendBanner, spendColor, spendStatus, withLive } from './board'
 const TASKS = [
   { task_id: 'm-1', mold_id: 'mold_v1', title: 'old', status: 'todo', priority: 2 },
   { task_id: 'm-1', mold_id: 'mold_v1', title: 'old', status: 'done', priority: 2 },
@@ -482,6 +482,12 @@ test('spend: a heartbeat entry reads with every figure, and a missing one is not
   ])
   const bare = parseSpend('octillion', { app_id: 'octillion', error: 'the database could not be read: timeout' })!
   expect([bare.todayUsd, bare.monthUsd, bare.lastRun, bare.accounts, bare.error]).toEqual([null, null, null, [], 'the database could not be read: timeout'])
+  expect([s.lastRun?.errorKind, s.monthOutputMissingRuns]).toEqual([null, null])
+  // mold_v0-188: a run that failed with a required output missing reads as such, and the month's count with it
+  const om = parseSpend('maxwell', { ...SPEND, month_output_missing_runs: 1, last_run: { ...SPEND.last_run, status: 'failed', error_kind: 'output_missing' } })!
+  expect([om.lastRun?.errorKind, om.monthOutputMissingRuns, runStatusWord(om.lastRun!), om.monthUsd]).toEqual(['output_missing', 1, 'failed (output missing)', 50.0089])
+  expect(runStatusWord({ status: 'failed', errorKind: 'run' })).toBe('failed')
+  expect(runStatusWord({ status: 'succeeded', errorKind: null })).toBe('succeeded')
   expect(parseSpend('x', null)).toBeNull()
   expect(Object.keys(parseHeartbeat({ generated_at: '2026-10-31T07:29:30Z', apps: { maxwell: SPEND } }).apps)).toEqual(['maxwell'])
   expect(parseHeartbeat(null)).toEqual({ at: '', apps: {} })
