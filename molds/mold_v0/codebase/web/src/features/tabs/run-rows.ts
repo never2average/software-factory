@@ -23,6 +23,14 @@ export const RUN_STATUSES = [
 ];
 export const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
 export const statusLabel = (s: string) => RUN_STATUSES.find((x) => x.value === s)?.label ?? s;
+/**
+ * Why a failed run failed, where its kind of failure needs saying beside "Failed" (mold_v0-188: it would have succeeded
+ * but did not write a required output of its kind, a report say). Other failures read from their error alone.
+ */
+export const ERROR_KIND_LABELS: Record<string, string> = { output_missing: 'output missing' };
+/** A run's status as its row shows it: "Failed (output missing)" for such a run, else its status's label. */
+export const runStatusText = (r: Pick<Run, 'status' | 'error_kind'>) =>
+  r.status === 'failed' && r.error_kind && ERROR_KIND_LABELS[r.error_kind] ? `${statusLabel(r.status)} (${ERROR_KIND_LABELS[r.error_kind]})` : statusLabel(r.status);
 const RESULT_ORDER = ['fail', 'error', 'pass', 'not_applicable', 'unknown'];
 export const RESULT_LABELS: Record<string, string> = { pass: 'Pass', fail: 'Fail', error: 'Error', not_applicable: 'Not applicable', unknown: 'Unknown' };
 export const resultCounts = (r: Record<string, number>) => RESULT_ORDER.filter((s) => r[s]).map((s) => `${r[s]} ${RESULT_LABELS[s]!.toLowerCase()}`).join(', ');

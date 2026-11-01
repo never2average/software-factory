@@ -184,7 +184,10 @@ export type Spend = {
   monthUsd: Measured
   /** The runs' recorded cost alone (what audit:run-events shows); monthUsd is what the allowance check counts. */
   monthRecordedUsd: Measured
-  lastRun: { kind: string; workspace: string; status: string; costUsd: Measured; at: string } | null
+  /** errorKind (mold_v0-188): why a failed run failed ("output_missing": it did not write a required output), or null. */
+  lastRun: { kind: string; workspace: string; status: string; errorKind: string | null; costUsd: Measured; at: string } | null
+  /** Runs this month that failed with a required output missing (mold_v0-188); their cost is in monthUsd as any run's. */
+  monthOutputMissingRuns: Measured
   accounts: Allowance[]
   kinds: KindBudget[]
   active: boolean

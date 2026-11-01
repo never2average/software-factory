@@ -61,7 +61,7 @@ ORG = "NULLIF(current_setting('app.org_id', true), '')::int"
 
 # One workspace, as the tenant role with app.org_id set (the generator below runs it once per workspace).
 WS_SQL = f"""WITH me AS (SELECT {ORG} AS org),
-r AS (SELECT r.pack, r.kind, r.status, r.created_at, r.started_at, r.ended_at, r.heartbeat_at, r.spec->>'month_budget_usd' AS kmb, ({RUN_USD})::float8 AS usd, r.cost_usd::float8 AS rec
+r AS (SELECT r.pack, r.kind, r.status, r.error_kind, r.created_at, r.started_at, r.ended_at, r.heartbeat_at, r.spec->>'month_budget_usd' AS kmb, ({RUN_USD})::float8 AS usd, r.cost_usd::float8 AS rec
         FROM runs r, me WHERE r.org_id = me.org AND (r.created_at >= least(:'since'::timestamptz, {PREV}) OR r.status IN ('queued', 'running'))),
 k AS (SELECT pack, kind, count(*) FILTER (WHERE created_at >= {MONTH})::int AS runs,
              coalesce(sum(usd) FILTER (WHERE created_at >= {MONTH} OR status IN ('queued', 'running')), 0)::float8 AS usd,
@@ -69,13 +69,14 @@ k AS (SELECT pack, kind, count(*) FILTER (WHERE created_at >= {MONTH})::int AS r
         FROM r GROUP BY 1, 2),
 w AS (SELECT pack, kind, count(*)::int AS runs, coalesce(sum(usd), 0)::float8 AS usd, coalesce(sum(rec), 0)::float8 AS rec, max(created_at) AS last FROM r WHERE created_at >= :'since'::timestamptz GROUP BY 1, 2),
 d AS (SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d, count(*)::int AS runs, coalesce(sum(usd), 0)::float8 AS usd, coalesce(sum(rec), 0)::float8 AS rec FROM r WHERE created_at >= :'since'::timestamptz GROUP BY 1),
-l AS (SELECT r.pack, r.kind, r.status, ({RUN_USD})::float8 AS usd, r.cost_usd::float8 AS rec, r.created_at, r.ended_at FROM runs r, me WHERE r.org_id = me.org ORDER BY r.created_at DESC LIMIT 1)
+l AS (SELECT r.pack, r.kind, r.status, r.error_kind, ({RUN_USD})::float8 AS usd, r.cost_usd::float8 AS rec, r.created_at, r.ended_at FROM runs r, me WHERE r.org_id = me.org ORDER BY r.created_at DESC LIMIT 1)
 SELECT json_build_object('k', 'ws', 'org', (SELECT org FROM me), 'role', current_user::text,
   'role_bypasses', (SELECT p.rolsuper OR p.rolbypassrls FROM pg_roles p WHERE p.rolname = current_user),
   'read_only', current_setting('transaction_read_only'),
   'month_usd', (SELECT coalesce(sum(usd), 0)::float8 FROM r WHERE created_at >= {MONTH}),
   'month_rec_usd', (SELECT coalesce(sum(rec), 0)::float8 FROM r WHERE created_at >= {MONTH}),
   'month_runs', (SELECT count(*)::int FROM r WHERE created_at >= {MONTH}),
+  'month_output_missing', (SELECT count(*)::int FROM r WHERE created_at >= {MONTH} AND status = 'failed' AND error_kind = 'output_missing'),
   'prev_usd', (SELECT coalesce(sum(usd), 0)::float8 FROM r WHERE created_at >= {PREV} AND created_at < {MONTH}),
   'prev_rec_usd', (SELECT coalesce(sum(rec), 0)::float8 FROM r WHERE created_at >= {PREV} AND created_at < {MONTH}),
   'prev_runs', (SELECT count(*)::int FROM r WHERE created_at >= {PREV} AND created_at < {MONTH}),
@@ -84,7 +85,7 @@ SELECT json_build_object('k', 'ws', 'org', (SELECT org FROM me), 'role', current
   'in_flight', (SELECT count(*)::int FROM r WHERE status IN ('queued', 'running')),
   'live_earlier_usd', (SELECT coalesce(sum(usd), 0)::float8 FROM r WHERE created_at < {MONTH} AND status IN ('queued', 'running')),
   'last_activity', (SELECT max(greatest(created_at, started_at, ended_at, heartbeat_at)) FROM r),
-  'last_run', (SELECT json_build_object('pack', pack, 'kind', kind, 'status', status, 'usd', usd, 'rec', rec, 'created_at', created_at, 'ended_at', ended_at) FROM l),
+  'last_run', (SELECT json_build_object('pack', pack, 'kind', kind, 'status', status, 'error_kind', error_kind, 'usd', usd, 'rec', rec, 'created_at', created_at, 'ended_at', ended_at) FROM l),
   'kinds', (SELECT coalesce(json_agg(json_build_object('pack', pack, 'kind', kind, 'runs', runs, 'usd', usd, 'kmb', kmb) ORDER BY pack, kind), '[]'::json) FROM k),
   'window', (SELECT coalesce(json_agg(json_build_object('pack', pack, 'kind', kind, 'runs', runs, 'usd', usd, 'rec', rec, 'last', last) ORDER BY usd DESC, pack, kind), '[]'::json) FROM w),
   'daily', (SELECT coalesce(json_agg(json_build_object('d', d, 'runs', runs, 'usd', usd, 'rec', rec) ORDER BY d), '[]'::json) FROM d),
@@ -224,7 +225,7 @@ def assemble(app_id, raw, settings, profile_limits=None, now=None):
     month = now.strftime("%Y-%m"); nm = []
     prev = (now.replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m")
     base = {"app_id": app_id, "measured_at": now.isoformat(timespec="seconds"), "month": month, "source": "runs", "today_usd": None, "month_usd": None,
-            "month_recorded_usd": None, "prev_month": prev, "prev_month_usd": None, "today_runs": None, "month_runs": None, "in_flight": None, "last_run": None, "last_activity": None, "accounts": [], "kinds": [], "basis": BASIS, "not_measured": nm}
+            "month_recorded_usd": None, "prev_month": prev, "prev_month_usd": None, "today_runs": None, "month_runs": None, "month_output_missing_runs": None, "in_flight": None, "last_run": None, "last_activity": None, "accounts": [], "kinds": [], "basis": BASIS, "not_measured": nm}
     if raw.get("error"): return dict(base, error=raw["error"], not_measured=[f"every figure: {raw['error']}"])
     if (raw.get("tx") or {}).get("read_only") != "on":
         why = "refused: the transaction did not report read only, so nothing it read is used"
@@ -237,7 +238,7 @@ def assemble(app_id, raw, settings, profile_limits=None, now=None):
     stripe = bool(settings.get("stripe")); fallback = num_setting(settings.get("APP_ORG_MONTHLY_BUDGET_USD"))
     if fallback is None and settings.get("APP_ORG_MONTHLY_BUDGET_USD") in (None, ""): fallback = 0.0
     plat_kind = num_setting(settings.get("APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD")) or (profile_limits or {}).get("kind_month_budget_usd") or PLATFORM_KIND_MONTH
-    tot = {"today_usd": 0.0, "month_usd": 0.0, "month_recorded_usd": 0.0, "prev_month_usd": 0.0, "today_runs": 0, "month_runs": 0, "in_flight": 0}
+    tot = {"today_usd": 0.0, "month_usd": 0.0, "month_recorded_usd": 0.0, "prev_month_usd": 0.0, "today_runs": 0, "month_runs": 0, "month_output_missing_runs": 0, "in_flight": 0}
     complete = True; last = None; lastact = None
     for o in orgs:
         oid = str(o.get("id")); w = raw["ws"].get(oid); name = o.get("name") or oid
@@ -250,7 +251,7 @@ def assemble(app_id, raw, settings, profile_limits=None, now=None):
         today_usd = float(w.get("today_usd") or 0) + float(s.get("today_usd") or 0)
         prev_usd = float(w.get("prev_usd") or 0) + float(s.get("prev_usd") or 0)
         rec_usd = float(w.get("month_rec_usd") or 0) + float(s.get("month_usd") or 0)
-        for k, v in (("today_usd", today_usd), ("month_usd", month_usd), ("month_recorded_usd", rec_usd), ("prev_month_usd", prev_usd), ("today_runs", w.get("today_runs") or 0), ("month_runs", w.get("month_runs") or 0), ("in_flight", w.get("in_flight") or 0)):
+        for k, v in (("today_usd", today_usd), ("month_usd", month_usd), ("month_recorded_usd", rec_usd), ("prev_month_usd", prev_usd), ("today_runs", w.get("today_runs") or 0), ("month_runs", w.get("month_runs") or 0), ("month_output_missing_runs", w.get("month_output_missing") or 0), ("in_flight", w.get("in_flight") or 0)):
             tot[k] += v
         lr = w.get("last_run")
         if lr and (last is None or str(lr.get("created_at")) > str(last.get("created_at"))): last = dict(lr, workspace=name)
@@ -277,7 +278,7 @@ def assemble(app_id, raw, settings, profile_limits=None, now=None):
     if not orgs: nm.append("workspaces: the app's database lists none")
     if complete:
         base.update({k: (_usd(v) if k.endswith("_usd") else v) for k, v in tot.items()})
-    base["last_run"] = None if not last else {"workspace": last["workspace"], "kind": f"{last.get('pack')}/{last.get('kind')}", "status": last.get("status"),
+    base["last_run"] = None if not last else {"workspace": last["workspace"], "kind": f"{last.get('pack')}/{last.get('kind')}", "status": last.get("status"), "error_kind": last.get("error_kind"),
                                               "cost_usd": _usd(last.get("usd")), "recorded_cost_usd": _usd(last.get("rec")), "at": last.get("ended_at") or last.get("created_at"), "queued_at": last.get("created_at")}
     base["last_activity"] = lastact
     base["accounts"].sort(key=lambda a: (-(a["pct"] or 0), a["workspace"]))
@@ -398,6 +399,11 @@ def self_test():
     want = json.load(open(os.path.join(FIX, "expected-maxwell.json")))
     rep.pop("_window", None)
     ok(rep == want, "assembled report differs from the fixture:\n" + json.dumps(rep, indent=2))
+    # mold_v0-188: a run that failed with a required output missing is counted, its cost in the month as any run's
+    om = json.loads(json.dumps(raw)); om["ws"]["3"]["month_output_missing"] = 1; om["ws"]["3"]["last_run"].update(kind="report_audit_findings", error_kind="output_missing")
+    r4 = assemble("maxwell", om, {"APP_ORG_MONTHLY_BUDGET_USD": "", "APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD": "", "stripe": False}, {"kind_month_budget_usd": 500}, now=now)
+    ok(r4["month_output_missing_runs"] == 1 and r4["last_run"]["error_kind"] == "output_missing" and r4["month_usd"] == rep["month_usd"], "output_missing: counted, its cost in the month")
+    ok("failed (output missing)" in summary_line(r4) and "1 run(s) this month failed with a required output missing" in summary_line(r4) and "output missing" not in summary_line(rep), "output_missing: said in the summary")
     lane = next(a for a in rep["accounts"] if a["workspace"] == "Lane check")
     ok(lane["level"] == "limit" and lane["limit_usd"] == 50 and lane["used_usd"] >= 50, "the lane-check account at its limit")
     w = warnings(rep)
@@ -450,7 +456,8 @@ def summary_line(rep):
     if rep.get("error"): return f"{rep['app_id']}: not measured: {rep['error']}"
     lr = rep.get("last_run")
     L = [f"{rep['app_id']}: {money(rep['today_usd'])} today ({rep['today_runs']} runs) · {money(rep['month_usd'])} in {rep['month']} ({rep['month_runs']} runs) · {rep['in_flight']} in flight"]
-    if lr: L.append(f"  last run: {lr['kind']} in {lr['workspace']}, {lr['status']}, {money(lr['cost_usd'])}, {lr['at']}")
+    if lr: L.append(f"  last run: {lr['kind']} in {lr['workspace']}, {lr['status']}{' (' + lr['error_kind'].replace('_', ' ') + ')' if lr.get('status') == 'failed' and lr.get('error_kind') == 'output_missing' else ''}, {money(lr['cost_usd'])}, {lr['at']}")
+    if rep.get("month_output_missing_runs"): L.append(f"  {rep['month_output_missing_runs']} run(s) this month failed with a required output missing (counted in the spend above)")
     for x in rep["accounts"]:
         L.append(f"  account {x['workspace']}: {money(x['used_usd'])} of {money(x['limit_usd'])} ({x['source']}{', ' + format(x['pct'], 'g') + '%' if x['pct'] is not None else ''}) {x['level'] or ''}")
     for k in rep["kinds"][:8]:

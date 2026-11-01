@@ -514,8 +514,11 @@ export async function appendRunEvents(runId: string, leaseToken: string, events:
 
 export interface Completion {
   outcome: "succeeded" | "failed";
-  /** For a failure: infrastructure (retried while attempts remain), run, validation or timeout. */
-  error_kind?: "infrastructure" | "run" | "validation" | "timeout";
+  /**
+   * For a failure: infrastructure (retried while attempts remain), run, validation, timeout, or output_missing (mold_v0-188:
+   * it would have succeeded but did not write a required output of its kind; src/required-outputs.ts).
+   */
+  error_kind?: "infrastructure" | "run" | "validation" | "timeout" | "output_missing";
   error?: string;
   results?: unknown[];
 }
@@ -788,7 +791,7 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
         dropped_not_passing: unresolved.filter((u) => u.action === "dropped" && u.status !== "pass" && u.status !== "not_applicable").length };
       status = "succeeded";
     } else {
-      kind = ["infrastructure", "run", "validation", "timeout"].includes(String(c.error_kind)) ? String(c.error_kind) : "run";
+      kind = ["infrastructure", "run", "validation", "timeout", "output_missing"].includes(String(c.error_kind)) ? String(c.error_kind) : "run";
       error = String(c.error ?? "").slice(0, 2000) || null;
       status = kind === "infrastructure" && run.attempt < run.max_attempts ? "queued" : "failed";
     }

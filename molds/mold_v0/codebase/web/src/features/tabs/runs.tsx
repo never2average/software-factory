@@ -20,7 +20,7 @@ import { fill } from '@/lib/vocabulary';
 import { formatValue } from './charts';
 import { EmptyState } from './empty';
 import { ExportRowsButton } from './export';
-import { duration, FINISHED, JOB_KINDS, lowerFirst, RESULT_LABELS, resultCounts, RUN_STATUSES, runKindLabel, runSeconds, runTarget, statusLabel, targetLabel, when, type Run } from './run-rows';
+import { duration, FINISHED, JOB_KINDS, lowerFirst, RESULT_LABELS, resultCounts, RUN_STATUSES, runKindLabel, runSeconds, runStatusText, runTarget, targetLabel, when, type Run } from './run-rows';
 
 type Ref = { area: string; key: string };
 type RunResult = { check: Ref; asset: Ref | null; source: Ref | null; status: string; evidence_ref: string | null };
@@ -33,8 +33,11 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 const dash = <span className='text-muted-foreground'>—</span>;
-const statusBadge = (s: string) => (
-  <Badge variant={s === 'failed' ? 'destructive' : s === 'succeeded' ? 'secondary' : 'outline'}>{statusLabel(s)}</Badge>
+// Red for a failed run, its kind of failure named where it needs saying (mold_v0-188: output missing) and its error as
+// the badge's title; the run's detail shows the error in full.
+const statusBadge = (r: Pick<Run, 'status' | 'error_kind' | 'error'>) => (
+  <Badge variant={r.status === 'failed' ? 'destructive' : r.status === 'succeeded' ? 'secondary' : 'outline'}
+    title={r.status === 'failed' && r.error ? r.error : undefined}>{runStatusText(r)}</Badge>
 );
 
 function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
@@ -49,7 +52,7 @@ function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
       value: (r) => `${r.pack}/${r.kind}`,
       render: (r) => <span className='leading-snug font-medium'>{runKindLabel(r.pack, r.kind)}</span>
     },
-    { key: 'status', label: 'Status', type: 'select', options: RUN_STATUSES, keep: true, value: (r) => r.status, render: (r) => statusBadge(r.status) },
+    { key: 'status', label: 'Status', type: 'select', options: RUN_STATUSES, keep: true, value: (r) => r.status, render: (r) => statusBadge(r) },
     ...(anyTarget ? [{
       key: 'target', label: target, type: 'select', value: (r) => runTarget(r)?.key ?? null,
       render: (r) => { const t = runTarget(r); return t ? <span className='font-mono text-xs break-all'>{t.key}</span> : dash; }
@@ -116,7 +119,7 @@ export function RunsTable({ tab, reports, summary }: {
       id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}
       rows={runs} rowKey={(r) => r.id} cols={cols} loading={!data}
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
-      searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${statusLabel(r.status)} ${runTarget(r)?.key ?? ''} ${r.id}`}
+      searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${runStatusText(r)} ${runTarget(r)?.key ?? ''} ${r.id}`}
       searchPlaceholder={`Search ${noun}`}
       primary={runs.length ? <ExportRowsButton name={`${tab.pack}-${tab.id}`} rows={runs} cols={cols} /> : undefined}
       empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={reports ? 'empty-reports' : 'empty-runs'} /></div>}
