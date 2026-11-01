@@ -99,7 +99,38 @@ There are two buttons:
 9. **Factory tickets for this app:** open factory tickets that name this app. Each one is clickable.
 10. **Buttons:** **Refresh** checks health again. **Collect usage** pulls fresh numbers.
 
+Above the usage, **Spend now**, **Allowances** and **Month budget per kind** show the spend heartbeat's figures (below).
+
 The numbers come from `.claude/scripts/app_usage.py`, which the board runs every 30 minutes and on **Collect usage**. It reads each app's own database as the app's own restricted role, one workspace at a time, in read-only transactions. Only counts leave the database: no messages, no names, no email addresses. The results are kept in `reports/usage/<app>.json`, which is not committed.
+
+An app built on mold_v0 (Maxwell, Octillion) has no chat turns or in-app tickets. Its usage is its **runs**: by agent is one row per kind of run, with its runs and their cost, and the bars show **Run cost per day**. Those fields say **not measured**, never `$0`.
+
+## Spend heartbeat
+
+While the board is open it checks spend every minute with `python3 .claude/scripts/app_usage.py --spend --json --file-tickets`. Each check is kept in `reports/spend/<app>.json`, and the whole beat in `reports/spend/heartbeat.json` (neither is committed).
+
+- **Status line:** each active app's spend today and this month, e.g. `maxwell $41.15 today · $50.01 Oct`. An app counts as active when a run is queued or running, a run was active in the last hour, a build session named it in the last hour, or it spent something today. A figure that can't be measured says `<app> spend not measured`. A beat more than 5 minutes old says when it was measured: `(as of 2h ago)`.
+- **Analytics → Spend now:** today, this month, and the runs' recorded cost when it differs. Then the last run's kind, cost, result and time, and when the figures were read.
+- **Allowances:** one bar per account (workspace) with used of limit for this month. Amber at 80%, red at the limit, and last month's figure beside it. An allowance set by a billing plan can't be read from here, so it says **not measured**, never `$0`. An account with no allowance says so: no run can start.
+- **Month budget per kind:** each kind's spend this month against its budget. The budget is the kind's own, capped by the platform's.
+- **When an allowance is reached**, a red banner sits above the tabs on every tab and names the app, the account and the amount. The heartbeat also files one factory ticket for that app and account (P2, through `factory.py add`). It files no other while that one is open, and none again this month once it was closed. Raising an allowance is money, so it needs the operator's yes.
+- **Built (Products & apps):** the build line is the hourly report with every live session brought up to the minute (`mint_report.py --live`). Only the new lines of each transcript changed in the last hour are read, and where each one stopped is kept in `reports/mint/live-cache.json`. Measured stays measured. The work after a session's last cost record stays **~ est.**, and so does a new session that names only this app. A new session that names several apps waits for the hourly recompute, because only that recompute can split it fairly. `· live (1 session now)` marks a line that is live.
+
+**How it stays cheap.** An app's database is read again only when the app is active and its last reading is a minute old. An idle app is read every 15 minutes, and 5 minutes after an error. `--force` reads every app now. A Maxwell check takes about 3 seconds and a live build check under a tenth of a second. The first read of a long session transcript takes a few seconds, at most 20 per call, and carries on in the next call.
+
+**How mold_v0 spend is read** (`.claude/scripts/lib/run_spend.py`). Read-only, with `psql` (no `build/<app>`, no `node_modules`):
+
+- **The connection:** the app's `DATABASE_URL` is pulled by name from its API project into a private folder and deleted at once. It is handed to `psql` in its environment only, never on a command line, never written and never printed.
+- **The transaction:** one `BEGIN TRANSACTION READ ONLY`, which must say read only. The list of workspaces (ids and names) is read first. Every figure is then read as the mold's own tenant role, under row-level security, one workspace at a time. Then it rolls back.
+- **The rules are the mold's own:** a run's cost is the larger of its recorded cost and its gateway usage, as the allowance check counts it. A run lands on the day and month it was queued. An account's allowance is the admin-set one, else its billing plan's, else the deployment's default.
+
+Run it yourself:
+
+- `python3 .claude/scripts/lib/run_spend.py <app>` prints one app's figures and writes nothing.
+- `python3 .claude/scripts/app_usage.py --spend` checks every app.
+- `--self-test` on either one runs offline.
+
+A mold_v1 app's spend is in its 30-minute usage report, because its chat turns are priced with its own price table, so the heartbeat says **not measured** for it.
 
 ## Uptime alerts
 
@@ -139,7 +170,7 @@ Inside the factory there is nothing to do: `.claude/settings.json` turns the plu
 /plugin install factory-board --marketplace never2average/software-factory
 ```
 
-The board reads the factory's records from the folder Claude Code was started in when that folder is the factory, and otherwise from `/root/software-factory`. It never changes a record or an app. The one ticket it may add is the database usage check's warning, described above.
+The board reads the factory's records from the folder Claude Code was started in when that folder is the factory, and otherwise from `/root/software-factory`. It never changes a record or an app. The only tickets it may add are the database usage check's warning and the spend heartbeat's allowance-reached ticket, both described above.
 
 ## Developing it
 
@@ -149,9 +180,10 @@ The board reads the factory's records from the folder Claude Code was started in
 
 The tests are:
 
-- `hooks/board.test.ts` for the readers, the build lines, the product totals, the health causes (the same cases as `lib/health_cause.py --self-test`) and the database lines;
+- `hooks/board.test.ts` for the readers, the build lines, the product totals, the health causes (the same cases as `lib/health_cause.py --self-test`), the database lines and the spend heartbeat's readers (status line, bars, banner, live build);
 - `hooks/db-usage-ui.test.tsx`, which checks that a database at 85% of a limit shows its line and the warning banner, that a down app's card says why, and that opening the board re-measures a stale report (and leaves a fresh one alone), on both surfaces;
 - `hooks/uptime-ui.test.tsx`, which checks that the red banner and the status line show a down app, and stay away while it's up, on both surfaces;
+- `hooks/spend-ui.test.tsx`, which checks the spend heartbeat on both surfaces. It checks that opening the board starts it, that the status line names each active app's spend (and says **not measured** for a mold_v1 app, never `$0`), that the allowance bars are amber at 80% and red at the limit, that the red banner shows (on every tab) only when an allowance is reached, that the build line carries the live figure with its estimate still **~ est.**, and that a stale beat says when it was measured;
 - `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab (with its build lines and **Recompute build costs**) on the terminal and desktop surfaces against a small fake factory.
 
 ```

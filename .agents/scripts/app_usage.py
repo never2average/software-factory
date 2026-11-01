@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""app_usage.py <app_id> [--days 30] [--json]   |   --all [--days 30] [--json]   |   --self-test
+"""app_usage.py <app_id> [--days 30] [--json]   |   --all [--days 30] [--json]   |   --spend [--json] [--force] [--file-tickets] [app...]   |   --self-test
 
 Rough usage analytics and in-app ticket counts, read from each deployed application's OWN database.
 
@@ -35,6 +35,22 @@ cost and no model, priced at the model that specialist is configured with NOW (`
 agent.ts (build/<app_id>, the app's packs, its mold), the model from the deployment's per-role model variables when
 they are read (CLOUDFLARE_MODEL_<ROLE>, CLOUDFLARE_MODEL; model ids only, every other value stays unread or scrubbed),
 else application.json model.roles / model.model; `mixed` is both. A run that cannot be priced makes the figure null.
+
+MOLD_V0 APPS (mold_v0-185). mold_v0 has no chat-turn, automation-run or in-app ticket table: an account's model spend is
+its runs' (the runs table, per workspace and per kind, a run's cost as the mold's own allowance check counts it), read
+by lib/run_spend.py with psql (no build/<app_id>, no node_modules): the app's DATABASE_URL from its API project, one READ
+ONLY transaction, the workspace list as the login, then every figure as the mold's tenant role under row-level security,
+one workspace at a time. The report's workflow_runs / workflow_cost_usd / by_agent are its runs (one row per kind), its
+`spend` the heartbeat's figures below; the chat and ticket fields are null and named.
+
+--spend: THE HEARTBEAT (the board runs it every minute while it is open). Per app: spend today and this UTC month, the
+last run's cost and time, each account's allowance used/limit (amber at 80%, red at the limit) and each kind's month
+budget, plus the live "built" figure (mint_report.live_builds). Cheap on purpose: an app is read again only when it is
+active (a run queued or running, a run in the last hour, or a build session naming it in the last hour) and its last
+reading is a minute old; otherwise every 15 minutes (5 after an error); --force reads every app now. Each reading is kept
+in reports/spend/<app>.json, the whole beat in reports/spend/heartbeat.json. --file-tickets files one factory ticket
+per app and account whose allowance is reached (none while one is open; none again this month once it was closed).
+A mold_v1 app's spend is in its usage report (chat turns need its price table): the heartbeat says "not measured".
 
 Only counts leave the database: email addresses are held in the query process's memory to count distinct people
 and never printed. Field meanings (and how ticket statuses are folded) are in FIELD_NOTES and TICKET_FOLD below; a
@@ -630,13 +646,172 @@ def remote_main(b64):
     doc = run_node(app_dir, env, secret + url_secrets(vals["DATABASE_URL"]), timeout=78, user_kw=kw)
     print(scrub(json.dumps(doc), secret)); return 0
 
+# ---------------------------------------------------------------------------------------------------------------------
+# mold_v0: the runs table (lib/run_spend.py), and the heartbeat
+# ---------------------------------------------------------------------------------------------------------------------
+SPEND_DIR = os.path.join(ROOT, "reports", "spend")
+HEARTBEAT_S, ACTIVE_WINDOW_S, IDLE_EVERY_S, ERROR_EVERY_S = 60, 3600, 900, 300
+V0_NOTES = [
+    "people_active, chats, chat_turns, input_tokens, output_tokens, cost_usd: mold_v0 has no chat-turn table; an account's model spend is its runs' (workflow_runs, workflow_cost_usd)",
+    "workflow_runs, workflow_cost_usd, by_agent: the app's runs table, one by_agent row per kind (pack/kind) per workspace; a run's cost is the larger of its recorded cost and its gateway usage, as the mold's own allowance check counts it",
+    "tickets: mold_v0 has no in-app tickets table",
+]
+
+def run_spend_lib():
+    sys.path.insert(0, os.path.join(S_DIR, "lib")); import run_spend
+    return run_spend
+
+def assemble_v0(app_id, days, target, rep, dates, generated_at=None):
+    """lib/run_spend.measure's answer -> the usage report (the same contract), with the heartbeat figures in `spend`."""
+    spend = {k: v for k, v in rep.items() if k != "_window"}
+    if rep.get("error"):
+        out = error_report(app_id, days, target, rep["error"]); out["spend"] = spend; return out
+    complete = rep.get("month_usd") is not None
+    ws, agents, per_day = [], [], {d: [0, 0.0] for d in dates}
+    for name, w in rep.get("_window") or []:
+        f = empty_fields(); f.update({"org_id": w.get("org"), "name": name})
+        f["workflow_runs"] = sum(int(x.get("runs") or 0) for x in w.get("window") or [])
+        f["workflow_cost_usd"] = round(sum(float(x.get("usd") or 0) for x in w.get("window") or []), 4); f["workflow_cost_basis"] = "recorded"
+        for x in w.get("window") or []:
+            agents.append({"agent": f"{x.get('pack')}/{x.get('kind')}", "kind": "specialist", "workspace": name, "turns": None, "runs": x.get("runs"),
+                           "input_tokens": None, "output_tokens": None, "cost_usd": _usd(x.get("usd")), "cost_basis": "recorded", "estimated_from": None,
+                           "last_active": x.get("last") or ""})
+        for d in w.get("daily") or []:
+            if d.get("d") in per_day: per_day[d["d"]][0] += int(d.get("runs") or 0); per_day[d["d"]][1] += float(d.get("usd") or 0)
+        ws.append(f)
+    tot = empty_fields()
+    if complete and ws:
+        tot["workflow_runs"] = sum(w["workflow_runs"] for w in ws); tot["workflow_cost_usd"] = round(sum(w["workflow_cost_usd"] for w in ws), 4); tot["workflow_cost_basis"] = "recorded"
+    elif complete:
+        tot.update(workflow_runs=0, workflow_cost_usd=0.0, workflow_cost_basis="recorded")
+    agents.sort(key=lambda r: (-(r["runs"] or 0), r["agent"]))
+    daily = [{"date": d, "chat_turns": None, "people_active": None, "runs": per_day[d][0] if complete else None,
+              "cost_usd": round(per_day[d][1], 4) if complete else None} for d in dates]
+    return {"app_id": app_id, "generated_at": generated_at or now_iso(), "days": days, "target": target, "totals": tot,
+            "workspaces": [{"org_id": w.pop("org_id"), "name": w.pop("name"), **w} for w in ws], "daily": daily,
+            "by_agent": agents[:ROW_CAP], "by_user": [], "not_measured": V0_NOTES + list(rep.get("not_measured") or []) +
+            ([f"by_agent: {len(agents)} rows; only the first {ROW_CAP} are shown"] if len(agents) > ROW_CAP else []), "spend": spend}
+
+def _t(iso):
+    try: return dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError): return None
+
+def spend_due(prev, building, now):
+    """(due, active, every): read this app again now? An app is active while a run is queued or running, a run was
+    active in the last hour, or a build session named it in the last hour; then every minute, else every 15 minutes."""
+    if not prev or not prev.get("measured_at"): return True, bool(building), HEARTBEAT_S
+    age = now - (_t(prev["measured_at"]) or 0)
+    last = _t(prev.get("last_activity"))
+    active = bool(building) or bool(prev.get("in_flight")) or (last is not None and now - last <= ACTIVE_WINDOW_S)
+    every = ERROR_EVERY_S if prev.get("error") else HEARTBEAT_S if active else IDLE_EVERY_S
+    return age >= every - 5, active, every
+
+def spend_entry_for(app_id, adir, now, measure):
+    """One app's reading now, or why it is not measured. measure(app_id) -> run_spend report."""
+    try: app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
+    except (OSError, ValueError): return {"app_id": app_id, "error": "its state files cannot be read", "measured_at": now_iso()}
+    if app.get("mold_id") != "mold_v0":
+        return {"app_id": app_id, "source": None, "measured_at": now_iso(), "today_usd": None, "month_usd": None, "accounts": [], "kinds": [],
+                "error": f"not measured by the heartbeat: a {app.get('mold_id') or 'mold'} app's spend is in its usage report (chat turns are priced with its own price table)"}
+    rep = measure(app_id); rep.pop("_window", None)
+    rep["warnings"] = run_spend_lib().warnings(rep)
+    return rep
+
+def heartbeat(force=False, only=None, tickets=False, state_dir=None, out_dir=None, measure=None, builds=None, now=None):
+    """--spend: every app that is not retired. -> the beat (also written to <out_dir>/heartbeat.json)."""
+    rs = run_spend_lib(); now = now or dt.datetime.now(dt.timezone.utc).timestamp()
+    state_dir = state_dir or os.path.join(ROOT, "state", "application"); out_dir = out_dir or SPEND_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    measure = measure or (lambda a: rs.measure(a, rs.month_start(), state_dir=state_dir))
+    if builds is None:
+        try:
+            sys.path.insert(0, S_DIR); import mint_report
+            builds = mint_report.live_builds()
+        except Exception as e:   # the build figure is the hourly report's, then; never the beat's failure
+            builds = {"error": f"the live build figures could not be read ({type(e).__name__})", "apps": {}, "active_apps": []}
+    building = set(builds.get("active_apps") or [])
+    apps = [a for a in apps_to_run(state_dir) if not only or a in only]
+    entries, todo = {}, []
+    for a in apps:
+        p = os.path.join(out_dir, a + ".json")
+        try: prev = load(p)
+        except (OSError, ValueError): prev = None
+        due, active, every = spend_due(prev, a in building, now)
+        if force or due: todo.append(a)
+        else: entries[a] = dict(prev, cached=True)
+        entries.setdefault(a, {}).update(active=active, every_s=every)
+    def one(a):
+        try: return spend_entry_for(a, os.path.join(state_dir, a), now, measure)
+        except Exception as e: return {"app_id": a, "error": f"the reading failed ({type(e).__name__})", "measured_at": now_iso()}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        for a, rep in zip(todo, ex.map(one, todo)):
+            keep = {k: entries[a].get(k) for k in ("active", "every_s")}
+            if rep.get("last_activity") and (now - (_t(rep["last_activity"]) or 0) <= ACTIVE_WINDOW_S or rep.get("in_flight")): keep["active"] = True
+            with open(os.path.join(out_dir, a + ".json.tmp"), "w") as f: json.dump(rep, f, indent=2)
+            os.replace(os.path.join(out_dir, a + ".json.tmp"), os.path.join(out_dir, a + ".json"))
+            entries[a] = dict(rep, cached=False, **keep)
+    for a, e in entries.items():
+        e["building"] = a in building
+        e["build"] = (builds.get("apps") or {}).get(a)
+        e["next_check_s"] = e.get("every_s")
+    filed = []
+    if tickets:
+        for a, e in entries.items():
+            if not e.get("cached") and any(w.get("level") == "limit" and not w.get("kind") for w in e.get("warnings") or []):
+                filed += file_allowance_tickets(e, os.path.dirname(state_dir))
+    beat = {"generated_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds"), "apps": entries,
+            "build_error": builds.get("error"), "builds_at": builds.get("generated_at"), "filed": filed}
+    with open(os.path.join(out_dir, "heartbeat.json.tmp"), "w") as f: json.dump(beat, f, indent=2)
+    os.replace(os.path.join(out_dir, "heartbeat.json.tmp"), os.path.join(out_dir, "heartbeat.json"))
+    return beat
+
+ALLOWANCE_LEAD = "Allowance: {app} {workspace} account "
+OPEN_STATUSES = ("todo", "in_progress", "blocked")
+
+def allowance_title(app_id, w, month):
+    return (ALLOWANCE_LEAD.format(app=app_id, workspace=w["workspace"]) + f"used all of its allowance for {month}: "
+            "no run can start until it is raised or the month ends")
+
+def file_allowance_tickets(rep, state_root):
+    """One factory ticket per app and account whose allowance is reached, through factory.py's own add and lock. None
+    while one for that account is open; none again this month once one was closed or dropped this month."""
+    try: application = load(os.path.join(state_root, "application", rep["app_id"], "application.json"))
+    except (OSError, ValueError, KeyError): return []
+    mold = application.get("mold_id")
+    if not mold: return []
+    sys.path.insert(0, S_DIR); import factory, io, contextlib
+    factory.ST = state_root
+    filed = []
+    with factory.tasks_lock(mold):
+        tasks = factory.read_tasks(mold)
+        for w in rep.get("warnings") or []:
+            if w.get("level") != "limit" or w.get("kind"): continue
+            lead = ALLOWANCE_LEAD.format(app=rep["app_id"], workspace=w["workspace"])
+            mine = [t for t in tasks if str(t.get("title", "")).startswith(lead)]
+            if any(t.get("status") in OPEN_STATUSES for t in mine): continue
+            if any(t.get("status") in ("done", "dropped") and str(t.get("updated") or "")[:7] >= rep["month"] for t in mine): continue
+            args = [mold, allowance_title(rep["app_id"], w, rep["month"]), "--type", "infra", "--pri", "2",
+                    "--accept", "The account's allowance is raised (operator's yes: it is money), or the operator decides to wait for the month to end",
+                    "--accept", w["text"]]
+            product = application.get("product_id")
+            if product and any(p.get("product_id") == product and p.get("mold_id") == mold for p in factory.products().get("products", [])):
+                args += ["--product", product]
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf): factory.cmd_add(args)
+            except (SystemExit, OSError, ValueError, KeyError, IndexError) as e:
+                print(f"could not file an allowance ticket for {rep['app_id']}: {type(e).__name__}", file=sys.stderr); continue
+            tid = buf.getvalue().strip(); filed.append(tid)
+            tasks.append({"task_id": tid, "title": args[1], "status": "todo"})
+    return filed
+
 # ---------------------------------------------------------------------------------------------------------
 # one app, all apps
 # ---------------------------------------------------------------------------------------------------------
 class TimeUp(Exception): pass
 
-def collect(app_id, days):
-    adir = os.path.join(ROOT, "state", "application", app_id)
+def collect(app_id, days, state_dir=None):
+    adir = os.path.join(state_dir or os.path.join(ROOT, "state", "application"), app_id)
     if not os.path.isfile(os.path.join(adir, "application.json")):
         return error_report(app_id, days, None, f"there is no application {app_id} in state")
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
@@ -644,6 +819,14 @@ def collect(app_id, days):
     target = infra.get("target")
     if not infra.get("deployed_at"): return error_report(app_id, days, target, "the app is not deployed, so it has no database to read")
     dates, since = window(days)
+    if app.get("mold_id") == "mold_v0":
+        rs = run_spend_lib()
+        def on_alarm_v0(*_): raise TimeUp()
+        old = signal.signal(signal.SIGALRM, on_alarm_v0); signal.alarm(TIMEOUT - 5)
+        try: rep = rs.measure(app_id, since, state_dir=os.path.dirname(adir))
+        except TimeUp: rep = rs.assemble(app_id, {"error": f"the app did not answer within {TIMEOUT} seconds"}, {})
+        finally: signal.alarm(0); signal.signal(signal.SIGALRM, old)
+        return assemble_v0(app_id, days, target, rep, dates)
     args = {"orgs": state_orgs(adir), "since": since, "days": days, "agent_roles": agent_roles(app_id, app), "state_models": state_models(app)}
     args["agent_models"] = resolve_models(args)   # from state; the deployment's own model names replace it where they are read
     def on_alarm(*_): raise TimeUp()
@@ -673,6 +856,14 @@ def summary(rep):
             f"{v(t['workflow_runs'])} workflow runs costing {v(t['workflow_cost_usd'], True)}; tickets {v(tk['open'])} open, "
             f"{v(tk['in_progress'])} in progress, {v(tk['done'])} done, {v(tk['total'])} total")
 
+def spend_summary(e):
+    m = lambda v: "not measured" if v is None else f"${v:,.2f}"
+    if e.get("error"): return f"{e.get('app_id')}: {e['error']}"
+    acc = "; ".join(f"{x['workspace']} {m(x['used_usd'])} of {m(x['limit_usd'])}" + (f" ({x['level']})" if x.get("level") not in (None, "ok") else "") for x in e.get("accounts") or [])
+    lr = e.get("last_run") or {}
+    return (f"{e['app_id']}: {m(e.get('today_usd'))} today · {m(e.get('month_usd'))} in {e.get('month')}" + (f" · last run {lr.get('kind')} {m(lr.get('cost_usd'))} at {lr.get('at')}" if lr else "") +
+            (f" · accounts: {acc}" if acc else "") + (" · active" if e.get("active") else "") + (" (cached)" if e.get("cached") else ""))
+
 def one_in_child(app_id, days):
     """--all: each app in its own process, so a hang or crash in one never stops the others."""
     try:
@@ -699,6 +890,10 @@ def days_arg(a):
 def main(a):
     if a[:1] == ["remote"]: return remote_main(a[1])
     if "--self-test" in a: return self_test()
+    if "--spend" in a:
+        only = [x for x in a if not x.startswith("--")]
+        beat = heartbeat(force="--force" in a, only=only or None, tickets="--file-tickets" in a)
+        print(json.dumps(beat, indent=2) if "--json" in a else "\n".join(spend_summary(e) for _, e in sorted(beat["apps"].items()))); return 0
     days = days_arg(a)
     if "--all" in a:
         apps = apps_to_run(os.path.join(ROOT, "state", "application"))
@@ -885,6 +1080,68 @@ def self_test():
     ok((rep["totals"]["dictations"], rep["totals"]["audio_seconds"], rep["totals"]["dictation_cost_usd"]) == (4, 170.0, None)
        and rep["workspaces"][0]["dictation_cost_usd"] == 0.001283 and any("@cf/unknown/asr" in x and "no total is given" in x for x in rep["not_measured"]),
        "an unpriced speech model makes the dictation total null, and is named")
+    # ---- mold_v0 (mold_v0-185): the runs table through lib/run_spend.py, and the --spend heartbeat ----
+    n += v0_self_test()
     print(f"app_usage: {n} checks passed"); return 0
+
+def v0_self_test():
+    import tempfile
+    n = 0
+    def ok(c, msg):
+        nonlocal n
+        assert c, msg
+        n += 1
+    rs = run_spend_lib()
+    raw = rs.parse_lines(open(os.path.join(S_DIR, "fixtures", "run_spend", "psql-maxwell.out")).read())
+    now = dt.datetime(2026, 10, 31, 7, 30, tzinfo=dt.timezone.utc)
+    rep = rs.assemble("maxwell", raw, {"stripe": False}, {"kind_month_budget_usd": 500}, now=now)
+    dates, _ = window(30, dt.date(2026, 10, 31))
+    u = assemble_v0("maxwell", 30, "vercel", rep, dates, generated_at="2026-10-31T07:30:00+00:00")
+    tkeys = set(NUM) | {"tickets", "workflow_cost_basis"}
+    ok(set(u["totals"]) == tkeys and all(set(w) == tkeys | {"org_id", "name"} for w in u["workspaces"]), "v0: the same field sets as every report")
+    ok(u["totals"]["workflow_runs"] == 18 and u["totals"]["workflow_cost_usd"] == 50.0089 and u["totals"]["workflow_cost_basis"] == "recorded", "v0: runs and their cost: " + json.dumps(u["totals"]))
+    ok(u["totals"]["chat_turns"] is None and u["totals"]["cost_usd"] is None and u["totals"]["tickets"]["total"] is None and any("no chat-turn table" in x for x in u["not_measured"]), "v0: chat and tickets not measured, said, never 0")
+    ok([(a["agent"], a["runs"], a["cost_usd"]) for a in u["by_agent"]][:2] == [("maxwell/add_application", 8, 0.0), ("maxwell/refresh_apps", 3, 12.1644)] and all(a["kind"] == "specialist" and a["workspace"] == "Factory lane check" for a in u["by_agent"]), "v0: by_agent per kind")
+    ok([d for d in u["daily"] if d["runs"]] == [{"date": "2026-10-29", "chat_turns": None, "people_active": None, "runs": 5, "cost_usd": 0.0}, {"date": "2026-10-30", "chat_turns": None, "people_active": None, "runs": 7, "cost_usd": 8.855},
+                                              {"date": "2026-10-31", "chat_turns": None, "people_active": None, "runs": 6, "cost_usd": 41.1539}], "v0: runs and cost per day")
+    ok(u["spend"]["accounts"][0]["level"] == "limit" and "_window" not in u["spend"], "v0: the heartbeat figures ride along")
+    e = assemble_v0("maxwell", 30, "vercel", rs.assemble("maxwell", {"error": "psql (the PostgreSQL client) is not installed"}, {}), dates)
+    ok(e["error"].startswith("psql") and e["totals"]["workflow_cost_usd"] is None and e["spend"]["month_usd"] is None, "v0: an error is not measured throughout")
+    # when to read again: a minute while active, 15 minutes when idle, 5 after an error, at once the first time
+    t = now.timestamp(); iso = lambda s: dt.datetime.fromtimestamp(t - s, dt.timezone.utc).isoformat()
+    ok(spend_due(None, False, t) == (True, False, HEARTBEAT_S), "first reading")
+    ok(spend_due({"measured_at": iso(30), "last_activity": iso(600)}, False, t) == (False, True, HEARTBEAT_S), "active, read 30 s ago: not yet")
+    ok(spend_due({"measured_at": iso(61), "last_activity": iso(600)}, False, t)[0], "active, a minute ago: now")
+    ok(spend_due({"measured_at": iso(120), "last_activity": iso(2 * 3600)}, False, t) == (False, False, IDLE_EVERY_S), "idle: backs off")
+    ok(spend_due({"measured_at": iso(120), "last_activity": iso(2 * 3600)}, True, t) == (True, True, HEARTBEAT_S), "a build session naming it: active")
+    ok(spend_due({"measured_at": iso(120), "in_flight": 1}, False, t)[1] and spend_due({"measured_at": iso(120), "error": "x"}, False, t) == (False, False, ERROR_EVERY_S), "in flight; an error waits 5 min")
+    # the heartbeat: a stand-in reading, a temporary factory, one ticket at the limit and no second one
+    with tempfile.TemporaryDirectory() as d:
+        st = os.path.join(d, "state"); out = os.path.join(d, "spend")
+        for a, mold in (("maxwell", "mold_v0"), ("hfc", "mold_v1")):
+            os.makedirs(os.path.join(st, "application", a))
+            json.dump({"app_id": a, "mold_id": mold, "status": "stamped", "product_id": "p0" if mold == "mold_v0" else "p1"}, open(os.path.join(st, "application", a, "application.json"), "w"))
+            json.dump({"target": "vercel", "deployed_at": "2026-10-31T06:00:29+00:00", "vercel": {"projects": {"api": a + "-api"}}}, open(os.path.join(st, "application", a, "infrastructure.json"), "w"))
+        os.makedirs(os.path.join(st, "tasks")); open(os.path.join(st, "tasks", "mold_v0.jsonl"), "w").write(json.dumps({"task_id": "mold_v0-001", "mold_id": "mold_v0", "title": "x", "status": "done"}) + "\n")
+        json.dump({"products": [{"product_id": "p0", "mold_id": "mold_v0"}, {"product_id": "p1", "mold_id": "mold_v1"}]}, open(os.path.join(st, "products.json"), "w"))
+        calls = []
+        def fake_measure(a):
+            calls.append(a); r = json.loads(json.dumps(rep)); r["measured_at"] = dt.datetime.fromtimestamp(t, dt.timezone.utc).isoformat(); r["last_activity"] = iso(600); return r
+        builds = {"apps": {"maxwell": {"cost_usd": 12.5, "uncounted_est_usd": 3.0}}, "active_apps": ["maxwell"], "generated_at": "x"}
+        b1 = heartbeat(state_dir=os.path.join(st, "application"), out_dir=out, measure=fake_measure, builds=builds, tickets=True, now=t)
+        mx = b1["apps"]["maxwell"]
+        ok(calls == ["maxwell"] and mx["today_usd"] == 41.1539 and mx["month_usd"] == 50.0089 and mx["active"] and mx["building"] and mx["build"]["cost_usd"] == 12.5 and not mx["cached"], "beat: maxwell read: " + json.dumps({k: mx.get(k) for k in ("today_usd", "month_usd", "active")}))
+        ok(b1["apps"]["hfc"]["error"].startswith("not measured by the heartbeat") and b1["apps"]["hfc"]["month_usd"] is None, "beat: a mold_v1 app says not measured, never $0")
+        ok(any(w["level"] == "limit" and "Factory lane check" in w["text"] for w in mx["warnings"]), "beat: the reached allowance is a warning")
+        tasks = [json.loads(l) for l in open(os.path.join(st, "tasks", "mold_v0.jsonl"))]
+        ok(len(b1["filed"]) == 1 and tasks[-1]["title"].startswith("Allowance: maxwell Factory lane check account used all of its allowance for 2026-10") and tasks[-1]["priority"] == 2 and tasks[-1]["product_id"] == "p0", "one ticket: " + json.dumps(tasks[-1]))
+        ok(os.path.isfile(os.path.join(out, "maxwell.json")) and load(os.path.join(out, "heartbeat.json"))["apps"]["maxwell"]["month_usd"] == 50.0089, "beat written")
+        b2 = heartbeat(state_dir=os.path.join(st, "application"), out_dir=out, measure=fake_measure, builds=builds, tickets=True, now=t + 30)
+        ok(calls == ["maxwell"] and b2["apps"]["maxwell"]["cached"] and b2["filed"] == [], "30 s later: the cached reading, no second query, no second ticket")
+        b3 = heartbeat(state_dir=os.path.join(st, "application"), out_dir=out, measure=fake_measure, builds=builds, tickets=True, now=t + 65)
+        ok(calls == ["maxwell", "maxwell"] and not b3["apps"]["maxwell"]["cached"] and b3["filed"] == [] and len([1 for l in open(os.path.join(st, "tasks", "mold_v0.jsonl"))]) == 2, "a minute later: read again; the open ticket stands, none filed")
+        heartbeat(state_dir=os.path.join(st, "application"), out_dir=out, measure=fake_measure, builds={"apps": {}, "active_apps": []}, now=t + 70, force=True)
+        ok(len(calls) == 3, "--force reads at once")
+    return n
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))

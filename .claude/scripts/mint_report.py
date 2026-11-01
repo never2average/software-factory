@@ -539,9 +539,13 @@ def live_builds(apps=None, tdir=None, reports_dir=None, cache_path=None, now=Non
             if not st.get("done"): e["live_from"] = "catching up on the session's transcript"; continue
             if "run_costs" not in s: e["live_from"] = "the next hourly recompute (this report predates live figures)"; continue
             runs = st.get("runs") or {}
+            if not runs and s.get("cost_usd") is None: continue   # no cost record yet, live or hourly: still not measured, never $0
             delta = sum(max(0.0, (v.get("cost") or 0) - (s["run_costs"].get(k) or 0)) for k, v in runs.items())
             whole = (s.get("session_cost_usd") or 0) + delta
-            share, share_after = s.get("share") or 0, s.get("share_uncounted") if s.get("share_uncounted") is not None else (s.get("share") or 0)
+            # the report's own split, unrounded where it can be worked back (share and share_uncounted are kept to 4 places)
+            share = s["cost_usd"] / s["session_cost_usd"] if s.get("cost_usd") is not None and s.get("session_cost_usd") else (s.get("share") or 0)
+            share_after = (s["cost_uncounted_est_usd"] / s["session_cost_uncounted_est_usd"] if s.get("cost_uncounted_est_usd") is not None and s.get("session_cost_uncounted_est_usd")
+                           else s.get("share_uncounted") if s.get("share_uncounted") is not None else share)
             later = sum((st.get("later") or {}).values()); before = st.get("before_w") or 0
             s_est = whole * later / before if before else 0.0
             cost = (cost or 0) - (s.get("cost_usd") or 0) + share * whole
@@ -608,6 +612,13 @@ def live_self_test():
             f.write(json.dumps(dict(type="cost-state", timestamp=stamp, startTime=10, totalCostUSD=100, totalAPIDuration=1, totalToolDuration=0)) + "\n")
         r2b = live_builds(apps, tdir, rdir)["apps"]
         assert r2b["app_a"]["uncounted_est_usd"] == r2["apps"]["app_a"]["uncounted_est_usd"] and "hourly" in r2b["app_a"]["live_from"] and r2b["app_b"]["cost_usd"] is None and r2b["app_b"]["uncounted_est_usd"] is None, r2b
+        # a live session with no cost record anywhere stays not measured (never $0)
+        with open(P("s6.jsonl"), "w") as f:
+            f.write(json.dumps(dict(type="user", timestamp=stamp, message=dict(role="user", content="app_a_vm only"))) + "\n")
+        s6 = read_session(P("s6.jsonl"), "app_a_vm", apps)
+        json.dump(dict(app_id="app_a_vm", sessions=[s6], summary=summary(dict(sessions=[s6], calendar=dict(deploys=[])))), open(os.path.join(rdir, "app_a_vm.json"), "w"))
+        r6 = live_builds(apps, tdir, rdir)["apps"]["app_a_vm"]
+        assert r6["cost_usd"] is None and r6["uncounted_est_usd"] is None and r6["live_sessions"] == [], r6
         # a report from before run_costs: its figure stands, and says when it goes live
         for s in rep["sessions"]: s.pop("run_costs")
         json.dump(rep, open(os.path.join(rdir, "app_a.json"), "w"))
