@@ -754,8 +754,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     const base: Record<string, string> = {
       ...runEnv,
       // A program of the pack's own gets the gateway's variables for its kind's providers; an agent exactly what its
-      // configuration declares (its env, with the run's gateway token where it says {gateway.token}).
-      ...(agent ? declaredEnv : claim.gateway.env), ...(proxy?.env ?? {}),
+      // configuration declares (its env, with the run's gateway token where it says {gateway.token}), over the CLI's
+      // provider-safe settings for what serves the run's providers (mold_v0-189: src/provider-safe-env.ts).
+      ...(agent ? { ...(claim.gateway.harness_env ?? {}), ...declaredEnv } : claim.gateway.env), ...(proxy?.env ?? {}),
     };
     /**
      * The credentials one program receives (mold_v0-034; per step since mold_v0-074): those it names (null: all the

@@ -373,6 +373,17 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   write-back, complete) with an in-process and an HTTP client. The gateway (`src/gateway.ts`) gives a run one token for
   the kind's providers that lives until the attempt's deadline, refuses it once the run is not running or its cost
   (summed from `gateway_usage.run_id` across attempts) reaches the kind's `budget_usd`, and the run's cost is that sum.
+  **Provider-safe CLI settings and the refused-before-spend retry** (mold_v0-189, `src/provider-safe-env.ts`): a run
+  with the Claude provider gets Claude Code's documented quiet settings (`DISABLE_AUTOUPDATER`,
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_TELEMETRY`: no self-update, no telemetry and so no remotely served
+  feature flags), and, when the gateway does not serve it from Anthropic's own API (a Vertex backend, only a Vertex key,
+  any other upstream), `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`: no beta request fields, so Vertex never sees
+  `context_management` (its "400 context_management: Extra inputs are not permitted" ended Maxwell's hosted run of
+  2026-11-01 10:06 in 3 s on a sandbox whose own Claude Code was 2.1.220). In the gateway's variables for a program, and
+  under an agent-workspace kind's declared `env` (the kind's own values win). An attempt that fails after the model API
+  refused it (an upstream error in its own tokens' `gateway_usage`) with no token metered and nothing spent is queued
+  **once** more whatever `max_attempts` says, with a `model_refused_retry` event (requests, refused); not a cancelled
+  run, a timeout or a gated write.
   Egress: the harness starts the sandboxes' own egress proxy (`orchestrator/core/egress.ts`) with the run's list (the
   kind's `egress` plus the gateway's public host; a listed host includes its subdomains, the proxy's rule) and gives the
   program its proxy settings: **enforced** for every connection through the proxy; a program that ignores proxy settings
@@ -436,7 +447,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     (`result_unmapped`, counted against `max_unresolved`). Read only from a plain file (never a link or a pipe), redacted
     as text first. Instead of `results`. **Every file the run writes under `<RUN_OUT>`** is recorded in its events
     (`agent_output`: path, size, sha256, a small JSON file's content, redacted), whatever the run's outcome.
-  - `tools` (072): tools from a fixed catalogue (`src/run-tools.ts`: claude-code 2.1.295, sops 3.13.3, age 1.3.2,
+  - `tools` (072): tools from a fixed catalogue (`src/run-tools.ts`: claude-code 2.1.316 (mold_v0-189), sops 3.13.3, age 1.3.2,
     kubectl 1.37.1, aws 2.37.5, cfn-lint 1.56.3, cfn-guard 3.2.1, aws-guard-rules 1.0.2, moto 5.2.4, each with its
     release artifact's sha256 for x64 and arm64, measured when pinned; git is the image's distribution package; the
     last four since mold_v0-184, below). `gen-packs` writes the union across the build's kinds
