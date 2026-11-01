@@ -1101,7 +1101,7 @@ def v0_self_test():
     ok(set(u["totals"]) == tkeys and all(set(w) == tkeys | {"org_id", "name"} for w in u["workspaces"]), "v0: the same field sets as every report")
     ok(u["totals"]["workflow_runs"] == 18 and u["totals"]["workflow_cost_usd"] == 50.0089 and u["totals"]["workflow_cost_basis"] == "recorded", "v0: runs and their cost: " + json.dumps(u["totals"]))
     ok(u["totals"]["chat_turns"] is None and u["totals"]["cost_usd"] is None and u["totals"]["tickets"]["total"] is None and any("no chat-turn table" in x for x in u["not_measured"]), "v0: chat and tickets not measured, said, never 0")
-    ok([(a["agent"], a["runs"], a["cost_usd"]) for a in u["by_agent"]][:2] == [("maxwell/add_application", 8, 0.0), ("maxwell/refresh_apps", 3, 12.1644)] and all(a["kind"] == "specialist" and a["workspace"] == "Factory lane check" for a in u["by_agent"]), "v0: by_agent per kind")
+    ok([(a["agent"], a["runs"], a["cost_usd"]) for a in u["by_agent"]][:2] == [("maxwell/add_application", 8, 0.0), ("maxwell/refresh_apps", 3, 12.1644)] and all(a["kind"] == "specialist" and a["workspace"] == "Lane check" for a in u["by_agent"]), "v0: by_agent per kind")
     ok([d for d in u["daily"] if d["runs"]] == [{"date": "2026-10-29", "chat_turns": None, "people_active": None, "runs": 5, "cost_usd": 0.0}, {"date": "2026-10-30", "chat_turns": None, "people_active": None, "runs": 7, "cost_usd": 8.855},
                                               {"date": "2026-10-31", "chat_turns": None, "people_active": None, "runs": 6, "cost_usd": 41.1539}], "v0: runs and cost per day")
     ok(u["spend"]["accounts"][0]["level"] == "limit" and "_window" not in u["spend"], "v0: the heartbeat figures ride along")
@@ -1132,9 +1132,9 @@ def v0_self_test():
         mx = b1["apps"]["maxwell"]
         ok(calls == ["maxwell"] and mx["today_usd"] == 41.1539 and mx["month_usd"] == 50.0089 and mx["active"] and mx["building"] and mx["build"]["cost_usd"] == 12.5 and not mx["cached"], "beat: maxwell read: " + json.dumps({k: mx.get(k) for k in ("today_usd", "month_usd", "active")}))
         ok(b1["apps"]["hfc"]["error"].startswith("not measured by the heartbeat") and b1["apps"]["hfc"]["month_usd"] is None, "beat: a mold_v1 app says not measured, never $0")
-        ok(any(w["level"] == "limit" and "Factory lane check" in w["text"] for w in mx["warnings"]), "beat: the reached allowance is a warning")
+        ok(any(w["level"] == "limit" and "Lane check" in w["text"] for w in mx["warnings"]), "beat: the reached allowance is a warning")
         tasks = [json.loads(l) for l in open(os.path.join(st, "tasks", "mold_v0.jsonl"))]
-        ok(len(b1["filed"]) == 1 and tasks[-1]["title"].startswith("Allowance: maxwell Factory lane check account used all of its allowance for 2026-10") and tasks[-1]["priority"] == 2 and tasks[-1]["product_id"] == "p0", "one ticket: " + json.dumps(tasks[-1]))
+        ok(len(b1["filed"]) == 1 and tasks[-1]["title"].startswith("Allowance: maxwell Lane check account used all of its allowance for 2026-10") and tasks[-1]["priority"] == 2 and tasks[-1]["product_id"] == "p0", "one ticket: " + json.dumps(tasks[-1]))
         ok(os.path.isfile(os.path.join(out, "maxwell.json")) and load(os.path.join(out, "heartbeat.json"))["apps"]["maxwell"]["month_usd"] == 50.0089, "beat written")
         b2 = heartbeat(state_dir=os.path.join(st, "application"), out_dir=out, measure=fake_measure, builds=builds, tickets=True, now=t + 30)
         ok(calls == ["maxwell"] and b2["apps"]["maxwell"]["cached"] and b2["filed"] == [], "30 s later: the cached reading, no second query, no second ticket")

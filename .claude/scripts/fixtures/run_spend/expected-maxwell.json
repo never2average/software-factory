@@ -12,7 +12,7 @@
   "month_runs": 18,
   "in_flight": 0,
   "last_run": {
-    "workspace": "Factory lane check",
+    "workspace": "Lane check",
     "kind": "maxwell/probe_agent_graph",
     "status": "failed",
     "cost_usd": 2.2866,
@@ -23,7 +23,7 @@
   "last_activity": "2026-10-31T04:18:09.504423+00:00",
   "accounts": [
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "org_id": 3,
       "used_usd": 50.0089,
       "limit_usd": 50.0,
@@ -38,7 +38,7 @@
       }
     },
     {
-      "workspace": "Onfinance AI",
+      "workspace": "Customer A",
       "org_id": 1,
       "used_usd": 0.0,
       "limit_usd": 250.0,
@@ -55,7 +55,7 @@
   ],
   "kinds": [
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "probe_cicd_env",
       "month_runs": 1,
@@ -65,7 +65,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "refresh_soc",
       "month_runs": 1,
@@ -75,7 +75,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "refresh_apps",
       "month_runs": 3,
@@ -85,7 +85,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "probe_agent_graph",
       "month_runs": 1,
@@ -95,7 +95,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "seed_company",
       "month_runs": 3,
@@ -105,7 +105,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "probe_iac",
       "month_runs": 1,
@@ -115,7 +115,7 @@
       "level": "ok"
     },
     {
-      "workspace": "Factory lane check",
+      "workspace": "Lane check",
       "pack": "maxwell",
       "kind": "add_application",
       "month_runs": 8,

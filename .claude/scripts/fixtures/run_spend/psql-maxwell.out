@@ -2,7 +2,7 @@ set_config
 20000
 {"k": "tx", "read_only": "on"}
 {"k": "tenant", "role": "app_tenant_0123456789", "bypasses": false}
-{"k": "orgs", "orgs": [{"id": 1, "name": "Onfinance AI"}, {"id": 3, "name": "Factory lane check"}]}
+{"k": "orgs", "orgs": [{"id": 1, "name": "Customer A"}, {"id": 3, "name": "Lane check"}]}
 1|1
 {"k": "ws", "org": 1, "role": "app_tenant_0123456789", "role_bypasses": false, "read_only": "on", "month_usd": 0, "month_rec_usd": 0, "month_runs": 0, "prev_usd": 0, "prev_rec_usd": 0, "prev_runs": 0, "today_usd": 0, "today_runs": 0, "in_flight": 0, "live_earlier_usd": 0, "last_activity": null, "last_run": null, "kinds": [], "window": [], "daily": [], "account": {"override_usd": 250, "has_billing_customer": false}}
 3|3

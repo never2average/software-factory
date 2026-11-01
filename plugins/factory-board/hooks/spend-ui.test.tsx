@@ -1,13 +1,13 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-// mold_v0-185: a small factory with Maxwell (mold_v0, Vercel) and a mold_v1 app, and the spend heartbeat's last beat as
-// read live from Maxwell on 2026-11-01 for 2026-10-31: the "Factory lane check" account at its $50 allowance (it ran
-// out that day), the OnFinance account at $200 of $250 (80%: amber, made up for the amber case), and a live build.
+// mold_v0-185: a small factory with Maxwell (mold_v0, Vercel) and a mold_v1 app, and the spend heartbeat's last beat:
+// the "Lane check" account at its $50 allowance (it ran
+// out that day), the "Customer A" account at $200 of $250 (80%: amber), and a live build.
 const ROOT = '/root/software-factory'
 const T = Date.parse('2026-10-31T07:30:00Z')
 
 const LANE_LIMIT =
-  'maxwell: the Factory lane check account has used all of its $50.00 allowance for 2026-10 ($50.01 spent): no run can start until it is raised or the month ends'
+  'maxwell: the Lane check account has used all of its $50.00 allowance for 2026-10 ($50.01 spent): no run can start until it is raised or the month ends'
 
 const beat = (limit: boolean, ageMs = 30_000) => ({
   generated_at: new Date(T - ageMs).toISOString(),
@@ -23,17 +23,17 @@ const beat = (limit: boolean, ageMs = 30_000) => ({
       today_runs: 6,
       month_runs: 18,
       in_flight: 0,
-      last_run: { workspace: 'Factory lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
+      last_run: { workspace: 'Lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
       last_activity: '2026-10-31T04:18:09+00:00',
       accounts: [
         limit
-          ? { workspace: 'Factory lane check', org_id: 3, used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, runs: 0, level: 'ok' } }
-          : { workspace: 'Factory lane check', org_id: 3, used_usd: 20, limit_usd: 50, source: 'override', pct: 40, level: 'ok', prev_month: null },
-        { workspace: 'Onfinance AI', org_id: 1, used_usd: 200, limit_usd: 250, source: 'override', pct: 80, level: 'warn', prev_month: null },
+          ? { workspace: 'Lane check', org_id: 3, used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, runs: 0, level: 'ok' } }
+          : { workspace: 'Lane check', org_id: 3, used_usd: 20, limit_usd: 50, source: 'override', pct: 40, level: 'ok', prev_month: null },
+        { workspace: 'Customer A', org_id: 1, used_usd: 200, limit_usd: 250, source: 'override', pct: 80, level: 'warn', prev_month: null },
       ],
-      kinds: [{ workspace: 'Factory lane check', pack: 'maxwell', kind: 'probe_cicd_env', month_runs: 1, used_usd: 16.6332, limit_usd: 500, pct: 3.3, level: 'ok' }],
+      kinds: [{ workspace: 'Lane check', pack: 'maxwell', kind: 'probe_cicd_env', month_runs: 1, used_usd: 16.6332, limit_usd: 500, pct: 3.3, level: 'ok' }],
       not_measured: [],
-      warnings: limit ? [{ workspace: 'Factory lane check', level: 'limit', pct: 100, text: LANE_LIMIT }] : [],
+      warnings: limit ? [{ workspace: 'Lane check', level: 'limit', pct: 100, text: LANE_LIMIT }] : [],
       active: true,
       building: true,
       cached: false,
@@ -115,11 +115,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
       const bar = async (text: string) => (await ui.findAll({ type: 'Text' })).find(t => t.text === text)
       const ofa = await bar('████████████████░░░░ 80%')
       expect(ofa?.props.color).toBe('warning')
-      expect(String((await ui.find({ key: 'allowance-Onfinance AI' }))?.text).includes('$200.00 of $250.00 in Oct · 80% used'), 'check 4').toBe(true)
-      expect(String((await ui.find({ key: 'kind-Factory lane check-maxwell/probe_cicd_env' }))?.text).includes('$16.63 of $500.00 · 1 runs'), 'check 8').toBe(true)
+      expect(String((await ui.find({ key: 'allowance-Customer A' }))?.text).includes('$200.00 of $250.00 in Oct · 80% used'), 'check 4').toBe(true)
+      expect(String((await ui.find({ key: 'kind-Lane check-maxwell/probe_cicd_env' }))?.text).includes('$16.63 of $500.00 · 1 runs'), 'check 8').toBe(true)
       if (limit) {
         expect((await bar('████████████████████ 100%'))?.props.color).toBe('error')
-        expect(String((await ui.find({ key: 'allowance-Factory lane check' }))?.text).includes('$50.01 of $50.00 in Oct · LIMIT REACHED: no run can start'), 'check 5').toBe(true)
+        expect(String((await ui.find({ key: 'allowance-Lane check' }))?.text).includes('$50.01 of $50.00 in Oct · LIMIT REACHED: no run can start'), 'check 5').toBe(true)
         const banner = String((await ui.find({ key: 'spend-banner' }))?.text ?? '')
         expect(banner.includes('An account has used its whole allowance'), 'check 6').toBe(true)
         expect(banner.includes(LANE_LIMIT), 'check 7').toBe(true)

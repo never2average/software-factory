@@ -461,15 +461,15 @@ test('the provider flag shows on the line with no plan; a pct rounded to 100 is 
 const AT = Date.parse('2026-10-31T07:30:00Z')
 const SPEND = {
   app_id: 'maxwell', measured_at: '2026-10-31T07:29:30Z', month: '2026-10', today_usd: 41.1539, month_usd: 50.0089, month_recorded_usd: 49.9143,
-  last_run: { workspace: 'Factory lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
+  last_run: { workspace: 'Lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
   accounts: [
-    { workspace: 'Factory lane check', used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, level: 'ok' } },
+    { workspace: 'Lane check', used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, level: 'ok' } },
     { workspace: 'Trial', used_usd: 3, limit_usd: null, source: 'plan', pct: null, level: null },
   ],
-  kinds: [{ workspace: 'Factory lane check', pack: 'maxwell', kind: 'refresh_apps', month_runs: 3, used_usd: 12.1644, limit_usd: 500, pct: 2.4, level: 'ok' }],
+  kinds: [{ workspace: 'Lane check', pack: 'maxwell', kind: 'refresh_apps', month_runs: 3, used_usd: 12.1644, limit_usd: 500, pct: 2.4, level: 'ok' }],
   warnings: [
-    { workspace: 'Factory lane check', level: 'limit', text: 'maxwell: the Factory lane check account has used all of its $50.00 allowance' },
-    { workspace: 'Factory lane check', level: 'limit', kind: 'maxwell/x', text: 'a kind at its budget is not the account banner' },
+    { workspace: 'Lane check', level: 'limit', text: 'maxwell: the Lane check account has used all of its $50.00 allowance' },
+    { workspace: 'Lane check', level: 'limit', kind: 'maxwell/x', text: 'a kind at its budget is not the account banner' },
   ],
   active: true, building: false, cached: true,
   build: { cost_usd: 34, uncounted_est_usd: 2.5, basis: 'own', live_sessions: ['abc'], unreported_sessions: [], live_from: null },
@@ -505,7 +505,7 @@ test('spend: allowance bars are amber from 80% and red at the limit; a plan allo
   expect(allowanceText(s.accounts[0]!, s.month)).toBe('$50.01 of $50.00 in Oct · LIMIT REACHED: no run can start')
   expect(allowanceText(s.accounts[1]!, s.month)).toBe('$3.00 spent in Oct · allowance not measured (set by its billing plan)')
   // the banner: accounts at the limit only (a kind at its budget is said on its own line, not as an account)
-  expect(spendBanner({ maxwell: s })).toEqual({ level: 'limit', lines: ['maxwell: the Factory lane check account has used all of its $50.00 allowance'] })
+  expect(spendBanner({ maxwell: s })).toEqual({ level: 'limit', lines: ['maxwell: the Lane check account has used all of its $50.00 allowance'] })
   expect(spendBanner({ maxwell: { ...s, warnings: [] } })).toEqual({ level: 'ok', lines: [] })
 })
 
