@@ -896,11 +896,13 @@ def run_needs(app_id, app, target, root=None):
     for pid in app.get("packs") or []:
         doc = pack_json(app_id, app, pid, root)
         if doc is None: unread.append(pid); continue
+        # mold_v0-186: an operator credential declared optional is not a need (the runs go ahead without it).
+        optional = {c.get("name") for c in doc.get("operator_credentials") or [] if isinstance(c, dict) and c.get("optional") is True}
         for k in doc.get("job_kinds") or []:
             if not isinstance(k, dict): continue
             n += 1; kid = f"{pid}.{k.get('name', '?')}"
             for slug in k.get("providers") or []: needs.setdefault(slug, []).append(kid)
-            if k.get("operator_credentials"): needs.setdefault("pack_credentials", []).append(kid)
+            if [n for n in k.get("operator_credentials") or [] if n not in optional]: needs.setdefault("pack_credentials", []).append(kid)
             if k.get("workspace") is True or k.get("runner") == "agent-workspace": store.append(kid)
     boat = target == "vercel" and n > 0
     return {"kinds": n, "needs": needs, "boat": boat, "unread": unread, "store": store}
