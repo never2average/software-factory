@@ -1170,6 +1170,21 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   it, instead of letting it succeed silently (Maxwell's seed-company stopped to ask a question; its refresh-apps was
   refused its writes; both "succeeded"). The harness learns it from the store's answer to the staged write-back
   (`unchanged`) and records `workspace_unchanged`. `npm run test:agent-runner` (11).
+- **Required outputs** (mold_v0-188, built): an agent-workspace kind's `required_outputs` (globs of write-back files,
+  `{name}` a declared argument) are what it always writes when it works, a report say. A run that exited 0, validated
+  and staged its write-back but added or changed no file matching one fails with error_kind `output_missing`, naming
+  it (event `workspace_output_missing`); nothing of it is written back and its results are not taken, as for any
+  failed run. `required_outputs_when: "workspace_changed"` checks only a run that changed something (a program's
+  quiet exit, "the report is current", writes nothing and still succeeds); `"always"` is the default. Maxwell's
+  report_audit_findings had its write to the report refused, appended one ledger line and "succeeded" ($11.60,
+  run_S59pF-Rit5xA3fsh): declared, that run fails, saying so. **Why a failure, not a new status:** every API, MCP and
+  console reader, the charges, the schedules and the allowances already know `failed`; a fourth terminal state would
+  be one they all had to learn, and a reader that takes `succeeded` as done would count a run with its report missing
+  as a finished one. The run's status stays `queued | running | succeeded | failed | cancelled`; `output_missing`
+  joins error_kind (migration 0030 widens its check), never retried, and its cost counts as a failed run's does
+  (`price.on_failure`; allowances count every run's cost). The console's runs tab shows it as a red "Failed (output
+  missing)" with the error; the factory board's spend line names it and counts the month's.
+  `npm run test:required-outputs`, `npm run test:agent-runner` (12).
 - **Checkouts as directories** (mold_v0-183, built): a checkout step's `mount_as: "directory"` places each repository
   as a read-only copy of the cache's tree (directories 0555, files without write bits, the runner's) instead of a link,
   for programs whose file search does not follow links: Claude Code's Glob and Grep run ripgrep without `--follow`, so

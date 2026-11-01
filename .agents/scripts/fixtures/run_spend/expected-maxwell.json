@@ -10,11 +10,13 @@
   "prev_month_usd": 0.0,
   "today_runs": 6,
   "month_runs": 18,
+  "month_output_missing_runs": 0,
   "in_flight": 0,
   "last_run": {
     "workspace": "Lane check",
     "kind": "maxwell/probe_agent_graph",
     "status": "failed",
+    "error_kind": null,
     "cost_usd": 2.2866,
     "recorded_cost_usd": 2.2866,
     "at": "2026-10-31T04:18:09.504423+00:00",

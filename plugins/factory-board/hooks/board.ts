@@ -651,6 +651,10 @@ export function parseLiveBuild(raw: Json | null | undefined): LiveBuild | null {
   }
 }
 
+/** A run's status as the board says it: "failed (output missing)" for a run that did not write a required output (mold_v0-188). */
+export const runStatusWord = (r: { status: string; errorKind: string | null }): string =>
+  r.status === 'failed' && r.errorKind === 'output_missing' ? 'failed (output missing)' : r.status
+
 /** One app's heartbeat entry; tolerant of missing fields (a missing figure is not measured, never 0). */
 export function parseSpend(id: string, raw: Json | null | undefined): Spend | null {
   if (!raw || typeof raw !== 'object') return null
@@ -662,7 +666,10 @@ export function parseSpend(id: string, raw: Json | null | undefined): Spend | nu
     todayUsd: num(raw.today_usd),
     monthUsd: num(raw.month_usd),
     monthRecordedUsd: num(raw.month_recorded_usd),
-    lastRun: lr ? { kind: String(lr.kind ?? ''), workspace: String(lr.workspace ?? ''), status: String(lr.status ?? ''), costUsd: num(lr.cost_usd), at: iso(lr.at) } : null,
+    lastRun: lr
+      ? { kind: String(lr.kind ?? ''), workspace: String(lr.workspace ?? ''), status: String(lr.status ?? ''), errorKind: lr.error_kind ? String(lr.error_kind) : null, costUsd: num(lr.cost_usd), at: iso(lr.at) }
+      : null,
+    monthOutputMissingRuns: num(raw.month_output_missing_runs),
     accounts: (Array.isArray(raw.accounts) ? raw.accounts : []).map(
       (a: Json): Allowance => ({
         workspace: String(a.workspace ?? ''),

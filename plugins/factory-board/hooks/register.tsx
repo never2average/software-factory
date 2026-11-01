@@ -25,6 +25,7 @@ import {
   isEstimate,
   cost,
   money,
+  runStatusWord,
   moldRow,
   openTickets,
   parseTasks,
@@ -825,11 +826,18 @@ export const register: Register = on => {
                   {chosenSpend.monthRecordedUsd !== null && chosenSpend.monthRecordedUsd !== chosenSpend.monthUsd
                     ? ` (runs recorded ${money(chosenSpend.monthRecordedUsd)})`
                     : ''}
-                  {chosenSpend.lastRun
-                    ? ` · last run ${chosenSpend.lastRun.kind} ${money(chosenSpend.lastRun.costUsd)} ${chosenSpend.lastRun.status} ${ago(chosenSpend.lastRun.at, now)}`
-                    : ' · no run yet'}
+                  {chosenSpend.lastRun ? ` · last run ${chosenSpend.lastRun.kind} ${money(chosenSpend.lastRun.costUsd)} ` : ' · no run yet'}
+                  {chosenSpend.lastRun ? (
+                    <Text color={chosenSpend.lastRun.status === 'failed' ? 'error' : undefined}>{runStatusWord(chosenSpend.lastRun)}</Text>
+                  ) : null}
+                  {chosenSpend.lastRun ? ` ${ago(chosenSpend.lastRun.at, now)}` : ''}
                 </Text>
                 </Box>
+                {chosenSpend.monthOutputMissingRuns ? (
+                  <Text key="output-missing" color="error" wrap="wrap">
+                    {chosenSpend.monthOutputMissingRuns} run{chosenSpend.monthOutputMissingRuns === 1 ? '' : 's'} this month failed with a required output missing (their cost is counted above)
+                  </Text>
+                ) : null}
                 <Text dimColor>
                   measured {ago(chosenSpend.measuredAt, now)} · {chosenSpend.active ? 'active: read every minute' : 'idle: read every 15 min'}
                 </Text>

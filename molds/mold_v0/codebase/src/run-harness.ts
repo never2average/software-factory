@@ -53,6 +53,7 @@ import type { RunCredentials } from "./credentials.js";
 import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { openTransfer, sealTransfer, sha256Hex, sizeInWords } from "./run-transfer-seal.js";
+import { fillPattern, missingOutputs, withRequiredOutputs, writtenOutputs, type RequiredOutputsWhen } from "./required-outputs.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, headCommit, recordedFiles, restoreInto, stripPaths, underWriteBack, writeBackIgnore, type WriteBackIgnore } from "./agent-workspace.js";
 import { checkInput, CheckoutCache, copyInto, field, gitCredentialFiles, mapResults, mountInto, pinCommits, removeCopy, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkToolData, linkTools, RUN_TOOL_CATALOG, RunToolError, verifyToolSet, type ToolCatalog } from "./run-tools.js";
@@ -1030,6 +1031,22 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         return await complete({ outcome: "failed", error_kind: "run",
           error: `the run changed nothing in its workspace (${agent.write_back.join(", ")}), and this kind always does when it works: `
             + "nothing was written; what the program said is in the run's events" });
+      }
+      // mold_v0-188: a kind's required outputs (a report): a run that would succeed but wrote none of one fails
+      // "output_missing", naming it (Maxwell's report_audit_findings had its write to the report refused, appended one
+      // ledger line, and "succeeded"). Its write-back is discarded with the failure, as any failed run's.
+      const required = (agent as { required_outputs?: string[] } | null)?.required_outputs ?? [];
+      if (agent && required.length) {
+        const when = (agent as { required_outputs_when?: RequiredOutputsWhen }).required_outputs_when ?? "always";
+        let written: string[] = [];
+        try { written = writtenOutputs(existsSync(snap) ? snap : null, stageDir, required.map((p) => fillPattern(p, values))); }
+        catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `required outputs: ${(e as Error).message}`.slice(0, 1000) }); }
+        const check = { required, when, workspaceUnchanged: !!staged?.unchanged, written, values };
+        const end = withRequiredOutputs({ outcome: "succeeded" as const, results }, check);
+        if (end.outcome === "failed") {
+          pending.push({ type: "workspace_output_missing", data: { required, missing: missingOutputs(check), when, written: written.slice(0, 20) } });
+          return await complete(end);
+        }
       }
     }
     return await complete({ outcome: "succeeded", results });

@@ -76,10 +76,10 @@ export interface Column {
 
 const RUN_RESULT_STATUSES = ["pass", "fail", "error", "not_applicable", "unknown"];
 const RUN_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
-const RUN_ERRORS = ["infrastructure", "run", "validation", "timeout", "cancelled"];
+const RUN_ERRORS = ["infrastructure", "run", "validation", "timeout", "cancelled", "output_missing"];
 const STATUS_LABELS: Record<string, string> = {
   pass: "Pass", fail: "Fail", error: "Error", not_applicable: "Not applicable", unknown: "Unknown", queued: "Queued", running: "Running",
-  succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", infrastructure: "Infrastructure", run: "Run", validation: "Validation", timeout: "Timeout",
+  succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", infrastructure: "Infrastructure", run: "Run", validation: "Validation", timeout: "Timeout", output_missing: "Output missing",
 };
 const labelsOf = (vals: string[]) => Object.fromEntries(vals.map((v) => [v, STATUS_LABELS[v] ?? v]));
 

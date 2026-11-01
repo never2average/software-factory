@@ -1138,7 +1138,7 @@ def cross_errors(p):
     RUNS = {"run_results": {"status": {"type": "enum", "options": ["pass", "fail", "error", "not_applicable", "unknown"]}, "check": {"type": "reference"},
                             "asset": {"type": "reference"}, "source": {"type": "reference"}, "check_area": {"type": "text"}, "created": {"type": "time"}},
             "runs": {"status": {"type": "enum", "options": ["queued", "running", "succeeded", "failed", "cancelled"]}, "kind": {"type": "text"},
-                     "error_kind": {"type": "enum", "options": ["infrastructure", "run", "validation", "timeout", "cancelled"]},
+                     "error_kind": {"type": "enum", "options": ["infrastructure", "run", "validation", "timeout", "cancelled", "output_missing"]},
                      "cost_usd": {"type": "number"}, "created": {"type": "time"}, "started": {"type": "time"}, "ended": {"type": "time"}}}
     def column(over, name):
         """src/metric-spec.ts columnOf: -> a column {type, options?, multiple?} or a reason (a string)."""

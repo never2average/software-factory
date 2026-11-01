@@ -26,6 +26,8 @@
 // 11. (mold_v0-183) A run that exits 0 and validates but changes nothing in its workspace: it succeeds as before for a
 //     kind that may (its workspace_written event says unchanged), and FAILS for a kind with write_back_required, saying
 //     it changed nothing (Maxwell's seed-company that stopped to ask a question, its refresh-apps refused its writes).
+// 12. (mold_v0-188) A kind's required output: a run that would succeed but did not write it fails "output_missing",
+//     naming it, and nothing is written back; a quiet exit passes under "workspace_changed"; writing it succeeds.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -158,7 +160,9 @@ try {
     ],
     agentJobKinds: [kind("audit"), kind("audit_short", {}, { timeout_seconds: 10 }), kind("audit_badpin", {}, { commit: "1".repeat(40) }),
       kind("audit_quiet", { credentials: [], providers: [], egress: [] }, { env: { AGENT_FIXED: "1" } }),
-      kind("audit_default", {}, { results: undefined }), kind("audit_must_write", {}, { write_back_required: true })] as never,
+      kind("audit_default", {}, { results: undefined }), kind("audit_must_write", {}, { write_back_required: true }),
+      kind("audit_report", {}, { required_outputs: ["data/{company}/report.md"], required_outputs_when: "workspace_changed" }),
+      kind("audit_report_always", {}, { required_outputs: ["data/{company}/report.md"] })] as never,
     tools: [
       defineTool({ name: "fixture_agent_run", description: "Start a run (test).", inputSchema: { kind: z.string(), mode: z.string().optional(), company: z.string() },
         handler: async (_ws, { kind: k, mode, company }, { runs: r }) => r.start(k, { scope: mode ? { mode } : {}, targets: { company } }) }),
@@ -405,6 +409,34 @@ try {
       assert.equal(wrote.view?.status, "succeeded", JSON.stringify(wrote.view));
       assert.equal((await latest(A.orgId))!.version, before! + 1);
       console.log("✓ a run that changed nothing in its workspace: succeeds for a kind that may (workspace_written says unchanged); fails, saying so, for a kind with write_back_required, and succeeds once it writes");
+    }
+    // ---------- 12. a kind's required output (mold_v0-188) ----------
+    {
+      const before = (await latest(A.orgId))!.version;
+      // It wrote its notes but not its report (Maxwell's report_audit_findings, its report write refused): failed
+      // output_missing, naming the report; nothing written back, no results taken.
+      await start(ca, "audit_report", "a-co");
+      const miss = await runNext("audit_report");
+      assert.equal(miss.view?.status, "failed", JSON.stringify(miss.view));
+      assert.equal(miss.view?.error_kind, "output_missing");
+      assert.match(miss.view!.error!, /did not write its required output \(data\/a-co\/report\.md\)/);
+      assert.deepEqual((await ev(miss.claim.run.id, "workspace_output_missing"))[0], { required: ["data/{company}/report.md"], missing: ["data/a-co/report.md"], when: "workspace_changed", written: [] });
+      assert.equal((await ev(miss.claim.run.id, "workspace_written")).length, 0, "nothing committed");
+      assert.equal((await latest(A.orgId))!.version, before);
+      assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM run_results WHERE run_id = $1", [miss.claim.run.id]))[0]!.n, 0, "and its results are not taken");
+      // A quiet exit (nothing changed at all) succeeds under workspace_changed, and fails under always.
+      await start(ca, "audit_report", "a-co", "idle");
+      const quiet = await runNext("audit_report");
+      assert.equal(quiet.view?.status, "succeeded", JSON.stringify(quiet.view));
+      await start(ca, "audit_report_always", "a-co", "idle");
+      const quietAlways = await runNext("audit_report_always");
+      assert.equal(quietAlways.view?.error_kind, "output_missing", JSON.stringify(quietAlways.view));
+      // It wrote its report: succeeded, written back.
+      await start(ca, "audit_report", "a-co", "report");
+      const wrote = await runNext("audit_report");
+      assert.equal(wrote.view?.status, "succeeded", JSON.stringify(wrote.view));
+      assert.equal((await latest(A.orgId))!.version, before! + 1);
+      console.log("✓ required outputs: a run that wrote other files but not its report fails output_missing, naming it, nothing written back; a quiet exit succeeds under workspace_changed and fails under always; one that writes it succeeds");
     }
   } finally {
     await ca.close(); await cb.close();

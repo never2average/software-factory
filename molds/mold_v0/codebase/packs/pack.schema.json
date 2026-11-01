@@ -1577,6 +1577,24 @@
                     "default": false,
                     "type": "boolean"
                   },
+                  "required_outputs": {
+                    "default": [],
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "required_outputs_when": {
+                    "default": "always",
+                    "type": "string",
+                    "enum": [
+                      "always",
+                      "workspace_changed"
+                    ]
+                  },
                   "results": {
                     "type": "string",
                     "minLength": 1,
