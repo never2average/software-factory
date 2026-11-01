@@ -3,7 +3,7 @@ import { getDb } from "./db.js";
 import * as kv from "./keyvault.js";
 import { envStillSet } from "./keyvault-env.js";
 import { setSettings } from "./settings.js";
-import { providerInBuild } from "./vault-providers.js";
+import { optionalAdds, providerInBuild } from "./vault-providers.js";
 
 /**
  * The platform's model keys and sandbox provider as /admin/compute and the key vault page show them, and saving global
@@ -52,6 +52,10 @@ export async function modelKeys() {
                ...(p.slug === kv.OBJECT_STORAGE_PROVIDER && store ? { in_use: store } : {}) };
     }),
     credentials,
+    // mold_v0-186: the operator credentials the packs declare (labels <pack>.<name>), so the page lists each, set or
+    // not, and tags the optional ones (the runs go ahead without them). Never a value: what the pack.json says.
+    ...(providers.some((p) => p.slug === "pack_credentials") ? { pack_credentials: (await import("./credentials.js")).operatorCredentialSpecs().map((c) => ({
+      label: `${c.pack}.${c.name}`, name: c.label, help: c.help ?? null, optional: c.optional, ...(c.optional ? { adds: optionalAdds(c) } : {}) })) } : {}),
   };
 }
 

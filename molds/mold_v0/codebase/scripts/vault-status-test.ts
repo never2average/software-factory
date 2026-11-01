@@ -7,6 +7,9 @@
 //      turned off, a turned-off provider, or one without a key is not; a Vertex AI backend counts its service-account key
 //   2. what the build's run kinds need (their providers, their operator credentials' labels, boat for their sandboxes)
 //      and which of those are missing; queued runs and the latest reason they were given for waiting
+//   2b. optional operator credentials (mold_v0-186): never a need nor MISSING; listed apart as "optional, not set
+//      (<what it adds>)" or "optional, set"; a kind that names only optional ones adds no pack_credentials need; a
+//      required one unset stays MISSING; `adds` only on an optional one (the schema refuses it otherwise)
 //   3. never a value: a recognisable secret seeded into the vault (and its display hint) appears in no output, text or
 //      --json, and no query the report runs names a sealed column
 //   4. read-only: the report's transaction refuses a write made inside it (SQLSTATE 25006), is rolled back, and a
@@ -41,8 +44,10 @@ try {
   await kv.setCredentialEnabled(off.id, false);
   await db.query(`INSERT INTO vault_providers (slug, mode, upstream_url, auth_header, auth_prefix, env_vars) VALUES ('pack_credentials', 'direct', NULL, 'authorization', '', '{}') ON CONFLICT (slug) DO NOTHING`);
   await kv.setCredential("pack_credentials", OPCRED, { label: "fixture_vs.catalogue_login" });
+  const OPTCRED = `optcred-CANARY-${randomBytes(10).toString("hex")}`;
+  await kv.setCredential("pack_credentials", OPTCRED, { label: "fixture_vs.extra_login" });
   await db.query("UPDATE vault_providers SET enabled = false WHERE slug = 'resend'");
-  const secrets = [CANARY, BOAT, OFF, OPCRED];
+  const secrets = [CANARY, BOAT, OFF, OPCRED, OPTCRED];
   const hints = secrets.map((s) => kv.hint(s));
   const [org] = await db.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('vs-org', 'VS Org') RETURNING id");
   for (const [id, kind, at] of [["run_vs1", "scan", "2026-10-28T10:00:00Z"], ["run_vs2", "scan", "2026-10-28T11:00:00Z"], ["run_vs3", "audit", "2026-10-28T12:00:00Z"]])
@@ -57,10 +62,13 @@ try {
     id: "fixture_vs",
     jobKinds: [
       { name: "scan", label: "Scan", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15, providers: ["anthropic", "google"], operator_credentials: ["catalogue_login", "other_login"] },
-      { name: "audit", label: "Audit", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15, providers: ["anthropic"] },
+      { name: "audit", label: "Audit", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15, providers: ["anthropic"], operator_credentials: ["speedup_token", "extra_login"] },
     ],
     operatorCredentials: [{ name: "catalogue_login", label: "Catalogue login", deliver_as: { env: "FIXTURE_CAT_LOGIN" } },
-                          { name: "other_login", label: "Other login", deliver_as: { env: "FIXTURE_OTHER_LOGIN" } }],
+                          { name: "other_login", label: "Other login", deliver_as: { env: "FIXTURE_OTHER_LOGIN" } },
+                          // mold_v0-186: optional ones, one unset (with `adds`), one set (what it adds from its help).
+                          { name: "speedup_token", label: "Speed-up token", optional: true, adds: "runs the checks in the faster engine", deliver_as: { env: "FIXTURE_SPEEDUP" } },
+                          { name: "extra_login", label: "Extra login", optional: true, help: "Optional. Lets the audit read the extra catalogue. Its free plan is limited.", deliver_as: { env: "FIXTURE_EXTRA" } }],
   });
   setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
                                  dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: fixture } as never]);
@@ -122,6 +130,12 @@ try {
   assert.equal(need("google")?.set, "no");
   assert.equal(need("boat")?.set, "yes"); assert.match(need("boat")?.why ?? "", /sandboxes/);
   assert.deepEqual(need("pack_credentials")?.missing_labels, ["fixture_vs.other_login"], "an operator credential's label without a key");
+  assert.deepEqual(need("pack_credentials")?.labels, ["fixture_vs.catalogue_login", "fixture_vs.other_login"], "optional operator credentials are not among the labels the runs need");
+  assert.deepEqual(need("pack_credentials")?.kinds, ["fixture_vs.scan"], "a kind that names only optional operator credentials adds no pack_credentials need");
+  assert.deepEqual(r.runs.optional, [
+    { slug: "pack_credentials", label: "fixture_vs.extra_login", name: "Extra login", kinds: ["fixture_vs.audit"], adds: "Lets the audit read the extra catalogue.", set: "yes" },
+    { slug: "pack_credentials", label: "fixture_vs.speedup_token", name: "Speed-up token", kinds: ["fixture_vs.audit"], adds: "runs the checks in the faster engine", set: "no" },
+  ], "optional operator credentials listed apart, set or not, with what a value adds (its adds, else its help's first sentence)");
   assert.deepEqual(r.runs.missing, ["google", "pack_credentials"]);
   assert.equal(r.queued?.count, 3); assert.equal(r.queued?.oldest_at, "2026-10-28T10:00:00.000Z");
   assert.deepEqual(r.queued?.by_kind, [{ pack: "fixture_vs", kind: "scan", count: 2 }, { pack: "fixture_vs", kind: "audit", count: 1 }]);
@@ -130,8 +144,38 @@ try {
   if (process.env.VAULT_STATUS_SHOW) console.log(text);
   assert.match(text, /needs Google Gemini \(google\) for 1 run kind \(fixture_vs\.scan\): MISSING/);
   assert.match(text, /Missing for the runs: google, pack_credentials/);
+  assert.match(text, /needs Staff-held run credentials \(pack_credentials\) for 1 run kind \(fixture_vs\.scan\): MISSING \(not set: fixture_vs\.other_login\)/, "a required one unset stays MISSING");
+  assert.match(text, /Speed-up token \(pack_credentials fixture_vs\.speedup_token\) for 1 run kind \(fixture_vs\.audit\): optional, not set \(runs the checks in the faster engine\)/);
+  assert.match(text, /Extra login \(pack_credentials fixture_vs\.extra_login\) for 1 run kind \(fixture_vs\.audit\): optional, set$/m);
+  const needsBlock = text.slice(text.indexOf("Runs: "), text.indexOf("Optional (the runs go ahead"));
+  assert.ok(text.indexOf("Optional (the runs go ahead") > text.indexOf("needs Staff-held"), "the optional block comes after what the runs need");
+  assert.ok(!/speedup_token|extra_login/.test(needsBlock), "no optional credential in the needs list");
+  assert.ok(!/MISSING[^\n]*(speedup_token|extra_login)|(speedup_token|extra_login)[^\n]*MISSING/.test(text), "an optional credential is never MISSING");
+  console.log("✓ optional operator credentials: listed apart as 'optional, not set (<what it adds>)' / 'optional, set', never needed nor MISSING; a required one unset stays MISSING");
   assert.match(text, /Queued runs: 3/);
   console.log("✓ what the run kinds need (providers, operator credentials' labels, boat), what is missing, queued runs and why they wait");
+
+  // mold_v0-186: kinds that name only optional operator credentials (Maxwell's probes and LocalStack): nothing missing.
+  const onlyOptional = definePack({ ...fixture, id: "fixture_vs", jobKinds: [{ ...(fixture.jobKinds![1] as object), operator_credentials: ["speedup_token"] }] as never });
+  setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
+                                 dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: onlyOptional } as never]);
+  const oo = await vaultStatus(lite as never);
+  assert.ok(!oo.runs.needs.some((n) => n.slug === "pack_credentials") && !oo.runs.missing.includes("pack_credentials"), "only optional ones: no pack_credentials need, nothing missing for it");
+  assert.doesNotMatch(formatVaultStatus(oo), /MISSING/, "only optional ones unset (and every needed key set): no MISSING at all");
+  assert.match(formatVaultStatus(oo), /Every provider the runs need has a key\./);
+  // the schema: `adds` only beside optional: true; optional defaults to false
+  const { OperatorCredentialSchema, CredentialSchema } = await import("../src/pack-api.js");
+  assert.equal(OperatorCredentialSchema.parse({ name: "plain_login", label: "Plain", deliver_as: { env: "X_PLAIN" } }).optional, false, "optional defaults to false");
+  assert.ok(!OperatorCredentialSchema.safeParse({ name: "plain_login", label: "Plain", adds: "x", deliver_as: { env: "X_PLAIN" } }).success, "adds without optional: refused");
+  assert.ok(!CredentialSchema.safeParse({ name: "plain_key", label: "Plain", bound_to: "workspace", adds: "x", deliver_as: { env: "X_PLAIN" } }).success, "a field's adds without optional: refused");
+  assert.equal(CredentialSchema.parse({ name: "plain_key", label: "Plain", bound_to: "workspace", optional: true, deliver_as: { env: "X_PLAIN" } }).optional, true);
+  const { fieldSummary } = await import("../src/credentials.js");
+  const fs_ = (c: object) => fieldSummary({ ...CredentialSchema.parse(c), pack: "fixture_vs" });
+  assert.deepEqual([fs_({ name: "api_key", label: "K", bound_to: "workspace", optional: true, adds: "more checks", deliver_as: { env: "X_K" } }).optional, fs_({ name: "api_key", label: "K", bound_to: "workspace", deliver_as: { env: "X_K" } }).optional],
+                   [true, undefined], "the console's field summary carries optional (and adds) only for an optional field");
+  setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
+                                 dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: fixture } as never]);
+  console.log("✓ kinds that name only optional operator credentials: no pack_credentials need, no MISSING; adds only with optional (default false)");
 
   // the boat rule follows the deployment's sandbox
   process.env.APP_RUN_SANDBOX = "docker";

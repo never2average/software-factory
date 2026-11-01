@@ -2205,6 +2205,15 @@
           "oauth": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "optional": {
+            "default": false,
+            "type": "boolean"
+          },
+          "adds": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
           }
         },
         "required": [
@@ -2376,6 +2385,15 @@
                 "additionalProperties": false
               }
             ]
+          },
+          "optional": {
+            "default": false,
+            "type": "boolean"
+          },
+          "adds": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
           }
         },
         "required": [

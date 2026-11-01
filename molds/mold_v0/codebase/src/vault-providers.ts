@@ -78,24 +78,48 @@ export interface RunNeed {
 }
 
 /**
+ * An operator credential a run kind names that is declared optional (mold_v0-186): the runs go ahead without it and do
+ * less, so it is not among what they need. `adds` is what a value adds (its `adds`, else its help, else its label).
+ */
+export interface RunOptional { slug: "pack_credentials"; label: string; name: string; kinds: string[]; adds: string }
+
+/** One line of what an optional credential adds: its `adds`, else the first sentence of its help after a leading "Optional.". */
+export function optionalAdds(c: { label: string; help?: string | null; adds?: string | null }): string {
+  if (c.adds) return c.adds;
+  const help = (c.help ?? "").replace(/^\s*optional[.:]?\s*/i, "").trim();
+  const first = help.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? help;
+  return (first || c.label).slice(0, 200);
+}
+
+/**
  * What the build's run kinds need from the vault, by the same rules the console uses: each kind's gateway `providers`,
  * its `operator_credentials` (provider pack_credentials, label `<pack>.<name>`), and boat when the runs get their
  * sandbox there (src/run-sandboxes.ts boatForRuns, with the deployment's APP_RUN_SANDBOX, default auto), and object
  * storage when kinds keep a workspace store and the deployment's settings seen here give it no bucket (no R2_*, no
- * APP_STORAGE_DIR).
+ * APP_STORAGE_DIR). An operator credential declared optional (mold_v0-186) is not a need: it is listed in `optional`.
  */
-export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sandbox_mode: string; boat_for_runs: boolean; needs: RunNeed[] }> {
+export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sandbox_mode: string; boat_for_runs: boolean; needs: RunNeed[]; optional: RunOptional[] }> {
   const kinds = (await import("./runs.js")).jobKinds();
   const rs = await import("./run-sandboxes.js");
   const mode = rs.RUN_SANDBOXES.mode();
   const boat = rs.boatForRuns(mode, kinds.length > 0);
   const bySlug = new Map<string, RunNeed>();
   const need = (slug: string) => bySlug.get(slug) ?? (bySlug.set(slug, { slug, kinds: [] }), bySlug.get(slug)!);
+  const specs = (await import("./credentials.js")).operatorCredentialSpecs();
+  const optional = new Map<string, RunOptional>();
   for (const k of kinds) {
     const id = `${k.pack}.${k.name}`;
     for (const p of k.providers ?? []) need(p).kinds.push(id);
     const ops = ("operator_credentials" in k ? (k.operator_credentials as string[] | undefined) : undefined) ?? [];
     for (const n of ops) {
+      // mold_v0-186: an optional one is listed apart, never among what the runs need.
+      const spec = specs.find((c) => c.pack === k.pack && c.name === n);
+      if (spec?.optional) {
+        const label = `${k.pack}.${n}`;
+        const o = optional.get(label) ?? (optional.set(label, { slug: "pack_credentials", label, name: spec.label, kinds: [], adds: optionalAdds(spec) }), optional.get(label)!);
+        o.kinds.push(id);
+        continue;
+      }
       const n_ = need("pack_credentials"); n_.kinds.push(id);
       const label = `${k.pack}.${n}`;
       n_.labels = [...new Set([...(n_.labels ?? []), label])];
@@ -107,7 +131,8 @@ export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sand
   if (stores.length && !storeOutsideVault()) { const n = need(OBJECT_STORAGE); n.store = true; n.kinds.push(...stores); }
   for (const n of bySlug.values()) n.kinds = [...new Set(n.kinds)];
   return { kinds: kinds.length, packs: [...new Set(kinds.map((k) => k.pack))], sandbox_mode: mode, boat_for_runs: boat,
-           needs: [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug)) };
+           needs: [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug)),
+           optional: [...optional.values()].map((o) => ({ ...o, kinds: [...new Set(o.kinds)] })).sort((a, b) => a.label.localeCompare(b.label)) };
 }
 
 /** Whether the deployment's settings read here are the defaults (the operator script names what it could not see). */
