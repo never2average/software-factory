@@ -107,14 +107,14 @@ A pack's guide pages are `pack.json` `guide.markdown`.
 
 ## mold_v0: packaging and pricing
 
-**Pricing: operator decision pending.** Nothing is charged today. No price below is a proposal: this lists what the
+**Pricing: running as option A (allowance only) since 2026-11-01; the price itself is the operator's, invoiced outside the app.** Nothing is charged in the app today. No price below is a proposal: this lists what the
 shell can already do, so the decision is one choice plus its numbers. What is fixed today, from the app's state:
 
 | Today (maxwell) | Value | Where it is set |
 |---|---|---|
 | ceiling on one audit's model spend | US$40 | `application.json` `profile.limits.runs.budget_usd_max` (brief, `## Budgets`, operator 2026-10-22); the shell's default is 25 and the most an app may set is 200 (`molds/mold_v0/branding/rules.json` `profile.app_limits_max`) |
 | ceiling per audit kind, per company, per month | US$500 | `profile.limits.runs.kind_month_budget_usd` (same); default 200, at most 2000 |
-| what one audit actually costs | PLACEHOLDER: not measured yet | the first end-to-end audit (ticket mold_v0-030) measures it; the console's **Overview** (Audit cost) and **FinOps** show it per run |
+| what one audit actually costs | measured 2026-10-30 to 11-01, one application, first audit: about US$86 of model spend (seed_company 1.21, refresh_soc 16.13, refresh_apps 4.89, probe_cicd_env 16.63, probe_iac 6.16, probe_agent_graph 17.78, report_audit_findings 11.60; plus small retries). Setup steps (seed, refresh_soc) do not repeat on a re-audit | the console's **Overview** (Audit cost) and **FinOps** show it per run; the factory board's Analytics tab shows spend against each account's allowance |
 | a company's monthly allowance for model spend | none set: a company with no plan and no allowance has US$0 and cannot start an audit (unless the API project sets a default, `APP_ORG_MONTHLY_BUDGET_USD`) | staff set it per company (below) |
 
 The options, each already built in the shell (`molds/mold_v0/codebase/docs/accounts.md`, `src/billing.ts`,
