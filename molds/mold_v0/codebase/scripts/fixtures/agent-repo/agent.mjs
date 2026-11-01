@@ -51,4 +51,5 @@ if (mode === "tamper") { writeFileSync("validate.mjs", "process.exit(0);\n"); wr
 if (mode === "fifo") { spawnSync("mkfifo", [`${process.env.RUN_OUT}/results.json`]); } // a pipe where the runner reads its results
 if (mode === "forbidden") writeFileSync(`data/${company}/forbidden.json`, "{}"); // a stripped path, written into the workspace
 if (mode === "big") writeFileSync(`data/${company}/big.bin`, Buffer.alloc(2 * 1024 * 1024));
+if (mode === "report") writeFileSync(`data/${company}/report.md`, `# Report\n\nrun ${process.env.RUN_ID}\n`); // mold_v0-188: its required output
 if (mode === "fail") process.exit(3);
