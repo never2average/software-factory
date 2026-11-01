@@ -1,0 +1,130 @@
+{
+  "app_id": "maxwell",
+  "measured_at": "2026-10-31T07:30:00+00:00",
+  "month": "2026-10",
+  "source": "runs",
+  "today_usd": 41.1539,
+  "month_usd": 50.0089,
+  "month_recorded_usd": 49.9143,
+  "prev_month": "2026-09",
+  "prev_month_usd": 0.0,
+  "today_runs": 6,
+  "month_runs": 18,
+  "in_flight": 0,
+  "last_run": {
+    "workspace": "Factory lane check",
+    "kind": "maxwell/probe_agent_graph",
+    "status": "failed",
+    "cost_usd": 2.2866,
+    "recorded_cost_usd": 2.2866,
+    "at": "2026-10-31T04:18:09.504423+00:00",
+    "queued_at": "2026-10-31T04:07:25.931035+00:00"
+  },
+  "last_activity": "2026-10-31T04:18:09.504423+00:00",
+  "accounts": [
+    {
+      "workspace": "Factory lane check",
+      "org_id": 3,
+      "used_usd": 50.0089,
+      "limit_usd": 50.0,
+      "source": "override",
+      "pct": 100.0,
+      "level": "limit",
+      "prev_month": {
+        "month": "2026-09",
+        "used_usd": 0.0,
+        "runs": 0,
+        "level": "ok"
+      }
+    },
+    {
+      "workspace": "Onfinance AI",
+      "org_id": 1,
+      "used_usd": 0.0,
+      "limit_usd": 250.0,
+      "source": "override",
+      "pct": 0.0,
+      "level": "ok",
+      "prev_month": {
+        "month": "2026-09",
+        "used_usd": 0.0,
+        "runs": 0,
+        "level": "ok"
+      }
+    }
+  ],
+  "kinds": [
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "probe_cicd_env",
+      "month_runs": 1,
+      "used_usd": 16.6332,
+      "limit_usd": 500.0,
+      "pct": 3.3,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "refresh_soc",
+      "month_runs": 1,
+      "used_usd": 16.1341,
+      "limit_usd": 500.0,
+      "pct": 3.2,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "refresh_apps",
+      "month_runs": 3,
+      "used_usd": 12.1644,
+      "limit_usd": 500.0,
+      "pct": 2.4,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "probe_agent_graph",
+      "month_runs": 1,
+      "used_usd": 2.2866,
+      "limit_usd": 500.0,
+      "pct": 0.5,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "seed_company",
+      "month_runs": 3,
+      "used_usd": 2.0255,
+      "limit_usd": 500.0,
+      "pct": 0.4,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "probe_iac",
+      "month_runs": 1,
+      "used_usd": 0.7651,
+      "limit_usd": 500.0,
+      "pct": 0.2,
+      "level": "ok"
+    },
+    {
+      "workspace": "Factory lane check",
+      "pack": "maxwell",
+      "kind": "add_application",
+      "month_runs": 8,
+      "used_usd": 0.0,
+      "limit_usd": 500.0,
+      "pct": 0.0,
+      "level": "ok"
+    }
+  ],
+  "basis": "a run's cost is the larger of its recorded cost (runs.cost_usd) and its gateway usage, as the mold's own allowance check counts it (src/run-spend.ts RUN_USD); month_recorded_usd is the recorded cost alone, which audit:run-events shows",
+  "not_measured": []
+}
