@@ -1300,8 +1300,10 @@ def run():
             rc = SS.main_for("zz_shop", ["zz_shop", "--operator", "vault-status", "--yes"], dict(va), dict(cp(vi), target="compose_remote"), {}, vdir, FakeP(), say=said.append, root=t)
             ok(rc == 2 and "Vercel only" in " ".join(said), f"--operator on a compose_remote app says it runs on Vercel only, exit 2: {said}")
             pk = os.path.join(t, "packs", "vs_fixture", "files", "packs", "vs_fixture"); os.makedirs(pk, exist_ok=True)
-            json.dump({"id": "vs_fixture", "job_kinds": [{"name": "scan", "providers": ["anthropic", "google"], "operator_credentials": ["login"]},
-                                                        {"name": "audit", "providers": ["anthropic"]}, {"name": "tally", "workspace": True}]}, open(os.path.join(pk, "pack.json"), "w"))
+            json.dump({"id": "vs_fixture", "job_kinds": [{"name": "scan", "providers": ["anthropic", "google"], "operator_credentials": ["login", "speedup"]},
+                                                        {"name": "audit", "providers": ["anthropic"], "operator_credentials": ["speedup"]}, {"name": "tally", "workspace": True}],
+                       # mold_v0-186: an optional operator credential is not a need (audit names only that one)
+                       "operator_credentials": [{"name": "login"}, {"name": "speedup", "optional": True}]}, open(os.path.join(pk, "pack.json"), "w"))
             app_p = dict(va, packs=["vs_fixture", "vs_absent"])
             rn = SS.run_needs("zz_shop", app_p, "vercel", root=t)
             ok(rn["kinds"] == 3 and rn["needs"] == {"anthropic": ["vs_fixture.scan", "vs_fixture.audit"], "google": ["vs_fixture.scan"], "pack_credentials": ["vs_fixture.scan"]}

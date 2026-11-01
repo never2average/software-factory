@@ -1205,6 +1205,11 @@ const envLabel = z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment nam
  * (targets.asset, its key) and environment (targets.environment) the run targets, as an environment variable
  * (deliver_as {env}) or a file in a private directory named by RUN_CREDENTIALS_DIR (deliver_as {file}). Values never
  * reach the pack's server code, the run's events or results, the MCP output or any log.
+ *
+ * `optional` (mold_v0-186, default false): the runs go ahead without a value and do less (a run never waits for a
+ * credential: src/runs.ts records which were delivered and which were missing). The console shows the field as
+ * Optional; `adds` says in one line what a value adds (shown beside an optional field that is not set; the field's
+ * help is used when absent).
  */
 /**
  * How a run receives a credential: an environment variable (`env`), or a file (`file`, 0400, the run user's, in a
@@ -1218,6 +1223,10 @@ const deliverAs = z.union([
     path_env: envNameField.optional(),
   }).strict(),
 ]);
+/** mold_v0-186: a credential the runs go ahead without (default false: a run kind that names it needs it). */
+const optionalFlag = z.boolean().default(false);
+/** mold_v0-186: what a value of an optional credential adds, for the console and operator:vault-status. */
+const addsText = z.string().min(1).max(200).optional();
 export const CredentialSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -1240,8 +1249,13 @@ export const CredentialSchema = z.object({
    * expires; with no connection the pasted value is delivered as before.
    */
   oauth: name.optional(),
+  /** mold_v0-186: the runs go ahead without a value (they do less); the console tags the field Optional. */
+  optional: optionalFlag,
+  /** mold_v0-186: what a value adds, one line (an optional field only). */
+  adds: addsText,
 }).strict()
   .refine((c) => !(c.github_app && c.oauth), "a field is either github_app or oauth, not both")
+  .refine((c) => c.adds === undefined || c.optional, "adds is for an optional field only (optional: true)")
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
 
@@ -1278,14 +1292,23 @@ export const OAuthProviderSchema = z.object({
  * A credential the platform's operators hold for a pack (mold_v0-075): a login to a catalogue every workspace's runs
  * read, say. Its value is in the platform's key vault (provider "pack_credentials", label "<pack>.<name>"), set by an
  * owner of the platform (/admin key vault); a kind that names it in `operator_credentials` receives it as declared. A
- * workspace never sees it: not in its console, its runs' events or results, nor its workspace's files.
+ * workspace never sees it: not in its console, its runs' events or results, nor its workspace's files. `optional`
+ * and `adds` as for a workspace's credential field (above).
  */
 export const OperatorCredentialSchema = z.object({
   name,
   label: z.string().min(1).max(80),
   help: z.string().max(500).optional(),
   deliver_as: deliverAs,
-}).strict();
+  /**
+   * mold_v0-186: the runs go ahead without it (they do less). operator:vault-status then lists it as "optional, not set
+   * (<adds>)" outside what the runs need, never as MISSING; the admin Key vault tags it Optional.
+   */
+  optional: optionalFlag,
+  /** mold_v0-186: what a value adds, one line (an optional credential only; its help is used when absent). */
+  adds: addsText,
+}).strict()
+  .refine((c) => c.adds === undefined || c.optional, "adds is for an optional credential only (optional: true)");
 
 /**
  * A default schedule (wired by mold_v0-035; src/schedules.ts). Every workspace gets its own copy (per workspace: its own

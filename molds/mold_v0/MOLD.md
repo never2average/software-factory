@@ -1014,6 +1014,13 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   host runner does not clear a uid's keyrings; on a host runner (not a sandbox) the checkout cache's trees (074) are
   readable by any user while their workspace's run is open; a uid whose processes would not die stays quarantined
   until its runner exits.
+- **Optional credentials** (mold_v0-186, built): a workspace's credential field and an operator credential may say
+  `optional: true` (default false) and, in one line, what a value `adds` (only beside `optional`; the help's first
+  sentence after a leading "Optional." is used when absent: `src/vault-providers.ts` `optionalAdds`). A run never waits
+  for a credential (`src/runs.ts` records which were delivered and which were missing); `optional` says the runs are
+  meant to go ahead without it and do less. The company Credentials page and the admin Key vault (which lists every
+  declared run credential, set or not, and offers them in Add a key) tag them Optional; `operator:vault-status` lists
+  them apart from what the runs need (below).
 - **Run credentials and egress per company** (mold_v0-075, built): a file credential's path in a declared variable
   (`deliver_as: {file, path_env}`, above); **operator credentials**: a pack declares `operatorCredentials`
   (`operator_credentials` in pack.json: name, label, help, `deliver_as` as a field's) and a kind names those its runs
@@ -1142,7 +1149,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (the check, offline) names the providers the packs' job kinds need with that command. Claude needed with no Anthropic
   key but a Vertex AI service-account key in the vault is "set (via Vertex AI ...)", as the gateway runs it there
   (`src/gateway.ts`); a kind that keeps a workspace store needs Object storage when the run's environment names no
-  bucket (mold_v0-181). `npm run test:vault-status`
+  bucket (mold_v0-181). An operator credential declared `optional` (mold_v0-186) is never a need nor MISSING: the
+  report lists it apart, after what the runs need, as "optional, not set (<what it adds>)" or "optional, set"
+  (`runs.optional` in `--json`); a kind naming only optional ones adds no `pack_credentials` need, and the factory's
+  offline check leaves them out too. `npm run test:vault-status`
   proves set and unset, no seeded secret or its hint in any output, a write inside its transaction refused (25006) and
   the database unchanged after it ran.
 - **A run's events from the factory, read-only** (mold_v0-183, built): `npm run audit:run-events -- <run_id> [--type

@@ -38,6 +38,9 @@ const NAME: Record<string, string> = {
 };
 const nameOf = (slug: string) => NAME[slug] ?? slug;
 interface Credential { id: number; provider: string; label: string; hint: string; enabled: boolean; uses: number; last_used_at: string | null; project_id?: string | null; client_email?: string; bucket?: string; endpoint?: string; access_key_hint?: string | null }
+/** mold_v0-186: an operator credential a pack declares (label <pack>.<name>); optional ones the runs go ahead without. */
+interface PackCredential { label: string; name: string; help: string | null; optional: boolean; adds?: string }
+const PACK_CREDENTIALS = 'pack_credentials';
 const TYPE: Record<string, string> = {
   anthropic: 'Inference', openai: 'Inference', google: 'Inference', cloudflare: 'Inference', dashscope: 'Inference', vertex: 'Inference',
   boat: 'Sandbox', exa: 'Search', libraries_io: 'Search', resend: 'Email',
@@ -62,7 +65,7 @@ const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFracti
 /** Every key the app uses, one row per provider; keys are added, disabled and deleted from the row's ⋯ menu. */
 export function AdminKeyVault() {
   const { lock } = useAdminRole();
-  const { data, error, isLoading } = useAdmin<{ unlocked: boolean; providers: Provider[]; credentials: Credential[] }>('/compute/keys');
+  const { data, error, isLoading } = useAdmin<{ unlocked: boolean; providers: Provider[]; credentials: Credential[]; pack_credentials?: PackCredential[] }>('/compute/keys');
   const [adding, setAdding] = useState<string | null>(null);
   const [del, setDel] = useState<Credential | null>(null);
   const [importing, setImporting] = useState(false);
@@ -85,6 +88,7 @@ export function AdminKeyVault() {
     { key: 'keys', label: 'Keys', className: 'w-72 max-w-72', type: 'number', value: (p) => keysOf(p).length, render: (p) => {
       const mine = keysOf(p);
       if (p.slug === OBJECT_STORAGE) return <ObjectStorageCell p={p} entry={mine[0] ?? null} unlocked={data?.unlocked !== false} test={store} onEdit={() => setStoring(true)} />;
+      if (p.slug === PACK_CREDENTIALS && data?.pack_credentials?.length) return <PackCredentialsCell declared={data.pack_credentials} keys={mine} />;
       return (
         <span className='flex flex-col gap-1'>
           {!mine.length && <span className='text-amber-700 dark:text-amber-400'>no key</span>}
@@ -131,7 +135,7 @@ export function AdminKeyVault() {
         ].map((a) => lock(a, 'keys'))}
         exportName='key-vault-providers' empty='No providers.' />
       {importing && <ImportKeys providers={providers} onClose={() => setImporting(false)} />}
-      {adding && <AddKey providers={providers} initial={adding} onClose={() => setAdding(null)} onObjectStorage={() => { setAdding(null); setStoring(true); }} />}
+      {adding && <AddKey providers={providers} initial={adding} onClose={() => setAdding(null)} onObjectStorage={() => { setAdding(null); setStoring(true); }} declared={data?.pack_credentials} />}
       {storing && <ObjectStorageForm onClose={() => setStoring(false)} onSaved={(test) => { setStoring(false); if (test) store.mutate(); }} />}
       <AlertDialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
         <AlertDialogContent>
@@ -152,7 +156,7 @@ export function AdminKeyVault() {
 }
 
 /** A key is posted once and the form is cleared; a failed save asks for it again rather than keeping it on screen. */
-function AddKey({ providers, initial, onClose, onObjectStorage }: { providers: Provider[]; initial: string; onClose: () => void; onObjectStorage: () => void }) {
+function AddKey({ providers, initial, onClose, onObjectStorage, declared }: { providers: Provider[]; initial: string; onClose: () => void; onObjectStorage: () => void; declared?: PackCredential[] }) {
   const [f, setF] = useState({ provider: initial, label: '', secret: '' });
   const [err, setErr] = useState('');
   const [file, setFile] = useState<string | null>(null);
@@ -182,6 +186,14 @@ function AddKey({ providers, initial, onClose, onObjectStorage }: { providers: P
               {providers.map((p) => <NativeSelectOption key={p.slug} value={p.slug}>{nameOf(p.slug)} · {typeOf(p.slug)}</NativeSelectOption>)}
             </NativeSelect>
           </FormRow>
+          {f.provider === PACK_CREDENTIALS && !!declared?.length && (
+            <FormRow id='ak-declared' label='Run credential' hint={declaredHint(declared.find((d) => d.label === f.label.trim()))}>
+              <NativeSelect id='ak-declared' value={declared.some((d) => d.label === f.label.trim()) ? f.label.trim() : ''} onChange={(e) => setF({ ...f, label: e.target.value })} className='w-full'>
+                <NativeSelectOption value=''>Choose…</NativeSelectOption>
+                {declared.map((d) => <NativeSelectOption key={d.label} value={d.label}>{d.name} · {d.label}{d.optional ? ' (optional)' : ''}</NativeSelectOption>)}
+              </NativeSelect>
+            </FormRow>
+          )}
           <FormRow id='ak-label' label='Label (optional)' hint={f.provider === 'vertex' ? 'A Google Cloud service-account JSON key; Claude on Vertex AI uses it (project from the key, region from Agent configuration).' : ABOUT[f.provider] ? `${ABOUT[f.provider]}.` : 'A new label adds to the pool; the same label replaces that key.'}>
             <Input id='ak-label' maxLength={60} placeholder={f.provider === 'vertex' ? 'vertex' : 'default'} value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} />
           </FormRow>
@@ -224,6 +236,38 @@ function AddKey({ providers, initial, onClose, onObjectStorage }: { providers: P
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** What a declared run credential is for, and whether the runs go ahead without it (mold_v0-186). */
+const declaredHint = (d: PackCredential | undefined) =>
+  !d ? 'The run credentials the packs declare; the label below is filled in.' : `${d.optional ? `Optional: runs go ahead without it${d.adds ? `; a value adds: ${d.adds}` : ''}.` : 'Needed by the runs that name it.'}${d.help && !d.optional ? ` ${d.help}` : ''}`;
+
+/**
+ * The run credentials the packs declare (mold_v0-186), one line each: the key's hint when one is stored under its label,
+ * else "not set" (amber when the runs need it); optional ones tagged Optional. Keys under other labels follow.
+ */
+function PackCredentialsCell({ declared, keys }: { declared: PackCredential[]; keys: Credential[] }) {
+  const labels = new Set(declared.map((d) => d.label));
+  return (
+    <span className='flex flex-col gap-1'>
+      {declared.map((d) => {
+        const k = keys.find((c) => c.label === d.label && c.enabled) ?? keys.find((c) => c.label === d.label);
+        return (
+          <span key={d.label} className='flex min-w-0 items-center gap-1.5' title={`${d.name} · ${d.label}${d.optional ? ` · optional${d.adds ? `: ${d.adds}` : ''}` : ''}`}>
+            {k ? <span className={cn('font-mono text-xs', !k.enabled && 'text-muted-foreground line-through')}>{k.hint}</span>
+               : <span className={d.optional ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}>not set</span>}
+            <span className='text-muted-foreground truncate'>{d.label}</span>
+            {d.optional && <StatusBadge tone='neutral' className='shrink-0'>Optional</StatusBadge>}
+          </span>
+        );
+      })}
+      {keys.filter((c) => !labels.has(c.label)).map((c) => (
+        <span key={c.id} className={cn('block truncate', !c.enabled && 'text-muted-foreground line-through')} title={`${c.hint} · ${c.label}`}>
+          <span className='font-mono text-xs'>{c.hint}</span> <span className='text-muted-foreground'>{c.label}</span>
+        </span>
+      ))}
+    </span>
   );
 }
 
