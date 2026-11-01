@@ -1,4 +1,4 @@
-import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, DbBanner, DbLimit, DbLine, DbUsage, DbWarning, Measured, MoldRow, ProductRow, Ticket, Uptime, UptimeApp, UptimeBanner, Usage, UsageNumbers, UserUsage } from '../types'
+import type { AgentUsage, Allowance, AppRow, Build, BuildBasis, Check, CostBasis, DbBanner, DbLimit, DbLine, DbUsage, DbWarning, KindBudget, LiveBuild, Measured, MoldRow, ProductRow, Spend, SpendBanner, SpendLevel, Ticket, Uptime, UptimeApp, UptimeBanner, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -196,6 +196,8 @@ export function parseUsage(raw: Json): Usage {
       date: String(d.date ?? ''),
       chat_turns: num(d.chat_turns),
       people_active: num(d.people_active),
+      ...('runs' in d ? { runs: num(d.runs) } : {}),
+      ...('cost_usd' in d ? { cost_usd: num(d.cost_usd) } : {}),
     })),
     not_measured: (Array.isArray(raw.not_measured) ? raw.not_measured : []).map(String),
     by_agent: (Array.isArray(raw.by_agent) ? raw.by_agent : []).map(
@@ -390,6 +392,7 @@ export function buildParts(b: Build | null | undefined): { text: string; dim: bo
   parts.push({ text: `· active ${duration(b.active_s)}`, dim: shared && b.active_s !== null })
   parts.push({ text: `· first message → live ${duration(b.calendar_to_first_deploy_s)}`, dim: false })
   parts.push({ text: b.deploys === null ? '· deploys not measured' : `· ${b.deploys} deploy${b.deploys === 1 ? '' : 's'}`, dim: false })
+  if (b.live && b.live.sessions > 0) parts.push({ text: `· live (${b.live.sessions} session${b.live.sessions === 1 ? '' : 's'} now)`, dim: true })
   return parts
 }
 
@@ -621,4 +624,153 @@ export function dbBanner(reports: Record<string, DbUsage>, now: number): DbBanne
   )
   const level = all.some(d => d.quotaExceeded || d.warnings.some(w => w.level === 'limit')) ? 'limit' : lines.length ? 'warn' : 'ok'
   return { level, lines }
+}
+
+/* ---- spend heartbeat: reports/spend/heartbeat.json, written every minute by .claude/scripts/app_usage.py --spend ------ */
+
+/** How often the board beats while it is open (app_usage.py reads an app again only when it is active). */
+export const SPEND_EVERY_MS = 60_000
+/** The beat is stale (not a measurement any more) after five missed beats. */
+export const SPEND_STALE_MS = 5 * SPEND_EVERY_MS
+/** Amber from this share of an allowance; red at the allowance itself. */
+export const SPEND_WARN_PCT = 80
+
+const LEVELS = new Set(['ok', 'warn', 'limit', 'none'])
+const levelOf = (v: unknown): SpendLevel | null => (LEVELS.has(String(v)) ? (v as SpendLevel) : null)
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+
+export function parseLiveBuild(raw: Json | null | undefined): LiveBuild | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    cost_usd: num(raw.cost_usd),
+    uncounted_est_usd: num(raw.uncounted_est_usd),
+    basis: buildBasis(raw.basis),
+    live_sessions: strings(raw.live_sessions),
+    unreported_sessions: strings(raw.unreported_sessions),
+    live_from: typeof raw.live_from === 'string' && raw.live_from ? raw.live_from : null,
+  }
+}
+
+/** One app's heartbeat entry; tolerant of missing fields (a missing figure is not measured, never 0). */
+export function parseSpend(id: string, raw: Json | null | undefined): Spend | null {
+  if (!raw || typeof raw !== 'object') return null
+  const lr: Json | null = raw.last_run && typeof raw.last_run === 'object' ? raw.last_run : null
+  return {
+    appId: String(raw.app_id ?? id),
+    measuredAt: iso(raw.measured_at),
+    month: String(raw.month ?? ''),
+    todayUsd: num(raw.today_usd),
+    monthUsd: num(raw.month_usd),
+    monthRecordedUsd: num(raw.month_recorded_usd),
+    lastRun: lr ? { kind: String(lr.kind ?? ''), workspace: String(lr.workspace ?? ''), status: String(lr.status ?? ''), costUsd: num(lr.cost_usd), at: iso(lr.at) } : null,
+    accounts: (Array.isArray(raw.accounts) ? raw.accounts : []).map(
+      (a: Json): Allowance => ({
+        workspace: String(a.workspace ?? ''),
+        usedUsd: num(a.used_usd),
+        limitUsd: num(a.limit_usd),
+        source: String(a.source ?? ''),
+        pct: num(a.pct),
+        level: levelOf(a.level),
+        prev: a.prev_month && typeof a.prev_month === 'object' ? { month: String(a.prev_month.month ?? ''), usedUsd: num(a.prev_month.used_usd), level: levelOf(a.prev_month.level) } : null,
+      }),
+    ),
+    kinds: (Array.isArray(raw.kinds) ? raw.kinds : []).map(
+      (k: Json): KindBudget => ({
+        workspace: String(k.workspace ?? ''),
+        kind: `${String(k.pack ?? '')}/${String(k.kind ?? '')}`,
+        monthRuns: num(k.month_runs),
+        usedUsd: num(k.used_usd),
+        limitUsd: num(k.limit_usd),
+        pct: num(k.pct),
+        level: levelOf(k.level),
+      }),
+    ),
+    active: raw.active === true,
+    building: raw.building === true,
+    cached: raw.cached === true,
+    notMeasured: strings(raw.not_measured),
+    warnings: (Array.isArray(raw.warnings) ? raw.warnings : []).map((w: Json) => ({
+      workspace: String(w.workspace ?? ''),
+      level: w.level === 'limit' ? ('limit' as const) : ('warn' as const),
+      text: String(w.text ?? ''),
+      ...(w.kind ? { kind: String(w.kind) } : {}),
+    })),
+    build: parseLiveBuild(raw.build),
+    ...(raw.error ? { error: String(raw.error) } : {}),
+  }
+}
+
+/** The whole beat: { appId: Spend }. */
+export function parseHeartbeat(raw: Json | null | undefined): { at: string; apps: Record<string, Spend> } {
+  const apps: Record<string, Spend> = {}
+  for (const [id, a] of Object.entries((raw?.apps ?? {}) as Record<string, Json>)) {
+    const s = parseSpend(id, a)
+    if (s) apps[id] = s
+  }
+  return { at: iso(raw?.generated_at), apps }
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "2026-10" -> "Oct"; anything else as it is. */
+export function monthWord(ym: string): string {
+  const m = /^\d{4}-(\d\d)$/.exec(ym)
+  return m ? (MONTHS[Number(m[1]) - 1] ?? ym) : ym
+}
+
+/** True when the beat is too old to be a measurement. */
+export const spendStale = (at: string, now: number): boolean => !Number.isFinite(Date.parse(at)) || now - Date.parse(at) > SPEND_STALE_MS
+
+/** The status line's part: each active app's spend today / this month ("maxwell $3.12 today · $52.03 Oct"). An app that
+ * spent today counts as active. A figure that cannot be measured says so; a stale beat says when it was measured. */
+export function spendStatus(spend: Record<string, Spend>, now: number, at = ''): string {
+  const shown = Object.values(spend)
+    .filter(s => s.active || s.building || (s.todayUsd ?? 0) > 0)
+    .sort((a, b) => a.appId.localeCompare(b.appId))
+  if (!shown.length) return ''
+  const parts = shown.map(s =>
+    s.error || (s.todayUsd === null && s.monthUsd === null)
+      ? `${s.appId} spend not measured`
+      : `${s.appId} ${money(s.todayUsd)} today · ${money(s.monthUsd)} ${monthWord(s.month)}`,
+  )
+  return parts.join('; ') + (at && spendStale(at, now) ? ` (as of ${ago(at, now)})` : '')
+}
+
+/** "██████░░░░ 62%": the share of an allowance used, `width` cells; past the limit the bar is full. */
+export function allowanceBar(a: Pick<Allowance, 'usedUsd' | 'limitUsd' | 'pct'>, width = 20): string {
+  if (a.usedUsd === null || a.limitUsd === null) return `${'·'.repeat(width)} not measured`
+  if (a.limitUsd <= 0) return `${'·'.repeat(width)} no allowance`
+  const share = Math.max(0, a.usedUsd / a.limitUsd)
+  const full = Math.min(width, Math.round(share * width))
+  return `${'█'.repeat(full)}${'░'.repeat(width - full)} ${Math.round(share * 100)}%`
+}
+
+/** The colour of a level: red at the limit, amber at 80%, otherwise none. */
+export const spendColor = (level: SpendLevel | null): 'error' | 'warning' | undefined =>
+  level === 'limit' ? 'error' : level === 'warn' ? 'warning' : undefined
+
+/** One allowance as words: "$50.01 of $50.00 this month · limit reached" (or not measured, and why). */
+export function allowanceText(a: Allowance, month: string): string {
+  if (a.limitUsd === null) return `${money(a.usedUsd)} spent in ${monthWord(month)} · allowance not measured (${a.source === 'plan' ? 'set by its billing plan' : 'not readable'})`
+  if (a.limitUsd <= 0) return `${money(a.usedUsd)} spent in ${monthWord(month)} · no allowance: no run can start`
+  const tail = a.level === 'limit' ? ' · LIMIT REACHED: no run can start' : a.level === 'warn' ? ` · ${Math.round(a.pct ?? 0)}% used` : ''
+  return `${money(a.usedUsd)} of ${money(a.limitUsd)} in ${monthWord(month)}${tail}`
+}
+
+/** The banner above the tabs: every account that has used its whole allowance this month. Quiet otherwise. */
+export function spendBanner(spend: Record<string, Spend>): SpendBanner {
+  const lines = Object.values(spend)
+    .sort((a, b) => a.appId.localeCompare(b.appId))
+    .flatMap(s => s.warnings.filter(w => w.level === 'limit' && !w.kind).map(w => w.text))
+  return { level: lines.length ? 'limit' : 'ok', lines }
+}
+
+/** The hourly build report with the heartbeat's live figure over it: measured stays measured, the estimate stays ~ est. */
+export function withLive(b: Build | undefined, live: LiveBuild | null | undefined, at: string): Build | undefined {
+  if (!live) return b
+  const sessions = live.live_sessions.length + live.unreported_sessions.length
+  if (!b) {
+    if (live.cost_usd === null && live.uncounted_est_usd === null) return b
+    return { ...parseBuild({}), cost_usd: live.cost_usd, basis: live.basis, uncounted_est_usd: live.uncounted_est_usd, live: { at, sessions, from: live.live_from } }
+  }
+  return { ...b, cost_usd: live.cost_usd ?? b.cost_usd, basis: live.basis ?? b.basis, uncounted_est_usd: live.uncounted_est_usd, live: { at, sessions, from: live.live_from } }
 }

@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { ago, appRow, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, parseUptime, productRows, since, uptimeBanner, verdict } from './board'
 
+import { allowanceBar, allowanceText, buildParts as partsOf, monthWord, parseBuild as buildOf, parseHeartbeat, parseSpend, spendBanner, spendColor, spendStatus, withLive } from './board'
 const TASKS = [
   { task_id: 'm-1', mold_id: 'mold_v1', title: 'old', status: 'todo', priority: 2 },
   { task_id: 'm-1', mold_id: 'mold_v1', title: 'old', status: 'done', priority: 2 },
@@ -453,4 +454,69 @@ test('the provider flag shows on the line with no plan; a pct rounded to 100 is 
   expect(dbLine(almost, NOW).level).toBe('warn')
   const at = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 100, pct: 100 }] })!
   expect(dbLine(at, NOW).level).toBe('limit')
+})
+
+/* ---- mold_v0-185: the spend heartbeat (reports/spend/heartbeat.json, app_usage.py --spend) ---------------------------- */
+
+const AT = Date.parse('2026-10-31T07:30:00Z')
+const SPEND = {
+  app_id: 'maxwell', measured_at: '2026-10-31T07:29:30Z', month: '2026-10', today_usd: 41.1539, month_usd: 50.0089, month_recorded_usd: 49.9143,
+  last_run: { workspace: 'Factory lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
+  accounts: [
+    { workspace: 'Factory lane check', used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, level: 'ok' } },
+    { workspace: 'Trial', used_usd: 3, limit_usd: null, source: 'plan', pct: null, level: null },
+  ],
+  kinds: [{ workspace: 'Factory lane check', pack: 'maxwell', kind: 'refresh_apps', month_runs: 3, used_usd: 12.1644, limit_usd: 500, pct: 2.4, level: 'ok' }],
+  warnings: [
+    { workspace: 'Factory lane check', level: 'limit', text: 'maxwell: the Factory lane check account has used all of its $50.00 allowance' },
+    { workspace: 'Factory lane check', level: 'limit', kind: 'maxwell/x', text: 'a kind at its budget is not the account banner' },
+  ],
+  active: true, building: false, cached: true,
+  build: { cost_usd: 34, uncounted_est_usd: 2.5, basis: 'own', live_sessions: ['abc'], unreported_sessions: [], live_from: null },
+}
+
+test('spend: a heartbeat entry reads with every figure, and a missing one is not measured, never $0', async () => {
+  const s = parseSpend('maxwell', SPEND)!
+  expect([s.todayUsd, s.monthUsd, s.monthRecordedUsd, s.lastRun?.costUsd, s.accounts[0]?.level, s.accounts[0]?.prev?.month, s.kinds[0]?.kind]).toEqual([
+    41.1539, 50.0089, 49.9143, 2.2866, 'limit', '2026-09', 'maxwell/refresh_apps',
+  ])
+  const bare = parseSpend('octillion', { app_id: 'octillion', error: 'the database could not be read: timeout' })!
+  expect([bare.todayUsd, bare.monthUsd, bare.lastRun, bare.accounts, bare.error]).toEqual([null, null, null, [], 'the database could not be read: timeout'])
+  expect(parseSpend('x', null)).toBeNull()
+  expect(Object.keys(parseHeartbeat({ generated_at: '2026-10-31T07:29:30Z', apps: { maxwell: SPEND } }).apps)).toEqual(['maxwell'])
+  expect(parseHeartbeat(null)).toEqual({ at: '', apps: {} })
+})
+
+test('spend: the status line names each active app, today and this month; not measured says so; stale says when', async () => {
+  const apps = parseHeartbeat({ apps: { maxwell: SPEND, idle: { ...SPEND, app_id: 'idle', active: false, today_usd: 0 }, hfc: { app_id: 'hfc', active: true, error: 'not measured by the heartbeat' } } }).apps
+  expect(spendStatus(apps, AT, '2026-10-31T07:29:30Z')).toBe('hfc spend not measured; maxwell $41.15 today · $50.01 Oct')
+  expect(spendStatus(apps, AT, '2026-10-31T05:29:30Z')).toBe('hfc spend not measured; maxwell $41.15 today · $50.01 Oct (as of 2h ago)')
+  expect(spendStatus({}, AT)).toBe('')
+  expect([monthWord('2026-10'), monthWord('2026-01'), monthWord('soon')]).toEqual(['Oct', 'Jan', 'soon'])
+})
+
+test('spend: allowance bars are amber from 80% and red at the limit; a plan allowance is not measured', async () => {
+  const s = parseSpend('maxwell', SPEND)!
+  expect(allowanceBar({ usedUsd: 40, limitUsd: 50, pct: 80 }, 10)).toBe('████████░░ 80%')
+  expect(allowanceBar({ usedUsd: 60, limitUsd: 50, pct: 120 }, 10)).toBe('██████████ 120%')
+  expect(allowanceBar({ usedUsd: null, limitUsd: 50, pct: null }, 4)).toBe('···· not measured')
+  expect(allowanceBar({ usedUsd: 0, limitUsd: 0, pct: null }, 4)).toBe('···· no allowance')
+  expect([spendColor('limit'), spendColor('warn'), spendColor('ok'), spendColor(null)]).toEqual(['error', 'warning', undefined, undefined])
+  expect(allowanceText(s.accounts[0]!, s.month)).toBe('$50.01 of $50.00 in Oct · LIMIT REACHED: no run can start')
+  expect(allowanceText(s.accounts[1]!, s.month)).toBe('$3.00 spent in Oct · allowance not measured (set by its billing plan)')
+  // the banner: accounts at the limit only (a kind at its budget is said on its own line, not as an account)
+  expect(spendBanner({ maxwell: s })).toEqual({ level: 'limit', lines: ['maxwell: the Factory lane check account has used all of its $50.00 allowance'] })
+  expect(spendBanner({ maxwell: { ...s, warnings: [] } })).toEqual({ level: 'ok', lines: [] })
+})
+
+test('spend: the live build figure goes over the hourly report; its estimate stays ~ est.; no live figure leaves it alone', async () => {
+  const hourly = buildOf({ generated_at: '2026-10-31T07:00:00Z', summary: { build_cost_usd: 29, build_cost_basis: 'own', build_cost_uncounted_est_usd: 1, deploys: 3 } })
+  const live = parseSpend('maxwell', SPEND)!.build
+  const b = withLive(hourly, live, '2026-10-31T07:29:30Z')!
+  expect([b.cost_usd, b.uncounted_est_usd, b.deploys, b.live?.sessions]).toEqual([34, 2.5, 3, 1])
+  expect(partsOf(b).map(p => p.text)).toEqual(['built: $34.00', '+ ~$2.50 est.', '· agent not measured', '· active not measured', '· first message → live not measured', '· 3 deploys', '· live (1 session now)'])
+  expect(partsOf(b).find(p => p.text.startsWith('+ ~'))?.dim).toBe(true)
+  expect(withLive(hourly, null, '')).toBe(hourly)
+  expect(withLive(undefined, { ...live!, cost_usd: null, uncounted_est_usd: null }, '')).toBeUndefined()
+  expect(withLive(undefined, live, 'x')?.cost_usd).toBe(34)
 })
