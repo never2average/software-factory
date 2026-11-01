@@ -27,6 +27,8 @@ interface Field {
   github_app?: boolean;
   /** mold_v0-014: the OAuth provider this field connects to, when it does. */
   oauth?: string;
+  /** mold_v0-186: the runs go ahead without a value (they do less); `adds`: what a value adds, when the pack says. */
+  optional?: boolean; adds?: string | null;
 }
 interface Stored { pack: string; name: string; bound_to: string; asset: string | null; environment: string | null; last4: string | null; updated_at: string; updated_by: string | null }
 interface Vault { fields: Field[]; values: Stored[]; can_manage: boolean }
@@ -64,7 +66,7 @@ export function CredentialsPage() {
           <RecordView<Field>
             id='app-credentials' compact noun='credentials' properties
             rows={data.fields} rowKey={(f) => `${f.pack}/${f.name}`} cols={credentialColumns(data.values)}
-            searchText={(f) => `${f.label} ${f.name} ${f.help ?? ''} ${bound(f)}`}
+            searchText={(f) => `${f.label} ${f.name} ${f.help ?? ''} ${bound(f)}${f.optional ? ' optional' : ''}`}
             searchPlaceholder='Search credentials'
             filters={<span className='text-muted-foreground text-xs'>{data.can_manage ? 'Open a credential to set or replace it.' : 'An owner of this workspace sets these.'}</span>}
             empty={<p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>}
@@ -85,7 +87,10 @@ const latest = (vs: Stored[]) => vs.map((v) => v.updated_at).sort().at(-1) ?? nu
 
 function credentialColumns(values: Stored[]): RecordCol<Field>[] {
   return [
-    { key: 'credential', label: 'Credential', title: true, keep: true, type: 'text', className: 'min-w-48', value: (f) => f.label, render: (f) => <span className='leading-snug font-medium'>{f.label}</span> },
+    { key: 'credential', label: 'Credential', title: true, keep: true, type: 'text', className: 'min-w-48', value: (f) => f.label, render: (f) => (
+      <span className='flex flex-wrap items-center gap-1.5 leading-snug font-medium'>{f.label}
+        {f.optional && <Badge variant='outline' className='text-muted-foreground font-normal' title='Runs go ahead without it'>Optional</Badge>}</span>
+    ) },
     {
       key: 'state', label: 'Status', type: 'select', keep: true, options: [{ value: 'set', label: 'Set' }, { value: 'not_set', label: 'Not set' }],
       value: (f) => (valuesOf(f, values).length ? 'set' : 'not_set'),
@@ -117,6 +122,7 @@ function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; va
   return (
     <div className='flex min-w-0 flex-col gap-3'>
       <p className='text-muted-foreground text-sm'>{f.help ?? bound(f)}
+        {f.optional && <span className='mt-1 block text-xs'>Optional: runs go ahead without it{f.adds ? `; a value adds: ${f.adds}` : ''}.</span>}
         {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</p>
       {oauth}
       {oauth && <p className='text-muted-foreground text-xs'>Or paste a value: it is used where nothing is connected.</p>}

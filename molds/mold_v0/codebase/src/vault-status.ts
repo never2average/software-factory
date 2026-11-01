@@ -35,6 +35,11 @@ export interface VaultStatus {
     kinds: number; packs: string[]; sandbox_mode: string; sandbox_mode_from: "deployment" | "default"; boat_for_runs: boolean;
     needs: { slug: string; name: string; category: string; set: "yes" | "no"; note: string | null; why: string; kinds: string[]; labels?: string[]; missing_labels?: string[] }[];
     missing: string[];
+    /**
+     * mold_v0-186: the operator credentials the kinds name that are declared optional: the runs go ahead without them
+     * (they do less), so they are never among `needs` or `missing`. `adds`: what a value adds.
+     */
+    optional: { slug: "pack_credentials"; label: string; name: string; set: "yes" | "no"; kinds: string[]; adds: string }[];
   };
   queued: { count: number; oldest_at: string | null; by_kind: { pack: string; kind: string; count: number }[];
             latest_waiting: { reason: string; at: string; pack: string; kind: string } | null } | null;
@@ -136,7 +141,8 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
     providers: shown,
     hidden: list.filter((p) => !shown.includes(p) && p.slug !== "github_app").map((p) => p.slug),
     runs: { kinds: rn.kinds, packs: rn.packs, sandbox_mode: rn.sandbox_mode, sandbox_mode_from: sandboxModeSet() ? "deployment" : "default",
-            boat_for_runs: rn.boat_for_runs, needs, missing: needs.filter((n) => n.set === "no").map((n) => n.slug) },
+            boat_for_runs: rn.boat_for_runs, needs, missing: needs.filter((n) => n.set === "no").map((n) => n.slug),
+            optional: rn.optional.map((o) => ({ ...o, set: bySlug.get("pack_credentials")?.enabled && on("pack_credentials", o.label) ? "yes" as const : "no" as const })) },
     queued: qd,
   };
 }
@@ -163,6 +169,14 @@ export function formatVaultStatus(r: VaultStatus): string {
   for (const n of rn.needs) {
     const ks = n.kinds.length > 4 ? `${n.kinds.slice(0, 4).join(", ")} and ${n.kinds.length - 4} more` : n.kinds.join(", ");
     out.push(`  needs ${n.name} (${n.slug}) for ${n.why}${ks ? ` (${ks})` : ""}: ${n.set === "yes" ? "set" : "MISSING"}${n.note ? ` (${n.note})` : ""}`);
+  }
+  if (rn.optional.length) {
+    // mold_v0-186: apart from what the runs need: a run goes ahead without these, so none is ever MISSING.
+    out.push("  Optional (the runs go ahead without these and do less):");
+    for (const o of rn.optional) {
+      const ks = o.kinds.length > 4 ? `${o.kinds.slice(0, 4).join(", ")} and ${o.kinds.length - 4} more` : o.kinds.join(", ");
+      out.push(`    ${o.name} (${o.slug} ${o.label}) for ${o.kinds.length} run kind${o.kinds.length > 1 ? "s" : ""} (${ks}): ${o.set === "yes" ? "optional, set" : `optional, not set (${o.adds})`}`);
+    }
   }
   out.push(rn.missing.length
     ? `Missing for the runs: ${rn.missing.join(", ")}. A platform owner adds each on the console's /admin, Key vault page.`
