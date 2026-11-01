@@ -59,11 +59,17 @@ export type ToolCatalog = Record<string, CatalogTool>;
  */
 export const RUN_TOOL_CATALOG: ToolCatalog = {
   git: { version: "system", format: "system", bins: { git: "git" }, source: "the image's distribution package (Dockerfile apt-get; the boat set-up)" },
+  // mold_v0-189 (pinned 2026-11-01): 2.1.316, the version Maxwell's hosted runs of 2026-11-01 09:13 and 10:10 completed
+  // on (129 and 110 turns, through the gateway to Vertex AI). Claude Code 2.1.304 and later send `context_management`
+  // and, refused by Vertex ("Extra inputs are not permitted"), retry once without it; 2.1.295 (the earlier pin) and
+  // every version up to 2.1.303 end the session there (measured with a stand-in API; src/provider-safe-env.ts turns the
+  // field off for every version). An exception to the two-weeks-old rule: published 2026-10-31, proven on the workload.
+  // Both tarballs matched the registry's own sha512 integrity.
   "claude-code": {
-    version: "2.1.295", format: "npm-tgz", bins: { claude: "package/claude" }, source: "npm @anthropic-ai/claude-code-linux-<arch> (the native build @anthropic-ai/claude-code installs)",
+    version: "2.1.316", format: "npm-tgz", bins: { claude: "package/claude" }, source: "npm @anthropic-ai/claude-code-linux-<arch> (the native build @anthropic-ai/claude-code installs)",
     artifacts: {
-      x64: { url: "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.295.tgz", sha256: "d45a2fa14a7ea0b8ab4f56e502de5893c2b816078c71c4d8ab2e4142148f3d95", bytes: 114433914 },
-      arm64: { url: "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.295.tgz", sha256: "931e64de4906046d2fc4d5a3c2daa9a27dc6397525c25f136cb8348749abcb51", bytes: 114688246 },
+      x64: { url: "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.316.tgz", sha256: "745e1b196eb475161a185a00f5e1144d7324ec6094e21149eae719fa42481000", bytes: 152154727 },
+      arm64: { url: "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.316.tgz", sha256: "3a948e45a0c79d1b41e5e40bb4163b5f9e4a193c16ed72c949d8e5f55e9d875d", bytes: 152572458 },
     },
   },
   sops: {
