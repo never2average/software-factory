@@ -1,7 +1,7 @@
--- Rolling back past 0031_record_clocks (mold_v0-191), for a release from before it (and before rolling back an earlier
+-- Rolling back past 0032_record_clocks (mold_v0-191), for a release from before it (and before rolling back an earlier
 -- migration, whose rollback refuses while this one is applied).
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0031_record_clocks.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0032_record_clocks.sql
 -- The clock notices go (an older release knows only due-date notices), workspace_notices takes back the kind check 0008
 -- gave it, and the two clock tables go with their rows: what a clock remembered (pauses it saw, when it stopped) and its
 -- events. Keep a copy first if the history matters (pg_dump -t workspace_record_clocks -t workspace_clock_events); an

@@ -864,8 +864,8 @@ async function suite(kind: "pglite" | "postgres") {
     await assert.rejects(loadMigrations(badName), /name it NNNN_/, "a badly named file is refused");
   }
 
-  // Record clocks (mold_v0-191, 0031): its tables and the notices' clock kind; its rollback takes the clock notices and
-  // both tables away, gives the notices back 0008's kind check, and leaves the database as 0030 left it (the same catalog).
+  // Record clocks (mold_v0-191, 0032): its tables and the notices' clock kind; its rollback takes the clock notices and
+  // both tables away, gives the notices back 0008's kind check, and leaves the database as the migration before it left it (the same catalog).
   {
     const db = await fresh(kind);
     await runMigrations(db);
@@ -873,24 +873,24 @@ async function suite(kind: "pglite" | "postgres") {
     const latest = (await loadMigrations()).at(-1)!.version;
     if (v31 === latest) {
       const at30 = await fresh(kind);
-      await runMigrations(at30, { dir: (() => { const d = path.join(tmp, `to30-${kind}`); cpSync(MIGRATIONS_DIR, d, { recursive: true }); for (const f of readdirSync(d)) if (Number(f.slice(0, 4)) >= v31) rmSync(path.join(d, f)); return d; })() });
+      await runMigrations(at30, { dir: (() => { const d = path.join(tmp, `before-clocks-${kind}`); cpSync(MIGRATIONS_DIR, d, { recursive: true }); for (const f of readdirSync(d)) if (Number(f.slice(0, 4)) >= v31) rmSync(path.join(d, f)); return d; })() });
       const [{ id: org }] = await db.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('clocks', 'Clocks') RETURNING id");
       await db.query("INSERT INTO workspace_notices (org_id, kind, pack, area, record_key, due_on) VALUES ($1, 'due', 'p', 'a', 'k1', current_date), ($1, 'clock', 'p', 'a', 'k2', current_date)", [org]);
       await db.query("INSERT INTO workspace_record_clocks (org_id, pack, area, record_key, clock, status, evaluated_at) VALUES ($1, 'p', 'a', 'k2', 'c', 'overdue', now())", [org]);
       await db.query("INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, at) VALUES ($1, 'p', 'a', 'k2', 'c', 'escalate:0', 'x', now())", [org]);
       await assert.rejects(db.query("INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, at) VALUES ($1, 'p', 'a', 'k2', 'c', 'escalate:0', 'x', now())", [org]), /duplicate key|unique/, "a step once per record, clock and deadline");
-      await db.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0031_record_clocks.sql"), "utf8"));
+      await db.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", "0032_record_clocks.sql"), "utf8"));
       const left = await db.query<{ kind: string; record_key: string }>("SELECT kind, record_key FROM workspace_notices ORDER BY id");
       assert.deepEqual(left.map((n) => `${n.kind}:${n.record_key}`), ["due:k1"], "the clock notice goes, the due-date notice stays");
       await assert.rejects(db.query("INSERT INTO workspace_notices (org_id, kind, pack, area, record_key, due_on) VALUES ($1, 'clock', 'p', 'a', 'k3', current_date)", [org]), /check constraint|violates/, "0008's kind check again");
       for (const t of ["workspace_record_clocks", "workspace_clock_events"]) assert.equal((await db.query<{ t: string | null }>("SELECT to_regclass($1)::text AS t", [t]))[0]!.t, null, `${t} dropped`);
-      assert.equal((await migrationStatus(db)).pending.map((m) => m.version).join(), String(v31), "0031 pending again");
-      sameCatalog(await catalog(db), await catalog(at30), `${kind}: rolled back past 0031 = a database at 0030`);
-      assert.deepEqual((await runMigrations(db)).applied, ["0031_record_clocks"], "and applied again");
+      assert.equal((await migrationStatus(db)).pending.map((m) => m.version).join(), String(v31), "0032 pending again");
+      sameCatalog(await catalog(db), await catalog(at30), `${kind}: rolled back past 0032 = a database at the migration before it`);
+      assert.deepEqual((await runMigrations(db)).applied, ["0032_record_clocks"], "and applied again");
       await at30.drop();
     }
     await db.drop();
-    log(`  ✓ ${kind}: 0031 (record clocks): a step once per record, clock and deadline; its rollback takes the clock notices and tables, gives back 0008's kind check, leaves the catalog of a database at 0030, and applies again`);
+    log(`  ✓ ${kind}: 0032 (record clocks): a step once per record, clock and deadline; its rollback takes the clock notices and tables, gives back 0008's kind check, leaves the catalog of a database at the migration before it, and applies again`);
   }
 
   // A failing migration rolls back whole: nothing of it, and nothing pending with it, is recorded or left behind.

@@ -1680,7 +1680,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
   Vercel).
 - **Clocks, reminders and escalation** (mold_v0-191, built; `src/clock-math.ts`, `src/record-clocks.ts`,
-  `sql/migrations/0031_record_clocks.sql`; `npm run test:record-clocks`). A workspace area declares `clocks` in pack.json
+  `sql/migrations/0032_record_clocks.sql`; `npm run test:record-clocks`). A workspace area declares `clocks` in pack.json
   (at most 5; `src/pack-api.ts` `ClockSchema`, checked at build by `clockProblems`), with no pack code: a deadline each record
   runs against. `starts` is one of its date fields, `{event: "created"}` or `{event: "entered", state}` (its lifecycle's
   `$state_at`); `after` a duration (`"90d"`, `"48h"`, `"10bd"`: business days, Monday to Friday UTC) or `{by: a single-choice
@@ -1722,7 +1722,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   clock's status, soonest first (overdue and due soon by default); a metric may filter by a clock's status (`clock: {name,
   is: [...]}`, counted in code over the opened rows, as a sealed area's); a list tab over a clock area shows **Overdue**
   as its second default card. Zero packs and builds without a clock: no tool, no column, no check (the MCP surface hash is
-  unchanged). Rolling back: `sql/rollback/0031_record_clocks.sql` (the clock notices and both tables go, the notices' kind
+  unchanged). Rolling back: `sql/rollback/0032_record_clocks.sql` (the clock notices and both tables go, the notices' kind
   check is 0008's again). **Not covered:** holiday calendars and time zones (business days are Monday to Friday, UTC); a
   pause by a field that is not the lifecycle's is timed when the check sees it (at most 15 minutes late); per-person
   in-app notices (a notice is the workspace's, shown to whoever may read the area).

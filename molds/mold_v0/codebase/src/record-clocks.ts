@@ -1,7 +1,7 @@
 /**
  * Clocks on a workspace area's records: deadlines, reminders and escalation (mold_v0-191; molds/mold_v0/MOLD.md
  * "Clocks, reminders and escalation"). Declared in pack.json (record_areas[].clocks, src/pack-api.ts ClockSchema), with
- * no pack code; the math is src/clock-math.ts; tables sql/migrations/0031_record_clocks.sql.
+ * no pack code; the math is src/clock-math.ts; tables sql/migrations/0032_record_clocks.sql.
  *
  *   reads        withClocks: every page and record of a clock area (/api/records, the data API, the record tools and the
  *                generated MCP tools: src/record-areas.ts listFor/getFor) carries `clocks` {name: due_at, status,
@@ -205,6 +205,9 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
       [orgId, area.pack, area.name, row.key, c.name, v.status, v.started_at, v.due_at, o.memory.paused_ms, o.memory.paused_since, o.memory.stopped_at, now]);
     report.updated++;
   }
+  // TODO(mold_v0-191, after #187 lands): when a clock goes overdue (prev?.status !== "overdue" && v.status === "overdue"),
+  // call the developer surface's emitEvent(orgId, "clock.overdue", {area, key, clock, due_at}) from src/developer-webhooks.ts
+  // (a no-op for tool apps). Not on main yet when this was written.
   // Each change once, keyed by when it happened.
   const markOf: Record<string, string | null> = { started: v.started_at, paused: o.memory.paused_since, stopped: v.stopped_at, resumed: now.toISOString(), reopened: now.toISOString() };
   for (const ch of o.changes) {

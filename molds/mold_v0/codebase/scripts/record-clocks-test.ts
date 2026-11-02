@@ -1,5 +1,5 @@
 // Record clocks: deadlines, reminders and escalation (mold_v0-191; src/clock-math.ts, src/record-clocks.ts,
-// sql/migrations/0031_record_clocks.sql), offline: an embedded database, the HTTP server behind a fake Clerk and a fake
+// sql/migrations/0032_record_clocks.sql), offline: an embedded database, the HTTP server behind a fake Clerk and a fake
 // Resend, a fixture pack declared as definePack would compile pack.json, and a clock the test controls.
 //   npm run test:record-clocks
 //
