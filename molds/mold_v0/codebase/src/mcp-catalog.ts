@@ -12,6 +12,8 @@
  *   list_<area>, get_<area>             every record area (reads; the area's `read` roles)
  *   export_<area>                       every record area (mold_v0-108): its records as CSV, every field a column under
  *                                       its label, as the console's Export CSV writes them (src/record-export.ts)
+ *   reveal_<area>                       a workspace area with encrypted fields (mold_v0-194): their values, for the
+ *                                       roles allowed to reveal them, each reveal in the data trail
  *   create_<area>, update_<area>        a workspace area whose rows are not read from files or an API
  *   move_<area>                         such an area with a lifecycle
  *   get_metrics                         the pack's metrics (mold_v0-063), computed for the caller's workspace
@@ -29,7 +31,7 @@ import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
 import { AgentJobKindSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
-export type GeneratedOp = "get_started" | "list" | "get" | "export" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
+export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
 
 export interface GeneratedTool {
@@ -286,6 +288,18 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
           after: z.string().min(1).max(2000).optional().describe("The next value of the previous export"),
         },
         annotations: READ });
+      // mold_v0-194: an area with encrypted fields (never shown on a read) can reveal them, to the roles allowed.
+      const encrypted = a.fields.filter((f) => f.encrypted);
+      if (!shared && encrypted.length)
+        add({ generated: n("reveal", a.name), op: "reveal", door: "workspace", area: a.name, action: "read", admin_needs: "read",
+          title: `${label}: reveal encrypted fields`,
+          description: `The values of the encrypted fields of one ${label} record (${encrypted.map((f) => `${f.name} (${plain(f.label, 40)})`).join(", ")}): every other read shows them as ${JSON.stringify("[encrypted]")}. ` +
+            `Only for the roles allowed to reveal them; each reveal is recorded. Ask only when the user needs the value itself.`,
+          input: {
+            key: recordKey(`The ${label} record's key`),
+            fields: z.array(z.enum(encrypted.map((f) => f.name) as [string, ...string[]])).min(1).max(encrypted.length).optional().describe("Which encrypted fields (default: every one you may reveal)"),
+          },
+          annotations: READ });
       if (!shared && !readOnly) {
         const dataShape = Object.fromEntries(a.fields.filter((f) => f.name !== state).map((f) => [f.name, fieldInput(f, labelOf)]));
         const required = a.fields.filter((f) => f.required && f.name !== state).map((f) => f.name);
@@ -298,10 +312,16 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
           title: `${label}: add one`,
           description: `Add a record to ${label}, this ${ws}'s own, under a new key (refused when the key exists).${life}`,
           input: { key: recordKey(`The new record's key (${KEY_TEXT})`), ...body }, annotations: WRITE(false, false) });
+        const kept = encrypted.length ? `; an encrypted field (${encrypted.map((f) => f.name).join(", ")}) left out, or given as "[encrypted]", keeps its value (null clears it)` : "";
+        const updateBody = encrypted.length ? {
+          ...body,
+          data: z.strictObject(Object.fromEntries(Object.entries(dataShape).map(([k, v]) => [k, encrypted.some((f) => f.name === k) ? z.union([v as z.ZodType, z.literal("[encrypted]")]).optional() : v])))
+            .describe(`The record's fields${required.length ? ` (required: ${required.join(", ")})` : ""}`),
+        } : body;
         add({ generated: n("update", a.name), op: "update", door: "workspace", area: a.name, action: "update", needs: "edit", admin_needs: "accounts",
           title: `${label}: change one`,
-          description: `Replace the title and fields of a record of ${label}: every field left out is cleared${state ? `; its state (${state}) is kept` : ""}. Read it with ${n("get", a.name)} first.`,
-          input: { key: recordKey(`The ${label} record's key`), ...body }, annotations: WRITE(true, true) });
+          description: `Replace the title and fields of a record of ${label}: every field left out is cleared${kept}${state ? `; its state (${state}) is kept` : ""}. Read it with ${n("get", a.name)} first.`,
+          input: { key: recordKey(`The ${label} record's key`), ...updateBody }, annotations: WRITE(true, true) });
         if (a.lifecycle) {
           const moves = a.lifecycle.transitions.map((t) => `${t.from === "*" ? "any" : t.from.join("/")} -> ${t.to}${t.label ? ` (${plain(t.label, 60)})` : ""}${t.roles ? ` [${t.roles.join(", ")}]` : ""}`).join("; ");
           const states = [...new Set(a.lifecycle.transitions.map((t) => t.to))];
