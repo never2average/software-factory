@@ -12,7 +12,7 @@
  *   GET    /origins | POST /origins {origin} | DELETE /origins?origin=
  *   GET    /webhooks | POST /webhooks {url, events?, description?} | PATCH /webhooks/:id | DELETE /webhooks/:id
  *   POST   /webhooks/:id/rotate | POST /webhooks/:id/reveal (recorded) | POST /webhooks/:id/test | GET /webhooks/:id/deliveries
- *   GET    /sources | POST /sources {receiver, description?} | DELETE /sources/:id
+ *   GET    /sources | POST /sources {receiver, description?} | DELETE /sources/:id | GET /sources/:id/deliveries (the last 24 hours)
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { accountRefusal, canAccount, type AccountPermission } from "./account-roles.js";
@@ -23,7 +23,7 @@ import { createDeveloperKey, listDeveloperKeys, revokeDeveloperKey, rotateDevelo
 import { addOrigin, listOrigins, removeOrigin } from "./developer-sessions.js";
 import { ApiProblem, currentApiVersion, developerSurface } from "./developer-surface.js";
 import * as hooks from "./developer-webhooks.js";
-import { createSource, deleteSource, listSources } from "./developer-inbound.js";
+import { createSource, deleteSource, listSourceDeliveries, listSources } from "./developer-inbound.js";
 import { endpointLimit } from "./rate-limits.js";
 
 const S = (res: Response) => res.locals.session as Session;
@@ -101,6 +101,10 @@ export function developerAppRouter(): Router {
   if (cfg.webhooks_in?.length) {
     r.get("/sources", answer("read", async (_q, res) => ({ data: await listSources(S(res).org) })));
     r.post("/sources", answer("manage", async (req, res) => ({ data: await createSource(S(res).org, body(req), who(res)) }), 201));
+    r.get("/sources/:id/deliveries", answer("read", async (req, res) => {
+      if (!(await listSources(S(res).org)).some((x) => x.id === String(req.params.id))) throw new ApiProblem(404, "not_found", "No such inbound source");
+      return { data: await listSourceDeliveries(S(res).org, String(req.params.id)) };
+    }));
     r.delete("/sources/:id", answer("manage", async (req, res) => {
       if (!(await deleteSource(S(res).org, String(req.params.id)))) throw new ApiProblem(404, "not_found", "No such inbound source");
     }));

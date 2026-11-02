@@ -2447,6 +2447,20 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
 - **The audit hook** (`src/developer-audit.ts`): every API request (credential, actor, scopes, status, request id) and
   every key and secret action is handed to `setPlatformAuditSink`, which the platform audit trail (mold_v0-197)
   registers; without it nothing is written.
+- **The console** (mold_v0-201, `web/src/features/developer`, `/app/developers`): Settings › Developers, only in an
+  embedded app (gen-packs writes `developerPortalNav` and `developerConsole` into `pack-nav.generated.ts`; in a tool app
+  both are empty, the page is not found and nothing else in the sidebar moves). A page of in-page tabs, each list the
+  console's database table (RecordView): **API keys** (made with a name, a scopes picker narrowing read, write and run to an
+  area or kind, an expiry, secret or integration; shown once in a dialog with Copy; then only the prefix; Rotate with a
+  grace, Revoke), **Webhooks** (add with the events picked; a row's peek edits the address and events, reveals the signing
+  secret (recorded), rotates it, sends a test ping and offers Enable again after an automatic disable; below the table the
+  endpoint's delivery log: status, attempts, answer and next retry, four numbers with the last two weeks' sparklines, and a
+  delivery's peek with every attempt and its payload, any credential-named field masked), **Allowed origins** (the app's
+  and the workspace's; add, remove) and **Inbound webhooks** (only with `webhooks_in`: add a source, its address and secret
+  shown once, the last 24 hours' deliveries from `GET /api/developer/sources/:id/deliveries`). Every role reads; every
+  change is an owner's (`manage`), the buttons disabled with the role they need for anyone else. Proof: `npm run
+  test:developer-console` (offline: the sidebar and route in an embedded, a tool and a zero-pack build; the helpers; the
+  page's shape).
 
 Tables: `sql/migrations/0033_developer_surface.sql` (all platform bookkeeping per workspace, closed to the tenant role;
 `check:rls` and `check:tenant-sql` know them; rollback `sql/rollback/0033_developer_surface.sql`). Proof: `npm run

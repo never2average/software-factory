@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { emailPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { developerPortalNav, emailPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
@@ -101,5 +101,7 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
  * the roles that may read what it shows), or the whole sidebar the app's profile declares (mold_v0-133: profile.json
  * console.sidebar, its groups, the packs' tabs and the shell's pages in its order); otherwise the shell's own.
  */
-// Settings › Email (mold_v0-192) comes after either, when a pack turns the company's own email on.
-export const portalNav: NavGroup[] = emailPortalNav.length ? mergeNav([...(tabPortalNav.length ? tabPortalNav : shellPortalNav), ...emailPortalNav]) : tabPortalNav.length ? tabPortalNav : shellPortalNav;
+// Settings › Email (mold_v0-192) and Settings › Developers (mold_v0-201, an embedded app's) come after either, when a pack
+// turns the company's own email or the developer surface on.
+const settingsPortalNav: NavGroup[] = [...emailPortalNav, ...developerPortalNav];
+export const portalNav: NavGroup[] = settingsPortalNav.length ? mergeNav([...(tabPortalNav.length ? tabPortalNav : shellPortalNav), ...settingsPortalNav]) : tabPortalNav.length ? tabPortalNav : shellPortalNav;

@@ -53,6 +53,22 @@ export async function createSource(orgId: number, input: { receiver?: unknown; d
 export async function listSources(orgId: number) {
   return (await asPlatform(async () => (await getDb()).query<SourceRaw>(`SELECT ${COLS} FROM webhook_sources WHERE org_id = $1 ORDER BY created_at, id`, [orgId]))).map(view);
 }
+/**
+ * A source's last deliveries (mold_v0-201, the console's Inbound tab): the messages written in the last 24 hours, newest
+ * first, from what the idempotency keys keep of each (its webhook-id, when, what was written). A message refused (a bad
+ * signature, a payload that did not fit) was not written and is not kept: only received ones are listed.
+ */
+export async function listSourceDeliveries(orgId: number, id: string, limit = 20) {
+  const n = Math.min(Math.max(Number.isInteger(limit) ? limit : 20, 1), 100);
+  const rows = await asPlatform(async () => (await getDb()).query<{ idem_key: string; state: string; response: Record<string, unknown> | null; created_at: Date }>(
+    `SELECT idem_key, state, response, created_at FROM idempotency_keys WHERE org_id = $1 AND scope = $2 ORDER BY created_at DESC LIMIT $3`,
+    [orgId, `inbound:${String(id)}`, n]));
+  return rows.map((r) => ({
+    id: r.idem_key, at: iso(r.created_at), state: r.state === "done" ? "written" : "writing",
+    written: typeof r.response?.written === "number" ? r.response.written : null, area: typeof r.response?.area === "string" ? r.response.area : null,
+    skipped: typeof r.response?.skipped === "string" ? r.response.skipped : null,
+  }));
+}
 export async function deleteSource(orgId: number, id: string): Promise<boolean> {
   return (await asPlatform(async () => (await getDb()).query("DELETE FROM webhook_sources WHERE org_id = $1 AND id = $2 RETURNING id", [orgId, String(id)]))).length > 0;
 }
