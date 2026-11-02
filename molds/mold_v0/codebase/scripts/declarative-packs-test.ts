@@ -371,7 +371,24 @@ try {
     assert.equal(ok.r.status, 0, `cards build (declared, and the shell's under a filter they apply): ${ok.r.stderr}`);
     const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
     assert.doesNotMatch(nav, /sparklines/, "the console asks the server for a tab's cards: the registry is unchanged");
-    console.log(`✓ a list tab's cards (mold_v0-181): ${m} malformed ones refused (three, five, twice, not a word, on an overview, undeclared, grouped, the shell's under a filter they cannot apply); declared ones and the shell's build, the registry unchanged`);
+    // A home tab's headline row (mold_v0-203): 1 to 4 of the pack's metrics, the same checks; carried in the registry
+    // as `headline` (the page draws the row and leaves those numbers out of its number charts); absent: nothing.
+    const home = (x: Record<string, unknown>) => ({ id: "home", kind: "overview", label: "Overview", include: ["setup"], charts: ["severity"], ...x });
+    no("five on a home tab", cards([home({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: exactly 4 metric names on a list tab \(its four cards\), up to 4 on a home tab/);
+    no("none on a home tab", cards([home({ sparklines: [] })]), /tabs\[0\]\.sparklines: 1 to 4 metric names/);
+    no("on an overview that is not the home tab", cards([home({ include: ["notices"], sparklines: four.slice(0, 2) })]), /tabs\[0\]\.sparklines: sparklines are for a list tab: area, runs, reports, schedules, or a home tab/);
+    no("an undeclared metric on a home tab", cards([home({ sparklines: ["open_count", "nope"] })]), /tab home: sparklines names metric nope, which this pack does not declare/);
+    no("a grouped metric on a home tab", cards([home({ sparklines: ["open_by_severity"] })]), /tab home: sparklines: metric open_by_severity: a card shows one number/);
+    no("a metric twice on a home tab", cards([home({ sparklines: ["open_count", "open_count"] })]), /tabs\[0\]\.sparklines: a metric is listed twice/);
+    const top = tryPack(cards([home({ sparklines: ["open_count", "found_weekly", "fix_share"] }), findings({ sparklines: four })]));
+    assert.equal(top.r.status, 0, `a home tab's headline row builds: ${top.r.stderr}`);
+    const topNav = readFileSync(path.join(top.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    assert.match(topNav, /"headline": \[\s*"open_count",\s*"found_weekly",\s*"fix_share"\s*\]/, "the home tab carries its headline row, in order");
+    assert.equal((topNav.match(/"headline":/g) ?? []).length, 1, "only the home tab carries one (a list tab's cards stay the server's)");
+    const bare = tryPack(cards([home({})]));
+    assert.equal(bare.r.status, 0, bare.r.stderr);
+    assert.doesNotMatch(readFileSync(path.join(bare.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"), /"headline":/, "a home tab that declares none has no row");
+    console.log(`✓ a list tab's cards (mold_v0-181): ${m} malformed ones refused (three, five, twice, not a word, on an overview, undeclared, grouped, the shell's under a filter they cannot apply; mold_v0-203: five or none on a home tab, an overview that is not the home tab, undeclared, grouped, twice); declared ones and the shell's build, the registry unchanged; a home tab's headline row carried in order, none by default`);
   }
 
   // ---------- 2d. flat console URLs (mold_v0-132) ----------

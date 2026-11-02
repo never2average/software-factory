@@ -188,9 +188,9 @@ async function drawInBrowser(chrome: string, web: string, name: string, input: u
  * its API answered in the page (the account, the setup steps, the pack's onboarding, seven notices, the metrics);
  * `complete`: every step done. Returns the DOM; with CONSOLE_TABS_SNAPSHOT_DIR also screenshots (light, dark).
  */
-async function renderHome(chrome: string, web: string, complete: boolean): Promise<string> {
+async function renderHome(chrome: string, web: string, complete: boolean, extra: Record<string, unknown> = {}, name = "home"): Promise<string> {
   const { build } = await import("esbuild");
-  const dir = path.join(TMP, `render-home-${complete ? "done" : "open"}`);
+  const dir = path.join(TMP, `render-${name}-${complete ? "done" : "open"}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(web, "render-home.tsx"), `import { createRoot } from 'react-dom/client';
 import { NuqsAdapter } from 'nuqs/adapters/react';
@@ -226,6 +226,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
     "/api/onboarding": { steps: [{ pack: "fixture_vulns", id: "first_app", label: "Add a first application", help: "Describe one application you want audited.", prompt: "Add our first application.", done: complete, at: null }], done: complete ? 1 : 0, total: 1 },
     "/api/notices": { notices },
     "/api/metrics": { metrics: answers },
+    ...extra,
   };
   const css = consoleCss(web);
   const page = (dark: boolean) => {
@@ -243,8 +244,8 @@ window.fetch = async (url) => { const p = new URL(String(url), 'http://console.t
   if (process.env.CONSOLE_TABS_SNAPSHOT_DIR) {
     mkdirSync(process.env.CONSOLE_TABS_SNAPSHOT_DIR, { recursive: true });
     for (const dark of [false, true])
-      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `home-${complete ? "done" : "open"}-${dark ? "dark" : "light"}.png`)}`, `file://${page(dark)}`], { timeout: 120_000 });
-    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `home-${complete ? "done" : "open"}.html`), r.stdout);
+      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `${name}-${complete ? "done" : "open"}-${dark ? "dark" : "light"}.png`)}`, `file://${page(dark)}`], { timeout: 120_000 });
+    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `${name}-${complete ? "done" : "open"}.html`), r.stdout);
   }
   return r.stdout;
 }
@@ -528,6 +529,45 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.deepEqual(stepProgress([{ ...sh("dashboard", true), optional: true }, sh("a", true)]), { done: 1, total: 1 }, "a done optional step is not counted either");
     assert.deepEqual(stepProgress(mergeSetupSteps(shell, [pk("a")])), { done: 1, total: 5 }, "with no optional step every step counts");
     console.log("✓ the checklist counts the steps that count (mold_v0-171): an optional step is shown, never in done or total (3 of 7 for eight steps with one optional)");
+    // 5d. a home tab's headline row (mold_v0-203): none above (no sparklines declared: the page as it was); declared, a
+    // row of the list tabs' cards above both columns, and the numbers it shows left out of the number card on the right.
+    assert.equal(spec.headline, undefined, "a home tab that declares no sparklines has no headline row");
+    const top = buildCopy("home-top", ["fixture_vulns", "fixture_adoption"], (packs) => {
+      const f = path.join(packs, "fixture_vulns", "pack.json");
+      const j = JSON.parse(readFileSync(f, "utf8"));
+      j.tabs = j.tabs.filter((t: { kind: string }) => t.kind !== "notices")
+        .map((t: { id: string }) => (t.id === "overview" ? { ...t, label: "Home", include: ["setup", "notices"], rail: ["chart:headline", "notices"], charts: ["headline", "severity"],
+          sparklines: ["open_findings", "overdue_findings", "mean_cvss_open", "opened_per_week"] } : t));
+      writeFileSync(f, JSON.stringify(j, null, 2));
+    });
+    const tweb = path.join(top, "web");
+    const tspec = inConsole<Nav>(tweb, NAV).packTabs.find((t: any) => t.pack === "fixture_vulns" && t.id === "overview");
+    assert.deepEqual(tspec.headline, ["open_findings", "overdue_findings", "mean_cvss_open", "opened_per_week"], "the home tab carries its headline row, in order");
+    console.log("✓ a home tab's headline row (mold_v0-203): none unless declared; declared, carried in the registry in order");
+    const chrome2 = findChrome();
+    if (!chrome2) console.log("✓ (no headless browser on this machine: the rendered headline row is skipped; set CHROME_BIN)");
+    else {
+      const weeks = 12, series = (end: number) => Array.from({ length: weeks }, (_, i) => Math.round((end * (i + 1)) / weeks));
+      const card = (id: string, label: string, unit: string, mode: string, value: number) => ({ id, label, unit, mode, value, series: series(value) });
+      const cards = { weeks, buckets: Array.from({ length: weeks }, (_, i) => `2026-08-${String(i + 1).padStart(2, "0")}`), as_of: "2026-10-21T12:00:00.000Z",
+        cards: [card("open_findings", "Open vulnerabilities", "count", "total", 4), card("overdue_findings", "Overdue", "count", "total", 1),
+          card("mean_cvss_open", "Average CVSS of open ones", "number", "weekly", 7.2), card("opened_per_week", "Found this week", "count", "latest", 3)] };
+      const html = await renderHome(chrome2, tweb, false, { "/api/sparklines/fixture_vulns/overview": cards }, "home-top");
+      const at = (re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
+      const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Get set up</), at(/>Connect your AI client</), at(/>Where things stand</)];
+      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the headline row first, above the checklist, the connection card and the number card: ${order}`);
+      const row = html.slice(order[0]!, order[1]!);
+      assert.match(row, /aria-label="Headline numbers"/, "a named section");
+      assert.deepEqual(["Open vulnerabilities", "Overdue", "Average CVSS of open ones", "Found this week"].map((l) => row.includes(`>${l}</dt>`)), [true, true, true, true], "its four cards, in order");
+      assert.equal([...row.matchAll(/<svg/g)].length, 4, "each with its sparkline");
+      assert.match(row, /grid grid-cols-2 border-y lg:grid-cols-4/, "the list tabs' strip: two by two below a wide screen, four across on one");
+      const rail = html.slice(order[3]!, at(/>Due soon</));
+      assert.deepEqual(["Open", "Overdue", "Mean time to fix", "Fixed"].map((l) => rail.includes(`>${l}</dt>`)), [false, false, true, true], "the number card leaves out what the row shows");
+      const below = html.slice(at(/class="grid border-t border-l/));
+      assert.doesNotMatch(below, />Open<\/dt>|>Overdue<\/dt>/, "so does the number chart below");
+      assert.match(below, />Mean time to fix<\/dt>/, "which keeps the rest");
+      console.log("✓ rendered headline row (mold_v0-203): four cards with sparklines above the checklist and the right column; the numbers it shows left out of the number card and chart");
+    }
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
