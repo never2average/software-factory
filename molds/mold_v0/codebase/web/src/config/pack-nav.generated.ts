@@ -37,6 +37,8 @@ export interface RecordAreaSpec {
   list_columns: string[];
   links: { field: string; area: string }[];
   lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;
+  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */
+  clocks?: { name: string; label: string }[];
 }
 
 /** A field of a record area (typed by mold_v0-057). */

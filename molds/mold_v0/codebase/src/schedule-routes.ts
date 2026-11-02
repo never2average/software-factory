@@ -21,6 +21,7 @@ import { customerSession, type Session } from "./app.js";
 import { PackError } from "./pack-api.js";
 import { recordAreas } from "./record-areas.js";
 import { createSchedule, deleteSchedule, dismissNotice, dueAreas, listNotices, listSchedules, schedulableKinds, schedulesWired, updateSchedule } from "./schedules.js";
+import { clockAreas } from "./record-clocks.js";
 
 function base(r: Router) {
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
@@ -88,7 +89,7 @@ export function scheduleAppRouter(): Router {
 
 export function noticeAppRouter(): Router {
   const r = express.Router();
-  if (!dueAreas().length) return r; // no due area: nothing is mounted, nothing answers
+  if (!dueAreas().length && !clockAreas().length) return r; // no due area and no clock (mold_v0-191): nothing is mounted, nothing answers
   base(r);
   r.get("/", answer(async (req, res) => ({ notices: await listNotices(S(res).org, { all: req.query.all === "1", actor: { role: S(res).accountRole, userId: S(res).user } }) })));
   r.post("/:id/dismiss", answer(async (req, res) => {

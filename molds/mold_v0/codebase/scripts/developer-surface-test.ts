@@ -109,7 +109,7 @@ try {
       assert.ok(doc.paths[p], `the document has ${p}`);
     assert.deepEqual(doc.components.schemas.TicketsData.properties.severity.enum, ["low", "medium", "high"], "enums typed");
     assert.deepEqual(doc.paths["/v1/records/tickets/{key}/move"].post.requestBody.content["application/json"].schema.properties.to.enum, ["open", "in_progress", "closed"], "lifecycle states");
-    assert.deepEqual(Object.keys(doc.webhooks).sort(), ["record.created", "record.deleted", "record.state_changed", "record.updated", "run.finished", "webhook.test"]);
+    assert.deepEqual(Object.keys(doc.webhooks).sort(), ["clock.overdue", "record.created", "record.deleted", "record.state_changed", "record.updated", "run.finished", "webhook.test"]);
     assert.ok(Object.values<any>(doc.paths).every((item) => Object.values<any>(item).every((op) => op.operationId && op.responses.default)), "every operation has an id and a problem answer");
     console.log("✓ the declaration: build checks refuse what does not fit; the Developers pages pass the guide's rules; the OpenAPI 3.1 document types each area and lists the events");
   }
@@ -315,7 +315,7 @@ try {
       const SECRET = ep.json.data.secret as string;
       assert.match(SECRET, /^whsec_[A-Za-z0-9+/=]{40,}$/);
       const epTickets = await call("POST", "/v1/webhook_endpoints", KEY, { url: `${ok.url}?only=state`, events: ["record.state_changed"] });
-      assert.equal((await call("POST", "/v1/webhook_endpoints", KEY, { url: ok.url, events: ["clock.overdue"] })).json.code, "invalid_event", "only declared events");
+      assert.equal((await call("POST", "/v1/webhook_endpoints", KEY, { url: ok.url, events: ["record.exploded"] })).json.code, "invalid_event", "only declared events");
       assert.equal((await call("POST", "/v1/webhook_endpoints", KEY, { url: "http://hooks.example.com/x" })).json.code, "invalid_url", "https only on the internet");
       assert.ok(!JSON.stringify((await call("GET", "/v1/webhook_endpoints", KEY)).json).includes(SECRET), "the list never shows a secret");
       // A change through the API: one signed delivery, with the actor.
@@ -406,6 +406,20 @@ try {
       const twice = ok.got.filter((g) => JSON.parse(g.body).type === "run.finished").length;
       await scanFinishedRuns(); await hooks.settled();
       assert.equal(ok.got.filter((g) => JSON.parse(g.body).type === "run.finished").length, twice, "a run's end is sent once");
+      // clock.overdue from the record clocks (mold_v0-191): once per record, clock and deadline.
+      {
+        const rc = await import("../src/record-clocks.js");
+        await call("POST", "/v1/records/tickets", KEY, { key: "CL-1", data: { summary: "late" } });
+        const later = new Date(Date.now() + 3 * 86400_000);
+        await rc.clockCheck(later, { force: true, orgId: A.orgId });
+        await rc.clockCheck(new Date(later.getTime() + 60_000), { force: true, orgId: A.orgId });
+        await hooks.settled();
+        const od = ok.got.map((g) => JSON.parse(g.body)).filter((e) => e.type === "clock.overdue" && e.data.key === "CL-1");
+        assert.equal(od.length, 1, `clock.overdue once (${od.length})`);
+        assert.equal(od[0].data.clock, "respond");
+        assert.equal(od[0].data.area, "tickets");
+        assert.ok(od[0].data.due_at);
+      }
       // The other workspace's endpoint hears nothing of A.
       const okB = await receiver();
       await call("POST", "/v1/webhook_endpoints", keyB, { url: okB.url });
@@ -416,7 +430,7 @@ try {
       assert.ok(epTickets.json.data.events.includes("record.state_changed"));
       hooks.setWebhookPolicyForTest(null);
     }
-    console.log("✓ webhooks out: Standard Webhooks signatures, events per endpoint, the actor, a rolled-back batch sends nothing, test ping, the delivery log, retries then failed, disabled after repeated failure, enable and redeliver, the audited reveal, rotation with two signatures, run.finished once, workspaces apart");
+    console.log("✓ webhooks out: Standard Webhooks signatures, events per endpoint, the actor, a rolled-back batch sends nothing, test ping, the delivery log, retries then failed, disabled after repeated failure, enable and redeliver, the audited reveal, rotation with two signatures, run.finished once, clock.overdue once, workspaces apart");
 
     // ---------- 8. webhooks in ----------
     {

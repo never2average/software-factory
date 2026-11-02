@@ -28,7 +28,7 @@ export const EVENT_CATALOG = {
   "record.state_changed": { about: "A record moved along its area's lifecycle (from, to).", record: true },
   "record.deleted": { about: "A record was deleted.", record: true },
   "run.finished": { about: "A run ended: succeeded, failed or cancelled.", record: false },
-  // Emitted once ticket mold_v0-191's deadline clocks land (they call emitEvent from src/developer-webhooks.ts).
+  // A record clock (mold_v0-191, src/record-clocks.ts) calls emitEvent when it goes overdue: once per record, clock and deadline.
   "clock.overdue": { about: "A record's deadline clock passed its due time.", record: false },
 } as const;
 export type EventName = keyof typeof EVENT_CATALOG;

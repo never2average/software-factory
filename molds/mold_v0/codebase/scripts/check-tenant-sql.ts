@@ -38,7 +38,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-182 a run's transfers through object storage
   "run_transfers",
   // mold_v0-193 the developer surface: keys, client sessions, origins, webhooks out and in, idempotency keys
-  "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys"];
+  "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys",
+  // mold_v0-191 record clocks: what the shell remembers of each record's clock, and its events
+  "workspace_record_clocks", "workspace_clock_events"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

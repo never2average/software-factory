@@ -1,7 +1,7 @@
--- Rolling back past 0032_developer_surface (mold_v0-193), for a release from before it (and before rolling back an
+-- Rolling back past 0033_developer_surface (mold_v0-193), for a release from before it (and before rolling back an
 -- earlier migration, whose rollback refuses while this one is applied).
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0032_developer_surface.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0033_developer_surface.sql
 -- The developer surface's tables go, and the ledger row. An older release has no developer surface: its workspaces'
 -- API keys, client sessions, webhook endpoints (with their sealed secrets) and delivery logs are deleted with them, so
 -- the integrations built on them stop; tell the workspaces first. Found by its name, so it also undoes it where it was

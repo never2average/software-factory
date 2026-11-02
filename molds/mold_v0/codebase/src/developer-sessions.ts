@@ -1,5 +1,5 @@
 /**
- * Client sessions and allowed origins (mold_v0-193; sql/migrations/0032_developer_surface.sql).
+ * Client sessions and allowed origins (mold_v0-193; sql/migrations/0033_developer_surface.sql).
  *
  * A browser or a phone app never holds a key. The workspace's backend mints a client session with a key that holds
  * `sessions`, for one of its own signed-in users (`subject`), and hands the token (`cs_...`) to the client:

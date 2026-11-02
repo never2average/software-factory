@@ -91,7 +91,7 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "onprem_runners", "workspace_runner_settings",
   // A run's transfers through object storage and their sealed keys (mold_v0-182, 0029_run_transfers): platform bookkeeping.
   "run_transfers",
-  // The developer surface (mold_v0-193, 0032_developer_surface): keys, client sessions, origins, webhook endpoints and
+  // The developer surface (mold_v0-193, 0033_developer_surface): keys, client sessions, origins, webhook endpoints and
   // their sealed secrets, deliveries, inbound sources, idempotency keys: the shell's developer modules only.
   "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys", "developer_marks"];
 
@@ -230,6 +230,9 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       // Schedules and notices (mold_v0-035): a schedule and a notice per organization.
       await tx.query("INSERT INTO workspace_schedules (org_id, pack, name, job_kind, cron, next_at) VALUES ($1, 'probe', 'probe', 'probe', '0 * * * *', now())", [o]);
       await tx.query("INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'probe', 'probe', $2, current_date)", [o, tag]);
+      // Record clocks (mold_v0-191): a clock row and an event per organization.
+      await tx.query("INSERT INTO workspace_record_clocks (org_id, pack, area, record_key, clock, status, evaluated_at) VALUES ($1, 'probe', 'probe', $2, 'probe', 'on_track', now())", [o, tag]);
+      await tx.query("INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, at) VALUES ($1, 'probe', 'probe', $2, 'probe', 'started', 'x', now())", [o, tag]);
       // Price per run (mold_v0-019): a run's charge per organization.
       await tx.query("INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'charge', 'probe', 'probe', 1, 'succeeded', 'usd', 100)", [`${tag}-run-${o}`, o]);
       // The audit trails (mold_v0-197, 0031_audit_trails): an entry of each per organization.
@@ -305,6 +308,14 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("workspace_schedules: a tenant moves its own schedule on", "/* tenant: rls probe */ UPDATE workspace_schedules SET next_at = now(), seq = seq + 1");
     await refused("workspace_notices: a tenant posts a notice", "INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'p', 'p', 'x', current_date)", [a]);
     await refused("workspace_notices: a tenant marks a notice emailed", "/* tenant: rls probe */ UPDATE workspace_notices SET emailed_at = now()");
+    // Record clocks (mold_v0-191): the clock check runs in a workspace's own scope, so it writes its own rows only; its
+    // events are never changed or deleted.
+    await refused("workspace_record_clocks: A writes a clock row for B", "/* tenant: rls probe */ INSERT INTO workspace_record_clocks (org_id, pack, area, record_key, clock, status, evaluated_at) VALUES ($1, 'p', 'p', 'x', 'c', 'overdue', now())", [b]);
+    if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ UPDATE workspace_record_clocks SET status = 'met' WHERE org_id = $1 RETURNING org_id", [b])).length) problems.push("workspace_record_clocks: A changed B's clock");
+    checked++;
+    await refused("workspace_clock_events: A records an event for B", "/* tenant: rls probe */ INSERT INTO workspace_clock_events (org_id, pack, area, record_key, clock, step, mark, at) VALUES ($1, 'p', 'p', 'x', 'c', 'started', 'y', now())", [b]);
+    await refused("workspace_clock_events: a tenant changes an event", "/* tenant: rls probe */ UPDATE workspace_clock_events SET detail = '{}'");
+    await refused("workspace_clock_events: a tenant deletes an event", "/* tenant: rls probe */ DELETE FROM workspace_clock_events");
     // Price per run (mold_v0-019): tenant work reads its own charges and can neither write, lower nor credit one, nor
     // call the function that writes them.
     await refused("run_charges: a tenant writes a charge", "INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'credit', 'p', 'p', 1, 'succeeded', 'usd', -100)", [`${tag}-run-${a}`, a]);

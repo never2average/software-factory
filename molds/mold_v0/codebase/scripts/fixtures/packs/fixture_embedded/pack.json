@@ -71,7 +71,17 @@
             "label": "Close"
           }
         ]
-      }
+      },
+      "clocks": [
+        {
+          "name": "respond",
+          "label": "Respond by",
+          "starts": {
+            "event": "created"
+          },
+          "after": "1d"
+        }
+      ]
     },
     {
       "name": "findings",
@@ -152,6 +162,10 @@
       {
         "name": "run.finished",
         "description": "A triage run ended."
+      },
+      {
+        "name": "clock.overdue",
+        "description": "A ticket was not answered in time."
       }
     ],
     "sdk_languages": [

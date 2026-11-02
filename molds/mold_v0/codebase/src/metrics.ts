@@ -273,7 +273,7 @@ async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Pro
 
 // ---------- the same rules in code, for sealed rows ----------
 
-type Row = { data: Record<string, unknown>; created_at: string; updated_at: string };
+type Row = { key?: string; data: Record<string, unknown>; created_at: string; updated_at: string };
 function jsValue(c: Column, r: Row): unknown {
   if ("data" in c.at) return r.data[c.at.data];
   if ("state" in c.at) { const t = r.data["$state_at"]; return t && typeof t === "object" ? (t as Record<string, unknown>)[c.at.state] : undefined; }
@@ -391,8 +391,8 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cells {
 export type Sealed = { rows: Row[]; partial: boolean };
 async function sealedRows(orgId: number, area: SpecArea): Promise<Sealed> {
   return withTenant(orgId, async () => {
-    const rows = await (await getDb()).query<{ data: unknown; created_at: Date | string; updated_at: Date | string; bytes: number }>(
-      "SELECT data, created_at, updated_at, octet_length(data::text) AS bytes FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY id DESC LIMIT $4",
+    const rows = await (await getDb()).query<{ key: string; data: unknown; created_at: Date | string; updated_at: Date | string; bytes: number }>(
+      "SELECT key, data, created_at, updated_at, octet_length(data::text) AS bytes FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY id DESC LIMIT $4",
       [orgId, area.pack, area.name, MAX_SEALED_ROWS + 1]);
     const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOString();
     await ensureOrgKey(orgId);
@@ -401,7 +401,7 @@ async function sealedRows(orgId: number, area: SpecArea): Promise<Sealed> {
     for (const r of rows.slice(0, MAX_SEALED_ROWS)) {
       bytes += Number(r.bytes);
       if (bytes > MAX_SEALED_BYTES) break;
-      out.push({ data: await openJson(orgId, r.data), created_at: iso(r.created_at), updated_at: iso(r.updated_at) });
+      out.push({ key: r.key, data: await openJson(orgId, r.data), created_at: iso(r.created_at), updated_at: iso(r.updated_at) });
     }
     return { rows: out, partial: out.length < rows.length };
   });
@@ -474,13 +474,19 @@ export async function computeSpec(orgId: number, m: SpecMetric, actor: Actor, no
   const src = sourceOf(m);
   const over = overOf(src);
   let got: Cells, partial = false;
-  if ("area" in src && (opts.forceCode || (await hasSealed(orgId, src.area)))) {
+  // A metric over a clock's status (mold_v0-191) is counted in code: a deadline is worked out per record, never in SQL.
+  if ("area" in src && (opts.forceCode || m.clock || (await hasSealed(orgId, src.area)))) {
     // One read of an area's sealed rows per request, shared by its metrics.
     const cache = opts.sealed ?? new Map<string, Promise<Sealed>>();
     if (!cache.has(src.area.name)) cache.set(src.area.name, sealedRows(orgId, src.area));
     const sealed = await cache.get(src.area.name)!;
     partial = sealed.partial;
-    got = jsCells(m, src.area, sealed.rows, now);
+    let rows = sealed.rows;
+    if (m.clock) {
+      const st = await (await import("./record-clocks.js")).clockStatuses(orgId, src.area, m.clock.name, rows, now);
+      rows = rows.filter((r) => r.key !== undefined && m.clock!.is.includes(st.get(r.key) ?? "not_started"));
+    }
+    got = jsCells(m, src.area, rows, now);
   } else got = await runSql(orgId, m, src, now);
   const cells = got.cells;
 

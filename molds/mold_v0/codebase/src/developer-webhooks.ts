@@ -7,7 +7,7 @@
  *               audit hook), rotated with the old secret still signing beside the new one for 24 hours
  *   events      the build's declared events (pack.json developer_surface.events): record.created / updated /
  *               state_changed / deleted (src/record-areas.ts onRecordChange), run.finished (the runs that ended, read
- *               by the tick, src/runs.ts untouched), clock.overdue (emitEvent, for mold_v0-191's clocks); webhook.test
+ *               by the tick, src/runs.ts untouched), clock.overdue (src/record-clocks.ts calls emitEvent when a clock goes overdue); webhook.test
  *               on request. A sealed area's events carry its key, never its title or fields
  *   deliveries  one per event per endpoint (webhook_deliveries; the same event twice is queued once): POSTed with
  *               webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 of "id.timestamp.body"),

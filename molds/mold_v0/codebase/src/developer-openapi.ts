@@ -231,6 +231,8 @@ export function openApiDocument(serverUrl: string): Schema {
     const data: Schema = record
       ? { type: "object", required: ["area", "key"], properties: { area: { type: "string", ...("areas" in e && e.areas?.length ? { enum: e.areas } : {}) }, key: { type: "string" }, title: { type: ["string", "null"] },
           data: { type: "object" }, updated_at: { type: "string" }, sealed: { type: "boolean" }, from: {}, to: {}, actor: { type: ["string", "null"] } } }
+      : e.name === "clock.overdue" ? { type: "object", required: ["area", "key", "clock", "due_at"], properties: { area: { type: "string" }, key: { type: "string" },
+          clock: { type: "string" }, due_at: { type: ["string", "null"], format: "date-time" } } }
       : e.name === "run.finished" ? { type: "object", required: ["run"], properties: { run: kinds.length ? ref("Run") : { type: "object" } } }
       : ("payload" in e && e.payload ? e.payload as Schema : { type: "object" });
     webhooks[e.name] = { post: {
