@@ -1,7 +1,7 @@
--- Rolling back past 0031_company_email (mold_v0-192), for a release from before it (and before rolling back an earlier
+-- Rolling back past 0033_company_email (mold_v0-192), for a release from before it (and before rolling back an earlier
 -- migration, whose rollback refuses while this one is applied).
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0031_company_email.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0033_company_email.sql
 -- Refused, changing nothing, while any workspace has a sender or a mailbox configured, or the intake's ledger holds a
 -- message: an older release would quietly send through the app's own sender instead, and the ledger is what keeps a
 -- message from being taken in twice (and where its attachments are). The workspaces' owners remove their senders and

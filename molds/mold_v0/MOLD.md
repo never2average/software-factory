@@ -795,7 +795,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,
   else `PUBLIC_URL`; anything but a plain http(s) address is ignored).
 - **The company's own email** (mold_v0-192, built; `src/company-email.ts`, `src/email-intake.ts`, `src/mail-protocols.ts`,
-  `src/email-routes.ts`, `src/company-email-config.ts`, `sql/migrations/0031_company_email.sql`; `npm run test:company-email`).
+  `src/email-routes.ts`, `src/company-email-config.ts`, `sql/migrations/0033_company_email.sql`; `npm run test:company-email`).
   A pack turns it on with pack.json `email` (or `definePack({ email })`): `sender: { allow: true }` and/or `intake: { area,
   label, folder ("INBOX"), fields: { subject, from, from_name, from_domain, to, cc, date, received_at, body, attachments,
   attachment_count, mailbox, message_id → the area's fields }, set: { field: constant }, body_chars, backfill_days,
