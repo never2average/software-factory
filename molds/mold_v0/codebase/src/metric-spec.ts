@@ -582,6 +582,7 @@ export function filterWhere(filter: Record<string, unknown>, area: SpecArea): No
 
 /**
  * A list tab's four cards (mold_v0-181): its `sparklines` (the pack's metrics, in order), else the shell's for its kind.
+ * A home tab's headline row (mold_v0-203): its `sparklines` (1 to 4), else none.
  *   area      the rows (the tab's label), new in the last 7 days, then two of the pack's own metrics over the area that
  *             the person may read (`readable`), else changed in the last 7 days and the main enum's most common value
  *             (its lifecycle's field, else the first single-choice enum of the table's columns, then of the area); a

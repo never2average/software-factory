@@ -4745,7 +4745,7 @@
                 }
               },
               "sparklines": {
-                "minItems": 4,
+                "minItems": 1,
                 "maxItems": 4,
                 "type": "array",
                 "items": {

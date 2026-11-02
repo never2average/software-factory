@@ -2,7 +2,8 @@
  * A list tab's four cards (mold_v0-181; molds/mold_v0/MOLD.md "Pack and record-area contract"): between the toolbar
  * and the table of an area, runs, reports or schedules tab, four cards, each a label, a value and a sparkline of its
  * last SPARK_WEEKS weeks. Which four is pure (src/metric-spec.ts sparkPlan: the tab's `sparklines`, else the shell's for
- * its kind); this computes them for one workspace, as `actor` may read them: every number is a metric computed by the
+ * its kind; a home tab's headline row, mold_v0-203: its declared 1 to 4); this computes them for one workspace, as
+ * `actor` may read them: every number is a metric computed by the
  * metric engine (src/metrics.ts computeSpec), under its workspace's row-level security, with its area's read permission
  * and its roles checked for the person. No SQL of its own.
  *
