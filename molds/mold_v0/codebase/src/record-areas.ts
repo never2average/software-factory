@@ -123,8 +123,20 @@ export interface RecordChange {
   record: RecordRow | null; from?: unknown; to?: unknown;
 }
 const changeListeners: ((c: RecordChange) => unknown)[] = [];
-/** Hear every workspace record change (src/developer-webhooks.ts). None is registered in a build without a developer surface. */
+/** Hear every workspace record change once it is stored (after its transaction commits): nothing it does undoes the change. */
 export const onRecordChange = (fn: (c: RecordChange) => unknown) => void changeListeners.push(fn);
+/**
+ * A listener inside the change's own transaction (mold_v0-202: the developer surface's event outbox): what it writes on
+ * `tx` commits with the change or not at all, and a throw rolls the change back. `wants(area)` says whether a write to
+ * that area needs it: only then is a single write (outside a batch) made a transaction of its own, so an app that wants
+ * none (a tool app) writes exactly as before.
+ */
+interface TxListener { fn: (c: RecordChange, tx: Queryable) => Promise<unknown>; wants: (area: string) => boolean }
+const txListeners: TxListener[] = [];
+export const onRecordChangeInTransaction = (fn: TxListener["fn"], wants: TxListener["wants"]) => void txListeners.push({ fn, wants });
+/** Run a single write as a transaction when a transaction listener wants its area (inside a batch: the batch's). */
+const atomic = <T>(orgId: number, area: string, fn: () => Promise<T>): Promise<T> =>
+  !txScope.getStore() && txListeners.some((l) => l.wants(area)) ? auditAtomic(() => inTransaction(orgId, fn)) : fn();
 const tell = async (list: RecordChange[]) => {
   for (const c of list) for (const fn of changeListeners) {
     try { await fn(c); } catch (e) { console.error(`record change listener: ${(e as Error).message}`); }
@@ -132,8 +144,9 @@ const tell = async (list: RecordChange[]) => {
 };
 /** A change: told now, or, inside a batch, once the batch has committed (a batch rolled back tells nothing). */
 async function changed(c: RecordChange) {
-  if (!changeListeners.length) return;
   const t = txScope.getStore();
+  if (t) for (const l of txListeners) if (l.wants(c.area)) await l.fn(c, t.tx);
+  if (!changeListeners.length) return;
   if (t) { (t.changes ??= []).push(c); return; }
   await tell([c]);
 }
@@ -599,7 +612,10 @@ const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.labe
 /** put: create or replace; create: only a new key (409 when it exists); update: only an existing key (404). */
 export type PutMode = "put" | "create" | "update";
 
-async function putWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
+function putWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
+  return atomic(orgId, name, () => putWorkspaceNow(orgId, pack, actor, name, key, value, mode, meta));
+}
+async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
   if (!meta && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
@@ -641,7 +657,10 @@ const movesFrom = (area: RecordArea, from: unknown) => area.lifecycle!.transitio
   .filter((t) => t.from === "*" || (typeof from === "string" && t.from.includes(from)))
   .map((t) => `${JSON.stringify(t.to)}${t.label ? ` (${t.label})` : ""}${t.roles ? ` [${t.roles.join(", ")}]` : ""}`);
 
-async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
+function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
+  return atomic(orgId, name, () => moveWorkspaceNow(orgId, pack, actor, name, key, to));
+}
+async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
   if (isReadOnlyArea(area)) throw readOnly(area);
   assertCanSeal(area);
@@ -666,7 +685,10 @@ async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: st
   return r;
 }
 
-async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
+function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
+  return atomic(orgId, name, () => deleteWorkspaceNow(orgId, pack, actor, name, key, source));
+}
+async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
   const area = ownWorkspaceArea(pack, name);
   if (source === null && isReadOnlyArea(area)) throw readOnly(area);
   assertMay(area, "read", actor);
