@@ -432,6 +432,29 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 20000
+                },
+                "encrypted": {
+                  "type": "boolean"
+                },
+                "reveal_roles": {
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "member",
+                      "billing",
+                      "owner"
+                    ]
+                  }
+                },
+                "searchable": {
+                  "type": "string",
+                  "enum": [
+                    "equality"
+                  ]
                 }
               },
               "required": [
@@ -1309,6 +1332,29 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 20000
+                    },
+                    "encrypted": {
+                      "type": "boolean"
+                    },
+                    "reveal_roles": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "member",
+                          "billing",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "searchable": {
+                      "type": "string",
+                      "enum": [
+                        "equality"
+                      ]
                     }
                   },
                   "required": [
@@ -1669,6 +1715,29 @@
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 20000
+                    },
+                    "encrypted": {
+                      "type": "boolean"
+                    },
+                    "reveal_roles": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "member",
+                          "billing",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "searchable": {
+                      "type": "string",
+                      "enum": [
+                        "equality"
+                      ]
                     }
                   },
                   "required": [

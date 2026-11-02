@@ -221,9 +221,9 @@ try {
     await audit.flushAudit();
     const reveals = await db.query<any>("SELECT * FROM audit_data_events WHERE org_id = $1 AND action = 'reveal' ORDER BY seq", [A.orgId]);
     const fresh = reveals.slice(before.n);
-    assert.ok(fresh.length >= 4, `each reveal is an entry (${fresh.length})`);
+    assert.equal(fresh.length, 3, `each reveal that answered is one entry, a refused one none (${JSON.stringify(fresh.map((e) => e.channel))})`);
     assert.ok(fresh.some((e) => e.channel === "console" && e.actor_kind === "user" && e.record_key === "c-1" && e.area === "contacts"), "with its person, door, area and key");
-    assert.ok(fresh.some((e) => e.channel === "mcp"), "and through MCP");
+    assert.ok(fresh.some((e) => e.channel === "api"), `the developer API's too (${fresh.map((e) => e.channel)})`);
     assert.deepEqual(leaks(JSON.stringify(reveals)), [], "never the value");
     const refusedCount = (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM audit_data_events WHERE org_id = $1 AND action = 'reveal' AND record_key = 'c-1'", [A.orgId]))[0]!.n;
     audit.setAuditForTest({ data: false, platform: false });
