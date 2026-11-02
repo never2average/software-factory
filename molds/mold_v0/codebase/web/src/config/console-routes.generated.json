@@ -36,6 +36,7 @@
     "/app/connected-apps",
     "/app/context/[[...section]]",
     "/app/credentials",
+    "/app/developers",
     "/app/docs",
     "/app/docs/[slug]",
     "/app/files",

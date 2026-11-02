@@ -88,6 +88,14 @@ export const hiddenConsoleUrls: string[] = [];
 /** Settings › Email (mold_v0-192): the workspace's own sender and mailboxes, when a pack declares pack.json email. */
 export const emailPortalNav: NavGroup[] = [];
 
+/** Settings › Developers (mold_v0-201): the developer surface's console, only where a pack declares pack.json developer_surface. */
+export const developerPortalNav: NavGroup[] = [];
+/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */
+export const developerConsole = {
+  "on": false,
+  "inbound": false
+};
+
 /** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
 export const usagePortalNav: NavGroup[] = [];
 export const usageAdminNav: NavGroup[] = [];
