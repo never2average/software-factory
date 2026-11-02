@@ -234,7 +234,8 @@ export async function auditAtomic<T>(fn: () => Promise<T>): Promise<T> {
   if (outer?.collect) return fn(); // already inside one: the outermost decides
   const collect: DataRow[] = [];
   const r = await als.run({ ...(outer ?? { channel: "system" as const }), collect }, fn);
-  for (const row of collect) enqueueData(row);
+  dataQueue.push(...collect); // one batch: queued whole, then written together
+  kick();
   return r;
 }
 
@@ -512,6 +513,12 @@ export function auditAdminRouter(): Router {
     const id = await orgIdOf(String(req.params.org));
     if (id === null) return void res.status(404).json({ error: "No such workspace" });
     res.json(await readDataTrail(id, req.query as TrailQuery));
+  }));
+  if (dataTrailOn()) r.get("/data/:org/csv", wrap(async (req, res) => {
+    const id = await orgIdOf(String(req.params.org));
+    if (id === null) return void res.status(404).json({ error: "No such workspace" });
+    const out = await trailCsv("data", id, req.query as TrailQuery);
+    res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="data-trail-${id}-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
   }));
   return r;
 }

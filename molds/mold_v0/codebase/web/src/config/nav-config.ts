@@ -1,6 +1,14 @@
 import { NavGroup } from '@/types';
 import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
+import { auditOn } from '@/features/audit/config';
+
+/**
+ * The access log (mold_v0-197, src/audit-trail.ts): one entry at the end of the sidebar, for the workspace's owners
+ * (staff: every admin), only where the profile turns an audit trail on; nothing otherwise.
+ */
+const withAuditNav = (groups: NavGroup[], url: string, roles?: string[]): NavGroup[] =>
+  auditOn() ? [...groups, { label: 'Security', items: [{ title: 'Access log', url, icon: 'lock', items: [], ...(roles ? { roles } : {}) }] }] : groups;
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -41,7 +49,8 @@ export const adminNav: NavGroup[] = [
   ...packAdminNav,
   ...recordAdminNav,
   // Usage in neutral words (mold_v0-008), when the build has a pack.
-  ...usageAdminNav
+  ...usageAdminNav,
+  ...withAuditNav([], '/admin/access-log')
 ];
 
 /** A shell page the build hides (mold_v0-130, src/console-pages.ts), or one under it: left out of the sidebar. */
@@ -101,4 +110,4 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
  * the roles that may read what it shows), or the whole sidebar the app's profile declares (mold_v0-133: profile.json
  * console.sidebar, its groups, the packs' tabs and the shell's pages in its order); otherwise the shell's own.
  */
-export const portalNav: NavGroup[] = tabPortalNav.length ? tabPortalNav : shellPortalNav;
+export const portalNav: NavGroup[] = withAuditNav(tabPortalNav.length ? tabPortalNav : shellPortalNav, '/app/access-log', ['owner']);

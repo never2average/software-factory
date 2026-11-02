@@ -27,6 +27,10 @@ each one the factory can check. Today (mold_v0):
                              by the build (scripts/gen-packs.mjs with src/landing.ts), so the factory follows the shell's
                              sections as they change. From the brief: `landing.<key>.<key> = <text>` lines in ## Profile,
                              or a ## Landing section holding the whole block as one ```json fenced block
+  audit                      {"data": true|false, "platform": true|false, "retention_days": 1..3650,
+                             "platform_retention_days": 1..3650} (mold_v0-197, the shell's src/audit-trail.ts): the
+                             company's data trail and the platform usage trail, each off unless true; entries kept 400
+                             days unless the app says otherwise (application.json profile.audit; the app spec's audit)
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -408,7 +412,22 @@ def problems(profile, mold_id, root, packs=None):
             e = instructions_problem(v, "profile.mcp_instructions")
             if e: errs.append(e)
         elif k == "landing": errs += landing_problems(v, "profile.landing")
+        elif k == "audit": errs += audit_problems(v, "profile.audit")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
+    return errs
+
+AUDIT_FLAGS, AUDIT_DAYS = ("data", "platform"), ("retention_days", "platform_retention_days")
+
+def audit_problems(v, at="audit"):
+    """The audit trails (mold_v0-197; the shell's scripts/gen-packs.mjs auditProblem checks the same in the build)."""
+    if not isinstance(v, dict) or not v: return [f"{at} must be an object of data, platform (true or false) and retention_days"]
+    errs = []
+    for k, x in v.items():
+        if k in AUDIT_FLAGS:
+            if not isinstance(x, bool): errs.append(f"{at}.{k} must be true or false (got {json.dumps(x)[:40]})")
+        elif k in AUDIT_DAYS:
+            if isinstance(x, bool) or not isinstance(x, int) or not (1 <= x <= 3650): errs.append(f"{at}.{k} must be a whole number of days, 1 to 3650 (got {json.dumps(x)[:40]})")
+        else: errs.append(f"{at}.{k} is not an audit setting (known: {', '.join(AUDIT_FLAGS + AUDIT_DAYS)})")
     return errs
 
 def flat(profile, at=""):
