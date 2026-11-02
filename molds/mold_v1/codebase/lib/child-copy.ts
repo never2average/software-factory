@@ -4,7 +4,7 @@
  *
  * WHY. A finished specialist's details (its rows, the files and apps it made, its nested specialists) exist only on
  * its own stream, and reading that stream from event 0 cost 9.4 MB to over 147 MB and 13.6 s to over 85 s per
- * specialist, once per page load (redacted, 2026-10-13). The fold (lib/child-feed.ts `ChildFold`) already keeps
+ * specialist, once per page load (the live app, 2026-10-13). The fold (lib/child-feed.ts `ChildFold`) already keeps
  * only the events that change what is shown (98.6% of the bytes were superseded reasoning deltas). A copy is those
  * kept events with their ABSOLUTE stream index, plus the cursor, taken at a session boundary; folding it again gives
  * the same rows, messages and nested specialists as folding the whole stream (scripts/test-child-feed.mjs, section 13).

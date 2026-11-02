@@ -389,10 +389,15 @@ def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pul
     if not db or db == "[SENSITIVE]":
         say(f"{app_id}: the database address could not be read from the project's production environment. Nothing was run."); return 1
     env, said = child_env(vals, url, v0=v0)
+    # Org #1 (lib/org_one.py), from state as every deploy writes it, for a mold that reads it: the scripts resolve org #1
+    # and record the operator's company as the app does. Not secrets, but they name the organisation: shown by name only.
+    import org_one
+    org1 = org_one.env_pairs(infra, build) if v0 is None else {}
+    env.update(org1)
     hide = hider(_secret_values(env))
     AR.NOTES["details"].setdefault("operator", {})["env"] = sorted(k for k in env if k not in BASE_ENV)
     say(f"{app_id}: {said}")
-    say(f"    $ " + " ".join(f"{k}={env[k]}" if k in SHOWN_VALUES or k in V0_SETTINGS or k in ("NODE_ENV", "WORKSPACE_OPS_URL") else f"{k}=<hidden>"
+    say(f"    $ " + " ".join(f"{k}={env[k]}" if k in SHOWN_VALUES or k in V0_SETTINGS or k in ("NODE_ENV", "WORKSPACE_OPS_URL") else f"{k}=<org #1, from state>" if k in org1 else f"{k}=<hidden>"
                            for k in env if k not in BASE_ENV) + " " + shlex.join(argv + mask_args(args)))
     try:
         r = (runner or subprocess.run)(argv + list(args), cwd=build, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)

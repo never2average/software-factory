@@ -22,6 +22,7 @@
 // Additive + idempotent. RUN THIS BEFORE deploying.
 import postgres from "postgres";
 import { readFileSync } from "node:fs";
+import { DEFAULT_ORG } from "./scripts/lib/default-org.mjs";
 
 const env = Object.fromEntries(
   readFileSync(".env.local", "utf8")
@@ -107,7 +108,8 @@ if (!appUrl) {
   let own = -1;
   let foreign = -1;
   await app.begin(async (tx) => {
-    await tx`select set_config('app.org_id', 'redacted', true)`;
+    // Org #1 (scripts/lib/default-org.mjs: DEFAULT_ORG_ID, as the deployment names it): a read, it changes nothing.
+    await tx`select set_config('app.org_id', ${DEFAULT_ORG}, true)`;
     [{ n: own }] = await tx`SELECT count(*)::int AS n FROM connector_secrets`;
   });
   await app.begin(async (tx) => {

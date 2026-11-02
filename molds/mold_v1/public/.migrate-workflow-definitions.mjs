@@ -22,7 +22,7 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 await sql`
   CREATE TABLE IF NOT EXISTS workflow_definitions (
     id text PRIMARY KEY,
-    org_id text NOT NULL DEFAULT 'redacted',
+    org_id text NOT NULL DEFAULT 'acmeco',
     name text NOT NULL,
     entity text NOT NULL,
     stages jsonb NOT NULL DEFAULT '[]'::jsonb,

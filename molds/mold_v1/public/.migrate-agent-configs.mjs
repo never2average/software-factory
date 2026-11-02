@@ -21,7 +21,7 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 
 await sql`
   CREATE TABLE IF NOT EXISTS agent_configs (
-    org_id text NOT NULL DEFAULT 'redacted',
+    org_id text NOT NULL DEFAULT 'acmeco',
     agent_key text NOT NULL,
     paused boolean NOT NULL DEFAULT false,
     instructions text,

@@ -1,15 +1,15 @@
 /**
  * Migration: take one tenant's brand out of every other tenant's schema.
  *
- * `implementation.redacted_launch_approver_email` is the PROVIDER-side signer
+ * The implementation table's vendor-named launch-approver column is the PROVIDER-side signer
  * in the four-party launch signoff, sitting beside `customer_launch_approver_
  * email`. Naming it after the vendor was fine while there was exactly one
  * vendor. It is not fine now: the column name reaches a tenant three ways —
  * the data-room detail view, the exported workbook's column header, and the
  * customer JSON schema the agent writes — so every workspace on the platform
- * reads "redacted launch approver" on their own customers.
+ * reads "<vendor> launch approver" on their own customers.
  *
- *   redacted_launch_approver_email  →  provider_launch_approver_email
+ *   <vendor>_launch_approver_email  →  provider_launch_approver_email
  *
  * Checked before writing this: NO row in ANY workspace has the column set, so
  * there is nothing to preserve and no window where the two names disagree.
@@ -90,15 +90,15 @@ await preflight(sql);
 const cols = await sql`
   SELECT column_name FROM information_schema.columns
   WHERE table_schema = 'public' AND table_name = 'implementation'
-    AND column_name IN ('redacted_launch_approver_email', 'provider_launch_approver_email')`;
+    AND column_name IN ('acmeco_launch_approver_email', 'provider_launch_approver_email')`;
 const names = new Set(cols.map((c) => c.column_name));
 
-if (names.has("provider_launch_approver_email") && !names.has("redacted_launch_approver_email")) {
+if (names.has("provider_launch_approver_email") && !names.has("acmeco_launch_approver_email")) {
   console.log("✓ already renamed — nothing to do");
   await sql.end();
   process.exit(0);
 }
-if (!names.has("redacted_launch_approver_email")) {
+if (!names.has("acmeco_launch_approver_email")) {
   console.log("✗ neither column exists on `implementation` — is this the right database?");
   await sql.end();
   process.exit(1);
@@ -118,11 +118,11 @@ if (names.size === 2) {
  * a rename is cheap to do loudly.
  */
 const [{ n }] = await sql`
-  SELECT count(*)::int AS n FROM implementation WHERE redacted_launch_approver_email IS NOT NULL`;
+  SELECT count(*)::int AS n FROM implementation WHERE acmeco_launch_approver_email IS NOT NULL`;
 console.log(`rows with a value in the old column: ${n} (a rename preserves them either way)`);
 
 await sql`ALTER TABLE implementation
-          RENAME COLUMN redacted_launch_approver_email TO provider_launch_approver_email`;
+          RENAME COLUMN acmeco_launch_approver_email TO provider_launch_approver_email`;
 
 const [check] = await sql`
   SELECT count(*)::int AS n FROM information_schema.columns

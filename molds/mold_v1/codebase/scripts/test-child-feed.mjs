@@ -1,7 +1,7 @@
 /**
  * THE CONTROL PANEL'S SPECIALIST FEEDS (lib/child-feed.ts): the fold, and the store that reads them.
  *
- * Measured before this module (redacted, 2026-10-13): every chat open re-read every specialist's stream from
+ * Measured before this module (the live app, 2026-10-13): every chat open re-read every specialist's stream from
  * event 0 (9.4 MB to over 147 MB each), folded it with one state update per event, waited for ever on the 6 of 12
  * streams that never answered, and started all of it at mount. What is held here, each on the real reducer
  * (`withSessionEpochs(defaultMessageReducer())`, the one the panel and the chat mount):

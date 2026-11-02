@@ -19,7 +19,7 @@ export async function recordActivity(
 ): Promise<void> {
   try {
     // The workspace is REQUIRED. It was optional, falling back to a column
-    // default of 'redacted' — a workspace that does not exist — so an
+    // default of a fixed org id — a workspace that does not exist — so an
     // omission filed the activity where nobody would ever read it.
     // Its own workspace-scoped transaction — see lib/ops-audit.ts for why a
     // fire-and-forget writer must not borrow the caller's.

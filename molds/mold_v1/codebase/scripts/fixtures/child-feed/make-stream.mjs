@@ -1,6 +1,6 @@
 /**
  * A specialist's session stream in eve's own shape, generated, content-free and deterministic: the shape the
- * Control Panel's harvest measured on the live app (redacted, 2026-10-13), where 98.6% of a specialist's bytes
+ * Control Panel's harvest measured on the live app (2026-10-13), where 98.6% of a specialist's bytes
  * were `reasoning.appended` deltas, each carrying the WHOLE reasoning text so far. Field order is eve's
  * (`{"data":{…},"type":"…","meta":{"at":"…"}}`, data keys sorted), as in scripts/fixtures/event-order/.
  *

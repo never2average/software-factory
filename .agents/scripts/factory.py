@@ -1041,6 +1041,18 @@ def doctor_items():
             add(f"{mid} fetched", False, "mold", f"Fetch it: python3 .claude/scripts/mold.py fetch {mid}"); continue
         if services.REHEARSAL:
             add(f"{mid} fetched (rehearsal mold)", True, "mold"); continue
+        # Its private paths (molds/<mid>/mold.json, lib/mold_private.py): never tracked, so a pull that untracks them or a
+        # fresh clone leaves them absent; the migration chain needs every one on disk (the originals, or the neutral
+        # replacements on a machine without the source).
+        import mold_private
+        try: _priv = mold_private.private_paths(ROOT, mid); _absent = [p for p, st in mold_private.states(ROOT, mid) if st == "absent"]
+        except mold_private.Problem as e: _priv, _absent = [], []; add(f"{mid} mold.json readable", False, "mold", str(e))
+        if _priv:
+            from factory_local import mold_source
+            add(f"{mid} private paths on disk ({len(_priv)}, never tracked)", not _absent, "mold",
+                (f"{len(_absent)} absent. This machine has the source: python3 .claude/scripts/mold.py fetch {mid} puts the originals back."
+                 if mold_source(mid, ST) else
+                 f"{len(_absent)} absent. Put the neutral replacements in place: python3 .claude/scripts/mold.py public {mid}"))
         r = _run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "mold.py"), "check", mid], timeout=600)
         out = ((r.stdout or "") + (r.stderr or "")) if r else ""
         add(f"{mid} fetched and IDENTICAL to its pin", r and r.returncode == 0, "mold",

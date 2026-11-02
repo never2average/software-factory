@@ -5,14 +5,17 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_DOMAIN } from "../../lib/default-org.mjs";
+import { DEFAULT_DOMAIN, DEFAULT_ORG_SLUG } from "../../lib/default-org.mjs";
 
 /** Consistent console vocabulary across every operator script. */
 export const glyph = { ok: "✓", bad: "✗", info: "•", warn: "⚠" };
-/** The only email domain the operator tooling accepts: org #1's (DEFAULT_DOMAIN in lib/org-context.ts). */
+/** The only email domain the operator tooling accepts: org #1's (DEFAULT_DOMAIN, lib/default-org.ts). */
 export const ALLOWED_DOMAIN = DEFAULT_DOMAIN;
-/** The employer the tooling records for the person running it (a staff row's employer_org). */
-export const OPERATOR_COMPANY = "redacted";
+/**
+ * The employer the tooling records for the person running it (a staff row's employer_org): org #1's company name,
+ * WORKSPACE_OPERATOR_COMPANY, else org #1's slug (DEFAULT_ORG without `org-`, scripts/lib/default-org.mjs).
+ */
+export const OPERATOR_COMPANY = String(process.env.WORKSPACE_OPERATOR_COMPANY ?? "").trim() || DEFAULT_ORG_SLUG;
 
 /** Minimal `--flag value` reader — no dependency, matches the repo's other scripts. */
 export function flag(name) {

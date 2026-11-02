@@ -25,8 +25,9 @@ import { orgMembers, orgs } from "./db/schema.ts";
 import { inheritedScope } from "./session-scope.ts";
 import { isServicePrincipal, serviceScopeOf, type AuthLike } from "./service-scope.ts";
 
-export const DEFAULT_ORG = "redacted";
-export const DEFAULT_DOMAIN = "redacted";
+// Org #1 and its hosted domain, set per deployment (DEFAULT_ORG_ID, DEFAULT_ORG_DOMAIN): lib/default-org.ts.
+export { DEFAULT_DOMAIN, DEFAULT_ORG } from "../../lib/default-org.ts";
+import { DEFAULT_DOMAIN, DEFAULT_ORG } from "../../lib/default-org.ts";
 
 /** True for an org #1 identity (member domain or address). */
 function isDefaultOrgIdentity(email?: string, hd?: string): boolean {

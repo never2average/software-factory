@@ -1,6 +1,6 @@
 {
-  "id": "25c808bb-e943-405d-933c-877fad054768",
-  "prevId": "d4991f07-d174-4660-b21c-cc65265eb964",
+  "id": "233462d3-2f7e-429a-932b-a9363ff110b5",
+  "prevId": "87850cec-d6b3-4ca2-afd6-5f7cd05b9c47",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -135,42 +135,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "run_key": {
-          "name": "run_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "input_tokens": {
-          "name": "input_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "output_tokens": {
-          "name": "output_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cache_read_tokens": {
-          "name": "cache_read_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cache_write_tokens": {
-          "name": "cache_write_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cost_usd": {
-          "name": "cost_usd",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -204,15 +168,7 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "automation_runs_run_key_unique": {
-          "name": "automation_runs_run_key_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "run_key"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -269,12 +225,6 @@
         },
         "synced": {
           "name": "synced",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notify_emails": {
-          "name": "notify_emails",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
@@ -1139,8 +1089,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "redacted_launch_approver_email": {
-          "name": "redacted_launch_approver_email",
+        "acmeco_launch_approver_email": {
+          "name": "acmeco_launch_approver_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -2157,12 +2107,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "notify_emails": {
-          "name": "notify_emails",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "notify_email": {
           "name": "notify_email",
           "type": "text",
@@ -2786,18 +2730,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "workflow": {
-          "name": "workflow",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notify_emails": {
-          "name": "notify_emails",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "notify_email": {
           "name": "notify_email",
           "type": "text",
@@ -3316,73 +3248,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.workflow_instruction_versions": {
-      "name": "workflow_instruction_versions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "workflow_id": {
-          "name": "workflow_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content": {
-          "name": "content",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "author": {
-          "name": "author",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "workflow_instr_versions_idx": {
-          "name": "workflow_instr_versions_idx",
-          "columns": [
-            {
-              "expression": "workflow_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.workflows": {
       "name": "workflows",
       "schema": "",
@@ -3428,19 +3293,6 @@
         "instructions": {
           "name": "instructions",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "instructions_enabled": {
-          "name": "instructions_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "notify_emails": {
-          "name": "notify_emails",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

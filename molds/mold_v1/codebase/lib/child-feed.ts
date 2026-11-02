@@ -5,7 +5,7 @@
  * stream: the parent only says `subagent.called` + `childSessionId`, and everything the specialist did (its tool calls,
  * the files, crons, apps and nested specialists it created, its resume token) exists only on that stream.
  *
- * WHAT THIS REPLACES, MEASURED (redacted, 2026-10-13, 12 specialist streams in the operator's 7 chats):
+ * WHAT THIS REPLACES, MEASURED (the live app, 2026-10-13, 12 specialist streams in the operator's 7 chats):
  *
  *   - Every chat open re-read every specialist's stream from event 0: 9.4 MB to over 147 MB each (3,038 to 18,870
  *     events), 13.6 s to over 85 s per specialist, because the read cursor lived in a `useRef` that a remount empties.

@@ -23,7 +23,7 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 await sql`
   CREATE TABLE IF NOT EXISTS chat_sessions (
     id text PRIMARY KEY,
-    org_id text NOT NULL DEFAULT 'redacted',
+    org_id text NOT NULL DEFAULT 'acmeco',
     owner_email text NOT NULL,
     client_key text,
     title text,

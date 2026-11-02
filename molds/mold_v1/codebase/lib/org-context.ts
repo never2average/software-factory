@@ -23,10 +23,12 @@ import { getOpsDb, withOrgRls, type Db } from "@/lib/ops-db";
 import { customers, orgMembers, orgs } from "@/agent/lib/db/schema";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
-/** Org #1. The backfill target; the fail-safe when tenancy isn't live yet. */
-export const DEFAULT_ORG = "redacted";
-/** Org #1's Google Workspace hosted domain. */
-export const DEFAULT_DOMAIN = "redacted";
+/**
+ * Org #1 (the backfill target, and the fail-safe when tenancy isn't live yet) and its Google Workspace hosted
+ * domain. Each deployment names its own (DEFAULT_ORG_ID, DEFAULT_ORG_DOMAIN); lib/default-org.ts says how.
+ */
+export { DEFAULT_DOMAIN, DEFAULT_ORG } from "@/lib/default-org";
+import { DEFAULT_DOMAIN, DEFAULT_ORG } from "@/lib/default-org";
 
 export type OrgRole = "owner" | "admin" | "engineer" | "member";
 

@@ -1089,8 +1089,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "redacted_launch_approver_email": {
-          "name": "redacted_launch_approver_email",
+        "acmeco_launch_approver_email": {
+          "name": "acmeco_launch_approver_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false

@@ -171,6 +171,7 @@ import buildfit             # a heavy build sized to this machine, now (lib/buil
 import asr                  # the app's speech model for dictation, carried as ASR_* (lib/asr.py)
 import vercel_addr          # which addresses are this app's own on Vercel: read, verified, never derived (mold_v1-239)
 import google_signin        # does "Continue with Google" work at the app's address; the sign-in hub's settings (mold_v1-242)
+import org_one              # org #1 (DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN) for a mold that reads it from the environment
 import single_service       # a mold that ships as one service with its own compose stack (mold_v0-028)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -1141,6 +1142,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
         try: cfg.update(asr.env_pairs(app, mold_dir))
         except SystemExit as x: create.append(f"NOTHING: the deploy stops before writing anything, because {x}")
         hub_cfg = google_signin.env_pairs(infra, mold_dir)
+        org1 = org_one.env_pairs(infra, mold_dir)
+        if org1: create.append(f"env on {proj} (and {api} for {', '.join(sorted(org_one.api_pairs(org1)))}), rewritten on every deploy (org #1, lib/org_one.py): {', '.join(sorted(org1))}")
         if hub_cfg: create.append(f"env on {proj}, rewritten on every deploy (the Google sign-in hub): " + ", ".join(f"{k}={v}" for k, v in hub_cfg.items()))
         create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items())
                       + "; PLATFORM_NOTIFY_FROM's display name set to this app's product name on all three projects")
@@ -1871,6 +1874,13 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     cfg.update(asr.env_pairs(app, mold_dir))
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
+    # Org #1 (lib/org_one.py): the id and hosted domain the app's data was written under, on the web door and the agent
+    # API; the operator tooling's company on the web door, whose environment the operator:* scripts run with. Written
+    # from state on every deploy, only for a mold that reads them; a name nothing sets is left to the mold's placeholder.
+    _org1 = org_one.env_pairs(infra, mold_dir)
+    for k, v in _org1.items(): _set_env(k, v, mold_dir, project=proj)
+    for k, v in org_one.api_pairs(_org1).items(): _set_env(k, v, mold_dir, project=f"{proj}-api")
+    if _org1: print(f"  org #1 set from state on {proj} and {proj}-api: {', '.join(sorted(_org1))}")
     # The Google sign-in hub (lib/google_signin.py, mold_v1-242): which app does the Google part for this one, and
     # which addresses this app does it for. The web door alone reads them; written from state on every deploy and
     # removed when state no longer says them, and only for a mold that has the hub.
@@ -3454,6 +3464,7 @@ def self_test():
         if _env is not None: os.environ["FACTORY_REHEARSAL"] = _env
     self_test_release(check)
     import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
+    org_one.self_test(check)                             # org #1 for a mold that reads it (DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN)
     self_test_single(check)                              # a single-service mold (mold_v0-028): the hand-off and its own module
     self_test_build_caches(check)                        # a typecheck's build cache never refuses an in-tree deploy (mold_v0-153)
     import migration_rehearsal                           # --rehearse-migrations (mold_v0-142): a stand-in Neon API and runner

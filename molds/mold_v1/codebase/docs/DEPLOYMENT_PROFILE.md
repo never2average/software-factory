@@ -1165,12 +1165,12 @@ own and no states, only a name the others share, is usually a field (a pick list
 
 | Domain | `tasks` | `periods` | `deployments` | `implementations` |
 |---|---|---|---|---|
-| Compliance (redacted) | obligation | regulatory filing (contains its obligations) | change-management initiative | compliance framework |
+| Compliance (a compliance desk) | obligation | regulatory filing (contains its obligations) | change-management initiative | compliance framework |
 | Equity research | research task (a model update, a channel check) | results season (contains the updates due in it) | report published on a company | coverage of a company (grouped into portfolios) |
 | Software delivery | ticket | iteration (contains the tickets planned into it) | release to a customer environment | customer implementation |
 | Sales | follow-up (a call, a proposal to send) | quarter (contains the commitments due in it) | order put into effect for an account | account plan |
 
-redacted in full is [`scripts/fixtures/record-areas/examples/redacted.json`](../scripts/fixtures/record-areas/examples/redacted.json).
+The compliance desk in full is [`scripts/fixtures/record-areas/examples/compliance-desk.json`](../scripts/fixtures/record-areas/examples/compliance-desk.json).
 Its period, the part a mapping most often gets wrong:
 
 ```jsonc

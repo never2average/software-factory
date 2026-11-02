@@ -1,16 +1,16 @@
 // Migration: Org (workspace) tenancy layer — the tenant layer ABOVE customers,
 // roster, connectors, workflows, apps, cycles, todos, memories, schedules,
 // secrets, and the automation/activity feeds. The operator's own company becomes org #1
-// (slug 'redacted').
+// (slug ORG below).
 //
 // SAFE BY DESIGN — additive + idempotent + NULLABLE-FIRST:
 //   * new tables: orgs, org_members, org_invites, platform_admins, recipes
 //   * new NULLABLE `org_id` column on each global table, backfilled to
-//     'redacted'. NO column is made NOT NULL here — the NOT-NULL + composite-PK
+//     ORG. NO column is made NOT NULL here — the NOT-NULL + composite-PK
 //     tightening is a SEPARATE later migration, run only once every write path
 //     stamps org_id. Nothing here can lock a table or break an existing query.
 //
-// Because org_id stays nullable and backfills to 'redacted', the running app
+// Because org_id stays nullable and backfills to ORG, the running app
 // behaves EXACTLY as today (single implicit org) until the org-aware code ships.
 //
 // Review the DDL, then run:  ! node .migrate-org-tenancy.mjs
@@ -31,9 +31,9 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 
 // The org #1 backfill target. Its Google Workspace domain is what today's
 // hard-coded ALLOWED_DOMAIN gate accepts, so the hd → org lookup keeps working.
-const ORG = "redacted";
-const ORG_NAME = "redacted";
-const ORG_DOMAIN = "redacted";
+const ORG = "acmeco";
+const ORG_NAME = "Acmeco";
+const ORG_DOMAIN = "acmeco.example";
 
 /* -------------------------------------------------------------------------- */
 /* 1. New tables                                                              */
@@ -190,7 +190,7 @@ const [t] = await sql`
     (SELECT count(*) FROM org_members WHERE org_id = ${ORG}) AS member_count,
     (SELECT count(*) FROM recipes WHERE org_id IS NULL) AS recipe_count`;
 console.log("orgs:", t.orgs ? "OK" : "MISSING", `(count ${t.org_count})`);
-console.log("org_members:", t.members ? "OK" : "MISSING", `(redacted members ${t.member_count})`);
+console.log("org_members:", t.members ? "OK" : "MISSING", `(org #1 members ${t.member_count})`);
 console.log("org_invites:", t.invites ? "OK" : "MISSING");
 console.log("platform_admins:", t.admins ? "OK" : "MISSING");
 console.log("recipes:", t.recipes ? "OK" : "MISSING", `(built-in ${t.recipe_count})`);

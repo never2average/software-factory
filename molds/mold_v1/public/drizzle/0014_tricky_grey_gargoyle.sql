@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS "account_summaries" (
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "agent_configs" (
-	"org_id" text DEFAULT 'redacted' NOT NULL,
+	"org_id" text DEFAULT 'org-acmeco' NOT NULL,
 	"agent_key" text NOT NULL,
 	"paused" boolean DEFAULT false NOT NULL,
 	"instructions" text,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS "agent_configs" (
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "agent_profiles" (
 	"id" text PRIMARY KEY NOT NULL,
-	"org_id" text DEFAULT 'redacted' NOT NULL,
+	"org_id" text DEFAULT 'org-acmeco' NOT NULL,
 	"email" text DEFAULT '' NOT NULL,
 	"persona_name" text,
 	"tone" text,
@@ -147,11 +147,11 @@ CREATE TABLE IF NOT EXISTS "browser_sessions" (
 -- hardening path. Persisted CDP/live-view URLs are bearer capabilities: expire
 -- the old ephemeral rows instead of attempting to preserve plaintext secrets.
 ALTER TABLE "browser_allowlist" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
-UPDATE "browser_allowlist" SET "org_id" = 'redacted' WHERE "org_id" IS NULL;--> statement-breakpoint
+UPDATE "browser_allowlist" SET "org_id" = 'org-acmeco' WHERE "org_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "browser_allowlist" ALTER COLUMN "org_id" SET NOT NULL;--> statement-breakpoint
 
 ALTER TABLE "browser_credentials" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
-UPDATE "browser_credentials" SET "org_id" = 'redacted' WHERE "org_id" IS NULL;--> statement-breakpoint
+UPDATE "browser_credentials" SET "org_id" = 'org-acmeco' WHERE "org_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "browser_credentials" ALTER COLUMN "org_id" SET NOT NULL;--> statement-breakpoint
 DO $$
 DECLARE existing_pk text;
@@ -175,7 +175,7 @@ ALTER TABLE "browser_contexts" ADD COLUMN IF NOT EXISTS "scope_key" text;--> sta
 ALTER TABLE "browser_contexts" ADD COLUMN IF NOT EXISTS "created_by" text;--> statement-breakpoint
 UPDATE "browser_contexts"
    SET "id" = COALESCE("id", gen_random_uuid()),
-       "org_id" = COALESCE("org_id", 'redacted'),
+       "org_id" = COALESCE("org_id", 'org-acmeco'),
        "scope_type" = COALESCE("scope_type", 'team'),
        "scope_key" = COALESCE("scope_key", 'team'),
        "created_by" = COALESCE("created_by", 'migration:legacy-team-context');--> statement-breakpoint
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS "chat_presence" (
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "chat_sessions" (
 	"id" text PRIMARY KEY NOT NULL,
-	"org_id" text DEFAULT 'redacted' NOT NULL,
+	"org_id" text DEFAULT 'org-acmeco' NOT NULL,
 	"owner_email" text NOT NULL,
 	"client_key" text,
 	"title" text,
@@ -442,7 +442,7 @@ CREATE TABLE IF NOT EXISTS "recipes" (
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "room_presence" (
-	"org_id" text DEFAULT 'redacted' NOT NULL,
+	"org_id" text DEFAULT 'org-acmeco' NOT NULL,
 	"room" text NOT NULL,
 	"email" text NOT NULL,
 	"activity" text,
@@ -516,7 +516,7 @@ CREATE TABLE IF NOT EXISTS "todos" (
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "workflow_definitions" (
 	"id" text PRIMARY KEY NOT NULL,
-	"org_id" text DEFAULT 'redacted' NOT NULL,
+	"org_id" text DEFAULT 'org-acmeco' NOT NULL,
 	"name" text NOT NULL,
 	"entity" text NOT NULL,
 	"stages" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -534,7 +534,7 @@ ALTER TABLE "workflow_definitions" ADD COLUMN IF NOT EXISTS "archived_at" timest
 ALTER TABLE "automation_audit" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 ALTER TABLE "automation_runs" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 ALTER TABLE "automation_runs" ADD COLUMN IF NOT EXISTS "workflow_run_id" text;--> statement-breakpoint
-ALTER TABLE "connector_secrets" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'redacted' NOT NULL;--> statement-breakpoint
+ALTER TABLE "connector_secrets" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'org-acmeco' NOT NULL;--> statement-breakpoint
 ALTER TABLE "connector_secrets" ADD COLUMN IF NOT EXISTS "key_version" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
 ALTER TABLE "connectors" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 ALTER TABLE "connectors" ADD COLUMN IF NOT EXISTS "endpoint_url" text;--> statement-breakpoint
@@ -555,13 +555,13 @@ ALTER TABLE "schedule_rules" ADD COLUMN IF NOT EXISTS "workflow" text;--> statem
 ALTER TABLE "solutions" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 ALTER TABLE "tickets" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 ALTER TABLE "workflow_instruction_versions" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
-ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'redacted' NOT NULL;--> statement-breakpoint
+ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'org-acmeco' NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "attempt" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "lease_token" text DEFAULT 'legacy' NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "session_id" text;--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" ADD COLUMN IF NOT EXISTS "child_session_id" text;--> statement-breakpoint
-UPDATE "workflow_run_journal" SET "org_id" = 'redacted' WHERE "org_id" IS NULL;--> statement-breakpoint
-ALTER TABLE "workflow_run_journal" ALTER COLUMN "org_id" SET DEFAULT 'redacted';--> statement-breakpoint
+UPDATE "workflow_run_journal" SET "org_id" = 'org-acmeco' WHERE "org_id" IS NULL;--> statement-breakpoint
+ALTER TABLE "workflow_run_journal" ALTER COLUMN "org_id" SET DEFAULT 'org-acmeco';--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" ALTER COLUMN "org_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflow_run_journal" DROP CONSTRAINT IF EXISTS "workflow_run_journal_run_id_call_index_pk";--> statement-breakpoint
 DO $$
@@ -576,7 +576,7 @@ BEGIN
       PRIMARY KEY ("run_id", "attempt", "call_index");
   END IF;
 END $$;--> statement-breakpoint
-ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'redacted' NOT NULL;--> statement-breakpoint
+ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "org_id" text DEFAULT 'org-acmeco' NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "lease_token" text;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "lease_expires_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "worker_id" text;--> statement-breakpoint
@@ -585,8 +585,8 @@ ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "cancel_requested_at" times
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "cancel_requested_by" text;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "cancel_reason" text;--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "cancelled_at" timestamp with time zone;--> statement-breakpoint
-UPDATE "workflow_runs" SET "org_id" = 'redacted' WHERE "org_id" IS NULL;--> statement-breakpoint
-ALTER TABLE "workflow_runs" ALTER COLUMN "org_id" SET DEFAULT 'redacted';--> statement-breakpoint
+UPDATE "workflow_runs" SET "org_id" = 'org-acmeco' WHERE "org_id" IS NULL;--> statement-breakpoint
+ALTER TABLE "workflow_runs" ALTER COLUMN "org_id" SET DEFAULT 'org-acmeco';--> statement-breakpoint
 ALTER TABLE "workflow_runs" ALTER COLUMN "org_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "workflows" ADD COLUMN IF NOT EXISTS "org_id" text;--> statement-breakpoint
 DO $$

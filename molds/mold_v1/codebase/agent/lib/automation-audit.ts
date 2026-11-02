@@ -20,7 +20,7 @@ export interface RecordAuditInput {
   /**
    * The workspace this row belongs to. REQUIRED.
    *
-   * It was omitted and the column defaulted to 'redacted' — a workspace
+   * It was omitted and the column defaulted to a fixed org id — a workspace
    * that does not exist — so the row landed where nobody could ever read it,
    * and once the isolation policy is fail-closed it would be unreadable
    * forever. There is no correct workspace to guess, so the caller must say.

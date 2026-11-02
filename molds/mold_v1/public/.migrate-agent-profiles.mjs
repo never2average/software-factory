@@ -22,7 +22,7 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 await sql`
   CREATE TABLE IF NOT EXISTS agent_profiles (
     id text PRIMARY KEY,
-    org_id text NOT NULL DEFAULT 'redacted',
+    org_id text NOT NULL DEFAULT 'acmeco',
     email text NOT NULL DEFAULT '',
     persona_name text,
     tone text,

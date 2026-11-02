@@ -51,7 +51,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "agent_key": {
           "name": "agent_key",
@@ -117,7 +117,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "email": {
           "name": "email",
@@ -1383,7 +1383,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "owner_email": {
           "name": "owner_email",
@@ -3390,8 +3390,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "redacted_launch_approver_email": {
-          "name": "redacted_launch_approver_email",
+        "acmeco_launch_approver_email": {
+          "name": "acmeco_launch_approver_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -4953,7 +4953,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "room": {
           "name": "room",
@@ -6873,7 +6873,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "name": {
           "name": "name",
@@ -7048,7 +7048,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "run_id": {
           "name": "run_id",
@@ -7180,7 +7180,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'redacted'"
+          "default": "'org-acmeco'"
         },
         "run_id": {
           "name": "run_id",

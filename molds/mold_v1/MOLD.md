@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** the mold's source (its address: `mold_sources.mold_v1` in `state/factory.local.json`) @ 306de3f (`main`, snapshot 2026-10-28; PRs #13-#82, #84-#142): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
+**Source:** the mold's source (its address: `mold_sources.mold_v1` in `state/factory.local.json`) @ ebd1ccd (`main`, snapshot 2026-11-02; PRs #13-#82, #84-#142): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
@@ -44,6 +44,18 @@ temporary directory at the pinned commit (or, for `refresh`, at `main`), verifie
 and into the **Source** line above. Every run ends with the proof that the snapshot is the source: the two compared
 file by file with the same excludes, `codebase/.next` absent, and the word IDENTICAL; anything else exits non-zero
 and names the differences.
+
+**Private paths** (`mold.json` `private_paths`, mold_v0-200). 26 files of the source are never tracked here: the
+migration history already applied to live databases (`drizzle/0000`, `0014`, `0023`, `drizzle/meta/0000`-`0014`
+snapshots, and eight one-off `.migrate-*.mjs` scripts), whose SQL carries this factory's organisation names as data.
+They are git-ignored under `codebase/`; `fetch` and `refresh` still put the originals on a machine that has the
+source, so its deploys run the history unchanged. `public/` holds a neutral replacement of each (same path, the
+organisation's values replaced by org #1's placeholders from `lib/default-org.ts`): on a fresh database the
+replacement history builds the same schema, apart from the placeholder in eight `org_id` column defaults. Without
+the source, `python3 .claude/scripts/mold.py public mold_v1` puts them in place (never over an original); `check`
+compares every other path and accepts each private path as the original or its replacement. A maintainer with the
+originals rewrites `public/` with `mold.py public mold_v1 --regenerate`, which refuses to write a replacement that
+still holds a private value.
 
 The snapshot is only ever written by `mold.py`. The mold's own scripts write INTO their cwd when the
 functional lane runs them — `next dev` (the `test:cards` Playwright webServer) rewrites `next-env.d.ts` to import

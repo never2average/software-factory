@@ -63,12 +63,12 @@ const areasOf = (extra) => {
   assert.equal(r.rc, 0, r.err);
   return JSON.parse(r.out);
 };
-const COS = [["50-redacted.json", join(EX, "redacted.json")]];
+const COS = [["50-compliance-desk.json", join(EX, "compliance-desk.json")]];
 /** The wrong mapping the operator saw: a regulatory filing as a deployment, with a due date. */
 const WRONG = [["50-a.json", join(EX, "compliance.json")], ["51-b.json", join(EX, "obligation.json")]];
-/** A redacted profile with one change to its periods area. */
+/** A compliance-desk profile with one change to its periods area. */
 const cosWith = (periods, extra = {}) => {
-  const doc = read(join(EX, "redacted.json"));
+  const doc = read(join(EX, "compliance-desk.json"));
   doc.records.areas.periods = { ...doc.records.areas.periods, ...periods };
   for (const [id, a] of Object.entries(extra)) doc.records.areas[id] = { ...doc.records.areas[id], ...a };
   return [["50-x.json", doc]];
@@ -123,8 +123,8 @@ await check("the record-area schema documents it, and a profile that states a st
 console.log("2. A period contains tasks, and is measured by them");
 // Compiled once; a build that refuses the profile fails every check that reads it, not the whole file.
 let cos = null;
-await check("redacted (scripts/fixtures/record-areas/examples/redacted.json) builds", () => { cos = areasOf(COS); });
-await check("redacted compiles: obligations, regulatory filings that contain them, initiatives, frameworks", () => {
+await check("The compliance desk (scripts/fixtures/record-areas/examples/compliance-desk.json) builds", () => { cos = areasOf(COS); });
+await check("The compliance desk compiles: obligations, regulatory filings that contain them, initiatives, frameworks", () => {
   assert.equal(cos.tasks.label.plural, "obligations");
   assert.equal(cos.periods.label.plural, "regulatory filings");
   assert.equal(cos.deployments.label.plural, "Change-management initiatives");
@@ -154,7 +154,7 @@ for (const [what, extra, re] of refused) {
 
 // --- 3. the build's note -----------------------------------------------------------------------------------------------
 console.log("3. The build says each area's role beside the pack's label");
-await check("redacted: each area's role next to its label, the filing containing the obligations, no warning", () => {
+await check("The compliance desk: each area's role next to its label, the filing containing the obligations, no warning", () => {
   const r = gen(COS);
   assert.equal(r.rc, 0, r.err);
   assert.match(r.err, /note: the record areas, by what each IS:/);
@@ -177,7 +177,7 @@ await check("the warning reads the legacy form too (the live compliance pack's f
   assert.doesNotMatch(research.err, /warning: the deployments area/);
 });
 await check("a deployments area that hides both its release state and its health is warned about", () => {
-  const r = gen(cosWith({}, { deployments: { fields: { ...read(join(EX, "redacted.json")).records.areas.deployments.fields, releaseStatus: { hidden: true, fixed: "deployed" }, healthStatus: { hidden: true, fixed: "healthy" } } } }));
+  const r = gen(cosWith({}, { deployments: { fields: { ...read(join(EX, "compliance-desk.json")).records.areas.deployments.fields, releaseStatus: { hidden: true, fixed: "deployed" }, healthStatus: { hidden: true, fixed: "healthy" } } } }));
   assert.equal(r.rc, 0, r.err);
   assert.match(r.err, /warning: the deployments area \("Change-management initiatives"\) hides both columns that carry what a deployment is \("releaseStatus", "healthStatus"/);
 });
@@ -196,7 +196,7 @@ await check("the default: no structure is said for any area, and no card", () =>
     assert.equal(ra.describeArea(id), null, id);
   }
 });
-await check("redacted: one sentence per area, in its words", () => {
+await check("The compliance desk: one sentence per area, in its words", () => {
   assert.equal(ra.describeStructure("periods", cos, "regulated entity"), 'Regulatory filings: each groups obligations due together in one window ("Period from", `startsAt` to "Filing due", `endsAt`) and is complete when they are all done; an obligation is in one when filed with its id (`cycleId`).');
   assert.equal(ra.describeStructure("tasks", cos, "regulated entity"), 'Obligations: each is one unit of work that someone owns ("Owner", `assignee`), falling due on a day ("Due", `dueAt`), moved through its states until it is done. Obligations due together are grouped into a regulatory filing (`cycleId`), which is complete when they are done. One may be filed under a compliance framework or a change-management initiative (containerType + containerId).');
   assert.equal(ra.describeStructure("deployments", cos, "regulated entity"), 'Change-management initiatives: each is a change rolled out to one regulated entity (its target), with its release state ("Rollout status", `releaseStatus`) and its health ("Control health", `healthStatus`). Obligations may be filed under one.');
@@ -250,7 +250,7 @@ await check("the default model surface is the recorded one, byte for byte", () =
   assert.equal(r.status, 0, r.stderr.slice(-2000));
   assert.ok(r.stdout === readFileSync(join(ROOT, "scripts/fixtures/agent-vocabulary/default-surface.txt"), "utf8"), "the default surface moved");
 });
-await check("under redacted (a copy): the briefing and list_cycles say what a filing is, and what moved is only what the profile defines", () => {
+await check("under the compliance desk (a copy): the briefing and list_cycles say what a filing is, and what moved is only what the profile defines", () => {
   const copy = copyWithProfiles(ROOT, COS);
   let secs;
   try {
@@ -280,7 +280,7 @@ await check('docs/DEPLOYMENT_PROFILE.md: "Choosing the area for a domain concept
   assert.ok(at > 0, "no section");
   const sec = doc.slice(at, doc.indexOf("\n## ", at));
   for (const id of lib.AREA_IDS) assert.match(sec, new RegExp(`^\\| \`${id}\` \\| ${lib.STRUCTURE[id].role} \\|`, "m"), id);
-  assert.match(sec, /^\| Compliance \(redacted\) \| obligation \| regulatory filing \(contains its obligations\) \| change-management initiative \| compliance framework \|$/m);
+  assert.match(sec, /^\| Compliance \(a compliance desk\) \| obligation \| regulatory filing \(contains its obligations\) \| change-management initiative \| compliance framework \|$/m);
   for (const d of ["Equity research", "Software delivery", "Sales"]) assert.match(sec, new RegExp(`^\\| ${d}`, "m"), d);
   assert.match(sec, /relations\.contains/);
 });

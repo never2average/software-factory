@@ -294,6 +294,10 @@ def settings(app_id, app, infra, ds):
     # file is rewritten whole, so a value state no longer sets is gone with the next deploy.
     import google_signin
     S["google_hub"] = google_signin.env_pairs(infra, S["mold_src"])
+    # Org #1 (lib/org_one.py): DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN / WORKSPACE_OPERATOR_COMPANY from state on every
+    # deploy, only for a mold that reads them; the env file is rewritten whole, so it can never drift from state.
+    import org_one
+    S["org_one"] = org_one.env_pairs(infra, S["mold_src"])
     S["host_shown"] = S["ssh_host"] or S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"
     S["sudo"] = "" if S["user"] == "root" else "sudo "
@@ -535,6 +539,7 @@ def config_pairs(S):
             if (S["model"].get("roles") or {}).get(role): c[name] = S["model"]["roles"][role]
     c.update(S.get("google_hub") or {})   # AUTH_GOOGLE_HUB_ORIGIN / AUTH_GOOGLE_HUB_ALLOWED_RETURNS, only for a mold that reads them
     c.update(S.get("asr") or {})     # ASR_MODEL / ASR_LANGUAGE / ASR_ENABLED, only for a mold that reads them
+    c.update(S.get("org_one") or {})   # DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN / WORKSPACE_OPERATOR_COMPANY (lib/org_one.py)
     if S["pg"]["tls"] == "migration_switch" and S["pg"]["switch"]: c[S["pg"]["switch"]] = "disable"
     return c
 

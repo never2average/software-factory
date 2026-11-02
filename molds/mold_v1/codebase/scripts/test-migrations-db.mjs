@@ -4,7 +4,7 @@
  *
  * A new deployment's database is built by `npm run db:migrate:production`, which applies drizzle/meta/_journal.json
  * in order. CI builds its database with `drizzle-kit push` from agent/lib/db/schema.ts instead, so nothing noticed
- * when the two disagreed: `implementation.redacted_launch_approver_email` was renamed to
+ * when the two disagreed: the implementation table's vendor-named launch-approver column was renamed to
  * `provider_launch_approver_email` in schema.ts and on the live database by a one-off script, never in the journal,
  * and on a journal-built database every read of the implementation table failed ("column … does not exist").
  *
@@ -60,6 +60,9 @@ const SCRATCH = `migtest_${process.pid}`;
 const scratchUrl = (() => { const u = new URL(adminUrl); u.pathname = `/${SCRATCH}`; return u.toString(); })();
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8"));
 const statementsOf = (tag) => readFileSync(`drizzle/${tag}.sql`, "utf8").split("--> statement-breakpoint").map((v) => v.trim()).filter(Boolean);
+/** The vendor-named column 0023 renames, read from 0023 itself: the journal keeps it as applied, so this test names it once. */
+const RENAME_TAG = journal.entries.find((e) => e.tag.includes("provider_launch_approver"))?.tag;
+const LEGACY_COLUMN = RENAME_TAG ? /RENAME COLUMN "([a-z0-9_]+)" TO "provider_launch_approver_email"/.exec(readFileSync(`drizzle/${RENAME_TAG}.sql`, "utf8"))?.[1] : undefined;
 const COLUMNS = `select table_name || '.' || column_name || ' ' || data_type || ' ' || is_nullable as c
                  from information_schema.columns where table_schema = 'public' order by 1`;
 
@@ -80,7 +83,8 @@ try {
   check(`every journal migration applies to an empty database (${journal.entries.length})`, failed.length === 0, failed);
   const implCols = (await db`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'implementation'`).map((r) => r.column_name);
   check("implementation has provider_launch_approver_email", implCols.includes("provider_launch_approver_email"), implCols);
-  check("…and not the vendor-named redacted_launch_approver_email", !implCols.includes("redacted_launch_approver_email"));
+  check("0023 names the column it renames", Boolean(LEGACY_COLUMN));
+  check("…and not the vendor-named column 0023 renames", !implCols.includes(LEGACY_COLUMN));
   const { drizzle } = await import("drizzle-orm/postgres-js");
   const schema = await import("../agent/lib/db/schema.ts");
   let readError = null;
@@ -98,15 +102,15 @@ try {
   await run();
   await run();
   check("run twice more: harmless", (await db`select count(*)::int as n from information_schema.columns where table_name = 'implementation' and column_name = 'provider_launch_approver_email'`)[0].n === 1);
-  await db.unsafe(`alter table implementation add column redacted_launch_approver_email text`);
+  await db.unsafe(`alter table implementation add column ${LEGACY_COLUMN} text`);
   await db.unsafe(`insert into customers (customer_id, org_id, customer_name) values ('c1', 'o1', 'C1'), ('c2', 'o1', 'C2')`);
-  await db.unsafe(`insert into implementation (customer_id, org_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, redacted_launch_approver_email, provider_launch_approver_email)
+  await db.unsafe(`insert into implementation (customer_id, org_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, ${LEGACY_COLUMN}, provider_launch_approver_email)
                    values ('c1', 'o1', 'UAT', 1, 'Green', 'None', 'old@example.com', null), ('c2', 'o1', 'UAT', 1, 'Green', 'None', 'old2@example.com', 'kept@example.com')`);
   await run();
-  const rows = await db`select customer_id, provider_launch_approver_email as p, redacted_launch_approver_email as o from implementation order by 1`;
+  const rows = await db.unsafe(`select customer_id, provider_launch_approver_email as p, ${LEGACY_COLUMN} as o from implementation order by 1`);
   check("both columns: an empty new cell takes the old value, a filled one is kept, nothing is dropped",
     rows[0].p === "old@example.com" && rows[1].p === "kept@example.com" && rows[0].o === "old@example.com", rows);
-  await db.unsafe(`alter table implementation drop column redacted_launch_approver_email`);
+  await db.unsafe(`alter table implementation drop column ${LEGACY_COLUMN}`);
 
   console.log("\n3. The journal and schema.ts agree, apart from the drift listed with its script");
   const pushed = new Set((await admin.unsafe(COLUMNS)).map((r) => r.c));
