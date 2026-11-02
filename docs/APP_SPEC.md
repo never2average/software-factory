@@ -45,7 +45,11 @@ through the same check `factory.py validate` and the build use.
 ## Completeness rules (beyond required fields)
 
 - `kind` is `tool` (default) or `embedded`. **embedded** needs `developer_surface` (events it emits, SDK languages, client
-  sessions; a stub whose shape mold_v0-193 implements) and `audit.platform: true`.
+  sessions, optional inbound receivers `webhooks_in` and `api_version`) and `audit.platform: true`. mold_v0 builds it
+  (mold_v0-193: the REST API at `/v1`, `/openapi.json`, scoped keys, client sessions, Standard Webhooks out and in, the
+  generated SDKs; molds/mold_v0/MOLD.md "Developer surface"): the spec check refuses an event or SDK language the mold
+  does not have, and `mint.py new --spec` writes the block into the app's first inline pack (so an embedded mold_v0 app
+  gives at least one pack inline). mold_v1 records it only.
 - `audit.data` and `audit.platform` are separate toggles, both default `false` (mold_v0-197 implements them; usage metering
   stays on regardless).
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an

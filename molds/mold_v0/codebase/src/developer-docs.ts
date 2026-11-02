@@ -34,7 +34,7 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
   out.push(page("API overview", [
     "Your own servers reach your workspace's data through a REST API under `/v1`, described as an OpenAPI 3.1 document at [/openapi.json](/openapi.json). The typed SDKs are generated from that document.",
     "## Keys",
-    "An owner makes API keys on the console's API page, or through the API itself. A key is shown **once**: only its first characters (its prefix, like `sk_ab12cd`) are kept to tell keys apart. Each key holds **scopes**:",
+    "Your workspace's owners make API keys (signed in to the console: `/api/developer/keys`). A key is shown **once**: only its first characters (its prefix, like `sk_ab12cd`) are kept to tell keys apart. Each key holds **scopes**:",
     [
       "- `read`: list and read records and runs",
       "- `write`: create, change, move and delete records",

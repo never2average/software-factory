@@ -501,9 +501,9 @@
         "sdk_languages",
         "client_sessions"
       ],
-      "title": "Developer surface (stub, mold_v0-193)",
-      "description": "What a host application's developers build against when this app is embedded in it: the events it emits, the SDK languages it ships, and the client sessions the host's backend mints. A STUB: its shape is fixed now and mold_v0-193 implements it; until then it is recorded with the spec and has no effect. Required when kind is embedded.",
-      "markdownDescription": "What a **host application's developers** build against when this app is embedded in their product.\n\n- `events`: what the embedded app tells the host about (name + meaning).\n- `sdk_languages`: the SDKs it ships.\n- `client_sessions`: short-lived sessions the host's own backend mints for its signed-in users.\n\n**Stub**: the shape is fixed now, **mold_v0-193** implements it. Required when `kind` is `embedded`.",
+      "title": "Developer surface (mold_v0-193)",
+      "description": "What a host application's developers build against when this app is embedded in it: the events it emits to webhooks, the SDK languages generated, the client sessions the host's backend mints, and optional inbound webhook receivers. mold_v0 builds it (the REST API at /v1, /openapi.json, keys, client sessions, webhooks out and in, the SDKs): mint new --spec writes it into the app's first inline pack as pack.json developer_surface. mold_v1: recorded with the spec only. Required when kind is embedded.",
+      "markdownDescription": "What a **host application's developers** build against when this app is embedded in their product.\n\n- `events`: what the app sends to the host's webhooks (mold_v0: `record.created`, `record.updated`, `record.state_changed`, `record.deleted`, `run.finished`, `clock.overdue`; a record event may name `areas`).\n- `sdk_languages`: the SDKs generated (mold_v0: `typescript`, `python`).\n- `client_sessions`: short-lived sessions the host's own backend mints for its signed-in users.\n- `webhooks_in` (optional): receivers that write a signed payload into a workspace record area.\n- `api_version` (optional): the dated version.\n\n**mold_v0** implements it (mold_v0-193): `mint.py new --spec` writes it into the app's first inline pack. Required when `kind` is `embedded`.",
       "properties": {
         "events": {
           "type": "array",
@@ -606,6 +606,84 @@
               }
             }
           }
+        },
+        "webhooks_in": {
+          "type": "array",
+          "maxItems": 20,
+          "title": "Inbound webhook receivers",
+          "description": "Optional: receivers that write a verified (Standard Webhooks) payload into one of the app's workspace record areas.",
+          "markdownDescription": "Optional: each receiver writes a signed payload (or each item of a list in it) into a workspace record area: `name`, `area`, `key` / `title` / `fields` as JSON Pointers (`/id`), `items` (a pointer to a list), `types` (payload types it takes).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "area",
+              "key",
+              "fields"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "description": "The receiver's name.",
+                "markdownDescription": "The receiver's name."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "What it receives.",
+                "markdownDescription": "What it receives."
+              },
+              "area": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "description": "The workspace record area it writes.",
+                "markdownDescription": "The workspace record area it writes."
+              },
+              "items": {
+                "type": "string",
+                "pattern": "^(/([^~/]|~[01])*)*$",
+                "description": "A JSON Pointer to a list: each item is one record.",
+                "markdownDescription": "A JSON Pointer to a list: each item is one record."
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^(/([^~/]|~[01])*)*$",
+                "description": "A JSON Pointer to the record's key.",
+                "markdownDescription": "A JSON Pointer to the record's key."
+              },
+              "title": {
+                "type": "string",
+                "pattern": "^(/([^~/]|~[01])*)*$",
+                "description": "A JSON Pointer to the record's title.",
+                "markdownDescription": "A JSON Pointer to the record's title."
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^(/([^~/]|~[01])*)*$"
+                },
+                "description": "Each field of the area, from a JSON Pointer.",
+                "markdownDescription": "Each field of the area, from a JSON Pointer."
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Only payloads whose type is one of these are written.",
+                "markdownDescription": "Only payloads whose type is one of these are written."
+              }
+            }
+          }
+        },
+        "api_version": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Optional: the dated API version new keys are pinned to (mold_v0: one of its API_VERSIONS).",
+          "markdownDescription": "Optional: the dated API version new keys are pinned to (mold_v0: one of its API_VERSIONS)."
         }
       }
     }
