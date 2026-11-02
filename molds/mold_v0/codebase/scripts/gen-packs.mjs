@@ -1020,13 +1020,14 @@ const deployFacts = readFacts();
  * its rules). Checked here so a typo fails the build rather than billing differently than written.
  */
 const BILLING_KEYS = ["$comment", "enabled", "currency", "max_fixed", "max_cost_plus_percent", "charge_failed_runs", "charge_cancelled_runs", "stripe_meter"];
-/** profile.json `audit` (mold_v0-197, src/audit-trail.ts): the two trails' toggles and how long each keeps its entries. */
+/** profile.json `audit` (mold_v0-197, src/audit-trail.ts): the two trails' toggles and how long each keeps its entries; sign and checkpoint_minutes (mold_v0-195, src/ledger.ts). */
 function auditProblem(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "an object: {\"data\": true or false, \"platform\": true or false, \"retention_days\": days}";
   for (const [k, x] of Object.entries(v)) {
-    if (k === "data" || k === "platform") { if (typeof x !== "boolean") return `${k}: true or false`; }
+    if (k === "data" || k === "platform" || k === "sign") { if (typeof x !== "boolean") return `${k}: true or false`; }
+    else if (k === "checkpoint_minutes") { if (!Number.isInteger(x) || x < 5 || x > 1440) return `${k}: a whole number of minutes, 5 to 1440`; }
     else if (k === "retention_days" || k === "platform_retention_days") { if (!Number.isInteger(x) || x < 1 || x > 3650) return `${k}: a whole number of days, 1 to 3650`; }
-    else return `${k}: not a setting (known: data, platform, retention_days, platform_retention_days)`;
+    else return `${k}: not a setting (known: data, platform, retention_days, platform_retention_days, sign, checkpoint_minutes)`;
   }
   return null;
 }

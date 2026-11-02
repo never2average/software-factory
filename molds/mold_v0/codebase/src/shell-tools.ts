@@ -13,8 +13,8 @@
 export const SHELL_TOOL_NAMES = [] as const;
 export type ShellToolName = (typeof SHELL_TOOL_NAMES)[number];
 
-/** The MCP tool the shell adds when an audit trail is on (src/audit-trail.ts, mold_v0-197), for a workspace's owners. */
-export const AUDIT_TOOL_NAMES = ["read_audit_trail"] as const;
+/** The MCP tools the shell adds when an audit trail is on (src/audit-trail.ts, mold_v0-197) and when audit.sign is (src/ledger.ts, mold_v0-195), for a workspace's owners. */
+export const AUDIT_TOOL_NAMES = ["read_audit_trail", "verify_audit_trail"] as const;
 /** The admin MCP tools the shell adds when the data trail, the platform trail is on (src/audit-trail.ts auditAdminTools). */
 export const ADMIN_AUDIT_TOOL_NAMES = ["read_audit_trail", "read_platform_trail"] as const;
 
