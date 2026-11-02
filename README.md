@@ -69,7 +69,7 @@ Then it keeps watching. A board inside your coding agent shows every app's healt
 
 ## Proof, from a production app
 
-**OnFinance AI** is a research workspace for housing-finance analysts, built and run with this factory. It runs on Vercel and on its own server.
+A **research workspace** (a customer product, unnamed here) for housing-finance analysts, built and run with this factory. It runs on Vercel and on its own server.
 
 - **First message to live app: 21 hours.**
 - **All five test suites passing on both copies**, signed in, with nothing skipped.
@@ -293,4 +293,4 @@ A **product** is a mold under a brand, with stage gates: defined → built → t
 
 ## License
 
-[GNU AGPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) under its section 7 for Priyesh Srivastava and affiliated legal entities.
+[GNU AGPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) under its section 7 for the licensor named in that file and affiliated legal entities.

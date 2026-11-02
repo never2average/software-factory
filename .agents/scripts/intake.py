@@ -323,7 +323,7 @@ def pick_product(mold_id, hints, existing=None):
 # Intake owns the fields it derives from the brief and answers. Everything else in an app's state was
 # written by something that MEASURED or DID it — provision.py (rls_verified, deployed_at, health, google,
 # mold_commit), agent_cli.py, domain.py, mint handoff — and a re-run used to rebuild the four files from
-# scratch and drop whatever it had no line for (on onfinance_hfc: the whole rls_verified proof, the Google
+# scratch and drop whatever it had no line for (on example_app: the whole rls_verified proof, the Google
 # client, the agent CLI package, handoff_url). So every key the old file has and the new one lacks is carried
 # forward, recursively, EXCEPT the paths intake decides by leaving out: those below disappear on purpose
 # when the brief or answers change (a vm app has no `vercel` block, a single-pack brief drops a pack, a neon
@@ -824,7 +824,19 @@ def self_test_single(n, fails):
         shutil.rmtree(T, ignore_errors=True)
     return n, fails
 
-def self_test(app_id="onfinance_hfc"):
+def _selftest_app():
+    """The app the re-run test copies when none is named: INTAKE_SELFTEST_APP, else the first mold_v1 app on Vercel with
+    answers.json on this machine (mold_v0-198: the repository names no real application)."""
+    if os.environ.get("INTAKE_SELFTEST_APP"): return os.environ["INTAKE_SELFTEST_APP"]
+    A = os.path.join(ST, "application")
+    for a in sorted(os.listdir(A)) if os.path.isdir(A) else []:
+        try:
+            if (a != "app_id" and os.path.exists(os.path.join(A, a, "answers.json")) and load(os.path.join(A, a, "application.json")).get("mold_id") == "mold_v1"
+                    and load(os.path.join(A, a, "infrastructure.json")).get("target") == "vercel"): return a
+        except (OSError, ValueError): continue
+    return "example_app"
+
+def self_test(app_id=None):
     """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
     verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
     (scripts and state copied; packs, molds and briefs linked read-only) and state/ is hashed around it."""
@@ -859,6 +871,7 @@ def self_test(app_id="onfinance_hfc"):
     import brief_pack_selftest   # mold_v0-062: a brief's pack sections -> packs/<id>/ (lib/brief_pack_selftest.py)
     n, _ = brief_pack_selftest.run(n, fails)
     if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
+    app_id = app_id or _selftest_app()
     src = os.path.join(ST, "application", app_id)
     if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none "
                                                                       f"(the {n} checks before it passed, the mold_v0 ones among them)")
@@ -1403,8 +1416,7 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     if os.path.exists(qfile): os.remove(qfile)
     if not resolved.get("platform_admins"): resolved.pop("platform_admins", None)   # none recorded: asked again, never answered "nobody"
     save(os.path.join(outdir, "answers.json"), {**resolved, **extra})
-    raw = load(os.path.join(ST, "factory.json"))     # the repository's file, never the merged view (see main)
-    if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id); save(os.path.join(ST, "factory.json"), raw)
+    # (mold_v0-198: no longer listed in the repository's factory.json; the folders under state/application/ are the list)
     P = load(os.path.join(ST, "products.json"))
     for p in P["products"]:
         if p["product_id"] == app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
@@ -1540,8 +1552,7 @@ def main(a):
     if not d.get("confirmed"):
         for k in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store"): rd[k] = resolved[k]
         rd["confirmed"] = True
-    if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id)
-    save(os.path.join(ST,"factory.json"), raw)
+    save(os.path.join(ST,"factory.json"), raw)   # the app is not listed here (mold_v0-198): state/application/ is the list
     P = load(os.path.join(ST,"products.json"))
     for p in P["products"]:
         if p["product_id"]==app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)

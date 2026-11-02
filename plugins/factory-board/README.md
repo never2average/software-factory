@@ -20,7 +20,7 @@ The tab buttons sit at the top of the pane. You can also jump straight to a tab:
 | `/factory products` | Products & apps (the board opens here) |
 | `/factory molds` | Molds |
 | `/factory tickets` | Tickets |
-| `/factory analytics onfinance_hfc_vm` | Analytics, with that app picked |
+| `/factory analytics example_vm` | Analytics, with that app picked |
 | `/factory mold_v1-215` | that ticket's details |
 | `/factory refresh` | the board, after a fresh health check |
 

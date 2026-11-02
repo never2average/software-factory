@@ -72,8 +72,8 @@ def known_apps():
     return sorted(ids)
 
 def name_pattern(apps):
-    """An app is named by its id or its hyphenated form (onfinance-hfc.vercel.app), as a whole word: onfinance_hfc
-    inside onfinance_hfc_vm does not count. Returns (regex, alias -> id)."""
+    """An app is named by its id or its hyphenated form (example-app.vercel.app), as a whole word: example_app
+    inside example_app_vm does not count. Returns (regex, alias -> id)."""
     alias = {a: a for a in apps}; alias.update({a.replace("_", "-"): a for a in apps})
     return re.compile(r"(?<![A-Za-z0-9_-])(" + "|".join(re.escape(x) for x in sorted(alias, key=len, reverse=True)) + r")(?![A-Za-z0-9_-])"), alias
 
@@ -404,8 +404,8 @@ def self_test():
     assert ts("2026-09-18T12:04:27.593Z").year == 2026
     assert "Vercel" in hosting_rows("vercel")[0] and hosting_rows(None) == hosting_rows("vercel") and "own server" in hosting_rows("vm_remote")[0] and "Vercel" not in "".join(hosting_rows("vm_remote"))
     assert lane_url.target_url({"target": "vm_remote", "deployed_at": "2026-10-04T00:00:00+00:00", "vm_remote": {"domain": "a.example.com", "production_url": "https://a.example.com"}}) == "https://a.example.com"
-    rx, alias = name_pattern(["onfinance_hfc", "onfinance_hfc_vm"])
-    assert [alias[x] for x in rx.findall("onfinance_hfc_vm, onfinance-hfc.vercel.app, onfinance_hfc")] == ["onfinance_hfc_vm", "onfinance_hfc", "onfinance_hfc"]
+    rx, alias = name_pattern(["example_app", "example_app_vm"])
+    assert [alias[x] for x in rx.findall("example_app_vm, example-app.vercel.app, example_app")] == ["example_app_vm", "example_app", "example_app"]
     apps = ["app_a", "app_b", "app_a_vm"]
     with tempfile.TemporaryDirectory() as d:
         fixture_sessions(d); P = lambda n: os.path.join(d, n)

@@ -882,8 +882,8 @@ S h;600;1791315000;-1;0.12;0.00;0.09;0.05;0.12;99.61
 S h;600;1791315600;-1;0.14;0.00;0.10;0.06;0.18;99.52
 S h;600;1791316200;-1;0.40;0.00;0.19;0.06;0.26;99.09
 S h;600;1791316800;-1;6.43;0.00;2.38;0.14;2.44;88.60
-J 1791235766.708149 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791236260.355004 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
+J 1791235766.708149 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791236260.355004 h systemd[1]: Started sf-example-vm-api.service.
 J 1791236283.017927 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting
 J 1791236284.873392 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 2 waiting
 J 1791236286.424376 h node[1]: [sandbox] sandbox slot free (…k) after 3.4 s
@@ -898,8 +898,8 @@ J 1791236301.554723 h node[1]: [sandbox] sandbox slot free (…k) after 0.8 s
 J 1791236301.974572 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 2 waiting
 J 1791236302.003720 h node[1]: [sandbox] sandbox slot free (…k) after 0.8 s
 J 1791236303.944311 h node[1]: [sandbox] sandbox slot free (…k) after 2 s
-J 1791242246.007992 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791242545.193980 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
+J 1791242246.007992 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791242545.193980 h systemd[1]: Started sf-example-vm-api.service.
 J 1791279563.339226 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting
 J 1791279565.616294 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 2 waiting
 J 1791279565.717372 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 3 waiting
@@ -1039,8 +1039,8 @@ J 1791283774.904300 h node[1]: [sandbox] waiting for a sandbox (…k): 2 already
 J 1791283775.340639 h node[1]: [sandbox] sandbox slot free (…k) after 1.2 s
 J 1791283777.264313 h node[1]: [sandbox] sandbox slot free (…k) after 2.4 s
 J 1791283807.412358 h node[1]: [sandbox] a sandbox did not start within 60 s (…k); starting another
-J 1791286819.361269 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791287152.849951 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
+J 1791286819.361269 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791287152.849951 h systemd[1]: Started sf-example-vm-api.service.
 J 1791287180.423163 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 1 waiting
 J 1791287181.683495 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 2 waiting
 J 1791287181.769149 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 3 waiting
@@ -1291,17 +1291,17 @@ J 1791288342.478103 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of
 J 1791288342.492398 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 2 waiting
 J 1791288345.935665 h node[1]: [sandbox] a sandbox came free (…k) after 3.5 s
 J 1791288355.187941 h node[1]: [sandbox] a sandbox came free (…k) after 12.7 s
-J 1791290123.131912 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791290514.185997 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
-J 1791290732.973150 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791291135.205972 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
+J 1791290123.131912 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791290514.185997 h systemd[1]: Started sf-example-vm-api.service.
+J 1791290732.973150 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791291135.205972 h systemd[1]: Started sf-example-vm-api.service.
 J 1791291429.997058 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 1 waiting
 J 1791291429.998744 h node[1]: [sandbox] stopping an idle sandbox (…k) to free its place for one that is waiting; its next command restores it
 J 1791291438.501412 h node[1]: [sandbox] a sandbox came free (…k) after 8.5 s
 J 1791291993.328006 h node[1]: [sandbox] stopping an idle sandbox (…k) ; its next command restores it
 J 1791292327.609061 h node[1]: [sandbox] stopping an idle sandbox (…k) ; its next command restores it
-J 1791304728.475482 h systemd[1]: Stopping sf-onfinance-hfc-vm-api.service...
-J 1791305113.009285 h systemd[1]: Started sf-onfinance-hfc-vm-api.service.
+J 1791304728.475482 h systemd[1]: Stopping sf-example-vm-api.service...
+J 1791305113.009285 h systemd[1]: Started sf-example-vm-api.service.
 J 1791305651.765796 h node[1]: [sandbox] waiting for a free sandbox (…k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 1 waiting
 J 1791305651.766856 h node[1]: [sandbox] stopping an idle sandbox (…k) to free its place for one that is waiting; its next command restores it
 J 1791305660.294344 h node[1]: [sandbox] a sandbox came free (…k) after 8.5 s

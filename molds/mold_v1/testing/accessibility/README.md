@@ -243,7 +243,7 @@ is printed, so grading a real deployment cannot change it.
 
 ## Measured today (2026-09-08)
 
-Signed out, against `claudecode_web_replica` and a locally started build of the same mold — identical:
+Signed out, against `example_replica` and a locally started build of the same mold — identical:
 
     axe /workspace  fail  button-name[critical x1]  color-contrast[serious x7]
                           (plus best-practice landmark-one-main, page-has-heading-one, region)
@@ -354,7 +354,7 @@ outputs quoted are the ones it printed:
    `pg-v040fix`), because the mold ran on the host rather than on the app's private network. No inference,
    blob, mail or task-workflow variable was set; the three signed-in surfaces render without them.
 3. The workspace seeded once with the mold's own `npm run operator:new-org -- --name "Fix 040" --id fix-040
-   --domain onfinance.in --owner <application.workspace.operator_self.email>`, with a `.env.local` in the
+   --domain example.com --owner <application.workspace.operator_self.email>`, with a `.env.local` in the
    SCRATCH copy holding `DATABASE_URL=<the admin URL>` (the seed writes rows the app_rw role's policies do
    not let it insert; the file was deleted right after). It created the `orgs` row and the owner +
    platform-admin membership, then its own `recipes` insert failed on a NULL `org_id` — a defect of the

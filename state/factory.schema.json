@@ -98,7 +98,7 @@
     },
     "applications": {
       "type": "array",
-      "description": "Stamped application ids; each has a folder under state/application/",
+      "description": "Unused since mold_v0-198 (an application id names a deployment, so the repository lists none): the folders under state/application/ are the list",
       "items": {
         "type": "string"
       }
