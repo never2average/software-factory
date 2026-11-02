@@ -8,7 +8,8 @@
  *   library             submissions received (operator alert), accepted, declined (src/contributions.ts, a host pack)
  *   usage               an account's spend crossing 80% and 100% of its monthly allowance (to owners and billing
  *                       managers), after a session (src/worker.ts) or a run (src/runs.ts) ends
- *   due dates           a workspace's records due within their area's window (mold_v0-035, src/schedules.ts dueCheck)
+ *   due dates           a workspace's records due within their area's window (mold_v0-035, src/schedules.ts dueCheck), and
+ *                       a record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts clockCheck)
  *   billing             billing notices to the operator: a run's charge that could not be delivered (src/run-charges.ts)
  *   test                the "Send test email" button on /admin/emails
  *
@@ -72,7 +73,9 @@ export const EMAIL_KINDS = ["request_received", "request_alert", "request_declin
   // Built-in sign-in (mold_v0-004, src/builtin-auth.ts): the one-time code, and an invitation to a workspace.
   "sign_in_code", "invitation",
   // A billing notice to the operator (mold_v0-083): a run's charge that could not be delivered.
-  "billing_notice"] as const;
+  "billing_notice",
+  // A record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts): the due_dates group.
+  "clock_step"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 /** The groups a profile turns on (`email.notifications`), and the kinds in each. Sign-in and test are always on. */
@@ -80,7 +83,7 @@ export const NOTIFICATION_GROUPS = {
   access_requests: ["request_received", "request_alert", "request_declined", "request_approved"],
   library: ["submission_alert", "submission_accepted", "submission_declined"],
   usage: ["budget_80", "budget_100"],
-  due_dates: ["due_soon"],
+  due_dates: ["due_soon", "clock_step"],
   billing: ["billing_notice"],
 } as const satisfies Record<string, readonly EmailKind[]>;
 export type NotificationGroup = keyof typeof NOTIFICATION_GROUPS;
@@ -602,6 +605,68 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
     return { recipients: to.length, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
   } catch (e) {
     console.error(`email due_soon for ${orgId} failed:`, (e as Error).message);
+    return { recipients: 0, delivered: 0 };
+  }
+}
+
+// ---------- record clocks (mold_v0-191: src/record-clocks.ts clockCheck) ----------
+
+/** One step of a record's clock to tell people about: who (roles of the workspace, people by sign-in id) and what. */
+export interface ClockStepItem { event: string; area_label: string; key: string; title: string | null; clock_label: string; what: string; due_on: string; roles: AccountRole[]; people: string[] }
+
+/** The workspace's own people among these sign-in ids (its members in the sign-in's directory, suspended people left out). */
+async function memberAddresses(orgId: number, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  const [o] = await (await getDb()).query<{ clerk_org_id: string | null }>("SELECT clerk_org_id FROM organizations WHERE id = $1", [orgId]);
+  const dir = people();
+  if (!o?.clerk_org_id || !dir.enabled()) return out;
+  for (const m of await dir.memberships.list(o.clerk_org_id)) {
+    const id = m.public_user_data?.user_id;
+    if (!id || !ids.includes(id) || clerk.isSuspended(m)) continue;
+    const ident = m.public_user_data?.identifier;
+    const email = isEmail(ident) ? ident : clerk.primaryEmail(await dir.users.get(id)).email;
+    if (isEmail(email)) out.set(id, email.toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * A workspace's clock steps from one check: one email to each of its own people a step tells (the roles it names, the
+ * record's assignee when they are a member), listing their steps. The idempotency key names the workspace, the steps
+ * listed (their event ids) and the recipient, so a check run twice never sends the same list again. A sealed record is
+ * named by its key (`title` null), never its title. Never throws. `delivered` counts recipients reached (now or before).
+ */
+export async function clockSteps(orgId: number, items: ClockStepItem[]): Promise<{ recipients: number; delivered: number }> {
+  if (!kindOn("clock_step").on || !items.length) return { recipients: 0, delivered: 0 }; // off unless the profile lists due_dates
+  try {
+    const [o] = await asPlatform(async () => (await getDb()).query<{ name: string; slug: string }>("SELECT name, slug FROM organizations WHERE id = $1", [orgId]));
+    if (!o) return { recipients: 0, delivered: 0 };
+    const byRoles = new Map<string, string[]>();
+    for (const r of new Set(items.filter((x) => x.roles.length).map((x) => [...x.roles].sort().join(","))))
+      byRoles.set(r, await asPlatform(() => accountRecipients(orgId, r.split(",") as AccountRole[])));
+    const members = await asPlatform(() => memberAddresses(orgId, [...new Set(items.flatMap((x) => x.people))]));
+    const to = new Map<string, ClockStepItem[]>();
+    for (const x of items) {
+      const each = new Set([...(byRoles.get([...x.roles].sort().join(",")) ?? []), ...x.people.map((p) => members.get(p)).filter((e): e is string => !!e)]);
+      for (const t of each) to.set(t, [...(to.get(t) ?? []), x]);
+    }
+    if (!to.size) { console.error(`email clock_step: ${o.slug} has nobody to tell with an email`); return { recipients: 0, delivered: 0 }; }
+    const results = await Promise.all([...to].map(([t, list]) => {
+      const shown = list.slice(0, 50);
+      const text = shown.map((x) => `- ${x.area_label}: ${(x.title ?? x.key).replace(/[\r\n]+/g, " ").slice(0, 200)} (${x.key}). ${x.clock_label} ${x.due_on}. ${x.what}`).join("\n");
+      const overdue = list.some((x) => !x.what.startsWith("Reminder"));
+      return send({ kind: "clock_step", to: t, idempotencyKey: keyFor(`clock:${orgId}:${createHash("sha256").update(list.map((x) => x.event).join(",")).digest("hex").slice(0, 16)}`, t),
+        meta: { account: o.slug, items: list.length },
+        subject: `${list.length} record${list.length === 1 ? "" : "s"} ${overdue ? "need attention" : "due soon"} in ${o.name}`.slice(0, 200),
+        text: lines("Hi,", `${list.length === 1 ? "This record has" : "These records have"} a deadline in ${o.name}:`,
+          text + (list.length > shown.length ? `\n…and ${list.length - shown.length} more` : ""),
+          `See them on ${siteUrl()}/app/notices. You're getting this because of your role in ${o.name}, or because a record is assigned to you.`,
+          sign()) });
+    }));
+    return { recipients: to.size, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
+  } catch (e) {
+    console.error(`email clock_step for ${orgId} failed:`, (e as Error).message);
     return { recipients: 0, delivered: 0 };
   }
 }

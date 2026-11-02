@@ -371,16 +371,26 @@ async function getWorkspace(orgId: number, area: RecordArea, key: string): Promi
  * One workspace's view of an area: a platform area's shared rows, or the workspace's own rows of a workspace area. With
  * an actor (the person asking), the area's read permission is checked first (mold_v0-057).
  */
-export const listFor = (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR) => {
+export const listFor = async (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR): Promise<RecordPage> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  return a.scope === "platform" ? listPlatform(a, opts) : listWorkspace(orgId, a, opts);
+  if (a.scope === "platform") return listPlatform(a, opts);
+  const page = await listWorkspace(orgId, a, opts);
+  return hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
 };
-export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) => {
+export const getFor = async (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  return a.scope === "platform" ? getPlatform(a, key) : getWorkspace(orgId, a, key);
+  if (a.scope === "platform") return getPlatform(a, key);
+  const r = await getWorkspace(orgId, a, key);
+  return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
 };
+/**
+ * Clocks (mold_v0-191, src/record-clocks.ts): a workspace area's records carry their deadlines on every read, except
+ * inside a batch's transaction (its writes' answers are the store's own) and for an area read live from an API.
+ */
+const hasClocks = (a: RecordArea) => (a.clocks?.length ?? 0) > 0 && !isLive(a) && !txScope.getStore();
+const clocks = () => import("./record-clocks.js");
 
 /**
  * A record and the records its links and references name (in the same workspace for a workspace area), as one
@@ -401,7 +411,9 @@ export async function detailFor(orgId: number, name: string, key: string, actor:
     const found = (await Promise.all(wanted.map((k) => getFor(orgId, target.name, k, actor)))).filter((r): r is RecordRow => !!r);
     links.push({ field: l.field, area: target.name, records: found.map((r) => ({ key: r.key, title: r.title })) });
   }
-  return { area: areaSummary(area), record, links };
+  // A clock area's record page shows what its clocks did (mold_v0-191): the latest events, newest first.
+  const clockEvents = hasClocks(area) ? { clock_events: await (await clocks()).clockEvents(orgId, area, record.key) } : {};
+  return { area: areaSummary(area), record, links, ...clockEvents };
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -711,6 +723,9 @@ export const areaSummary = (a: RecordArea) => ({
   ...(isSealedArea(a) ? { sealed: true } : {}),
   // mold_v0-057: the lifecycle and who may do what (each action's roles, never wider than the platform's).
   ...(a.lifecycle ? { lifecycle: a.lifecycle } : {}),
+  // mold_v0-191: the clocks its records run against (what each counts from, its durations, its steps).
+  ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label, starts: c.starts, after: c.after, ...(c.not_later_than ? { not_later_than: c.not_later_than } : {}),
+    ...(c.stops_when ? { stops_when: c.stops_when } : {}), ...(c.pauses_when ? { pauses_when: c.pauses_when } : {}) })) } : {}),
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),
 });
 
@@ -745,7 +760,9 @@ export function recordTools(): PackTool[] {
         const cols = areaSummary(area).list_columns;
         return {
           area: area.name, label: area.label, role: area.role, scope: area.scope,
-          records: page.records.map((r) => ({ key: r.key, title: r.title, ...Object.fromEntries(cols.map((c) => [c, r.data[c] ?? null])) })),
+          records: page.records.map((r) => ({ key: r.key, title: r.title, ...Object.fromEntries(cols.map((c) => [c, r.data[c] ?? null])),
+            // mold_v0-191: a clock area's records say when each is due and whether it is overdue.
+            ...(r.clocks ? { due: Object.values(r.clocks).map((v) => ({ clock: v.name, status: v.status, due_at: v.due_at, overdue: v.overdue })) } : {}) })),
           next: page.next,
         };
       },

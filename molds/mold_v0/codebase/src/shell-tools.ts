@@ -15,6 +15,8 @@ export type ShellToolName = (typeof SHELL_TOOL_NAMES)[number];
 
 /** The MCP tools the shell adds when at least one record area is declared (src/record-areas.ts). */
 export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
+/** The MCP tool the shell adds when at least one record area declares clocks (mold_v0-191, src/record-clocks.ts). */
+export const CLOCK_TOOL_NAMES = ["list_due_records"] as const;
 
 /**
  * The admin MCP's own tools (src/admin-mcp.ts ADMIN_TOOLS). The session engine's job tools (its simulations: list, get,
