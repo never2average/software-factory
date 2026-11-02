@@ -35,6 +35,10 @@ each one the factory can check. Today (mold_v0):
                              "sign": true|false (mold_v0-195, src/ledger.ts: signed checkpoints of the hash-chained
                              entries, with APP_LEDGER_SIGNING_KEY; brief line `audit.sign = true`) and
                              "checkpoint_minutes": 5..1440 (how often, default 60)
+  onprem_runners             true or false (mold_v0-205, the shell's src/onprem-runners.ts): true lets the app's
+                             workspaces install on-premises runners for its kinds that need their private network
+                             (today's behaviour); absent or false (the default): no runner route, console page, admin tab
+                             or enrolment, and every run is hosted. From the brief: `onprem_runners = true` in ## Profile
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -417,6 +421,8 @@ def problems(profile, mold_id, root, packs=None):
             if e: errs.append(e)
         elif k == "landing": errs += landing_problems(v, "profile.landing")
         elif k == "audit": errs += audit_problems(v, "profile.audit")
+        elif k == "onprem_runners":
+            if not isinstance(v, bool): errs.append(f"profile.onprem_runners must be true or false (got {json.dumps(v)[:40]})")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
     return errs
 
@@ -470,7 +476,7 @@ LANDING_FENCE = re.compile(r"^[ \t]*```[ \t]*json[ \t]*\n(.*?)^[ \t]*```[ \t]*$"
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
-WORDSET = re.compile(r"(?<![\w.])(member_keys|audit\.(?:data|platform|sign)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+WORDSET = re.compile(r"(?<![\w.])(member_keys|onprem_runners|audit\.(?:data|platform|sign)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
 WORD = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*([A-Za-z_]+)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 
 def _clean(text):
@@ -494,7 +500,8 @@ def from_brief(text):
     `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan; `mcp_instructions = <text>`, or
     a `## MCP instructions` section (mold_v0-119); `email_from_address = <address>`,
     `email.notifications = <group>, <group>` (or `none`) and `email.provider = resend|none` (mold_v0-101); `member_keys =
-    false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `legal.<field> = <text>`
+    false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `onprem_runners = true` (or
+    false; mold_v0-205); `legal.<field> = <text>`
     (mold_v0-109: company_name, contact_email, jurisdiction, effective_date, terms_url, privacy_url). A setting written twice with two
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
@@ -517,10 +524,10 @@ def from_brief(text):
             d[path[-1]] = n
         for m in WORDSET.finditer(body):
             name, w = m.group(1), WORD.match(body, m.end())
-            if name == "member_keys" or name.startswith("audit."):
+            if name in ("member_keys", "onprem_runners") or name.startswith("audit."):
                 val = {"true": True, "false": False}.get(w.group(1).lower()) if w else None
                 if val is None: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {'false' if name == 'member_keys' else 'true'}` (or {'true' if name == 'member_keys' else 'false'})"); continue
-                path = name.split(".")   # member_keys; audit.data, audit.platform (mold_v0-197)
+                path = name.split(".")   # member_keys; onprem_runners (mold_v0-205); audit.data, audit.platform (mold_v0-197)
             else:
                 if not w or w.group(1) != OWNED: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {OWNED}`"); continue
                 val, path = OWNED, ["source_offer", "upstreams", m.group(2)]
