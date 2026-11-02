@@ -32,8 +32,9 @@ export function DeveloperPage() {
     <PageContainer>
       {error ? <ErrorState error={error} /> : (
         <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className='gap-6'>
-          <TabsList variant='line' className='max-w-full gap-6 overflow-x-auto p-0'>
-            {tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
+          {/* On a phone the four tabs wrap to a second line rather than scroll out of sight. */}
+          <TabsList variant='line' className='max-w-full flex-wrap justify-start gap-x-6 gap-y-3 p-0 group-data-horizontal/tabs:h-auto'>
+            {tabs.map((t) => <TabsTrigger key={t.id} value={t.id} className='h-7 flex-none px-0'>{t.label}</TabsTrigger>)}
           </TabsList>
           <TabsContent value={current.id}>
             {!offer ? <LoadingCards count={1} />
