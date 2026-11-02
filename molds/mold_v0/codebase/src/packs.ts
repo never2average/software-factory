@@ -22,6 +22,8 @@ import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { clockTools } from "./record-clocks.js";
 import { CLOCK_TOOL_NAMES } from "./shell-tools.js";
+import { checksProblems, checkToolName } from "./check-spec.js";
+import { checkTools } from "./checks.js";
 import { hostToolNames, memoryToolNames } from "./host.js";
 import { INTAKE_TOOL_NAMES } from "./shell-tools.js";
 import { intakeTools } from "./email-intake.js";
@@ -124,6 +126,15 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   if (!problems.length) problems.push(...checkViews(viewsOf(out)));
   // The source offer names the upstream commit that runs (mold_v0-050): an agent kind on the upstream runs that commit.
   problems.push(...upstreamProblems(out));
+  // Declarative checks (mold_v0-196, src/check-spec.ts): names unique in the build, each against the build's areas, and
+  // its tool (check_<name>) no other tool's name.
+  const areasForChecks = out.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ name: a.name, scope: a.scope, fields: a.fields, sealed: a.sealed === true || a.role === "asset",
+    live: !!a.repository && (p.definition.repositories?.[a.repository] as { kind?: string } | undefined)?.kind === "http_api" })));
+  problems.push(...checksProblems(out.map((p) => ({ id: p.id, checks: (p.definition.checks ?? []) as unknown[] })), areasForChecks));
+  for (const p of out) for (const c of p.definition.checks ?? []) {
+    const t = checkToolName(String((c as { name?: unknown }).name));
+    if (toolOwner.has(t) || generated.has(t)) problems.push(`pack ${p.id}: check ${String((c as { name?: unknown }).name)}'s tool ${t} is already ${toolOwner.get(t) === "the shell" ? "a shell tool" : toolOwner.has(t) ? `pack ${toolOwner.get(t)}'s` : "a generated tool"}`);
+  }
   if (problems.length) throw new PackDefinitionError(`packs refused:\n  ${problems.join("\n  ")}`);
   return out;
 }
@@ -277,5 +288,9 @@ export function registerPackTools(server: McpServer, org: Org) {
   for (const t of [...intakeTools(), ...clockTools()])
     server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.inputSchema ?? {}, annotations: t.annotations },
       (args: Record<string, unknown>) => runPackTool(org, "records", t, args) as never);
+  // Declarative checks (mold_v0-196, src/checks.ts): check_<name>, only when a pack declares one.
+  if (packs().some((p) => p.definition.checks?.length)) for (const t of checkTools())
+    server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.inputSchema ?? {}, annotations: t.annotations },
+      (args: Record<string, unknown>) => runPackTool(org, t.pack, t, args) as never);
   registerGeneratedTools(server, org, (t) => t.op !== "get_started");
 }

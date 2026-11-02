@@ -17,6 +17,7 @@ import { ApiProblem, currentApiVersion } from "./developer-surface.js";
 import { getDb } from "./db.js";
 import { recordAreas } from "./record-areas.js";
 import { jobKinds } from "./runs.js";
+import { findCheck } from "./checks.js";
 import { asPlatform } from "./tenant-scope.js";
 
 export const DEV_KEY_PREFIX = "sk_";
@@ -45,10 +46,11 @@ export function checkScopes(v: unknown, kind: "secret" | "integration"): string[
   if (!Array.isArray(list) || list.some((s) => typeof s !== "string")) throw new ApiProblem(400, "invalid_request", "scopes: a list of scopes");
   const scopes = [...new Set(list as string[])];
   for (const s of scopes) {
-    if (!SCOPE_PATTERN.test(s)) throw new ApiProblem(400, "invalid_scope", `${s.slice(0, 80)} is not a scope (${BASE_SCOPES.join(", ")}, or read:<area>, write:<area>, run:<kind>)`);
+    if (!SCOPE_PATTERN.test(s)) throw new ApiProblem(400, "invalid_scope", `${s.slice(0, 80)} is not a scope (${BASE_SCOPES.join(", ")}, or read:<area>, write:<area>, run:<kind>, checks:<name>)`);
     const [base, target] = s.split(":");
     if (target && (base === "read" || base === "write") && !recordAreas().some((a) => a.name === target)) throw new ApiProblem(400, "invalid_scope", `${s}: ${target} is not one of the record areas`);
     if (target && base === "run" && !jobKinds().some((k) => k.name === target)) throw new ApiProblem(400, "invalid_scope", `${s}: ${target} is not one of the job kinds`);
+    if (target && base === "checks" && !findCheck(target)) throw new ApiProblem(400, "invalid_scope", `${s}: ${target} is not one of the checks`);
     if (target && (base === "sessions" || base === "webhooks")) throw new ApiProblem(400, "invalid_scope", `${s}: ${base} is not narrowed`);
   }
   if (!scopes.length) throw new ApiProblem(400, "invalid_scope", kind === "integration" ? "an integration key holds exactly one scope: name it" : "give the key at least one scope");

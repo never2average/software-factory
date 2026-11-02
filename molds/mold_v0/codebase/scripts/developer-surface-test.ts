@@ -136,7 +136,7 @@ try {
     const KEY = made.json.key as string;
     assert.match(KEY, /^sk_[A-Za-z0-9_-]{40,}$/);
     assert.equal(made.json.data.key_prefix, KEY.slice(0, 9));
-    assert.deepEqual(made.json.data.scopes, ["read", "write", "run", "sessions", "webhooks"], "a secret key holds every scope by default");
+    assert.deepEqual(made.json.data.scopes, ["read", "write", "run", "sessions", "webhooks", "checks"], "a secret key holds every scope by default (checks since mold_v0-196)");
     assert.equal((await consoleCall("POST", "/keys", memberA, { name: "Mine" })).status, 403, "a member cannot make keys");
     const listed = await consoleCall("GET", "/keys", memberA);
     assert.equal(listed.status, 200);
