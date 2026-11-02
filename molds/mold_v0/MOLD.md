@@ -1699,6 +1699,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack) shows no card and mounts no route. `npm run test:declarative-packs` refuses those; `npm run test:metrics`
   checks each card's value and weeks by hand (declared, an area's and a runs tab's defaults, the commonest value), two
   workspaces, a role, and the route; `npm run test:record-pages` the words and that every list shows them.
+  **A home tab's headline row** (mold_v0-203): pack.json `sparklines` on the home tab (an `overview` that includes
+  `setup`) names 1 to 4 of the pack's metrics, drawn as the same cards (`TabSparklines`, `StatStrip` with `quad`: four
+  across from a wide screen, two by two below it, in the console's light or dark theme) in a row at the very top of the
+  Overview, above the checklist or journey and the right column (the connection card, the journey picker). The same
+  rules as a list tab's cards (a declared metric, never grouped, weeks to draw, never twice) and the same route
+  (`GET /api/sparklines/<pack>/<home tab>`, mounted for it too; the home tab is every role's, each card refused alone to
+  a role that may not read its metric). The registry carries the list as the tab's `headline`; a number the row shows is
+  left out of the tab's `number` charts (below, and a `chart:<name>` card on the right), a number chart left with none
+  is left out (one idea once per page; a bar or line chart draws a breakdown or a trend, not the same number, and
+  stays). Without it, no row: the page is unchanged. gen-packs refuses more than 4, none, one on an overview that is not
+  the home tab, and the list tab's other refusals; `npm run test:declarative-packs` checks those and the registry, `npm
+  run test:console-tabs` draws the row above both columns and the number card without its numbers.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per

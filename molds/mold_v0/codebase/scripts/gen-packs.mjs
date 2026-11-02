@@ -2451,6 +2451,9 @@ function viewsModule() {
     ...(t.include?.length ? { include: t.include } : {}),
     ...(t.rail?.length ? { rail: t.rail } : {}),
     ...(t.charts_title ? { charts_title: t.charts_title } : {}),
+    // A home tab's headline row (mold_v0-203): its declared cards' metrics, so the page draws the row and leaves those
+    // numbers out of its number charts below; the cards' own numbers come from the server, as a list tab's.
+    ...(t.kind === "overview" && (t.include ?? []).includes("setup") && t.sparklines?.length ? { headline: t.sparklines } : {}),
     ...(t.filter ? { filtered: true } : {}),
     ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
@@ -2491,6 +2494,8 @@ function viewsModule() {
     "  rail?: string[];\n" +
     "  /** A home tab's heading above its charts (mold_v0-175). */\n" +
     "  charts_title?: string;\n" +
+    "  /** A home tab's headline row above its columns (mold_v0-203): the metrics of its cards, in order (1 to 4). */\n" +
+    "  headline?: string[];\n" +
     "  /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */\n" +
     "  filtered?: boolean;\n" +
     "  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */\n" +

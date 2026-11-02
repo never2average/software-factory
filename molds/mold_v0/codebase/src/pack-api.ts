@@ -1228,7 +1228,9 @@ export type Chart = z.output<typeof ChartSchema>;
  *                 diffs, for the roles that may read every one of the pack's record areas
  * A list tab (area, runs, reports, schedules; mold_v0-181) shows four cards between its toolbar and its table, each a
  * metric's label, value and a sparkline of its last weeks: `sparklines` names exactly 4 of the pack's metrics (a single
- * number or a series, never grouped); without it the shell's four for the kind (src/metric-spec.ts sparkPlan).
+ * number or a series, never grouped); without it the shell's four for the kind (src/metric-spec.ts sparkPlan). A home
+ * tab (an overview that includes setup; mold_v0-203) may name 1 to 4 of them: the same cards, as a row above its
+ * columns (the checklist or journey, the connection card and the journey picker); without it, no row.
  * `label` is the tab's name in the app's words (default: the area's label, else the shell's word), `icon` one of
  * TAB_ICONS, `roles` who sees it (narrowing what its data allows: an area tab is never shown to a role that may not read
  * the area, an overview never to one that may read none of its metrics).
@@ -1331,8 +1333,9 @@ export const TabSchema = z.object({
   /**
    * The four cards below a list's toolbar (mold_v0-181): exactly 4 of the pack's metrics, each a label, its value and a
    * sparkline of its last SPARK_WEEKS weeks (src/sparklines.ts). Absent: the shell's four for the tab's kind.
+   * On a home tab (mold_v0-203): 1 to 4 of them, the headline row above its columns. Absent there: no row.
    */
-  sparklines: z.array(name).length(4, "exactly 4 metric names: the tab's four cards").optional(),
+  sparklines: z.array(name).min(1, "1 to 4 metric names").max(4, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab").optional(),
   /** A home tab's heading above its charts, below both columns (mold_v0-175); none by default. */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
@@ -1363,7 +1366,9 @@ export const TabSchema = z.object({
   if (t.charts_title !== undefined && (!(t.include ?? []).includes("setup") || !t.charts?.length)) bad("charts_title is for a home tab with charts: an overview tab that includes setup and lists charts", "charts_title");
   if (t.include && t.roles) bad("a tab that includes a section of the shell's is every member's home page (/app leads there): it takes no roles", "roles");
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
-  if (t.sparklines && !(SPARK_KINDS as readonly string[]).includes(t.kind)) bad(`sparklines are for a list tab: ${SPARK_KINDS.join(", ")}`, "sparklines");
+  const home = t.kind === "overview" && (t.include ?? []).includes("setup");
+  if (t.sparklines && !home && !(SPARK_KINDS as readonly string[]).includes(t.kind)) bad(`sparklines are for a list tab: ${SPARK_KINDS.join(", ")}, or a home tab (an overview that includes setup)`, "sparklines");
+  else if (t.sparklines && !home && t.sparklines.length !== 4) bad("exactly 4 metric names: the tab's four cards", "sparklines");
   if (t.sparklines && new Set(t.sparklines).size !== t.sparklines.length) bad("a metric is listed twice", "sparklines");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
