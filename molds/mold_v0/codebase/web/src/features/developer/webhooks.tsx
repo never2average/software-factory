@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { Icons } from '@/components/icons';
 import { Allowed, useAccountRole } from '@/features/portal/role';
 import { ErrorState, FormRow, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { dev, type Delivery, type Endpoint, type Offer } from './api';
@@ -33,8 +34,10 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
   const [open, setOpen] = useState<string | null>(null);
   const [once, setOnce] = useState<Once | null>(null);
   const [logKick, setLogKick] = useState(0);
+  // The delivery log of one endpoint, in the table's place (one table a screen, as everywhere in the console).
+  const [log, setLog] = useState<string | null>(null);
   const endpoints = data?.data ?? [];
-  const current = endpoints.find((e) => e.id === open) ?? null;
+  const logOf = endpoints.find((e) => e.id === log) ?? null;
   const cols = useMemo<RecordCol<Endpoint>[]>(() => [
     { key: 'url', label: 'Endpoint', title: true, keep: true, type: 'text', className: 'min-w-56', value: (e) => e.url,
       render: (e) => <span className='flex min-w-0 flex-col gap-1'><span className='truncate font-mono text-xs'>{e.url}</span>{e.description && <span className='text-muted-foreground text-xs'>{e.description}</span>}</span> },
@@ -60,11 +63,13 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
     const d = r.data;
     if (d.status === 'succeeded') toast.success(`Test ping delivered (${d.last_status})`); else toast.error(`Test ping not delivered: ${d.last_error ?? d.status}`);
     setLogKick((n) => n + 1);
+    setLog(e.id);
     return reload();
   }).catch(fail);
   if (error) return <ErrorState error={error} />;
   return (
-    <div className='flex flex-col gap-10'>
+    <>
+      {logOf ? <DeliveryLog key={`${logOf.id}:${logKick}`} e={logOf} onBack={() => setLog(null)} /> : (
       <RecordView<Endpoint>
         id='app-developer-webhooks' compact noun='endpoints' properties rows={endpoints} rowKey={(e) => e.id} cols={cols} loading={!data}
         openKey={open} onOpenChange={setOpen}
@@ -78,17 +83,17 @@ export function WebhooksTab({ offer }: { offer: Offer }) {
           lock({ label: 'Delete', destructive: true, separator: true, onSelect: () => void dev('DELETE', `/webhooks/${e.id}`).then(() => { toast.success('Endpoint deleted'); setOpen(null); return reload(); }).catch(fail) }, 'manage'),
         ]}
         detailTitle={(e) => <span className='font-mono text-sm break-all'>{e.url}</span>}
-        detail={(e) => <EndpointDetail key={e.id} e={e} offer={offer} onPatch={patch} onReveal={reveal} onRotate={rotate} onPing={ping} />}
+        detail={(e) => <EndpointDetail key={e.id} e={e} offer={offer} onPatch={patch} onReveal={reveal} onRotate={rotate} onPing={ping} onLog={() => setLog(e.id)} />}
         empty={<p className='text-muted-foreground py-10 text-center text-sm'>No endpoints yet. Add the address on your server that should hear about changes here.</p>}
       />
-      {current && <DeliveryLog key={`${current.id}:${logKick}`} e={current} />}
+      )}
       {adding && <AddEndpoint offer={offer} onClose={() => setAdding(false)} onAdded={(e, secret) => {
         setAdding(false); setOpen(e.id);
         setOnce({ title: 'Endpoint added', label: 'Signing secret', secret, description: 'Copy the signing secret now: you can reveal it again later, and each reveal is recorded. Your receiver verifies every delivery\'s signature with it.' });
         void reload();
       }} />}
       <OnceDialog once={once} onClose={() => setOnce(null)} />
-    </div>
+    </>
   );
 }
 
@@ -108,9 +113,9 @@ function EventPicker({ offer, value, set }: { offer: Offer; value: string[]; set
   );
 }
 
-function EndpointDetail({ e, offer, onPatch, onReveal, onRotate, onPing }: {
+function EndpointDetail({ e, offer, onPatch, onReveal, onRotate, onPing, onLog }: {
   e: Endpoint; offer: Offer; onPatch: (e: Endpoint, b: Record<string, unknown>, done: string) => Promise<unknown>;
-  onReveal: (e: Endpoint) => Promise<unknown>; onRotate: (e: Endpoint, grace: number) => Promise<unknown>; onPing: (e: Endpoint) => Promise<unknown>;
+  onReveal: (e: Endpoint) => Promise<unknown>; onRotate: (e: Endpoint, grace: number) => Promise<unknown>; onPing: (e: Endpoint) => Promise<unknown>; onLog: () => void;
 }) {
   const [events, setEvents] = useState<string[]>(e.events);
   const [url, setUrl] = useState(e.url);
@@ -127,6 +132,7 @@ function EndpointDetail({ e, offer, onPatch, onReveal, onRotate, onPing }: {
         </div>
       )}
       <div className='flex flex-wrap gap-2'>
+        <Button size='sm' variant='outline' onClick={onLog} data-open-log=''>Delivery log</Button>
         <Allowed need='manage'><Button size='sm' variant='outline' disabled={e.status !== 'enabled'} onClick={() => void onPing(e)} data-test-ping=''>Send test ping</Button></Allowed>
       </div>
       <form className='grid gap-3' onSubmit={(x) => { x.preventDefault(); void onPatch(e, { url, events }, 'Saved'); }}>
@@ -200,7 +206,7 @@ async function loadDeliveries(id: string): Promise<{ rows: Delivery[]; more: boo
   }
 }
 
-function DeliveryLog({ e }: { e: Endpoint }) {
+function DeliveryLog({ e, onBack }: { e: Endpoint; onBack: () => void }) {
   const { data, error, reload } = useOrgLoad(() => loadDeliveries(e.id), [e.id]);
   const rows = data?.rows ?? [];
   const cols = useMemo<RecordCol<Delivery>[]>(() => [
@@ -231,12 +237,11 @@ function DeliveryLog({ e }: { e: Endpoint }) {
   if (error) return <ErrorState error={error} />;
   return (
     <section className='flex flex-col gap-3' aria-label='Delivery log' data-delivery-log={e.id}>
-      <div className='flex flex-wrap items-end justify-between gap-2'>
-        <div className='min-w-0'>
-          <h2 className='text-base font-semibold tracking-tight'>Delivery log</h2>
-          <p className='text-muted-foreground truncate text-sm'>Every delivery to <span className='font-mono text-xs'>{e.url}</span>, newest first. Open one for its payload and attempts.</p>
-        </div>
-        <Button size='sm' variant='outline' onClick={() => void reload()}>Refresh</Button>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button size='sm' variant='ghost' onClick={onBack} data-back-endpoints=''><Icons.chevronLeft className='size-4' />Endpoints</Button>
+        <h2 className='min-w-0 truncate text-sm font-medium'>Delivery log of <span className='font-mono text-xs'>{e.url}</span></h2>
+        {e.status === 'disabled' && <Badge variant='destructive'>Disabled</Badge>}
+        <Button size='sm' variant='outline' className='ml-auto' onClick={() => void reload()}>Refresh</Button>
       </div>
       <RecordView<Delivery>
         id='app-developer-deliveries' compact noun='deliveries' properties rows={rows} rowKey={(d) => d.id} cols={cols} loading={!data}
