@@ -33,6 +33,7 @@ import { ENV } from "./env-names.js";
 import { open, seal } from "./orgcrypto.js";
 import { onRecordChange, onRecordChangeInTransaction, recordAreas, type RecordChange } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
+import { tracked } from "./scheduler-jobs.js";
 
 /** Seconds to wait before each retry (attempt 2, 3, ...): 8 attempts over about 27 hours. */
 const DEFAULT_SCHEDULE = [5, 300, 1800, 7200, 18000, 36000, 36000];
@@ -464,7 +465,8 @@ export function decodeCursor(s: string): { at: string; id: string } {
 export async function webhookTick() {
   if (!developerSurface()) return null;
   // The outbox first (every pending event, a batch at a time), then the deliveries that are due.
-  const relayed = await (async () => {
+  // Each step's run is kept for the staff console's Health › Scheduled work (mold_v0-204, src/scheduler-jobs.ts).
+  const relayed = await tracked("event_outbox", async () => {
     const total = { events: 0, queued: 0 };
     for (let i = 0; i < 10; i++) {
       const r = await relayOutbox(200);
@@ -472,8 +474,8 @@ export async function webhookTick() {
       if (r.events < 200) break;
     }
     return total;
-  })().catch((e) => ({ error: (e as Error).message }));
-  const sent = await deliverDue(200).catch((e) => ({ error: (e as Error).message }));
+  }).catch((e) => ({ error: (e as Error).message }));
+  const sent = await tracked("webhook_deliveries", () => deliverDue(200)).catch((e) => ({ error: (e as Error).message }));
   await asPlatform(async () => {
     const db = await getDb();
     await db.query("/* tenant: internal: expired idempotency keys of every workspace */ DELETE FROM idempotency_keys WHERE created_at < now() - interval '24 hours'");

@@ -33,6 +33,7 @@ import type { Org } from "./auth.js";
 import { getDb, type Queryable } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { tracked } from "./scheduler-jobs.js";
 
 // ---------------------------------------------------------------- settings
 
@@ -145,7 +146,7 @@ export function auditRequests(): RequestHandler {
     const path = req.path;
     // The Vercel cron's tick (src/http.ts /api/cron/autoscale): the trails' retention, once it answered (authorized).
     if (path === "/api/cron/autoscale") {
-      res.on("finish", () => { if (res.statusCode === 200) keepAliveAudit(pruneAudit().catch((e) => console.error(`audit trail prune: ${(e as Error).message}`))); });
+      res.on("finish", () => { if (res.statusCode === 200) keepAliveAudit(tracked("audit_retention", () => pruneAudit()).catch((e) => console.error(`audit trail prune: ${(e as Error).message}`))); });
       return next();
     }
     const channel = channelOf(path);
@@ -403,7 +404,7 @@ let pruneTimer: NodeJS.Timeout | null = null;
 /** Once a process writes an entry: prune now and then hourly (a server); on Vercel the cron also calls pruneAudit. */
 function startPruning() {
   if (pruneTimer || process.env.VERCEL) return;
-  const go = () => void pruneAudit().catch((e) => console.error(`audit trail prune: ${(e as Error).message}`));
+  const go = () => void tracked("audit_retention", () => pruneAudit()).catch((e) => console.error(`audit trail prune: ${(e as Error).message}`));
   pruneTimer = setInterval(go, 3_600_000);
   pruneTimer.unref?.();
   setTimeout(go, 60_000).unref?.();

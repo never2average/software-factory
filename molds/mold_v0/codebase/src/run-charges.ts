@@ -30,6 +30,7 @@ import { PackError, RunPriceSchema, z } from "./pack-api.js";
 import { PROFILE, type ProfileBilling } from "./profile.js";
 import { asPlatform } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
+import { tracked } from "./scheduler-jobs.js";
 
 /** The app's billing rules in force (defaults filled in), or null when billing is off. */
 export interface BillingRules {
@@ -272,7 +273,7 @@ export function startChargeDelivery(everyMs = 60_000): boolean {
   const run = () => {
     if (busy) return;
     busy = true;
-    deliverCharges().then((r) => { if (r.stripe || r.failed || r.reconciled) console.error(`run charges: ${r.stripe} to Stripe, ${r.ledger} to the ledger, ${r.failed} failed, ${r.waiting} waiting, ${r.reconciled} reconciled`); })
+    tracked("run_charges", () => deliverCharges()).then((r) => { if (r.stripe || r.failed || r.reconciled) console.error(`run charges: ${r.stripe} to Stripe, ${r.ledger} to the ledger, ${r.failed} failed, ${r.waiting} waiting, ${r.reconciled} reconciled`); })
       .catch((e) => console.error("run charges:", (e as Error).message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, everyMs);

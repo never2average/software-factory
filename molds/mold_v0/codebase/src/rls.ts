@@ -96,6 +96,8 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys", "developer_marks",
   // The developer surface's event outbox (mold_v0-202, 0036_event_outbox): written through app_event_outbox_put only.
   "event_outbox", "developer_events",
+  // What the shell's scheduled work last did (mold_v0-204, 0037_scheduler_jobs): platform bookkeeping.
+  "scheduler_jobs",
   // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
   "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
 
