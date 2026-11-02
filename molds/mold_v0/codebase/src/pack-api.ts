@@ -749,7 +749,7 @@ export const RecordAreaSchema = z.object({
   /**
    * Append-only (mold_v0-195): a record is added once and never changed, moved or deleted through any door (the record
    * store refuses). With `chain: true` the database enforces it too and hash-chains the area's records per workspace
-   * (sql/migrations/0033_ledger_chain.sql; src/ledger.ts), signed in checkpoints when the profile's audit.sign is on.
+   * (sql/migrations/0034_ledger_chain.sql; src/ledger.ts), signed in checkpoints when the profile's audit.sign is on.
    * Workspace areas of the shell's own tables only: no lifecycle (a move changes a record), no repository.
    */
   append_only: z.boolean().optional(),

@@ -627,6 +627,12 @@
           "sealed": {
             "type": "boolean"
           },
+          "append_only": {
+            "type": "boolean"
+          },
+          "chain": {
+            "type": "boolean"
+          },
           "rows": {
             "type": "string",
             "maxLength": 500

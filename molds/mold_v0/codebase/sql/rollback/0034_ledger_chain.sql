@@ -1,12 +1,12 @@
--- Rolling back past 0033_ledger_chain (mold_v0-195), for a release from before it (and before rolling back an earlier
+-- Rolling back past 0034_ledger_chain (mold_v0-195), for a release from before it (and before rolling back an earlier
 -- migration, whose rollback refuses while this one is applied).
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0033_ledger_chain.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0034_ledger_chain.sql
 -- The chain's columns, triggers and functions go, with the heads, and the ledger row. The chain's hashes can be
 -- recomputed from the entries at any time; signed checkpoints cannot (the key that signed them is not the database's).
 -- A database that holds a checkpoint is refused unless the operator says to drop them anyway (export them first:
 -- npm run operator:verify-ledger -- --export <file>):
---   psql ... -c "SET app.ledger_rollback_drop = 'on'" -f sql/rollback/0033_ledger_chain.sql   (one session: use -1)
+--   psql ... -c "SET app.ledger_rollback_drop = 'on'" -f sql/rollback/0034_ledger_chain.sql   (one session: use -1)
 -- A chained area's records stay, as ordinary records. Found by its name, so it also undoes it where it was recorded
 -- under another number. Refused when a later migration is applied.
 DO $rb$

@@ -1,6 +1,6 @@
 /**
  * Chain and sign (mold_v0-195): the audit trails (src/audit-trail.ts) and a pack's record areas declared
- * `append_only: true` with `chain: true` are hash-chained in the database (sql/migrations/0033_ledger_chain.sql: a
+ * `append_only: true` with `chain: true` are hash-chained in the database (sql/migrations/0034_ledger_chain.sql: a
  * trigger computes every entry's hash = sha256(prev_hash || canonical entry), per workspace and stream), and, when the
  * profile says `audit.sign: true`, signed: a scheduler job writes checkpoints, each an Ed25519 signature over the
  * Merkle root of a window of a stream's entries and the previous checkpoint's hash, with a key the database never sees.
