@@ -130,6 +130,8 @@ export const keys = {
   diff: (orgId: number, simulationId: string, sessionId: string) => `diffs/org-${Math.trunc(orgId)}/${safe(simulationId)}/${safe(sessionId)}.diff.gz`,
   workspace: (orgId: number, store: string, snapshotId: number) => `workspaces/org-${Math.trunc(orgId)}/${safe(store)}/${Math.trunc(snapshotId)}.wse`,
   transfer: (orgId: number, transferId: string) => `workspaces/org-${Math.trunc(orgId)}/.transfers/${safe(transferId)}.wst`,
+  /** A message the mail intake took in (mold_v0-192, src/email-intake.ts): attachment n of its ledger row, sealed. */
+  mail: (orgId: number, messageRow: number, n: number) => `workspaces/org-${Math.trunc(orgId)}/.mail/${Math.trunc(messageRow)}/${Math.trunc(n)}.wse`,
 };
 
 export async function putObject(key: string, body: Buffer | string, contentType: string, meta: Record<string, string> = {}): Promise<void> {

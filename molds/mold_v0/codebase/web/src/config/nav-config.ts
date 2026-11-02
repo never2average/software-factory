@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { emailPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
@@ -101,4 +101,5 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
  * the roles that may read what it shows), or the whole sidebar the app's profile declares (mold_v0-133: profile.json
  * console.sidebar, its groups, the packs' tabs and the shell's pages in its order); otherwise the shell's own.
  */
-export const portalNav: NavGroup[] = tabPortalNav.length ? tabPortalNav : shellPortalNav;
+// Settings › Email (mold_v0-192) comes after either, when a pack turns the company's own email on.
+export const portalNav: NavGroup[] = emailPortalNav.length ? mergeNav([...(tabPortalNav.length ? tabPortalNav : shellPortalNav), ...emailPortalNav]) : tabPortalNav.length ? tabPortalNav : shellPortalNav;

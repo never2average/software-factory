@@ -14,6 +14,8 @@ import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
+import { emailAppRouter } from "./email-routes.js";
+import { intakeWired, pollIntake, startEmailIntake } from "./email-intake.js";
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
@@ -192,6 +194,8 @@ export function createApp() {
     // The packs' schedules and the daily due-date check (mold_v0-035, src/schedules.ts): a server ticks them from its own
     // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
     const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
+    // The mail intake (mold_v0-192, src/email-intake.ts): a server polls from its own loop; on Vercel this entry polls.
+    const intake = intakeWired() ? { email_intake: await pollIntake().catch((e) => ({ error: (e as Error).message })) } : {};
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
     const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
@@ -251,6 +255,8 @@ export function createApp() {
   app.use("/api/data", dataAppRouter());
   // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
   app.use("/api/credentials", credentialAppRouter());
+  // A company's own email (mold_v0-192, src/email-routes.ts): Settings › Email, when a pack turns it on.
+  app.use("/api/email", emailAppRouter());
   // A workspace's GitHub App installation (mold_v0-014): only when a pack's credential field asks for one.
   app.use("/api/github-app", githubAppRouter());
   // Credential fields connected through an OAuth provider (mold_v0-014): only when a pack's field names one.
@@ -880,6 +886,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`  archive       ${!archiving ? "off" : storageInEnv() ? "on (traces + research to the bucket in R2_*)" : "on while Key vault › Object storage is set (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");
+    // The mail intake (mold_v0-192): each workspace's connected mailboxes, every minute; APP_EMAIL_INTAKE=off disables.
+    if (startEmailIntake()) console.error("  mail intake   on (every minute; APP_EMAIL_INTAKE=off to disable)");
     // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.
     if (startChargeDelivery()) console.error("  run charges   on (every minute; the profile's billing, APP_RUN_BILLING=off to disable)");
     // Webhooks out (mold_v0-193): retries and run.finished, every 15 seconds, only with a developer surface.
