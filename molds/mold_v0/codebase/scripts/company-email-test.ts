@@ -134,7 +134,7 @@ try {
   const SHARED_ID = `shared-${STAMP}@regulator.example`;
   const aInbox: FakeMessage[] = [
     msg(1, { from: "Regulator <notices@regulator.example>", subject: "Circular 1", text: "Please comply by Friday.", messageId: `c1-${STAMP}@regulator.example`, attachments: [att("circular-1.pdf", "first")] }),
-    msg(2, { from: "customer@bank.example", subject: "Audit request", text: "Body two", html: "<p>Body <b>two</b></p>", messageId: SHARED_ID }),
+    msg(2, { from: "customer@acme-bank.example", subject: "Audit request", text: "Body two", html: "<p>Body <b>two</b></p>", messageId: SHARED_ID }),
     msg(3, { from: "old@regulator.example", subject: "Too old", text: "old", date: new Date(NOW.getTime() - 30 * day) }),
     msg(4, { from: "big@regulator.example", subject: "Many files", text: "files", attachments: [att("a.pdf", "a"), att("b.pdf", "b"), att("c.pdf", "c"), { name: "huge.bin", type: "application/octet-stream", data: Buffer.alloc(300 * 1024, 1) }, att("e.pdf", "e")] }),
   ];
@@ -147,12 +147,12 @@ try {
   const smtp = await startFakeSmtp({ user: "notices@a.example", pass: C.SMTP_A });
   const graphMsgs: FakeMessage[] = [
     msg(1, { from: "graph@regulator.example", subject: "Via Graph", text: "graph body", messageId: `g1-${STAMP}@regulator.example`, attachments: [att("g.pdf", "graph")] }, "AAMk-1"),
-    msg(2, { from: "customer@bank.example", subject: "Audit request (copy)", text: "again", messageId: SHARED_ID }, "AAMk-2"),
+    msg(2, { from: "customer@acme-bank.example", subject: "Audit request (copy)", text: "again", messageId: SHARED_ID }, "AAMk-2"),
   ];
   const gmailMsgs: FakeMessage[] = [msg(11, { from: "gm@regulator.example", subject: "Via Gmail", text: "gmail body", messageId: `gm1-${STAMP}@regulator.example` }, "gm-1")];
   const providers = await startFakeProviders({
-    graph: [{ tenant: "contoso.example", client: "client-1", secret: C.GRAPH, mailbox: "legal@a.example", folders: { inbox: graphMsgs } },
-            { tenant: "contoso.example", client: "client-send", secret: C.GRAPH_SEND, mailbox: "notices@a.example", folders: {} }],
+    graph: [{ tenant: "acme.example", client: "client-1", secret: C.GRAPH, mailbox: "legal@a.example", folders: { inbox: graphMsgs } },
+            { tenant: "acme.example", client: "client-send", secret: C.GRAPH_SEND, mailbox: "notices@a.example", folders: {} }],
     gmail: [{ client_email: "intake@proj.iam.example", publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(), mailbox: "legal@a.example", labels: { INBOX: { id: "INBOX", messages: gmailMsgs } }, historyId: 10 },
             { client_email: "intake@proj.iam.example", publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(), mailbox: "notices@a.example", labels: {}, historyId: 1 }],
   });
@@ -224,7 +224,7 @@ try {
       assert.ok(!/535|Authentication/.test(logRow!.error), "the operator's email log says only that the workspace's sender failed");
       await req("PUT", "/api/email/sender", bearer(ownerA), { provider: "smtp", settings: smtpSettings, secret: C.SMTP_A });
       // Graph and Gmail senders, against their stand-ins.
-      const g = await req("PUT", "/api/email/sender", bearer(ownerA), { provider: "graph", settings: { from_address: "notices@a.example", tenant_id: "contoso.example", client_id: "client-send" }, secret: C.GRAPH_SEND });
+      const g = await req("PUT", "/api/email/sender", bearer(ownerA), { provider: "graph", settings: { from_address: "notices@a.example", tenant_id: "acme.example", client_id: "client-send" }, secret: C.GRAPH_SEND });
       assert.equal(g.status, 200, JSON.stringify(g.body));
       assert.equal((await req("PUT", "/api/email/sender", bearer(ownerA), { provider: "gmail", settings: { from_address: "notices@a.example" } })).status, 400, "a new provider needs its own secret");
       const gt = await req("POST", "/api/email/sender/test", bearer(ownerA), { to: "me@a.example" });
@@ -306,7 +306,7 @@ try {
 
     // ---------- 6. Graph and Gmail intakes ----------
     {
-      const g = await req("PUT", "/api/email/inboxes", bearer(ownerA), { provider: "graph", settings: { label: "Legal (365)", tenant_id: "contoso.example", client_id: "client-1", mailbox: "legal@a.example" }, secret: C.GRAPH });
+      const g = await req("PUT", "/api/email/inboxes", bearer(ownerA), { provider: "graph", settings: { label: "Legal (365)", tenant_id: "acme.example", client_id: "client-1", mailbox: "legal@a.example" }, secret: C.GRAPH });
       assert.equal(g.status, 200, JSON.stringify(g.body));
       const gm = await req("PUT", "/api/email/inboxes", bearer(ownerA), { provider: "gmail", settings: { label: "Legal (Gmail)", mailbox: "legal@a.example" }, secret: GMAIL_KEY });
       assert.equal(gm.status, 200, JSON.stringify(gm.body));
