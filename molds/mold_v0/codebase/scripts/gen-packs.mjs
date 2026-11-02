@@ -2262,6 +2262,12 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   // email), after the sidebar whatever it is made of (the shell's, the packs' tabs or the profile's).
   "\n/** Settings › Email (mold_v0-192): the workspace's own sender and mailboxes, when a pack declares pack.json email. */\n" +
   `export const emailPortalNav: NavGroup[] = ${json(packs.some((p) => p.json?.email) ? [{ label: "Settings", items: [{ title: "Email", url: "/app/settings/email", icon: "mail", items: [] }] }] : [])};\n` +
+  // The developer surface's console (mold_v0-201, web/src/features/developer): Settings › Developers (keys, webhooks,
+  // allowed origins, inbound sources), only in an embedded app (a pack declares developer_surface); a tool app has none.
+  "\n/** Settings › Developers (mold_v0-201): the developer surface's console, only where a pack declares pack.json developer_surface. */\n" +
+  `export const developerPortalNav: NavGroup[] = ${json(developerFacts ? [{ label: "Settings", items: [{ title: "Developers", url: "/app/developers", icon: "code", items: [] }] }] : [])};\n` +
+  "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
+  `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length })};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
   // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's. A host pack's mcp block (mold_v0-137:

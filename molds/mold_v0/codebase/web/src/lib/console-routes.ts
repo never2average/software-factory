@@ -24,6 +24,7 @@ import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
 import { journeysOn, tipsOn } from '../features/journeys/config';
 import { auditOn } from '../features/audit/config';
+import { developerConsole } from '../config/pack-nav.generated';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -69,6 +70,8 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   // The access log (mold_v0-197): only where the profile turns an audit trail on.
   '/app/access-log': () => auditOn(),
   '/admin/access-log': () => auditOn(),
+  // The developer surface's console (mold_v0-201): only in an embedded app (a pack declares developer_surface).
+  '/app/developers': () => developerConsole.on,
 };
 
 /**
