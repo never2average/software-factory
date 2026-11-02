@@ -15,6 +15,9 @@
 //   5. A list tab's four cards (mold_v0-181): a card's number and its trend in words (web/src/features/tabs/spark-words.ts),
 //      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them below its
 //      toolbar.
+//   6. The Access log (mold_v0-205): the records' own table over the audit trails as a read-only system area (the data
+//      adapter, RecordSource), with the trail's four cards under the search row, its filters (who, action, area, door,
+//      the date range), the column picker, Download CSV and the row drawer; no table of its own.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -147,3 +150,20 @@ assert.match(tab, /<RunsTable tab=\{tab\} reports=\{tab\.kind === 'reports'\} su
 assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} \/>/, "a schedules section");
 for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table, below its toolbar`);
 ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them below its toolbar (a board or timeline: above it)");
+
+// 6. The Access log on the records table (mold_v0-205).
+{
+  const log = src("features/audit/access-log.tsx");
+  const code = log.replace(/\/\/.*$/gm, "");
+  assert.match(code, /<RecordTableView /, "the access log draws the records pages' table");
+  assert.doesNotMatch(code, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
+  assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, below the search row");
+  assert.match(code, /primary: <CsvLink href=\{csv\} \/>/, "Download CSV: the server's file of every entry");
+  assert.match(code, /title: \{ label: 'When', type: 'date'/, "the entry's time: sorted and filtered by date range");
+  for (const [name, type] of [["actor", "enum"], ["action", "enum"], ["area", "enum"], ["channel", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);
+  assert.match(code, /\/api\/audit\/data\/sparklines/); assert.match(code, /\/api\/admin\/audit\/platform\/sparklines/);
+  const rp = src("features/records/record-pages.tsx");
+  assert.match(rp, /source \? source\.load\(\) : loadAll\(url, rows\)/, "the table reads a data adapter's rows in place of a records route");
+  assert.match(rp, /export interface RecordSource/);
+  ok("the Access log is the records table over a read-only system area: search, four cards, filters on who, action, area, door and date, column picker, Download CSV, a row drawer");
+}

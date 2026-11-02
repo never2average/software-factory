@@ -1,6 +1,7 @@
 /**
- * On-premises runners over HTTP (mold_v0-036; src/onprem-runners.ts). Nothing is mounted unless the build has a kind
- * that needs a workspace's private network (and APP_ONPREM_RUNNERS is not off): every path then answers 404 as before.
+ * On-premises runners over HTTP (mold_v0-036; src/onprem-runners.ts). Nothing is mounted unless the app's profile turns
+ * them on (`onprem_runners: true`, mold_v0-205), the build has a kind that needs a workspace's private network and
+ * APP_ONPREM_RUNNERS is not off: every path then answers 404 as before, enrolment included.
  *
  *   the workspace (/api/runners; the portal's session, X-Pack-Request: 1 on a change made with the cookie)
  *     GET    /                 a signed-in person: the location, the runners and their health, the kinds it applies to
@@ -68,7 +69,7 @@ export function installCommand(token: string, image = "<the image your provider 
 
 export function onPremAppRouter(): Router {
   const r = express.Router();
-  if (!onPremAvailable()) return r; // no kind needs a private network: nothing is mounted, nothing answers
+  if (!onPremAvailable()) return r; // off in the profile, or no kind needs a private network: nothing is mounted, nothing answers
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(...jsonBody("16kb"));
   r.use(customerSession);

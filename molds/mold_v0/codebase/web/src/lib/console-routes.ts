@@ -14,7 +14,7 @@ import packRoutesJson from '../config/pack-routes.generated.json';
 import { landing } from '../config/landing.generated';
 import { legal } from '../config/legal.generated';
 import { profile } from '../config/profile.generated';
-import { ADMIN_DOCS } from '../content/admin-docs.generated';
+import { ADMIN_DOCS } from '../content/admin-docs';
 import { STAFF_GUIDE_SLUG, staffGuideShown } from '../content/staff-guide';
 import { guidePages } from '../content/customer-guide';
 import catalog from '../content/mcp-tools.generated.json';

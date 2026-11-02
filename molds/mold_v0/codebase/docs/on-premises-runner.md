@@ -6,8 +6,11 @@ customer installs a small **on-premises runner** inside their own network. This 
 it does (the code: `src/onprem-runner.ts`, `src/onprem-runners.ts`, `src/onprem-runner-routes.ts`; the tables:
 `sql/migrations/0027_on_premises_runners.sql`).
 
-It exists only in a build where some job kind declares `private_network: true`. With none (and with
-`APP_ONPREM_RUNNERS=off`) nothing of it is mounted, every run is hosted, and nothing changes.
+It is an app's choice, **off by default** (mold_v0-205): it exists only where the app's profile says
+`"onprem_runners": true` (profile.json; from the factory, the app's `profile.onprem_runners` or the brief line
+`onprem_runners = true`) and some job kind declares `private_network: true`. Off, with no such kind, or with
+`APP_ONPREM_RUNNERS=off`, nothing of it is mounted (its routes answer not found, so no runner can enrol), no page, tab
+or guide for it shows, and every run is hosted.
 
 ## How it works
 

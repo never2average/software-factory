@@ -25,8 +25,9 @@
  *   health    a runner is online when it polled within APP_RUNNER_ONLINE_SECONDS (90); the console shows when it was
  *             last seen. A runner silent for APP_RUNNER_OFFLINE_REAP_MINUTES (15) loses its sandboxes' tokens.
  *
- * Nothing here exists in a build with no kind that needs the private network (the routes mount nothing, every run is
- * hosted, as before), nor with APP_ONPREM_RUNNERS=off.
+ * Nothing here exists unless the app's profile says `onprem_runners: true` (mold_v0-205; the default is off), nor in a
+ * build with no kind that needs the private network (the routes mount nothing, every run is hosted, as before), nor
+ * with APP_ONPREM_RUNNERS=off.
  */
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
@@ -39,6 +40,7 @@ import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
+import { onPremRunnersOn } from "./profile.js";
 
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -60,8 +62,11 @@ export const ENROLL_PREFIX = "ore_", CREDENTIAL_PREFIX = "orr_";
 
 /** The kinds of this build that may need a workspace's private network. */
 export const privateNetworkKinds = (): JobKind[] => jobKinds().filter((k) => (k as { private_network?: boolean }).private_network);
-/** Whether this build offers on-premises runners at all: a kind that needs the private network, and not switched off. */
-export const onPremAvailable = () => (ENV.APP_ONPREM_RUNNERS ?? "").toLowerCase() !== "off" && privateNetworkKinds().length > 0;
+/**
+ * Whether this build offers on-premises runners at all: the app's profile turns them on (`onprem_runners: true`,
+ * mold_v0-205; off by default), a kind needs the private network, and APP_ONPREM_RUNNERS does not switch them off.
+ */
+export const onPremAvailable = () => onPremRunnersOn() && (ENV.APP_ONPREM_RUNNERS ?? "").toLowerCase() !== "off" && privateNetworkKinds().length > 0;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ONLINE = () => `last_seen_at > now() - make_interval(secs => ${Math.round(ONPREM.onlineSeconds())})`;

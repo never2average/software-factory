@@ -19,6 +19,9 @@
 //     the runner removes its containers, deletes its credential and exits 3. Switching back to hosted moves queued runs.
 //  8. A silent runner loses its sandboxes' tokens; staff see every runner (no secret) and only operators revoke.
 //  9. The allow list parser; APP_ONPREM_RUNNERS=off sends every run back to the hosted scaler.
+// 10. The app's profile (mold_v0-205, profile.json `onprem_runners`, off by default): off, a build whose kinds need a
+//     private network mounts nothing either (/api/runners, /api/runner/enroll and the staff list answer 404), nothing is
+//     routed on premises, and queued on-premises runs go back to the hosted scaler; on, exactly the behaviour above.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -81,6 +84,7 @@ const docker = http.createServer((req, res) => {
 });
 
 const { getDb } = await import("../src/db.js");
+const { setOnPremRunnersForTest } = await import("../src/profile.js");
 const db = await getDb();
 await import("../src/server.js");
 const { setPacksForTest } = await import("../src/packs.js");
@@ -110,6 +114,25 @@ try {
 
   const A = (await createOrg(`Onprem A ${STAMP}`)).org, B = (await createOrg(`Onprem B ${STAMP}`)).org;
   setPacksForTest([onpremFixturePack()] as never);
+
+  // ---------- 10a. the profile's toggle off (the default): kinds need a private network, and still nothing exists ----------
+  {
+    setOnPremRunnersForTest(null);
+    assert.equal(onprem.onPremAvailable(), false, "off by default: the profile does not turn them on");
+    assert.equal(routes.onPremAppRouter().stack.length, 0, "off: nothing mounted at /api/runners");
+    assert.equal(routes.onPremRunnerRouter().stack.length, 0, "off: nothing mounted at /api/runner");
+    assert.equal(await onprem.runLocationFor(db, A.orgId), "hosted");
+    const off = await startHttp();
+    // Mounted, these answer 401 without a session or credential; not mounted, nothing answers them at all.
+    const h = { "content-type": "application/json" };
+    assert.equal((await fetch(`${off.base}/api/runners`, { headers: h })).status, 404, "off: GET /api/runners is not found");
+    assert.equal((await fetch(`${off.base}/api/runners`, { method: "POST", headers: h, body: JSON.stringify({ name: "x" }) })).status, 404, "off: no runner can be added");
+    assert.equal((await fetch(`${off.base}/api/runner/enroll`, { method: "POST", headers: { authorization: "Bearer ore_x", "content-type": "application/json" }, body: "{}" })).status, 404, "off: enrolment is refused");
+    assert.equal((await fetch(`${off.base}/api/runner/poll`, { method: "POST", headers: { authorization: "Bearer orr_x", "content-type": "application/json" }, body: "{}" })).status, 404);
+    await off.close();
+    console.log("✓ profile onprem_runners off (the default): with kinds that need a private network, nothing mounted, enrolment refused, every run hosted");
+  }
+  setOnPremRunnersForTest(true);
   assert.equal(onprem.onPremAvailable(), true);
   await rec.putPlatform(null, "run_sources", "s1", { title: "Keep logs", data: { body: "a year" } });
   await rec.putPlatform(null, "run_checks", "c1", { title: "Retention", data: { summary: "logs kept" } });
@@ -422,8 +445,16 @@ try {
     const q2 = await start(ca, "probe", { asset: "app-a" });
     assert.equal((await runRow(q2)).runner_location, "hosted", "off: new runs are hosted");
     delete process.env.APP_ONPREM_RUNNERS;
-    await db.query("UPDATE runs SET status = 'cancelled', ended_at = now() WHERE id = ANY($1::text[])", [[q, q2]]);
-    console.log("✓ the allow list: names, wildcards, networks and ports; loopback, link-local, multicast, IPv6, wide networks refused; APP_ONPREM_RUNNERS=off sends every run back to the hosted scaler");
+    // 10b. The profile's toggle off (mold_v0-205) does the same: the queued on-premises run is hosted's, new runs are hosted.
+    assert.ok(!(await claimableRuns()).some((x) => x.id === q), "on again: it waits for the runner");
+    setOnPremRunnersForTest(false);
+    assert.equal(onprem.onPremAvailable(), false);
+    assert.ok((await claimableRuns()).some((x) => x.id === q), "profile off: the hosted scaler takes it");
+    const q3 = await start(ca, "probe", { asset: "app-a" });
+    assert.equal((await runRow(q3)).runner_location, "hosted", "profile off: new runs are hosted");
+    setOnPremRunnersForTest(true);
+    await db.query("UPDATE runs SET status = 'cancelled', ended_at = now() WHERE id = ANY($1::text[])", [[q, q2, q3]]);
+    console.log("✓ the allow list: names, wildcards, networks and ports; loopback, link-local, multicast, IPv6, wide networks refused; APP_ONPREM_RUNNERS=off and the profile's onprem_runners off send every run back to the hosted scaler");
   }
   await ca.close(); await cb.close();
   await srv.close();

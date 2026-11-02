@@ -35,7 +35,11 @@ const labelPulse = <span className='bg-muted inline-block h-3 w-24 animate-pulse
 
 /** The four cards of a list tab, for the RecordView's `summary` (below its toolbar) or above a board or timeline. */
 export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }) {
-  const url = `/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`;
+  return <Sparklines url={`/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`} tag={`${tab.pack}/${tab.id}`} />;
+}
+
+/** Four cards from any route that answers as /api/sparklines does (mold_v0-205: the Access log's, /api/audit/<trail>/sparklines). */
+export function Sparklines({ url, tag }: { url: string; tag: string }) {
   const { data, error } = useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as SparkAnswers & { error?: string };
@@ -57,7 +61,7 @@ export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }
   // Cards that cannot be read at all (the API predates them, a network failure) leave the list as it was.
   if (error || (data && !data.cards.length)) return null;
   return (
-    <section aria-label='Key numbers' aria-busy={!data || undefined} data-sparklines={`${tab.pack}/${tab.id}`}>
+    <section aria-label='Key numbers' aria-busy={!data || undefined} data-sparklines={tag}>
       <StatStrip quad items={items} />
     </section>
   );

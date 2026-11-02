@@ -10,7 +10,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
-import { Field, RecordView, type PropType, type RecordCol } from '@/components/layout/record-view';
+import { Field, RecordView, type PropType, type RecordCol, type SortRule } from '@/components/layout/record-view';
+import type { RawValue } from '@/components/layout/record-filters';
 import { useRepositories } from '@/features/admin/repositories';
 import { EmptyState } from '@/features/tabs/empty';
 import { cn } from '@/lib/utils';
@@ -22,7 +23,7 @@ import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, OverdueToggle, type ClockEvent, type ClockView } from './clocks';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
-type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView> };
+export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView> };
 export type Page = { records: RecordRow[]; next: string | null };
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -70,11 +71,30 @@ export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
 const COL_TYPE: Record<string, PropType> = { enum: 'select', number: 'number', date: 'date', boolean: 'boolean' };
 const dash = <span className='text-muted-foreground'>—</span>;
 
+/**
+ * A data adapter (mold_v0-205): the same table over rows that do not come from a records route, as a read-only system
+ * area (the Access log's trails, features/audit/access-log.tsx). `load` reads the rows (at most LIST_MAX; `more` when
+ * there were more), `primary` is the toolbar's action in place of Export CSV, `title` types the record column (the
+ * entry's time: sorted and filtered by date range), `hidden` adds fields as columns the column picker shows on request,
+ * `updated` false leaves out the Updated column, and `defaultSort` orders the rows at first.
+ */
+export interface RecordSource {
+  load: () => Promise<{ records: RecordRow[]; more: boolean }>;
+  /** What the rows depend on (reloaded when it changes). */
+  key: string;
+  primary?: ReactNode;
+  title?: { label: string; type: PropType; value: (r: RecordRow) => RawValue };
+  hidden?: string[];
+  updated?: false;
+  defaultSort?: SortRule[];
+  noun?: string;
+}
+
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
-function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
+function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<RecordRow>[] {
   const record: RecordCol<RecordRow> = {
-    key: '_record', label: 'Record', title: true, keep: true, type: 'text', className: 'min-w-56',
-    value: (r) => r.title || r.key,
+    key: '_record', label: source?.title?.label ?? 'Record', title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
+    value: source?.title?.value ?? ((r) => r.title || r.key),
     render: (r) => (
       <span className='flex min-w-0 flex-col gap-1'>
         <span className='leading-snug font-medium'>{r.title || r.key}</span>
@@ -82,11 +102,12 @@ function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
       </span>
     )
   };
-  const fields = area.list_columns.map((name): RecordCol<RecordRow> => {
+  const hidden = new Set(source?.hidden ?? []);
+  const fields = [...area.list_columns, ...hidden].map((name): RecordCol<RecordRow> => {
     const f = area.fields.find((x) => x.name === name);
     const type = (f && !f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
     return {
-      key: name, label: areaFieldLabel(area, name), type, keep: false,
+      key: name, label: areaFieldLabel(area, name), type, keep: false, ...(hidden.has(name) ? { hidden: true } : {}),
       ...(type === 'select' && f?.options ? { options: f.options.map((o) => (typeof o === 'string' ? { value: o } : { value: o.value, label: o.label })) } : {}),
       value: (r) => {
         const v = r.data[name];
@@ -103,7 +124,7 @@ function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
   });
   const updated: RecordCol<RecordRow> = { key: '_updated', label: 'Updated', type: 'date', hidden: true, value: (r) => r.updated_at, render: (r) => r.updated_at.slice(0, 10) };
   // mold_v0-191: each clock's deadline and status (./clocks).
-  return [record, ...fields, ...clockColumns<RecordRow>(area), updated];
+  return [record, ...fields, ...clockColumns<RecordRow>(area), ...(source?.updated === false ? [] : [updated])];
 }
 
 /** A field's value in the peek: a reference to a record this page can show links to it. */
@@ -132,8 +153,10 @@ function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admi
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
+  /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
+  source?: RecordSource;
   /** Between the toolbar and the table: a tab's four cards (mold_v0-181, features/tabs/sparklines.tsx). */
   summary?: ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
@@ -141,8 +164,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
   exportName?: string; exportAreas?: string[];
 }) {
-  const { data, error } = useOrgLoad(() => loadAll(url, rows), [url, rows]);
-  const cols = useMemo(() => columnsOf(area), [area]);
+  const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
+  const cols = useMemo(() => columnsOf(area, source), [area, source]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on.
   const [overdueOnly, setOverdueOnly] = useState(false);
   const clocked = !!area.clocks?.length;
@@ -153,22 +176,22 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
-      id={id} compact={compact} noun='records' properties summary={summary}
+      id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} defaultSort={source?.defaultSort}
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={(clocked && data) || data?.more ? <>
         {clocked && data && <OverdueToggle count={overdue.length} on={overdueOnly} onChange={setOverdueOnly} />}
-        {data?.more && <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span>}
+        {data?.more && <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span>}
       </> : undefined}
-      primary={data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
+      primary={source ? source.primary : data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
       empty={clocked && overdueOnly ? 'Nothing is overdue.' : empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return href ? <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button> : null; }}
       detail={(r) => (
         <dl>
           {r.version && <Field label='Version'>{r.version}</Field>}
-          {area.fields.filter((f) => !area.list_columns.includes(f.name)).map((f) => (
+          {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name)).map((f) => (
             <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
           ))}
         </dl>

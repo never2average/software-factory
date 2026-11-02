@@ -3,7 +3,7 @@
 // navigation's client part gets titles and headings).
 import { notFound } from 'next/navigation';
 import { Markdown } from '@/components/markdown';
-import { ADMIN_DOCS, type AdminDoc } from '@/content/admin-docs.generated';
+import { ADMIN_DOCS, type AdminDoc } from '@/content/admin-docs';
 import { DocsLayout } from './docs-layout';
 import { markdownHeadings, splitLead, type DocNavGroup } from './docs-data';
 import { adminDocGroup as groupOf, STAFF_GUIDE_SLUG, staffGuideMarkdown, staffGuideShown } from '@/content/staff-guide';
