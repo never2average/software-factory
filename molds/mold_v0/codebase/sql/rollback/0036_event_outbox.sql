@@ -5,7 +5,7 @@
 -- The outbox, its functions and the runs trigger go, and the ledger row. An older release queues events after commit
 -- (and scans the runs that ended for run.finished). Events still pending in the outbox would be lost: they are relayed
 -- into webhook_deliveries first, here, for every enabled endpoint that takes them (the older release sends those), so
--- nothing already committed goes unsent. Found by its name, so it also undoes it where it was recorded under another
+-- nothing already committed goes unsent; its run.finished scan starts from now. Found by its name, so it also undoes it where it was recorded under another
 -- number. Refused when a later migration is applied.
 DO $rb$
 DECLARE
@@ -22,6 +22,8 @@ BEGIN
     FROM event_outbox o JOIN webhook_endpoints e ON e.org_id = o.org_id AND e.status = 'enabled' AND (cardinality(e.events) = 0 OR o.event_type = ANY (e.events))
    WHERE o.relayed_at IS NULL
   ON CONFLICT (endpoint_id, dedupe_key) DO NOTHING;
+  -- The older release's run.finished scan starts from here: the runs that ended meanwhile were told through the outbox.
+  UPDATE developer_marks SET at = now() WHERE name = 'run.finished';
   DROP TRIGGER IF EXISTS runs_event_outbox ON runs;
   DROP FUNCTION IF EXISTS app_event_outbox_run_finished();
   DROP FUNCTION IF EXISTS app_event_outbox_put(INT, TEXT, TEXT, JSONB);
