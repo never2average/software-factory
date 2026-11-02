@@ -18,6 +18,7 @@
 //  7. Tenant isolation: another workspace never reads, finds or reveals them; a value moved to its row does not open.
 //  8. The migration: rows written before a field was encrypted are sealed by the scheduler's pass in batches,
 //     idempotently and resumably; a field no longer encrypted is opened back.
+//  9. Declarative checks (mold_v0-196): an encrypted field is compared by equality (match, blind index) only.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
@@ -335,6 +336,31 @@ try {
     const [l1] = await db.query<{ data: Record<string, any> }>("SELECT data FROM workspace_records WHERE org_id = $1 AND area = 'later' AND key = 'l-1'", [C.orgId]);
     assert.equal(l1!.data.memo, MEMO); assert.equal(l1!.data[FIELDS_TAG], "v1:pin,ref=eq");
     ok("migration: newly encrypted fields are masked at once and sealed by the scheduler's pass in batches (4, then resumed after a restart, 4, 2), every row tagged, nothing else changed; a second pass does nothing; values reveal and the blind index finds them; a field no longer encrypted is opened back");
+  }
+
+  // ---------- 9. declarative checks (mold_v0-196): equality by the blind index only ----------
+  {
+    const spec = await import("../src/check-spec.js");
+    const areas = [{ name: "contacts", scope: "workspace" as const, fields: CONTACTS.fields }];
+    const base = { name: "known_ref", inputs: { ref: "string" }, rule: { area: "contacts", match: { ref: "$ref" }, require: [{ field: "tier", eq: "silver" }] }, explain: true };
+    const problems = (patch: (c: any) => void) => { const c = structuredClone(base) as any; patch(c); return spec.checksProblems([{ id: "p", checks: [c] }], areas).join("\n"); };
+    assert.equal(problems(() => {}), "", "a match on a searchable encrypted field is allowed");
+    assert.match(problems((c) => { c.rule.match = { memo: "$ref" }; }), /memo is encrypted: a check matches it by equality only/);
+    assert.match(problems((c) => { c.rule.match = { ref: ["$ref", "x"] }; }), /ref is encrypted: a check matches it by equality only \(one value\)/);
+    assert.match(problems((c) => { c.rule.require = [{ field: "ref", eq: "$ref" }]; }), /ref is encrypted: a check never reads its value/);
+    assert.match(problems((c) => { c.rule.require = [{ field: "name", eq: "@memo" }]; }), /memo is encrypted/);
+    await installEmbedded((j: any) => { j.record_areas.push(CONTACTS); j.checks = [base]; });
+    const { answerCheck } = await import("../src/checks.js");
+    const E = (await createOrg(`Enc E ${STAMP}`)).org, F = (await createOrg(`Enc F ${STAMP}`)).org;
+    await withTenant(E.orgId, () => records.workspaceRecords("fixture_embedded", E.orgId).create("contacts", "e-1", { data: { name: "Eve", ref: REF, tier: "silver" } }));
+    const caller = (o: { orgId: number }) => ({ orgId: o.orgId, role: null, userId: null, scopes: null });
+    const yes = await answerCheck(caller(E), "known_ref", { ref: REF });
+    assert.equal(yes.allowed, true, JSON.stringify(yes));
+    assert.deepEqual(yes.record_refs, [{ area: "contacts", key: "e-1" }]);
+    assert.deepEqual(leaks(JSON.stringify(yes)), [], "the answer and its explanation hold no value");
+    assert.equal((await answerCheck(caller(E), "known_ref", { ref: `${REF}x` })).allowed, false, "another value: no");
+    assert.equal((await answerCheck(caller(F), "known_ref", { ref: REF })).allowed, false, "another workspace: its own records only");
+    ok("declarative checks: an encrypted field is matched by equality through its blind index (yes for the value, no for another value or another workspace), never in require, an order or an operand, never with a list; no value in the answer");
   }
 
   await installEmbedded(null);

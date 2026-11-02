@@ -2692,7 +2692,8 @@ stored in the clear, only revealed on purpose:
   key derived from the workspace's data key, `orgcrypto.orgMac`), outside a sealed area's ciphertext too, so a filter
   `{field: value}` runs in SQL. Every other operator (`ne`, `in`, `prefix`, `contains`, comparisons, `exists`) and a sort
   on an encrypted field are refused (400). The same value has a different index in each workspace. A declarative check
-  compares an encrypted field through `equalsByIndex` (equality, never the value).
+  (mold_v0-196) compares an encrypted field only by equality: in its `match` (one value, a searchable field), through the
+  blind index; never in `require`, an order or an operand (`src/check-spec.ts` refuses it at build).
 - **The migration.** Each stored row carries the tag of the declaration it was written under (`$enc`). When a pack newly
   marks a field encrypted (or searchable), reads mask the old plain values at once, and the scheduler's tick (every
   minute on a server, the cron on Vercel; `src/encrypted-fields-migration.ts`) rewrites the rows whose tag differs, 500 a
@@ -2705,7 +2706,7 @@ stored in the clear, only revealed on purpose:
 Proof: `npm run test:encrypted-fields` (the declaration; round trip; every output grepped for the values: lists, record
 pages, exports, MCP, developer API, webhooks received and queued, the data trail, every log line; reveal by role and
 audited; the blind index for equality only and per workspace; key rotation re-wraps without re-encrypting; tenant
-isolation; the migration in resumed batches, idempotent, and un-marking).
+isolation; the migration in resumed batches, idempotent, and un-marking; declarative checks by equality only).
 
 ## How the factory runs it
 

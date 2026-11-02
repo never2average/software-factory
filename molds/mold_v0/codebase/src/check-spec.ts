@@ -122,7 +122,7 @@ export type Kind = "string" | "number" | "boolean" | "date" | "list" | "json";
 export interface CheckArea {
   name: string;
   scope: "platform" | "workspace";
-  fields: { name: string; type?: string; multiple?: boolean; options?: (string | { value: string })[] }[];
+  fields: { name: string; type?: string; multiple?: boolean; options?: (string | { value: string })[]; encrypted?: boolean; searchable?: string }[];
   /** Read live from an API (a repository of kind http_api): no stored rows. */
   live?: boolean;
   sealed?: boolean;
@@ -316,6 +316,29 @@ export function checkProblems(check: Check, areas: readonly CheckArea[]): Proble
     }
     if (r.lookup) bad("without latest_by, a rule has no lookup (the record that decides is any of several)", "rule", "lookup");
   }
+  // Encrypted fields (mold_v0-194): compared by equality only, through their blind index, in `match` (a searchable
+  // field, one value); never in require, an order or an operand (the evaluator never reads the value).
+  const enc = (a: CheckArea | undefined, n: string) => a?.fields.find((f) => f.name === n && (f as { encrypted?: boolean }).encrypted) as { searchable?: string } | undefined;
+  const encMatch = (m: Record<string, unknown> | undefined, a: CheckArea | undefined, where: (string | number)[]) => {
+    for (const [n, v] of Object.entries(m ?? {})) {
+      const f = enc(a, n);
+      if (f && (f.searchable !== "equality" || Array.isArray(v))) bad(`${n} is encrypted: a check matches it by equality only (one value), and only when it is searchable: "equality"`, ...where, n);
+    }
+  };
+  encMatch(r.match, area, ["rule", "match"]);
+  encMatch(r.lookup?.match, lookupArea, ["rule", "lookup", "match"]);
+  const named = (v: unknown, acc: string[] = []): string[] => {
+    if (typeof v === "string") { if (v.startsWith("@")) acc.push(v.slice(1)); }
+    else if (Array.isArray(v)) for (const x of v) named(x, acc);
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { if (k === "field" && typeof x === "string") acc.push(x); else named(x, acc); }
+    return acc;
+  };
+  for (const p of [...named(r.require), ...named(r.lookup?.key), ...named(r.lookup?.match), ...(r.latest_by ? [r.latest_by] : [])]) {
+    const dot = p.indexOf(".");
+    const [a, n] = dot < 0 ? [area, p] : [lookupArea, p.slice(dot + 1)];
+    if (enc(a, n)) bad(`${p} is encrypted: a check never reads its value (compare it by equality in match, when it is searchable)`, "rule");
+  }
+  if (r.lookup?.latest_by && enc(lookupArea, r.lookup.latest_by)) bad(`${r.lookup.latest_by} is encrypted: it cannot order the lookup`, "rule", "lookup", "latest_by");
   return out;
 }
 
