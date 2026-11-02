@@ -90,7 +90,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // On-premises runners and a workspace's runner location (mold_v0-036, 0027_on_premises_runners): the shell's code only.
   "onprem_runners", "workspace_runner_settings",
   // A run's transfers through object storage and their sealed keys (mold_v0-182, 0029_run_transfers): platform bookkeeping.
-  "run_transfers"];
+  "run_transfers",
+  // A company's own email (mold_v0-192, 0031_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
+  "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
