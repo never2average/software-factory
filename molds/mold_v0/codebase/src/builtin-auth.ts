@@ -29,6 +29,7 @@
  */
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
+import { auditSignIn } from "./audit-trail.js";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { builtinAuth } from "./auth-provider.js";
 import { ClerkError, isPlatformAdminEmail, type ClerkInvitation, type ClerkMembership, type ClerkOrg, type ClerkUser, type SessionClaims } from "./clerk.js";
@@ -424,6 +425,8 @@ async function startSession(req: Request, res: Response, userId: string, method:
       `INSERT INTO auth_sessions (id, token_hash, user_id, active_org_id, method, expires_at, user_agent) VALUES ($1, $2, $3, $4, $5, now() + make_interval(days => $6), $7)`,
       [newId("ses_b"), sha256(value), userId, activeOrg, method, days, String(req.get("user-agent") ?? "").slice(0, 200) || null]);
   });
+  // The platform trail (mold_v0-197): this request is a sign-in, by this person into this workspace.
+  auditSignIn(userId, activeOrg, method);
   const secure = secureSite(req);
   res.append("Set-Cookie", [...clearSessionCookies(res).filter((l) => !l.startsWith(`${secure ? COOKIE_SECURE : COOKIE_PLAIN}=`)),
     cookieLine(secure ? COOKIE_SECURE : COOKIE_PLAIN, value, days * 86_400, secure)]);

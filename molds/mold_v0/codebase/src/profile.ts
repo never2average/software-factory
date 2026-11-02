@@ -43,6 +43,10 @@
  *                      effective_date; optionally jurisdiction, terms_url, privacy_url): its /terms and /privacy pages
  *                      and their links; never part of this profile: gen-packs writes it to src/legal.generated.ts and
  *                      web/src/config/legal.generated.ts. Only the app's own profile.json sets it
+ *   audit              optional (mold_v0-197, src/audit-trail.ts): the two audit trails, {"data": true, "platform": false,
+ *                      "retention_days": 400, "platform_retention_days": 400}; each trail off unless true (off: nothing is
+ *                      written and no page, route or tool appears); retention_days (default 400) keeps the data trail,
+ *                      platform_retention_days (default retention_days) the platform trail
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
@@ -77,6 +81,15 @@ export interface Profile {
   billing?: ProfileBilling;
   email?: ProfileEmail;
   entitlements?: ProfileEntitlements;
+  audit?: ProfileAudit;
+}
+
+/** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */
+export interface ProfileAudit {
+  data?: boolean;
+  platform?: boolean;
+  retention_days?: number;
+  platform_retention_days?: number;
 }
 
 /**

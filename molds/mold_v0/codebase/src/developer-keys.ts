@@ -1,5 +1,5 @@
 /**
- * A workspace's API keys for its own servers (mold_v0-193; sql/migrations/0031_developer_surface.sql developer_keys).
+ * A workspace's API keys for its own servers (mold_v0-193; sql/migrations/0032_developer_surface.sql developer_keys).
  * Beside the MCP keys (src/auth.ts, src/member-keys.ts: `oct_`, for AI clients on /mcp), and never accepted there: these
  * start `sk_`, answer only on the developer API (/v1), and each holds scopes (src/developer-config.ts BASE_SCOPES).
  *

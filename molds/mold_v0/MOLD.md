@@ -2348,8 +2348,8 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
   every key and secret action is handed to `setPlatformAuditSink`, which the platform audit trail (mold_v0-197)
   registers; without it nothing is written.
 
-Tables: `sql/migrations/0031_developer_surface.sql` (all platform bookkeeping per workspace, closed to the tenant role;
-`check:rls` and `check:tenant-sql` know them; rollback `sql/rollback/0031_developer_surface.sql`). Proof: `npm run
+Tables: `sql/migrations/0032_developer_surface.sql` (all platform bookkeeping per workspace, closed to the tenant role;
+`check:rls` and `check:tenant-sql` know them; rollback `sql/rollback/0032_developer_surface.sql`). Proof: `npm run
 test:developer-surface` (offline) and `npm run test:developer-e2e` (the fixture pack `scripts/fixtures/packs/
 fixture_embedded` over a running dev server: a key, OpenAPI read from the server, both SDKs generated and called, a
 client session, an idempotent write replayed, signed webhooks verified with the Standard Webhooks reference libraries in
@@ -2397,6 +2397,59 @@ run in its unbranded lane copy `build/<app_id>.lane/` (`packs.py lane-copy`), as
   its config pack, with the engine pack `packs/apo`: "Engine packs and config packs") has the same surface as the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
   routes, the same console pages and navigation, and the same tables. The surface diff between the two must be empty,
   and the re-mint (mold_v0-029) must still pass smoke, `mcp:check` and the isolation sweep (mold_v0-039).
+
+## Audit trails (mold_v0-197)
+
+Two toggles in the app's profile, each **off unless the app turns it on** (`profile.json` `audit`; the factory's
+`application.json` `profile.audit`, checked by `lib/app_profile.py audit_problems`, app-settable in
+[branding/rules.json](branding/rules.json); the app spec's `audit.data` and `audit.platform`):
+
+```json
+"audit": { "data": true, "platform": false, "retention_days": 400, "platform_retention_days": 400 }
+```
+
+- **`data`, the company's data trail.** Every list, read, reveal, export, create, update, move and delete of a
+  workspace's records (record areas' workspace rows, files in the workspace store, run results), through the console,
+  the API, MCP, a run (the worker API: the run is the actor), staff (the admin MCP: their activity-log pseudonym), or the
+  system (a repository's index: one entry per index, not per row). Each entry: actor (kind and id, the key's id), action,
+  target, pack, area or store, the record's key or the file's path, how many rows, when, and the door (console, api,
+  mcp, admin_console, admin_mcp, run, system). A list or an export is **one entry per page or file, never one per row**,
+  and an entry never holds a field's value or a title; a sealed area's read is a `reveal`; a batch's entries are written
+  only when it commits. Per workspace under row-level security: the workspace's owners read it on the console's
+  **Access log** page (`/app/access-log`, the records pages' table; Download CSV), `GET /api/audit/data[.csv]`, and the
+  MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
+  MCP's `read_audit_trail` (by slug).
+- **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
+  arguments) and sign-in (the built-in code check and Google's return, the MCP authorization server's token grants):
+  the key's id (its prefix joined on read, never the key), the actor, the scopes it acted with (workspace key, member key
+  and role, sign-in and role, session and role), the result code and latency; plus **staff actions on an account**: every
+  `/api/admin` request (the account by the slug in its path) and every admin MCP tool call (the account its `slug`
+  names). The operator reads it fleet-wide (`/admin/access-log`, `GET /api/admin/audit/platform[.csv]`, admin MCP
+  `read_platform_trail`); a workspace's owners read their slice (`GET /api/audit/platform[.csv]`, the Access log's
+  Requests tab, `read_audit_trail` with `trail: platform`), staff shown as their pseudonym and without addresses.
+  The worker API (runs) and cron are machine traffic, not entries.
+- **Retention.** `retention_days` (default 400) for the data trail, `platform_retention_days` (default the same) for
+  the platform trail: pruned 5,000 rows a trail per call, hourly on a server and after each Vercel cron tick (`/api/cron/autoscale`).
+- **Separate from usage metering.** `mcp_events`, `compute_events` and `run_events` are unchanged (billing, analytics,
+  the factory board's `run_spend.py` and `app_usage.py`).
+- **Off** (the default): nothing is written (not even a sequence row), no route is mounted, no console page or sidebar
+  entry shows, and no MCP or admin MCP tool is listed: the zero-pack MCP surface stays `4e3e14917286b00c`.
+- **One writer, append-only, numbered** (for chain-and-sign, mold_v0-195): `src/audit-trail.ts` is the only module that
+  writes the tables (`sql/migrations/0031_audit_trails.sql`: `audit_data_events`, `audit_platform_events`,
+  `audit_sequences`). Entries queue in memory and are written in one transaction per flush (every 200 ms, at 200 entries,
+  at the end of each request; kept alive past the answer on Vercel), each workspace's numbered by a monotonic, gapless
+  per-workspace sequence taken under its row's lock (commit order). A trigger refuses every UPDATE and every DELETE but
+  the retention prune's (`app.audit_prune`) and a removed workspace's cascade; tenant work may only SELECT its own rows.
+  The hooks are one call each in the existing paths (`src/record-areas.ts` listFor/getFor/writeRow/deleteWorkspace and
+  batches, `src/record-export.ts`, `src/runs.ts` results, `src/workspace-files.ts`, `src/http.ts` the middleware and the
+  MCP caller, `src/builtin-auth.ts` sessions, `src/admin-mcp.ts` staff tools). Rollback:
+  `sql/rollback/0031_audit_trails.sql` (refuses while entries exist unless `app.audit_rollback_drop` is on).
+
+Proof: `npm run test:audit-trail` (gen-packs' check of the setting; both off, each alone, both on; tenant isolation by
+route, MCP tool and the tenant role; no value in either trail; one entry per list; a 250-operation batch in at most two
+INSERTs and a refused batch in none; staff through the admin API and MCP; a built-in sign-in; append-only; retention),
+`npm run check:rls` (the probe: a workspace sees none of another's entries and cannot write, change or remove its own),
+`npm run test:migrations` (0031 and its rollback).
 
 ## How the factory runs it
 

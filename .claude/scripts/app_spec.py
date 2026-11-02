@@ -96,12 +96,12 @@ def _common(mold, root):
       "audit": {
         "type": "object", "additionalProperties": False, "title": "Audit trails (mold_v0-197)",
         **D("Two audit trails, each on or off on its own (both default false). Separate from usage metering, which always stays on. "
-            "Implemented by ticket mold_v0-197: until then the setting is recorded with the spec and has no effect.",
+            "mold_v0 writes it to the app's profile.audit (mold_v0-197, src/audit-trail.ts; entries kept 400 days unless profile.audit.retention_days says otherwise).",
             "Two audit trails, **each on or off on its own** (both default `false`).\n\n"
             "- `data`: every read, change, reveal and export of a workspace's records, visible to that workspace's admins.\n"
             "- `platform`: every API and MCP request and every sign-in, with the key, the actor and the scope, plus staff actions on accounts.\n\n"
             "Separate from **usage metering**, which always stays on. An `embedded` app needs `platform: true`.\n\n"
-            "_Implemented by mold_v0-197; until then it is recorded with the spec and has no effect._"),
+            "_mold_v0 writes it to the app's `profile.audit` (mold_v0-197, `src/audit-trail.ts`); entries are kept 400 days unless `profile.audit.retention_days` says otherwise._"),
         "properties": {
           "data": {"type": "boolean", "default": False, "title": "Data audit trail",
                    **D("Every read, change, reveal and export of a workspace's records, visible to that workspace's admins.",
@@ -323,6 +323,7 @@ def schema_v0(root):
         else:
             profile_props[top] = {**D(f"{k}: a profile field this mold lets an app set (molds/mold_v0/branding/rules.json); the factory checks it.")}
     profile_props["limits"] = NS("say limits in the spec's top-level `budgets` block, which is written to profile.limits")
+    profile_props["audit"] = NS("say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197)")
     run_keys = {
       "type": "object", "additionalProperties": False, "title": "Keys the runs need (names, never values)",
       **D("Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
@@ -622,6 +623,9 @@ def _profile_lines(spec):
             if isinstance(v, dict): walk(f"{prefix}.{k}", v)
             else: lines.append(f"{prefix}.{k} = {v:g}" if isinstance(v, float) else f"{prefix}.{k} = {v}")
     if spec.get("budgets"): walk("limits", spec["budgets"])
+    # The audit trails (mold_v0-197): the spec's top-level audit, written to profile.audit (only a trail that is on).
+    for k, v in (spec.get("audit") or {}).items():
+        if v is True: lines.append(f"audit.{k} = true")
     prof = spec.get("profile") or {}
     for k, v in prof.items():
         if k == "member_keys": lines.append(f"member_keys = {'true' if v else 'false'}")
@@ -688,6 +692,8 @@ def _read_back(spec, text, ids):
             out.append(("not supported", k, f"the brief path would read {k} as {json.dumps(h.get(k))}, not {json.dumps(v)}: say it another way in the spec (nothing was written)"))
     prof = dict(spec.get("profile") or {});
     if spec.get("budgets"): prof["limits"] = spec["budgets"]
+    on = {k: True for k, v in (spec.get("audit") or {}).items() if v is True}
+    if on: prof["audit"] = on
     got = h.get("profile") or {}
     if json.loads(json.dumps(prof)) != json.loads(json.dumps(got)) and (prof or got):
         out.append(("not supported", "profile", f"the brief's profile lines read back as {json.dumps(got)[:200]}, not the spec's {json.dumps(prof)[:200]} (nothing was written)"))
@@ -771,6 +777,9 @@ def spec_from_state(app_id, root):
         spec["workspace"] = {"platform_admins": a["platform_admins"]} if a.get("platform_admins") else {}
         prof = dict(a.get("profile") or {})
         if prof.get("limits"): spec["budgets"] = prof.pop("limits")
+        # profile.audit (mold_v0-197) is the spec's top-level audit; its retention days stay the state's own.
+        if isinstance(prof.get("audit"), dict):
+            au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform") if isinstance(au.get(k), bool)}
         if prof: spec["profile"] = prof
     else:
         ws = a.get("workspace") or {}; org = ws.get("org") or {}; me = ws.get("operator_self") or {}
@@ -794,8 +803,8 @@ def cmd_apps(a, root=ROOT):
         if status == "retired": rows.append({"app": app, "mold": spec.get("mold_id"), "status": status, "complete": None, "gaps": ["retired: not checked"]}); continue
         if spec.get("mold_id") not in MOLDS: rows.append({"app": app, "mold": spec.get("mold_id"), "status": status, "complete": None, "gaps": ["no spec schema for this mold"]}); continue
         gaps = [m for _, _, m in problems(spec, src, load(schema_path(spec["mold_id"], root)))]
-        if spec["mold_id"] == "mold_v0": gaps.append("audit, kind and run_keys are not recorded in an app's state yet (the spec carries them; read as the defaults: tool, both audit trails off)")
-        rows.append({"app": app, "mold": spec["mold_id"], "status": status, "complete": not [g for g in gaps if not g.startswith("audit, kind")], "gaps": gaps})
+        if spec["mold_id"] == "mold_v0": gaps.append("kind and run_keys are not recorded in an app's state yet (the spec carries them; read as the defaults: tool)")
+        rows.append({"app": app, "mold": spec["mold_id"], "status": status, "complete": not [g for g in gaps if not g.startswith("kind and run_keys")], "gaps": gaps})
     if as_json: print(json.dumps({"apps": rows}, indent=2)); return 0
     for r in rows:
         print(f"{r['app']} ({r['mold']}, {r['status']}): {'complete' if r['complete'] else 'not complete' if r['complete'] is False else 'not checked'}")
@@ -830,6 +839,11 @@ def self_test():
             ok(any("give at least one pack inline" in y[2] for y in problems(x)), "mold_v0: an embedded app's developer surface needs an inline pack to go into")
         e["audit"]["platform"] = False
         ok(any("audit.platform" in x[2] for x in problems(e)), f"{m}: kind embedded with audit.platform false is refused")
+        if m == "mold_v0":   # mold_v0-197: the top-level audit becomes the brief's audit lines, read back into profile.audit
+            import app_profile as _ap
+            lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
+            ok("audit.data = true" in lines and not any("platform" in l for l in lines)
+               and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
         t = copy.deepcopy(spec); t["developer_surface"] = e["developer_surface"]
         ok(any("not supported" == x[0] and "developer_surface" in x[1] for x in problems(t)), f"{m}: a developer surface on a tool is not supported")
         t = copy.deepcopy(spec); t["colour_typo"] = 1; del t["product"]["colour"]

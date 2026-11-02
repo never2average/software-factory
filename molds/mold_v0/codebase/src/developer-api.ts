@@ -23,6 +23,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
+import { auditApiCaller } from "./audit-trail.js";
 import { auditPlatform } from "./developer-audit.js";
 import { API_VERSIONS, scopeAllows, type BaseScope } from "./developer-config.js";
 import { resolveDeveloperKey, type ResolvedKey } from "./developer-keys.js";
@@ -244,6 +245,9 @@ export function developerApiRouter(): Router {
       res.set("API-Version", version);
       const actor: ApiActor = { orgId, credential: key ? `key:${key.prefix}` : `session:${session!.id}`, user: key ? assert ?? null : session!.subject };
       res.locals.caller = { orgId, key, session, scopes, actor, version } satisfies Caller;
+      // The platform audit trail (mold_v0-197, when audit.platform is on): this request's entry, and its data entries, name
+      // the credential, the user it acts for and the scopes it held.
+      auditApiCaller(orgId, { kind: key ? "key" : "user", id: actorLabel(actor), key_id: key ? key.id : null, scopes });
       const lim = limitsFor(await planOf(orgId)).mcp;
       const refused = await hit([
         { bucket: key ? `api-key:${key.id}` : `api-session:${session!.id}`, limit: lim.per_key_per_minute, what: key ? "key" : "client session" },

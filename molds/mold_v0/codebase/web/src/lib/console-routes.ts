@@ -23,6 +23,7 @@ import { findRecordArea } from '../features/records/registry';
 import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
 import { journeysOn, tipsOn } from '../features/journeys/config';
+import { auditOn } from '../features/audit/config';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -65,6 +66,9 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   // The journeys and in-chat tips components' pages (mold_v0-143): only where a pack turns them on.
   '/app/journeys': () => journeysOn(),
   '/admin/journeys': () => journeysOn() || tipsOn(),
+  // The access log (mold_v0-197): only where the profile turns an audit trail on.
+  '/app/access-log': () => auditOn(),
+  '/admin/access-log': () => auditOn(),
 };
 
 /**

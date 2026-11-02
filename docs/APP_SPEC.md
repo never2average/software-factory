@@ -50,7 +50,7 @@ through the same check `factory.py validate` and the build use.
   generated SDKs; molds/mold_v0/MOLD.md "Developer surface"): the spec check refuses an event or SDK language the mold
   does not have, and `mint.py new --spec` writes the block into the app's first inline pack (so an embedded mold_v0 app
   gives at least one pack inline). mold_v1 records it only.
-- `audit.data` and `audit.platform` are separate toggles, both default `false` (mold_v0-197 implements them; usage metering
+- `audit.data` and `audit.platform` are separate toggles, both default `false` (mold_v0-197: mold_v0 writes them to the app's `profile.audit`; usage metering
   stays on regardless).
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on

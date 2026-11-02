@@ -447,6 +447,32 @@ try {
       assert.deepEqual(srcB, [], "B sees none of A's sources");
     }
     console.log("✓ webhooks in: a signed payload's items written into the receiver's area, once per webhook-id; bad signatures, old timestamps and other types refused or skipped");
+
+    // ---------- 9. the platform audit trail (mold_v0-197), when audit.platform is on ----------
+    {
+      const trail = await import("../src/audit-trail.js");
+      trail.setAuditForTest({ platform: true, data: true });
+      try {
+        assert.equal((await call("GET", "/v1/records/tickets/T-1", KEY, undefined, { "x-actor": "trail-user" })).status, 200);
+        assert.equal((await call("GET", "/v1/records/tickets", READER)).status, 200);
+        await sleep(100);
+        await trail.flushAudit();
+        const rows = await db.query<{ channel: string; path: string; actor_kind: string; actor_id: string; key_id: number | null; scopes: string[]; org_id: number; status: number }>(
+          "SELECT channel, path, actor_kind, actor_id, key_id, scopes, org_id, status FROM audit_platform_events WHERE path LIKE '/v1/%' ORDER BY seq");
+        const one = rows.find((r) => r.path === "/v1/records/tickets/T-1");
+        assert.ok(one, `the request is in the platform trail (${JSON.stringify(rows)})`);
+        assert.equal(one!.channel, "api");
+        assert.equal(one!.actor_kind, "key");
+        assert.equal(one!.actor_id, `key:${KEY.slice(0, 9)} as trail-user`, "the asserted actor");
+        assert.equal(one!.org_id, A.orgId);
+        assert.ok(one!.scopes.includes("webhooks"), "the scopes the key held");
+        const two = rows.find((r) => r.path === "/v1/records/tickets" && r.actor_id === `key:${READER.slice(0, 9)}`);
+        assert.ok(two && two.scopes.join() === "read:tickets", "an integration key's single scope");
+        const data = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM audit_data_events WHERE org_id = $1 AND actor_id = $2", [A.orgId, `key:${KEY.slice(0, 9)} as trail-user`]);
+        assert.ok(data[0]!.n >= 1, "the data trail names the same actor");
+      } finally { trail.setAuditForTest(null); }
+    }
+    console.log("✓ the platform audit trail: each /v1 request with the key, its asserted actor, its scopes and its workspace; the data trail names the same actor");
   } finally {
     setPlatformAuditSink(null);
     await http.close();

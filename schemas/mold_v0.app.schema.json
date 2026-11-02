@@ -471,8 +471,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "title": "Profile settings",
-      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
-      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
+      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
+      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
       "properties": {
         "email": {
           "type": "object",
@@ -610,6 +610,13 @@
           "type": "object",
           "description": "The landing page at / (the shell's src/landing.ts sections): plain text, true/false, numbers and lists. The build checks its sections.",
           "markdownDescription": "The landing page at / (the shell's src/landing.ts sections): plain text, true/false, numbers and lists. The build checks its sections."
+        },
+        "audit": {
+          "not": {},
+          "x-not-supported": "say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197)",
+          "description": "Not supported: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197).",
+          "markdownDescription": "**Not supported**: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197).",
+          "errorMessage": "Not supported: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197)."
         },
         "limits": {
           "not": {},
@@ -997,8 +1004,8 @@
       "type": "object",
       "additionalProperties": false,
       "title": "Audit trails (mold_v0-197)",
-      "description": "Two audit trails, each on or off on its own (both default false). Separate from usage metering, which always stays on. Implemented by ticket mold_v0-197: until then the setting is recorded with the spec and has no effect.",
-      "markdownDescription": "Two audit trails, **each on or off on its own** (both default `false`).\n\n- `data`: every read, change, reveal and export of a workspace's records, visible to that workspace's admins.\n- `platform`: every API and MCP request and every sign-in, with the key, the actor and the scope, plus staff actions on accounts.\n\nSeparate from **usage metering**, which always stays on. An `embedded` app needs `platform: true`.\n\n_Implemented by mold_v0-197; until then it is recorded with the spec and has no effect._",
+      "description": "Two audit trails, each on or off on its own (both default false). Separate from usage metering, which always stays on. mold_v0 writes it to the app's profile.audit (mold_v0-197, src/audit-trail.ts; entries kept 400 days unless profile.audit.retention_days says otherwise).",
+      "markdownDescription": "Two audit trails, **each on or off on its own** (both default `false`).\n\n- `data`: every read, change, reveal and export of a workspace's records, visible to that workspace's admins.\n- `platform`: every API and MCP request and every sign-in, with the key, the actor and the scope, plus staff actions on accounts.\n\nSeparate from **usage metering**, which always stays on. An `embedded` app needs `platform: true`.\n\n_mold_v0 writes it to the app's `profile.audit` (mold_v0-197, `src/audit-trail.ts`); entries are kept 400 days unless `profile.audit.retention_days` says otherwise._",
       "properties": {
         "data": {
           "type": "boolean",
