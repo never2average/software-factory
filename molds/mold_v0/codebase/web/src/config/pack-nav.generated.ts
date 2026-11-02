@@ -85,6 +85,9 @@ export const onPremRunners = false;
 /** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */
 export const hiddenConsoleUrls: string[] = [];
 
+/** Settings › Email (mold_v0-192): the workspace's own sender and mailboxes, when a pack declares pack.json email. */
+export const emailPortalNav: NavGroup[] = [];
+
 /** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
 export const usagePortalNav: NavGroup[] = [];
 export const usageAdminNav: NavGroup[] = [];

@@ -137,6 +137,21 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     sections.push({ id: "credentials", title: "Credentials (names only)", rows });
   }
 
+  // ---------- a company's own email (mold_v0-192), only when a pack turns it on ----------
+  {
+    const withEmail = list_.filter((p) => p.definition.email);
+    if (withEmail.length) {
+      const rows: DataMapRow[] = [];
+      const e = (p: (typeof withEmail)[number]) => p.definition.email as { sender?: { allow?: boolean }; intake?: { area: string; folder?: string } };
+      if (withEmail.some((p) => e(p).sender?.allow)) rows.push({ item: "A workspace's own sender", detail: "set by the workspace's owners (Settings › Email: SMTP, Microsoft 365 through Microsoft Graph, or Google Workspace through the Gmail API); the app's emails to that workspace's people go out through it while it is on, from this server to the host the owners named, login.microsoftonline.com and graph.microsoft.com, or oauth2.googleapis.com and gmail.googleapis.com. Its secret (a password, a client secret or a service-account key) is sealed with the workspace's data key and never shown again, to the workspace or to this service's operators" });
+      for (const p of withEmail) {
+        const it = e(p).intake;
+        if (it) rows.push({ item: `Mail intake of ${p.manifest.name}`, detail: `mailboxes the workspace's owners connect (IMAP, Microsoft Graph or Gmail), read only and only in the folder or label ${code(it.folder ?? "INBOX")}, by this server: each new message becomes a record of ${code(it.area)} in the database (the workspace's own, under row-level security), once per Message-ID; its attachments are sealed with the workspace's data key in the object store. Their secrets are sealed as the sender's` });
+      }
+      sections.push({ id: "email", title: "A company's own email", rows });
+    }
+  }
+
   // ---------- model calls ----------
   {
     const rows: DataMapRow[] = [];

@@ -169,6 +169,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
+  // the company's own email: a workspace's sender and mailbox intake (mold_v0-192, src/company-email-config.ts)
+  "email",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
   "account_stages",
   // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
@@ -1303,10 +1305,10 @@ if (loaded.length === entries.length) {
 // (src/shell-tools.ts, mold_v0-067: refused here at build, not only when the server starts). The tools the settings
 // withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
-const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, CLOCK_TOOL_NAMES = [], ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
+const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, CLOCK_TOOL_NAMES = [], INTAKE_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
 const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
-  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES];
+  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES, ...INTAKE_TOOL_NAMES];
   const own = new Map();
   // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
   const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
@@ -2267,6 +2269,10 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const onPremRunners = ${privateNetworkKindCount > 0};\n\n` +
   "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
   `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
+  // The company's own email (mold_v0-192, src/company-email.ts): Settings › Email, when a pack turns it on (pack.json
+  // email), after the sidebar whatever it is made of (the shell's, the packs' tabs or the profile's).
+  "\n/** Settings › Email (mold_v0-192): the workspace's own sender and mailboxes, when a pack declares pack.json email. */\n" +
+  `export const emailPortalNav: NavGroup[] = ${json(packs.some((p) => p.json?.email) ? [{ label: "Settings", items: [{ title: "Email", url: "/app/settings/email", icon: "mail", items: [] }] }] : [])};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
   // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's. A host pack's mcp block (mold_v0-137:
