@@ -228,6 +228,12 @@ export function checkViews(b: BuildViews): string[] {
     };
     conditions(m.where ?? [], "where");
     if (m.rate) conditions(m.rate.where, "rate.where");
+    // mold_v0-191: a metric over a clock's status names a clock of its own area.
+    if (m.clock) {
+      const a = typeof over === "string" ? null : over;
+      if (!a) at(p, `${w}: clock: clocks are a record area's (runs and run_results have none)`);
+      else if (!(a.clocks ?? []).some((c) => c.name === m.clock!.name)) at(p, `${w}: clock: ${m.clock.name} is not a clock of ${a.name}${a.clocks?.length ? ` (${a.clocks.map((c) => c.name).join(", ")})` : ""}`);
+    }
     if (m.field !== undefined) { const k = col(m.field, `the ${m.measure} of ${m.field}`); if (k && k.type !== "number") at(p, `${w}: a ${m.measure} reads a number field; ${m.field} is ${k.type}`); }
     if (m.duration) for (const end of [m.duration.from, m.duration.to]) { const c = pointOf(over, end); if (typeof c === "string") at(p, `${w}: duration: ${c}`); }
     if (m.by_time) { const c = pointOf(over, m.by_time.at); if (typeof c === "string") at(p, `${w}: by_time.at: ${c}`); }
@@ -497,7 +503,7 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     areas, metrics: flat("metrics", MetricSchema) as SpecMetric[], charts: flat("charts", ChartSchema) as SpecChart[], tabs: flat("tabs", TabSchema) as SpecTab[],
     jobKinds: packs.reduce((n, p) => n + (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0), 0),
     credentials: packs.reduce((n, p) => n + (p.definition.credentials?.length ?? 0), 0),
-    dueAreas: areas.filter((a) => a.due).length,
+    dueAreas: areas.filter((a) => a.due || (a.clocks?.length ?? 0) > 0).length,
     steps: packs.flatMap((p) => (p.definition.onboarding ?? []).map((x) => ({ ...(x as { id: string; label: string; help?: string; done_when: string }), pack: p.id }))),
     kinds: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].map((k) => ({ pack: p.id, name: (k as { name: string }).name, label: (k as { label?: string }).label }))),
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
@@ -600,6 +606,9 @@ export function sparkPlan(t: SpecTab, b: Pick<BuildViews, "areas" | "metrics">, 
     const all = synth(a.name, "_records", o.label, { where });
     if (ok("created")) {
       cards.push({ id: "_records", label: o.label, value: all, series: weekly(all, "created"), mode: "total" });
+      // mold_v0-191: an area with a clock shows its overdue records second (counted by the week each was added).
+      const ck = a.clocks?.[0];
+      if (ck) { const od = synth(a.name, "_overdue", "Overdue", { where, clock: { name: ck.name, is: ["overdue"] } }); cards.push({ id: "_overdue", label: "Overdue", value: od, series: weekly(od, "created"), mode: "total" }); }
       cards.push({ id: "_new_7d", label: "New in 7 days", value: synth(a.name, "_new_7d", "New in 7 days", { where: [...where, { field: "created", op: "gte", value: "now-7" }] }), series: weekly(all, "created"), mode: "weekly" });
     }
     const own = b.metrics.filter((m) => m.pack === t.pack && m.over === a.name && !sparkProblem(m, a) && o.readable(m)).slice(0, 2).map(sparkCardOf);

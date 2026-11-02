@@ -1298,10 +1298,10 @@ if (loaded.length === entries.length) {
 // (src/shell-tools.ts, mold_v0-067: refused here at build, not only when the server starts). The tools the settings
 // withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
-const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
+const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, CLOCK_TOOL_NAMES = [], ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
 const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
-  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES];
+  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES];
   const own = new Map();
   // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
   const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
@@ -1383,7 +1383,7 @@ const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []
 const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type === "reference" && !(a.links ?? []).some((l) => l.field === f.name)).map((f) => ({ field: f.name, area: f.to }))];
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
-const dueAreaCount = recordAreas.filter((a) => a.due).length;
+const dueAreaCount = recordAreas.filter((a) => a.due || a.clocks?.length).length; // due dates and clocks (mold_v0-191) post notices
 /** Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner. */
 const privateNetworkKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
 /**
@@ -2212,12 +2212,14 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */\n" +
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
-  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n}\n\n" +
+  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
+  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
-    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null })))};\n\n` +
+    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
+    ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name)) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
