@@ -95,7 +95,7 @@ try {
     assert.doesNotThrow(() => checkPackJson(embeddedJson()), "the fixture's pack.json passes the pack schema");
     assert.throws(() => checkPackJson({ ...embeddedJson(), developer_surface: { ...embeddedJson().developer_surface, events: [{ name: "nope.x", description: "x" }] } }), /developer_surface.events/);
     await installEmbedded();
-    const { developerGuidePages } = await import("../src/developer-docs.ts");
+    const { developerGuidePages } = await import("../src/developer-docs.js");
     const { pageProblems } = await import("../src/pack-guide.js");
     const { recordAreas } = await import("../src/record-areas.js");
     const { developerSurface } = await import("../src/developer-surface.js");

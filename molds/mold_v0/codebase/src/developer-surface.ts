@@ -23,7 +23,7 @@ import { packConfigs } from "./host.js";
 export function developerSurface(): DeveloperSurfaceConfig | null {
   const c = packConfigs().find((x) => x.developer_surface)?.developer_surface;
   if (!c) return null;
-  return { ...c, client_sessions: { ttl_seconds: 3600, ...c.client_sessions } };
+  return { ...c, client_sessions: { ...c.client_sessions, ttl_seconds: c.client_sessions.ttl_seconds ?? 3600 } };
 }
 export const developerOn = () => developerSurface() !== null;
 /** The version a key made now is pinned to. */

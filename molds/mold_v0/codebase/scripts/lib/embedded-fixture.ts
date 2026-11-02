@@ -10,6 +10,8 @@ export const embeddedJson = () => JSON.parse(readFileSync(path.join(EMBEDDED_DIR
 
 /** Install the fixture (or `edit` it first); null uninstalls (zero packs). */
 export async function installEmbedded(edit?: ((j: any) => void) | null) {
+  // The build's host registry first: it sets the packs' server config when it loads, which would undo ours.
+  await import("../../src/hosts.js");
   const { setPacksForTest } = await import("../../src/packs.js");
   const { setPackConfigsForTest } = await import("../../src/host.js");
   if (edit === null) { setPacksForTest(null); setPackConfigsForTest([]); return null; }

@@ -106,13 +106,15 @@ async function idempotent(req: Request, res: Response, c: Caller, fn: () => Prom
     if (row!.state === "done") {
       res.set("Idempotent-Replayed", "true");
       const status = row!.status_code ?? 200;
-      if (status >= 400) throw Object.assign(new ApiProblem(status, String((row!.response as { code?: string })?.code ?? STATUS_CODE[status] ?? "error"), String((row!.response as { detail?: string })?.detail ?? "")));
-      return { status, body: row!.response };
+      const stored = (typeof row!.response === "string" ? JSON.parse(row!.response) : row!.response) as { code?: string; detail?: string } | null;
+      if (status >= 400) throw new ApiProblem(status, String(stored?.code ?? STATUS_CODE[status] ?? "error"), String(stored?.detail ?? ""));
+      // Stored as the answer's own JSON text (a jsonb string), so the replay is the same bytes, keys in their order.
+      return { status, body: typeof row!.response === "string" ? JSON.parse(row!.response) : row!.response };
     }
     await asPlatform(() => db.query("UPDATE idempotency_keys SET created_at = now() WHERE org_id = $1 AND scope = $2 AND idem_key = $3", [c.orgId, scope, raw]));
   }
   const store = (status: number, body: unknown) => asPlatform(() => db.query(
-    "UPDATE idempotency_keys SET state = 'done', status_code = $4, response = $5 WHERE org_id = $1 AND scope = $2 AND idem_key = $3", [c.orgId, scope, raw, status, JSON.stringify(body ?? null)]));
+    "UPDATE idempotency_keys SET state = 'done', status_code = $4, response = $5 WHERE org_id = $1 AND scope = $2 AND idem_key = $3", [c.orgId, scope, raw, status, JSON.stringify(JSON.stringify(body ?? null))]));
   const forget = () => asPlatform(() => db.query("DELETE FROM idempotency_keys WHERE org_id = $1 AND scope = $2 AND idem_key = $3", [c.orgId, scope, raw]));
   try {
     const a = await fn();

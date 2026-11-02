@@ -11,18 +11,65 @@
       "role": "check",
       "scope": "workspace",
       "fields": [
-        { "name": "summary", "label": "Summary", "type": "text", "required": true, "max_length": 500 },
-        { "name": "severity", "label": "Severity", "type": "enum", "options": ["low", "medium", "high"] },
-        { "name": "points", "label": "Points", "type": "number", "min": 0, "max": 100 },
-        { "name": "due", "label": "Due", "type": "date" },
-        { "name": "state", "label": "State", "type": "enum", "options": ["open", "in_progress", "closed"] }
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "required": true,
+          "max_length": 500
+        },
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "name": "points",
+          "label": "Points",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "name": "due",
+          "label": "Due",
+          "type": "date"
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "open",
+            "in_progress",
+            "closed"
+          ]
+        }
       ],
       "lifecycle": {
         "field": "state",
         "initial": "open",
         "transitions": [
-          { "from": ["open"], "to": "in_progress", "label": "Start" },
-          { "from": ["open", "in_progress"], "to": "closed", "label": "Close" }
+          {
+            "from": [
+              "open"
+            ],
+            "to": "in_progress",
+            "label": "Start"
+          },
+          {
+            "from": [
+              "open",
+              "in_progress"
+            ],
+            "to": "closed",
+            "label": "Close"
+          }
         ]
       }
     },
@@ -32,28 +79,94 @@
       "role": "source",
       "scope": "workspace",
       "fields": [
-        { "name": "severity", "label": "Severity", "type": "enum", "options": ["low", "medium", "high", "critical"] },
-        { "name": "scanner", "label": "Scanner", "type": "text" },
-        { "name": "location", "label": "Location", "type": "text" }
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "scanner",
+          "label": "Scanner",
+          "type": "text"
+        },
+        {
+          "name": "location",
+          "label": "Location",
+          "type": "text"
+        }
       ]
     }
   ],
   "job_kinds": [
-    { "name": "triage", "label": "Triage", "runner": "workspace-harness", "entry": "runner/triage.mjs" }
+    {
+      "name": "triage",
+      "label": "Triage",
+      "runner": "agent-workspace",
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "triage.mjs"
+        ],
+        "timeout_seconds": 600,
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "notes"
+        ]
+      }
+    }
   ],
   "developer_surface": {
     "events": [
-      { "name": "record.created", "description": "A ticket or finding was created." },
-      { "name": "record.updated", "description": "A ticket or finding changed." },
-      { "name": "record.state_changed", "description": "A ticket moved.", "areas": ["tickets"] },
-      { "name": "record.deleted", "description": "A ticket or finding was deleted." },
-      { "name": "run.finished", "description": "A triage run ended." }
+      {
+        "name": "record.created",
+        "description": "A ticket or finding was created."
+      },
+      {
+        "name": "record.updated",
+        "description": "A ticket or finding changed."
+      },
+      {
+        "name": "record.state_changed",
+        "description": "A ticket moved.",
+        "areas": [
+          "tickets"
+        ]
+      },
+      {
+        "name": "record.deleted",
+        "description": "A ticket or finding was deleted."
+      },
+      {
+        "name": "run.finished",
+        "description": "A triage run ended."
+      }
     ],
-    "sdk_languages": ["typescript", "python"],
+    "sdk_languages": [
+      "typescript",
+      "python"
+    ],
     "client_sessions": {
       "ttl_seconds": 900,
-      "allowed_origins": ["https://app.example.com"],
-      "scopes": ["read", "write"]
+      "allowed_origins": [
+        "https://app.example.com"
+      ],
+      "scopes": [
+        "read",
+        "write"
+      ]
     },
     "webhooks_in": [
       {
@@ -63,8 +176,13 @@
         "items": "/findings",
         "key": "/id",
         "title": "/title",
-        "fields": { "severity": "/severity", "location": "/where/path" },
-        "types": ["scan.completed"]
+        "fields": {
+          "severity": "/severity",
+          "location": "/where/path"
+        },
+        "types": [
+          "scan.completed"
+        ]
       }
     ]
   }
