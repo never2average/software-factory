@@ -1,5 +1,5 @@
 {
-  "$comment": "ComplianceOS, mapped by STRUCTURE (docs/DEPLOYMENT_PROFILE.md \"Choosing the area for a domain concept\"): an obligation is a unit of work (tasks); a regulatory filing is the set of obligations due together in one window, complete when they are (periods, relations.contains: tasks); a change-management initiative is a change rolled out to one regulated entity, with its rollout state and control health (deployments); a compliance framework is the standing programme an entity adopts in stages and files its obligations under (implementations). A test fixture; no deployment ships it.",
+  "$comment": "A compliance desk, mapped by STRUCTURE (docs/DEPLOYMENT_PROFILE.md \"Choosing the area for a domain concept\"): an obligation is a unit of work (tasks); a regulatory filing is the set of obligations due together in one window, complete when they are (periods, relations.contains: tasks); a change-management initiative is a change rolled out to one regulated entity, with its rollout state and control health (deployments); a compliance framework is the standing programme an entity adopts in stages and files its obligations under (implementations). A test fixture; no deployment ships it.",
   "records": {
     "areas": {
       "tasks": {

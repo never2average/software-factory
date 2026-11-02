@@ -1,8 +1,8 @@
-// Migration: rename org #1's slug  'onfinance' → 'org-onfinance'  so every
+// Migration: rename org #1's slug  OLD → NEW (below)  so every
 // workspace id follows the `org-{slug}` convention.
 //
 // This rewrites the tenant key, so it does three things IN ONE TRANSACTION:
-//   1. every table with an `org_id` column: 'onfinance' → 'org-onfinance'
+//   1. every table with an `org_id` column: OLD → NEW
 //      (discovered from information_schema, so a new table can't be missed);
 //   2. every `org_id` column DEFAULT retargeted to the new id;
 //   3. the orgs row's own primary key + its blob_prefix.
@@ -29,8 +29,8 @@ const env = Object.fromEntries(
     }),
 );
 
-const OLD = "onfinance";
-const NEW = "org-onfinance";
+const OLD = "acmeco";
+const NEW = "org-acmeco";
 
 const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 

@@ -259,6 +259,13 @@ jobs:
         if: always()
         run: npm run test:operator-tooling
 
+      # Org #1 (its workspace id and hosted domain) is a deployment setting, DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN, with
+      # neutral built-in values (lib/default-org.ts). Unset and set, the web's and the agent's org context, the scripts'
+      # copy of the rule and the operator tooling all answer the same org #1. Offline; no database.
+      - name: Org #1 is a deployment setting (every reader, unset and set)
+        if: always()
+        run: npm run test:default-org
+
       # The profile generator's rules (including custom_fields) and the per-turn briefing. It existed and was not
       # wired in; the custom-field checks below lean on it, so both run.
       - name: Deployment profile (generator rules, briefing)

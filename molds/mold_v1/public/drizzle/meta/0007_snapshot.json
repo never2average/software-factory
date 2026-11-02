@@ -1,6 +1,6 @@
 {
-  "id": "cee92a6d-5e91-4bd4-952b-be9a020e53c2",
-  "prevId": "8b4fbc02-a25d-460b-ba34-c7be587cd3fa",
+  "id": "8b4fbc02-a25d-460b-ba34-c7be587cd3fa",
+  "prevId": "233462d3-2f7e-429a-932b-a9363ff110b5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1095,8 +1095,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "onfinance_launch_approver_email": {
-          "name": "onfinance_launch_approver_email",
+        "acmeco_launch_approver_email": {
+          "name": "acmeco_launch_approver_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -3266,73 +3266,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.workflow_instruction_versions": {
-      "name": "workflow_instruction_versions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "workflow_id": {
-          "name": "workflow_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content": {
-          "name": "content",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "author": {
-          "name": "author",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "workflow_instr_versions_idx": {
-          "name": "workflow_instr_versions_idx",
-          "columns": [
-            {
-              "expression": "workflow_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.workflows": {
       "name": "workflows",
       "schema": "",
@@ -3380,13 +3313,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "instructions_enabled": {
-          "name": "instructions_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
         },
         "notify_emails": {
           "name": "notify_emails",

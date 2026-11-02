@@ -6,6 +6,10 @@
                                            in state/factory.json and the mold's MOLD.md
   mold.py check <mold_id> [--into DIR]     compare the snapshot with the pinned commit; writes nothing
   mold.py fetch|refresh <mold_id> --dry-run   clone the source and list what would change; writes nothing
+  mold.py public <mold_id>                 put the neutral replacement of each absent private path in place (a machine
+                                           without the source: this public repository does not carry them)
+  mold.py public <mold_id> --regenerate    rewrite molds/<mold_id>/public/ from the originals on disk (a machine with the
+                                           source; refused when a replacement would still hold a private value)
   mold.py fetch <mold_id> --rehearsal      INSIDE A REHEARSAL ONLY (FACTORY_REHEARSAL set; lib/services.py): write a tiny
                                            stand-in mold instead of fetching the source: a few files of codebase, the
                                            brand rules for them, and five lanes whose checks run in under a second against
@@ -17,6 +21,12 @@ operator decision D1, mold_v0-040; lib/intree.py) is authored in this repository
 source to copy from: `refresh` refuses (exit 2, nothing written), `fetch` writes nothing (exit 0 when the codebase is
 here, 2 when it is not: it comes with a checkout of this repository), and `check` reports "in-tree since <commit>" with
 the last commit that changed it and any uncommitted change under it (exit 0; 2 when the codebase is missing).
+
+PRIVATE PATHS (molds/<mold_id>/mold.json "private_paths", mold_v0-200; lib/mold_private.py): files of the source that
+hold this factory's organisation names and cannot be made neutral at the source (mold_v1's applied migration history).
+They are git-ignored under the codebase: fetch and refresh still copy them to disk, `check` leaves them out of the
+path-by-path proof and instead requires each one on disk to be the source's file or its neutral replacement
+(molds/<mold_id>/public/), and says how many are absent.
 --rehearsal refuses an in-tree mold too. Every other mold (mold_v1) behaves exactly as above.
 
 Where the source lives is this machine's own: state/factory.local.json -> "mold_sources" -> {"<mold_id>": "<git URL>"}
@@ -34,6 +44,7 @@ sys.path.insert(0, os.path.join(HERE, "lib"))
 from factory_local import mold_source
 import asr
 import intree
+import mold_private
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 # Never part of a snapshot (molds/mold_v1/MOLD.md): the source's own history, installed packages, and what the
@@ -102,12 +113,41 @@ def sync(tmp, dest, dry=False):
     return len([l for l in r.stdout.splitlines() if changed(l)])
 
 
-def prove(tmp, dest):
-    """The MOLD.md proof. -> (identical, the differences)."""
+def _diff_path(line, tmp, dest):
+    """The codebase-relative path one `diff -rq` line is about."""
+    m = re.match(r"^Files (.+) and (.+) differ$", line)
+    if m: full = m.group(1)
+    else:
+        m = re.match(r"^Only in (.+): (.+)$", line)
+        full = os.path.join(m.group(1), m.group(2)) if m else ""
+    for base in (tmp, dest):
+        if full == base or full.startswith(base + os.sep): return os.path.relpath(full, base)
+    return None
+
+
+def prove(tmp, dest, private=(), root=None, mold_id=None):
+    """The MOLD.md proof. -> (identical, the differences). The mold's private paths (lib/mold_private.py) are left out
+    of the path-by-path comparison; each one on disk must be the source's file or its neutral replacement, and an
+    absent one is not a difference (this repository does not carry them)."""
     r = run(["diff", "-rq"] + [x for e in EXCLUDES for x in ("--exclude", e)] + [tmp, dest])
-    diffs = [l.replace(tmp, "<source>").replace(dest, "<snapshot>") for l in r.stdout.splitlines()]
+    priv = set(private)
+    diffs = [l.replace(tmp, "<source>").replace(dest, "<snapshot>") for l in r.stdout.splitlines() if _diff_path(l, tmp, dest) not in priv]
+    if priv and root and mold_id:
+        diffs += [f"<snapshot>/{p} is neither the source's file nor its neutral replacement (molds/{mold_id}/public/{p})"
+                  for p, st in mold_private.states(root, mold_id, dest, source=tmp) if st == "differs"]
     if os.path.lexists(os.path.join(dest, ".next")): diffs.append("<snapshot>/.next exists (a run wrote into the snapshot; remove it)")
-    return r.returncode == 0 and not diffs, diffs
+    return not diffs, diffs
+
+
+def private_note(root, mold_id, dest, source=None):
+    """One line on the mold's private paths, or None for a mold without any."""
+    st = mold_private.states(root, mold_id, dest, source=source)
+    if not st: return None
+    n = {k: sum(1 for _, s in st if s == k) for k in ("original", "public", "absent", "present", "differs")}
+    parts = [f"{v} {k if k != 'original' else 'the originals'}" for k, v in n.items() if v]
+    line = f"  private paths (molds/{mold_id}/mold.json, never tracked): {len(st)}: " + ", ".join(parts)
+    if n["absent"]: line += f". Put the neutral replacements in place with: python3 .claude/scripts/mold.py public {mold_id}"
+    return line
 
 
 def record(root, mold_id, commit, today):
@@ -163,13 +203,32 @@ def in_tree(cmd, mold_id, I, root, rehearsal=False):
     return 0
 
 
-KNOWN_FLAGS = {"--into", "--rehearsal", "--dry-run"}
+KNOWN_FLAGS = {"--into", "--rehearsal", "--dry-run", "--regenerate"}
+
+
+def public_cmd(mold_id, regen, root):
+    """mold.py public <mold_id> [--regenerate] (lib/mold_private.py). -> exit code."""
+    try:
+        if not mold_private.private_paths(root, mold_id):
+            print(f"{mold_id} has no private paths (molds/{mold_id}/mold.json private_paths); nothing to do."); return 0
+        if regen:
+            done = mold_private.regenerate(root, mold_id)
+            print(f"{mold_id}: {len(done)} neutral replacement(s) written under molds/{mold_id}/public/" + (": " + ", ".join(done) if done else " (all were current)"))
+            return 0
+        written, missing = mold_private.fill(root, mold_id)
+        print(f"{mold_id}: {len(written)} neutral replacement(s) put in place under molds/{mold_id}/codebase (git-ignored)"
+              + ("" if written else "; every private path was already on disk (originals are never written over)"))
+        if missing: print(f"  no replacement for: {', '.join(missing)}", file=sys.stderr); return 1
+        return 0
+    except mold_private.Problem as e:
+        print(str(e), file=sys.stderr); return 2
 
 def main(a, root=ROOT, today=None):
     if any(x in ("-h", "--help") for x in a): print(__doc__); return 0
     # An unknown option never runs the command (mold_v0-167: `refresh --dry-run` once refreshed for real).
     bad = [x for i, x in enumerate(a) if x.startswith("-") and x not in KNOWN_FLAGS and not (i and a[i - 1] == "--into")]
     if bad: print(f"mold.py: unknown option {', '.join(bad)}; nothing was run.", file=sys.stderr); return 2
+    if a and a[0] == "public" and len(a) >= 2: return public_cmd(a[1], "--regenerate" in a, root)
     if not a or a[0] not in ("fetch", "refresh", "check") or len(a) < 2: print(__doc__); return 2
     dry = "--dry-run" in a
     cmd, mold_id = a[0], a[1]
@@ -188,6 +247,7 @@ def main(a, root=ROOT, today=None):
     today = today or datetime.date.today().isoformat()
     try:
         m = mold_entry(root, mold_id); url = source_of(root, mold_id)
+        priv = mold_private.private_paths(root, mold_id)
         pinned = (m.get("source") or {}).get("commit")
         if cmd != "refresh" and not pinned:
             raise Stop(f"state/factory.json pins no commit for {mold_id} (molds[].source.commit), so there is nothing to "
@@ -205,7 +265,9 @@ def main(a, root=ROOT, today=None):
                 n = sync(tmp, dest)
                 print(f"  copied into {os.path.relpath(dest, root) if dest.startswith(root + os.sep) else dest}: "
                       + (f"{n} path(s) changed" if n else "nothing changed (it was already this commit)"))
-            same, diffs = prove(tmp, dest)
+            same, diffs = prove(tmp, dest, priv, root, mold_id)
+            note = private_note(root, mold_id, dest, source=tmp)
+            if note: print(note)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         if not same:
@@ -220,6 +282,8 @@ def main(a, root=ROOT, today=None):
         return 0
     except Stop as e:
         print(str(e), file=sys.stderr); return e.code
+    except mold_private.Problem as e:
+        print(str(e), file=sys.stderr); return 2
 
 
 # ---- the rehearsal mold (FACTORY_REHEARSAL only) ------------------------------------------------------------------
@@ -384,6 +448,24 @@ def self_test():
         rc, out = quiet(["fetch", "m"], root)
         ok(rc == 0 and "IDENTICAL" in out and not os.path.exists(os.path.join(snap, "stray.txt")) and open(os.path.join(snap, "README.md")).read() == "base\n", "fetch: puts a drifted snapshot back")
         ok(os.path.exists(os.path.join(snap, "node_modules", "x", "i.js")), "fetch: an installed node_modules survives")
+        # Private paths (mold_v0-200, lib/mold_private.py): README.md stands in for a file this repository does not carry.
+        json.dump({"mold_id": "m", "private_paths": ["README.md"]}, open(os.path.join(root, "molds", "m", "mold.json"), "w"))
+        os.remove(os.path.join(snap, "README.md"))
+        rc, out = quiet(["check", "m"], root)
+        ok(rc == 0 and out.rstrip().endswith("IDENTICAL") and "1 absent" in out and "mold.py public m" in out, "private paths: an absent one is not a difference, and check says how to fill it")
+        rc, out = quiet(["public", "m"], root)
+        ok(rc == 1 and "no replacement for: README.md" in out, "  ...public without a replacement for it: named, exit 1")
+        os.makedirs(os.path.join(root, "molds", "m", "public")); open(os.path.join(root, "molds", "m", "public", "README.md"), "w").write("neutral\n")
+        rc, out = quiet(["public", "m"], root)
+        ok(rc == 0 and open(os.path.join(snap, "README.md")).read() == "neutral\n", "  ...public puts the neutral replacement in place")
+        rc, out = quiet(["check", "m"], root)
+        ok(rc == 0 and "1 public" in out and out.rstrip().endswith("IDENTICAL"), "  ...and check accepts the replacement")
+        open(os.path.join(snap, "README.md"), "w").write("edited in place\n")
+        rc, out = quiet(["check", "m"], root)
+        ok(rc == 1 and "neither the source's file nor its neutral replacement" in out, "  ...but a private path that is neither is a difference")
+        rc, out = quiet(["fetch", "m"], root)
+        ok(rc == 0 and open(os.path.join(snap, "README.md")).read() == "base\n" and "1 the originals" in out, "  ...and fetch puts the original back")
+        os.remove(os.path.join(root, "molds", "m", "mold.json")); shutil.rmtree(os.path.join(root, "molds", "m", "public"))
         rc, out = quiet(["fetch", "m"], root)
         ok(rc == 0 and "nothing changed" in out, "fetch again: nothing changed")
         os.makedirs(os.path.join(snap, ".next"))
