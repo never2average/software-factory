@@ -6,7 +6,7 @@
 // The list is the console's database table (RecordView, as on Accounts; mold_v0-170), and so is every customer list of
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
@@ -19,11 +19,12 @@ import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
 import { httpError } from '@/features/status/from-error';
+import { ClockSection, clockColumns, isOverdue, OverdueToggle, type ClockEvent, type ClockView } from './clocks';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
-type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[] };
+type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView> };
 export type Page = { records: RecordRow[]; next: string | null };
-type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[] };
+type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -99,7 +100,8 @@ function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
     };
   });
   const updated: RecordCol<RecordRow> = { key: '_updated', label: 'Updated', type: 'date', hidden: true, value: (r) => r.updated_at, render: (r) => r.updated_at.slice(0, 10) };
-  return [record, ...fields, updated];
+  // mold_v0-191: each clock's deadline and status (./clocks).
+  return [record, ...fields, ...clockColumns<RecordRow>(area), updated];
 }
 
 /** A field's value in the peek: a reference to a record this page can show links to it. */
@@ -139,18 +141,26 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
 }) {
   const { data, error } = useOrgLoad(() => loadAll(url, rows), [url, rows]);
   const cols = useMemo(() => columnsOf(area), [area]);
+  // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on.
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const clocked = !!area.clocks?.length;
+  const overdue = useMemo(() => (clocked ? (data?.records ?? []).filter(isOverdue) : []), [clocked, data]);
+  const shown = clocked && overdueOnly ? overdue : data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
       id={id} compact={compact} noun='records' properties summary={summary}
-      rows={data?.records ?? []} rowKey={(r) => r.key} cols={cols} loading={!data}
+      rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
-      filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span> : undefined}
+      filters={(clocked && data) || data?.more ? <>
+        {clocked && data && <OverdueToggle count={overdue.length} on={overdueOnly} onChange={setOverdueOnly} />}
+        {data?.more && <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} records: search and sort cover these</span>}
+      </> : undefined}
       primary={data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
-      empty={empty}
+      empty={clocked && overdueOnly ? 'Nothing is overdue.' : empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return href ? <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button> : null; }}
       detail={(r) => (
@@ -190,6 +200,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
               </div>
             ))}
           </dl>
+          <ClockSection record={data.record} events={data.clock_events} />
           {data.links.map((l) => {
             const target = findRecordArea(base, l.area);
             return (

@@ -17,7 +17,11 @@ import { FloatPanel } from '@/features/portal/setup';
 import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
 
-interface Notice { id: string; kind: 'due'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean }
+interface Notice {
+  id: string; kind: 'due' | 'clock'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
+  /** A clock's notice (mold_v0-191): its latest step in words. */
+  what?: string;
+}
 
 async function call<T>(method: string, path = ''): Promise<T> {
   const res = await fetch(`/api/notices${path}`, {
@@ -97,6 +101,8 @@ export function NoticesPage() {
     },
     { key: 'due', label: 'Due', type: 'date', keep: true, value: (n) => n.due_on, render: (n) => <span className='font-mono text-sm'>{n.due_on}</span> },
     { key: 'area', label: 'Area', type: 'select', value: (n) => n.area_label, render: (n) => n.area_label },
+    // mold_v0-191: a clock's reminder or escalation step, in words; a due-date notice says it is due soon.
+    { key: 'what', label: 'What', type: 'text', value: (n) => n.what ?? 'Due soon', render: (n) => <span className='line-clamp-2'>{n.what ?? 'Due soon'}</span> },
     { key: 'posted', label: 'Posted', type: 'date', value: (n) => n.created_at, render: (n) => <When d={n.created_at} /> },
     { key: 'emailed', label: 'Emailed', type: 'boolean', value: (n) => n.emailed, render: (n) => (n.emailed ? 'Yes' : 'No') }
   ];
@@ -107,7 +113,7 @@ export function NoticesPage() {
           id='app-notices' compact noun='notices' properties
           rows={data?.notices ?? []} rowKey={(n) => n.id} cols={cols} loading={!data}
           defaultSort={[{ key: 'due', dir: 'asc' }]}
-          searchText={(n) => `${n.title ?? ''} ${n.key} ${n.area_label} ${n.due_on}`}
+          searchText={(n) => `${n.title ?? ''} ${n.key} ${n.area_label} ${n.due_on} ${n.what ?? ''}`}
           searchPlaceholder='Search notices'
           primary={data?.notices.length ? <ExportRowsButton name='notices' rows={data.notices} cols={cols} /> : undefined}
           empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-notices' empty={{
