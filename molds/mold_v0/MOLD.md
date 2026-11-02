@@ -1679,6 +1679,53 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and its spend counting is the limits tickets', 053/008/018); the run engine's per-workspace cap is a count then an
   insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
   Vercel).
+- **Clocks, reminders and escalation** (mold_v0-191, built; `src/clock-math.ts`, `src/record-clocks.ts`,
+  `sql/migrations/0031_record_clocks.sql`; `npm run test:record-clocks`). A workspace area declares `clocks` in pack.json
+  (at most 5; `src/pack-api.ts` `ClockSchema`, checked at build by `clockProblems`), with no pack code: a deadline each record
+  runs against. `starts` is one of its date fields, `{event: "created"}` or `{event: "entered", state}` (its lifecycle's
+  `$state_at`); `after` a duration (`"90d"`, `"48h"`, `"10bd"`: business days, Monday to Friday UTC) or `{by: a single-choice
+  enum, values: {option: duration}, default?}`; `not_later_than` a date field that caps it (the earlier wins); `stops_when`
+  `{field, in, at?}` (met when it stopped by the deadline, missed after; `at` a date field saying when, else the lifecycle's
+  time for its field, else when the check saw it); `pauses_when` `{field, in}` (the deadline moves out by the time paused,
+  business time for a business-day clock, exactly from the lifecycle's times when the field is its field); `assignee` a
+  person field; `notify` the roles (and `assignee`) told by default (owners); `soon` (the first reminder's `before`, else
+  7d); `remind` `[{before, notify?}]`; `escalate` `[{after, label?, notify?, reassign?: {field, from_field}, raise?: {field,
+  to?}}]` in order of `after` (time past the deadline). Refused at build: a start that is not a date, mixed calendar and
+  business time, an assignee not declared or not a single person field, steps out of order or doing nothing, raising the
+  field the duration is chosen by (its deadline would move with every step) or the lifecycle's field, a clock on a shared
+  area or on an area read live from an API, reassign or raise on a read-only (repository) area, a clock named like a field.
+  **What the shell keeps** (`workspace_record_clocks`: per record and clock, the status and deadline last seen, the time
+  paused, when the current pause began, when it stopped) and **what happened** (`workspace_clock_events`, append-only:
+  started, paused, resumed, stopped, reopened, `remind:<i>`, `escalate:<j>`, each once per record, clock and deadline by its
+  unique key, with what it did: who it told, a person reassigned or a value raised). Both under `tenant_isolation`: the check
+  runs one workspace at a time inside that workspace's tenant scope, so it reads its own records and writes its own clock rows
+  and events only (the tenant role may insert and update clock rows, insert events, never change or delete one; `check:rls`
+  probes A writing B's). **The check** (`clockCheck(now)`, from the scheduler's tick, `src/schedules.ts` `schedulerTick`, at
+  most every 15 minutes: `scheduler_marks` `record_clocks`): each record's clock observed (`observe`: its view, the memory to
+  keep, what changed), every change and every step due (`stepsDue`: a reminder once the deadline is within its `before`, an
+  escalation once overdue for its `after`; nothing while not started, paused or stopped) recorded once; a record first seen
+  with several steps due does every one (their changes too) and tells only the latest, so nobody gets a pile of old
+  reminders. A step tells people only through the shell's own paths: one in-app notice per record and deadline
+  (`workspace_notices` kind `clock`, raised again by each step, its latest step in words on Notices) and one email per person
+  of the workspace (`src/email.ts` `clockSteps`, kind `clock_step` in the profile's `due_dates` group: off unless the profile
+  lists it; owners by role, the assignee when they are a member; a sealed record named by its key). Reassign and raise write
+  through the record store as the shell (the area's fields and lifecycle rules apply; a refusal is recorded as
+  `<step>:failed`). Running it again, or several at once, does nothing more. Sealed areas are opened with the workspace's
+  key in its scope; with the key vault locked they are skipped and counted. **Where it shows:** every read of a clock area's
+  records (`listFor`/`getFor`, so `/api/records`, the data API, `list_records`/`get_record` and the generated tools) carries
+  `clocks` `{name: {status, due_at, due_on, overdue, overdue_days, ...}}`, computed at the read from the record and what
+  the shell kept (the same function as the check, so a page shows what the check records); `list_records` rows add `due`;
+  the record page shows each deadline and the clock's history (`clock_events`); the console's tables
+  (`web/src/features/records/clocks.tsx`, every customer list of the area and its tabs) add a column per clock (its date and
+  a status badge), its status as a filter and an **Overdue** toggle with the count above the table; `list_due_records`
+  (the shell's MCP tool, only with a clock area: `src/shell-tools.ts` `CLOCK_TOOL_NAMES`) lists a workspace's records by a
+  clock's status, soonest first (overdue and due soon by default); a metric may filter by a clock's status (`clock: {name,
+  is: [...]}`, counted in code over the opened rows, as a sealed area's); a list tab over a clock area shows **Overdue**
+  as its second default card. Zero packs and builds without a clock: no tool, no column, no check (the MCP surface hash is
+  unchanged). Rolling back: `sql/rollback/0031_record_clocks.sql` (the clock notices and both tables go, the notices' kind
+  check is 0008's again). **Not covered:** holiday calendars and time zones (business days are Monday to Friday, UTC); a
+  pause by a field that is not the lifecycle's is timed when the check sees it (at most 15 minutes late); per-person
+  in-app notices (a notice is the workspace's, shown to whoever may read the area).
 - **Host packs** (mold_v0-039, built; `src/host.ts`, `src/pack-host.ts`, `src/hosts.ts`; the console's
   `web/src/features/packs/host-web.ts`; `orchestrator/main.ts`). A product whose surface is more than declarations and
   pack tools (the shell's first product, `octillion`) is a **host pack**: its pack.json names `host.entry` (a module whose
@@ -1817,6 +1864,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path); `github_app: true` for a GitHub repository token a connected GitHub App replaces, or `oauth: "<provider>"` for one connected through an OAuth provider (mold_v0-014) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `oauth_providers` (`oauthProviders`) | OAuth 2.0 providers the pack's credential fields connect to: sign-in, token and revoke addresses, scopes, the client id and secret by key-vault label, PKCE | credentials connected through OAuth (mold_v0-014, built): the Credentials page's Connect, tokens sealed and refreshed, `/admin/keys` lists providers and connections |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
+| `clocks` (on `record_areas`) | deadlines per record: a start, a duration (by a field's value), a cap, stops and pauses, reminders and escalation steps | due dates, statuses and an Overdue filter on every list and record, notices and emails at each step, reassign and raise through the store, `list_due_records`, metrics by status (mold_v0-191, built: `src/record-clocks.ts`) |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id (a host pack's under their own names: `host.schema`, mold_v0-049); every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
