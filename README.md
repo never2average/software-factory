@@ -136,6 +136,19 @@ The factory is run from a **terminal coding agent** (CLI). Every rule lives in [
 
 Claude Code is the reference, and the factory ships its skills, subagents and the board plugin. Per-agent setup: [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md). Each agent's results appear in the benchmarks below as it is verified.
 
+### An app as one JSON file, checked in your editor
+
+Instead of a brief, an app can be one **app spec** with its mold's schema as `$schema`, so VS Code (or any editor that
+reads JSON Schema) shows what is missing or not supported as you type:
+
+```json
+{ "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json" }
+```
+
+Your agent checks it with `python3 .claude/scripts/factory.py spec check <file>` (plain "missing / not supported" lines)
+and mints it with `python3 .claude/scripts/mint.py new <app_id> --spec <file>`. Examples: [`schemas/examples/`](schemas/examples/);
+how it works: [`docs/APP_SPEC.md`](docs/APP_SPEC.md).
+
 ## Benchmarks
 
 How well can each coding agent run the factory, start to finish? Each agent gets the same requests a user would make, against a rehearsal factory with fake clouds, so it costs nothing and touches nothing real. It's scored on:
