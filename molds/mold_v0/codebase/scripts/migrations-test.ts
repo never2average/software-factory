@@ -831,6 +831,40 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} audit trails are append-only (a removed workspace's entries cascade); its rollback refuses while an entry exists, drops them when told, and leaves exactly what ${v - 1} left`);
   }
 
+  // Chain and sign (mold_v0-195, ledger_chain, found by name): entries written before it are chained once, in sequence
+  // order, as the trigger chains new ones; the trigger refuses an entry out of sequence; the rollback refuses while a
+  // signed checkpoint exists, drops when told, leaves the catalog of the migration before it, and applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "ledger_chain")!.version;
+    const d = await shellAt(kind, v - 1);
+    const [{ id }] = await d.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('mig-ledger', 'Ledger') RETURNING id");
+    await d.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1, 'system', 'read', 'record', 'system'), ($1, 2, 'user', 'list', 'record', 'console')", [id]);
+    await d.query("INSERT INTO audit_platform_events (scope_id, seq, kind, channel, method, path, actor_kind) VALUES (0, 1, 'request', 'api', 'GET', '/x', 'system')");
+    await runMigrations(d, { packDirs: [] });
+    const chain = async () => d.query<{ seq: number; ok: boolean; linked: boolean }>(
+      `SELECT e.seq, e.hash = app_ledger_hash(e.prev_hash, app_ledger_fields_data(e)) AS ok,
+              e.prev_hash = coalesce((SELECT p.hash FROM audit_data_events p WHERE p.org_id = e.org_id AND p.seq = e.seq - 1), '\\x0000000000000000000000000000000000000000000000000000000000000000'::bytea) AS linked
+         FROM audit_data_events e WHERE org_id = $1 ORDER BY seq`, [id]);
+    assert.deepEqual((await chain()).map((r) => [Number(r.seq), r.ok, r.linked]), [[1, true, true], [2, true, true]], "the entries already written are chained, in order");
+    await d.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 3, 'system', 'read', 'record', 'system')", [id]);
+    assert.deepEqual((await chain()).map((r) => [Number(r.seq), r.ok, r.linked]).at(-1), [3, true, true], "a new entry continues the chain");
+    await assert.rejects(d.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 2, 'system', 'read', 'record', 'system')", [id]), /out of sequence/, "an entry behind the chain is refused");
+    assert.equal(Number((await d.query<{ s: number }>("SELECT last_seq AS s FROM ledger_heads WHERE scope_id = 0 AND stream = 'platform'"))[0]!.s), 1, "the platform's own entries have their head");
+    await d.query(`INSERT INTO ledger_checkpoints (scope_id, org_id, stream, n, from_seq, to_seq, entries, last_hash, merkle_root, prev_checkpoint, checkpoint_hash, key_id, signature, signed_at)
+      VALUES ($1, $1, 'data', 1, 1, 3, 3, '\\x00', '\\x00', '\\x00', '\\x00', 'k', '\\x00', now())`, [id]);
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_ledger_chain.sql`), "utf8");
+    await assert.rejects(d.exec(rb), /1 signed checkpoint/, "rollback refused while a signed checkpoint exists");
+    await d.exec(`SET app.ledger_rollback_drop = 'on';\n${rb}\nRESET app.ledger_rollback_drop;`);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    assert.equal(Number((await d.query<{ n: number }>("SELECT count(*)::int AS n FROM audit_data_events WHERE org_id = $1", [id]))[0]!.n), 3, "the entries stay");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_ledger_chain")).length, 1, "and it applies again");
+    assert.deepEqual((await chain()).map((r) => r.ok && r.linked), [true, true, true], "re-chained the same way");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} ledger chain: entries written before it are chained in sequence order, new ones continue it, one behind the chain is refused; its rollback refuses while a signed checkpoint exists, drops when told, leaves exactly what ${v - 1} left, and applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

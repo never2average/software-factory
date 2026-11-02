@@ -156,7 +156,7 @@ async function inner() {
       await assert.rejects(db.query("UPDATE workspace_records SET title = 'x' WHERE org_id = $1 AND area = 'audit_evidence'", [A.id]), /append-only/, "the database refuses a change");
       await assert.rejects(db.query("DELETE FROM workspace_records WHERE org_id = $1 AND area = 'audit_evidence'", [A.id]), /append-only/, "and a removal");
       await assert.rejects(db.query("INSERT INTO workspace_records (org_id, pack, area, key) VALUES ($1, 'fixture_vulns', 'audit_evidence', 'sneak')", [A.id]), /chained/, "an unchained write to a chained area is refused");
-      await assert.rejects(db.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 99999, 'system', 'read', 'record', 'system')", [A.id]), /out of sequence/, "a trail entry out of sequence is refused");
+      await assert.rejects(db.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1, 'system', 'read', 'record', 'system')", [A.id]), /out of sequence/, "a trail entry numbered behind the chain is refused");
       await assert.rejects(db.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel, hash) SELECT $1, max(seq) + 1, 'system', 'read', 'record', 'system', '\\x00' FROM audit_data_events WHERE org_id = $1", [A.id]), /hash does not match/, "a writer's wrong hash is refused, never trusted");
       ok("the chain: every trail entry and chained record has its hash, linked in sequence; verify says ok; chained records are append-only in the store and the database; an unchained, out-of-sequence or wrongly hashed write is refused");
     }

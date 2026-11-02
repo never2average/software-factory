@@ -80,7 +80,8 @@ BEGIN
   SELECT h.last_seq, h.last_hash INTO last_seq, last_hash FROM ledger_heads h WHERE h.scope_id = p_scope AND h.stream = p_stream FOR UPDATE;
 END $fn$;
 
--- The trails' entries: the writer numbers them (src/audit-trail.ts, under audit_sequences' lock); the chain follows.
+-- The trails' entries: the writer numbers them (src/audit-trail.ts, under audit_sequences' lock); the chain follows,
+-- in that order: an entry numbered at or below the stream's head is refused.
 CREATE OR REPLACE FUNCTION app_ledger_chain_trail() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 DECLARE
   hd RECORD;
@@ -96,7 +97,8 @@ BEGIN
     parts := app_ledger_fields_platform(NEW);
   END IF;
   SELECT * INTO hd FROM app_ledger_head(scope, TG_ARGV[0]);
-  IF hd.last_seq > 0 AND NEW.seq <> hd.last_seq + 1 THEN
+  -- Numbers only go forward (the writer's are gapless; a gap is reported by every verifier, never hidden by the chain).
+  IF NEW.seq <= hd.last_seq THEN
     RAISE EXCEPTION '% entry % of scope % is out of sequence: the chain is at %', TG_ARGV[0], NEW.seq, scope, hd.last_seq USING ERRCODE = '23514';
   END IF;
   IF NEW.prev_hash IS NOT NULL AND NEW.prev_hash IS DISTINCT FROM coalesce(hd.last_hash, '\x0000000000000000000000000000000000000000000000000000000000000000'::bytea) THEN
