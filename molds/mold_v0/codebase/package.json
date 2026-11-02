@@ -42,6 +42,7 @@
     "test:record-gaps": "tsx scripts/record-gaps-test.ts",
     "test:data-api": "tsx scripts/data-api-test.ts",
     "test:record-export": "tsx scripts/record-export-test.ts",
+    "test:audit-trail": "tsx scripts/audit-trail-test.ts",
     "test:mcp-tools": "tsx scripts/mcp-tools-test.ts",
     "test:mcp-followups": "tsx scripts/mcp-followups-test.ts",
     "test:install-docs": "tsx scripts/install-docs-test.ts",

@@ -33,6 +33,7 @@ import { packs } from "./packs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
+import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
 export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
@@ -339,8 +340,9 @@ export async function listPlatform(area: RecordArea, opts?: RecordQuery | { limi
 
 async function listWorkspace(orgId: number, area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {
   const p = queryOf(area, opts);
-  if (isLive(area)) return (await live()).listLive(area, orgId, p);
-  return listTable(area, orgId, p);
+  // The data trail (mold_v0-197): one entry per page of a workspace's records, never one per row, never their values.
+  return auditAs(orgId, async () => (isLive(area) ? (await live()).listLive(area, orgId, p) : listTable(area, orgId, p)),
+    (page) => ({ action: "list", pack: area.pack, area: area.name, rows: page.records.length }));
 }
 
 export async function getPlatform(area: RecordArea, key: string): Promise<RecordRow | null> {
@@ -363,8 +365,9 @@ async function readWorkspace(orgId: number, area: RecordArea, key: string): Prom
   });
 }
 async function getWorkspace(orgId: number, area: RecordArea, key: string): Promise<RecordRow | null> {
-  if (isLive(area)) return (await live()).getLive(area, orgId, checkKey(key));
-  return (await readWorkspace(orgId, area, key))?.record ?? null;
+  // The data trail (mold_v0-197): one read of a record (a sealed area's is a reveal), never its values.
+  return auditAs(orgId, async () => (isLive(area) ? (await live()).getLive(area, orgId, checkKey(key)) : (await readWorkspace(orgId, area, key))?.record ?? null),
+    (r) => (r ? { action: isSealedArea(area) ? "reveal" : "read", pack: area.pack, area: area.name, key: r.key } : null));
 }
 
 /**
@@ -408,7 +411,8 @@ export async function detailFor(orgId: number, name: string, key: string, actor:
     if (!target || !wanted.length || !may(target, "read", actor)) continue;
     // A shared area never resolves into one workspace's rows, whatever its stored values say.
     if (area.scope === "platform" && target.scope === "workspace") continue;
-    const found = (await Promise.all(wanted.map((k) => getFor(orgId, target.name, k, actor)))).filter((r): r is RecordRow => !!r);
+    // Only the linked records' titles: part of the detail's one entry in the data trail (mold_v0-197), none of their own.
+    const found = (await auditQuiet(() => Promise.all(wanted.map((k) => getFor(orgId, target.name, k, actor))))).filter((r): r is RecordRow => !!r);
     links.push({ field: l.field, area: target.name, records: found.map((r) => ({ key: r.key, title: r.title })) });
   }
   // A clock area's record page shows what its clocks did (mold_v0-191): the latest events, newest first.
@@ -446,7 +450,7 @@ const assertCanSeal = (area: RecordArea) => {
   if (isSealedArea(area) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
 };
 
-async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, meta: WriteMeta | null = null): Promise<RecordRow> {
+async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, meta: WriteMeta | null = null, action: "move" | null = null): Promise<RecordRow> {
   let stored: Record<string, unknown> = data;
   if (isSealedArea(area)) {
     assertCanSeal(area);
@@ -467,6 +471,7 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
           WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at`,
         [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null]);
     if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
+    auditData(orgId, { action: action ?? (prev === null ? "create" : "update"), pack: area.pack, area: area.name, key }); // mold_v0-197: never the values
     return toRecord(area, r, orgId);
   });
 }
@@ -528,7 +533,7 @@ async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: st
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev);
+  return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, null, "move");
 }
 
 async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
@@ -537,9 +542,11 @@ async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: 
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
   // A repository's writer deletes only rows it wrote itself (its prune).
-  return withTenant(orgId, async () => (await (await q()).query(
+  const gone = await withTenant(orgId, async () => (await (await q()).query(
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
     [orgId, area.pack, area.name, checkKey(key), source])).length > 0);
+  if (gone) auditData(orgId, { action: "delete", pack: area.pack, area: area.name, key });
+  return gone;
 }
 
 const platformAreaFor = (pack: string | null, name: string) => {
@@ -622,7 +629,8 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
 
 async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   const ops = checkOps(raw, max);
-  return inTransaction(orgId, async () => {
+  // The data trail (mold_v0-197): each operation's entry, written only when the whole batch commits.
+  return auditAtomic(() => inTransaction(orgId, async () => {
     const out: RecordOperationResult[] = [];
     for (const [i, o] of ops.entries()) {
       try {
@@ -635,7 +643,7 @@ async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: un
       } catch (e) { throw numbered(i, o, e); }
     }
     return out;
-  });
+  }));
 }
 
 async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
@@ -671,7 +679,9 @@ export async function storedMarks(area: RecordArea, orgId: number | null): Promi
  */
 export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   if (!ops.length) return [];
-  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints, claim) : batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim);
+  // The data trail (mold_v0-197): an index's writes are one entry (its source and how many rows), not one per row.
+  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints, claim)
+    : auditAs(orgId, () => batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim), (r) => ({ action: "update", pack, area: null, key: `index:${source}`.slice(0, 200), rows: r.length }));
 }
 
 /**

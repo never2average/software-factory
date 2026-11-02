@@ -37,6 +37,7 @@ import { credentialEgressHosts, runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
 import { ENV } from "./env-names.js";
+import { auditAs, auditData } from "./audit-trail.js";
 import { noteOnPremisesStart, onPremAvailable, runLocationFor } from "./onprem-runners.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
@@ -169,6 +170,10 @@ export async function listRuns(orgId: number, opts: { pack?: string; kind?: stri
   return rows.map(view);
 }
 export async function runResults(orgId: number, id: string): Promise<RunResultRow[]> {
+  // The data trail (mold_v0-197): one read of a run's results, with how many.
+  return auditAs(orgId, () => readRunResults(orgId, id), (r) => ({ action: "read", target: "run_result", key: String(id), rows: r.length }));
+}
+async function readRunResults(orgId: number, id: string): Promise<RunResultRow[]> {
   const rows = await (await getDb()).query<{ check_area: string; check_key: string; asset_area: string | null; asset_key: string | null; source_area: string | null;
     source_key: string | null; status: RunResultRow["status"]; finding_fingerprint: string | null; evidence_ref: string | null; detail: Record<string, unknown> }>(
     `SELECT check_area, check_key, asset_area, asset_key, source_area, source_key, status, finding_fingerprint, evidence_ref, detail
@@ -776,6 +781,7 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
     if ("done" in h) { await removeObjects(h.gone); return view(h.done); }
     hooked = h;
   }
+  let written = 0;
   const r = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     const run = await leased(tx, runId, leaseToken, true);
     // The attempt's end, in this transaction: its tokens revoked, its store lease released, its uncommitted stage discarded.
@@ -811,6 +817,7 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [run.id, run.org_id, x.check.area, x.check.key, x.asset?.area ?? null, x.asset?.key ?? null, x.source?.area ?? null, x.source?.key ?? null,
            x.status, x.fp, x.ev, JSON.stringify(x.detail)]);
+      written = results.length;
       // Every result left out or downgraded is said so (mold_v0-065), with its status: a dropped failure is visible.
       for (const u of unresolved.slice(0, 500)) await event(run.id, run.org_id, run.attempt, "result_unresolved", u as unknown as Record<string, unknown>, tx);
       if (unresolved.length) resultSummary = { results: results.length, unresolved: unresolved.length,
@@ -832,6 +839,8 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
     await endOfAttempt();
     return u!;
   }));
+  // The data trail (mold_v0-197): the run's results, once committed (how many, never what they say).
+  if (written) auditData(r.org_id, { action: "create", target: "run_result", pack: r.pack, area: r.kind, key: r.id, rows: written });
   await removeObjects(gone);
   return view(r);
 }

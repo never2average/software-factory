@@ -27,6 +27,11 @@ each one the factory can check. Today (mold_v0):
                              by the build (scripts/gen-packs.mjs with src/landing.ts), so the factory follows the shell's
                              sections as they change. From the brief: `landing.<key>.<key> = <text>` lines in ## Profile,
                              or a ## Landing section holding the whole block as one ```json fenced block
+  audit                      {"data": true|false, "platform": true|false, "retention_days": 1..3650,
+                             "platform_retention_days": 1..3650} (mold_v0-197, the shell's src/audit-trail.ts): the
+                             company's data trail and the platform usage trail, each off unless true; entries kept 400
+                             days unless the app says otherwise (application.json profile.audit; the app spec's top-level
+                             audit; a brief's `audit.data = true` / `audit.platform = true` lines in ## Profile)
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -408,7 +413,22 @@ def problems(profile, mold_id, root, packs=None):
             e = instructions_problem(v, "profile.mcp_instructions")
             if e: errs.append(e)
         elif k == "landing": errs += landing_problems(v, "profile.landing")
+        elif k == "audit": errs += audit_problems(v, "profile.audit")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
+    return errs
+
+AUDIT_FLAGS, AUDIT_DAYS = ("data", "platform"), ("retention_days", "platform_retention_days")
+
+def audit_problems(v, at="audit"):
+    """The audit trails (mold_v0-197; the shell's scripts/gen-packs.mjs auditProblem checks the same in the build)."""
+    if not isinstance(v, dict) or not v: return [f"{at} must be an object of data, platform (true or false) and retention_days"]
+    errs = []
+    for k, x in v.items():
+        if k in AUDIT_FLAGS:
+            if not isinstance(x, bool): errs.append(f"{at}.{k} must be true or false (got {json.dumps(x)[:40]})")
+        elif k in AUDIT_DAYS:
+            if isinstance(x, bool) or not isinstance(x, int) or not (1 <= x <= 3650): errs.append(f"{at}.{k} must be a whole number of days, 1 to 3650 (got {json.dumps(x)[:40]})")
+        else: errs.append(f"{at}.{k} is not an audit setting (known: {', '.join(AUDIT_FLAGS + AUDIT_DAYS)})")
     return errs
 
 def flat(profile, at=""):
@@ -445,7 +465,7 @@ LANDING_FENCE = re.compile(r"^[ \t]*```[ \t]*json[ \t]*\n(.*?)^[ \t]*```[ \t]*$"
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
-WORDSET = re.compile(r"(?<![\w.])(member_keys|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+WORDSET = re.compile(r"(?<![\w.])(member_keys|audit\.(?:data|platform)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
 WORD = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*([A-Za-z_]+)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 
 def _clean(text):
@@ -492,10 +512,10 @@ def from_brief(text):
             d[path[-1]] = n
         for m in WORDSET.finditer(body):
             name, w = m.group(1), WORD.match(body, m.end())
-            if name == "member_keys":
+            if name == "member_keys" or name.startswith("audit."):
                 val = {"true": True, "false": False}.get(w.group(1).lower()) if w else None
-                if val is None: errs.append(f"{head}: member_keys has no value I can read; write it as `member_keys = false` (or true)"); continue
-                path = ["member_keys"]
+                if val is None: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {'false' if name == 'member_keys' else 'true'}` (or {'true' if name == 'member_keys' else 'false'})"); continue
+                path = name.split(".")   # member_keys; audit.data, audit.platform (mold_v0-197)
             else:
                 if not w or w.group(1) != OWNED: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {OWNED}`"); continue
                 val, path = OWNED, ["source_offer", "upstreams", m.group(2)]

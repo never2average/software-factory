@@ -808,6 +808,29 @@ async function suite(kind: "pglite" | "postgres") {
     assert.equal(createHash("sha256").update(readFileSync(path.join(PRE, f), "utf8")).digest("hex"), sp.before, `${f}: the fixture is the earlier file`);
   }
 
+  // The audit trails (mold_v0-197, 0031_audit_trails, found by name so a renumbering keeps this): append-only; the
+  // rollback refuses while a trail holds an entry, drops them when told to, and leaves exactly what the migration before left.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "audit_trails")!.version;
+    const d = await shellAt(kind);
+    const [{ id }] = await d.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('mig-audit', 'Audit') RETURNING id");
+    await d.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1, 'system', 'read', 'record', 'system')", [id]);
+    await assert.rejects(d.query("UPDATE audit_data_events SET action = 'list'"), /append-only/, "an entry is never changed");
+    await assert.rejects(d.query("DELETE FROM audit_data_events"), /append-only/, "nor removed");
+    await d.query("DELETE FROM organizations WHERE id = $1", [id]); // a removed workspace's entries go with it (cascade)
+    await d.query("INSERT INTO organizations (slug, name) VALUES ('mig-audit-2', 'Audit') RETURNING id").then(([o]: any[]) =>
+      d.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1, 'system', 'read', 'record', 'system')", [o.id]));
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_audit_trails.sql`), "utf8");
+    await assert.rejects(d.exec(rb), /hold 1 entr/, "rollback refused while a trail holds an entry");
+    await d.exec(`SET app.audit_rollback_drop = 'on';\n${rb}\nRESET app.audit_rollback_drop;`);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_audit_trails")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} audit trails are append-only (a removed workspace's entries cascade); its rollback refuses while an entry exists, drops them when told, and leaves exactly what ${v - 1} left`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);
