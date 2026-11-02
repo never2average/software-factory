@@ -231,6 +231,11 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await tx.query("INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'probe', 'probe', $2, current_date)", [o, tag]);
       // Price per run (mold_v0-019): a run's charge per organization.
       await tx.query("INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'charge', 'probe', 'probe', 1, 'succeeded', 'usd', 100)", [`${tag}-run-${o}`, o]);
+      // The audit trails (mold_v0-197, 0031_audit_trails): an entry of each per organization.
+      if (has.has("audit_data_events")) {
+        await tx.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1000000000 + $1, 'system', 'read', 'record', 'system')", [o]);
+        await tx.query("INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, actor_kind) VALUES ($1, 1000000000 + $1, $1, 'request', 'api', 'GET', '/probe', 'system')", [o]);
+      }
     }
     if (product) await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -307,6 +312,15 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("run_charges: a tenant writes a charge through the shell's function", "SELECT app_run_charge($1)", [`${tag}-run-${a}`]);
     if ((await one<{ ok: boolean }>("SELECT to_regprocedure('octillion_run_charge(text)') IS NOT NULL AS ok")).ok)
       await refused("run_charges: a tenant writes a charge through the function's old name", "SELECT octillion_run_charge($1)", [`${tag}-run-${a}`]);
+    // The audit trails (mold_v0-197): tenant work reads its own entries and can neither write, change nor remove one.
+    if (has.has("audit_data_events")) {
+      await refused("audit_data_events: a tenant writes an entry", "INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1, 'system', 'read', 'record', 'system')", [a]);
+      await refused("audit_data_events: a tenant changes its own entry", "/* tenant: rls probe */ UPDATE audit_data_events SET action = 'list'");
+      await refused("audit_data_events: a tenant removes its own entry", "/* tenant: rls probe */ DELETE FROM audit_data_events");
+      await refused("audit_platform_events: a tenant writes an entry", "INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, actor_kind) VALUES ($1, 1, $1, 'request', 'api', 'GET', '/x', 'system')", [a]);
+      await refused("audit_platform_events: a tenant removes its own entry", "/* tenant: rls probe */ DELETE FROM audit_platform_events");
+      await refused("audit_sequences: readable by a tenant query", "SELECT 1 FROM audit_sequences LIMIT 1");
+    }
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 

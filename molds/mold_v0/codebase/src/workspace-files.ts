@@ -28,6 +28,7 @@
  * vault), never served unchecked; the versions are still listed. Text goes out as JSON
  * (the console renders it as text, never as markup); a download as bytes no browser renders.
  */
+import { auditData } from "./audit-trail.js";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { canAccount } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
@@ -335,22 +336,31 @@ export function workspaceFileAppRouter(): Router {
   r.use((req, res, next) => (req.method === "GET" || req.method === "HEAD" ? next() : void res.status(405).json({ error: "Read only" })));
   r.use(customerSession);
   const S = (res: Response) => session(res).org;
+  // The data trail (mold_v0-197): which store, version and path was listed, shown, downloaded or compared; never the bytes.
+  const trail = <T>(res: Response, action: "list" | "read" | "export", store: string, key: string | null, out: T, rows?: number) => {
+    auditData(S(res), { action, target: "file", pack: store, area: store, key, rows: rows ?? null });
+    return out;
+  };
   r.get("/", answer((_req, res) => ({ stores: viewerStores(actorOf(res)) })));
   r.get("/:store/versions", answer(async (req, res) => {
     const p = storeFor(String(req.params.store), actorOf(res));
-    return { store: p.id, label: p.manifest.name || p.id, retention: storePolicy(p.id), versions: await listVersions(S(res), p.id) };
+    const versions = await listVersions(S(res), p.id);
+    return trail(res, "list", p.id, null, { store: p.id, label: p.manifest.name || p.id, retention: storePolicy(p.id), versions }, versions.length);
   }));
   r.get("/:store/versions/:v/files", answer(async (req, res) => {
     const p = storeFor(String(req.params.store), actorOf(res));
-    return { store: p.id, ...(await versionFiles(S(res), p.id, String(req.params.v))) };
+    const v = await versionFiles(S(res), p.id, String(req.params.v));
+    return trail(res, "list", p.id, `v${v.version}`, { store: p.id, ...v }, v.files.length);
   }));
   r.get("/:store/versions/:v/file", answer(async (req, res) => {
     const p = storeFor(String(req.params.store), actorOf(res));
-    return { store: p.id, ...(await viewFile(S(res), p.id, String(req.params.v), req.query.path)) };
+    const f = await viewFile(S(res), p.id, String(req.params.v), req.query.path);
+    return trail(res, "read", p.id, `v${f.version}:${f.path}`, { store: p.id, ...f });
   }));
   r.get("/:store/versions/:v/download", answer(async (req, res) => {
     const p = storeFor(String(req.params.store), actorOf(res));
     const f = await downloadFile(S(res), p.id, String(req.params.v), req.query.path);
+    trail(res, "export", p.id, `v${f.version}:${f.path}`, null);
     res.set({
       "Content-Type": "application/octet-stream", "Content-Disposition": disposition(f.path), "Content-Length": String(f.body.length),
       // Never rendered: an attachment, no sniffing, and a policy that would run nothing if a browser tried.
@@ -361,7 +371,8 @@ export function workspaceFileAppRouter(): Router {
   r.get("/:store/diff", answer(async (req, res) => {
     const p = storeFor(String(req.params.store), actorOf(res));
     const q = req.query;
-    return { store: p.id, ...(q.path === undefined ? await diffVersions(S(res), p.id, q.from, q.to) : await diffFile(S(res), p.id, q.from, q.to, q.path)) };
+    const d = q.path === undefined ? await diffVersions(S(res), p.id, q.from, q.to) : await diffFile(S(res), p.id, q.from, q.to, q.path);
+    return trail(res, "read", p.id, `diff v${String(q.from)}..v${String(q.to)}${q.path === undefined ? "" : `:${String(q.path)}`}`.slice(0, 500), { store: p.id, ...d });
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;

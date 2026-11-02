@@ -1022,6 +1022,16 @@ const deployFacts = readFacts();
  * its rules). Checked here so a typo fails the build rather than billing differently than written.
  */
 const BILLING_KEYS = ["$comment", "enabled", "currency", "max_fixed", "max_cost_plus_percent", "charge_failed_runs", "charge_cancelled_runs", "stripe_meter"];
+/** profile.json `audit` (mold_v0-197, src/audit-trail.ts): the two trails' toggles and how long each keeps its entries. */
+function auditProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "an object: {\"data\": true or false, \"platform\": true or false, \"retention_days\": days}";
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "data" || k === "platform") { if (typeof x !== "boolean") return `${k}: true or false`; }
+    else if (k === "retention_days" || k === "platform_retention_days") { if (!Number.isInteger(x) || x < 1 || x > 3650) return `${k}: a whole number of days, 1 to 3650`; }
+    else return `${k}: not a setting (known: data, platform, retention_days, platform_retention_days)`;
+  }
+  return null;
+}
 function billingProblem(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
   for (const k of Object.keys(v)) if (!BILLING_KEYS.includes(k)) return `${k} is not a billing setting (known: ${BILLING_KEYS.slice(1).join(", ")})`;
@@ -1154,6 +1164,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
       // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
+      // The audit trails (mold_v0-197, src/audit-trail.ts): {data, platform: true or false, retention_days, platform_retention_days: 1 to 3650}.
+      if (k === "audit") { const bad = auditProblem(v); if (bad) fail(rel(PROFILE_FILE), `audit: ${bad}`); else profile[k] = v; continue; }
       // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
@@ -1175,7 +1187,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, audit, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1293,13 +1305,16 @@ const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
   const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...INTAKE_TOOL_NAMES];
   const own = new Map();
+  // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
+  const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
+  shell.push(...AUDIT_TOOL_NAMES);
   for (const p of loaded) for (const t of p.definition.tools ?? []) {
     if (!t || typeof t.name !== "string") continue;
     if (shell.includes(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already a shell tool\`);
     else if (own.has(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already pack \${own.get(t.name)}'s\`);
     else own.set(t.name, p.id);
   }
-  const catalog = generateCatalog(loaded, { customer: shell, admin: ADMIN_SHELL_TOOL_NAMES });
+  const catalog = generateCatalog(loaded, { customer: shell, admin: [...ADMIN_SHELL_TOOL_NAMES, ...ADMIN_AUDIT_TOOL_NAMES] });
   mcp.problems.push(...catalog.problems);
   // The packs' declared slash commands (mold_v0-137, pack.json mcp.prompts): one name, one pack.
   const promptOwner = new Map();
