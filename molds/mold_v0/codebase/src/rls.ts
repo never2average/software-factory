@@ -93,7 +93,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "run_transfers",
   // The developer surface (mold_v0-193, 0033_developer_surface): keys, client sessions, origins, webhook endpoints and
   // their sealed secrets, deliveries, inbound sources, idempotency keys: the shell's developer modules only.
-  "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys", "developer_marks"];
+  "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys", "developer_marks",
+  // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
+  "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

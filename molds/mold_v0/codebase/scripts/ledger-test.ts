@@ -1,4 +1,4 @@
-// Chain and sign (mold_v0-195; src/ledger.ts, sql/migrations/0034_ledger_chain.sql), offline: a build copy of the
+// Chain and sign (mold_v0-195; src/ledger.ts, sql/migrations/0035_ledger_chain.sql), offline: a build copy of the
 // codebase with the fixture pack fixture_vulns plus one chained area (append_only, chain), both audit trails and
 // audit.sign on, the API on an embedded database behind a stand-in Clerk.
 //   npm run test:ledger
