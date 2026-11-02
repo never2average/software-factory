@@ -223,7 +223,7 @@ export function packGuide(d: PackGuideData, catalog: Catalog, shell: ShellTexts)
     ? [{ title: fill('What {product} does'), group: 'Getting started', body: d.packs.filter((p) => p.description).map((p) => sentence(p.description!)).join('\n\n') }]
     : [];
   const all = [...d.pages, ...lead, ...generated].map((p) => ({ slug: slug(p.title), title: p.title, group: p.group, body: p.body }));
-  const order = [...d.groups, 'Getting started', 'Reference', 'Account'].filter((g, i, xs) => xs.indexOf(g) === i);
+  const order = [...d.groups, 'Getting started', 'Reference', 'Developers', 'Account'].filter((g, i, xs) => xs.indexOf(g) === i);
   const groups = order.map((g) => [g, all.filter((p) => p.group === g).map((p) => p.title)] as [string, string[]]).filter(([, ts]) => ts.length);
   return { groups, pages: groups.flatMap(([g]) => all.filter((p) => p.group === g)) };
 }

@@ -190,6 +190,8 @@ export interface PackConfig {
   tips?: TipsConfig;
   texts?: Partial<Record<import("./shell-texts.js").ShellTextId, string>>;
   connect_page?: ConnectPageConfig;
+  /** The developer surface of an embedded app (mold_v0-193; src/developer-config.ts): one pack's per build. */
+  developer_surface?: import("./developer-config.js").DeveloperSurfaceConfig;
 }
 /**
  * The journeys component (mold_v0-143; src/journeys.ts): pack.json `journeys`, one pack's per build, which turns it on.
