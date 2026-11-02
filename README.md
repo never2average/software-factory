@@ -69,7 +69,7 @@ Then it keeps watching. A board inside your coding agent shows every app's healt
 
 ## Proof, from a production app
 
-**OnFinance AI** is a research workspace for housing-finance analysts, built and run with this factory. It runs on Vercel and on its own server.
+A **research workspace** (a customer product, unnamed here) for housing-finance analysts, built and run with this factory. It runs on Vercel and on its own server.
 
 - **First message to live app: 21 hours.**
 - **All five test suites passing on both copies**, signed in, with nothing skipped.
@@ -136,6 +136,19 @@ The factory is run from a **terminal coding agent** (CLI). Every rule lives in [
 
 Claude Code is the reference, and the factory ships its skills, subagents and the board plugin. Per-agent setup: [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md). Each agent's results appear in the benchmarks below as it is verified.
 
+### An app as one JSON file, checked in your editor
+
+Instead of a brief, an app can be one **app spec** with its mold's schema as `$schema`, so VS Code (or any editor that
+reads JSON Schema) shows what is missing or not supported as you type:
+
+```json
+{ "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json" }
+```
+
+Your agent checks it with `python3 .claude/scripts/factory.py spec check <file>` (plain "missing / not supported" lines)
+and mints it with `python3 .claude/scripts/mint.py new <app_id> --spec <file>`. Examples: [`schemas/examples/`](schemas/examples/);
+how it works: [`docs/APP_SPEC.md`](docs/APP_SPEC.md).
+
 ## Benchmarks
 
 How well can each coding agent run the factory, start to finish? Each agent gets the same requests a user would make, against a rehearsal factory with fake clouds, so it costs nothing and touches nothing real. It's scored on:
@@ -188,9 +201,11 @@ An agent that can't be run shows "not available", never an estimated score. Task
 git clone https://github.com/never2average/software-factory.git
 cd software-factory
 cp state/factory.local.example.json state/factory.local.json   # then put your own email, domain and Vercel team in it
+cp state/products.example.json state/products.json             # your products (never committed)
+python3 .claude/scripts/leakcheck.py install-hook               # git refuses a commit or push that names your private values
 ```
 
-`state/factory.local.json` holds your own values (operator email, notification domain, Vercel team, machine address). It is git-ignored and never committed.
+`state/factory.local.json` holds your own values (operator email, notification domain, Vercel team, machine address). It is git-ignored and never committed, and so are your products (`state/products.json`), your backlog (`state/tasks/`) and your applications (`state/application/<app_id>/`). `leakcheck.py` turns those values, plus any terms you list in `state/leak-denylist.txt`, into a denylist and checks every commit and push against it.
 
 ### 3. The mold
 
@@ -257,7 +272,7 @@ To use the board outside the factory folder:
 |---|---|
 | `molds/` | each mold's full source code (`codebase/`), its `MOLD.md` (pinned version), its five test-suite definitions under `testing/`, and its branding rules |
 | `packs/` | *(yours, not committed)* an app's own agents, instructions and starter content, applied on top of the mold. Molds are never edited or forked. |
-| `state/` | `factory.json` (molds, defaults), `products.json` (products and their stage gates), `tasks/` (one ticket list per mold), `application/app_id/` (the schemas every app's records follow) |
+| `state/` | `factory.json` (molds, defaults), `products.example.json` (the shape of your own `products.json`: products and their stage gates), `tasks/` (one ticket list per mold, your own, git-ignored), `application/app_id/` (the schemas every app's records follow) |
 | `.claude/` | Claude Code agents (`intake`, `provisioner`, `mold-engineer`, `lane-tester`, `product-packager`), skills (`mint`, `provision`, `run-lanes`, `productize`, `task`, `repo`, …) and the scripts they run |
 | `.agents/` | the same scripts and skills for other agent runtimes |
 | `plugins/factory-board/` | the board |
@@ -293,4 +308,4 @@ A **product** is a mold under a brand, with stage gates: defined → built → t
 
 ## License
 
-[GNU AGPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) under its section 7 for Priyesh Srivastava and affiliated legal entities.
+[GNU AGPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) under its section 7 for the licensor named in that file and affiliated legal entities.

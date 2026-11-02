@@ -3,6 +3,10 @@
 
   mint.py new <app_id> --brief briefs/<app_id>.md [--mold mold_v0|mold_v1]   start one (the brief is a page of plain words;
                                    without --mold, the mold on the brief's own `Mold:` line, else mold_v1; an unregistered one is refused)
+  mint.py new <app_id> --spec <file.json>     start one from an app spec (schemas/<mold>.app.schema.json; check it first
+                                   with factory.py spec check). It writes briefs/<app_id>.md from the spec (and the spec
+                                   beside it as briefs/<app_id>.spec.json, and an inline mold_v0 pack to packs/<id>/), reads
+                                   the brief back to prove it says what the spec says, then follows the brief path exactly
   mint.py <app_id>                 where it stands: every station, and THE ONE thing that happens next
   mint.py <app_id> run             do every station that needs nobody, in order; stop at the first that needs
                                    the operator (and say exactly what is needed) or at the first that fails
@@ -590,7 +594,7 @@ def origin(app):
     u = lane_url.target_url(docs(app)[1] or {})
     if not u: sys.exit(f"{app} is not deployed yet")
     # mold_v1-239: an email address and a sign-in code go only to an address Vercel files under this app's web project
-    # (an app on its own server is not asked). The address in state was once another account's compliance-os.vercel.app.
+    # (an app on its own server is not asked). The address in state was once another account's example-compliance.vercel.app.
     import vercel_addr
     mine, why = vercel_addr.guard_app(docs(app)[1] or {}, u, roles=("",))
     if not mine: sys.exit(f"{app}: {why}")
@@ -640,6 +644,37 @@ def new(app, brief, mold):
     r = py(os.path.join(S, "intake.py"), brief, "--app", app, *(["--mold", mold] if mold else []))
     if r.returncode == 0: finish_new(app, open(os.path.join(ROOT, brief)).read())
     show(app); return 0 if r.returncode in (0, 2) else 1
+
+def new_from_spec(app, path):
+    """mold_v0-190: an app spec -> the brief the brief path reads (and the spec's inline packs into packs/), then `new`."""
+    sys.path.insert(0, S)
+    import app_spec
+    spec, err = app_spec._read_spec(os.path.abspath(path))
+    if err: print(err, file=sys.stderr); return 2
+    if spec.get("app_id") not in (None, app): sys.exit(f"the spec is for app {spec.get('app_id')!r}, not {app!r}: name the same id, or change the spec's app_id. Nothing was written.")
+    if not re.match(r"^[a-z][a-z0-9_]{2,40}$", app): sys.exit("an app id is lowercase letters, digits and underscores")
+    if os.path.isdir(adir(app)): sys.exit(f"{app} already exists: python3 .claude/scripts/mint.py {app}")
+    probs = app_spec.problems(spec, ROOT)
+    if probs:
+        print(f"{path} is not complete for {spec['mold_id']}, so nothing was written:")
+        for k, _, m in probs: print(f"  {k}: {m}")
+        return 1
+    text, back = app_spec.to_brief(spec, app)
+    if back:
+        print("the spec cannot be said as a brief exactly, so nothing was written:")
+        for _, _, m in back: print(f"  {m}")
+        return 1
+    brief, keep = os.path.join(ROOT, "briefs", app + ".md"), os.path.join(ROOT, "briefs", app + ".spec.json")
+    for f, body in ((brief, text), (keep, app_spec.dumps(spec))):
+        if os.path.exists(f) and open(f).read() != body:
+            sys.exit(f"{os.path.relpath(f, ROOT)} already exists and says something else: move it away (or mint from it with --brief). Nothing was written.")
+    bad = app_spec.write_inline_packs(spec, ROOT)
+    if bad: print("\n".join(bad)); return 1
+    os.makedirs(os.path.dirname(brief), exist_ok=True)
+    for f, body in ((brief, text), (keep, app_spec.dumps(spec))):
+        with open(f, "w") as fh: fh.write(body)
+    print(f"briefs/{app}.md written from {path} (kept as briefs/{app}.spec.json)")
+    return new(app, f"briefs/{app}.md", spec["mold_id"])
 
 def finish_new(app, brief_text):
     """What a newcomer should not have to ask for: the brand from the product's name, and the app's own agent
@@ -1084,6 +1119,7 @@ def main(a):
             print(f"{app:28} {'finished' if not nxt else nxt[0] + ': ' + nxt[1]}")
         return 0
     if a[0] == "new":
+        if len(a) >= 4 and a[2] == "--spec": return new_from_spec(a[1], a[3])
         if len(a) < 4 or a[2] != "--brief": sys.exit(__doc__)
         return new(a[1], a[3], a[a.index("--mold") + 1] if "--mold" in a else None)   # none named: the brief's ("mold: mold_v0"), else mold_v1
     app = a[0]

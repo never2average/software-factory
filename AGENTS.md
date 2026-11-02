@@ -10,7 +10,7 @@ A software factory, not an application. It turns a one-page brief into a tested,
 
 1. If `AGENTS.local.md` exists next to this file, read it. It holds this machine's and this operator's own rules (git-ignored, never committed) and wins over this file where they differ.
 2. `python3 .claude/scripts/factory.py doctor`: checks the machine (tools, sign-ins, mold on disk). Fix or report what it names before anything else.
-3. Read state: `state/factory.json` (operator, molds, defaults), `state/products.json` (products and stage gates), `python3 .claude/scripts/mint.py list --json` (every app and its next step).
+3. Read state: `state/factory.json` (operator, molds, defaults), `state/products.json` (products and stage gates; this machine's own, `state/products.example.json` shows the shape), `python3 .claude/scripts/mint.py list --json` (every app and its next step).
 4. Then do what was asked, using the map below.
 
 ## Skills: how each job is done
@@ -22,6 +22,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
 | The person asks | Open | Runs |
 |---|---|---|
 | "Make an app from this brief", "mint X" | `mint` | `mint.py new <app> --brief briefs/<app>.md`, then `mint.py <app> run` |
+| "Check this app spec", "mint X from this spec" | `mint` | `factory.py spec check <file>`, then `mint.py new <app> --spec <file>` (docs/APP_SPEC.md) |
 | "Where does X stand?", "what's left?" | `mint` | `mint.py <app> --json`, `mint.py list --json` |
 | "What's next on the backlog?", log or close work | `task` | `factory.py next <mold_id>`, `factory.py add`, `factory.py close` |
 | "Can X deploy?", "deploy X" | `provision` | `provision.py <app>` (check), `provision.py <app> --deploy` |
@@ -61,7 +62,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
 
 ## What needs an explicit yes
 
-Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `validate`; `mint.py list` and `mint.py <app> [--json]`; `sweep.py plan` and `clean --dry-run`; every check, `status`, `--list` and `--dry-run`; `provision.py <app>` (the check) and `--capacity`; `repo.py <app> status`; `mold.py check`. Local edits to the factory's own state as part of the job you were given (a brief, `mint.py new`, intake, a task note) are fine.
+Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `validate`, `spec check`, `spec apps`; `mint.py list` and `mint.py <app> [--json]`; `sweep.py plan` and `clean --dry-run`; every check, `status`, `--list` and `--dry-run`; `provision.py <app>` (the check) and `--capacity`; `repo.py <app> status`; `mold.py check`. Local edits to the factory's own state as part of the job you were given (a brief, `mint.py new`, intake, a task note) are fine.
 
 **Always ask first, naming the app and what will happen, and wait for a plain yes:**
 
@@ -80,7 +81,8 @@ Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `val
 - An app's own code (specialist agents, an instructions section, sandbox helpers) is a pack under `packs/<pack_id>/`, named in the app's state and applied to `build/<app_id>/` by `packs.py`.
 - Stamping an app means: copy `state/application/app_id/` to a real id, fill the four JSON files against their schemas, then run the five lanes in `molds/<mold_id>/testing/`. A failed lane sets the app to `reverted` and hands control back to the operator. Report what was measured, never what was hoped; never edit a lane or a test to make it pass.
 - Shallow-clone external repositories.
-- **Never commit git-ignored paths:** app state (`state/application/<app_id>/`), `packs/`, `brands/`, `briefs/`, `reports/`, `build/`, `molds/*/codebase/`, `state/factory.local.json`, `AGENTS.local.md`, `.env*`. Stage explicit paths (`git add <path>`); never `git add -A` or `git add -f`.
+- **Never commit git-ignored paths:** app state (`state/application/<app_id>/`), the backlog (`state/tasks/`), the product records (`state/products.json`), `packs/`, `brands/`, `briefs/`, `reports/`, `build/`, `molds/*/codebase/`, `state/factory.local.json`, the leak check's lists (`state/leak-denylist.txt`, `state/leak-allowlist.txt`), `AGENTS.local.md`, `.env*`. Stage explicit paths (`git add <path>`); never `git add -A` or `git add -f`.
+- **No organisation-identifying data in tracked files, commit messages or pull requests** (this repository is public): no company, customer or people names, email domains, server addresses, Vercel team or project names, or real application ids. Use neutral words (`example_app`, `example_vm`, `acme`, `example.com`). `python3 .claude/scripts/leakcheck.py install-hook` once per clone makes git refuse a commit or push that adds one of this machine's private values; `leakcheck.py scan` checks every tracked file and `factory.py validate` runs it too. A finding says `local value #n`, never the value. Never paste a value into a commit, PR or chat to explain a finding.
 - Generic agent assets live under `.agents/`; tool-specific ones under that tool's folder (`.claude/`, `.gemini/`, `.codex/`, ...). `docs/AGENT_INTEGRATION.md` lists what each coding agent reads.
 
 ## Asking the operator for something

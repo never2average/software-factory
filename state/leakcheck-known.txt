@@ -1,0 +1,63 @@
+# Tracked files whose leak-check findings are known and do not fail (.claude/scripts/leakcheck.py, mold_v0-198).
+# Paths only, never a value. Each line: a path or glob, then why. Keep this list short: every entry is a leak that
+# someone still has to remove at its source.
+
+# The licence's additional permission names its licensor, a person: changing who it is granted to is the operator's
+# legal decision, not a scrub.
+LICENSE-EXCEPTION.md
+
+# molds/mold_v1/codebase is a snapshot of the mold's upstream repository at its pin (AGENTS.md: never edited in place).
+# These files carry the upstream's own organisation and deployment names; the fix is a pull request upstream, after
+# which mold.py refresh brings the clean files and their lines here are removed.
+molds/mold_v1/codebase/.migrate-agent-configs.mjs
+molds/mold_v1/codebase/.migrate-agent-profiles.mjs
+molds/mold_v1/codebase/.migrate-chat-sessions.mjs
+molds/mold_v1/codebase/.migrate-debrand-approver.mjs
+molds/mold_v1/codebase/.migrate-drop-org-defaults.mjs
+molds/mold_v1/codebase/.migrate-org-tenancy-tighten.mjs
+molds/mold_v1/codebase/.migrate-org-tenancy.mjs
+molds/mold_v1/codebase/.migrate-rename-default-org.mjs
+molds/mold_v1/codebase/.migrate-room-presence.mjs
+molds/mold_v1/codebase/.migrate-secrets-hardening.mjs
+molds/mold_v1/codebase/.migrate-task-workflow-service.mjs
+molds/mold_v1/codebase/.migrate-workflow-definitions.mjs
+molds/mold_v1/codebase/agent/lib/automation-audit.ts
+molds/mold_v1/codebase/agent/lib/automation-runs.ts
+molds/mold_v1/codebase/agent/lib/org-context.ts
+molds/mold_v1/codebase/agent/lib/schedule-store.ts
+molds/mold_v1/codebase/app/api/cron/run-cron-workflows/route.ts
+molds/mold_v1/codebase/app/api/ops/orgs/route.ts
+molds/mold_v1/codebase/docs/DEPLOYMENT_PROFILE.md
+molds/mold_v1/codebase/docs/WORKFLOW_RUN_LEASES.md
+molds/mold_v1/codebase/drizzle/0000_eminent_thunderbolts.sql
+molds/mold_v1/codebase/drizzle/0014_tricky_grey_gargoyle.sql
+molds/mold_v1/codebase/drizzle/0023_provider_launch_approver.sql
+molds/mold_v1/codebase/drizzle/meta/0000_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0001_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0002_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0003_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0004_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0005_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0006_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0007_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0008_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0009_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0010_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0011_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0012_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0013_snapshot.json
+molds/mold_v1/codebase/drizzle/meta/0014_snapshot.json
+molds/mold_v1/codebase/lib/child-copy.ts
+molds/mold_v1/codebase/lib/child-feed.ts
+molds/mold_v1/codebase/lib/eve-stream-encoding.ts
+molds/mold_v1/codebase/lib/ops-activity.ts
+molds/mold_v1/codebase/lib/org-context.ts
+molds/mold_v1/codebase/scripts/fixtures/child-feed/make-stream.mjs
+molds/mold_v1/codebase/scripts/fixtures/dataroom-folders/keys-before.json
+molds/mold_v1/codebase/scripts/fixtures/record-areas/examples/*.json   # an example whose file name is an app id
+molds/mold_v1/codebase/scripts/fixtures/storage/default-driver.golden.json
+molds/mold_v1/codebase/scripts/operator/lib/operator.mjs
+molds/mold_v1/codebase/scripts/test-child-feed.mjs
+molds/mold_v1/codebase/scripts/test-migrations-db.mjs
+molds/mold_v1/codebase/scripts/test-record-structure.mjs
+molds/mold_v1/codebase/tests/control-panel.spec.ts

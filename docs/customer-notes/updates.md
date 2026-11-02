@@ -1,6 +1,6 @@
-# Customer note: how updates to OnFinance AI work (self-hosted copy)
+# Customer note: how updates to Acme Research work (self-hosted copy)
 
-A draft for the operator to send to customers whose OnFinance AI runs on its own server (`target: vm_remote`).
+A draft for the operator to send to customers whose Acme Research runs on its own server (`target: vm_remote`).
 Filled in by the operator on 2026-10-12; send it as it is. The facts behind it are in `docs/COST_MODEL.md` §7
 ("what a redeploy costs in downtime") and `docs/RUNBOOK.md` §9 F; if either changes, change this note too.
 
@@ -8,13 +8,13 @@ Status: **sent** by the operator on 2026-10-12 (closed gate task mold_v1-213).
 
 ---
 
-**Subject: How updates to OnFinance AI work**
+**Subject: How updates to Acme Research work**
 
 Hello,
 
-A short note on how we update your OnFinance AI workspace, and what you might notice when we do.
+A short note on how we update your Acme Research workspace, and what you might notice when we do.
 
-**When updates happen.** We update OnFinance AI about once a week, at a quiet time:
+**When updates happen.** We update Acme Research about once a week, at a quiet time:
 weekdays between 7 and 8 am India time. If an update ever needs more than a few
 seconds of your time, we will tell you beforehand.
 
@@ -38,4 +38,4 @@ You do not need to sign in again, and nothing you have saved is affected.
 If something does not look right after an update, reply to this email and we will look at it straight away.
 
 Best regards,
-Priyesh
+<your name>
