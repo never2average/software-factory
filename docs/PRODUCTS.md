@@ -1,7 +1,7 @@
 # Products: what the factory ships
 
 A **mold** is a codebase snapshot plus its five test lanes. A **product** is a mold under a brand, with stage
-gates. An **application** is one stamped, deployable instance of a product. `state/products.json` (schema
+gates. An **application** is one stamped, deployable instance of a product. `state/products.json` (this factory machine's own and git-ignored since mold_v0-198; `state/products.example.json` shows the shape; schema
 `state/products.schema.json`) is the only list of products; `factory.py validate` checks it.
 
 ## A product is

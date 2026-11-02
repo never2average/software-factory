@@ -583,7 +583,11 @@ def self_test_single(n, fails):
         os.makedirs(os.path.join(T, "state", "application")); os.makedirs(os.path.join(T, "briefs"))
         for f in os.listdir(ST):
             if os.path.isfile(os.path.join(ST, f)): shutil.copy(os.path.join(ST, f), os.path.join(T, "state", f))
-        shutil.copytree(os.path.join(ST, "tasks"), os.path.join(T, "state", "tasks"))
+        if os.path.isdir(os.path.join(ST, "tasks")): shutil.copytree(os.path.join(ST, "tasks"), os.path.join(T, "state", "tasks"))   # this machine's own (mold_v0-198)
+        # The repository's factory.json names no workspace (mold_v0-198: it lives in factory.local.json), so the copy
+        # gets a neutral one, as it had before: these cases are not about that question.
+        _fj = os.path.join(T, "state", "factory.json"); _f = json.load(open(_fj)); _f.setdefault("defaults", {}).setdefault("workspace_name", "Acme")
+        json.dump(_f, open(_fj, "w"), indent=2)
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")

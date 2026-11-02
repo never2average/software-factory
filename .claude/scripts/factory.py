@@ -1003,6 +1003,14 @@ def doctor_items():
             blank = [k for k, x in want.items() if not isinstance(x, str) or PLACEHOLDER.search(x.strip())]
             add(f"{rel} filled", not blank, "value", f"{rel} still lacks the operator's own value for {', '.join(blank)} "
                 f"(state/factory.local.example.json shows each one). Ask the operator for them, one at a time.")
+    if os.path.isdir(os.path.join(ROOT, ".git")):   # mold_v0-198: this machine's private values never reach a commit or a push
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import leakcheck
+        add("leak check hooks installed (pre-commit, commit-msg, pre-push)", leakcheck.hook_installed(ROOT), "tool",
+            "Install them once in this checkout: python3 .claude/scripts/leakcheck.py install-hook")
+    add("state/products.json present", os.path.exists(os.path.join(ST, "products.json")), "value",
+        "This machine's product records are its own (never committed). On a new factory machine: "
+        "cp state/products.example.json state/products.json, then define the products there (docs/PRODUCTS.md).")
     for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active" or _in_tree(m["mold_id"])]:
         mid = m["mold_id"]; cb = os.path.join(ROOT, "molds", mid, "codebase")
         if _in_tree(mid):

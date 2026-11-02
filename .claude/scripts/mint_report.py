@@ -652,7 +652,8 @@ def all_reports(as_json):
             summaries[app_id] = r["summary"]
         except Exception as e:   # one app's broken state must not stop the others
             errors[app_id] = f"{type(e).__name__}: {e}"
-    products = product_totals(summaries, load(os.path.join(ROOT, "state", "products.json")).get("products", []))
+    pj = os.path.join(ROOT, "state", "products.json")   # this machine's own (git-ignored, mold_v0-198); none on a fresh checkout
+    products = product_totals(summaries, (load(pj) if os.path.exists(pj) else {}).get("products", []))
     res = dict(generated_at=dt.datetime.now(dt.timezone.utc).isoformat(), apps=summaries, products=products, errors=errors)
     if as_json: print(json.dumps(res, indent=2))
     else:

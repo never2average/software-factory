@@ -37,7 +37,7 @@ around it end the match). Binary files are checked by path only.
 
 Exit codes: 0 nothing found, 1 found something, 2 could not run (not a git repository, a bad argument).
 """
-import fnmatch, ipaddress, json, os, re, subprocess, sys, tempfile
+import bisect, fnmatch, ipaddress, json, os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOOK_MARK = "# leakcheck-hook"
@@ -174,33 +174,56 @@ def load_terms(root=ROOT):
     return out
 
 
+def _body(term):
+    """The term as a pattern over lowercased text: `_` and `-` also match a space, the other one or nothing."""
+    parts = [re.escape(p) for p in re.split(r"[-_]+", term.lower())]
+    return r"[-_ ]?".join(p for p in parts if p)
+
+
 def _pattern(term):
-    parts = [re.escape(p) for p in re.split(r"[-_]+", term)]
-    body = r"[-_ ]?".join(p for p in parts if p)
+    """The whole rule as one regular expression (for reading; Matcher applies the same rule faster)."""
+    body = _body(term)
     if len(term) >= SUBSTRING_LEN: return body
-    return r"(?<![A-Za-z0-9])" + body + r"(?![A-Za-z0-9])"
+    return r"(?<![a-z0-9])" + body + r"(?![a-z0-9])"
 
 
 class Matcher:
     def __init__(self, terms):
         self.terms = terms
-        self.rx = [(t["n"], re.compile(_pattern(t["term"]), re.I), max(re.split(r"[-_ ]+", t["term"].lower()), key=len))
-                   for t in terms]
+        # (n, pattern over lowercased text, quick substring key, whole word only)
+        self.rx = [(t["n"], re.compile(_body(t["term"])), max(re.split(r"[-_ ]+", t["term"].lower()), key=len),
+                    len(t["term"]) < SUBSTRING_LEN) for t in terms]
+
+    @staticmethod
+    def _word(low, a, b):
+        return not ((a > 0 and low[a - 1].isascii() and low[a - 1].isalnum()) or (b < len(low) and low[b].isascii() and low[b].isalnum()))
+
+    def _spans(self, low):
+        for n, rx, key, word in self.rx:
+            if key not in low: continue          # quick: most files hold none of the terms
+            for m in rx.finditer(low):
+                if word and not self._word(low, m.start(), m.end()): continue
+                yield n, m.start(), m.end()
 
     def mask(self, text):
         """text with every term replaced by `<local value #n>`: what a printed path may show."""
-        for n, rx, _ in self.rx: text = rx.sub(f"<local value #{n}>", text)
-        return text
+        low = text.lower()
+        if len(low) != len(text): return "<a path holding a local value>" if any(True for _ in self._spans(low)) else text
+        spans = sorted(self._spans(low), key=lambda x: (x[1], -x[2]))
+        out, at = [], 0
+        for n, a, b in spans:
+            if a < at: continue
+            out += [text[at:a], f"<local value #{n}>"]; at = b
+        return "".join(out) + text[at:]
 
     def find(self, text):
         """[(line_no, n)] for every term found in text (one entry per term per line)."""
         low = text.lower()
-        hits = []
-        for n, rx, key in self.rx:
-            if key not in low: continue          # quick: most files hold none of the terms
-            for m in rx.finditer(text):
-                hits.append((text.count("\n", 0, m.start()) + 1, n))
-        return sorted(set(hits))
+        hits, nl = set(), None
+        for n, a, _ in self._spans(low):
+            if nl is None: nl = [i for i, c in enumerate(low) if c == "\n"] if "\n" in low else []
+            hits.add((bisect.bisect_left(nl, a) + 1, n))
+        return sorted(hits)
 
 
 # ---- what to read ------------------------------------------------------------------------------------------------
@@ -547,7 +570,10 @@ def self_test():
         shutil.rmtree(os.path.join(d, "state", "application", "quux_vm_app"))
         rc, out = captured(report, scan(d, "all")); ok(load_terms(d) == [] and rc == 0, "no denylist: nothing to find, passes")
     if old is not None: os.environ["FACTORY_LOCAL"] = old
-    ok(_pattern("ab-cd") .startswith("(?<!") and _pattern("abcdef_g") == r"abcdef[-_ ]?g", "pattern shapes")
+    ok(_pattern("ab-cd").startswith("(?<!") and _pattern("Abcdef_g") == r"abcdef[-_ ]?g", "pattern shapes")
+    M = Matcher([{"n": 1, "term": "jdoe", "source": "s"}, {"n": 2, "term": "Zorblax-Corp", "source": "s"}])
+    ok(M.find("a\nJDOE\nzorblaxcorp and ajdoe\n\nZORBLAX CORP") == [(2, 1), (3, 2), (5, 2)], f"line numbers and word rule {M.find('a')}")
+    ok(M.mask("docs/jdoe-zorblax_corp.md") == "docs/<local value #1>-<local value #2>.md", M.mask("docs/jdoe-zorblax_corp.md"))
     ok(_added_lines("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,0 +2,2 @@\n+one\n+two\n") == {"x": [(2, "one"), (3, "two")]}, "diff parsing")
     for f in fails: print("FAIL", f)
     print("leakcheck self-test:", "ok" if not fails else f"{len(fails)} failure(s)")
