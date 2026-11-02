@@ -30,6 +30,7 @@ import { StaffDocsSchema } from "./staff-docs.js";
 import { SHELL_TEXTS, SHELL_TEXT_IDS } from "./shell-texts.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { CheckSchema } from "./check-spec.js";
+import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
@@ -156,6 +157,40 @@ const MemorySchema = z.object({
     titles: z.object({ company: plain(60).optional(), users: plain(60).optional(), products: plain(60).optional() }).strict().optional(),
     aliases: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a page name under /app/context"), SECTION).optional(),
   }).strict().optional(),
+}).strict();
+
+/**
+ * The developer surface of an embedded app (mold_v0-193; src/developer-config.ts, src/developer-*.ts): on in a build
+ * where one pack declares it. `events` (the shell's events this build emits to webhooks), `sdk_languages`,
+ * `client_sessions` (ttl, allowed browser origins, scopes), `webhooks_in` (inbound receivers into a workspace area),
+ * `api_version`. What only the whole build can check (areas, fields) is src/developer-config.ts developerSurfaceProblems.
+ */
+const devPointer = z.string().max(200).regex(/^(\/([^~/]|~[01])*)*$/, "a JSON Pointer, like /id or /finding/title");
+const DeveloperSurfaceSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  events: z.array(z.object({
+    name: z.enum(EVENT_NAMES as [string, ...string[]]),
+    description: z.string().trim().min(1).max(300),
+    areas: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(60).optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+  }).strict()).min(1).max(100),
+  sdk_languages: z.array(z.enum(SDK_LANGUAGES)).min(1).max(SDK_LANGUAGES.length).refine((l) => new Set(l).size === l.length, "each language once"),
+  client_sessions: z.object({
+    ttl_seconds: z.number().int().min(60).max(86400).default(3600),
+    allowed_origins: z.array(z.string().regex(/^https:\/\/[a-z0-9.-]+(:[0-9]{2,5})?$/, "an https origin like https://app.example.com")).min(1).max(50),
+    scopes: z.array(z.string().regex(/^(read|write|run)(:[a-z][a-z0-9_]{0,63})?$/, "read, write or run, or one narrowed like read:<area>")).max(50).optional(),
+  }).strict(),
+  webhooks_in: z.array(z.object({
+    name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "lowercase letters, digits and _"),
+    description: z.string().trim().max(300).optional(),
+    area: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    items: devPointer.optional(),
+    key: devPointer,
+    title: devPointer.optional(),
+    fields: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), devPointer),
+    types: z.array(z.string().min(1).max(120)).min(1).max(50).optional(),
+  }).strict()).max(20).optional(),
+  api_version: z.enum(API_VERSIONS).optional(),
 }).strict();
 
 /**
@@ -410,6 +445,8 @@ export const PackJsonSchema = z.object({
   setup: SetupSchema.optional(),
   /** The account context and memory component, turned on (mold_v0-142; src/account-context.ts): MemorySchema above. */
   memory: MemorySchema.optional(),
+  /** The developer surface of an embedded app, turned on (mold_v0-193; src/developer-config.ts): DeveloperSurfaceSchema above. One pack's per build. */
+  developer_surface: DeveloperSurfaceSchema.optional(),
   /** The journeys component, turned on (mold_v0-143; src/journeys.ts): JourneysSchema above. */
   journeys: JourneysSchema.optional(),
   /** The in-chat tips component, turned on (mold_v0-143; src/tips.ts): TipsSchema above. */

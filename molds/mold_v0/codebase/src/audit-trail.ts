@@ -124,6 +124,8 @@ function channelOf(path: string): Channel | null {
   if (path.startsWith("/api/admin/")) return "admin_console";
   if (path.startsWith("/api/worker/") || path.startsWith("/api/runner/")) return "run";
   if (path.startsWith("/api/cron/")) return null;
+  // An embedded app's developer API (mold_v0-193, src/developer-api.ts): its key or client session names the actor (auditApiCaller).
+  if (path.startsWith("/v1/")) return "api";
   if (path.startsWith("/api/") || path.startsWith("/oauth/") || path === "/token" || path === "/register") return "api";
   return null;
 }
@@ -182,6 +184,11 @@ function mcpSummary(body: unknown): string | null {
 
 /** The MCP caller, once signed in (src/http.ts mcp): every entry of the request is theirs. */
 export function auditCaller(org: Org) { const c = current(); if (c) c.org = org; }
+/**
+ * A developer API caller, once authenticated (mold_v0-193, src/developer-api.ts): a workspace key or a client session,
+ * the user it acts for, the scopes it held. Every entry of the request (its platform entry, its data entries) is theirs.
+ */
+export function auditApiCaller(orgId: number, actor: AuditActor) { const c = current(); if (c) { c.orgId = orgId; c.actor = actor; } }
 /** A sign-in that opened a session (src/builtin-auth.ts startSession): the request's entry names the person and workspace. */
 export function auditSignIn(userId: string, orgId: number | null, method: string) {
   const c = current();

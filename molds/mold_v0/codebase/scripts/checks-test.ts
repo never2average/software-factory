@@ -14,13 +14,14 @@
 //    lookup's purpose inactive, no record; an any-record rule; the explanation names what decided.
 // 5. Workspaces: another workspace's records never answer, the workspace is never an input; every door (session, MCP
 //    key, MCP tool) answers for the caller's own.
-// 6. Scopes: the developer surface's resolver hook (mold_v0-193): checks, checks:<name>, and a key without either.
+// 6. Scopes, on the developer surface (mold_v0-193): keys and client sessions with checks, checks:<name>, or neither.
 // 7. Audit: each answer one platform-trail entry (name and outcome, never an input) when audit.platform is on; none off.
 // 8. Speed: answers over 3,000 records of one workspace, with the declaration's index hint.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
+import type * as SpecT from "../src/check-spec.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const FIX = path.join(ROOT, "scripts", "fixtures", "packs", "fixture_consent");
@@ -70,7 +71,7 @@ try {
     const kindOf = (p: string) => kinds[p] ?? "string";
     const ctx = (r: { key: string; data: Record<string, unknown> }, inputs: Record<string, unknown> = {}) => ({ record: r, lookup: null, lookupAs: null, inputs, now: NOW, kindOf });
     const operand = (f: string) => (kinds[f] === "date" ? pick(["now", "now-2d", "now+1d", "$tt|now", new Date(NOW + Math.floor(rnd() * 7 - 3) * DAY).toISOString()]) : f === "n" ? Math.floor(rnd() * 7) - 3 : f === "b" ? rnd() < 0.5 : pick(["a", "b", "c"]));
-    const leaf = (): spec.FieldCondition => {
+    const leaf = (): SpecT.FieldCondition => {
       const f = pick(["n", "s", "d", "b", "l"]);
       if (f === "l") return rnd() < 0.5 ? { field: f, has: pick(["a", "b", "c"]) } : { field: f, exists: rnd() < 0.5 };
       const ops = f === "n" || f === "d" ? ["eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in", "exists", ...(f === "d" ? ["within"] : [])] : ["eq", "ne", "in", "not_in", "exists"];
@@ -80,14 +81,14 @@ try {
       if (op === "in" || op === "not_in") return { field: f, [op]: [operand(f), operand(f)].filter((x) => typeof x !== "string" || !x.startsWith("$")) } as never;
       return { field: f, [op]: operand(f) } as never;
     };
-    const cond = (depth = 0): spec.CheckCondition => {
+    const cond = (depth = 0): SpecT.CheckCondition => {
       const r = rnd();
       if (depth >= 3 || r < 0.5) return leaf();
       if (r < 0.7) return { all: Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => cond(depth + 1)) };
       if (r < 0.9) return { any: Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => cond(depth + 1)) };
       return { not: cond(depth + 1) };
     };
-    const holds = (c: spec.CheckCondition, r: ReturnType<typeof record>, inputs: Record<string, unknown> = {}) => ev.evaluate(c, ctx(r, inputs)).passed;
+    const holds = (c: SpecT.CheckCondition, r: ReturnType<typeof record>, inputs: Record<string, unknown> = {}) => ev.evaluate(c, ctx(r, inputs)).passed;
     let n = 0;
     for (let i = 0; i < 1500; i++) {
       const r = record();
@@ -121,7 +122,7 @@ try {
     assert.ok(n > 50, `the order complements were exercised (${n})`);
     // An absent input fails closed (eq, ne, gt alike); $x|now falls back to now.
     const r0 = { key: "k", data: { d: new Date(NOW + DAY).toISOString(), s: "a" } };
-    for (const c of [{ field: "s", eq: "$xx" }, { field: "s", ne: "$xx" }, { field: "d", gt: "$xx" }, { field: "s", in: ["$xx"] }, { field: "s", not_in: ["$xx"] }] as spec.FieldCondition[])
+    for (const c of [{ field: "s", eq: "$xx" }, { field: "s", ne: "$xx" }, { field: "d", gt: "$xx" }, { field: "s", in: ["$xx"] }, { field: "s", not_in: ["$xx"] }] as SpecT.FieldCondition[])
       assert.equal(holds(c, r0 as never), false, `absent input: ${JSON.stringify(c)} fails closed`);
     assert.equal(holds({ field: "d", gt: "$xx|now" }, r0 as never), true, "$xx|now: now");
     // Latest wins, whatever the order the rows came in; ties to the greater key; no value last.
@@ -262,6 +263,10 @@ try {
   }
 
   // ---------- 5. workspaces ----------
+  // The developer surface on (mold_v0-193), as gen-packs would carry a pack's developer_surface: its /v1/checks door.
+  await import("../src/hosts.js");
+  const { setPackConfigsForTest } = await import("../src/host.js");
+  setPackConfigsForTest([{ pack: "fixture_consent", developer_surface: { events: [], sdk_languages: ["typescript"], client_sessions: { ttl_seconds: 900, allowed_origins: [], scopes: ["read", "checks"] } } } as never]);
   const http = await startHttp();
   try {
     {
@@ -304,24 +309,39 @@ try {
       console.log("✓ workspaces: another workspace's records never answer (direct, session, MCP key, MCP tool), the workspace is never an input");
     }
 
-    // ---------- 6. scopes (the developer surface's hook) ----------
+    // ---------- 6. scopes (the developer surface, mold_v0-193) ----------
     {
-      const scoped: Record<string, string[]> = { sk_test_all: ["checks"], sk_test_one: ["checks:may_email"], sk_test_read: ["read"] };
-      ck.setCheckCallerResolver(async (token) => (scoped[token] ? { orgId: A.org.orgId, role: null, userId: null, scopes: scoped[token]! } : null));
-      const post = (tok: string, name: string, body: unknown) => http.req("POST", `/api/checks/${name}`, { authorization: `Bearer ${tok}` }, body);
-      assert.equal((await post("sk_test_all", "may_process", { subject: "s1", purpose: "marketing" })).status, 200, "checks: every check");
-      assert.equal((await post("sk_test_one", "may_email", { subject: "s6" })).status, 200, "checks:may_email: that one");
-      const refused = await post("sk_test_one", "may_process", { subject: "s1", purpose: "marketing" });
-      assert.equal(refused.status, 403);
-      assert.match((await refused.json()).error, /checks:may_process/);
-      assert.equal((await post("sk_test_read", "may_email", { subject: "s6" })).status, 403, "a key without a checks scope");
-      assert.deepEqual((await (await http.req("GET", "/api/checks", { authorization: "Bearer sk_test_one" })).json()).checks.map((c: { name: string }) => c.name), ["may_email"]);
+      const { createDeveloperKey, checkScopes } = await import("../src/developer-keys.js");
+      const { mintClientSession } = await import("../src/developer-sessions.js");
+      const key = async (scopes: string[]) => (await createDeveloperKey(A.org.orgId, { name: `checks ${scopes.join(" ")}`, scopes }, "user_test")).key;
+      const [all, one, read] = [await key(["checks"]), await key(["checks:may_email"]), await key(["read"])];
+      const post = (tok: string, name: string, body: unknown) => http.req("POST", `/v1/checks/${name}`, { authorization: `Bearer ${tok}` }, body);
+      let r = await post(all, "may_process", { subject: "s1", purpose: "marketing" });
+      assert.equal(r.status, 200, "checks: every check");
+      assert.equal((await r.json()).data.allowed, true);
+      assert.equal((await post(one, "may_email", { subject: "s6" })).status, 200, "checks:may_email: that one");
+      r = await post(one, "may_process", { subject: "s1", purpose: "marketing" });
+      assert.equal(r.status, 403);
+      assert.match(JSON.stringify(await r.json()), /checks:may_process/);
+      assert.equal((await post(read, "may_email", { subject: "s6" })).status, 403, "a key without a checks scope");
+      r = await post(all, "may_process", { subject: "s9", purpose: "marketing" });
+      assert.equal((await r.json()).data.allowed, false, "a key of A never reads B's records");
+      assert.equal((await post(all, "may_process", { subject: "s1", purpose: "marketing", org_id: B.org.orgId })).status, 400, "nor names a workspace");
+      assert.deepEqual((await (await http.req("GET", "/v1/checks", { authorization: `Bearer ${one}` })).json()).data.map((c: { name: string }) => c.name), ["may_email"]);
+      // A client session minted by a key that holds checks:may_email, for one of the app's users.
+      const minter = (await createDeveloperKey(A.org.orgId, { name: "minter", scopes: ["sessions", "checks:may_email"] }, "user_test")).row;
+      const cs = await mintClientSession(A.org.orgId, minter.id, minter.scopes, { subject: "end-user-1", scopes: ["checks:may_email"] });
+      assert.equal((await post(cs.token, "may_email", { subject: "s6" })).status, 200, "a client session with checks:may_email");
+      assert.equal((await post(cs.token, "may_process", { subject: "s1", purpose: "marketing" })).status, 403, "and no other check");
+      await assert.rejects(mintClientSession(A.org.orgId, minter.id, minter.scopes, { subject: "end-user-1", scopes: ["checks:may_process"] }), /does not hold it/, "never a check its key lacks");
+      assert.throws(() => checkScopes(["checks:nope"], "secret"), /nope is not one of the checks/);
+      assert.deepEqual(checkScopes(["checks", "checks:may_process"], "secret"), ["checks", "checks:may_process"]);
+      const doc = JSON.stringify((await (await http.req("GET", "/openapi.json")).json()).paths["/v1/checks/may_process"]);
+      assert.match(doc, /"x-scope":"checks:may_process"/);
       assert.equal(ck.scopeAllows(null, "x"), true);
       assert.equal(ck.scopeAllows(["checks:x"], "y"), false);
       assert.equal(ck.scopeAllows(["checks:x2", "checks"], "y"), true);
-      assert.deepEqual(ck.checkScopeNames(), ["checks", "checks:may_process", "checks:may_email"]);
-      ck.setCheckCallerResolver(null);
-      console.log("✓ scopes: a developer credential with checks asks every check, checks:<name> that one, another scope none (the resolver hook for mold_v0-193)");
+      console.log("✓ scopes: a developer key with checks asks every check, checks:<name> that one, another scope none; a client session holds at most its key's check scopes; /openapi.json lists each check");
     }
 
     // ---------- 7. audit ----------

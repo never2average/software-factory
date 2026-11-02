@@ -6,11 +6,13 @@
  *   POST /api/checks/<name>    the inputs as a JSON object -> {check, allowed, reason, record_refs, explanation?}
  *   GET  /api/checks           the checks a caller may ask, with their inputs
  *   MCP  check_<name>          the same answer, as a read-only tool of the workspace's MCP server
+ *   POST /v1/checks/<name>     the developer surface's door (mold_v0-193, src/developer-api.ts), when the app has one
  *
  * Who asks: a signed-in person of a workspace (the console's session: cookie, with X-Pack-Request on a POST, or a
- * session token), a workspace's MCP key (`Authorization: Bearer oct_...`, a member key with its person's role), or a
- * credential the developer surface resolves (setCheckCallerResolver: its keys and client sessions, mold_v0-193, which
- * hold scopes; `checks` lets them ask every check, `checks:<name>` one). The workspace is always the caller's own,
+ * session token) or a workspace's MCP key (`Authorization: Bearer oct_...`, a member key with its person's role) on
+ * /api/checks; on /v1/checks a developer key (`sk_`) or a client session (`cs_`) holding the scope `checks` (every
+ * check) or `checks:<name>` (that one), with the developer surface's own origin, version and rate rules. The
+ * workspace is always the caller's own,
  * never an input: every record is read through the record store for that workspace (src/record-areas.ts listFor and
  * getFor: its row-level security, the area's read permission for the caller's role, sealed areas opened with the
  * workspace's key, the data trail), so another workspace's records never answer. Each answer is one entry in the
@@ -35,7 +37,7 @@ export interface CheckCaller {
   orgId: number;
   role: AccountRole | null;
   userId: string | null;
-  /** A scoped credential's scopes (the developer surface's keys and client sessions); null: a session or MCP key, every check. */
+  /** A scoped credential's scopes (the developer surface's keys and client sessions, mold_v0-193); null: a session or MCP key, every check. */
   scopes: readonly string[] | null;
 }
 export interface CheckAnswer {
@@ -301,15 +303,6 @@ export function checkTools(): (PackTool & { pack: string })[] {
 
 // ---------- HTTP ----------
 
-/**
- * The developer surface's credentials (mold_v0-193): a resolver it registers for its own tokens (keys `sk_`, client
- * sessions `cs_`), giving the workspace, the person (a client session's subject) and the scopes held. Until it lands
- * nothing is registered and only sessions and MCP keys ask.
- */
-export type CheckCallerResolver = (token: string, req: Request) => Promise<(CheckCaller & { actor?: string }) | null>;
-let resolver: CheckCallerResolver | null = null;
-export function setCheckCallerResolver(fn: CheckCallerResolver | null) { resolver = fn; }
-
 const bearer = (req: Request) => {
   const h = req.get("authorization") ?? "";
   const m = /^Bearer\s+(\S+)$/i.exec(h);
@@ -330,7 +323,7 @@ export function checkAppRouter(session: (req: Request, res: Response, next: Next
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(express.json({ limit: "16kb" }));
   r.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => (err ? void res.status(err.status && err.status < 500 ? err.status : 400).json({ error: "The request body must be a JSON object of the check's inputs" }) : next()));
-  // Who asks: an MCP key, a developer credential (when the developer surface registered its resolver), else a session.
+  // Who asks: an MCP key, else a session (developer keys and client sessions ask at /v1/checks).
   r.use(async (req, res, next) => {
     const token = bearer(req);
     try {
@@ -341,9 +334,6 @@ export function checkAppRouter(session: (req: Request, res: Response, next: Next
         res.locals.checkCaller = { orgId: org.orgId, role: org.role ?? null, userId: org.userId ?? null, scopes: null } satisfies CheckCaller;
         return next();
       }
-      // The developer surface's own tokens; anything it does not know is the session's to judge (a session token).
-      const got = token && resolver ? await resolver(token, req) : null;
-      if (got) { res.locals.checkCaller = got; return next(); }
     } catch (e) { return next(e); }
     // The console's session: a POST riding its cookie carries X-Pack-Request (CSRF), as the data API asks.
     return session(req, res, () => {
