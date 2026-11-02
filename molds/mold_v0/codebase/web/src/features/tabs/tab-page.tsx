@@ -120,19 +120,29 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
  * at /app itself (mold_v0-175, web/src/app/app/page.tsx).
  */
 function HomeTab({ tab }: { tab: PackTabSpec }) {
-  const charts = tabCharts(tab);
+  // Its headline row (mold_v0-203: pack.json sparklines on the home tab), drawn as a list tab's four cards. A number its
+  // cards show is not shown again in a number chart below or on the right (one idea once per page); a number chart left
+  // with none is left out. Other charts (a bar, a line) draw a breakdown or a trend, not the same number, and stay.
+  const top = tab.headline ?? [];
+  const once = (c: PackChartSpec): PackChartSpec | null => {
+    if (c.type !== 'number' || !top.length) return c;
+    const metrics = c.metrics.filter((n) => !top.includes(n));
+    return !metrics.length ? null : metrics.length === c.metrics.length ? c : { ...c, metrics };
+  };
+  const charts = useMemo(() => tabCharts(tab).map(once).filter((c): c is PackChartSpec => !!c), [tab]);
   const rail = tab.rail;
   const notices = (tab.include ?? []).includes('notices');
   const cards: Record<string, React.ReactNode> = {};
   for (const x of rail ?? []) {
     if (x === 'notices') cards[x] = <DueSoonCard />;
     else if (x.startsWith('chart:')) {
-      const c = packCharts.find((y) => y.pack === tab.pack && y.name === x.slice(6));
+      const found = packCharts.find((y) => y.pack === tab.pack && y.name === x.slice(6));
+      const c = found && once(found);
       if (c) cards[x] = <ChartCard chart={c} home={tab} />;
     }
   }
   return (
-    <SetupPage rail={rail} cards={cards}
+    <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined}
       main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection /> : undefined}
       below={charts.length ? (tab.charts_title
         ? <section aria-labelledby='home-charts' className='mt-10 flex flex-col gap-4'><h2 id='home-charts' className='text-lg font-semibold tracking-tight'>{tab.charts_title}</h2><ChartGrid charts={charts} /></section>

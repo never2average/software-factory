@@ -57,7 +57,7 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
  * (these setup steps), then the journeys component's when pack.json journeys turns it on. `main`: what follows the checklist in the main
  * column (a home tab's records due soon); `below`: what follows both columns, full width (a home tab's charts).
  */
-export function SetupPage({ rail, cards, main, below }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; below?: React.ReactNode } = {}) {
+export function SetupPage({ rail, cards, main, below, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; below?: React.ReactNode; top?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
   // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys and the
@@ -76,6 +76,8 @@ export function SetupPage({ rail, cards, main, below }: { rail?: readonly string
   }} />;
   return (
     <PageContainer>
+      {/* A home tab's headline row (mold_v0-203), above both columns: it loads on its own, at a fixed height. */}
+      {top && <div className='mb-8 w-full'>{top}</div>}
       {error ? <ErrorState error={error} /> : !s || !pack.settled ? <LoadingCards count={4} /> : (<>
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>

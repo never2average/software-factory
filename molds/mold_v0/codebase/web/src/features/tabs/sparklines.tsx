@@ -33,8 +33,11 @@ const drawn = (series: (number | null)[]) => {
 const pulse = <span className='bg-muted inline-block h-7 w-16 animate-pulse rounded-md align-bottom' />;
 const labelPulse = <span className='bg-muted inline-block h-3 w-24 animate-pulse rounded-sm align-middle' />;
 
-/** The four cards of a list tab, for the RecordView's `summary` (below its toolbar) or above a board or timeline. */
-export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }) {
+/**
+ * The four cards of a list tab, for the RecordView's `summary` (below its toolbar) or above a board or timeline; or a home
+ * tab's headline row (mold_v0-203: `count` cards, its declared 1 to 4, the same strip at the top of the Overview).
+ */
+export function TabSparklines({ tab, count = 4, label = 'Key numbers' }: { tab: Pick<PackTabSpec, 'pack' | 'id'>; count?: number; label?: string }) {
   const url = `/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`;
   const { data, error } = useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -43,7 +46,7 @@ export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }
     return body;
   }, [url]);
   const items = useMemo(() => {
-    if (!data) return Array.from({ length: 4 }, () => ({ label: labelPulse, value: pulse }));
+    if (!data) return Array.from({ length: count }, () => ({ label: labelPulse, value: pulse }));
     return data.cards.map((c) => {
       // A card this role may not read, or that failed, keeps its place and its label, and says why.
       if (c.error) return { label: c.label, value: '—', said: c.status === 403 ? 'Not shown to your role.' : 'Not available.' };
@@ -53,11 +56,11 @@ export function TabSparklines({ tab }: { tab: Pick<PackTabSpec, 'pack' | 'id'> }
         said: `${value(c.value, c.unit)}. ${trendWords(c, data.weeks, formatValue)}`
       };
     });
-  }, [data]);
+  }, [data, count]);
   // Cards that cannot be read at all (the API predates them, a network failure) leave the list as it was.
   if (error || (data && !data.cards.length)) return null;
   return (
-    <section aria-label='Key numbers' aria-busy={!data || undefined} data-sparklines={`${tab.pack}/${tab.id}`}>
+    <section aria-label={label} aria-busy={!data || undefined} data-sparklines={`${tab.pack}/${tab.id}`}>
       <StatStrip quad items={items} />
     </section>
   );

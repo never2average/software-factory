@@ -8,7 +8,8 @@
  *   GET /api/runs                  the workspace's runs, newest first (?limit, at most 200), with each run's result
  *                                  counts by status (the Runs and Reports tabs)
  *   GET /api/runs/:id              one run of the workspace and its results
- *   GET /api/sparklines/<pack>/<tab>   a list tab's four cards (mold_v0-181, src/sparklines.ts): each card's value and
+ *   GET /api/sparklines/<pack>/<tab>   a list tab's four cards (mold_v0-181, src/sparklines.ts), or a home tab's headline
+ *                                  row (mold_v0-203: its declared sparklines, 1 to 4): each card's value and
  *                                  its weeks, as the person's role may read each (a refusal per card); the tab itself
  *                                  as the sidebar shows it (its roles; a tab whose list the pack withholds: not found)
  */
@@ -18,7 +19,7 @@ import { getDb } from "./db.js";
 import { PackError, SPARK_KINDS } from "./pack-api.js";
 import { buildViews, computeMetrics, MAX_METRICS_PER_REQUEST } from "./metrics.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
-import { tabAreas, tabRoles } from "./metric-spec.js";
+import { tabAreas, tabRoles, type SpecTab } from "./metric-spec.js";
 import { packs } from "./packs.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -51,16 +52,17 @@ export function metricAppRouter(): Router {
   return r;
 }
 
-/** /api/sparklines: mounted when a pack declares a list tab (area, runs, reports, schedules). */
+/** /api/sparklines: mounted when a pack declares a list tab (area, runs, reports, schedules) or a home tab's headline row. */
 export function sparklineAppRouter(): Router {
   const r = express.Router();
-  const listTab = (kind: string) => (SPARK_KINDS as readonly string[]).includes(kind);
-  if (!buildViews().tabs.some((t) => listTab(t.kind))) return r;
+  // A list tab, or a home tab that declares its headline row (mold_v0-203: an overview that includes setup, with sparklines).
+  const listTab = (t: SpecTab) => (SPARK_KINDS as readonly string[]).includes(t.kind) || (t.kind === "overview" && !!t.sparklines?.length && (t.include ?? []).includes("setup"));
+  if (!buildViews().tabs.some(listTab)) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
   r.get("/:pack/:tab", answer(async (req, res) => {
     const b = buildViews();
-    const tab = b.tabs.find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && listTab(t.kind));
+    const tab = b.tabs.find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && listTab(t));
     // A tab the sidebar does not show (its area's or its runs' list withheld, mold_v0-067) has no cards either.
     const withheld = tab && (tab.kind === "area" ? tabAreas(tab).some((a) => areaOpWithheld(a.area, "list")) : (tab.kind === "runs" || tab.kind === "reports") && packOpWithheld(tab.pack, "list_runs"));
     if (!tab || withheld) throw new PackError("Not found", 404);

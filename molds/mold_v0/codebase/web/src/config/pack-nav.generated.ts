@@ -151,6 +151,8 @@ export interface PackTabSpec {
   rail?: string[];
   /** A home tab's heading above its charts (mold_v0-175). */
   charts_title?: string;
+  /** A home tab's headline row above its columns (mold_v0-203): the metrics of its cards, in order (1 to 4). */
+  headline?: string[];
   /** An area tab whose rows its declared filter narrows (mold_v0-175): read from /api/records/tabs/<pack>/<tab>. */
   filtered?: boolean;
   /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
