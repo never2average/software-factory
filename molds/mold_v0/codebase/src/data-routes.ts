@@ -8,6 +8,8 @@
  *                         GET    /:area/:key           one record and its links
  *                         PUT    /:area/:key           update {title?, data}
  *                         POST   /:area/:key/move      {to}
+ *                         POST   /:area/:key/reveal    {fields?}: an area's encrypted fields' values, for the roles
+ *                                                       allowed to reveal them, each reveal in the data trail (mold_v0-194)
  *                         DELETE /:area/:key
  *                         POST   /_batch               {operations: [{op, area, key, ...}]}: all or none
  *                       Every rule is the record store's (the area's permissions for the person's role, fields,
@@ -87,6 +89,7 @@ export function dataAppRouter(): Router {
   }));
   r.put("/:area/:key", open("update"), answer(async (req, res) => dataApi.update(caller(res), String(req.params.area), keyOf(req), body(req))));
   r.post("/:area/:key/move", open("move"), answer(async (req, res) => dataApi.move(caller(res), String(req.params.area), keyOf(req), body(req).to)));
+  r.post("/:area/:key/reveal", open("reveal"), answer(async (req, res) => dataApi.reveal(caller(res), String(req.params.area), keyOf(req), body(req).fields)));
   r.delete("/:area/:key", open("delete"), answer(async (req, res) => {
     if (!(await dataApi.delete(caller(res), String(req.params.area), keyOf(req)))) throw new PackError("Not found", 404);
   }));

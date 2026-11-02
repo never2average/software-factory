@@ -143,7 +143,14 @@ export interface WorkspaceRecords {
   delete(area: string, key: string): Promise<boolean>;
   /** Several writes as one transaction (mold_v0-066): all of them, or (on any refusal or error) none. */
   batch(ops: RecordOperation[]): Promise<RecordOperationResult[]>;
+  /**
+   * The values of a record's encrypted fields (mold_v0-194), for the person the call is made for when the fields'
+   * reveal_roles allow it; each reveal is recorded in the data trail. `fields` absent: every encrypted field they may.
+   */
+  reveal?(area: string, key: string, fields?: string[]): Promise<RevealedFields>;
 }
+/** What a reveal answers (mold_v0-194): the record, and each revealed field's value (null: none stored). */
+export interface RevealedFields { area: string; key: string; fields: Record<string, unknown> }
 /** Records as platform staff see them: platform areas only; `put` and `delete` reach this pack's own platform areas. */
 export interface PlatformRecords {
   list(area: string, opts?: RecordQuery): Promise<RecordPage>;
@@ -290,6 +297,8 @@ const role = z.enum(DECLARABLE_ROLES);
 const choiceValue = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$/, "a choice value: 1-80 letters, digits, spaces and _ . : / ( ) & -, starting with a letter or digit");
 const choice = z.union([choiceValue, z.object({ value: choiceValue, label: z.string().min(1).max(80).optional() }).strict()]);
 export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file"] as const;
+/** The field types an encrypted field may have (mold_v0-194): values the shell never needs to read itself. */
+export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "enum"] as const;
 /**
  * A field of a record area (or an argument of a job kind):
  *   text, number, date, boolean, json   as they read; `max_length` (text), `min`/`max` (number)
@@ -315,8 +324,27 @@ export const RecordFieldSchema = z.object({
   min: z.number().finite().optional(),
   max: z.number().finite().optional(),
   max_length: z.number().int().min(1).max(20_000).optional(),
+  /**
+   * Encrypted at rest (mold_v0-194; src/encrypted-fields.ts): the value is sealed with the workspace's data key (wrapped
+   * by the app's vault key) and bound to its workspace, area, record and field. Every read (lists, a record's page, the
+   * MCP tools, exports, the developer API, webhooks) shows ENCRYPTED_MASK in its place; only an explicit reveal returns
+   * it, to `reveal_roles`, and each reveal is a `reveal` entry of the data trail. A workspace area's field in the shell's
+   * own tables only; types text, number, date, boolean, json and single enum.
+   */
+  encrypted: z.boolean().optional(),
+  /** Who may reveal an encrypted field (default: the roles that may update the area's records). */
+  reveal_roles: z.array(role).min(1).max(4).optional(),
+  /**
+   * "equality": a keyed blind index (HMAC-SHA256 under a key derived from the workspace's data key) is kept beside the
+   * value, so a filter `{field: value}` (eq) finds it; no other operator, no sort.
+   */
+  searchable: z.enum(["equality"]).optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
+  if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
+  if (f.searchable && !f.encrypted) bad("searchable is for an encrypted field (any other field is filtered as it is)", "searchable");
+  if (f.encrypted && !ENCRYPTABLE_TYPES.includes(f.type as (typeof ENCRYPTABLE_TYPES)[number])) bad(`an encrypted field is text, number, date, boolean, json or enum (a ${f.type} field is read by the shell itself)`, "encrypted");
+  if (f.encrypted && f.multiple) bad("an encrypted field holds one value (not multiple)", "encrypted");
   if (f.type === "enum" && !f.options) bad("an enum field lists its options", "options");
   if (f.type !== "enum" && f.options) bad("options are for an enum field only", "options");
   if (f.options) {
@@ -488,7 +516,8 @@ const jobKindBase = {
    * run's `scope` must be exactly these (unknown keys refused, each value of its type, required ones present); checked
    * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
    */
-  args: z.array(field).max(30).optional(),
+  args: z.array(field).max(30).optional()
+    .refine((a) => !(a ?? []).some((f) => f.encrypted || f.searchable || f.reveal_roles), "encrypted, searchable and reveal_roles are for a record area's fields, not a job kind's arguments"),
   unresolved_references: z.enum(["reject", "drop", "downgrade"]).default("reject"),
   max_unresolved: z.number().int().min(0).max(5000).default(100),
   /**
@@ -802,6 +831,14 @@ export const RecordAreaSchema = z.object({
   if (a.append_only && a.lifecycle) bad("an append-only area has no lifecycle: a move changes a record", "append_only");
   if (a.append_only && a.repository) bad("an append-only area keeps its records in the shell's own tables, not a repository's", "append_only");
   if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
+  // mold_v0-194: an encrypted field's value is never read by the shell itself, so nothing may be computed from it.
+  for (const [i, f] of a.fields.entries()) if (f.encrypted) {
+    if (a.scope !== "workspace") bad("a shared (platform) area has no workspace key: encrypted is for a workspace area's fields", "fields", i, "encrypted");
+    if (a.lifecycle?.field === f.name) bad(`${f.name} is the lifecycle's field: it cannot be encrypted`, "fields", i, "encrypted");
+    if (a.due?.field === f.name) bad(`${f.name} is the due date's field: it cannot be encrypted`, "fields", i, "encrypted");
+    if ((a.links ?? []).some((l) => l.field === f.name)) bad(`${f.name} is a link's field: it cannot be encrypted`, "fields", i, "encrypted");
+    if (JSON.stringify(a.clocks ?? []).includes(JSON.stringify(f.name))) bad(`${f.name} is named by a clock: it cannot be encrypted`, "fields", i, "encrypted");
+  }
   if (!(a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c))) bad("list_columns must name declared fields", "list_columns");
   if (!(a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field))) bad("a link's field must be a declared field", "links");
   for (const [i, l] of (a.links ?? []).entries()) {
