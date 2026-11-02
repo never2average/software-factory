@@ -1209,7 +1209,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure); **Deliveries**, only when a pack declares company email or the app has a developer surface:
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Deliveries**, only when a pack declares company email or the app has a developer surface:
   emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
   endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
   `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
