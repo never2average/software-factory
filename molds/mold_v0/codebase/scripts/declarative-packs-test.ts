@@ -373,7 +373,7 @@ try {
     assert.doesNotMatch(nav, /sparklines/, "the console asks the server for a tab's cards: the registry is unchanged");
     // A home tab's headline row (mold_v0-203): 1 to 4 of the pack's metrics, the same checks; carried in the registry
     // as `headline` (the page draws the row and leaves those numbers out of its number charts); absent: nothing.
-    const home = (x: Record<string, unknown>) => ({ id: "home", kind: "overview", label: "Overview", include: ["setup"], charts: ["severity"], ...x });
+    const home = (x: Record<string, unknown>) => ({ id: "home", kind: "overview", label: "Overview", include: ["setup"], ...x });
     no("five on a home tab", cards([home({ sparklines: [...four, "open_by_severity"] })]), /tabs\[0\]\.sparklines: exactly 4 metric names on a list tab \(its four cards\), up to 4 on a home tab/);
     no("none on a home tab", cards([home({ sparklines: [] })]), /tabs\[0\]\.sparklines: 1 to 4 metric names/);
     no("on an overview that is not the home tab", cards([home({ include: ["notices"], sparklines: four.slice(0, 2) })]), /tabs\[0\]\.sparklines: sparklines are for a list tab: area, runs, reports, schedules, or a home tab/);
