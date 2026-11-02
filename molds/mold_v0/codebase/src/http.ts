@@ -34,6 +34,9 @@ import { browserNotFound } from "./status-pages.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
+import { developerApiRouter } from "./developer-api.js";
+import { developerAppRouter } from "./developer-routes.js";
+import { startWebhookLoop, stopWebhookLoop, webhookTick } from "./developer-webhooks.js";
 import { builtinAuthRouter } from "./builtin-auth.js";
 import * as mcpOAuth from "./mcp-oauth.js";
 import * as roles from "./admin-roles.js";
@@ -192,7 +195,9 @@ export function createApp() {
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
     const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
-    res.json({ tick, pruned, ...host, rls, schedules, ...charges });
+    // Webhooks out (mold_v0-193, src/developer-webhooks.ts): retries due and runs that ended; only with a developer surface.
+    const hooksTick = await webhookTick().catch((e) => ({ error: (e as Error).message }));
+    res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...(hooksTick ? { webhooks: hooksTick } : {}) });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -272,6 +277,10 @@ export function createApp() {
   app.use("/api/sparklines", sparklineAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
+  // ---------- the developer surface of an embedded app (mold_v0-193, src/developer-*.ts): /v1, /openapi.json and the
+  // console's /api/developer; with no pack declaring developer_surface nothing is mounted ----------
+  app.use(developerApiRouter());
+  app.use("/api/developer", developerAppRouter());
   // The access log (mold_v0-197, src/audit-trail.ts): a workspace's owners read its trails; nothing mounted with both off.
   app.use("/api/audit", auditAppRouter(customerSession));
 
@@ -873,6 +882,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");
     // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.
     if (startChargeDelivery()) console.error("  run charges   on (every minute; the profile's billing, APP_RUN_BILLING=off to disable)");
+    // Webhooks out (mold_v0-193): retries and run.finished, every 15 seconds, only with a developer surface.
+    if (startWebhookLoop()) console.error("  webhooks      on (deliveries and retries every 15 seconds)");
   });
   // Graceful drain (deploys, restarts): stop accepting connections, let in-flight requests finish (gateway streams
   // are sandboxed agents' model calls; cutting them fails the sessions), then exit. A rolling deploy starts the new
@@ -886,6 +897,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     stopArchiver();
     stopScheduler();
     stopChargeDelivery();
+    stopWebhookLoop();
     void telemetry.flush();
     server.close(() => { console.error("drained, exiting"); process.exit(0); });
     server.closeIdleConnections();

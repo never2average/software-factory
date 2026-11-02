@@ -10439,6 +10439,183 @@
       ],
       "additionalProperties": false
     },
+    "developer_surface": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "events": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "record.created",
+                  "record.updated",
+                  "record.state_changed",
+                  "record.deleted",
+                  "run.finished",
+                  "clock.overdue"
+                ]
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "areas": {
+                "minItems": 1,
+                "maxItems": 60,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                }
+              },
+              "payload": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "name",
+              "description"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sdk_languages": {
+          "minItems": 1,
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "typescript",
+              "python"
+            ]
+          }
+        },
+        "client_sessions": {
+          "type": "object",
+          "properties": {
+            "ttl_seconds": {
+              "default": 3600,
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 86400
+            },
+            "allowed_origins": {
+              "minItems": 1,
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^https:\\/\\/[a-z0-9.-]+(:[0-9]{2,5})?$"
+              }
+            },
+            "scopes": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(read|write|run)(:[a-z][a-z0-9_]{0,63})?$"
+              }
+            }
+          },
+          "required": [
+            "allowed_origins"
+          ],
+          "additionalProperties": false
+        },
+        "webhooks_in": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "area": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "items": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^(\\/([^~/]|~[01])*)*$"
+              },
+              "key": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^(\\/([^~/]|~[01])*)*$"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^(\\/([^~/]|~[01])*)*$"
+              },
+              "fields": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "pattern": "^(\\/([^~/]|~[01])*)*$"
+                }
+              },
+              "types": {
+                "minItems": 1,
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                }
+              }
+            },
+            "required": [
+              "name",
+              "area",
+              "key",
+              "fields"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "api_version": {
+          "type": "string",
+          "enum": [
+            "2026-11-01"
+          ]
+        }
+      },
+      "required": [
+        "events",
+        "sdk_languages",
+        "client_sessions"
+      ],
+      "additionalProperties": false
+    },
     "journeys": {
       "type": "object",
       "properties": {
