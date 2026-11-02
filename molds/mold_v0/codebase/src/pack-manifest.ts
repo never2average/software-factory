@@ -29,6 +29,7 @@ import { GuideSchema } from "./pack-guide.js";
 import { StaffDocsSchema } from "./staff-docs.js";
 import { SHELL_TEXTS, SHELL_TEXT_IDS } from "./shell-texts.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
+import { CheckSchema } from "./check-spec.js";
 import { EmailPackSchema } from "./company-email-config.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
@@ -401,6 +402,8 @@ export const PackJsonSchema = z.object({
   mcp: McpSettingsSchema.optional(),
   /** The workspace store's retention and the viewer's secret paths (mold_v0-056; src/workspace-store-policy.ts). */
   workspace_store: WorkspaceStoreSchema.optional(),
+  /** Declarative yes/no checks answered from the records (mold_v0-196; src/check-spec.ts, src/checks.ts; definePack checks). */
+  checks: z.array(CheckSchema).max(50).optional(),
   /** The company's own email: a sender the workspace may set, and a mailbox intake into one of its areas (mold_v0-192; src/company-email-config.ts). */
   email: EmailPackSchema.optional(),
   /**
@@ -510,8 +513,8 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "checks">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -545,6 +548,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.metrics?.length) out.metrics = p.metrics;
   if (p.charts?.length) out.charts = p.charts;
   if (p.tabs?.length) out.tabs = p.tabs;
+  if (p.checks?.length) out.checks = p.checks;
   if (p.repositories && Object.keys(p.repositories).length) {
     // An upstream catalog may point at pack.json's own pin: resolved here, so the definition carries the pin itself.
     const problems: string[] = [];

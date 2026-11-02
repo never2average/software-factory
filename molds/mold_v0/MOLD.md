@@ -2421,7 +2421,7 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
   Python package would hold; publishing is the operator's own step with their yes, never from here.
 - **Keys** (`src/developer-keys.ts`, `developer_keys`): a workspace's keys for its own servers, made by its owners on
   `/api/developer/keys` (`src/developer-routes.ts`): `sk_`, shown once (the sha256 kept, and the first 9 characters to
-  tell keys apart), scopes (`read`, `write`, `run`, `sessions`, `webhooks`; the first three narrowable to an area or kind:
+  tell keys apart), scopes (`read`, `write`, `run`, `sessions`, `webhooks`, and `checks` since mold_v0-196, narrowable to a check; the first three narrowable to an area or kind:
   `read:<area>`), an expiry or none, revocation, rotation (the old key kept for a grace of 0 to 168 hours, 24 by default),
   integration keys holding exactly one scope. Never accepted on `/mcp` (the MCP keys, `oct_`, are unchanged). Per request:
   `X-Scope` narrows to fewer scopes; `X-Actor` (keys only) names the backend's signed-in user the call is for, recorded
@@ -2550,6 +2550,58 @@ route, MCP tool and the tenant role; no value in either trail; one entry per lis
 INSERTs and a refused batch in none; staff through the admin API and MCP; a built-in sign-in; append-only; retention),
 `npm run check:rls` (the probe: a workspace sees none of another's entries and cannot write, change or remove its own),
 `npm run test:migrations` (0031 and its rollback).
+
+## Declarative checks (mold_v0-196)
+
+A pack names yes/no questions its own records answer, in pack.json `checks` (or `definePack({ checks })`), with no
+code: `src/check-spec.ts` (the declaration and its build checks), `src/check-eval.ts` (the condition evaluator, pure),
+`src/checks.ts` (reading the records and answering). No migration and no table: answers are read from the record areas.
+
+```json
+"checks": [{ "name": "may_send", "inputs": { "subject": "string", "topic": "string", "at": "datetime?" },
+  "rule": { "area": "permissions_given", "match": { "subject": "$subject", "topic": "$topic" }, "latest_by": "recorded_at",
+            "require": [{ "field": "status", "eq": "given" }, { "field": "expires_at", "gt": "$at|now" }] },
+  "explain": true }]
+```
+
+- **Inputs** by name and type (`string`, `number`, `boolean`, `date`, `datetime`; `?` optional). Anything else is
+  refused (400), and the workspace is never an input: it is the caller's.
+- **Rule.** `area` (any area of the build, not one read live from an API); `match` (equality, or set membership for a
+  list, on fields or `key`: literals or required inputs; at least one); `latest_by` (a date or number field or
+  `updated_at`: the latest matching record alone decides, latest-record-wins); without it any matching record meeting
+  `require` says yes. `lookup` (one level): a record of a second area by `key` or `match` (`latest_by` optional), its
+  fields read as `<as>.<field>`. `require`: a list (all of) or `{all}`, `{any}`, `{not}` of `{field, op: value}`,
+  op one of `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte` (numbers and dates), `within` (`{last|next: "30d",
+  of?}`), `exists`, `has` (a list field). Values: literals, `$input`, `$input|now`, `now`, `now-30d`, `@field`,
+  `@<as>.field`; `$$` starts a literal `$`. An absent optional input makes its condition fail (closed).
+- **Refused at build** (gen-packs and `installPacks`, `checksProblems`): unknown areas, fields and inputs; type
+  mismatches (an input or literal against its field, an enum value not an option, an operator a type does not take);
+  unbounded scans (an empty match, or one resting on an optional input); `latest_by` not a date or number; a lookup
+  named like a field or of a workspace area from a shared one; an any-record rule the database cannot find by itself
+  (groups, lookups, `not_in`, field-to-field comparisons need `latest_by`); a name twice; a `check_<name>` tool name taken.
+- **Answers.** `POST /api/checks/<name>` (the console's session with `X-Pack-Request` on a cookie, or an MCP key `oct_`),
+  `GET /api/checks`; `POST /v1/checks/<name>` and `GET /v1/checks` on the developer surface (mold_v0-193) with a key
+  or client session holding `checks` or `checks:<name>` (a client session never beyond its key; `/openapi.json` and
+  the SDKs list each check); the MCP tool `check_<name>` (read-only). Each returns `{check, allowed, reason,
+  record_refs, explanation?}`; the explanation (unless `explain: false`) lists every condition evaluated (field, op,
+  expected, actual, passed, in words) and `decided_by`, the ones that decided it, plus the index hint.
+- **Safety.** Records are read only through the record store for the caller's workspace (`listFor`/`getFor`: row-level
+  security, the area's read permission for the caller's role, sealed areas opened with the workspace's key, the data
+  trail's one entry per read), so another workspace's records never answer. Nothing mounted and no tool listed with no
+  check (the zero-pack MCP surface stays `4e3e14917286b00c`).
+- **Audit.** With `audit.platform` on, each answer is one platform-trail entry (`method` CHECK, `path`
+  `/checks/<name> allowed|denied`, the asker, the latency): never an input or a value (`src/audit-trail.ts`
+  `auditCheckAnswer`).
+- **Speed.** The latest rule is one `ORDER BY <latest_by> DESC LIMIT 1` query within the workspace's area rows (the
+  records' (org_id, pack, area, key) index; `key` in a match is that index alone); an any-record rule pushes its
+  conditions into the query (dates widened by a day each side, the evaluator decides) and reads at most 20.
+  `checkIndexHint` (the build's hint, `checkHints()`) names how and suggests the expression index for a large area;
+  the shell adds no per-app index.
+
+Proof: `npm run test:checks` (the fixture `scripts/fixtures/packs/fixture_checks`: granted, withdrawn, expired,
+latest-wins both ways, a lookup, an any-record rule, a cross-workspace attempt denied at every door; property tests on
+the evaluator; 25 refused declarations; scopes on keys and client sessions; the audit entry; a median answer of about
+12 ms over 3,000 records on the embedded database).
 
 ## Chain and sign (mold_v0-195)
 

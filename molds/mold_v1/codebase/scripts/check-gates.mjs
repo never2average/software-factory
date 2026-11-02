@@ -24,7 +24,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { DEFAULT_DOMAIN, DEFAULT_ORG, DEFAULT_ORG_SLUG, escapeRegExp } from "./lib/default-org.mjs";
+import { BUILT_IN_DOMAIN, BUILT_IN_ORG, DEFAULT_DOMAIN, DEFAULT_ORG_SLUG, escapeRegExp } from "./lib/default-org.mjs";
 
 /** Every .ts file under a directory, recursively. */
 const walkTs = (dir) =>
@@ -255,8 +255,8 @@ check("the agent's old copy of the mapping (agent/lib/org-blob.ts) is gone", !ex
     decomment(src).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
   /* Org #1's own identity — infrastructure, not a label shown to others. */
   const LEGITIMATE = [
-    new RegExp(`DEFAULT_ORG = "${escapeRegExp(DEFAULT_ORG)}"`),
-    new RegExp(`DEFAULT_DOMAIN = "${escapeRegExp(DEFAULT_DOMAIN)}"`),
+    new RegExp(`BUILT_IN_ORG = "${escapeRegExp(BUILT_IN_ORG)}"`),
+    new RegExp(`BUILT_IN_DOMAIN = "${escapeRegExp(BUILT_IN_DOMAIN)}"`),
     new RegExp(`claims: \\{ hd: \\["${escapeRegExp(DEFAULT_DOMAIN)}"\\] \\}`),
   ];
   const brand = new RegExp(escapeRegExp(DEFAULT_ORG_SLUG), "i");

@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
      *
      * This used to refuse unconditionally, which was fine while the primary
      * workspace was guaranteed present. It is not: after the database moved to
-     * Supabase, org-onfinance was gone, and the reservation then guarded a
+     * Supabase, org #1's row was gone, and the reservation then guarded a
      * workspace that did not exist while locking out the only people entitled
      * to recreate it. Signing in from the domain you are claiming is already
      * checked above, so gating on the row's existence is the whole condition.

@@ -276,6 +276,7 @@
     "test:build-limits": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-build-limits.mjs",
     "test:neutral-names": "node scripts/test-neutral-names.mjs",
     "test:operator-tooling": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-operator-tooling.mjs",
+    "test:default-org": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-default-org.mjs",
     "build:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/build-agent-cli.mjs",
     "test:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-agent-cli-build.mjs",
     "test:sandbox-libs": "node scripts/test-sandbox-libs.mjs",

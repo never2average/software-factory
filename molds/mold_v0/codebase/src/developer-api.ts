@@ -28,6 +28,7 @@ import { auditPlatform } from "./developer-audit.js";
 import { API_VERSIONS, scopeAllows, type BaseScope } from "./developer-config.js";
 import { resolveDeveloperKey, type ResolvedKey } from "./developer-keys.js";
 import { openApiDocument } from "./developer-openapi.js";
+import { answerCheck, declaredChecks, findCheck } from "./checks.js";
 import { addOrigin, covers, listOrigins, mintClientSession, originAllowed, removeOrigin, resolveClientSession, revokeClientSession, type ResolvedSession } from "./developer-sessions.js";
 import { actorLabel, ApiProblem, asApiActor, developerSurface, type ApiActor } from "./developer-surface.js";
 import * as hooks from "./developer-webhooks.js";
@@ -399,6 +400,19 @@ export function developerApiRouter(): Router {
   v1.get("/webhook_endpoints/:id/deliveries", wh(async (req, _r, org) => ({ status: 200, body: await hooks.listDeliveries(org, String(req.params.id), { limit: q1(req, "limit"), after: q1(req, "after"), status: q1(req, "status") }) })));
   v1.get("/webhook_deliveries/:id", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.getDelivery(org, String(req.params.id)) } })));
   v1.post("/webhook_deliveries/:id/retry", wh(async (req, _r, org) => ({ status: 200, body: { data: await hooks.redeliver(org, String(req.params.id)) } })));
+
+  // ---------- declarative checks (mold_v0-196, src/checks.ts): the scope checks, or checks:<name> ----------
+  if (declaredChecks().length) {
+    v1.get("/checks", h(async (_req, res) => ({ status: 200, body: { data: declaredChecks().filter((x) => scopeAllows(callerOf(res).scopes, "checks", x.name))
+      .map((x) => ({ name: x.name, label: x.label ?? null, description: x.description ?? null, inputs: x.inputs })) } })));
+    v1.post("/checks/:name", h(async (req, res) => {
+      const name = String(req.params.name);
+      if (!findCheck(name)) throw new ApiProblem(404, "not_found", `no check ${name.slice(0, 64)}`);
+      need(res, "checks", name);
+      const c = callerOf(res);
+      return { status: 200, body: { data: await answerCheck({ orgId: c.orgId, role: null, userId: c.actor.user, scopes: c.scopes }, name, jsonBody(res)) } };
+    }));
+  }
 
   // ---------- webhooks in: the sources ----------
   if (developerSurface()?.webhooks_in?.length) {

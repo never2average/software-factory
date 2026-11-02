@@ -4,7 +4,7 @@
  * The /eve gate (app/eve/v1/session/[...segments]/route.ts) marks every response `content-encoding: identity`, and
  * that is deliberate: measured through the gate, one turn arrived as 20 text deltas in 2 network chunks where the
  * agent sent 40 in 3, and an intermediary that may re-encode a chunked response may also hold it. The price was every
- * read uncompressed: a Control Panel harvest of one specialist was 9.4 MB to over 147 MB on the wire (onfinance_hfc,
+ * read uncompressed: a Control Panel harvest of one specialist was 9.4 MB to over 147 MB on the wire (the live app,
  * 2026-10-13), where the same bytes compress about 70 to 500 times (98.6% of them are `reasoning.appended` deltas, each
  * the whole reasoning so far).
  *

@@ -66,3 +66,32 @@ reports/usage/
 # products name their brands and deployments. Kept on the factory machine only; state/products.example.json shows the shape.
 /state/tasks/
 /state/products.json
+
+# mold_v1's private paths (molds/mold_v1/mold.json private_paths, mold_v0-200): migration history holding this factory's
+# organisation names. On disk where the source is fetched, never tracked; neutral replacements are in molds/mold_v1/public/.
+/molds/mold_v1/codebase/.migrate-agent-configs.mjs
+/molds/mold_v1/codebase/.migrate-agent-profiles.mjs
+/molds/mold_v1/codebase/.migrate-chat-sessions.mjs
+/molds/mold_v1/codebase/.migrate-debrand-approver.mjs
+/molds/mold_v1/codebase/.migrate-org-tenancy.mjs
+/molds/mold_v1/codebase/.migrate-rename-default-org.mjs
+/molds/mold_v1/codebase/.migrate-room-presence.mjs
+/molds/mold_v1/codebase/.migrate-workflow-definitions.mjs
+/molds/mold_v1/codebase/drizzle/0000_eminent_thunderbolts.sql
+/molds/mold_v1/codebase/drizzle/0014_tricky_grey_gargoyle.sql
+/molds/mold_v1/codebase/drizzle/0023_provider_launch_approver.sql
+/molds/mold_v1/codebase/drizzle/meta/0000_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0001_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0002_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0003_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0004_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0005_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0006_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0007_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0008_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0009_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0010_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0011_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0012_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0013_snapshot.json
+/molds/mold_v1/codebase/drizzle/meta/0014_snapshot.json

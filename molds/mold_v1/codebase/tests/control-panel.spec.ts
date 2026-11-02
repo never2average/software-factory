@@ -6,7 +6,7 @@ import { specialistStream } from "../scripts/fixtures/child-feed/make-stream.mjs
 /**
  * THE CONTROL PANEL ON A CHAT OPEN, IN A BROWSER (/preview/control-panel; lib/child-feed.ts).
  *
- * Measured on the live app before this (onfinance_hfc, 2026-10-13): every open of a chat with specialists re-read
+ * Measured on the live app before this (2026-10-13): every open of a chat with specialists re-read
  * each specialist's whole raw stream from event 0 (9.4 MB to over 147 MB), at mount, all at once, one panel update
  * per network read, with no deadline on the 6 of 12 streams that never answered, and again on every remount. Here
  * the real Cockpit runs against seven fake specialists whose streams this spec answers:

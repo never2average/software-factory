@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { migrationSsl } from "./scripts/lib/migration-ssl.mjs";
+import { DEFAULT_ORG } from "./scripts/lib/default-org.mjs";
 
 function readEnv(file) {
   try {
@@ -217,7 +218,8 @@ const appUrl = local.DATABASE_URL;
 if (appUrl) {
   const app = postgres(appUrl, { ssl: migrationSsl(appUrl), prepare: false, max: 1 });
   await app.begin(async (tx) => {
-    await tx`select set_config('app.org_id', 'org-onfinance', true)`;
+    // A read check of the app role's grants, as org #1 (scripts/lib/default-org.mjs); it changes nothing.
+    await tx`select set_config('app.org_id', ${DEFAULT_ORG}, true)`;
     await tx`select 1 from project_workflow_versions limit 1`;
     await tx`select 1 from task_workflow_instances limit 1`;
     await tx`select 1 from task_workflow_transition_events limit 1`;

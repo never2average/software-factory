@@ -1,10 +1,10 @@
 // Migration: Phase-3 org tenancy TIGHTENING. Run AFTER `.migrate-org-tenancy.mjs`
 // and after the org-permeation code is deployed (every write path now stamps
-// org_id, and the DB DEFAULT 'onfinance' remains as a safety net).
+// org_id, and the DB DEFAULT on org_id remains as a safety net).
 //
 // Two changes, both safe because org_id is fully backfilled (zero NULLs) and
 // people_roster has zero duplicate emails:
-//   1. org_id → NOT NULL on every scoped table. The DEFAULT 'onfinance' is KEPT
+//   1. org_id → NOT NULL on every scoped table. The org_id DEFAULT is KEPT
 //      (NOT NULL + DEFAULT together = integrity without a prod-crash footgun for
 //      any internal insert path that doesn't stamp org_id yet, e.g. automation
 //      runs / memories / seed scripts).
@@ -48,7 +48,7 @@ for (const table of SCOPED) {
 for (const table of SCOPED) {
   await sql.unsafe(`ALTER TABLE ${table} ALTER COLUMN org_id SET NOT NULL`);
 }
-console.log(`✓ org_id SET NOT NULL on ${SCOPED.length} tables (DEFAULT 'onfinance' kept).`);
+console.log(`✓ org_id SET NOT NULL on ${SCOPED.length} tables (DEFAULT kept).`);
 
 // 2. people_roster composite PK (org_id, email).
 const [{ dups }] = await sql`

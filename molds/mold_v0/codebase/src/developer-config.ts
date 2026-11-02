@@ -38,14 +38,15 @@ export const TEST_EVENT = "webhook.test";
 /**
  * Scopes a key or a client session holds. `read`, `write` and `run` may be narrowed to one area or kind
  * (`read:<area>`, `write:<area>`, `run:<kind>`); `sessions` mints client sessions and manages the browser origins;
- * `webhooks` manages webhook endpoints and inbound sources. An integration key holds exactly one scope.
+ * `webhooks` manages webhook endpoints and inbound sources; `checks` asks the build's declarative checks (mold_v0-196,
+ * src/checks.ts), narrowed as `checks:<name>`. An integration key holds exactly one scope.
  */
-export const BASE_SCOPES = ["read", "write", "run", "sessions", "webhooks"] as const;
+export const BASE_SCOPES = ["read", "write", "run", "sessions", "webhooks", "checks"] as const;
 export type BaseScope = (typeof BASE_SCOPES)[number];
 /** What a client session may ever hold (a browser or phone never manages keys, sessions or webhooks). */
-export const SESSION_SCOPES = ["read", "write", "run"] as const;
+export const SESSION_SCOPES = ["read", "write", "run", "checks"] as const;
 export const DEFAULT_SESSION_SCOPES = ["read", "write"];
-export const SCOPE_PATTERN = /^(read|write|run|sessions|webhooks)(:[a-z][a-z0-9_]{0,63})?$/;
+export const SCOPE_PATTERN = /^(read|write|run|sessions|webhooks|checks)(:[a-z][a-z0-9_]{0,63})?$/;
 
 export const SDK_LANGUAGES = ["typescript", "python"] as const;
 

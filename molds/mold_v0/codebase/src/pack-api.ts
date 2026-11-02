@@ -71,6 +71,7 @@ import { emailPackProblems, type EmailPackSchema } from "./company-email-config.
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 import { templateProblems } from "./text-template.js";
 
+import { CheckSchema } from "./check-spec.js";
 export { z };
 
 /** The workspace (a customer account) a tool call or a route works for. */
@@ -1665,6 +1666,11 @@ export interface PackDefinition {
   /** The generated MCP tools' settings (mold_v0-060; src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. */
   mcp?: z.input<typeof McpSettingsSchema>;
   /**
+   * Declarative yes/no checks answered from the records (mold_v0-196; src/check-spec.ts CheckSchema, src/checks.ts): each
+   * on the API (POST /api/checks/<name>) and as an MCP tool (check_<name>), for the caller's own workspace. No code.
+   */
+  checks?: z.input<typeof CheckSchema>[];
+  /**
    * The workspace store's settings (mold_v0-056; src/workspace-store-policy.ts): how long old versions are kept
    * (retention: keep_last, keep_days, under the platform's ceiling) and the files the console's viewer never shows
    * (secret_paths). Needs a job kind with workspace: true (or an agent-workspace kind).
@@ -1769,6 +1775,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     inSections.set(id, t.id);
   }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
+  each(p.checks, CheckSchema, "checks");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.oauthProviders, OAuthProviderSchema, "oauthProviders");
   each(p.operatorCredentials, OperatorCredentialSchema, "operatorCredentials");
