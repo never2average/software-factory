@@ -22,7 +22,7 @@
 import { z } from "zod";
 import type { AccountRole } from "./account-roles.js";
 import { CLOCK_STATUSES, observe, parseDuration, raised, stepsDue, type ClockMemory, type ClockRecord, type ClockStatus, type ClockView } from "./clock-math.js";
-import { getDb, type Queryable } from "./db.js";
+import { getDb, type Db, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { optionValues, PackError, type Clock, type PackTool, type RecordRow, type Workspace } from "./pack-api.js";
@@ -196,21 +196,26 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
   const v = o.view;
   const same = prev && prev.status === v.status && prev.due_at === v.due_at && prev.paused_ms === o.memory.paused_ms
     && prev.paused_since === o.memory.paused_since && prev.stopped_at === o.memory.stopped_at;
-  if (!same) {
-    await db.query(
+  // An embedded app's clock.overdue event (mold_v0-193, src/developer-webhooks.ts emitEvent): once per record, clock and
+  // deadline, written to the outbox in the transaction that records the clock as overdue (mold_v0-202); nothing is
+  // written unless the app declares the event (a tool app has no developer surface).
+  const overdue = prev?.status !== "overdue" && v.status === "overdue";
+  const hooks = overdue ? await import("./developer-webhooks.js") : null;
+  const event = hooks?.declaredEvents().includes("clock.overdue") ? hooks : null;
+  const write = async (q: Queryable) => {
+    await q.query(
       `INSERT INTO workspace_record_clocks (org_id, pack, area, record_key, clock, status, started_at, due_at, paused_ms, paused_since, stopped_at, evaluated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (org_id, pack, area, record_key, clock) DO UPDATE SET status = excluded.status, started_at = excluded.started_at, due_at = excluded.due_at,
          paused_ms = excluded.paused_ms, paused_since = excluded.paused_since, stopped_at = excluded.stopped_at, evaluated_at = excluded.evaluated_at`,
       [orgId, area.pack, area.name, row.key, c.name, v.status, v.started_at, v.due_at, o.memory.paused_ms, o.memory.paused_since, o.memory.stopped_at, now]);
+    if (event) await event.emitEvent(orgId, "clock.overdue", { area: area.name, key: row.key, clock: c.name, due_at: v.due_at },
+      `clock.overdue:${area.name}:${row.key}:${c.name}:${v.due_at}`, q);
+  };
+  if (!same) {
+    if (event) { await (db as Db).transaction(write); void event.kick(); }
+    else await write(db);
     report.updated++;
-  }
-  // An embedded app's clock.overdue event (mold_v0-193, src/developer-webhooks.ts emitEvent): once per record, clock and
-  // deadline; nothing is queued unless the app declares the event (a tool app has no developer surface).
-  if (prev?.status !== "overdue" && v.status === "overdue") {
-    const { emitEvent } = await import("./developer-webhooks.js");
-    await emitEvent(orgId, "clock.overdue", { area: area.name, key: row.key, clock: c.name, due_at: v.due_at },
-      `clock.overdue:${area.name}:${row.key}:${c.name}:${v.due_at}`).catch((e) => console.error(`clock.overdue event: ${(e as Error).message}`));
   }
   // Each change once, keyed by when it happened.
   const markOf: Record<string, string | null> = { started: v.started_at, paused: o.memory.paused_since, stopped: v.stopped_at, resumed: now.toISOString(), reopened: now.toISOString() };

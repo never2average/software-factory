@@ -40,7 +40,7 @@ import { offerFooterHtml } from "./source-offer.js";
 import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
 import { developerApiRouter } from "./developer-api.js";
 import { developerAppRouter } from "./developer-routes.js";
-import { startWebhookLoop, stopWebhookLoop, webhookTick } from "./developer-webhooks.js";
+import { startWebhookLoop, stopWebhookLoop, syncDeclaredEvents, webhookTick } from "./developer-webhooks.js";
 import { builtinAuthRouter } from "./builtin-auth.js";
 import * as mcpOAuth from "./mcp-oauth.js";
 import * as roles from "./admin-roles.js";
@@ -288,6 +288,8 @@ export function createApp() {
   // ---------- the developer surface of an embedded app (mold_v0-193, src/developer-*.ts): /v1, /openapi.json and the
   // console's /api/developer; with no pack declaring developer_surface nothing is mounted ----------
   app.use(developerApiRouter());
+  // The events this build declares, for the run.finished trigger (mold_v0-202, sql 0036); only with a developer surface.
+  void syncDeclaredEvents().catch((e) => console.error(`webhooks: ${(e as Error).message}`));
   app.use("/api/developer", developerAppRouter());
   // The access log (mold_v0-197, src/audit-trail.ts): a workspace's owners read its trails; nothing mounted with both off.
   app.use("/api/audit", auditAppRouter(customerSession));

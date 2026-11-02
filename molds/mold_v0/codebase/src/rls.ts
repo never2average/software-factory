@@ -94,6 +94,8 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // The developer surface (mold_v0-193, 0033_developer_surface): keys, client sessions, origins, webhook endpoints and
   // their sealed secrets, deliveries, inbound sources, idempotency keys: the shell's developer modules only.
   "developer_keys", "developer_client_sessions", "developer_origins", "webhook_endpoints", "webhook_deliveries", "webhook_sources", "idempotency_keys", "developer_marks",
+  // The developer surface's event outbox (mold_v0-202, 0036_event_outbox): written through app_event_outbox_put only.
+  "event_outbox", "developer_events",
   // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
   "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
 

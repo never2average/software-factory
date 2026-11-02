@@ -107,6 +107,7 @@
     "test:run-approvals": "tsx scripts/run-approvals-test.ts",
     "test:developer-surface": "tsx scripts/developer-surface-test.ts",
     "test:developer-e2e": "tsx scripts/developer-e2e.ts",
+    "test:event-outbox": "tsx scripts/event-outbox-test.ts",
     "gen:sdks": "tsx scripts/gen-sdks.ts",
     "runner:fleet": "tsx --env-file-if-exists=.env src/run-fleet.ts",
     "runner:onprem": "tsx src/onprem-runner.ts",

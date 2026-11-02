@@ -2434,10 +2434,22 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
 - **Webhooks out** (`src/developer-webhooks.ts`, Standard Webhooks): endpoints with a `whsec_` signing secret (sealed with
   the workspace's data key; answered when made or rotated; read again only through the audited reveal, counted on the
   endpoint and handed to the audit hook; a rotation signs with both secrets for its grace). Events: record created,
-  updated, state changed and deleted (`src/record-areas.ts` `onRecordChange`, told after a batch commits, nothing for
-  one rolled back; a sealed or asset area's events carry its key only), `run.finished` (the runs that ended, scanned by
-  the tick: `src/runs.ts` untouched), `clock.overdue` (`src/record-clocks.ts` calls `emitEvent` when a clock goes overdue, once per record, clock and deadline) and the test
-  ping. Each delivery is POSTed signed within 15 seconds, no redirect, never to a private address (a preview server also
+  updated, state changed and deleted (`src/record-areas.ts` `onRecordChangeInTransaction`; a sealed or asset area's
+  events carry its key only), `run.finished` (a trigger on `runs`, in the transaction that ends the run: `src/runs.ts`
+  untouched), `clock.overdue` (`src/record-clocks.ts` calls `emitEvent` in the transaction that records a clock as
+  overdue, once per record, clock and deadline) and the test ping.
+- **Event outbox** (mold_v0-202, `sql/migrations/0036_event_outbox.sql`): every event is written to `event_outbox` in
+  the same database transaction as the change it tells of (`app_event_outbox_put`, the tenant's own workspace only), so
+  a change rolled back has no event and a crash right after the commit loses none. A single record write becomes a
+  transaction of its own only when the build declares a record event for its area; nothing is written in a tool build
+  or for a workspace with no enabled endpoint that takes the event. The scheduler's step (`relayOutbox`: the server's
+  15-second loop, Vercel's cron entry `/api/cron/autoscale`, and at once after each commit) queues each pending event
+  once per endpoint and marks it relayed in the same transaction (claimed with `SKIP LOCKED`: schedulers running at
+  once never share an event); a failed relay is retried after 5 s, doubling, at most an hour; relayed rows go after
+  30 days. `npm run test:event-outbox` proves it with real processes (a writer killed between commit and enqueue, three
+  schedulers at once on Postgres with `OUTBOX_PG_URL`). Rollback: `sql/rollback/0036_event_outbox.sql` (queues what
+  is still pending first).
+- Each delivery is POSTed signed within 15 seconds, no redirect, never to a private address (a preview server also
   takes localhost); retried after 5 s, 5 min, 30 min, 2, 5, 10 and 10 h with every attempt in its log; an endpoint whose
   last 30 attempts failed is disabled until enabled again. A server ticks every 15 seconds; Vercel's cron ticks it.
 - **Webhooks in** (`src/developer-inbound.ts`): a workspace adds a source for a pack-declared receiver and gets its

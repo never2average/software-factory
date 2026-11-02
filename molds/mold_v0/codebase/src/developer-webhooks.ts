@@ -6,9 +6,14 @@
  *               when made; read again only through revealWebhookSecret (recorded on the endpoint and to the platform
  *               audit hook), rotated with the old secret still signing beside the new one for 24 hours
  *   events      the build's declared events (pack.json developer_surface.events): record.created / updated /
- *               state_changed / deleted (src/record-areas.ts onRecordChange), run.finished (the runs that ended, read
- *               by the tick, src/runs.ts untouched), clock.overdue (src/record-clocks.ts calls emitEvent when a clock goes overdue); webhook.test
- *               on request. A sealed area's events carry its key, never its title or fields
+ *               state_changed / deleted (src/record-areas.ts onRecordChangeInTransaction), run.finished (a trigger on
+ *               runs, src/runs.ts untouched), clock.overdue (src/record-clocks.ts calls emitEvent when a clock goes
+ *               overdue); webhook.test on request. A sealed area's events carry its key, never its title or fields
+ *   outbox      (mold_v0-202, sql 0036) each event is written to event_outbox in the same transaction as the change it
+ *               tells of: a change rolled back has none, a crash after the commit loses none. The scheduler's step
+ *               (relayOutbox: the 15-second loop, the cron entry; and at once after a commit) queues each pending event
+ *               once per endpoint, marking it relayed in the same transaction (SKIP LOCKED: schedulers at once never
+ *               share one); a failed relay is retried with a backoff
  *   deliveries  one per event per endpoint (webhook_deliveries; the same event twice is queued once): POSTed with
  *               webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 of "id.timestamp.body"),
  *               within 15 seconds, no redirect followed; anything but a 2xx is retried after RETRY_SCHEDULE; each
@@ -23,10 +28,10 @@ import { isIP } from "node:net";
 import { auditPlatform } from "./developer-audit.js";
 import { EVENT_CATALOG, TEST_EVENT, type EventName } from "./developer-config.js";
 import { actorLabel, ApiProblem, currentApiActor, developerSurface } from "./developer-surface.js";
-import { getDb } from "./db.js";
+import { getDb, type Queryable } from "./db.js";
 import { ENV } from "./env-names.js";
 import { open, seal } from "./orgcrypto.js";
-import { onRecordChange, recordAreas, type RecordChange } from "./record-areas.js";
+import { onRecordChange, onRecordChangeInTransaction, recordAreas, type RecordChange } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
 
 /** Seconds to wait before each retry (attempt 2, 3, ...): 8 attempts over about 27 hours. */
@@ -204,31 +209,34 @@ export async function revealWebhookSecret(orgId: number, id: string, by: string 
 /** The envelope Standard Webhooks recommends: {type, timestamp, data}. */
 const envelope = (type: string, data: Record<string, unknown>) => ({ type, timestamp: new Date().toISOString(), data });
 
+// ---------- the outbox (mold_v0-202, sql/migrations/0036_event_outbox.sql) ----------
+
+/** The record areas a record event of this build is declared for (an event with no areas: every area). */
+const recordEventFor = (area: string) => (developerSurface()?.events ?? []).some((e) => e.name.startsWith("record.") && (!e.areas?.length || e.areas.includes(area)));
+
 /**
- * Queue an event of workspace `orgId` for every enabled endpoint that takes it (one delivery per endpoint; `dedupe`
- * names the event so it is queued once whatever calls this again). An event the app does not declare is not sent.
- * The hook point for other emitters (mold_v0-191's clock.overdue).
+ * Write an event of workspace `orgId` to the outbox, on `db` (a transaction: the event commits with the change it tells
+ * of, or not at all), once per `dedupe` key; the scheduler's step relays it to every enabled endpoint that takes it.
+ * Nothing is written for an event the app does not declare, an area the event is not declared for, or a workspace with
+ * no enabled endpoint that takes it. Without `db`, a statement of its own, relayed and sent at once in the background.
+ * The hook point for other emitters (mold_v0-191's clock.overdue). Answers 1 when an event was written, else 0.
  */
-export async function emitEvent(orgId: number, type: EventName, data: Record<string, unknown>, dedupe?: string): Promise<number> {
+export async function emitEvent(orgId: number, type: EventName, data: Record<string, unknown>, dedupe?: string, db?: Queryable): Promise<number> {
   const cfg = developerSurface();
   if (!cfg) return 0;
   const decl = cfg.events.find((e) => e.name === type);
   if (!decl) return 0;
   if (decl.areas?.length && typeof data.area === "string" && !decl.areas.includes(data.area)) return 0;
   const key = dedupe ?? `${type}:${randomBytes(9).toString("base64url")}`;
-  const payload = envelope(type, data);
-  const rows = await asPlatform(async () => (await getDb()).query<{ id: string }>(
-    `INSERT INTO webhook_deliveries (id, org_id, endpoint_id, event_type, dedupe_key, payload, next_attempt_at)
-     SELECT 'msg_' || substr(md5(random()::text || clock_timestamp()::text || e.id), 1, 24), e.org_id, e.id, $2, $3, $4, now() FROM webhook_endpoints e
-      WHERE e.org_id = $1 AND e.status = 'enabled' AND (cardinality(e.events) = 0 OR $2 = ANY (e.events))
-     ON CONFLICT (endpoint_id, dedupe_key) DO NOTHING RETURNING id`, [orgId, type, key, JSON.stringify(payload)]));
-  if (rows.length) kick();
-  return rows.length;
+  const put = async (q: Queryable) => (await q.query<{ id: string | null }>("SELECT app_event_outbox_put($1, $2, $3, $4::jsonb)::text AS id", [orgId, type, key, JSON.stringify(envelope(type, data))]))[0]?.id ?? null;
+  if (db) return (await put(db)) ? 1 : 0;
+  const id = await asPlatform(async () => put(await getDb()));
+  if (id) kick();
+  return id ? 1 : 0;
 }
 
-/** A record change as its event (src/record-areas.ts onRecordChange): a sealed area's carries its key only. */
-async function onChange(c: RecordChange) {
-  if (!developerSurface()) return;
+/** A record change as its event (src/record-areas.ts): a sealed area's carries its key only. */
+function recordEvent(c: RecordChange) {
   const type = `record.${c.change}` as EventName;
   const area = recordAreas().find((a) => a.name === c.area);
   const sealed = area?.sealed === true || area?.role === "asset";
@@ -240,31 +248,75 @@ async function onChange(c: RecordChange) {
     ...(c.change === "state_changed" ? { from: c.from ?? null, to: c.to ?? null } : {}),
     actor: actorLabel(currentApiActor()),
   };
-  await emitEvent(c.orgId, type, data, `${type}:${c.area}:${c.key}:${r?.updated_at ?? Date.now()}:${randomBytes(4).toString("hex")}`);
+  return { type, data, dedupe: `${type}:${c.area}:${c.key}:${r?.updated_at ?? Date.now()}:${randomBytes(4).toString("hex")}` };
 }
-onRecordChange(onChange);
+// In the change's own transaction: its event is in the outbox exactly when the change commits.
+onRecordChangeInTransaction(async (c, tx) => { const e = recordEvent(c); await emitEvent(c.orgId, e.type, e.data, e.dedupe, tx); }, recordEventFor);
+// After the commit: relay and send now, in the background (a crash here loses nothing: the scheduler's step relays it).
+onRecordChange((c) => { if (recordEventFor(c.area)) void kick(); });
 
-/** The runs that ended since the last scan, as run.finished (the runs table read, src/runs.ts untouched). */
+let declaredSig: string | null = null;
+/**
+ * The events this build declares, written to developer_events (what the runs trigger reads for run.finished): at boot,
+ * and before each relay. A write only when they changed since this process last wrote them.
+ */
+export async function syncDeclaredEvents(): Promise<void> {
+  if (!developerSurface()) return;
+  const names = [...new Set(declaredEvents())].sort();
+  if (names.join(",") === declaredSig) return;
+  await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    await tx.query("DELETE FROM developer_events WHERE NOT (name = ANY ($1::text[]))", [names]);
+    await tx.query("INSERT INTO developer_events (name) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING", [names]);
+  }));
+  declaredSig = names.join(",");
+}
+
+/**
+ * The scheduler's step: the outbox's pending events (at most `limit`), each queued once for every enabled endpoint of
+ * its workspace that takes it and marked relayed in the same transaction (claimed with SKIP LOCKED, so schedulers
+ * running at once never take the same event; a delivery is unique per endpoint and event). An event the build no longer
+ * declares is marked relayed with no delivery. A relay that fails is retried after a backoff (5 s doubling, at most an hour).
+ */
+export async function relayOutbox(limit = 200): Promise<{ events: number; queued: number }> {
+  if (!developerSurface()) return { events: 0, queued: 0 };
+  await syncDeclaredEvents();
+  const declared = declaredEvents();
+  let claimed: string[] = [];
+  try {
+    return await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+      claimed = (await tx.query<{ id: string }>(
+        `/* tenant: internal: the outbox's pending events of every workspace, each queued for its own workspace's endpoints */
+         SELECT id::text AS id FROM event_outbox WHERE relayed_at IS NULL AND next_attempt_at <= now() ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit])).map((r) => r.id);
+      if (!claimed.length) return { events: 0, queued: 0 };
+      const queued = await tx.query<{ id: string }>(
+        `/* tenant: each claimed event to the enabled endpoints of its own workspace (e.org_id = o.org_id) */
+         INSERT INTO webhook_deliveries (id, org_id, endpoint_id, event_type, dedupe_key, payload, next_attempt_at)
+         SELECT 'msg_' || substr(md5(random()::text || clock_timestamp()::text || e.id || o.id::text), 1, 24), o.org_id, e.id, o.event_type, o.dedupe_key, o.payload, now()
+           FROM event_outbox o JOIN webhook_endpoints e ON e.org_id = o.org_id AND e.status = 'enabled' AND (cardinality(e.events) = 0 OR o.event_type = ANY (e.events))
+          WHERE o.id = ANY ($1::bigint[]) AND o.event_type = ANY ($2::text[])
+         ON CONFLICT (endpoint_id, dedupe_key) DO NOTHING RETURNING id`, [claimed, declared]);
+      await tx.query("/* tenant: internal: the claimed events, by id */ UPDATE event_outbox SET relayed_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = ANY ($1::bigint[])", [claimed]);
+      return { events: claimed.length, queued: queued.length };
+    }));
+  } catch (e) {
+    const ids = claimed;
+    if (ids.length) await asPlatform(async () => (await getDb()).query(
+      `/* tenant: internal: the claimed events, by id */ UPDATE event_outbox SET attempts = attempts + 1, last_error = $2,
+              next_attempt_at = now() + make_interval(secs => least(3600, 5 * power(2, attempts))::int) WHERE id = ANY ($1::bigint[]) AND relayed_at IS NULL`,
+      [ids, (e as Error).message.slice(0, 500)])).catch(() => {});
+    throw e;
+  }
+}
+
+/**
+ * run.finished (the runs trigger writes it to the outbox in the transaction that ends the run, sql 0036): relays what
+ * is pending and answers how many deliveries were queued. Kept for its callers; the scheduler's step does the same.
+ */
 export async function scanFinishedRuns(): Promise<number> {
   if (!declaredEvents().includes("run.finished")) return 0;
-  return asPlatform(async () => {
-    const db = await getDb();
-    const [mark] = await db.query<{ at: Date }>("SELECT at FROM developer_marks WHERE name = 'run.finished'");
-    if (!mark) { await db.query("INSERT INTO developer_marks (name, at) VALUES ('run.finished', now()) ON CONFLICT DO NOTHING"); return 0; }
-    // A minute's overlap: a run whose end was written in a transaction that committed late is still seen (queued once).
-    const runs = await db.query<{ id: string; org_id: number; pack: string; kind: string; status: string; error_kind: string | null; cost_usd: string; attempt: number; ended_at: Date; created_at: Date }>(
-      `/* tenant: the runs of every workspace with an enabled endpoint, each queued for its own workspace */
-       SELECT r.id, r.org_id, r.pack, r.kind, r.status, r.error_kind, r.cost_usd, r.attempt, r.ended_at, r.created_at FROM runs r
-        WHERE r.ended_at >= $1::timestamptz - interval '1 minute' AND r.status IN ('succeeded', 'failed', 'cancelled')
-          AND EXISTS (SELECT 1 FROM webhook_endpoints e WHERE e.org_id = r.org_id AND e.status = 'enabled')
-        ORDER BY r.ended_at LIMIT 1000`, [mark.at]);
-    let n = 0;
-    for (const r of runs) n += await emitEvent(r.org_id, "run.finished", { run: { id: r.id, pack: r.pack, kind: r.kind, status: r.status, error_kind: r.error_kind,
-      cost_usd: Number(r.cost_usd), attempt: r.attempt, created_at: iso(r.created_at), ended_at: iso(r.ended_at) } }, `run.finished:${r.id}:${r.attempt}`);
-    const last = runs.length === 1000 ? runs[runs.length - 1]!.ended_at : null;
-    await db.query("UPDATE developer_marks SET at = coalesce($1::timestamptz, now()) WHERE name = 'run.finished'", [last]);
-    return n;
-  });
+  const { queued } = await relayOutbox();
+  if (queued) kick();
+  return queued;
 }
 
 interface DeliveryRaw {
@@ -344,7 +396,11 @@ let kicking: Promise<unknown> | null = null, again = false;
 export function kick(): Promise<unknown> {
   if (kicking) { again = true; return kicking; }
   kicking = (async () => {
-    do { again = false; await deliverDue().catch((e) => console.error(`webhooks: ${(e as Error).message}`)); } while (again);
+    do {
+      again = false;
+      await relayOutbox().catch((e) => console.error(`webhooks outbox: ${(e as Error).message}`));
+      await deliverDue().catch((e) => console.error(`webhooks: ${(e as Error).message}`));
+    } while (again);
   })().finally(() => { kicking = null; });
   return kicking;
 }
@@ -407,20 +463,31 @@ export function decodeCursor(s: string): { at: string; id: string } {
 /** The run-finished scan, the due deliveries, and pruning (idempotency keys after 24 hours, deliveries after 30 days). */
 export async function webhookTick() {
   if (!developerSurface()) return null;
-  const finished = await scanFinishedRuns().catch((e) => ({ error: (e as Error).message }));
+  // The outbox first (every pending event, a batch at a time), then the deliveries that are due.
+  const relayed = await (async () => {
+    const total = { events: 0, queued: 0 };
+    for (let i = 0; i < 10; i++) {
+      const r = await relayOutbox(200);
+      total.events += r.events; total.queued += r.queued;
+      if (r.events < 200) break;
+    }
+    return total;
+  })().catch((e) => ({ error: (e as Error).message }));
   const sent = await deliverDue(200).catch((e) => ({ error: (e as Error).message }));
   await asPlatform(async () => {
     const db = await getDb();
     await db.query("/* tenant: internal: expired idempotency keys of every workspace */ DELETE FROM idempotency_keys WHERE created_at < now() - interval '24 hours'");
     await db.query("/* tenant: internal: old deliveries of every workspace */ DELETE FROM webhook_deliveries WHERE status <> 'pending' AND created_at < now() - interval '30 days'");
     await db.query("/* tenant: internal: expired client sessions of every workspace */ DELETE FROM developer_client_sessions WHERE expires_at < now() - interval '1 day'");
+    await db.query("/* tenant: internal: relayed events of every workspace */ DELETE FROM event_outbox WHERE relayed_at < now() - interval '30 days'");
   }).catch((e) => console.error(`webhooks prune: ${(e as Error).message}`));
-  return { finished, sent };
+  return { relayed, sent };
 }
 let timer: NodeJS.Timeout | null = null;
 /** A server's loop (every 15 seconds); on Vercel the cron calls webhookTick. Started only with a developer surface. */
 export function startWebhookLoop(): boolean {
   if (!developerSurface() || timer) return false;
+  void syncDeclaredEvents().catch((e) => console.error(`webhooks: ${(e as Error).message}`));
   timer = setInterval(() => void webhookTick().catch((e) => console.error(`webhooks: ${(e as Error).message}`)), 15_000);
   timer.unref();
   return true;

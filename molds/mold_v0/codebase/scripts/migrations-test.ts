@@ -865,6 +865,41 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} ledger chain: entries written before it are chained in sequence order, new ones continue it, one behind the chain is refused; its rollback refuses while a signed checkpoint exists, drops when told, leaves exactly what ${v - 1} left, and applies again`);
   }
 
+  // The event outbox (mold_v0-202, event_outbox, found by name): the runs trigger writes run.finished only when the
+  // build declares it and the workspace has an endpoint for it; the rollback queues what is still pending into
+  // webhook_deliveries (the older release sends those), leaves the catalog of the migration before it, and applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "event_outbox")!.version;
+    const d = await shellAt(kind);
+    const [{ id }] = await d.query<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ('mig-outbox', 'Outbox') RETURNING id");
+    const run = (rid: string) => d.query(`INSERT INTO runs (id, org_id, pack, kind, status, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd)
+      VALUES ($1, $2, 'p', 'k', 'queued', '{}'::jsonb, 1, 600, 60, 1)`, [rid, id]);
+    const end = (rid: string) => d.query("UPDATE runs SET status = 'succeeded', ended_at = now() WHERE id = $1", [rid]);
+    const events = async () => Number((await d.query<{ n: number }>("SELECT count(*)::int AS n FROM event_outbox"))[0]!.n);
+    await run("run_mig_1"); await end("run_mig_1");
+    assert.equal(await events(), 0, "no event: nothing declared, no endpoint");
+    await d.query("INSERT INTO developer_events (name) VALUES ('run.finished')");
+    await run("run_mig_2"); await end("run_mig_2");
+    assert.equal(await events(), 0, "no event: no endpoint");
+    await d.query("INSERT INTO webhook_endpoints (id, org_id, url, events, secret_sealed) VALUES ('we_mig', $1, 'https://hooks.example.com/x', '{}', 'x')", [id]);
+    await run("run_mig_3"); await end("run_mig_3");
+    await d.query("UPDATE runs SET updated_at = now() WHERE id = 'run_mig_3'");
+    assert.equal(await events(), 1, "run.finished once per run and attempt");
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_event_outbox.sql`), "utf8");
+    await d.exec(rb);
+    assert.deepEqual((await d.query<{ dedupe_key: string }>("SELECT dedupe_key FROM webhook_deliveries WHERE org_id = $1", [id])).map((r) => r.dedupe_key), ["run.finished:run_mig_3:0"],
+      "the pending event queued by the rollback");
+    await d.query("DELETE FROM webhook_endpoints WHERE id = 'we_mig'");
+    await d.query("DELETE FROM organizations WHERE id = $1", [id]);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_event_outbox")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} event outbox: run.finished written by the runs trigger only when declared and an endpoint takes it, once per run and attempt; its rollback queues what is pending, leaves exactly what ${v - 1} left, and applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);
