@@ -150,7 +150,11 @@ export function auditRequests(): RequestHandler {
     const ctx: Ctx = { channel, req, res, ...(run ? { actor: { kind: "agent_run", id: decodeURIComponent(run) } } : {}),
       kind: SIGN_IN.test(path) ? "sign_in" : channel === "admin_console" ? "staff" : "request" };
     const t0 = performance.now();
-    res.on("finish", () => {
+    // Once per request: when it was answered, or when the client went away first (its status as it stood).
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
       // Machine traffic (a run's worker API) and the admin MCP (one staff entry per tool call: src/admin-mcp.ts) are not
       // request entries; everything else is.
       if (platformTrailOn() && channel !== "run" && channel !== "admin_mcp") {
@@ -162,7 +166,9 @@ export function auditRequests(): RequestHandler {
         });
       }
       kick(true);
-    });
+    };
+    res.on("finish", end);
+    res.on("close", end);
     als.run(ctx, () => next());
   };
 }
