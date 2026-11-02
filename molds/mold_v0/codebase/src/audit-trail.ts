@@ -267,6 +267,18 @@ export function auditStaff(actor: string, role: string, tool: string, status: nu
     actor: { kind: "staff", id: actor.slice(0, 120), scopes: ["staff", `platform:${role}`] }, org_id: null, org_slug: orgSlug });
 }
 
+/**
+ * A declared check's answer (mold_v0-196, src/checks.ts answerCheck): one platform entry per answer, through the door
+ * it was asked at (the API, the console, MCP), by whoever asked, with the check's name and outcome. Never its inputs,
+ * the records it read or their values.
+ */
+export function auditCheckAnswer(orgId: number, check: string, allowed: boolean, latencyMs: number) {
+  if (!platformTrailOn()) return;
+  const c = current();
+  platformEntry({ kind: "request", channel: channelNow(c) === "system" ? "api" : channelNow(c), method: "CHECK", path: `/checks/${check} ${allowed ? "allowed" : "denied"}`.slice(0, 300),
+    status: 200, latency_ms: latencyMs, ip: c?.req ? String(c.req.ip ?? "").slice(0, 64) : null, actor: actorOf(c), org_id: orgId, org_slug: null });
+}
+
 // ---------------------------------------------------------------- batched writes
 
 const FLUSH_MS = 200, FLUSH_AT = 200, KEEP_MAX = 20_000;

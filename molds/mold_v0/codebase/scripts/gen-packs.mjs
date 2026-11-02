@@ -1229,7 +1229,7 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles, staffApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles, staffApi, checkSpecApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
@@ -1306,6 +1306,17 @@ if (loaded.length === entries.length) {
   // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
   const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
   shell.push(...AUDIT_TOOL_NAMES);
+  // Declarative checks (mold_v0-196, src/check-spec.ts): each against the build's areas (unknown fields, type mismatches,
+  // unbounded scans refused here), names unique, and its tool (check_<name>) a name no other tool takes.
+  const { checksProblems, checkToolName } = await import(pathToFileURL(checkSpecApi).href);
+  const checkAreas = loaded.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ name: a.name, scope: a.scope, fields: a.fields, sealed: a.sealed === true || a.role === "asset",
+    live: !!a.repository && p.definition.repositories?.[a.repository]?.kind === "http_api" })));
+  mcp.problems.push(...checksProblems(loaded.map((p) => ({ id: p.id, checks: p.definition.checks ?? [] })), checkAreas));
+  for (const p of loaded) for (const c of p.definition.checks ?? []) {
+    const t = checkToolName(String(c?.name));
+    if (shell.includes(t)) mcp.problems.push(\`pack \${p.id}: check \${c.name}'s tool \${t} is already a shell tool\`);
+    else shell.push(t);
+  }
   for (const p of loaded) for (const t of p.definition.tools ?? []) {
     if (!t || typeof t.name !== "string") continue;
     if (shell.includes(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already a shell tool\`);
@@ -1337,7 +1348,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
       path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
-      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES), path.join(ROOT, "src", "staff-docs.ts")]));
+      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES), path.join(ROOT, "src", "staff-docs.ts"), path.join(ROOT, "src", "check-spec.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }

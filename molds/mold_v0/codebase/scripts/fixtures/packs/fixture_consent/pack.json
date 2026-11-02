@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_consent",
+  "name": "Fixture consent",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-196; scripts/checks-test.ts): a workspace's consent records and a shared list of processing purposes, answered by declared yes/no checks. Never shipped; the only place these words are used.",
+  "record_areas": [
+    {
+      "name": "purposes",
+      "label": "Purposes",
+      "role": "source",
+      "scope": "platform",
+      "fields": [
+        { "name": "lawful_basis", "label": "Lawful basis", "type": "enum", "options": ["consent", "contract", "legitimate_interest"] },
+        { "name": "active", "label": "Active", "type": "boolean" }
+      ]
+    },
+    {
+      "name": "consents",
+      "label": "Consents",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["subject", "purpose", "status", "recorded_at"],
+      "fields": [
+        { "name": "subject", "label": "Data subject", "type": "text", "required": true, "max_length": 200 },
+        { "name": "purpose", "label": "Purpose", "type": "reference", "to": "purposes", "required": true },
+        { "name": "status", "label": "Status", "type": "enum", "options": ["granted", "withdrawn"], "required": true },
+        { "name": "recorded_at", "label": "Recorded", "type": "date", "required": true },
+        { "name": "expires_at", "label": "Expires", "type": "date" },
+        { "name": "channels", "label": "Channels", "type": "enum", "multiple": true, "options": ["email", "sms", "post"] },
+        { "name": "age", "label": "Subject age", "type": "number" }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "name": "may_process",
+      "label": "May we process this subject's data for this purpose?",
+      "inputs": { "subject": "string", "purpose": "string", "at": "datetime?" },
+      "rule": {
+        "area": "consents",
+        "match": { "subject": "$subject", "purpose": "$purpose" },
+        "latest_by": "recorded_at",
+        "lookup": { "area": "purposes", "as": "purpose_rec", "key": "$purpose" },
+        "require": [
+          { "field": "status", "eq": "granted", "label": "Consent is granted" },
+          { "any": [{ "field": "expires_at", "exists": false }, { "field": "expires_at", "gt": "$at|now" }], "label": "Not expired" },
+          { "field": "purpose_rec.active", "eq": true, "label": "The purpose is active" }
+        ]
+      },
+      "explain": true
+    },
+    {
+      "name": "may_email",
+      "label": "Has this subject granted email within the last year?",
+      "inputs": { "subject": "string", "min_age": "number?" },
+      "rule": {
+        "area": "consents",
+        "match": { "subject": "$subject", "status": ["granted"] },
+        "require": [
+          { "field": "channels", "has": "email" },
+          { "field": "recorded_at", "within": { "last": "365d" } },
+          { "field": "age", "gte": 18 }
+        ]
+      },
+      "explain": false
+    }
+  ]
+}
