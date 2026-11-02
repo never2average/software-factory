@@ -53,13 +53,14 @@ export function businessMs(a: number, b: number): number {
 /** The instant reached after `ms` of business time from `t` (a weekend start waits for Monday 00:00 UTC). */
 export function addBusiness(t: number, ms: number): number {
   let cur = t, left = ms;
-  if (left <= 0) return t;
+  if (left <= 0) { let x = t; while (x === dayOf(x) && weekend(x)) x += DAY; return x; }
   while (left > 0) {
     const d = dayOf(cur);
     if (weekend(d)) { cur = d + DAY; continue; }
     if (cur === mondayOf(cur) && left > 5 * DAY) { const weeks = Math.floor((left - 1) / (5 * DAY)); cur += weeks * WEEK; left -= weeks * 5 * DAY; continue; }
     const avail = d + DAY - cur;
-    if (left <= avail) return cur + left;
+    // Ending as a Friday ends is the same business time as Monday 00:00: the deadline is then Monday's, never a weekend day.
+    if (left <= avail) { const end = cur + left; return weekend(dayOf(end)) ? addBusiness(dayOf(end) + DAY, 0) : end; }
     left -= avail;
     cur = d + DAY;
   }
