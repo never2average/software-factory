@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v1.app.schema.json",
+  "$comment": "An example mold_v1 app spec (schemas/examples/). Check it: python3 .claude/scripts/factory.py spec check schemas/examples/mold_v1.example.app.json",
+  "app_id": "example_desk",
+  "mold_id": "mold_v1",
+  "kind": "tool",
+  "audit": { "data": false, "platform": false },
+  "product": {
+    "name": "Example Desk",
+    "colour": "#1F6F5C",
+    "logo": "schemas/examples/example-logo.svg",
+    "tagline": "A research desk for your team"
+  },
+  "deploy": { "target": "vercel" },
+  "workspace": {
+    "name": "Example Team",
+    "owner": "owner@example.com",
+    "members": ["analyst@example.com"]
+  },
+  "capabilities": { "web_search": true, "browser": false, "multi_tenant": true },
+  "inference": { "provider": "cloudflare_workers_ai" },
+  "library": "none",
+  "dictation": { "model": "@cf/openai/whisper-large-v3-turbo" },
+  "packs": []
+}
