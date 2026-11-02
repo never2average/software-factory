@@ -23,6 +23,8 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   "run_charges",
   // mold_v0-197 the audit trails (src/audit-trail.ts, their only writer)
   "audit_data_events", "audit_platform_events",
+  // mold_v0-195 the signed checkpoints of the hash chains (src/ledger.ts)
+  "ledger_checkpoints",
   // mold_v0-004 the built-in sign-in's memberships and invitations (platform-only tables that carry org_id)
   "auth_memberships", "auth_invitations",
   // mold_v0-013 the built-in MCP authorization server's grants (a person in one workspace; platform-only, carries org_id)
