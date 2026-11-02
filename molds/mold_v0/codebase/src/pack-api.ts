@@ -59,6 +59,7 @@
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
  * that reaches only that workspace's rows).
  */
+import type { ClockView } from "./clock-math.js";
 import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
 import { hrefProblem, NOT_PLAIN } from "./landing.js";
@@ -103,6 +104,8 @@ export interface RecordRow {
    * declared is left out of `data`, the rest is shown as stored, and the next write must fit the declaration.
    */
   drift?: string[];
+  /** A clock area's deadlines (mold_v0-191, src/record-clocks.ts): each clock's due_at, status and whether it is overdue. */
+  clocks?: Record<string, ClockView>;
 }
 export interface RecordPage { records: RecordRow[]; next: string | null }
 export interface RecordInput { title?: string | null; data: Record<string, unknown>; version?: string | null }
@@ -585,6 +588,134 @@ export const AgentJobKindSchema = z.object({
   }
 });
 
+// ---------- clocks on a workspace area's records (mold_v0-191; src/clock-math.ts, src/record-clocks.ts) ----------
+
+/**
+ * A duration a clock counts: a whole number and a unit, `h` (hours) or `d` (calendar days), or `bd` (business days:
+ * Monday to Friday, UTC; a pause or a start on a weekend counts no business time). "90d", "10bd", "48h".
+ */
+export const CLOCK_DURATION = /^(0|[1-9][0-9]{0,4})(h|d|bd)$/;
+const clockDuration = z.string().regex(CLOCK_DURATION, 'a duration: a whole number then h (hours), d (calendar days) or bd (business days, Monday to Friday, UTC): "90d", "10bd", "48h"');
+/** Who a clock's reminder or escalation step tells: the record's assignee (the clock's `assignee` person field) or the workspace's people with a role. */
+export const CLOCK_AUDIENCE = ["assignee", ...DECLARABLE_ROLES] as const;
+const audience = z.array(z.enum(CLOCK_AUDIENCE)).min(1).max(5);
+const clockMatch = z.object({ field: name, in: z.array(choiceValue).min(1).max(20) }).strict();
+/**
+ * A clock (mold_v0-191): a deadline each record of a workspace area runs against, declared in pack.json, evaluated by
+ * the shell (src/record-clocks.ts) on reads and by the scheduler's clock check. No pack code.
+ *   starts          {field: a date field} (the record's own date), {event: "created"} (when the record was added) or
+ *                   {event: "entered", state} (when it last entered a state of the area's lifecycle). No start: no deadline
+ *   after           a duration, or {by: a single-choice enum field, values: {option: duration}, default?}: the deadline is
+ *                   the start plus it (one clock's durations are all calendar or all business time)
+ *   not_later_than  a date field: when the record holds a date there, the deadline is the earlier of the two
+ *   stops_when      {field, in, at?}: the clock stops (met, or missed when after the deadline) while the field holds one
+ *                   of these values; `at` names the date field that says when (else when the shell first saw it)
+ *   pauses_when     {field, in}: the clock does not run while the field holds one of these; the deadline moves out by the
+ *                   time paused (business time for a business-day clock)
+ *   assignee        a person field: who "assignee" is in `notify`
+ *   notify          who reminders and escalations tell by default (owners when absent)
+ *   soon            how long before the deadline a record is "due soon" (the first reminder's `before`, else 7d)
+ *   remind          steps before the deadline: {before, notify?}
+ *   escalate        steps once overdue, in order of `after` (time past the deadline, 0d: as soon as it is overdue): each
+ *                   tells `notify`, reassigns (`reassign`: copies the person in `from_field` into `field`) and/or raises
+ *                   (`raise`: moves a single-choice enum field to its next option, at most up to `to`)
+ * Every step is recorded as an event once per record and deadline (workspace_clock_events); a step tells people only
+ * through the shell's in-app notices and its email adapter (src/email.ts, the profile's due_dates group).
+ */
+export const ClockSchema = z.object({
+  name,
+  label: z.string().min(1).max(80),
+  starts: z.union([
+    z.object({ field: name }).strict(),
+    z.object({ event: z.literal("created") }).strict(),
+    z.object({ event: z.literal("entered"), state: choiceValue }).strict(),
+  ]),
+  after: z.union([clockDuration, z.object({ by: name, values: z.record(choiceValue, clockDuration), default: clockDuration.optional() }).strict()]),
+  not_later_than: name.optional(),
+  stops_when: z.object({ field: name, in: z.array(choiceValue).min(1).max(20), at: name.optional() }).strict().optional(),
+  pauses_when: clockMatch.optional(),
+  assignee: name.optional(),
+  notify: audience.optional(),
+  soon: clockDuration.optional(),
+  remind: z.array(z.object({ before: clockDuration, notify: audience.optional() }).strict()).max(5).optional(),
+  escalate: z.array(z.object({
+    after: clockDuration.default("0d"),
+    label: z.string().min(1).max(80).optional(),
+    notify: audience.optional(),
+    reassign: z.object({ field: name, from_field: name }).strict().optional(),
+    raise: z.object({ field: name, to: choiceValue.optional() }).strict().optional(),
+  }).strict()).max(8).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type Clock = z.output<typeof ClockSchema>;
+
+/** What is wrong with an area's clocks against its fields (each problem a message and the path under `clocks`). */
+export function clockProblems(a: { scope: string; fields: z.output<typeof field>[]; lifecycle?: z.output<typeof LifecycleSchema> }, clocks: Clock[]): { message: string; path: (string | number)[] }[] {
+  const out: { message: string; path: (string | number)[] }[] = [];
+  const bad = (message: string, ...path: (string | number)[]) => out.push({ message, path });
+  if (clocks.length && a.scope !== "workspace") bad("clocks run on a workspace's own records (workspace scope)");
+  if (clocks.length > 5) bad("at most 5 clocks on an area");
+  const f = (n: string) => a.fields.find((x) => x.name === n);
+  const isDate = (n: string) => f(n)?.type === "date";
+  const single = (n: string) => { const x = f(n); return !!x && x.type === "enum" && !x.multiple ? x : null; };
+  const unitOf = (d: string) => (d.endsWith("bd") ? "business" : "calendar");
+  for (const [i, c] of clocks.entries()) {
+    if (clocks.findIndex((x) => x.name === c.name) !== i) bad(`clock ${c.name} is declared twice`, i, "name");
+    if (f(c.name)) bad(`clock ${c.name} has the name of one of the area's fields`, i, "name");
+    if ("field" in c.starts && !isDate(c.starts.field)) bad("starts.field must name one of the area's date fields", i, "starts", "field");
+    if ("state" in c.starts) {
+      const lf = a.lifecycle ? single(a.lifecycle.field) : null;
+      if (!lf) bad("starts {event: entered} needs the area's lifecycle", i, "starts");
+      else if (!optionValues(lf).includes(c.starts.state)) bad(`${c.starts.state} is not a state of the area's lifecycle`, i, "starts", "state");
+    }
+    const durations = typeof c.after === "string" ? [c.after] : [...Object.values(c.after.values), ...(c.after.default ? [c.after.default] : [])];
+    if (typeof c.after !== "string") {
+      const by = single(c.after.by);
+      if (!by) bad("after.by must name one of the area's single-choice enum fields", i, "after", "by");
+      else for (const k of Object.keys(c.after.values)) if (!optionValues(by).includes(k)) bad(`${k} is not one of ${by.name}'s options`, i, "after", "values", k);
+      if (!Object.keys(c.after.values).length) bad("after.values names at least one option", i, "after", "values");
+    }
+    if (new Set(durations.map(unitOf)).size > 1) bad("a clock's durations are all calendar time (h, d) or all business days (bd)", i, "after");
+    if ((c.remind ?? []).some((r) => unitOf(r.before) !== unitOf(durations[0] ?? "0d")) || (c.escalate ?? []).some((e) => unitOf(e.after) !== unitOf(durations[0] ?? "0d")) || (c.soon && unitOf(c.soon) !== unitOf(durations[0] ?? "0d")))
+      bad("reminders, escalations and soon count the clock's own kind of time (calendar or business days)", i);
+    if (c.not_later_than !== undefined && !isDate(c.not_later_than)) bad("not_later_than must name one of the area's date fields", i, "not_later_than");
+    for (const k of ["stops_when", "pauses_when"] as const) {
+      const m = c[k];
+      if (!m) continue;
+      const x = f(m.field);
+      if (!x || x.multiple || !["enum", "text", "boolean"].includes(x.type)) bad(`${k}.field must name one of the area's single enum, text or boolean fields`, i, k, "field");
+      else if (x.type === "enum") for (const v of m.in) if (!optionValues(x).includes(v)) bad(`${v} is not one of ${x.name}'s options`, i, k, "in");
+      if (x?.type === "boolean") for (const v of m.in) if (v !== "true" && v !== "false") bad(`a boolean field holds true or false, not ${v}`, i, k, "in");
+    }
+    if (c.stops_when?.at !== undefined && !isDate(c.stops_when.at)) bad("stops_when.at must name one of the area's date fields", i, "stops_when", "at");
+    if (c.stops_when && c.pauses_when && c.stops_when.field === c.pauses_when.field && c.stops_when.in.some((v) => c.pauses_when!.in.includes(v)))
+      bad("a value cannot both stop and pause the clock", i, "pauses_when", "in");
+    const person = (n: string) => { const x = f(n); return !!x && x.type === "person" && !x.multiple; };
+    if (c.assignee !== undefined && !person(c.assignee)) bad("assignee must name one of the area's single person fields", i, "assignee");
+    const tells = [c.notify ?? [], ...(c.remind ?? []).map((r) => r.notify ?? []), ...(c.escalate ?? []).map((e) => e.notify ?? [])].flat();
+    if (tells.includes("assignee") && c.assignee === undefined) bad("notify names the assignee: declare the clock's assignee field", i, "assignee");
+    const befores = (c.remind ?? []).map((r) => r.before);
+    if (new Set(befores).size !== befores.length) bad("two reminders at the same time", i, "remind");
+    const ms = (d: string) => Number(d.replace(/\D+$/, "")) * (d.endsWith("h") ? 1 : 24);
+    for (const [j, e] of (c.escalate ?? []).entries()) {
+      if (!e.notify && !e.reassign && !e.raise) bad("an escalation step notifies, reassigns or raises", i, "escalate", j);
+      if (j > 0 && ms(e.after) <= ms(c.escalate![j - 1]!.after)) bad("escalation steps are in order of after, each later than the one before", i, "escalate", j, "after");
+      if (e.reassign) {
+        if (!person(e.reassign.field)) bad("reassign.field must name one of the area's single person fields", i, "escalate", j, "reassign", "field");
+        if (!person(e.reassign.from_field)) bad("reassign.from_field must name one of the area's single person fields", i, "escalate", j, "reassign", "from_field");
+      }
+      if (e.raise) {
+        const x = single(e.raise.field);
+        if (!x) bad("raise.field must name one of the area's single-choice enum fields", i, "escalate", j, "raise", "field");
+        else if (e.raise.to !== undefined && !optionValues(x).includes(e.raise.to)) bad(`${e.raise.to} is not one of ${x.name}'s options`, i, "escalate", j, "raise", "to");
+        if (x && a.lifecycle?.field === x.name) bad("raise cannot move the lifecycle's field (only a move does)", i, "escalate", j, "raise", "field");
+        if (typeof c.after !== "string" && c.after.by === e.raise.field) bad("raise cannot change the field the clock's duration is chosen by (its deadline would move with every step)", i, "escalate", j, "raise", "field");
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
  * across every pack in a build (they are the `area` of the MCP tools and the path of the console pages). A `link`
@@ -632,6 +763,8 @@ export const RecordAreaSchema = z.object({
     within_days: z.number().int().min(0).max(365).default(7),
     notify: z.array(z.enum(["owner", "billing", "member", "viewer"])).min(1).max(4).default(["owner"]),
   }).strict().optional(),
+  /** Deadlines its records run against, with reminders and escalation (mold_v0-191; ClockSchema above). */
+  clocks: z.array(ClockSchema).max(5).optional(),
   /**
    * Example records of a shared (platform) area (mold_v0-170), for the test lanes only: the lane world
    * (molds/mold_v0/testing/console/world.mts) writes them into its throwaway database, so the area's console pages are
@@ -665,6 +798,7 @@ export const RecordAreaSchema = z.object({
   }
   if (a.due && !(a.role === "check" && a.scope === "workspace")) bad("due is for a check area of workspace scope (each workspace's own dates)", "due");
   if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
+  for (const p of clockProblems(a, a.clocks ?? [])) bad(p.message, "clocks", ...p.path);
   const p = a.permissions;
   if (p) for (const k of ["create", "update", "move", "delete"] as const) {
     if (a.scope === "platform" && p[k]) bad(`a shared (platform) area is written by platform staff only: declare read alone`, "permissions", k);
@@ -959,6 +1093,8 @@ export const MetricSchema = z.object({
     unit: z.enum(["days", "hours"]).default("days"),
   }).strict().optional(),
   where: z.array(MetricConditionSchema).max(10).optional(),
+  /** Only the records whose clock (mold_v0-191) is in one of these states: overdue, due_soon, on_track, paused, met, missed, not_started. */
+  clock: z.object({ name, is: z.array(z.enum(["overdue", "due_soon", "on_track", "paused", "met", "missed", "not_started"])).min(1).max(7) }).strict().optional(),
   group_by: z.union([fieldRef, z.object({ due: name, soon_days: z.number().int().min(1).max(365).default(7) }).strict()]).optional(),
   group_by_list: z.enum(["first", "each"]).optional(),
   by_time: z.object({
@@ -1705,8 +1841,12 @@ function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
       if (r.kind === "workspace_files" && a.scope !== "workspace") out.push(`record area ${a.name}: a workspace_files repository feeds a workspace's own areas (scope workspace)`);
       if (r.kind === "upstream_catalog" && a.scope !== "platform") out.push(`record area ${a.name}: an upstream catalog feeds shared areas (scope platform)`);
       if (r.kind === "http_api" && r.credential && a.scope !== "workspace") out.push(`record area ${a.name}: an API read with a workspace's credential feeds a workspace's own areas`);
+      if (r.kind === "http_api" && ((a as { clocks?: unknown[] }).clocks ?? []).length) out.push(`record area ${a.name} is read live from an API: its rows are not kept, so it cannot have clocks`);
       if ((READ_ONLY_KINDS as readonly string[]).includes(r.kind)) {
         if (a.lifecycle) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot have a lifecycle`);
+        // mold_v0-191: a clock's escalation writes the record (reassign, raise): not on a read-only area.
+        for (const c of ((a as { clocks?: Clock[] }).clocks ?? [])) if ((c.escalate ?? []).some((e) => e.reassign || e.raise))
+          out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): clock ${c.name} cannot reassign or raise (it would write the record)`);
         for (const k of ["create", "update", "move", "delete"] as const) if (a.permissions?.[k]) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot declare ${k}`);
       }
     }

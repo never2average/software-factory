@@ -110,7 +110,31 @@ const live = () => import("./data-repositories.js");
  * platform). A query that has left that scope (a callback that lost it, a write to another workspace) is refused, never
  * run outside the transaction.
  */
-const txScope = new AsyncLocalStorage<{ tx: Queryable; orgId: number | null }>();
+const txScope = new AsyncLocalStorage<{ tx: Queryable; orgId: number | null; changes?: RecordChange[] }>();
+
+// ---------- record changes (mold_v0-193: the developer surface's record events) ----------
+
+/** A workspace record that was written: told to the listeners after it is stored (after its batch commits). */
+export interface RecordChange {
+  orgId: number; pack: string; area: string; key: string;
+  change: "created" | "updated" | "state_changed" | "deleted";
+  record: RecordRow | null; from?: unknown; to?: unknown;
+}
+const changeListeners: ((c: RecordChange) => unknown)[] = [];
+/** Hear every workspace record change (src/developer-webhooks.ts). None is registered in a build without a developer surface. */
+export const onRecordChange = (fn: (c: RecordChange) => unknown) => void changeListeners.push(fn);
+const tell = async (list: RecordChange[]) => {
+  for (const c of list) for (const fn of changeListeners) {
+    try { await fn(c); } catch (e) { console.error(`record change listener: ${(e as Error).message}`); }
+  }
+};
+/** A change: told now, or, inside a batch, once the batch has committed (a batch rolled back tells nothing). */
+async function changed(c: RecordChange) {
+  if (!changeListeners.length) return;
+  const t = txScope.getStore();
+  if (t) { (t.changes ??= []).push(c); return; }
+  await tell([c]);
+}
 async function q(): Promise<Queryable> {
   const t = txScope.getStore();
   if (!t) return getDb();
@@ -374,16 +398,26 @@ async function getWorkspace(orgId: number, area: RecordArea, key: string): Promi
  * One workspace's view of an area: a platform area's shared rows, or the workspace's own rows of a workspace area. With
  * an actor (the person asking), the area's read permission is checked first (mold_v0-057).
  */
-export const listFor = (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR) => {
+export const listFor = async (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR): Promise<RecordPage> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  return a.scope === "platform" ? listPlatform(a, opts) : listWorkspace(orgId, a, opts);
+  if (a.scope === "platform") return listPlatform(a, opts);
+  const page = await listWorkspace(orgId, a, opts);
+  return hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
 };
-export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) => {
+export const getFor = async (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  return a.scope === "platform" ? getPlatform(a, key) : getWorkspace(orgId, a, key);
+  if (a.scope === "platform") return getPlatform(a, key);
+  const r = await getWorkspace(orgId, a, key);
+  return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
 };
+/**
+ * Clocks (mold_v0-191, src/record-clocks.ts): a workspace area's records carry their deadlines on every read, except
+ * inside a batch's transaction (its writes' answers are the store's own) and for an area read live from an API.
+ */
+const hasClocks = (a: RecordArea) => (a.clocks?.length ?? 0) > 0 && !isLive(a) && !txScope.getStore();
+const clocks = () => import("./record-clocks.js");
 
 /**
  * A record and the records its links and references name (in the same workspace for a workspace area), as one
@@ -405,7 +439,9 @@ export async function detailFor(orgId: number, name: string, key: string, actor:
     const found = (await auditQuiet(() => Promise.all(wanted.map((k) => getFor(orgId, target.name, k, actor))))).filter((r): r is RecordRow => !!r);
     links.push({ field: l.field, area: target.name, records: found.map((r) => ({ key: r.key, title: r.title })) });
   }
-  return { area: areaSummary(area), record, links };
+  // A clock area's record page shows what its clocks did (mold_v0-191): the latest events, newest first.
+  const clockEvents = hasClocks(area) ? { clock_events: await (await clocks()).clockEvents(orgId, area, record.key) } : {};
+  return { area: areaSummary(area), record, links, ...clockEvents };
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -480,7 +516,11 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   assertMay(area, prev ? "update" : "create", actor);
   const given = value?.data;
   const t = title(value?.title);
-  if (!area.lifecycle) return writeRow(orgId, area, key, t, await checkRecord(area, given, orgId, actor), prev, meta);
+  if (!area.lifecycle) {
+    const r = await writeRow(orgId, area, key, t, await checkRecord(area, given, orgId, actor), prev, meta);
+    await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
+    return r;
+  }
   // A lifecycle (mold_v0-057): a new record starts in its initial state; a write never changes the state.
   const field = area.lifecycle.field;
   const asked = given && typeof given === "object" && !Array.isArray(given) ? (given as Record<string, unknown>)[field] : undefined;
@@ -493,7 +533,9 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   delete rest[field];
   const data = await checkRecord(area, rest, orgId, actor, undefined, [field]);
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
-  return writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, meta);
+  const r = await writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, meta);
+  await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
+  return r;
 }
 
 /** The moves a record in `from` may make, in words (a refusal's second sentence). */
@@ -521,7 +563,9 @@ async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: st
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, null, "move");
+  const r = await writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, null, "move");
+  await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to });
+  return r;
 }
 
 async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
@@ -534,6 +578,7 @@ async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: 
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
     [orgId, area.pack, area.name, checkKey(key), source])).length > 0);
   if (gone) auditData(orgId, { action: "delete", pack: area.pack, area: area.name, key });
+  if (gone) await changed({ orgId, pack: area.pack, area: area.name, key, change: "deleted", record: null });
   return gone;
 }
 
@@ -611,8 +656,11 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   if (txScope.getStore()) throw new Error("a batch inside a batch: refused");
   // The data key is loaded before the transaction: sealing and opening inside it then need no other query.
   if (orgId !== null) await ensureOrgKey(orgId);
-  const run = async () => (await getDb()).transaction((tx) => txScope.run({ tx, orgId }, fn));
-  return orgId === null ? asPlatform(run) : withTenant(orgId, run);
+  const scope: { tx: Queryable; orgId: number | null; changes?: RecordChange[] } = { tx: null as unknown as Queryable, orgId };
+  const run = async () => (await getDb()).transaction((tx) => txScope.run(Object.assign(scope, { tx }), fn));
+  const out = await (orgId === null ? asPlatform(run) : withTenant(orgId, run));
+  if (scope.changes?.length) await tell(scope.changes);
+  return out;
 }
 
 async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
@@ -721,6 +769,9 @@ export const areaSummary = (a: RecordArea) => ({
   ...(isSealedArea(a) ? { sealed: true } : {}),
   // mold_v0-057: the lifecycle and who may do what (each action's roles, never wider than the platform's).
   ...(a.lifecycle ? { lifecycle: a.lifecycle } : {}),
+  // mold_v0-191: the clocks its records run against (what each counts from, its durations, its steps).
+  ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label, starts: c.starts, after: c.after, ...(c.not_later_than ? { not_later_than: c.not_later_than } : {}),
+    ...(c.stops_when ? { stops_when: c.stops_when } : {}), ...(c.pauses_when ? { pauses_when: c.pauses_when } : {}) })) } : {}),
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),
 });
 
@@ -755,7 +806,9 @@ export function recordTools(): PackTool[] {
         const cols = areaSummary(area).list_columns;
         return {
           area: area.name, label: area.label, role: area.role, scope: area.scope,
-          records: page.records.map((r) => ({ key: r.key, title: r.title, ...Object.fromEntries(cols.map((c) => [c, r.data[c] ?? null])) })),
+          records: page.records.map((r) => ({ key: r.key, title: r.title, ...Object.fromEntries(cols.map((c) => [c, r.data[c] ?? null])),
+            // mold_v0-191: a clock area's records say when each is due and whether it is overdue.
+            ...(r.clocks ? { due: Object.values(r.clocks).map((v) => ({ clock: v.name, status: v.status, due_at: v.due_at, overdue: v.overdue })) } : {}) })),
           next: page.next,
         };
       },

@@ -19,6 +19,7 @@ import { auditDataMapRows, auditSettings } from "./audit-trail.js";
 import { DEPLOY_FACTS } from "./deploy-facts.generated.js";
 import { packs, type InstalledPack } from "./packs.js";
 import { PROFILE, type Profile } from "./profile.js";
+import { developerSurface } from "./developer-surface.js";
 import { hasSourceSection, LICENSOR_EXCEPTION_TEXT, sourceOffer, type SourceOffer, type SourceOfferSetting } from "./source-offer.js";
 
 /** deploy-facts.json, as scripts/gen-packs.mjs checks it (names, places and providers; never a value). */
@@ -173,6 +174,12 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
       const rr = r as { kind: string; base_url?: string; egress?: string[]; upstream?: { repo: string; commit: string } | string; index?: string };
       if (rr.kind === "http_api") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server reads ${hostOf(rr.base_url ?? "")} live (allowed hosts: ${list(rr.egress ?? [])})` });
       if (rr.kind === "upstream_catalog" && typeof rr.upstream === "object") rows.push({ item: `Repository ${code(n)} (${p.manifest.name})`, detail: `this server fetches ${rr.upstream.repo} at commit ${code(rr.upstream.commit)} ${rr.index === "manual" ? "when platform staff index it" : "when it indexes it: by itself at a new pin (mold_v0-128), and when platform staff index it"}` });
+    }
+    // The developer surface of an embedded app (mold_v0-193): where its events go, and what may write in.
+    const dev = developerSurface();
+    if (dev) {
+      rows.push({ item: "Webhooks out", detail: `this server POSTs the events ${list(dev.events.map((e) => e.name))} of a workspace, signed (Standard Webhooks), to the https addresses that workspace's owners add, never to a private address; a sealed area's events carry its record keys only` });
+      if (dev.webhooks_in?.length) rows.push({ item: "Webhooks in", detail: `senders a workspace sets up post signed payloads that are written into its own ${list([...new Set(dev.webhooks_in.map((r) => r.area))])} records` });
     }
     if (!rows.length) rows.push({ item: "Runs", detail: "this build declares no job kind and no outside repository" });
     sections.push({ id: "egress", title: "Egress: the hosts runs and repositories may reach", rows });

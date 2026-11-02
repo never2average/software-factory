@@ -13,7 +13,7 @@
  * Credentials are write-only: set or replaced, never returned (no part of them: the console shows "Set", when and by
  * whom). Each is sealed with the workspace's data key (src/orgcrypto.ts sealBytes, AES-256-GCM, the key wrapped by the
  * vault's master key) and bound by additional data to its workspace and its slot, so a sealed value moved to another row
- * or workspace does not open. The tables (sql/migrations/0033_company_email.sql) have no grant for tenant work (a
+ * or workspace does not open. The tables (sql/migrations/0034_company_email.sql) have no grant for tenant work (a
  * pack's code never reads them) and no admin route, admin MCP tool, operator script or log line shows a workspace's
  * settings, credentials or mail: the platform operator never sees them. Errors are kept with the secret cut out.
  */

@@ -119,6 +119,9 @@ const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
 const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "account-context-words.ts")).href);
 // The journeys and tips components' words (mold_v0-143): plain TypeScript with no imports.
 const { JOURNEY_WEB_WORDS, TIP_WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "journeys-words.ts")).href);
+// The developer surface's catalog and build checks (mold_v0-193): plain TypeScript with no imports.
+const { developerSurfaceProblems, LATEST_API_VERSION } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-config.ts")).href);
+const { developerGuidePages } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-docs.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -175,7 +178,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the journeys and in-chat tips components, turned on (mold_v0-143, src/journeys.ts, src/tips.ts; PACK_CONFIG, JOURNEYS and TIPS)
   "journeys", "tips",
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
-  "texts"]);
+  "texts",
+  // the developer surface of an embedded app (mold_v0-193, src/developer-config.ts; PACK_CONFIG and the guide's Developers pages)
+  "developer_surface"]);
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
@@ -1300,10 +1305,10 @@ if (loaded.length === entries.length) {
 // (src/shell-tools.ts, mold_v0-067: refused here at build, not only when the server starts). The tools the settings
 // withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
-const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, INTAKE_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
+const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, CLOCK_TOOL_NAMES = [], INTAKE_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
 const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
-  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...INTAKE_TOOL_NAMES];
+  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES, ...INTAKE_TOOL_NAMES];
   const own = new Map();
   // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
   const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
@@ -1385,7 +1390,7 @@ const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []
 const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type === "reference" && !(a.links ?? []).some((l) => l.field === f.name)).map((f) => ({ field: f.name, area: f.to }))];
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
-const dueAreaCount = recordAreas.filter((a) => a.due).length;
+const dueAreaCount = recordAreas.filter((a) => a.due || a.clocks?.length).length; // due dates and clocks (mold_v0-191) post notices
 /** Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner. */
 const privateNetworkKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
 /**
@@ -1671,6 +1676,8 @@ const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
 /** The pack that declares the connect guide (mold_v0-171), once checked. */
 let connectOwner = null;
+/** The pack that declares the developer surface (mold_v0-193) and its declaration, once checked; null: off. */
+let developerOwner = null, developerFacts = null;
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
   const groups = new Map(SHELL_GROUPS.map((g) => [g, "the shell"])), keys = new Map(), reworded = new Map();
@@ -1781,6 +1788,16 @@ let connectOwner = null;
         const { $comment: _c, ...rest } = j.connect_page;
         c.connect_page = rest;
       }
+    }
+    // The developer surface of an embedded app (mold_v0-193, src/developer-config.ts): one pack's per build, checked
+    // against the build's record areas.
+    if (j.developer_surface !== undefined) {
+      const { $comment: _c, ...rest } = j.developer_surface;
+      const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
+      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })));
+      for (const b of bad) fail(at, `developer_surface.${b}`);
+      if (developerOwner) fail(at, `developer_surface: pack ${developerOwner} declares the developer surface too: one pack's`);
+      else if (!bad.length) { developerOwner = p.id; developerFacts = cfg; c.developer_surface = cfg; }
     }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
@@ -2214,12 +2231,14 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */\n" +
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
-  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n}\n\n" +
+  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
+  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
-    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null })))};\n\n` +
+    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
+    ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name)) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
@@ -2320,6 +2339,12 @@ function packGuideData() {
   const startOf = (pack, kind) => tools.find((t) => t.pack === pack && t.op === "start" && t.kind === kind)?.name ?? null;
   const kinds = facts.flatMap(({ p, f }) => (f?.kinds ?? []).map((k) => ({ pack: p.id, ...k, start: startOf(p.id, k.name) })));
   const offered = kinds.filter((k) => k.start);
+  // The developer surface's pages (mold_v0-193, src/developer-docs.ts), group Developers: only when a pack declares it.
+  if (developerFacts) for (const pg of developerGuidePages(developerFacts, recordAreas.filter((a) => !listWithheld(a.name)), kinds, developerFacts.api_version ?? LATEST_API_VERSION)) {
+    if (seen.has(pg.slug)) { fail(`packs/${developerOwner}/pack.json`, `developer_surface: the guide page ${JSON.stringify(pg.title)} is at the same address as pack ${seen.get(pg.slug)}'s (/app/docs/${pg.slug})`); continue; }
+    seen.set(pg.slug, developerOwner);
+    pages.push(pg);
+  }
   const credentialLabel = (pack, name) => facts.find((x) => x.p.id === pack)?.f?.credentials.find((c) => c.name === name)?.label ?? name;
   const kindLabel = (k) => k.label ?? k.name.replace(/_/g, " ");
   const label = (s) => s.charAt(0).toUpperCase() + s.slice(1);

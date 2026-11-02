@@ -795,7 +795,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,
   else `PUBLIC_URL`; anything but a plain http(s) address is ignored).
 - **The company's own email** (mold_v0-192, built; `src/company-email.ts`, `src/email-intake.ts`, `src/mail-protocols.ts`,
-  `src/email-routes.ts`, `src/company-email-config.ts`, `sql/migrations/0033_company_email.sql`; `npm run test:company-email`).
+  `src/email-routes.ts`, `src/company-email-config.ts`, `sql/migrations/0034_company_email.sql`; `npm run test:company-email`).
   A pack turns it on with pack.json `email` (or `definePack({ email })`): `sender: { allow: true }` and/or `intake: { area,
   label, folder ("INBOX"), fields: { subject, from, from_name, from_domain, to, cc, date, received_at, body, attachments,
   attachment_count, mailbox, message_id → the area's fields }, set: { field: constant }, body_chars, backfill_days,
@@ -1729,6 +1729,53 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and its spend counting is the limits tickets', 053/008/018); the run engine's per-workspace cap is a count then an
   insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
   Vercel).
+- **Clocks, reminders and escalation** (mold_v0-191, built; `src/clock-math.ts`, `src/record-clocks.ts`,
+  `sql/migrations/0032_record_clocks.sql`; `npm run test:record-clocks`). A workspace area declares `clocks` in pack.json
+  (at most 5; `src/pack-api.ts` `ClockSchema`, checked at build by `clockProblems`), with no pack code: a deadline each record
+  runs against. `starts` is one of its date fields, `{event: "created"}` or `{event: "entered", state}` (its lifecycle's
+  `$state_at`); `after` a duration (`"90d"`, `"48h"`, `"10bd"`: business days, Monday to Friday UTC) or `{by: a single-choice
+  enum, values: {option: duration}, default?}`; `not_later_than` a date field that caps it (the earlier wins); `stops_when`
+  `{field, in, at?}` (met when it stopped by the deadline, missed after; `at` a date field saying when, else the lifecycle's
+  time for its field, else when the check saw it); `pauses_when` `{field, in}` (the deadline moves out by the time paused,
+  business time for a business-day clock, exactly from the lifecycle's times when the field is its field); `assignee` a
+  person field; `notify` the roles (and `assignee`) told by default (owners); `soon` (the first reminder's `before`, else
+  7d); `remind` `[{before, notify?}]`; `escalate` `[{after, label?, notify?, reassign?: {field, from_field}, raise?: {field,
+  to?}}]` in order of `after` (time past the deadline). Refused at build: a start that is not a date, mixed calendar and
+  business time, an assignee not declared or not a single person field, steps out of order or doing nothing, raising the
+  field the duration is chosen by (its deadline would move with every step) or the lifecycle's field, a clock on a shared
+  area or on an area read live from an API, reassign or raise on a read-only (repository) area, a clock named like a field.
+  **What the shell keeps** (`workspace_record_clocks`: per record and clock, the status and deadline last seen, the time
+  paused, when the current pause began, when it stopped) and **what happened** (`workspace_clock_events`, append-only:
+  started, paused, resumed, stopped, reopened, `remind:<i>`, `escalate:<j>`, each once per record, clock and deadline by its
+  unique key, with what it did: who it told, a person reassigned or a value raised). Both under `tenant_isolation`: the check
+  runs one workspace at a time inside that workspace's tenant scope, so it reads its own records and writes its own clock rows
+  and events only (the tenant role may insert and update clock rows, insert events, never change or delete one; `check:rls`
+  probes A writing B's). **The check** (`clockCheck(now)`, from the scheduler's tick, `src/schedules.ts` `schedulerTick`, at
+  most every 15 minutes: `scheduler_marks` `record_clocks`): each record's clock observed (`observe`: its view, the memory to
+  keep, what changed), every change and every step due (`stepsDue`: a reminder once the deadline is within its `before`, an
+  escalation once overdue for its `after`; nothing while not started, paused or stopped) recorded once; a record first seen
+  with several steps due does every one (their changes too) and tells only the latest, so nobody gets a pile of old
+  reminders. A step tells people only through the shell's own paths: one in-app notice per record and deadline
+  (`workspace_notices` kind `clock`, raised again by each step, its latest step in words on Notices) and one email per person
+  of the workspace (`src/email.ts` `clockSteps`, kind `clock_step` in the profile's `due_dates` group: off unless the profile
+  lists it; owners by role, the assignee when they are a member; a sealed record named by its key). Reassign and raise write
+  through the record store as the shell (the area's fields and lifecycle rules apply; a refusal is recorded as
+  `<step>:failed`). Running it again, or several at once, does nothing more. Sealed areas are opened with the workspace's
+  key in its scope; with the key vault locked they are skipped and counted. **Where it shows:** every read of a clock area's
+  records (`listFor`/`getFor`, so `/api/records`, the data API, `list_records`/`get_record` and the generated tools) carries
+  `clocks` `{name: {status, due_at, due_on, overdue, overdue_days, ...}}`, computed at the read from the record and what
+  the shell kept (the same function as the check, so a page shows what the check records); `list_records` rows add `due`;
+  the record page shows each deadline and the clock's history (`clock_events`); the console's tables
+  (`web/src/features/records/clocks.tsx`, every customer list of the area and its tabs) add a column per clock (its date and
+  a status badge), its status as a filter and an **Overdue** toggle with the count above the table; `list_due_records`
+  (the shell's MCP tool, only with a clock area: `src/shell-tools.ts` `CLOCK_TOOL_NAMES`) lists a workspace's records by a
+  clock's status, soonest first (overdue and due soon by default); a metric may filter by a clock's status (`clock: {name,
+  is: [...]}`, counted in code over the opened rows, as a sealed area's); a list tab over a clock area shows **Overdue**
+  as its second default card. Zero packs and builds without a clock: no tool, no column, no check (the MCP surface hash is
+  unchanged). Rolling back: `sql/rollback/0032_record_clocks.sql` (the clock notices and both tables go, the notices' kind
+  check is 0008's again). **Not covered:** holiday calendars and time zones (business days are Monday to Friday, UTC); a
+  pause by a field that is not the lifecycle's is timed when the check sees it (at most 15 minutes late); per-person
+  in-app notices (a notice is the workspace's, shown to whoever may read the area).
 - **Host packs** (mold_v0-039, built; `src/host.ts`, `src/pack-host.ts`, `src/hosts.ts`; the console's
   `web/src/features/packs/host-web.ts`; `orchestrator/main.ts`). A product whose surface is more than declarations and
   pack tools (the shell's first product, `octillion`) is a **host pack**: its pack.json names `host.entry` (a module whose
@@ -1867,6 +1914,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path); `github_app: true` for a GitHub repository token a connected GitHub App replaces, or `oauth: "<provider>"` for one connected through an OAuth provider (mold_v0-014) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `oauth_providers` (`oauthProviders`) | OAuth 2.0 providers the pack's credential fields connect to: sign-in, token and revoke addresses, scopes, the client id and secret by key-vault label, PKCE | credentials connected through OAuth (mold_v0-014, built): the Credentials page's Connect, tokens sealed and refreshed, `/admin/keys` lists providers and connections |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
+| `clocks` (on `record_areas`) | deadlines per record: a start, a duration (by a field's value), a cap, stops and pauses, reminders and escalation steps | due dates, statuses and an Overdue filter on every list and record, notices and emails at each step, reassign and raise through the store, `list_due_records`, metrics by status (mold_v0-191, built: `src/record-clocks.ts`) |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id (a host pack's under their own names: `host.schema`, mold_v0-049); every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
@@ -2341,6 +2389,69 @@ page when there is one (mold_v0-138) and the legal pages the console serves itse
 attached), as are the icons' and share image's absolute URLs. The factory's intake asks a new app for the company (the
 brief's `## Profile` `legal.*` lines, or one question; `later` leaves the pages off; docs/INTAKE.md). The lanes grade
 `/terms` and `/privacy` only when the build serves them (`testing/console/surface.mts`).
+
+**Developer surface (mold_v0-193; an app of kind `embedded`).** On in a build where one pack's pack.json declares
+`developer_surface` (`src/developer-config.ts`: `events`, `sdk_languages`, `client_sessions` {ttl_seconds,
+allowed_origins, scopes}, optional `webhooks_in` and `api_version`; checked by `gen-packs.mjs` against the build's record
+areas, one pack's per build, carried to the server as `PACK_CONFIG`). The factory writes it there from the app spec
+(`mint.py new --spec`: the spec's `developer_surface` into the first inline pack; docs/APP_SPEC.md). Off, in every
+`kind: tool` app, nothing of it is mounted, read or queued: no `/v1`, no `/openapi.json`, no `/api/developer`, the MCP
+surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP hash is unchanged). What it gives:
+
+- **The API** (`src/developer-api.ts`, `/v1`): every record area's list (cursor pages), get, create, replace, move,
+  delete and `/v1/batch` through the generic data API (the record store's rules), runs (start, list with a keyset
+  cursor, get, results, cancel), client sessions, allowed origins, webhook endpoints and deliveries, inbound sources.
+  Errors are `application/problem+json` (`type` `/problems/<code>`, `title`, `status`, `detail`, `code`, `request_id`);
+  `API-Version` (dated, `API_VERSIONS`; a key is pinned to the version current when it was made); `Idempotency-Key` on
+  writes (24 hours, per credential, the first answer replayed byte for byte with `Idempotent-Replayed: true`, another
+  request with the key 422); rate limits per key (or client session) and per workspace a minute (the MCP front door's
+  numbers, `src/rate-limits.ts`), 429 with `Retry-After`.
+- **The description** (`src/developer-openapi.ts`, `/openapi.json`): OpenAPI 3.1 generated from the pack contract (each
+  area's paths and typed schemas: enums, references, lifecycle states; shared and repository-fed areas read only;
+  withheld operations left out; job kinds; the declared events as OpenAPI `webhooks`), each operation with `x-sdk`
+  {group, method}. Checks (mold_v0-196) are record areas of role check today and appear as such. The customer guide gets
+  a Developers group from it (`src/developer-docs.ts`, written by gen-packs into `PACK_GUIDE`, so `/app/docs` and the
+  docs answers' corpus carry it).
+- **SDKs** (`npm run gen:sdks`, `scripts/gen-sdks.ts`, `scripts/lib/sdk-gen.ts`): from the build or a running server's
+  `/openapi.json`, into `dist/sdk/` (git-ignored): one JavaScript/TypeScript package (ESM with its `.d.ts`, no build step
+  or dependency) and one Python package (standard library, TypedDicts), each sending an Idempotency-Key per write and
+  retrying safely, errors as `ApiError` with the problem's `code`. `--publish-dry-run` shows what `npm pack` and the
+  Python package would hold; publishing is the operator's own step with their yes, never from here.
+- **Keys** (`src/developer-keys.ts`, `developer_keys`): a workspace's keys for its own servers, made by its owners on
+  `/api/developer/keys` (`src/developer-routes.ts`): `sk_`, shown once (the sha256 kept, and the first 9 characters to
+  tell keys apart), scopes (`read`, `write`, `run`, `sessions`, `webhooks`; the first three narrowable to an area or kind:
+  `read:<area>`), an expiry or none, revocation, rotation (the old key kept for a grace of 0 to 168 hours, 24 by default),
+  integration keys holding exactly one scope. Never accepted on `/mcp` (the MCP keys, `oct_`, are unchanged). Per request:
+  `X-Scope` narrows to fewer scopes; `X-Actor` (keys only) names the backend's signed-in user the call is for, recorded
+  as the actor on the platform audit hook and on the events the call causes.
+- **Client sessions** (`src/developer-sessions.ts`): `cs_` tokens a backend mints with a key holding `sessions`
+  (`POST /v1/client_sessions` {subject, scopes, ttl_seconds}): at most the app's ttl and session scopes and never beyond
+  the minting key's; the subject is the actor; revocable, and dead with their key. A browser calls only from an origin
+  allowed for the session's workspace (the app's `allowed_origins` and the workspace's own, `/v1/allowed_origins`);
+  a key sent with an `Origin` is refused (`secret_key_in_browser`).
+- **Webhooks out** (`src/developer-webhooks.ts`, Standard Webhooks): endpoints with a `whsec_` signing secret (sealed with
+  the workspace's data key; answered when made or rotated; read again only through the audited reveal, counted on the
+  endpoint and handed to the audit hook; a rotation signs with both secrets for its grace). Events: record created,
+  updated, state changed and deleted (`src/record-areas.ts` `onRecordChange`, told after a batch commits, nothing for
+  one rolled back; a sealed or asset area's events carry its key only), `run.finished` (the runs that ended, scanned by
+  the tick: `src/runs.ts` untouched), `clock.overdue` (`src/record-clocks.ts` calls `emitEvent` when a clock goes overdue, once per record, clock and deadline) and the test
+  ping. Each delivery is POSTed signed within 15 seconds, no redirect, never to a private address (a preview server also
+  takes localhost); retried after 5 s, 5 min, 30 min, 2, 5, 10 and 10 h with every attempt in its log; an endpoint whose
+  last 30 attempts failed is disabled until enabled again. A server ticks every 15 seconds; Vercel's cron ticks it.
+- **Webhooks in** (`src/developer-inbound.ts`): a workspace adds a source for a pack-declared receiver and gets its
+  address (`/v1/inbound/<id>`) and secret; a payload verified by its Standard Webhooks signature (5 minutes' tolerance)
+  is written into the receiver's workspace area, one record per item (JSON Pointers for key, title and fields), as one
+  batch, once per `webhook-id`.
+- **The audit hook** (`src/developer-audit.ts`): every API request (credential, actor, scopes, status, request id) and
+  every key and secret action is handed to `setPlatformAuditSink`, which the platform audit trail (mold_v0-197)
+  registers; without it nothing is written.
+
+Tables: `sql/migrations/0033_developer_surface.sql` (all platform bookkeeping per workspace, closed to the tenant role;
+`check:rls` and `check:tenant-sql` know them; rollback `sql/rollback/0033_developer_surface.sql`). Proof: `npm run
+test:developer-surface` (offline) and `npm run test:developer-e2e` (the fixture pack `scripts/fixtures/packs/
+fixture_embedded` over a running dev server: a key, OpenAPI read from the server, both SDKs generated and called, a
+client session, an idempotent write replayed, signed webhooks verified with the Standard Webhooks reference libraries in
+JavaScript and Python; it fetches those libraries once).
 
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and

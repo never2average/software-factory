@@ -37,6 +37,7 @@ import { asPlatform, withTenant } from "./tenant-scope.js";
 import { requireFeature, featureRefusal, workspaceEntitlements } from "./entitlements.js";
 import { retentionSweep, retentionWired, type RetentionReport } from "./workspace-retention.js";
 import { ENV } from "./env-names.js";
+import { clockAreas, clockCheck, stepWords, type ClockReport } from "./record-clocks.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -531,21 +532,28 @@ async function sealedDue(orgId: number, pack: string, area: string, field: strin
 
 // ---------- notices (the console) ----------
 
-export interface NoticeView { id: string; kind: "due"; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean }
+export interface NoticeView {
+  id: string; kind: "due" | "clock"; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean;
+  /** A clock's notice (mold_v0-191): its latest step in words ("Overdue; told owner"). */
+  what?: string;
+}
 
 /** A workspace's notices, only those of areas `actor` may read (an API key or the system: every one). */
 export async function listNotices(orgId: number, opts: { all?: boolean; actor?: Actor } = {}): Promise<NoticeView[]> {
-  let rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due"; area: string; record_key: string; title: string | null;
-    due_on: string | Date; created_at: Date; emailed_at: Date | null; dismissed_at: Date | null }>(
-    `SELECT id, kind, area, record_key, title, due_on, created_at, emailed_at, dismissed_at FROM workspace_notices
-      WHERE org_id = $1 AND ($2 OR dismissed_at IS NULL) ORDER BY due_on, id LIMIT 500`, [orgId, !!opts.all]));
+  let rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due" | "clock"; area: string; record_key: string; title: string | null;
+    due_on: string | Date; created_at: Date; emailed_at: Date | null; dismissed_at: Date | null; clock: string | null; step: string | null; detail: Record<string, unknown> | null }>(
+    `SELECT n.id, n.kind, n.area, n.record_key, n.title, n.due_on, n.created_at, n.emailed_at, n.dismissed_at, e.clock, e.step, e.detail FROM workspace_notices n
+       LEFT JOIN LATERAL (SELECT clock, step, detail FROM workspace_clock_events e WHERE n.kind = 'clock' AND e.org_id = n.org_id AND e.pack = n.pack AND e.area = n.area
+          AND e.record_key = n.record_key AND e.step ~ '^(remind|escalate):[0-9]+$' AND (e.due_at AT TIME ZONE 'UTC')::date = n.due_on ORDER BY e.at DESC, e.id DESC LIMIT 1) e ON true
+      WHERE n.org_id = $1 AND ($2 OR n.dismissed_at IS NULL) ORDER BY n.due_on, n.id LIMIT 500`, [orgId, !!opts.all]));
   // A notice names a record (its key, its due day, its title): only for people who may read its area (mold_v0-076).
   const actor = opts.actor;
   if (actor) rows = rows.filter((r) => { const a = findArea(r.area); return !!a && may(a, "read", actor); });
   // A sealed area's notice holds its title sealed with this workspace's key: opened here, for this workspace only.
   const titles = await Promise.all(rows.map(async (r) => (isSealed(r.title) ? withTenant(orgId, () => open(orgId, r.title!)).catch(() => null) : r.title)));
   return rows.map((r, i) => ({ id: String(r.id), kind: r.kind, area: r.area, area_label: findArea(r.area)?.label ?? r.area, key: r.record_key, title: titles[i] ?? null,
-    due_on: typeof r.due_on === "string" ? r.due_on.slice(0, 10) : dayOf(new Date(r.due_on)), created_at: iso(r.created_at)!, emailed: !!r.emailed_at, dismissed: !!r.dismissed_at }));
+    due_on: typeof r.due_on === "string" ? r.due_on.slice(0, 10) : dayOf(new Date(r.due_on)), created_at: iso(r.created_at)!, emailed: !!r.emailed_at, dismissed: !!r.dismissed_at,
+    ...(r.kind === "clock" && r.clock && r.step ? { what: stepWords(findArea(r.area) ?? ({ fields: [], clocks: [] } as never), r.clock, r.step, r.detail ?? {}) } : {}) }));
 }
 
 export async function dismissNotice(orgId: number, id: string, by: string): Promise<boolean> {
@@ -557,13 +565,15 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 
 // ---------- both, from the cron entry and the server's loop ----------
 
-export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; retention?: RetentionReport | { error: string } }> {
+export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; retention?: RetentionReport | { error: string } }> {
   const schedules = await tickSchedules(now);
   const due = await dueCheck(now);
+  // Record clocks (mold_v0-191, src/record-clocks.ts): with a clock area, at most every 15 minutes.
+  const clocks = clockAreas().length ? { clocks: await clockCheck(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
   // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
-  if (!retentionWired()) return { schedules, due };
+  if (!retentionWired()) return { schedules, due, ...clocks };
   const retention = await retentionSweep(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) }));
-  return { schedules, due, retention };
+  return { schedules, due, ...clocks, retention };
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -571,12 +581,14 @@ let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
   if (timer || (ENV.APP_SCHEDULER ?? "on").toLowerCase() === "off") return false;
-  if (!schedulesWired() && !dueAreas().length && !retentionWired()) return false;
+  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired()) return false;
   const run = () => {
     if (busy) return;
     busy = true;
     schedulerTick().then((r) => {
       if (r.schedules.fired || r.due.ran) console.error(`scheduler: ${r.schedules.fired} schedule(s) fired, ${r.schedules.runs} run(s) started${r.due.ran ? `; due check: ${r.due.posted} notice(s), ${r.due.emailed} email(s)` : ""}`);
+      const ck = r.clocks;
+      if (ck && "ran" in ck && ck.ran && (ck.steps || ck.changes)) console.error(`scheduler: clocks: ${ck.records} record(s), ${ck.changes} change(s), ${ck.steps} step(s), ${ck.notices} notice(s), ${ck.emailed} email(s)${ck.errors ? `, ${ck.errors} error(s)` : ""}`);
       const kept = r.retention;
       if (kept && "ran" in kept && kept.ran) console.error(`scheduler: workspace retention: ${kept.stores} store(s), ${kept.deleted} version(s) expired, ${kept.objects_removed} object(s) removed${kept.failed ? `, ${kept.failed} store(s) failed` : ""}`);
     }).catch((e) => console.error("scheduler tick:", (e as Error).message)).finally(() => { busy = false; });
