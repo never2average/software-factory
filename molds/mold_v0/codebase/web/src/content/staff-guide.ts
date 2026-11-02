@@ -8,7 +8,7 @@ import { HOST_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
 import { developerConsole, emailPortalNav, recordAreas, repositoryCount } from '../config/pack-nav.generated';
 import { HOST_TABLES } from '../config/build-facts.generated';
 import { profile } from '../config/profile.generated';
-import { ADMIN_DOCS, type AdminDoc } from './admin-docs.generated';
+import { ADMIN_DOCS, type AdminDoc } from './admin-docs';
 import { fill, W } from '../lib/vocabulary';
 
 export const STAFF_GUIDE_SLUG = 'staff-guide';

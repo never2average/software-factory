@@ -43,6 +43,10 @@
  *                      effective_date; optionally jurisdiction, terms_url, privacy_url): its /terms and /privacy pages
  *                      and their links; never part of this profile: gen-packs writes it to src/legal.generated.ts and
  *                      web/src/config/legal.generated.ts. Only the app's own profile.json sets it
+ *   onprem_runners     optional (mold_v0-205, src/onprem-runners.ts): true lets the workspaces install on-premises runners
+ *                      for the kinds that need their private network (pack kinds with private_network: true); absent or
+ *                      false (the default): no runner route answers, no console page or admin tab shows, enrolment is
+ *                      refused and every run is hosted
  *   audit              optional (mold_v0-197, src/audit-trail.ts): the two audit trails, {"data": true, "platform": false,
  *                      "retention_days": 400, "platform_retention_days": 400}; each trail off unless true (off: nothing is
  *                      written and no page, route or tool appears); retention_days (default 400) keeps the data trail,
@@ -84,6 +88,8 @@ export interface Profile {
   email?: ProfileEmail;
   entitlements?: ProfileEntitlements;
   audit?: ProfileAudit;
+  /** On-premises runners (mold_v0-205): off unless true. */
+  onprem_runners?: boolean;
 }
 
 /** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */
@@ -172,3 +178,11 @@ export function memberKeysOn(p?: Pick<Profile, "member_keys">): boolean {
 let testMemberKeys: boolean | undefined;
 /** Tests only: turn member keys on or off as the profile would (null: the profile's own setting). */
 export function setMemberKeysForTest(on: boolean | null) { testMemberKeys = on ?? undefined; }
+
+/** Whether the app offers on-premises runners at all (mold_v0-205, profile `onprem_runners`): off unless the profile says true. */
+export function onPremRunnersOn(): boolean {
+  return testOnPremRunners ?? PROFILE.onprem_runners === true;
+}
+let testOnPremRunners: boolean | undefined;
+/** Tests only: turn on-premises runners on or off as the profile would (null: the profile's own setting). */
+export function setOnPremRunnersForTest(on: boolean | null) { testOnPremRunners = on ?? undefined; }

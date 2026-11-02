@@ -479,6 +479,60 @@ export async function readPlatformTrail(orgId: number | null, q: TrailQuery = {}
   return { entries, next: more && last ? `${new Date(last.at).toISOString()}|${last.scope_id}|${last.seq}` : null };
 }
 
+// ---------------------------------------------------------------- the four cards (mold_v0-205)
+
+/** Weeks the Access log's cards cover (the list tabs' SPARK_WEEKS, src/metric-spec.ts). */
+export const TRAIL_SPARK_WEEKS = 12;
+export interface TrailSparkCard { id: string; label: string; unit: "count" | "number"; mode: "latest"; value: number | null; series: (number | null)[] }
+export interface TrailSparklines { weeks: number; buckets: string[]; as_of: string; cards: TrailSparkCard[] }
+const DAY_MS = 86_400_000;
+/** The last TRAIL_SPARK_WEEKS weeks' first days (Mondays, UTC; the metric engine's weeks), oldest first. */
+export function trailWeeks(now: Date): string[] {
+  const day = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const monday = day - ((new Date(day).getUTCDay() + 6) % 7) * DAY_MS;
+  return Array.from({ length: TRAIL_SPARK_WEEKS }, (_, i) => new Date(monday - (TRAIL_SPARK_WEEKS - 1 - i) * 7 * DAY_MS).toISOString().slice(0, 10));
+}
+const CARDS: Record<"data" | "platform", { id: string; label: string; unit: "count" | "number"; sql: string }[]> = {
+  data: [
+    { id: "entries", label: "Entries this week", unit: "count", sql: "count(*)" },
+    { id: "changes", label: "Changes this week", unit: "count", sql: "count(*) FILTER (WHERE action IN ('create', 'update', 'move', 'delete'))" },
+    { id: "exports", label: "Exports and reveals", unit: "count", sql: "count(*) FILTER (WHERE action IN ('export', 'reveal'))" },
+    { id: "actors", label: "People and keys", unit: "count", sql: "count(DISTINCT actor_kind || ':' || coalesce(actor_id, ''))" },
+  ],
+  platform: [
+    { id: "requests", label: "Requests this week", unit: "count", sql: "count(*) FILTER (WHERE kind = 'request')" },
+    { id: "sign_ins", label: "Sign-ins this week", unit: "count", sql: "count(*) FILTER (WHERE kind = 'sign_in')" },
+    { id: "errors", label: "Refused or failed", unit: "count", sql: "count(*) FILTER (WHERE status >= 400)" },
+    { id: "latency", label: "Average latency (ms)", unit: "number", sql: "round(avg(latency_ms) FILTER (WHERE kind = 'request'))" },
+  ],
+};
+/**
+ * The Access log's four cards (mold_v0-205; the list tabs' cards, web/src/features/tabs/sparklines.tsx): one per number,
+ * this week's value and a value per week of the last TRAIL_SPARK_WEEKS. Counts only, never an entry's contents. A
+ * workspace's (`orgId`, under row-level security), or the operator's fleet-wide platform trail (null).
+ */
+export async function trailSparklines(which: "data" | "platform", orgId: number | null, now = new Date()): Promise<TrailSparklines> {
+  const buckets = trailWeeks(now);
+  const cards = CARDS[which];
+  const table = which === "data" ? "audit_data_events" : "audit_platform_events";
+  const params: unknown[] = [buckets[0]];
+  if (orgId !== null) params.push(orgId);
+  const sql = `SELECT to_char(date_trunc('week', at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS week, ${cards.map((c, i) => `${c.sql}::float8 AS c${i}`).join(", ")}
+                 FROM ${table} WHERE at >= $1::date${orgId !== null ? " AND org_id = $2" : ""} GROUP BY 1`;
+  if (which === "data" && orgId === null) throw new Error("the data trail's cards are one workspace's");
+  const rows = orgId === null
+    ? await asPlatform(async () => (await getDb()).query<Record<string, unknown>>(`/* tenant: the operator's fleet-wide trail (platform staff only) */ ${sql}`, params))
+    : await withTenant(orgId, async () => (await getDb()).query<Record<string, unknown>>(sql, params));
+  const byWeek = new Map(rows.map((r) => [String(r.week), r]));
+  return {
+    weeks: TRAIL_SPARK_WEEKS, buckets, as_of: now.toISOString(),
+    cards: cards.map((c, i) => {
+      const series = buckets.map((w) => { const v = byWeek.get(w)?.[`c${i}`]; return v === null || v === undefined ? (c.unit === "count" ? 0 : null) : Number(v); });
+      return { id: c.id, label: c.label, unit: c.unit, mode: "latest" as const, value: series[series.length - 1] ?? null, series };
+    }),
+  };
+}
+
 // ---------------------------------------------------------------- CSV
 
 const csvCell = (v: unknown): string => {
@@ -524,10 +578,12 @@ export function auditAppRouter(customerSession: RequestHandler): Router {
   if (dataTrailOn()) {
     r.get("/data", wrap(async (req, res) => void res.json(await readDataTrail(org(res), req.query as TrailQuery))));
     r.get("/data.csv", wrap(async (req, res) => csvOut(res, "data-access-log", await trailCsv("data", org(res), req.query as TrailQuery))));
+    r.get("/data/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("data", org(res)))));
   }
   if (platformTrailOn()) {
     r.get("/platform", wrap(async (req, res) => void res.json(await readPlatformTrail(org(res), req.query as TrailQuery))));
     r.get("/platform.csv", wrap(async (req, res) => csvOut(res, "request-log", await trailCsv("platform", org(res), req.query as TrailQuery))));
+    r.get("/platform/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("platform", org(res)))));
   }
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;
@@ -538,6 +594,7 @@ export function auditAdminRouter(): Router {
   if (!anyTrailOn()) return r;
   if (platformTrailOn()) {
     r.get("/platform", wrap(async (req, res) => void res.json(await readPlatformTrail(null, req.query as TrailQuery))));
+    r.get("/platform/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("platform", null))));
     r.get("/platform.csv", wrap(async (req, res) => {
       const out = await trailCsv("platform", null, req.query as TrailQuery);
       res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="platform-trail-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
@@ -547,6 +604,11 @@ export function auditAdminRouter(): Router {
     const id = await orgIdOf(String(req.params.org));
     if (id === null) return void res.status(404).json({ error: "No such workspace" });
     res.json(await readDataTrail(id, req.query as TrailQuery));
+  }));
+  if (dataTrailOn()) r.get("/data/:org/sparklines", wrap(async (req, res) => {
+    const id = await orgIdOf(String(req.params.org));
+    if (id === null) return void res.status(404).json({ error: "No such workspace" });
+    res.json(await trailSparklines("data", id));
   }));
   if (dataTrailOn()) r.get("/data/:org/csv", wrap(async (req, res) => {
     const id = await orgIdOf(String(req.params.org));

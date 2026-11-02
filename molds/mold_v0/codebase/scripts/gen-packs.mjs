@@ -1172,6 +1172,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
       // The audit trails (mold_v0-197, src/audit-trail.ts): {data, platform: true or false, retention_days, platform_retention_days: 1 to 3650}.
       if (k === "audit") { const bad = auditProblem(v); if (bad) fail(rel(PROFILE_FILE), `audit: ${bad}`); else profile[k] = v; continue; }
+      // On-premises runners (mold_v0-205, src/onprem-runners.ts): true turns them on; absent or false, none (no route, page or tab).
+      if (k === "onprem_runners") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "onprem_runners: true or false (true: workspaces may install on-premises runners for the kinds that need their private network; default false)"); else profile[k] = v; continue; }
       // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
@@ -1193,7 +1195,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, audit, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1403,8 +1405,13 @@ const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type ===
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due || a.clocks?.length).length; // due dates and clocks (mold_v0-191) post notices
-/** Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner. */
-const privateNetworkKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
+/**
+ * Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner.
+ * Counted only where the app's profile turns on-premises runners on (mold_v0-205, profile.json `onprem_runners: true`;
+ * off by default): off, no runner section, admin tab, guide page or Credentials entry for them.
+ */
+const privateNetworkKindCount = profile.onprem_runners !== true ? 0
+  : packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
 /**
  * The shell pages this build's customer console hides (mold_v0-130, src/console-pages.ts): the packs' pack.json `console`
  * and the app's profile.json `console`, joined. Each leaves the /app sidebar (below, the tabs, nav-config.ts) and redirects

@@ -669,8 +669,17 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   console shows status, last seen, runs and allow list; staff list every workspace's (`/api/admin/onboarding/runners`).
   **Revoking** (owner, or staff): credential and sandbox tokens stop at once, its runs' gateway tokens are revoked and the
   runs requeued (the sweep), and the runner removes its sandboxes and exits at its next poll; one silent for 15 minutes
-  loses its sandboxes' tokens. **Off** in a build with no such kind (nothing mounted, every run hosted, zero-pack
-  unchanged) and with `APP_ONPREM_RUNNERS=off` (every run hosted again). `npm run test:onprem-runners`.
+  loses its sandboxes' tokens. **An app's toggle, off by default** (mold_v0-205): the app's profile turns them on with
+  `"onprem_runners": true` (profile.json; the factory's `application.json` `profile.onprem_runners`, app-settable in
+  [branding/rules.json](branding/rules.json), the app spec's `profile.onprem_runners`, the brief line `onprem_runners =
+  true`). **Off** (absent or false, whatever its kinds declare): `/api/runners`, `/api/runner/*` and the staff
+  `/api/admin/onboarding/runners` are not mounted (404, so enrolment is refused), the Credentials page has no runner
+  section (nor the Credentials entry for it alone), the admin Compute page no On-premises runners tab, the customer guide
+  no On-premises runner page and /admin/docs no runner guide, the data map no on-premises rows, and every run is hosted
+  (a run queued on premises before goes back to the hosted scaler). There are no runner MCP tools, so the MCP surfaces
+  are the same either way. **On**: exactly the behaviour above. Also off in a build with no such kind (nothing mounted,
+  every run hosted, zero-pack unchanged) and with `APP_ONPREM_RUNNERS=off` (every run hosted again).
+  `npm run test:onprem-runners` (both: the toggle off with private-network kinds, then on).
 - **After a workspace commit** (mold_v0-064, built; `definePack({ onWorkspaceCommit(ctx, files) })`, code packs only):
   when a run of a pack with the hook and a workspace kind succeeds, its snapshot is committed first (in its own
   transaction, the run's and the store's leases extended by the hook's time), then the hook gets every file of the
@@ -2582,7 +2591,7 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   mcp, admin_console, admin_mcp, run, system). A list or an export is **one entry per page or file, never one per row**,
   and an entry never holds a field's value or a title; a sealed area's read is a `reveal`; a batch's entries are written
   only when it commits. Per workspace under row-level security: the workspace's owners read it on the console's
-  **Access log** page (`/app/access-log`, the records pages' table; Download CSV), `GET /api/audit/data[.csv]`, and the
+  **Access log** page (`/app/access-log`; Download CSV), `GET /api/audit/data[.csv]`, and the
   MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
   MCP's `read_audit_trail` (by slug).
 - **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
@@ -2610,6 +2619,18 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   batches, `src/record-export.ts`, `src/runs.ts` results, `src/workspace-files.ts`, `src/http.ts` the middleware and the
   MCP caller, `src/builtin-auth.ts` sessions, `src/admin-mcp.ts` staff tools). Rollback:
   `sql/rollback/0031_audit_trails.sql` (refuses while entries exist unless `app.audit_rollback_drop` is on).
+
+- **The Access log page is the records pages' table** (mold_v0-205): each trail is a read-only system area (no pack
+  declares it; its fields typed as an area's are) drawn by `RecordTableView` (`web/src/features/records/record-pages.tsx`,
+  what every record area's page and tab draws) through its data adapter (`RecordSource`: rows from the trail's own
+  route, Download CSV in place of Export CSV, the record column as the entry's time). So it has everything an area's
+  page has: the search row with the trail's four cards under it (`GET /api/audit/<trail>/sparklines`, staff
+  `/api/admin/audit/platform/sparklines` and `/api/admin/audit/data/<workspace>/sparklines`, `src/audit-trail.ts`
+  `trailSparklines`: this week's entries, changes, exports and reveals, people and keys; or requests, sign-ins, refused
+  or failed, average latency; each with twelve weeks, counts only), filters on who, action, area, door and the date
+  range, the column picker (the entry's kind, pack, actor kind and key on request), sort, a pager and a row drawer with
+  the entry's details. /admin/access-log is the same table (the platform trail fleet-wide; a workspace's data trail by
+  its slug). Owners only, never a value, each workspace's own rows under row-level security, as before.
 
 Proof: `npm run test:audit-trail` (gen-packs' check of the setting; both off, each alone, both on; tenant isolation by
 route, MCP tool and the tenant role; no value in either trail; one entry per list; a 250-operation batch in at most two

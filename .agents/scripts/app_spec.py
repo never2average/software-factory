@@ -309,6 +309,15 @@ def schema_v0(root):
             profile_props[k] = {"$ref": "#/$defs/email", **D("The emails' sender address, on a domain you verified for sending. Absent: <app_id>@<this machine's notify domain>.")}
         elif k == "member_keys":
             profile_props[k] = {"type": "boolean", **D("false: no per-member API keys; AI clients connect by signing in.")}
+        elif k == "onprem_runners":
+            profile_props[k] = {"type": "boolean", "default": False, "title": "On-premises runners (mold_v0-205)",
+                                **D("true: the app's workspaces may install an on-premises runner inside their own network for the kinds that need it "
+                                    "(a pack's job kind with private_network: true); false (the default): no runner routes, pages, tabs or enrolment, and every run is hosted.",
+                                    "**On-premises runners**, off unless `true` (mold_v0-205, the shell's `src/onprem-runners.ts`).\n\n"
+                                    "- `true`: a workspace's owners add a runner on **Credentials** and install it inside their network; the runs of a kind "
+                                    "with `private_network: true` then go to it when the workspace chooses so.\n"
+                                    "- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners "
+                                    "appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`.")}
         elif k == "source_offer.upstreams":
             profile_props["source_offer"] = {"type": "object", "additionalProperties": False, "required": ["upstreams"], **D("Only its upstreams part is the app's."), "properties": {
                 "upstreams": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": pid}, "additionalProperties": {"const": "licensor_owned"},
@@ -636,6 +645,7 @@ def _profile_lines(spec):
     prof = spec.get("profile") or {}
     for k, v in prof.items():
         if k == "member_keys": lines.append(f"member_keys = {'true' if v else 'false'}")
+        elif k == "onprem_runners": lines.append(f"onprem_runners = {'true' if v else 'false'}")
         elif k == "email_from_address": lines.append(f"email_from_address = {v}")
         elif k == "email":
             for kk, vv in v.items(): lines.append(f"email.{kk} = {', '.join(vv) if isinstance(vv, list) else vv}" if vv != [] else f"email.{kk} = none")
@@ -851,6 +861,9 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
             ok("audit.data = true" in lines and not any("platform" in l for l in lines)
                and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
+            lines, _ = _profile_lines({"profile": {"onprem_runners": True}})   # mold_v0-205
+            ok(lines == ["onprem_runners = true"] and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("onprem_runners") is True
+               and _ap.from_brief("## Profile\nonprem_runners = false\n")[0] == {"onprem_runners": False}, f"{m}: onprem_runners is written to the profile through the brief")
             lines, _ = _profile_lines({"audit": {"data": True, "sign": True}})   # mold_v0-195: chain and sign
             ok("audit.sign = true" in lines and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True, "sign": True},
                f"{m}: audit.sign true is written to profile.audit through the brief")

@@ -55,6 +55,9 @@ through the same check `factory.py validate` and the build use.
 - `audit.sign` (default `false`; mold_v0-195): signed checkpoints of the hash-chained trail entries (Ed25519 over Merkle roots, hourly
   when there are new entries), written to `profile.audit.sign` (brief line `audit.sign = true`); the app needs `APP_LEDGER_SIGNING_KEY` in its
   environment (`provision.py <app> --set-secret APP_LEDGER_SIGNING_KEY`; `npm run ledger:keygen -- --out <file>` makes one).
+- `profile.onprem_runners` (mold_v0-205; default `false`): `true` lets the app's workspaces install an on-premises runner
+  for its kinds with `private_network: true` (molds/mold_v0/MOLD.md "On-premises runners"); off, no runner route, page,
+  tab or enrolment exists and every run is hosted. Brief line `onprem_runners = true` in `## Profile`.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

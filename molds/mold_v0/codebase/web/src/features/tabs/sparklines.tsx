@@ -38,7 +38,11 @@ const labelPulse = <span className='bg-muted inline-block h-3 w-24 animate-pulse
  * tab's headline row (mold_v0-203: `count` cards, its declared 1 to 4, the same strip at the top of the Overview).
  */
 export function TabSparklines({ tab, count = 4, label = 'Key numbers' }: { tab: Pick<PackTabSpec, 'pack' | 'id'>; count?: number; label?: string }) {
-  const url = `/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`;
+  return <Sparklines url={`/api/sparklines/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`} tag={`${tab.pack}/${tab.id}`} count={count} label={label} />;
+}
+
+/** Cards from any route that answers as /api/sparklines does (mold_v0-205: the Access log's, /api/audit/<trail>/sparklines). */
+export function Sparklines({ url, tag, count = 4, label = 'Key numbers' }: { url: string; tag: string; count?: number; label?: string }) {
   const { data, error } = useOrgLoad(async () => {
     const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as SparkAnswers & { error?: string };
@@ -60,7 +64,7 @@ export function TabSparklines({ tab, count = 4, label = 'Key numbers' }: { tab: 
   // Cards that cannot be read at all (the API predates them, a network failure) leave the list as it was.
   if (error || (data && !data.cards.length)) return null;
   return (
-    <section aria-label={label} aria-busy={!data || undefined} data-sparklines={`${tab.pack}/${tab.id}`}>
+    <section aria-label={label} aria-busy={!data || undefined} data-sparklines={tag}>
       <StatStrip quad items={items} />
     </section>
   );

@@ -67,7 +67,8 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   const sections: DataMapSection[] = [];
   const agentKinds = list_.flatMap((p) => (p.definition.agentJobKinds ?? []).map((k) => ({ pack: p, k })));
   const harnessKinds = list_.flatMap((p) => (p.definition.jobKinds ?? []).map((k) => ({ pack: p, k })));
-  const priv = (k: unknown) => (k as { private_network?: boolean }).private_network === true;
+  // A kind runs on a workspace's own runner only where the profile turns on-premises runners on (mold_v0-205).
+  const priv = (k: unknown) => profile.onprem_runners === true && (k as { private_network?: boolean }).private_network === true;
   const kinds = [...agentKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [], private_network: priv(k) })),
     ...harnessKinds.map(({ pack, k }) => ({ pack, name: k.name, label: k.label ?? k.name, egress: k.egress ?? [], providers: k.providers ?? [], credentials: k.credentials ?? [], private_network: priv(k) }))];
 

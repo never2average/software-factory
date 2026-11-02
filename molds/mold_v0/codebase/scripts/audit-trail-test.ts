@@ -197,6 +197,17 @@ async function inner() {
       assert.match(csv.text, /^(\ufeff)?seq,at,actor_kind,actor_id,key_id,action,target,pack,area,record_key,rows,channel\r\n/);
       assert.equal(csv.text.trim().split("\r\n").length, all.length + 1, "the CSV holds every entry");
       assert.equal((await app.req("GET", "/api/audit/platform", A.owner)).status, 404, "the platform trail's route is not there");
+      // The Access log's four cards (mold_v0-205): this week's counts and twelve weeks, owners only, counts never contents.
+      assert.equal((await app.req("GET", "/api/audit/data/sparklines", A.member)).status, 403, "a member does not read the cards");
+      const cards = await app.req("GET", "/api/audit/data/sparklines", A.owner);
+      assert.equal(cards.status, 200);
+      assert.equal(cards.body.weeks, 12); assert.equal(cards.body.buckets.length, 12);
+      assert.deepEqual(cards.body.cards.map((c: any) => c.id), ["entries", "changes", "exports", "actors"]);
+      const card = (id: string) => cards.body.cards.find((c: any) => c.id === id);
+      assert.equal(card("entries").value, all.length, "entries this week: every entry written above");
+      assert.equal(card("exports").value, (await dataRows(A.org.orgId)).filter((r: any) => r.action === "export" || r.action === "reveal").length, "exports and reveals");
+      assert.ok(cards.body.cards.every((c: any) => c.series.length === 12 && c.series.at(-1) === c.value), "each card's last week is its value");
+      assert.equal((await app.req("GET", "/api/audit/platform/sparklines", A.owner)).status, 404, "the platform trail's cards are not there");
       await app.close();
       ok("data trail alone: create, list (one entry for the page), read, a sealed record's read as a reveal, export, MCP list and run results, each with actor, area, key, rows and door; numbered 1..n; owners read it as JSON pages and CSV, members are refused; platform trail untouched");
     }
@@ -222,6 +233,10 @@ async function inner() {
       assert.ok(!r.isError);
       assert.equal(r.structuredContent.entries.length, bRows.length + 0 || r.structuredContent.entries.length, "the tool answers");
       assert.ok(r.structuredContent.entries.every((e: any) => bRows.some((x) => Number(x.seq) === e.seq)), "the MCP tool reads B's own entries only");
+      // The Access log's cards (mold_v0-205): each workspace's own counts only.
+      const ca = await app.req("GET", "/api/audit/data/sparklines", A.owner), cb = await app.req("GET", "/api/audit/data/sparklines", B.owner);
+      assert.equal(ca.body.cards[0].value, (await dataRows(A.org.orgId)).length, "A's cards count A's entries only");
+      assert.equal(cb.body.cards[0].value, bRows.length, "B's cards count B's entries only");
       await c.close();
       await audit.flushAudit();
       // No value: neither the titles nor the fields written above appear anywhere in either trail.
@@ -263,6 +278,14 @@ async function inner() {
       const staffSeen = slice.body.entries.filter((e: any) => e.actor_kind === "staff");
       assert.ok(staffSeen.length >= 2 && staffSeen.every((e: any) => e.actor_id.startsWith("staff:") && !("ip" in e)), "staff appear in the slice as a pseudonym, without addresses");
       assert.equal((await app.req("GET", "/api/audit/data", A.owner)).status, 404, "the data trail's route is not there");
+      // The cards (mold_v0-205): the owner's slice counts its own requests; staff read the fleet's.
+      const sc = await app.req("GET", "/api/audit/platform/sparklines", A.owner);
+      assert.equal(sc.status, 200);
+      assert.ok(sc.body.cards.find((c: any) => c.id === "requests").value >= slice.body.entries.filter((e: any) => e.kind === "request").length, "the slice's requests this week (and the reads since)");
+      const fc = await app.req("GET", "/api/admin/audit/platform/sparklines", adminH);
+      assert.equal(fc.status, 200);
+      assert.ok(fc.body.cards.find((c: any) => c.id === "requests").value >= sc.body.cards.find((c: any) => c.id === "requests").value, "the fleet's cards cover every workspace");
+      assert.equal((await app.req("GET", "/api/audit/platform/sparklines", A.member)).status, 403, "members do not read them");
       const admin = (await import("../src/admin-mcp.js")).adminTools();
       assert.ok("read_platform_trail" in admin && !("read_audit_trail" in admin), "the admin MCP lists the platform trail's tool only");
       const viaTool = await runAdminTool({ actor: "ops@platform.example", role: "viewer", userId: null }, "read_platform_trail", { org: A.slug, kind: "staff" }) as any;

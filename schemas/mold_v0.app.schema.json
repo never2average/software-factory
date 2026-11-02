@@ -471,8 +471,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "title": "Profile settings",
-      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
-      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
+      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
+      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
       "properties": {
         "email": {
           "type": "object",
@@ -617,6 +617,13 @@
           "description": "Not supported: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197).",
           "markdownDescription": "**Not supported**: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197).",
           "errorMessage": "Not supported: say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197)."
+        },
+        "onprem_runners": {
+          "type": "boolean",
+          "default": false,
+          "title": "On-premises runners (mold_v0-205)",
+          "description": "true: the app's workspaces may install an on-premises runner inside their own network for the kinds that need it (a pack's job kind with private_network: true); false (the default): no runner routes, pages, tabs or enrolment, and every run is hosted.",
+          "markdownDescription": "**On-premises runners**, off unless `true` (mold_v0-205, the shell's `src/onprem-runners.ts`).\n\n- `true`: a workspace's owners add a runner on **Credentials** and install it inside their network; the runs of a kind with `private_network: true` then go to it when the workspace chooses so.\n- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`."
         },
         "limits": {
           "not": {},
