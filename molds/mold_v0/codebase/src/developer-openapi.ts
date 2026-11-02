@@ -37,6 +37,10 @@ function fieldSchema(f: RecordArea["fields"][number]): Schema {
     }
   };
   const s = f.multiple ? { type: "array", items: one() } : one();
+  // mold_v0-194: an encrypted field reads as "[encrypted]" (sent back, or left out, it keeps its value); its value only
+  // through POST /v1/records/{area}/{key}/reveal.
+  if (f.encrypted) return { anyOf: [s, { type: "string", const: "[encrypted]" }], title: f.label, "x-encrypted": true,
+    description: `${f.help ? `${f.help} ` : ""}Encrypted: every read shows "[encrypted]"; reveal returns the value to the roles allowed.` };
   return { ...s, title: f.label, ...(f.help ? { description: f.help } : {}) };
 }
 
