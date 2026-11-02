@@ -108,10 +108,10 @@ const netKind = (e: unknown): MailError => {
 };
 
 class Wire {
-  private buf = Buffer.alloc(0);
+  private buf: Buffer = Buffer.alloc(0);
   private failed: Error | null = null;
   private wake: (() => void) | null = null;
-  private onData = (d: Buffer) => { this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d; if (this.buf.length > 64 * 1024 * 1024) this.sock.destroy(new Error("answer too large")); this.poke(); };
+  private onData = (d: Buffer) => { this.buf = Buffer.concat([this.buf, d]); if (this.buf.length > 64 * 1024 * 1024) this.sock.destroy(new Error("answer too large")); this.poke(); };
   private onErr = (e: Error) => { this.failed ??= e; this.poke(); };
   private onClose = () => { this.failed ??= new Error("connection closed"); this.poke(); };
   constructor(public sock: Socket | TLSSocket) { this.attach(sock); }

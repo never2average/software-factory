@@ -94,6 +94,11 @@ export interface Email {
   idempotencyKey: string;
   /** What it is about (ids, an account slug); anything that looks like an address is dropped. */
   meta?: Record<string, unknown>;
+  /**
+   * The workspace a message is about, when it goes to that workspace's people (mold_v0-192): it then goes out through
+   * the workspace's own sender when it has one that is on (src/company-email.ts companySender), else as before.
+   */
+  org?: number;
 }
 export interface EmailResult { status: "sent" | "skipped" | "failed" | "duplicate"; id?: number; provider_id?: string | null; error?: string | null }
 
@@ -271,7 +276,7 @@ async function attempt(m: Email): Promise<EmailResult> {
     [m.kind, hashAddress(to), domainOf(to) || "-", logSubject(subject), key, JSON.stringify(scrub(m.meta ?? {}))]);
   if (!row) return { status: "duplicate" };
   const id = Number(row.id);
-  const t = TRANSPORTS[transportId()];
+  let t: { id: string } = TRANSPORTS[transportId()];
   const finish = async (status: "sent" | "skipped" | "failed", extra: { provider_id?: string | null; error?: string | null } = {}): Promise<EmailResult> => {
     // An error never carries the address (a provider may echo it back).
     const error = extra.error ? extra.error.replaceAll(to || "\u0000", "*@" + (domainOf(to) || "?")).slice(0, 500) : null;
@@ -287,12 +292,26 @@ async function attempt(m: Email): Promise<EmailResult> {
   if (!gate.on) return finish("skipped", { error: gate.why });
   await freshSettings();
   if (settingText("EMAILS_ENABLED") !== "on") return finish("skipped", { error: "Emails are off (Agent configuration, Send emails)" });
+  // The workspace's own sender (mold_v0-192): a message to one workspace's people goes out through it while it is on.
+  // Its failure is not handed to the app's sender (the workspace chose where its mail comes from); the same message is
+  // tried again when it is triggered again. The log says only that it failed: its owners see why on Settings › Email.
+  if (typeof m.org === "number") {
+    const { companySender } = await import("./company-email.js");
+    const co = await companySender(m.org).catch(() => null);
+    if (co) {
+      t = { id: `workspace:${co.provider}` };
+      const out = await co.deliver({ to, subject, text: String(m.text), html: m.html ?? htmlOf(String(m.text)) });
+      if (out.ok) return finish("sent", { provider_id: out.provider_id });
+      return finish("failed", { error: `The workspace's own sender (${co.provider}) did not send it (${out.error.split(":")[0]}): its owners see why on Settings › Email` });
+    }
+  }
+  const tr = TRANSPORTS[transportId()];
   const from = oneLine(settingText("EMAIL_FROM"), 320);
   if (!SENDER.test(from)) return finish("skipped", { error: "The sender (Agent configuration, Email, From) is not Name <address> or an address" });
-  const why = await t.notReady();
+  const why = await tr.notReady();
   if (why) return finish("skipped", { error: why });
   const replyTo = settingText("EMAIL_REPLY_TO").split(",").map((x) => x.trim()).filter(isEmail).slice(0, 5);
-  const out = await t.deliver({ from, to, reply_to: replyTo, subject, text: String(m.text), html: m.html ?? htmlOf(String(m.text)), kind: m.kind, idempotencyKey: key });
+  const out = await tr.deliver({ from, to, reply_to: replyTo, subject, text: String(m.text), html: m.html ?? htmlOf(String(m.text)), kind: m.kind, idempotencyKey: key });
   if (out.ok) return finish("sent", { provider_id: out.provider_id });
   return finish(out.skipped ? "skipped" : "failed", { error: out.error });
 }
@@ -495,7 +514,7 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
     : credit.status === "credited"
       ? w.t`As thanks, we've added a ${money(credit.usd)} credit to your {account}. It comes off your next invoice automatically.`
       : w.t`As thanks, you've earned a ${money(credit.usd)} credit. It is still being added to your {account}; once it is, it comes off your next invoice automatically. You can see it on ${siteUrl()}/app/billing.`;
-  return each(await submitterOf(s), (t) => ({ kind: "submission_accepted", to: t, idempotencyKey: keyFor(`submission:${s.id}:accepted`, t),
+  return each(await submitterOf(s), (t) => ({ kind: "submission_accepted", to: t, org: s.org_id, idempotencyKey: keyFor(`submission:${s.id}:accepted`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug, credit_usd: credit.usd, credit_status: credit.status },
     subject: w.t`Your ${noun(s.kind)} is in {product}'s library`,
     text: lines("Hi,",
@@ -508,7 +527,7 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
 /** Declined: with the reason the reviewer gave (it is required). */
 export async function submissionDeclined(s: SubmissionFacts, reason: string) {
   const w = emailWords();
-  return each(await submitterOf(s), (t) => ({ kind: "submission_declined", to: t, idempotencyKey: keyFor(`submission:${s.id}:declined`, t),
+  return each(await submitterOf(s), (t) => ({ kind: "submission_declined", to: t, org: s.org_id, idempotencyKey: keyFor(`submission:${s.id}:declined`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
     subject: w.t`About your ${noun(s.kind)} for {product}'s library`,
     text: lines("Hi,",
@@ -551,7 +570,7 @@ export async function checkBudget(orgId: number, now = new Date()): Promise<{ th
     const { month, reset } = monthWords(now);
     const over = threshold >= 100;
     const w = emailWords();
-    const results = await each(to, (t) => ({ kind: over ? "budget_100" : "budget_80", to: t, idempotencyKey: keyFor(purpose, t),
+    const results = await each(to, (t) => ({ kind: over ? "budget_100" : "budget_80", to: t, org: orgId, idempotencyKey: keyFor(purpose, t),
       meta: { account: o?.slug ?? null, month: monthKey(now), threshold, spent_usd: Math.round(spent * 100) / 100, budget_usd: budget },
       subject: over ? w.t`${o?.name ?? w.fill("Your {account}")} has used its {product} allowance for ${month}` : w.t`${o?.name ?? w.fill("Your {account}")} has used ${threshold}% of its {product} allowance`,
       text: lines("Hi,",
@@ -591,7 +610,7 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
     if (!to.length) { console.error(`email due_soon: ${o.slug} has no ${d.roles.join("/")} with an email`); return { recipients: 0, delivered: 0 }; }
     const n = d.items.length, shown = d.items.slice(0, 50);
     const list = shown.map((x) => `- ${(x.title ?? x.key).replace(/[\r\n]+/g, " ").slice(0, 200)} (${x.key}): due ${x.due_on}`).join("\n");
-    const results = await Promise.all(to.map((t) => send({ kind: "due_soon", to: t, idempotencyKey: keyFor(`due:${orgId}:${d.area}:${createHash("sha256").update(d.batch.join(",")).digest("hex").slice(0, 16)}`, t),
+    const results = await Promise.all(to.map((t) => send({ kind: "due_soon", to: t, org: orgId, idempotencyKey: keyFor(`due:${orgId}:${d.area}:${createHash("sha256").update(d.batch.join(",")).digest("hex").slice(0, 16)}`, t),
       meta: { account: o.slug, area: d.area, day: d.day, items: n },
       subject: `${n} ${d.label.toLowerCase()} due within ${d.within_days} day${d.within_days === 1 ? "" : "s"} in ${o.name}`.slice(0, 200),
       text: lines("Hi,",
@@ -620,9 +639,9 @@ export function signInCode(c: { id: number | string; to: string; code: string; m
  * An invitation to a workspace: to the invited address only, linking to the console's sign-in page (consoleUrl, from
  * the server's environment; the place to go after it is a fixed path, never one a request named).
  */
-export function invitation(i: { id: string; to: string; account: string; accountSlug: string; role: string; google: boolean; days: number }) {
+export function invitation(i: { id: string; to: string; account: string; accountSlug: string; role: string; google: boolean; days: number; org?: number }) {
   const w = emailWords();
-  return sendLater({ kind: "invitation", to: i.to, idempotencyKey: `invitation:${i.id}`, meta: { invitation: i.id, account: i.accountSlug },
+  return sendLater({ kind: "invitation", to: i.to, ...(typeof i.org === "number" ? { org: i.org } : {}), idempotencyKey: `invitation:${i.id}`, meta: { invitation: i.id, account: i.accountSlug },
     subject: w.t`You're invited to ${oneLine(i.account, 80)} on {product}`,
     text: lines(`Hi,`, w.t`You're invited to join ${i.account} on {product} as ${i.role}.`,
       `To accept, sign in with this address (${i.to}): ${siteUrl()}/auth/sign-in?redirect_url=%2Fapp`,

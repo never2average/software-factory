@@ -21,6 +21,8 @@ import { upstreamProblems, type UpstreamPin } from "./source-offer.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { hostToolNames, memoryToolNames } from "./host.js";
+import { INTAKE_TOOL_NAMES } from "./shell-tools.js";
+import { intakeTools } from "./email-intake.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
 
 /** What gen-packs copies from a pack's pack.json into the registry. */
@@ -53,7 +55,7 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const problems: string[] = [];
   const out: InstalledPack[] = [];
   const ids = new Set<string>();
-  const toolOwner = new Map<string, string>([...reservedTools, ...RECORD_TOOL_NAMES].map((t) => [t, "the shell"]));
+  const toolOwner = new Map<string, string>([...reservedTools, ...RECORD_TOOL_NAMES, ...INTAKE_TOOL_NAMES].map((t) => [t, "the shell"]));
   const areaOwner = new Map<string, string>();
   for (const g of list) {
     const m = g.manifest;
@@ -82,7 +84,7 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts): the packs' mcp settings name real
   // tools, and no generated name takes the shell's, a pack's own or the admin MCP's.
   const catalog = generateCatalog(out.map((p) => ({ id: p.id, name: p.manifest.name, words: p.manifest.words, definition: p.definition })),
-    { customer: [...reservedTools, ...RECORD_TOOL_NAMES], admin: reservedAdmin });
+    { customer: [...reservedTools, ...RECORD_TOOL_NAMES, ...INTAKE_TOOL_NAMES], admin: reservedAdmin });
   problems.push(...catalog.problems);
   // The packs' declared slash commands (mold_v0-137, pack.json mcp.prompts): one name, one pack.
   const promptOwner = new Map<string, string>();
@@ -268,5 +270,9 @@ export function registerPackTools(server: McpServer, org: Org) {
     }
   }
   registerRecordTools(server, (t, args) => runPackTool(org, "records", t, args));
+  // The mail intake's tool (mold_v0-192), when a pack declares an intake: read only, under each area's own read rule.
+  for (const t of intakeTools())
+    server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.inputSchema ?? {}, annotations: t.annotations },
+      (args: Record<string, unknown>) => runPackTool(org, "records", t, args) as never);
   registerGeneratedTools(server, org, (t) => t.op !== "get_started");
 }

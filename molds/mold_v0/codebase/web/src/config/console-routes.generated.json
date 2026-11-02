@@ -46,6 +46,7 @@
     "/app/records/[area]",
     "/app/records/[area]/[key]",
     "/app/schedules",
+    "/app/settings/email",
     "/app/team",
     "/app/usage",
     "/auth",
