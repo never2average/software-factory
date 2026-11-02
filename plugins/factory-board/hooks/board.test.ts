@@ -138,11 +138,11 @@ test('analytics helpers: sparkline, usage report, tickets per app, short numbers
   expect(cost(null, 'estimated')).toBe('not measured')
   expect([isEstimate('estimated'), isEstimate('mixed'), isEstimate('recorded'), isEstimate(null)]).toEqual([true, true, false, false])
   const tickets = [
-    { id: '1', mold: 'm', title: 'Lane fail: functional on redacted — 1 check', status: 'todo', priority: 1 },
-    { id: '2', mold: 'm', title: 'Lane fail: functional on redacted — 1 check', status: 'todo', priority: 1 },
+    { id: '1', mold: 'm', title: 'Lane fail: functional on example_app — 1 check', status: 'todo', priority: 1 },
+    { id: '2', mold: 'm', title: 'Lane fail: functional on example_vm — 1 check', status: 'todo', priority: 1 },
   ]
-  expect(ticketsForApp(tickets, 'redacted').map(t => t.id)).toEqual(['1'])
-  expect(ticketsForApp(tickets, 'redacted').map(t => t.id)).toEqual(['2'])
+  expect(ticketsForApp(tickets, 'example_app').map(t => t.id)).toEqual(['1'])
+  expect(ticketsForApp(tickets, 'example_vm').map(t => t.id)).toEqual(['2'])
   expect(short(1234)).toBe('1.2k')
   expect(short(2_500_000)).toBe('2.5M')
   expect(short(42)).toBe('42')
@@ -174,7 +174,7 @@ test('stages, the tickets standing before the next one, filters and fitting', as
 import { plainTitle } from './board'
 
 test('a gate ticket drops its product and stage lead', async () => {
-  const t = { id: 'x', mold: 'm', title: 'redacted_research released gate: docs + pricing decided', status: 'todo', priority: 2, product: 'redacted_research' }
+  const t = { id: 'x', mold: 'm', title: 'example_research released gate: docs + pricing decided', status: 'todo', priority: 2, product: 'example_research' }
   expect(plainTitle(t)).toBe('Docs + pricing decided')
   expect(plainTitle({ ...t, product: undefined })).toBe(t.title)
 })

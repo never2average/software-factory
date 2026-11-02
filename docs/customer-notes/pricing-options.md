@@ -1,4 +1,4 @@
-# Decision brief: pricing and packaging for redacted AI
+# Decision brief: pricing and packaging for Acme Research
 
 For the operator. This decides the `released` gate "pricing/packaging decided" (task mold_v1-211), which only you can
 close. Below are three ways to charge, what each costs us to serve, and one recommendation. The **costs are
@@ -7,7 +7,7 @@ change. All amounts are US dollars per month.
 
 ## What it costs us to serve (from `docs/COST_MODEL.md` §2c)
 
-| Item | On Vercel (`redacted`) | On the customer's own server (`redacted`) | Kind |
+| Item | On Vercel (`example_app`) | On the customer's own server (`example_vm`) | Kind |
 |---|---|---|---|
 | one chat turn (main agent) | $0.080 | $0.012 | measured |
 | one research-assistant run: small / typical / heavy | $0.036 / $0.50 / $6.43 | the same (same model) | measured |

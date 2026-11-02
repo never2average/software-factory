@@ -772,7 +772,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack's profile may, for its product); `APP_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
   this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
   lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
-  as redacted: `due_dates`), or they are logged as skipped. The factory writes the sender and the groups for an app
+  as Example Compliance: `due_dates`), or they are logged as skipped. The factory writes the sender and the groups for an app
   whose host pack does not (mold_v0-101, `branding/rules.json` `profile.email_defaults`: `<app_id>@<notify_domain>`,
   `access_requests`, and `due_dates` when a pack declares due dates). No product word is in the text (mold_v0-101,
   `emailWords`): it writes placeholders (`{product}`, `{run}`, `{runs}`, `{account}`, `{owner}`, "a {product}") that the

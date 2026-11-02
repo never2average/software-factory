@@ -147,7 +147,7 @@ TEMPLATE = ",".join(COLS) + "\n" + \
 
 def self_test():
     rows, p = parse(TEMPLATE); assert not p and len(rows) == 2, p
-    m, ro, st, seed, people, p = build(rows, "owner@example.com", "redacted AI", "recordOwner"); assert not p, p
+    m, ro, st, seed, people, p = build(rows, "owner@example.com", "Acme Research", "recordOwner"); assert not p, p
     assert [x["role"] for x in m] == ["owner", "member", "admin", "member"], m
     assert st[0]["id"] == "example-home-loans" and st[1]["id"] == "examplehfl", [c["id"] for c in st]
     assert seed["customers"][1]["recordOwner"] == "asha@example.com" and seed["customers"][1]["aeOwner"] == "ravi@example.com"

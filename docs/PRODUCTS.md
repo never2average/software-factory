@@ -1,7 +1,7 @@
 # Products: what the factory ships
 
 A **mold** is a codebase snapshot plus its five test lanes. A **product** is a mold under a brand, with stage
-gates. An **application** is one stamped, deployable instance of a product. `state/products.json` (schema
+gates. An **application** is one stamped, deployable instance of a product. `state/products.json` (this factory machine's own and git-ignored since mold_v0-198; `state/products.example.json` shows the shape; schema
 `state/products.schema.json`) is the only list of products; `factory.py validate` checks it.
 
 ## A product is
@@ -9,11 +9,11 @@ gates. An **application** is one stamped, deployable instance of a product. `sta
 | Field | Meaning |
 |---|---|
 | `product_id`, `name`, `tagline` | identity. `tagline` is the line under the sign-in wordmark |
-| `mold_id` | the codebase it is stamped from. Several products may share one mold (`delivered`, `dover` and `redacted_research` all sit on mold_v1) and they share that mold's backlog `state/tasks/<mold_id>.jsonl`; a gate task names its product (`factory.py add ... --product <id> --advances <stage>`) and only moves that product |
+| `mold_id` | the codebase it is stamped from. Several products may share one mold (`delivered`, `dover` and `example_research` all sit on mold_v1) and they share that mold's backlog `state/tasks/<mold_id>.jsonl`; a gate task names its product (`factory.py add ... --product <id> --advances <stage>`) and only moves that product |
 | `stage` | `defined` → `stamped` → `lanes_passing` → `deployed` → `released`. Written only by `factory.py close` when every task carrying that `advances_stage` is done; never by hand |
 | `gates` | the plain-English conditions for each stage, the checklist the `productize` skill turns into tasks |
 | `app_ids` | the applications stamped from it (intake appends; a retired or reverted app stays listed with its status in its own state) |
-| `deploy_targets` | `vercel`, `vm` (local verification only) and/or `vm_remote` (a server of the customer's own over SSH, `docs/RUNBOOK.md` §9; in production since 2026-10-04 as `redacted` on a DigitalOcean `s-4vcpu-8gb`, mold_v1-150) |
+| `deploy_targets` | `vercel`, `vm` (local verification only) and/or `vm_remote` (a server of the customer's own over SSH, `docs/RUNBOOK.md` §9; in production since 2026-10-04 as `example_vm` on a DigitalOcean `s-4vcpu-8gb`, mold_v1-150) |
 | `target_model` | the model the product's apps actually run, in words (each app's exact ids are in its `application.model`) |
 | `vercel_project` | project name for the product's first app; later apps get `<project>-<suffix>` |
 | `brand` | the visual identity. Set it from three inputs and let the rest derive: `python3 .claude/scripts/branding.py --product <id> set --name "Acme Ops" --color #1F6F5C --logo brands/acme/logo.png` (optional `--tagline`). The stored block also carries the derived fields (`description`, `neutral_chroma`, `radius`, `icon_bg`/`icon_fg`, the inlined `icon_svg`, optional `tokens` pins) for a designer who wants an exact value |
@@ -70,16 +70,16 @@ exactly what closes it. It is a record, not a switch: `stage` still moves only t
 
 | Product | Mold | Stage | Apps | Deploy targets |
 |---|---|---|---|---|
-| `delivered` | mold_v1 | released | redacted, redacted, sf_gateway_probe | vercel |
+| `delivered` | mold_v1 | released | example_internal, example_replica, sf_gateway_probe | vercel |
 | `dover` | mold_v1 | released | none | vercel |
-| `redacted_research` | mold_v1 | released | redacted (Vercel), redacted (own server) | vercel, vm_remote |
-| `redacted` | mold_v1 | deployed | redacted | vercel |
+| `example_research` | mold_v1 | released | example_app (Vercel), example_vm (own server) | vercel, vm_remote |
+| `example_compliance` | mold_v1 | deployed | example_compliance | vercel |
 | `mcp_product_shell` | mold_v0 | stamped (gates and their evidence: `gate_evidence` in `state/products.json`) | octillion, maxwell | vercel, compose_remote |
-| `redacted_governed` | mold_v2 | defined | none | vercel, vm |
-| `redacted_research` | mold_v3 | defined | none | vercel, vm |
+| `governed_web` | mold_v2 | defined | none | vercel, vm |
+| `research_web` | mold_v3 | defined | none | vercel, vm |
 
-`redacted_research` runs on Cloudflare Workers AI with a model per role: GLM 5.3 for both roles on
-`redacted`; Kimi K2.6 orchestrating and GLM 5.3 as specialist on `redacted`. Its pricing and
+`example_research` runs on Cloudflare Workers AI with a model per role: GLM 5.3 for both roles on
+`example_app`; Kimi K2.6 orchestrating and GLM 5.3 as specialist on `example_vm`. Its pricing and
 packaging are not decided yet (a `released` gate, mold_v1-211; the options and a recommendation are in
 `docs/customer-notes/pricing-options.md`); what it costs to run, per turn, per specialist run, per person and per
 workspace, is in `docs/COST_MODEL.md` §2b, §2c and §7.

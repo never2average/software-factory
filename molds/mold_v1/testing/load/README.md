@@ -148,7 +148,7 @@ stopped. This lane cannot run it, and says so rather than carrying it as a perma
 Three facts, each verifiable in the mold:
 
 * **It needs a human.** `lib/ops-auth.ts` admits exactly two identities — a Google ID token for an
-  `@redacted` Workspace account, or an ES256 token minted after a sign-in code is emailed — and
+  Google Workspace account on the operator's own company domain, or an ES256 token minted after a sign-in code is emailed — and
   states the rule outright: *"There is deliberately no shared service key: every caller is a real,
   named human."* Both are obtained interactively and last about an hour. No factory script can mint
   one for a stamped app, and `HOW_TO_GET_A_TOKEN` in that script tells you to open a browser console

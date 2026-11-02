@@ -7,9 +7,9 @@
 
 WHY (mold_v1-239, 2026-10-12). provision.py used to assume a project named X answers at https://X.vercel.app. A
 *.vercel.app name is global across every Vercel account, and the first project to take it keeps it: when the name
-is taken, Vercel gives a new project a different one (redacted-neon.vercel.app) and says so only in the
-project's domain list and the deployment's alias list. redacted was deployed to redacted,
-redacted-api and redacted-workflow; redacted.vercel.app and redacted-api.vercel.app belonged to
+is taken, Vercel gives a new project a different one (records-desk-neon.vercel.app) and says so only in the
+project's domain list and the deployment's alias list. records_desk was deployed to records-desk,
+records-desk-api and records-desk-workflow; records-desk.vercel.app and records-desk-api.vercel.app belonged to
 someone else's account. The factory read health from the stranger's site, wrote the stranger's address into
 WEB_ORIGIN and NEXT_PUBLIC_EVE_API_URL, and, had health passed, the smoke test would have sent the operator's
 signed-in session to that site.
@@ -304,42 +304,42 @@ def self_test():
     def ok(cond, what, detail=""):
         n[0] += 1
         if not cond: fails.append(f"{what}{': ' + str(detail)[:300] if detail else ''}")
-    # the 2026-10-12 world: someone else holds redacted.vercel.app and redacted-api.vercel.app
+    # the 2026-10-12 world: someone else holds records-desk.vercel.app and records-desk-api.vercel.app
     V = FakeVercel()
-    V.strangers = {"redacted.vercel.app": "<title>redacted</title> someone else's product",
-                   "redacted-api.vercel.app": "<html>404 someone else's</html>"}
-    V.add("redacted", ["redacted-neon.vercel.app"], ["redacted-neon.vercel.app", "redacted-team.vercel.app"])
-    V.add("redacted-api", ["redacted-api-ten.vercel.app"])
-    V.add("redacted-workflow", ["redacted-workflow.vercel.app"])
+    V.strangers = {"records-desk.vercel.app": "<title>Records Desk</title> someone else's product",
+                   "records-desk-api.vercel.app": "<html>404 someone else's</html>"}
+    V.add("records-desk", ["records-desk-neon.vercel.app"], ["records-desk-neon.vercel.app", "records-desk-team.vercel.app"])
+    V.add("records-desk-api", ["records-desk-api-ten.vercel.app"])
+    V.add("records-desk-workflow", ["records-desk-workflow.vercel.app"])
 
     # 1. alias reading: the real address comes from Vercel, not from the project name
-    url, why = production_address(V.api, "redacted", deployment="redacted-abc123-team.vercel.app")
-    ok(url == "https://redacted-neon.vercel.app", "alias reading: the web address is the project's own domain on its deployment, not <name>.vercel.app", (url, why))
-    url, _ = production_address(V.api, "redacted-api")
-    ok(url == "https://redacted-api-ten.vercel.app", "alias reading: the api's address is Vercel's fallback name, read from the production target", url)
-    url, _ = production_address(V.api, "redacted-workflow")
-    ok(url == "https://redacted-workflow.vercel.app", "alias reading: a free name is still read, not assumed", url)
-    url, why = production_address(V.api, "redacted", deployment="dpl_redacted-api")
-    ok(url is None and "not one of redacted's" in why, "alias reading: a deployment of another project is refused", why)
+    url, why = production_address(V.api, "records-desk", deployment="records-desk-abc123-team.vercel.app")
+    ok(url == "https://records-desk-neon.vercel.app", "alias reading: the web address is the project's own domain on its deployment, not <name>.vercel.app", (url, why))
+    url, _ = production_address(V.api, "records-desk-api")
+    ok(url == "https://records-desk-api-ten.vercel.app", "alias reading: the api's address is Vercel's fallback name, read from the production target", url)
+    url, _ = production_address(V.api, "records-desk-workflow")
+    ok(url == "https://records-desk-workflow.vercel.app", "alias reading: a free name is still read, not assumed", url)
+    url, why = production_address(V.api, "records-desk", deployment="dpl_records-desk-api")
+    ok(url is None and "not one of records-desk's" in why, "alias reading: a deployment of another project is refused", why)
     V2 = FakeVercel(); V2.add("fresh", ["fresh.vercel.app"], prod_aliases=[])
     url, why = production_address(V2.api, "fresh")
     ok(url is None and "carries none" in why, "alias reading: a domain the deployment does not carry yet is not an address", why)
-    url, _ = current_address(V.api, "redacted")
-    ok(url == "https://redacted-neon.vercel.app", "current_address reads the domain list (before a deploy)", url)
+    url, _ = current_address(V.api, "records-desk")
+    ok(url == "https://records-desk-neon.vercel.app", "current_address reads the domain list (before a deploy)", url)
 
     # 2. name collision
-    st, _ = name_status(V.api, V.probe, "redacted")
-    ok(st == "taken", "name collision: redacted.vercel.app served by someone else is 'taken'", st)
-    st, _ = name_status(V.api, V.probe, "redacted-workflow")
+    st, _ = name_status(V.api, V.probe, "records-desk")
+    ok(st == "taken", "name collision: records-desk.vercel.app served by someone else is 'taken'", st)
+    st, _ = name_status(V.api, V.probe, "records-desk-workflow")
     ok(st == "team", "a name our own project serves is 'team', not free", st)
-    st, _ = name_status(V.api, V.probe, "redacted-redacted")
+    st, _ = name_status(V.api, V.probe, "globex-records-desk")
     ok(st == "free", "a name nobody serves (DEPLOYMENT_NOT_FOUND) is free", st)
     st, _ = name_status(V.api, lambda u: (0, ""), "anything")
     ok(st == "unknown", "nothing answered: unknown, never free", st)
-    alts = alternatives("redacted", prefix="redacted", team="acme7f-1234s-projects", rand="beef")
-    ok(alts == ["redacted-redacted", "redacted-acme7f", "redacted-beef"], "alternatives: prefix, team word, random", alts)
-    base, rep = free_base(V.api, V.probe, "redacted", alts)
-    ok(base == "redacted-redacted" and rep[0][1], "free_base skips the taken name and picks the first free set of three", (base, rep))
+    alts = alternatives("records-desk", prefix="Globex", team="acme7f-1234s-projects", rand="beef")
+    ok(alts == ["globex-records-desk", "records-desk-acme7f", "records-desk-beef"], "alternatives: prefix, team word, random", alts)
+    base, rep = free_base(V.api, V.probe, "records-desk", alts)
+    ok(base == "globex-records-desk" and rep[0][1], "free_base skips the taken name and picks the first free set of three", (base, rep))
     W = FakeVercel(); W.strangers = {"app.vercel.app": "x"}
     base, rep = free_base(W.api, W.probe, "app", [])
     ok(base is None and "someone else's" in rep[0][1][0], "free_base: no free name -> None, saying whose", rep)
@@ -357,21 +357,21 @@ def self_test():
     ok(url is None and "not free" in why and ("POST", "/v10/projects/prj_taken/domains") not in C.calls, "claim: a taken name is never claimed", why)
 
     # 3. the ownership guard: nothing carrying a credential goes to an address Vercel does not call ours
-    infra = {"target": "vercel", "vercel": {"team": "t", "project": "redacted"}}
-    good, why = guard_app(infra, "https://redacted.vercel.app", api=V.api, roles=("",))
-    ok(not good and "refusing to send anything to redacted.vercel.app" in why and "Nothing was sent" in why,
-       "ownership guard: the stranger's redacted.vercel.app is refused", why)
-    ok(not any(c[0] == "PROBE" and "redacted.vercel.app" in c[1] for c in V.calls[-6:]), "  ...and the guard itself never contacts that address")
-    good, who = guard_app(infra, "https://redacted-neon.vercel.app/", api=V.api, roles=("",))
-    ok(good and who == "redacted", "ownership guard: our own alias passes", who)
-    good, why = guard_app(infra, "https://redacted-api-ten.vercel.app", api=V.api, roles=("",))
+    infra = {"target": "vercel", "vercel": {"team": "t", "project": "records-desk"}}
+    good, why = guard_app(infra, "https://records-desk.vercel.app", api=V.api, roles=("",))
+    ok(not good and "refusing to send anything to records-desk.vercel.app" in why and "Nothing was sent" in why,
+       "ownership guard: the stranger's records-desk.vercel.app is refused", why)
+    ok(not any(c[0] == "PROBE" and "records-desk.vercel.app" in c[1] for c in V.calls[-6:]), "  ...and the guard itself never contacts that address")
+    good, who = guard_app(infra, "https://records-desk-neon.vercel.app/", api=V.api, roles=("",))
+    ok(good and who == "records-desk", "ownership guard: our own alias passes", who)
+    good, why = guard_app(infra, "https://records-desk-api-ten.vercel.app", api=V.api, roles=("",))
     ok(not good and "another project" in why, "ownership guard: our api's address is not the web app's", why)
-    good, _ = guard_app(infra, "https://redacted-abc123-team.vercel.app", api=V.api, roles=("",))
+    good, _ = guard_app(infra, "https://records-desk-abc123-team.vercel.app", api=V.api, roles=("",))
     ok(good, "ownership guard: our own one-off deployment URL passes (the deployment record names our project)")
     good, why = guard_app({"target": "vercel", "vercel": {}}, "https://x.vercel.app", api=V.api)
     ok(not good and "no Vercel project" in why, "ownership guard: no project in state -> refused", why)
     broken = lambda path, method="GET", fields=None: (1, {"error": "network down"})
-    good, why = guard_app(infra, "https://redacted-neon.vercel.app", api=broken)
+    good, why = guard_app(infra, "https://records-desk-neon.vercel.app", api=broken)
     ok(not good, "ownership guard: Vercel unreadable -> refused (unknown is no)", why)
     good, _ = guard_app({"target": "vm_remote", "vm_remote": {"production_url": "https://a.example.com"}}, "https://a.example.com", api=broken)
     ok(good, "ownership guard: an app on its own server is not asked of Vercel")

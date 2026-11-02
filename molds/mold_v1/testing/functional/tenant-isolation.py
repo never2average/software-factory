@@ -8,7 +8,7 @@
   python3 molds/mold_v1/testing/functional/tenant-isolation.py --self-test           the rls.health row against a stand-in
                                                                                       server on loopback; touches no app
 
-WHY THIS EXISTS. The lane report for redacted printed
+WHY THIS EXISTS. The lane report for example_replica printed
 
   | health.db | pass | ok=true, 94-123 ms: "SELECT 1 ok · role postgres — WARNING: BYPASSRLS,
                                             row-level security is NOT enforced..."

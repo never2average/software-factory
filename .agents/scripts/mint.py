@@ -594,7 +594,7 @@ def origin(app):
     u = lane_url.target_url(docs(app)[1] or {})
     if not u: sys.exit(f"{app} is not deployed yet")
     # mold_v1-239: an email address and a sign-in code go only to an address Vercel files under this app's web project
-    # (an app on its own server is not asked). The address in state was once another account's redacted.vercel.app.
+    # (an app on its own server is not asked). The address in state was once another account's example-compliance.vercel.app.
     import vercel_addr
     mine, why = vercel_addr.guard_app(docs(app)[1] or {}, u, roles=("",))
     if not mine: sys.exit(f"{app}: {why}")

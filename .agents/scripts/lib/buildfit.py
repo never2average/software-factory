@@ -32,7 +32,7 @@ measures what the step can have at that moment and sizes the step to it, slower 
             keeps serving.
   honest    (mold_v1-247) a step has finished only when it left what it is for (`produces`: the eve build's
             .vercel/output/config.json) and the kernel killed none of its processes. A build tool can exit 0 after
-            the kernel killed its child (redacted, 2026-10-13: the child at 4.87 GB, "finished in 1208s", an
+            the kernel killed its child (example_compliance, 2026-10-13: the child at 4.87 GB, "finished in 1208s", an
             empty output uploaded), so each run is watched (Watch): the scope's memory.events, the kernel log for the
             step's own processes, and the product. A kill or a missing product is a failure that says so ("killed
             for lack of memory at N MB"), shows the last lines of the build's own output (secrets hidden) and keeps
@@ -60,7 +60,7 @@ import contextlib, json, math, os, re, shlex, shutil, subprocess, sys, threading
 
 CAPACITY_RC = 75                    # EX_TEMPFAIL: the machine, not the app. build.sh passes it on; the factory reads it
 # Each step's need, measured on the factory machine (4 vCPU, 7.8 GB, no swap) on 2026-10-11, building the
-# redacted build copy at mold 1260acd, each step alone in a cgroup limited to 3 GB and 2 CPUs (the highest
+# example_vm build copy at mold 1260acd, each step alone in a cgroup limited to 3 GB and 2 CPUs (the highest
 # anonymous memory, sampled every 0.5 s; the page cache is left out, the kernel reclaims it):
 #                     as it was (no sizing)     sized, tight                     where the memory goes
 #   npm ci (app)      1.5 GB    51 s            -                                npm and the install scripts
@@ -717,7 +717,7 @@ def _run(step, argv, serving, label, wait_s, allow_swap, base, cwd, probe, runne
                 say(short_line(step, probe(), serving, killed=True, prof=p, at_mb=at_mb)); return CAPACITY_RC
             if how == "heap":     # V8's own ceiling was too low for this step: more heap, inside the budget
                 # The ceiling is the step's whole budget (RAM + swap it may use) less 1 GB for native memory, not the
-                # step's recorded heap: a pack that grew past that heap (2026-10-15, redacted at 5080 MB) used to be
+                # step's recorded heap: a pack that grew past that heap (2026-10-15, example_compliance at 5080 MB) used to be
                 # retried at the very heap it had just run out of.
                 cap = max(HEAP_MAX_MB, p["heap_mb"], (pl.get("budget_mb") or 0) - 1024)
                 heap = min(cap, max(pl["heap_mb"] + 512, (pl["heap_mb"] * 3) // 2)); heap_failed = True

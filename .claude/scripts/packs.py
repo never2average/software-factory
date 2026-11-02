@@ -328,7 +328,7 @@ def apply(app_id, lane=False, default_profile=False, build=None):
     profile — scripts/test-deployment-profile.mjs says so in as many words, and upstream CI runs them on nothing
     else — so a pack that relabels the vocabulary or declares its own record fields fails them by design: the
     wording "deployment's profile" becomes "workspace's profile", a pinned 38-column workbook gains the pack's
-    field, a tool's result speaks `companyId` where the test reads `customerId` (redacted, mold_v1-146/147).
+    field, a tool's result speaks `companyId` where the test reads `customerId` (example_app, mold_v1-146/147).
     Those rows measured the pack's profile against the mold's fixtures, not the product. This copy still carries
     the pack's CODE, so those tests also run over its subagents and helpers; the profile's own words are graded
     where they mean something (the pack-mode vocabulary gate, the rendered and live checks). The generated
@@ -567,7 +567,7 @@ def verify(app_id):
 
 def model_surface(build, env, run=subprocess.run):
     """Render what the agent's model reads in this build copy (the mold's scripts/lib/model-surface.mjs, ~10 s), so
-    a profile whose words collide (two labels turning into one tool parameter name, 2026-10-16 redacted) fails
+    a profile whose words collide (two labels turning into one tool parameter name, 2026-10-16 example_compliance) fails
     HERE, before a deploy, instead of inside the deploy's eve build. 0 when it renders or the mold has no renderer."""
     script = os.path.join(build, "scripts", "lib", "model-surface.mjs")
     if not os.path.exists(script): return 0

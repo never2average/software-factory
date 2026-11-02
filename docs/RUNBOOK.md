@@ -181,7 +181,7 @@ The mold ships three commands of its own for this (`molds/mold_v1/codebase/packa
 
 | Command | What it writes |
 |---|---|
-| `operator:new-org -- --name "<Name>" --id <id> --owner <email>` | a workspace: the `orgs` row, the owner (also made a platform admin), one workflow row per specialist and the build's starter library. On `redacted_research` that library is `hfc-research`: four starter apps that refresh on a schedule and spend inference whether anyone opens them or not (`docs/COST_MODEL.md` §2c). Refuses a workspace id that already exists unless `--force`, so it cannot change an existing workspace by accident |
+| `operator:new-org -- --name "<Name>" --id <id> --owner <email>` | a workspace: the `orgs` row, the owner (also made a platform admin), one workflow row per specialist and the build's starter library. On `example_research` that library is `hfc-research`: four starter apps that refresh on a schedule and spend inference whether anyone opens them or not (`docs/COST_MODEL.md` §2c). Refuses a workspace id that already exists unless `--force`, so it cannot change an existing workspace by accident |
 | `operator:onboard-self -- --org <workspace id> --email <you> --name "<you>"` | records you as a team member **in that one workspace** (a team memory and, in its data room, `People/<you>/`) and prints a readiness checklist. `--org` is required since mold 1260acd (upstream #154, mold_v1-229); without it the command stops and writes nothing. Run it once per workspace you work in |
 | `operator:new-customer -- --email <you> --name "<Company>" --id <id> --org <workspace id>` | a company in that workspace: its row, you as its solution engineer, and `context.md` + `interactions.jsonl` in the workspace's data room |
 
@@ -217,7 +217,7 @@ app, switch to that workspace, open `https://<address>/workspace`, the **Setting
 `{"status": "suspended"}` as its owner or an admin). A suspended workspace refuses sign-ins to it and its schedules stop
 (the starter apps no longer refresh); its rows and files stay, and **Reactivate** brings it back.
 
-Measured on `redacted` on 2026-10-10 with a throwaway workspace "Onboarding Check 2026-10-10": `new-org` and
+Measured on `example_vm` on 2026-10-10 with a throwaway workspace "Onboarding Check 2026-10-10": `new-org` and
 `new-customer` succeeded (readiness: 1 member, 7 workflows, data-room prefix, 1 company) and the workspace was
 suspended. `onboard-self` failed there (mold_v1-229); on 2026-10-11, on mold 1260acd, it succeeded with `--org` in the
 same workspace, still suspended (it does not need the workspace active), and its row landed in that workspace only.
@@ -290,7 +290,7 @@ ever runs the app on the vm target, and it is a measurement on your own machine,
 
 ## 9. A server of your own instead of Vercel (`target: vm_remote`)
 
-**Where this stands today:** in production since 2026-10-04 (`redacted`, a DigitalOcean `s-4vcpu-8gb`).
+**Where this stands today:** in production since 2026-10-04 (`example_vm`, a DigitalOcean `s-4vcpu-8gb`).
 Steps A to E cost one server and change nothing for anyone; step F is the deploy.
 
 Say in the brief `on the customer's own server` (step 1), and intake writes an application whose target is
@@ -543,7 +543,7 @@ It is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
 ## 10. A repository of its own for an application (only if you ask)
 
 An application's code can be kept in a private repository on GitHub or GitLab, one per application. Nothing makes
-one by itself. You ask the agent ("put redacted in a GitHub repository"), and it does three things in order.
+one by itself. You ask the agent ("put example_app in a GitHub repository"), and it does three things in order.
 
 1. **It looks first, and creates nothing.**
 

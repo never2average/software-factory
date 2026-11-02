@@ -120,7 +120,7 @@ def clear_stale_revert(adir, app_id, ordered):
     Until now only a deploy cleared `reverted`, so an application whose cause was fixed and then re-proven
     by a full passing run still read `reverted` in the one machine-readable place the gate consults — while
     the deployment in front of traffic was fine. That is the self-contradictory record HARD RULE 8 exists to
-    prevent, and it bit redacted on 2026-09-23: a responsiveness lane failed on a VM busy with someone
+    prevent, and it bit example_app on 2026-09-23: a responsiveness lane failed on a VM busy with someone
     else's browsers, the re-run passed 6/6, and the record still said reverted.
 
     Narrow on purpose:
