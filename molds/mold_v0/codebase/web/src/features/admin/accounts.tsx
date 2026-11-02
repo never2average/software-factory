@@ -126,7 +126,7 @@ export function AdminAccounts({ tabs }: { tabs?: ReactNode } = {}) {
       <div className='flex min-w-0 flex-col gap-3'>
       {tabs}
       <RecordView<Org>
-        id='admin-accounts-v2' noun='accounts' exportName='accounts' groupable
+        id='admin-accounts-v2' noun='accounts' exportName='accounts' groupable compact={!!tabs}
         rows={orgs} rowKey={(o) => o.slug} cols={cols} views={VIEWS} loading={isLoading}
         defaultSort={[{ key: 'last_seen', dir: 'desc' }]}
         searchText={(o) => `${o.name} ${o.slug} ${o.contact ?? ''} ${o.stage_label} ${o.subscription?.plan ?? ''}`}

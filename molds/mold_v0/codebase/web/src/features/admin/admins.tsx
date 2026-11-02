@@ -69,7 +69,7 @@ export function AdminAdmins({ tabs }: { tabs?: ReactNode } = {}) {
       {tabs}
       <ErrorBox error={error} />
       <RecordView<Admin>
-        id='admin-admins' noun='admins' exportName='admins'
+        id='admin-admins' noun='admins' exportName='admins' compact={!!tabs}
         rows={data?.admins ?? []} rowKey={(a) => a.id ?? `env:${a.email}`} cols={cols} actions={actions} loading={isLoading}
         searchText={(a) => `${a.email ?? ''} ${a.name ?? ''} ${a.role_label} ${a.added_by ?? ''}`}
         searchPlaceholder='Search admins by email, name or role'
