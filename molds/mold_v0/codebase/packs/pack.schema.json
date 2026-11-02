@@ -4645,6 +4645,137 @@
       },
       "additionalProperties": false
     },
+    "email": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "sender": {
+          "type": "object",
+          "properties": {
+            "allow": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "allow"
+          ],
+          "additionalProperties": false
+        },
+        "intake": {
+          "type": "object",
+          "properties": {
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "area": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,62}$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60,
+              "pattern": "^[^{}<>]*$"
+            },
+            "folder": {
+              "default": "INBOX",
+              "type": "string",
+              "pattern": "^[\\x20-\\x21\\x23-\\x5b\\x5d-\\x7e]{1,100}$"
+            },
+            "fields": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "enum": [
+                  "subject",
+                  "from",
+                  "from_name",
+                  "from_domain",
+                  "to",
+                  "cc",
+                  "date",
+                  "received_at",
+                  "body",
+                  "attachments",
+                  "attachment_count",
+                  "mailbox",
+                  "message_id"
+                ]
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,62}$"
+              }
+            },
+            "set": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,62}$"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
+            },
+            "body_chars": {
+              "default": 4000,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 20000
+            },
+            "backfill_days": {
+              "default": 7,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 90
+            },
+            "attachments": {
+              "default": {
+                "max_bytes": 10485760,
+                "max_count": 20
+              },
+              "type": "object",
+              "properties": {
+                "max_bytes": {
+                  "default": 10485760,
+                  "type": "integer",
+                  "minimum": 1024,
+                  "maximum": 26214400
+                },
+                "max_count": {
+                  "default": 20,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 50
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "area"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "landing": {
       "anyOf": [
         {

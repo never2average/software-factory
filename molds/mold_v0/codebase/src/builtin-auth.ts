@@ -269,7 +269,7 @@ export const invitations = {
     });
     // The words and the link are the email module's (src/email.ts invitation): the one place that sends.
     const mail = await import("./email.js");
-    void mail.invitation({ id: inv.id, to: e, account: org.name, accountSlug: org.slug, role: ACCOUNT_ROLE_LABELS[accountRole], google: googleConfigured(), days: INVITE_DAYS });
+    void mail.invitation({ id: inv.id, to: e, account: org.name, accountSlug: org.slug, role: ACCOUNT_ROLE_LABELS[accountRole], google: googleConfigured(), days: INVITE_DAYS, org: org.id });
     return toInvitation(inv);
   }),
   list: (orgDirId: string) => P(async (db) => {

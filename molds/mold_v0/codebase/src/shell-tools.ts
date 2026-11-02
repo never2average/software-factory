@@ -23,6 +23,9 @@ export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
 /** The MCP tool the shell adds when at least one record area declares clocks (mold_v0-191, src/record-clocks.ts). */
 export const CLOCK_TOOL_NAMES = ["list_due_records"] as const;
 
+/** The MCP tool the shell adds when a pack declares a mail intake (src/email-intake.ts, mold_v0-192). */
+export const INTAKE_TOOL_NAMES = ["list_intake_items"] as const;
+
 /**
  * The admin MCP's own tools (src/admin-mcp.ts ADMIN_TOOLS). The session engine's job tools (its simulations: list, get,
  * cancel) are its host pack's since mold_v0-049, added through src/host.ts at the same places.

@@ -67,6 +67,7 @@ import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.
 import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
+import { emailPackProblems, type EmailPackSchema } from "./company-email-config.js";
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 import { templateProblems } from "./text-template.js";
 
@@ -1621,6 +1622,12 @@ export interface PackDefinition {
    */
   workspaceStore?: z.input<typeof WorkspaceStoreSchema>;
   /**
+   * The company's own email (mold_v0-192; src/company-email-config.ts): `sender.allow` lets a workspace's admins send
+   * the app's notifications through their own mail system; `intake` turns a mailbox's new messages into records of one
+   * of the pack's own workspace areas.
+   */
+  email?: z.input<typeof EmailPackSchema>;
+  /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
@@ -1743,6 +1750,8 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     if (!(p.agentJobKinds ?? []).length && !(p.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace))
       problems.push(at("workspaceStore settles the workspace store's retention and viewer: declare a job kind with workspace: true (or agent-workspace)"));
   }
+  // The company's own email (mold_v0-192): its intake writes one of this pack's own workspace areas.
+  if (p.email !== undefined) problems.push(...emailPackProblems(String(p.id), p.email, (p.recordAreas ?? []) as never));
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const k of p.agentJobKinds ?? []) if (k?.name && kinds.has(k.name)) problems.push(at(`job kind ${k.name} is declared twice`)); else if (k?.name) kinds.add(k.name);
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));
