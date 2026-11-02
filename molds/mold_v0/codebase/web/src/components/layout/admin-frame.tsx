@@ -1,5 +1,6 @@
 import { AreaShell } from '@/components/layout/area-shell';
 import { adminNav } from '@/config/nav-config';
+import { withAuditNav } from '@/features/audit/nav';
 import { serverApi } from '@/lib/server-api';
 import { protect } from '@/lib/auth/server';
 import { CLERK } from '@/lib/auth/provider';
@@ -23,5 +24,5 @@ export async function AdminFrame({ children }: { children: React.ReactNode }) {
   if (s.status >= 500 || !s.body) throw new Error(`The admin session could not be read (${s.status})`);
   if (!s.body!.is_platform_admin) forbidden();
   const role = { role: s.body!.role, permissions: s.body!.permissions ?? [], needs: s.body!.needs ?? {} };
-  return <AdminRoleProvider session={role}><AreaShell area='admin' groups={adminNav} docs={adminDocsNav()}>{children}</AreaShell></AdminRoleProvider>;
+  return <AdminRoleProvider session={role}><AreaShell area='admin' groups={withAuditNav(adminNav, '/admin/access-log')} docs={adminDocsNav()}>{children}</AreaShell></AdminRoleProvider>;
 }

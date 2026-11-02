@@ -34,7 +34,8 @@ const line = (cells: unknown[]) => `${cells.map(csvCell).join(',')}\r\n`;
 export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'>, rows: (p: Page) => Page = (p) => p) {
   let csv = line(['Key', 'Title', ...area.fields.map((f) => f.label), 'Updated']), count = 0, after: string | null = null;
   for (;;) {
-    const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}limit=200${after ? `&after=${encodeURIComponent(after)}` : ''}`, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    // audit=export: the data trail (mold_v0-197) records these pages as one export each, not as list reads.
+    const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}limit=200&audit=export${after ? `&after=${encodeURIComponent(after)}` : ''}`, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const body = (await res.json().catch(() => ({}))) as Page & { error?: string };
     if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
     const page = rows(body);

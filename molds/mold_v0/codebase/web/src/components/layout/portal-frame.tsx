@@ -1,5 +1,6 @@
 import { AreaShell } from '@/components/layout/area-shell';
 import { portalNav } from '@/config/nav-config';
+import { withAuditNav } from '@/features/audit/nav';
 import { protect } from '@/lib/auth/server';
 import { serverApi } from '@/lib/server-api';
 import { NoAccount } from '@/features/portal/no-account';
@@ -27,7 +28,7 @@ export async function PortalFrame({ children }: { children: React.ReactNode }) {
     return <NoAccount reason={refused ? 'no_account' : 'choose'} email={s?.body?.email ?? null} platformAdmin={!!s?.body?.is_platform_admin} />;
   }
   return (
-    <AreaShell area='portal' groups={portalNav} docs={customerDocsNav()}>
+    <AreaShell area='portal' groups={withAuditNav(portalNav, '/app/access-log', ['owner'])} docs={customerDocsNav()}>
       {children}
       <InvitationLanding activeOrgId={orgId ?? null} />
     </AreaShell>

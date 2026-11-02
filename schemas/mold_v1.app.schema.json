@@ -474,8 +474,8 @@
       "type": "object",
       "additionalProperties": false,
       "title": "Audit trails (mold_v0-197)",
-      "description": "Two audit trails, each on or off on its own (both default false). Separate from usage metering, which always stays on. Implemented by ticket mold_v0-197: until then the setting is recorded with the spec and has no effect.",
-      "markdownDescription": "Two audit trails, **each on or off on its own** (both default `false`).\n\n- `data`: every read, change, reveal and export of a workspace's records, visible to that workspace's admins.\n- `platform`: every API and MCP request and every sign-in, with the key, the actor and the scope, plus staff actions on accounts.\n\nSeparate from **usage metering**, which always stays on. An `embedded` app needs `platform: true`.\n\n_Implemented by mold_v0-197; until then it is recorded with the spec and has no effect._",
+      "description": "Two audit trails, each on or off on its own (both default false). Separate from usage metering, which always stays on. mold_v0 writes it to the app's profile.audit (mold_v0-197, src/audit-trail.ts; entries kept 400 days unless profile.audit.retention_days says otherwise).",
+      "markdownDescription": "Two audit trails, **each on or off on its own** (both default `false`).\n\n- `data`: every read, change, reveal and export of a workspace's records, visible to that workspace's admins.\n- `platform`: every API and MCP request and every sign-in, with the key, the actor and the scope, plus staff actions on accounts.\n\nSeparate from **usage metering**, which always stays on. An `embedded` app needs `platform: true`.\n\n_mold_v0 writes it to the app's `profile.audit` (mold_v0-197, `src/audit-trail.ts`); entries are kept 400 days unless `profile.audit.retention_days` says otherwise._",
       "properties": {
         "data": {
           "type": "boolean",
