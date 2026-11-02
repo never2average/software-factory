@@ -1,0 +1,203 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_embedded",
+  "name": "Fixture embedded",
+  "version": "0.1.0",
+  "description": "A declarative test fixture for an app of kind embedded (mold_v0-193; scripts/developer-surface-test.ts, scripts/developer-e2e.ts): record areas, a job kind and a developer surface, in a pack.json alone. Never shipped.",
+  "record_areas": [
+    {
+      "name": "tickets",
+      "label": "Tickets",
+      "role": "check",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "required": true,
+          "max_length": 500
+        },
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "name": "points",
+          "label": "Points",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "name": "due",
+          "label": "Due",
+          "type": "date"
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "open",
+            "in_progress",
+            "closed"
+          ]
+        }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "in_progress",
+            "label": "Start"
+          },
+          {
+            "from": [
+              "open",
+              "in_progress"
+            ],
+            "to": "closed",
+            "label": "Close"
+          }
+        ]
+      },
+      "clocks": [
+        {
+          "name": "respond",
+          "label": "Respond by",
+          "starts": {
+            "event": "created"
+          },
+          "after": "1d"
+        }
+      ]
+    },
+    {
+      "name": "findings",
+      "label": "Findings",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "scanner",
+          "label": "Scanner",
+          "type": "text"
+        },
+        {
+          "name": "location",
+          "label": "Location",
+          "type": "text"
+        }
+      ]
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "triage",
+      "label": "Triage",
+      "runner": "agent-workspace",
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "triage.mjs"
+        ],
+        "timeout_seconds": 600,
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "notes"
+        ]
+      }
+    }
+  ],
+  "developer_surface": {
+    "events": [
+      {
+        "name": "record.created",
+        "description": "A ticket or finding was created."
+      },
+      {
+        "name": "record.updated",
+        "description": "A ticket or finding changed."
+      },
+      {
+        "name": "record.state_changed",
+        "description": "A ticket moved.",
+        "areas": [
+          "tickets"
+        ]
+      },
+      {
+        "name": "record.deleted",
+        "description": "A ticket or finding was deleted."
+      },
+      {
+        "name": "run.finished",
+        "description": "A triage run ended."
+      },
+      {
+        "name": "clock.overdue",
+        "description": "A ticket was not answered in time."
+      }
+    ],
+    "sdk_languages": [
+      "typescript",
+      "python"
+    ],
+    "client_sessions": {
+      "ttl_seconds": 900,
+      "allowed_origins": [
+        "https://app.example.com"
+      ],
+      "scopes": [
+        "read",
+        "write"
+      ]
+    },
+    "webhooks_in": [
+      {
+        "name": "scanner",
+        "description": "A scanner's report: one finding per item.",
+        "area": "findings",
+        "items": "/findings",
+        "key": "/id",
+        "title": "/title",
+        "fields": {
+          "severity": "/severity",
+          "location": "/where/path"
+        },
+        "types": [
+          "scan.completed"
+        ]
+      }
+    ]
+  }
+}

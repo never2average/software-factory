@@ -119,6 +119,9 @@ const { joinAccessFields } = await import(pathToFileURL(ACCESS_REQUEST).href);
 const { CONTEXT_SECTIONS, MEMORY_WORDS, WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "account-context-words.ts")).href);
 // The journeys and tips components' words (mold_v0-143): plain TypeScript with no imports.
 const { JOURNEY_WEB_WORDS, TIP_WEB_WORDS } = await import(pathToFileURL(path.join(HERE, "..", "src", "journeys-words.ts")).href);
+// The developer surface's catalog and build checks (mold_v0-193): plain TypeScript with no imports.
+const { developerSurfaceProblems, LATEST_API_VERSION } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-config.ts")).href);
+const { developerGuidePages } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-docs.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -173,7 +176,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the journeys and in-chat tips components, turned on (mold_v0-143, src/journeys.ts, src/tips.ts; PACK_CONFIG, JOURNEYS and TIPS)
   "journeys", "tips",
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
-  "texts"]);
+  "texts",
+  // the developer surface of an embedded app (mold_v0-193, src/developer-config.ts; PACK_CONFIG and the guide's Developers pages)
+  "developer_surface"]);
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
@@ -1670,6 +1675,8 @@ const consoleTexts = {}, textOwner = new Map();
 const packConfig = [];
 /** The pack that declares the connect guide (mold_v0-171), once checked. */
 let connectOwner = null;
+/** The pack that declares the developer surface (mold_v0-193) and its declaration, once checked; null: off. */
+let developerOwner = null, developerFacts = null;
 {
   const SHELL_GROUPS = [...readFileSync(path.join(ROOT, "src", "settings.ts"), "utf8").matchAll(/\{ id: "([a-z_]+)", label: "[^"]+" \}/g)].map((m) => m[1]);
   const groups = new Map(SHELL_GROUPS.map((g) => [g, "the shell"])), keys = new Map(), reworded = new Map();
@@ -1780,6 +1787,16 @@ let connectOwner = null;
         const { $comment: _c, ...rest } = j.connect_page;
         c.connect_page = rest;
       }
+    }
+    // The developer surface of an embedded app (mold_v0-193, src/developer-config.ts): one pack's per build, checked
+    // against the build's record areas.
+    if (j.developer_surface !== undefined) {
+      const { $comment: _c, ...rest } = j.developer_surface;
+      const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
+      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })));
+      for (const b of bad) fail(at, `developer_surface.${b}`);
+      if (developerOwner) fail(at, `developer_surface: pack ${developerOwner} declares the developer surface too: one pack's`);
+      else if (!bad.length) { developerOwner = p.id; developerFacts = cfg; c.developer_surface = cfg; }
     }
     if (Object.keys(c).length > 1) packConfig.push(c);
   }
@@ -2317,6 +2334,12 @@ function packGuideData() {
   const startOf = (pack, kind) => tools.find((t) => t.pack === pack && t.op === "start" && t.kind === kind)?.name ?? null;
   const kinds = facts.flatMap(({ p, f }) => (f?.kinds ?? []).map((k) => ({ pack: p.id, ...k, start: startOf(p.id, k.name) })));
   const offered = kinds.filter((k) => k.start);
+  // The developer surface's pages (mold_v0-193, src/developer-docs.ts), group Developers: only when a pack declares it.
+  if (developerFacts) for (const pg of developerGuidePages(developerFacts, recordAreas.filter((a) => !listWithheld(a.name)), kinds, developerFacts.api_version ?? LATEST_API_VERSION)) {
+    if (seen.has(pg.slug)) { fail(`packs/${developerOwner}/pack.json`, `developer_surface: the guide page ${JSON.stringify(pg.title)} is at the same address as pack ${seen.get(pg.slug)}'s (/app/docs/${pg.slug})`); continue; }
+    seen.set(pg.slug, developerOwner);
+    pages.push(pg);
+  }
   const credentialLabel = (pack, name) => facts.find((x) => x.p.id === pack)?.f?.credentials.find((c) => c.name === name)?.label ?? name;
   const kindLabel = (k) => k.label ?? k.name.replace(/_/g, " ");
   const label = (s) => s.charAt(0).toUpperCase() + s.slice(1);

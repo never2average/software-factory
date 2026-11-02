@@ -2340,6 +2340,69 @@ attached), as are the icons' and share image's absolute URLs. The factory's inta
 brief's `## Profile` `legal.*` lines, or one question; `later` leaves the pages off; docs/INTAKE.md). The lanes grade
 `/terms` and `/privacy` only when the build serves them (`testing/console/surface.mts`).
 
+**Developer surface (mold_v0-193; an app of kind `embedded`).** On in a build where one pack's pack.json declares
+`developer_surface` (`src/developer-config.ts`: `events`, `sdk_languages`, `client_sessions` {ttl_seconds,
+allowed_origins, scopes}, optional `webhooks_in` and `api_version`; checked by `gen-packs.mjs` against the build's record
+areas, one pack's per build, carried to the server as `PACK_CONFIG`). The factory writes it there from the app spec
+(`mint.py new --spec`: the spec's `developer_surface` into the first inline pack; docs/APP_SPEC.md). Off, in every
+`kind: tool` app, nothing of it is mounted, read or queued: no `/v1`, no `/openapi.json`, no `/api/developer`, the MCP
+surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP hash is unchanged). What it gives:
+
+- **The API** (`src/developer-api.ts`, `/v1`): every record area's list (cursor pages), get, create, replace, move,
+  delete and `/v1/batch` through the generic data API (the record store's rules), runs (start, list with a keyset
+  cursor, get, results, cancel), client sessions, allowed origins, webhook endpoints and deliveries, inbound sources.
+  Errors are `application/problem+json` (`type` `/problems/<code>`, `title`, `status`, `detail`, `code`, `request_id`);
+  `API-Version` (dated, `API_VERSIONS`; a key is pinned to the version current when it was made); `Idempotency-Key` on
+  writes (24 hours, per credential, the first answer replayed byte for byte with `Idempotent-Replayed: true`, another
+  request with the key 422); rate limits per key (or client session) and per workspace a minute (the MCP front door's
+  numbers, `src/rate-limits.ts`), 429 with `Retry-After`.
+- **The description** (`src/developer-openapi.ts`, `/openapi.json`): OpenAPI 3.1 generated from the pack contract (each
+  area's paths and typed schemas: enums, references, lifecycle states; shared and repository-fed areas read only;
+  withheld operations left out; job kinds; the declared events as OpenAPI `webhooks`), each operation with `x-sdk`
+  {group, method}. Checks (mold_v0-196) are record areas of role check today and appear as such. The customer guide gets
+  a Developers group from it (`src/developer-docs.ts`, written by gen-packs into `PACK_GUIDE`, so `/app/docs` and the
+  docs answers' corpus carry it).
+- **SDKs** (`npm run gen:sdks`, `scripts/gen-sdks.ts`, `scripts/lib/sdk-gen.ts`): from the build or a running server's
+  `/openapi.json`, into `dist/sdk/` (git-ignored): one JavaScript/TypeScript package (ESM with its `.d.ts`, no build step
+  or dependency) and one Python package (standard library, TypedDicts), each sending an Idempotency-Key per write and
+  retrying safely, errors as `ApiError` with the problem's `code`. `--publish-dry-run` shows what `npm pack` and the
+  Python package would hold; publishing is the operator's own step with their yes, never from here.
+- **Keys** (`src/developer-keys.ts`, `developer_keys`): a workspace's keys for its own servers, made by its owners on
+  `/api/developer/keys` (`src/developer-routes.ts`): `sk_`, shown once (the sha256 kept, and the first 9 characters to
+  tell keys apart), scopes (`read`, `write`, `run`, `sessions`, `webhooks`; the first three narrowable to an area or kind:
+  `read:<area>`), an expiry or none, revocation, rotation (the old key kept for a grace of 0 to 168 hours, 24 by default),
+  integration keys holding exactly one scope. Never accepted on `/mcp` (the MCP keys, `oct_`, are unchanged). Per request:
+  `X-Scope` narrows to fewer scopes; `X-Actor` (keys only) names the backend's signed-in user the call is for, recorded
+  as the actor on the platform audit hook and on the events the call causes.
+- **Client sessions** (`src/developer-sessions.ts`): `cs_` tokens a backend mints with a key holding `sessions`
+  (`POST /v1/client_sessions` {subject, scopes, ttl_seconds}): at most the app's ttl and session scopes and never beyond
+  the minting key's; the subject is the actor; revocable, and dead with their key. A browser calls only from an origin
+  allowed for the session's workspace (the app's `allowed_origins` and the workspace's own, `/v1/allowed_origins`);
+  a key sent with an `Origin` is refused (`secret_key_in_browser`).
+- **Webhooks out** (`src/developer-webhooks.ts`, Standard Webhooks): endpoints with a `whsec_` signing secret (sealed with
+  the workspace's data key; answered when made or rotated; read again only through the audited reveal, counted on the
+  endpoint and handed to the audit hook; a rotation signs with both secrets for its grace). Events: record created,
+  updated, state changed and deleted (`src/record-areas.ts` `onRecordChange`, told after a batch commits, nothing for
+  one rolled back; a sealed or asset area's events carry its key only), `run.finished` (the runs that ended, scanned by
+  the tick: `src/runs.ts` untouched), `clock.overdue` (`src/record-clocks.ts` calls `emitEvent` when a clock goes overdue, once per record, clock and deadline) and the test
+  ping. Each delivery is POSTed signed within 15 seconds, no redirect, never to a private address (a preview server also
+  takes localhost); retried after 5 s, 5 min, 30 min, 2, 5, 10 and 10 h with every attempt in its log; an endpoint whose
+  last 30 attempts failed is disabled until enabled again. A server ticks every 15 seconds; Vercel's cron ticks it.
+- **Webhooks in** (`src/developer-inbound.ts`): a workspace adds a source for a pack-declared receiver and gets its
+  address (`/v1/inbound/<id>`) and secret; a payload verified by its Standard Webhooks signature (5 minutes' tolerance)
+  is written into the receiver's workspace area, one record per item (JSON Pointers for key, title and fields), as one
+  batch, once per `webhook-id`.
+- **The audit hook** (`src/developer-audit.ts`): every API request (credential, actor, scopes, status, request id) and
+  every key and secret action is handed to `setPlatformAuditSink`, which the platform audit trail (mold_v0-197)
+  registers; without it nothing is written.
+
+Tables: `sql/migrations/0033_developer_surface.sql` (all platform bookkeeping per workspace, closed to the tenant role;
+`check:rls` and `check:tenant-sql` know them; rollback `sql/rollback/0033_developer_surface.sql`). Proof: `npm run
+test:developer-surface` (offline) and `npm run test:developer-e2e` (the fixture pack `scripts/fixtures/packs/
+fixture_embedded` over a running dev server: a key, OpenAPI read from the server, both SDKs generated and called, a
+client session, an idempotent write replayed, signed webhooks verified with the Standard Webhooks reference libraries in
+JavaScript and Python; it fetches those libraries once).
+
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes

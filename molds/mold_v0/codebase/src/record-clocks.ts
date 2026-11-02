@@ -205,9 +205,13 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
       [orgId, area.pack, area.name, row.key, c.name, v.status, v.started_at, v.due_at, o.memory.paused_ms, o.memory.paused_since, o.memory.stopped_at, now]);
     report.updated++;
   }
-  // TODO(mold_v0-191, after #187 lands): when a clock goes overdue (prev?.status !== "overdue" && v.status === "overdue"),
-  // call the developer surface's emitEvent(orgId, "clock.overdue", {area, key, clock, due_at}) from src/developer-webhooks.ts
-  // (a no-op for tool apps). Not on main yet when this was written.
+  // An embedded app's clock.overdue event (mold_v0-193, src/developer-webhooks.ts emitEvent): once per record, clock and
+  // deadline; nothing is queued unless the app declares the event (a tool app has no developer surface).
+  if (prev?.status !== "overdue" && v.status === "overdue") {
+    const { emitEvent } = await import("./developer-webhooks.js");
+    await emitEvent(orgId, "clock.overdue", { area: area.name, key: row.key, clock: c.name, due_at: v.due_at },
+      `clock.overdue:${area.name}:${row.key}:${c.name}:${v.due_at}`).catch((e) => console.error(`clock.overdue event: ${(e as Error).message}`));
+  }
   // Each change once, keyed by when it happened.
   const markOf: Record<string, string | null> = { started: v.started_at, paused: o.memory.paused_since, stopped: v.stopped_at, resumed: now.toISOString(), reopened: now.toISOString() };
   for (const ch of o.changes) {
