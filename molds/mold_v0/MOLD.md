@@ -2546,7 +2546,7 @@ code: `src/check-spec.ts` (the declaration and its build checks), `src/check-eva
   `checkIndexHint` (the build's hint, `checkHints()`) names how and suggests the expression index for a large area;
   the shell adds no per-app index.
 
-Proof: `npm run test:checks` (the fixture `scripts/fixtures/packs/fixture_consent`: granted, withdrawn, expired,
+Proof: `npm run test:checks` (the fixture `scripts/fixtures/packs/fixture_checks`: granted, withdrawn, expired,
 latest-wins both ways, a lookup, an any-record rule, a cross-workspace attempt denied at every door; property tests on
 the evaluator; 25 refused declarations; scopes on keys and client sessions; the audit entry; a median answer of about
 12 ms over 3,000 records on the embedded database).

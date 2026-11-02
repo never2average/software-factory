@@ -1,7 +1,7 @@
 {
   "$schema": "../../../../packs/pack.schema.json",
-  "id": "fixture_consent",
-  "name": "Fixture consent",
+  "id": "fixture_checks",
+  "name": "Fixture checks",
   "version": "0.1.0",
   "description": "A declarative test fixture (mold_v0-196; scripts/checks-test.ts): a workspace's consent records and a shared list of processing purposes, answered by declared yes/no checks. Never shipped; the only place these words are used.",
   "record_areas": [

@@ -1,5 +1,5 @@
 // Declarative yes/no checks (mold_v0-196; src/check-spec.ts, src/check-eval.ts, src/checks.ts), offline: an embedded
-// database, the HTTP server behind a fake Clerk, and the fixture pack scripts/fixtures/packs/fixture_consent (a
+// database, the HTTP server behind a fake Clerk, and the fixture pack scripts/fixtures/packs/fixture_checks (a
 // pack.json alone, compiled as gen-packs compiles it).
 //   npm run test:checks
 //
@@ -24,10 +24,14 @@ import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 import type * as SpecT from "../src/check-spec.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const FIX = path.join(ROOT, "scripts", "fixtures", "packs", "fixture_consent");
+const FIX = path.join(ROOT, "scripts", "fixtures", "packs", "fixture_checks");
 const json = JSON.parse(readFileSync(path.join(FIX, "pack.json"), "utf8"));
 const [MAIN, SHARED] = [json.checks[0].rule.area as string, json.checks[0].rule.lookup.area as string];
 const DAY = 86_400_000;
+const BASIS = json.record_areas[0].fields[0].options[0] as string;
+const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const LABEL = (i: number) => json.checks[0].rule.require[i].label as string;
+const MAIN_LABEL = json.record_areas[1].label as string;
 
 try {
   const { getDb } = await import("../src/db.js");
@@ -186,19 +190,19 @@ try {
     assert.match(twice, /check ok_check is already pack p's/);
     // A pack that declares a check whose tool a pack tool already has is refused when the packs are installed.
     const { definePack } = await import("../src/pack-api.js");
-    assert.throws(() => setPacksForTest([{ manifest: { id: "fixture_consent", name: "x", version: "1", entry: null, migrations: null, words: {}, dir: FIX } as never,
-      declared: compileDeclarations(json), definition: definePack({ id: "fixture_consent", tools: [{ name: "check_may_process", description: "x", handler: () => null }] }) }]), /check_may_process is already/);
+    assert.throws(() => setPacksForTest([{ manifest: { id: "fixture_checks", name: "x", version: "1", entry: null, migrations: null, words: {}, dir: FIX } as never,
+      declared: compileDeclarations(json), definition: definePack({ id: "fixture_checks", tools: [{ name: "check_may_process", description: "x", handler: () => null }] }) }]), /check_may_process is already/);
     console.log(`✓ declarations refused at build: ${refused.length} kinds (unknown fields and inputs, type mismatches, unbounded scans, any-record rules the database cannot find, lookups), a name twice, a tool name taken`);
   }
 
   // ---------- the fixture ----------
-  setPacksForTest([{ manifest: { id: "fixture_consent", name: "Fixture consent", version: "1", entry: null, migrations: null, words: {}, dir: FIX }, declared: compileDeclarations(json), definition: null }]);
+  setPacksForTest([{ manifest: { id: "fixture_checks", name: "Fixture checks", version: "1", entry: null, migrations: null, words: {}, dir: FIX }, declared: compileDeclarations(json), definition: null }]);
   assert.deepEqual(ck.declaredChecks().map((c) => c.name), ["may_process", "may_email"]);
   assert.deepEqual(ck.checkTools().map((t) => t.name), ["check_may_process", "check_may_email"]);
   const A = await createOrg(`Checks A ${STAMP}`), B = await createOrg(`Checks B ${STAMP}`);
-  const recs = (o: { orgId: number }) => rec.workspaceRecords("fixture_consent", o.orgId);
-  await rec.adminRecords.put(SHARED, "marketing", { data: { lawful_basis: "consent", active: true } });
-  await rec.adminRecords.put(SHARED, "analytics", { data: { lawful_basis: "consent", active: false } });
+  const recs = (o: { orgId: number }) => rec.workspaceRecords("fixture_checks", o.orgId);
+  await rec.adminRecords.put(SHARED, "marketing", { data: { lawful_basis: BASIS, active: true } });
+  await rec.adminRecords.put(SHARED, "analytics", { data: { lawful_basis: BASIS, active: false } });
   const NOW = Date.now();
   const day = (d: number) => new Date(NOW + d * DAY).toISOString().slice(0, 10);
   const put = (o: { orgId: number }, key: string, data: Record<string, unknown>) => recs(o).create(MAIN, key, { data });
@@ -229,7 +233,7 @@ try {
     assert.equal(withdrawn.allowed, false);
     assert.deepEqual(withdrawn.record_refs[0], { area: MAIN, key: "s2-2" }, "latest wins: the withdrawal");
     assert.deepEqual(withdrawn.explanation!.decided_by.map((l) => [l.field, l.op, l.expected, l.actual]), [["status", "eq", "granted", "withdrawn"]]);
-    assert.match(withdrawn.reason, /Consent is granted is "withdrawn", not "granted"/);
+    assert.match(withdrawn.reason, new RegExp(`${esc(LABEL(0))} is "withdrawn", not "granted"`));
     const regranted = await ask(A.org, "may_process", { subject: "s3", purpose: "marketing" });
     assert.equal(regranted.allowed, true, "latest wins: the grant after a withdrawal");
     assert.equal(regranted.record_refs[0]!.key, "s3-2");
@@ -244,7 +248,7 @@ try {
     assert.deepEqual(inactive.record_refs.map((r) => r.area), [MAIN, SHARED]);
     const none = await ask(A.org, "may_process", { subject: "nobody", purpose: "marketing" });
     assert.deepEqual([none.allowed, none.record_refs], [false, []]);
-    assert.match(none.reason, /no Consents record matches \(subject, purpose\)/);
+    assert.match(none.reason, new RegExp(`no ${esc(MAIN_LABEL)} record matches \\(subject, purpose\\)`));
     // The any-record rule: a recent grant with email by an adult; no explanation (explain: false).
     const email6 = await ask(A.org, "may_email", { subject: "s6" });
     assert.equal(email6.allowed, false, "the email grant is older than a year; the recent one has no email");
@@ -266,7 +270,7 @@ try {
   // The developer surface on (mold_v0-193), as gen-packs would carry a pack's developer_surface: its /v1/checks door.
   await import("../src/hosts.js");
   const { setPackConfigsForTest } = await import("../src/host.js");
-  setPackConfigsForTest([{ pack: "fixture_consent", developer_surface: { events: [], sdk_languages: ["typescript"], client_sessions: { ttl_seconds: 900, allowed_origins: [], scopes: ["read", "checks"] } } } as never]);
+  setPackConfigsForTest([{ pack: "fixture_checks", developer_surface: { events: [], sdk_languages: ["typescript"], client_sessions: { ttl_seconds: 900, allowed_origins: [], scopes: ["read", "checks"] } } } as never]);
   const http = await startHttp();
   try {
     {
