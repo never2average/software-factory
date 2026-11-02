@@ -30,7 +30,7 @@ export interface GuideNavGroup { label: string; items: { title: string; url: str
 const PAGE_USE: Record<string, string> = {
   '/admin': fill('The onboarding funnel, from access request to the last step, and the {accounts} where a person should step in.'),
   '/admin/requests': fill('People who asked for access from the landing page. Approve one to create their {account} (or add them to one), or decline.'),
-  '/admin/accounts': fill('Every {account}: its stage, what needs attention, its plan and when it was last seen. Open one for its people, keys, usage and billing.'),
+  '/admin/accounts': fill('Every {account}: its stage, what needs attention, its plan and when it was last seen. Open one for its people, keys, usage and billing. Its Admins tab lists the platform\'s staff and their roles: owners add, change and remove staff; everyone else reads.'),
   '/admin/journeys': fill('The messages that bring people back to a step they have not taken.'),
   '/admin/analytics': fill('Use across every {account}: active {accounts} and people, {tool_calls}, new {accounts} and how each changes week to week.'),
   '/admin/health': fill('What failed, newest first: {tool_call} errors and latency and failed agent sessions, each with its {account} and client.'),
@@ -39,7 +39,6 @@ const PAGE_USE: Record<string, string> = {
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',
   '/admin/repositories': 'Where the shared record areas get their rows: each catalog\'s pin, when it was last indexed, and Index now.',
   '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.',
-  '/admin/admins': 'The platform\'s staff and their roles. Owners add, change and remove staff; everyone else reads.',
   '/admin/activity': fill('{Tool_calls} and {run} spend across every {workspace}, per {member} and per {run}.')
 };
 

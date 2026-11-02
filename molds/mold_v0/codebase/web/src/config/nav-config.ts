@@ -32,8 +32,8 @@ export const adminNav: NavGroup[] = [
         { title: 'Agent configuration', url: '/admin/configuration', icon: 'settings', items: [] },
         // The packs' data repositories (mold_v0-129): their pins, index state and Index now, in a build that has one.
         ...(repositoryCount ? [{ title: 'Data repositories', url: '/admin/repositories', icon: 'book' as const, items: [] }] : []),
-        { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] },
-        { title: 'Admins', url: '/admin/admins', icon: 'teams', items: [] }
+        // The platform's staff are Accounts' Admins tab (/admin/accounts?section=admins, mold_v0-204), not an entry here.
+        { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] }
       ]
     }
   ]),

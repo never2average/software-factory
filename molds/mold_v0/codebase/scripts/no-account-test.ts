@@ -134,7 +134,7 @@ try {
     // Removal ends their sessions: they sign in again, as someone this server knows.
     await former.resign();
     stranger = former;
-    // Platform staff as /admin/admins makes them (a role on the person, who then signs in with an emailed code).
+    // Platform staff as Accounts › Admins makes them (a role on the person, who then signs in with an emailed code).
     await (await import("../src/admin-roles.js")).addAdmin({ actor: "no-account-test", userId: null }, STAFF, "support");
     staff = await builtinPerson(STAFF);
     invitee = stranger;
