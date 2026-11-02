@@ -18,6 +18,7 @@ import { tabAreas } from "./metric-spec.js";
 import { PackError, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
+import { auditListPurpose } from "./audit-trail.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -41,6 +42,8 @@ export function recordAppRouter(): Router {
   if (!recordAreas().length) return r; // no areas: nothing is mounted, nothing answers
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
+  // The console's Export CSV pages through the list routes with ?audit=export: the data trail records an export (mold_v0-197).
+  r.use(auditListPurpose);
   const org = (res: Response) => (res.locals.session as Session).org;
   // The person asking: an area's read permission is theirs to pass (mold_v0-057).
   const actor = (res: Response) => { const s = res.locals.session as Session; return { role: s.accountRole ?? null, userId: s.user ?? null }; };
