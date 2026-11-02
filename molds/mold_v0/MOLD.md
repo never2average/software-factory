@@ -823,7 +823,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   hour, never sooner than its interval). **Credentials** are write-only: set or replaced, never returned in any part (the
   page shows "set", when and by whom, and Replace), sealed with the workspace's data key (AES-256-GCM, the key wrapped by
   the vault key), bound to the workspace and the row's slot; each sender and mailbox has a **Test** button (sign in; the
-  sender optionally sends a test email; a mailbox opens its folder read-only and counts it). The three tables have no
+  sender optionally sends a test email, in the email adapter's words; a mailbox opens its folder read-only and counts it; the workspace's transports, `src/mail-protocols.ts`, are reached only through the adapter's `send()` and these buttons, so `src/email.ts` stays the one place a message is written). The three tables have no
   grant for tenant work, and there is no admin route, admin MCP tool, operator script or log line that shows a workspace's
   mail settings, credentials or mail: the platform operator never sees them. Hosts: an SMTP or IMAP host must resolve to a
   public address unless the operator lists it in `APP_EMAIL_ALLOWED_PRIVATE_HOSTS`; no TLS only with
