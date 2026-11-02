@@ -7,7 +7,6 @@
     "/admin/accounts",
     "/admin/accounts/[slug]",
     "/admin/activity",
-    "/admin/admins",
     "/admin/analytics",
     "/admin/compute",
     "/admin/configuration",

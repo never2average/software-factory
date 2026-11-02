@@ -40,6 +40,7 @@ import { ENV } from "./env-names.js";
 import { clockAreas, clockCheck, stepWords, type ClockReport } from "./record-clocks.js";
 import { encryptedAreas, encryptFieldsTick, type EncryptionReport } from "./encrypted-fields-migration.js";
 import { checkpointTick, signOn, type LedgerTick } from "./ledger.js";
+import { tracked } from "./scheduler-jobs.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -568,17 +569,21 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 // ---------- both, from the cron entry and the server's loop ----------
 
 export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; encryption?: EncryptionReport | { error: string }; retention?: RetentionReport | { error: string }; ledger?: LedgerTick | { error: string } }> {
-  const schedules = await tickSchedules(now);
-  const due = await dueCheck(now);
+  // Each step's run is kept for the staff console's Health › Scheduled work (mold_v0-204, src/scheduler-jobs.ts), only
+  // for the steps this build has: with no job kind and no due area nothing is written there either.
+  const keep = schedulesWired() || dueAreas().length > 0;
+  const both = async () => ({ schedules: await tickSchedules(now), due: await dueCheck(now) });
+  const { schedules, due } = keep ? await tracked("schedules", both) : await both();
+  const err = (e: unknown) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) });
   // Record clocks (mold_v0-191, src/record-clocks.ts): with a clock area, at most every 15 minutes.
-  const clocks = clockAreas().length ? { clocks: await clockCheck(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
+  const clocks = clockAreas().length ? { clocks: await tracked("record_clocks", () => clockCheck(now)).catch(err) } : {};
   // Signed checkpoints (mold_v0-195, src/ledger.ts): with audit.sign on, each stream with new entries every checkpoint_minutes.
-  const ledger = signOn() ? { ledger: await checkpointTick(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
+  const ledger = signOn() ? { ledger: await tracked("ledger_checkpoints", () => checkpointTick(now)).catch(err) } : {};
   // Encrypted fields (mold_v0-194, src/encrypted-fields-migration.ts): rows written before a field was encrypted, a batch a tick.
-  const encryption = encryptedAreas().length ? { encryption: await encryptFieldsTick().catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
+  const encryption = encryptedAreas().length ? { encryption: await tracked("encrypted_fields", () => encryptFieldsTick()).catch(err) } : {};
   // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
   if (!retentionWired()) return { schedules, due, ...clocks, ...ledger, ...encryption };
-  const retention = await retentionSweep(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) }));
+  const retention = await tracked("workspace_retention", () => retentionSweep(now)).catch(err);
   return { schedules, due, ...clocks, ...ledger, ...encryption, retention };
 }
 

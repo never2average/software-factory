@@ -490,7 +490,7 @@ export async function adminCallerFor(req: Request): Promise<{ caller: AdminCalle
   const claims = await verifyOAuthToken(t, mcpAudiences().flatMap((a) => ADMIN_MCP_PATHS.map((p) => `${a.replace(/\/mcp$/, "")}${p}`)));
   if (!claims) return { status: 401, message: `Sign in to ${PROFILE.name} as a platform admin (send a Clerk OAuth access token)` };
   const { email, role } = await platformRoleFor(claims.userId).catch(() => ({ email: null, role: null }));
-  if (!role) return { status: 403, message: `${email ?? "This account"} is not a platform admin. Ask an Owner on /admin/admins.` };
+  if (!role) return { status: 403, message: `${email ?? "This account"} is not a platform admin. Ask an Owner on /admin/accounts?section=admins (Accounts › Admins).` };
   return { caller: { actor: email ?? claims.userId, role, userId: claims.userId } };
 }
 

@@ -481,7 +481,7 @@ try {
       assert.equal((await call("GET", "/api/admin/onboarding/orgs", { cookie: boss })).status, 200, "an environment admin reaches /api/admin");
       assert.equal((await call("POST", "/api/admin/onboarding/orgs", { cookie: boss }, { name: `x ${STAMP}` })).status, 403, "a cookie write without the CSRF header is refused");
       assert.equal((await call("GET", "/api/admin/onboarding/orgs", ownerA.h)).status, 403, "a workspace owner is no platform admin");
-      // A platform role given on /admin/admins (stored on the person) works too.
+      // A platform role given on Accounts › Admins (stored on the person) works too.
       const add = await call("POST", "/api/admin/onboarding/admins", { cookie: boss, "x-app-admin": "1" }, { email: `support-${STAMP}@platform.example`, role: "support" });
       assert.ok(add.status === 200 || add.status === 201, JSON.stringify(add.body));
       const sup = (await codeSignIn(`support-${STAMP}@platform.example`)).cookie;
@@ -491,7 +491,7 @@ try {
       assert.equal(prm.status, 200); assert.deepEqual(prm.body.authorization_servers, [process.env.PUBLIC_URL ?? "http://127.0.0.1:3333"], "this server is the authorization server");
       const bare = await fetch(`${http.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
       assert.equal(bare.status, 401); assert.match(bare.headers.get("www-authenticate") ?? "", /resource_metadata="[^"]+\/\.well-known\/oauth-protected-resource\/mcp"/, "the 401 sends clients to sign in");
-      ok("platform admins: an APP_PLATFORM_ADMINS address and a person given a role on /admin/admins sign in with a code and reach /admin; cookie writes need the CSRF header");
+      ok("platform admins: an APP_PLATFORM_ADMINS address and a person given a role on Accounts › Admins sign in with a code and reach /admin; cookie writes need the CSRF header");
     }
   } else {
     // ---------- Clerk: a person with an organization of their own, invited into an account ----------

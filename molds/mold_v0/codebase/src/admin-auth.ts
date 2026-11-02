@@ -3,7 +3,7 @@
  * organization role admin, managing their team on /app). They sign in with Clerk (password, Google, Microsoft, GitHub,
  * whatever the Clerk instance allows); being a platform admin is configured, not stored in the database or the source:
  *
- *   Clerk user public_metadata.platform_role  viewer, support, operator or owner (src/admin-roles.ts), set on /admin/admins
+ *   Clerk user public_metadata.platform_role  viewer, support, operator or owner (src/admin-roles.ts), set on Accounts › Admins
  *   APP_PLATFORM_ADMINS  comma-separated addresses or *@domain entries, owners; Clerk must have verified the address
  *   (public_metadata.platform_admin = true, the old flag, also means owner)
  *   admin tokens (adm_…)       for scripts: minted per purpose with a role and an expiry, revocable (src/admin-tokens.ts).
