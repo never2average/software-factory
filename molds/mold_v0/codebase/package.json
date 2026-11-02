@@ -43,6 +43,7 @@
     "test:data-api": "tsx scripts/data-api-test.ts",
     "test:record-export": "tsx scripts/record-export-test.ts",
     "test:audit-trail": "tsx scripts/audit-trail-test.ts",
+    "test:encrypted-fields": "tsx scripts/encrypted-fields-test.ts",
     "test:ledger": "tsx scripts/ledger-test.ts",
     "ledger:keygen": "tsx scripts/ledger-keygen.ts",
     "test:mcp-tools": "tsx scripts/mcp-tools-test.ts",

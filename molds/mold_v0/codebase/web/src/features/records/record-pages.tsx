@@ -59,6 +59,8 @@ const optionLabel = (f: RecordFieldSpec, v: unknown) => {
 /** A field's value as the list and the peek show it: an option's label, Yes / No, a date, lists joined. */
 export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
   if (v == null || v === '') return '';
+  // An encrypted field (mold_v0-194) is never read here: every answer carries the mask; a reveal is its own request.
+  if (f?.encrypted) return '•••••• (encrypted)';
   if (Array.isArray(v)) return v.map((x) => fieldText(f, x)).filter(Boolean).join(', ');
   if (f?.type === 'enum') return optionLabel(f, v);
   if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
@@ -82,7 +84,7 @@ function columnsOf(area: RecordAreaSpec): RecordCol<RecordRow>[] {
   };
   const fields = area.list_columns.map((name): RecordCol<RecordRow> => {
     const f = area.fields.find((x) => x.name === name);
-    const type = (f && !f.multiple && COL_TYPE[f.type]) || 'text';
+    const type = (f && !f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
     return {
       key: name, label: areaFieldLabel(area, name), type, keep: false,
       ...(type === 'select' && f?.options ? { options: f.options.map((o) => (typeof o === 'string' ? { value: o } : { value: o.value, label: o.label })) } : {}),

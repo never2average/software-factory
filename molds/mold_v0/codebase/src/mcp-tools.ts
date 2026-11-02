@@ -35,7 +35,7 @@ import { declaredRuns, packs, runPackTool, workspaceDb, type InstalledPack } fro
 import { PROFILE } from "./profile.js";
 import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
-import { findArea, may, workspaceRecords } from "./record-areas.js";
+import { findArea, may, mayReveal, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
 export type { GeneratedTool } from "./mcp-catalog.js";
@@ -76,6 +76,8 @@ export function permitted(t: GeneratedTool, role: AccountRole | null): boolean {
     const a = findArea(t.area);
     const actor = { role, userId: null };
     if (!a || !may(a, "read", actor) || !may(a, t.action, actor)) return false;
+    // mold_v0-194: reveal_<area> is offered to a role that may reveal at least one of its encrypted fields.
+    if (t.op === "reveal" && !a.fields.some((f) => f.encrypted && mayReveal(a, f, actor))) return false;
   }
   return true;
 }
@@ -120,6 +122,8 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       const { exportArea } = await import("./record-export.js");
       return exportArea(caller, area, { filter: a.filter, sort: a.sort, after: a.after });
     }
+    // mold_v0-194: the values of a record's encrypted fields, for the roles allowed (src/record-areas.ts revealFor).
+    case "reveal": operation("workspace", "reveal"); return dataApi.reveal(caller, area, a.key, a.fields);
     case "create": operation("workspace", "create"); return dataApi.create(caller, area, a.key, { title: a.title, data: a.data ?? {} });
     case "update": operation("workspace", "update"); return dataApi.update(caller, area, a.key, { title: a.title, data: a.data ?? {} });
     case "move": operation("workspace", "move"); return dataApi.move(caller, area, a.key, a.to);

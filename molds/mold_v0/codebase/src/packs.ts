@@ -12,6 +12,7 @@ import { accountRefusal, canAccount } from "./account-roles.js";
 import { errorClass, jsonBytes, recordMcpEvent } from "./analytics.js";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
+import { encryptedFieldProblems } from "./encrypted-fields.js";
 import { areaLinks, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
 import { mergePack, type DeclaredPack } from "./pack-manifest.js";
 import { generateCatalog } from "./mcp-catalog.js";
@@ -124,6 +125,8 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     if (!areaOwner.has(c)) problems.push(`pack ${p.id}: run_results.check names ${c}, which is not a record area of this build`);
   // Metrics, charts and tabs (mold_v0-063, 058): what each names across the build (areas, fields, states, job kinds).
   if (!problems.length) problems.push(...checkViews(viewsOf(out)));
+  // Encrypted fields (mold_v0-194): stored in the shell's tables, never computed, grouped or filtered on by a view.
+  problems.push(...encryptedFieldProblems(out));
   // The source offer names the upstream commit that runs (mold_v0-050): an agent kind on the upstream runs that commit.
   problems.push(...upstreamProblems(out));
   // Declarative checks (mold_v0-196, src/check-spec.ts): names unique in the build, each against the build's areas, and

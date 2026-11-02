@@ -110,7 +110,10 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
       const shared = own.filter((x) => x.a.scope === "platform" && !live(x.a)).map((x) => x.a.label ?? x.a.name);
       const mine = own.filter((x) => x.a.scope !== "platform" && !live(x.a)).map((x) => x.a.label ?? x.a.name);
       const read = own.filter((x) => live(x.a)).map((x) => x.a.label ?? x.a.name);
-      rows.push({ item: `Records of ${p.manifest.name}`, detail: `in the database: shared with every workspace: ${list(shared)}; each workspace's own: ${list(mine)}${read.length ? `; read live from an outside API and not stored: ${read.join(", ")}` : ""}` });
+      // Encrypted fields (mold_v0-194): named with where their values are, and who sees them.
+      const enc = own.flatMap((x) => (x.a.fields ?? []).filter((f) => (f as { encrypted?: boolean }).encrypted).map((f) => `${x.a.label ?? x.a.name} › ${f.label ?? f.name}`));
+      const encrypted = enc.length ? `; encrypted field by field with the workspace's data key (${enc.join(", ")}): never shown in lists, exports, the API, MCP or webhooks, only on an explicit reveal by the roles allowed, each one in the data trail when it is on` : "";
+      rows.push({ item: `Records of ${p.manifest.name}`, detail: `in the database: shared with every workspace: ${list(shared)}; each workspace's own: ${list(mine)}${read.length ? `; read live from an outside API and not stored: ${read.join(", ")}` : ""}${encrypted}` });
     }
     const store = facts?.object_store;
     const usesStore = list_.some((p) => (p.definition.agentJobKinds ?? []).length || (p.definition.jobKinds ?? []).some((k) => k.workspace));

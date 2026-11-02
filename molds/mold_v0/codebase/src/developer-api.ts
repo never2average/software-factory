@@ -294,6 +294,13 @@ export function developerApiRouter(): Router {
     need(res, "write", a.name);
     return { status: 200, body: { data: (await dataApi.move(dataCaller(res), a.name, String(req.params.key), jsonBody(res).to)).record } };
   }));
+  // mold_v0-194: a record's encrypted fields, revealed (a key's `read` scope, then the fields' reveal roles for its
+  // actor's role; an account-level key has none), each reveal in the data trail.
+  v1.post("/records/:area/:key/reveal", h(async (req, res) => {
+    const a = areaFor(String(req.params.area), "reveal");
+    need(res, "read", a.name);
+    return { status: 200, body: { data: await dataApi.reveal(dataCaller(res), a.name, String(req.params.key), jsonBody(res).fields) } };
+  }));
   v1.delete("/records/:area/:key", h(async (req, res) => {
     const a = areaFor(String(req.params.area), "delete");
     need(res, "write", a.name);
