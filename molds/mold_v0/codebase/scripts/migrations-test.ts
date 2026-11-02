@@ -900,6 +900,23 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} event outbox: run.finished written by the runs trigger only when declared and an endpoint takes it, once per run and attempt; its rollback queues what is pending, leaves exactly what ${v - 1} left, and applies again`);
   }
 
+  // The scheduler's job record (mold_v0-204, scheduler_jobs, found by name): platform bookkeeping closed to tenant work;
+  // its rollback drops it with its rows, leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "scheduler_jobs")!.version;
+    const d = await shellAt(kind);
+    await d.query("INSERT INTO scheduler_jobs (job, last_run_at, last_ok_at, runs) VALUES ('schedules', now(), now(), 1)");
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_scheduler_jobs.sql`), "utf8");
+    await d.exec(rb);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_scheduler_jobs")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} scheduler jobs: its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

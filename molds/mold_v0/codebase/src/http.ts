@@ -92,6 +92,7 @@ import { answerDocs, sseStart, streamDocsAnswer } from "./docs-answers.js";
 import { freshPlatformHarnesses } from "./harnesses.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
+import { tracked } from "./scheduler-jobs.js";
 
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -197,10 +198,10 @@ export function createApp() {
     // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
     const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
     // The mail intake (mold_v0-192, src/email-intake.ts): a server polls from its own loop; on Vercel this entry polls.
-    const intake = intakeWired() ? { email_intake: await pollIntake().catch((e) => ({ error: (e as Error).message })) } : {};
+    const intake = intakeWired() ? { email_intake: await tracked("email_intake", () => pollIntake()).catch((e) => ({ error: (e as Error).message })) } : {};
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
-    const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
+    const charges = rc.runBillingOn() ? { run_charges: await tracked("run_charges", () => rc.deliverCharges()).catch((e) => ({ error: (e as Error).message })) } : {};
     // Webhooks out (mold_v0-193, src/developer-webhooks.ts): retries due and runs that ended; only with a developer surface.
     const hooksTick = await webhookTick().catch((e) => ({ error: (e as Error).message }));
     res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...(hooksTick ? { webhooks: hooksTick } : {}) });
@@ -696,6 +697,20 @@ export function createApp() {
   ob.get("/usage", usageAdminRoute());
   // Every failure in the period, paged: ?kind=tool|session|onboarding&offset&limit, plus the /analytics filters.
   ob.get("/analytics/errors", async (req, res) => void res.json(await platformErrors(req.query)));
+  // Health's tabs beside Errors in a build without the session engine (mold_v0-204, src/health-tabs.ts): runs, the
+  // scheduler's jobs, deliveries and the live checks. Read only, staff only, never an address or a secret.
+  ob.get("/health/runs", async (req, res) => void res.json(await (await import("./health-tabs.js")).healthRuns(req.query as Record<string, unknown>)));
+  ob.get("/health/runs/:id/events", async (req, res) => {
+    try { res.json(await (await import("./health-tabs.js")).healthRunEvents(String(req.params.id))); }
+    catch (e) { if ((e as { status?: number }).status === 404) return void res.status(404).json({ error: "No such run" }); throw e; }
+  });
+  ob.get("/health/scheduled", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthScheduled()));
+  ob.get("/health/deliveries", async (req, res) => {
+    const h = await import("./health-tabs.js");
+    if (!h.deliveriesOn()) return void res.status(404).json({ error: "This app sends no deliveries of its own (no company email, no webhooks)" });
+    res.json(await h.healthDeliveries(req.query as Record<string, unknown>));
+  });
+  ob.get("/health/status", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthStatus()));
   // A host pack's console routes (src/host.ts; the product's journeys, libraries, agent mix and settings, loss reasons),
   // behind the same guard, log and permission check (roles.assertGuarded below covers them).
   for (const h of hosts()) h.routes?.onboarding?.(ob, { need, actor: adminActor });

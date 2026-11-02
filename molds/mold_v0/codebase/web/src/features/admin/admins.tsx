@@ -1,8 +1,8 @@
 'use client';
-// /admin/admins: the platform's staff and their roles (src/admin-roles.ts). Roles are Clerk user metadata; admins listed in
+// Accounts › Admins (/admin/accounts?section=admins, mold_v0-204): the platform's staff and their roles (src/admin-roles.ts). Roles are Clerk user metadata; admins listed in
 // the server environment (APP_PLATFORM_ADMINS) are owners and are changed there. Owners add, change and remove
 // admins; everyone else reads. Adding an address nobody has used creates the Clerk user, who is an admin on first sign-in.
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,8 @@ interface RoleInfo { id: AdminRole; label: string; help: string }
 
 const NA = <span className='text-muted-foreground'>—</span>;
 
-export function AdminAdmins() {
+/** The Admins table; since mold_v0-204 an in-page tab of Accounts (`tabs`: the strip drawn above it, no title). */
+export function AdminAdmins({ tabs }: { tabs?: ReactNode } = {}) {
   const { data, error, isLoading } = useAdmin<{ admins: Admin[]; roles: RoleInfo[]; me: string | null }>('/admins');
   const { can, lock } = useAdminRole();
   const [adding, setAdding] = useState(false);
@@ -64,9 +65,11 @@ export function AdminAdmins() {
 
   return (
     <PageContainer>
+      <div className='flex min-w-0 flex-col gap-3'>
+      {tabs}
       <ErrorBox error={error} />
       <RecordView<Admin>
-        id='admin-admins' noun='admins' exportName='admins'
+        id='admin-admins' noun='admins' exportName='admins' compact={!!tabs}
         rows={data?.admins ?? []} rowKey={(a) => a.id ?? `env:${a.email}`} cols={cols} actions={actions} loading={isLoading}
         searchText={(a) => `${a.email ?? ''} ${a.name ?? ''} ${a.role_label} ${a.added_by ?? ''}`}
         searchPlaceholder='Search admins by email, name or role'
@@ -80,6 +83,7 @@ export function AdminAdmins() {
           </div>
         )}
       />
+      </div>
       {adding && <AddAdmin roles={roles} onClose={() => setAdding(false)} />}
     </PageContainer>
   );

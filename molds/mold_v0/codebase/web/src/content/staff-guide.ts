@@ -5,12 +5,16 @@
 // areas and where their rows come from. The engineering documents (../../docs/*.md) stay in the navigation below it.
 // Pure TS with relative imports: features/docs/admin-docs.tsx renders it, scripts/record-pages-test.ts reads it.
 import { HOST_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
-import { recordAreas, repositoryCount } from '../config/pack-nav.generated';
+import { developerConsole, emailPortalNav, recordAreas, repositoryCount } from '../config/pack-nav.generated';
+import { HOST_TABLES } from '../config/build-facts.generated';
 import { profile } from '../config/profile.generated';
 import { ADMIN_DOCS, type AdminDoc } from './admin-docs';
 import { fill, W } from '../lib/vocabulary';
 
 export const STAFF_GUIDE_SLUG = 'staff-guide';
+/** The session engine's build keeps its Health words; without it Health has more tabs (mold_v0-204, features/admin/health-tabs.tsx). */
+const ENGINE = ['products', 'scenarios', 'simulations', 'agent_sessions'].every((t) => HOST_TABLES.includes(t));
+const DELIVERIES = emailPortalNav.length > 0 || developerConsole.on;
 
 const titleCase = (s: string) => s.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
 /**
@@ -30,16 +34,16 @@ export interface GuideNavGroup { label: string; items: { title: string; url: str
 const PAGE_USE: Record<string, string> = {
   '/admin': fill('The onboarding funnel, from access request to the last step, and the {accounts} where a person should step in.'),
   '/admin/requests': fill('People who asked for access from the landing page. Approve one to create their {account} (or add them to one), or decline.'),
-  '/admin/accounts': fill('Every {account}: its stage, what needs attention, its plan and when it was last seen. Open one for its people, keys, usage and billing.'),
+  '/admin/accounts': fill('Every {account}: its stage, what needs attention, its plan and when it was last seen. Open one for its people, keys, usage and billing. Its Admins tab lists the platform\'s staff and their roles: owners add, change and remove staff; everyone else reads.'),
   '/admin/journeys': fill('The messages that bring people back to a step they have not taken.'),
   '/admin/analytics': fill('Use across every {account}: active {accounts} and people, {tool_calls}, new {accounts} and how each changes week to week.'),
-  '/admin/health': fill('What failed, newest first: {tool_call} errors and latency and failed agent sessions, each with its {account} and client.'),
+  '/admin/health': ENGINE ? fill('What failed, newest first: {tool_call} errors and latency and failed agent sessions, each with its {account} and client.')
+    : fill(`What failed, newest first: {tool_call} errors and latency, each with its {account} and client. Its tabs: {Runs} (failures by kind and error kind, durations, cost, each failed {run}'s events), Scheduled work (every job the app runs: last run, last success, lag and last error)${DELIVERIES ? ', Deliveries (emails and webhooks by status, endpoints switched off)' : ''} and Status (the database, the row-level security probe, object storage, the key vault, the Claude provider, the last deploy and the mold version).`),
   '/admin/compute': fill('The capacity that runs the {runs}: limits in force, what is running and what failed.'),
   '/admin/finops': 'Revenue, plans and measured spend: model use, compute hours and storage, by account or by provider.',
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',
   '/admin/repositories': 'Where the shared record areas get their rows: each catalog\'s pin, when it was last indexed, and Index now.',
   '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.',
-  '/admin/admins': 'The platform\'s staff and their roles. Owners add, change and remove staff; everyone else reads.',
   '/admin/activity': fill('{Tool_calls} and {run} spend across every {workspace}, per {member} and per {run}.')
 };
 

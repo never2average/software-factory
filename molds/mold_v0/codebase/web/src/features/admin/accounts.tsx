@@ -1,7 +1,7 @@
 'use client';
 // Every account as a database: views for the questions asked most (who needs attention, who is paying, who went quiet),
 // typed columns to filter, sort, group and export, and the account itself in the side peek (account-peek.tsx).
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
@@ -51,7 +51,8 @@ const VIEWS: RecordViewDef<Org>[] = [
 /** Contact emails, one per account that has one. */
 const contacts = (list: Org[]) => [...new Set(list.map((o) => o.contact).filter(Boolean))].join(', ');
 
-export function AdminAccounts() {
+/** The accounts table; `tabs`: Accounts' in-page tab strip (Accounts | Admins, mold_v0-204) drawn above it, no title. */
+export function AdminAccounts({ tabs }: { tabs?: ReactNode } = {}) {
   const { data, error, isLoading } = useAdmin<Orgs>('/orgs');
   const { data: ov } = useAdmin<{ integrations: { clerk?: boolean } }>('/overview');
   const [creating, setCreating] = useState(false);
@@ -122,8 +123,10 @@ export function AdminAccounts() {
 
   return (
     <PageContainer>
+      <div className='flex min-w-0 flex-col gap-3'>
+      {tabs}
       <RecordView<Org>
-        id='admin-accounts-v2' noun='accounts' exportName='accounts' groupable
+        id='admin-accounts-v2' noun='accounts' exportName='accounts' groupable compact={!!tabs}
         rows={orgs} rowKey={(o) => o.slug} cols={cols} views={VIEWS} loading={isLoading}
         defaultSort={[{ key: 'last_seen', dir: 'desc' }]}
         searchText={(o) => `${o.name} ${o.slug} ${o.contact ?? ''} ${o.stage_label} ${o.subscription?.plan ?? ''}`}
@@ -141,6 +144,7 @@ export function AdminAccounts() {
         detailActions={(o) => <AccountPeekActions org={o} ctl={ctl} />}
         detail={(o) => <AccountPeek org={o} ctl={ctl} />}
       />
+      </div>
       {creating && (
         <NewAccount
           clerk={Boolean(ov?.integrations.clerk)}

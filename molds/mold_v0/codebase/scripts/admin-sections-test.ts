@@ -16,8 +16,9 @@
 //   3. the stages, their next steps, the attention messages, the funnel and the account page are exactly the engine's,
 //      as they were before mold_v0-103 (in its host pack's words since mold_v0-121: pack.json account_stages): no pack
 //      stage, no pack runs, no new field on its rows
-// Every build: the console lists FinOps' runs tab in the Experiments slot, and Health no longer lists one (its old link
-// redirects to FinOps).
+// Every build: the console lists FinOps' runs tab in the Experiments slot. Health: the session engine's Errors, Jobs
+// and Sessions with its old runs link redirecting to FinOps; without the engine, Errors, Runs, Scheduled work,
+// Deliveries (with company email or webhooks) and Status (mold_v0-204).
 import "./lib/test-world.js";
 // The build's packs registered as a process registers them: the session engine's words are its host pack's pack.json
 // account_stages (mold_v0-121), which reach the server through src/hosts.ts.
@@ -213,9 +214,14 @@ try {
     assert.match(spend, /\['plans', 'Plans'\], \['runs', W\.Runs\], \['experiments', 'Experiments'\]/, "FinOps: the runs tab, in the build's word, where Experiments was, Experiments after it");
     assert.match(spend, /id !== 'runs' \|\| packRuns\(\)/, "the runs tab only with the packs' runs");
     assert.match(spend, /id !== 'experiments' \|\| tab === 'experiments' \|\| anyExperiment/, "Experiments only with a pricing experiment, or when a link opens it");
-    assert.doesNotMatch(health, /\['runs', /, "Health lists no runs tab");
-    assert.match(health, /runs: '\/admin\/finops\?section=runs'/, "Health's old runs link goes to FinOps");
-    console.log("✓ console: FinOps' runs tab in the Experiments slot (Experiments only with an experiment); Health's old runs link redirects");
+    // mold_v0-204: the session engine's Health keeps exactly its three tabs and its old runs link to FinOps; a build
+    // without it has Health's own tabs after Errors (Runs, Scheduled work, Deliveries only with mail or webhooks, Status).
+    assert.match(health, /ENGINE_HEALTH \? \[\['errors', 'Errors'\], \['jobs', 'Jobs'\], \['sessions', 'Sessions'\]\] : healthTabsShell\(\)/, "the engine's Health: Errors, Jobs, Sessions, as before");
+    assert.match(health, /ENGINE_HEALTH \? \{ runs: '\/admin\/finops\?section=runs' \} : \{\}/, "the engine's old runs link still goes to FinOps");
+    const tabs = readFileSync(path.join(ROOT, "web/src/features/admin/health-tabs.tsx"), "utf8");
+    assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Deliveries'\] as const\] : \[\]\), \['status', 'Status'\]/, "the shell's Health tabs");
+    assert.match(tabs, /emailPortalNav\.length > 0 \|\| developerConsole\.on/, "Deliveries only with company email or webhooks");
+    console.log("✓ console: FinOps' runs tab in the Experiments slot (Experiments only with an experiment); the engine's Health as before, the shell's Health tabs");
   }
   console.log("admin-sections: ok");
 } finally {

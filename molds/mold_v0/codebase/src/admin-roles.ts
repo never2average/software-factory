@@ -9,7 +9,7 @@
  *
  * The role lives in Clerk (user public_metadata.platform_role), so there is no table. Owner also covers the old ways
  * in: public_metadata.platform_admin = true and an address APP_PLATFORM_ADMINS lists. Admin tokens (adm_…,
- * src/admin-tokens.ts) carry the role they were minted for. Owners manage everyone else's role on /admin/admins.
+ * src/admin-tokens.ts) carry the role they were minted for. Owners manage everyone else's role on Accounts › Admins (/admin/accounts?section=admins).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";
@@ -55,7 +55,7 @@ export const can = (role: PlatformRole | null | undefined, p: Permission) => rol
 export const permissionsOf = (role: PlatformRole | null) => (Object.keys(PERMISSIONS) as Permission[]).filter((p) => can(role, p));
 export const refusal = (p: Permission) => {
   const needs = PERMISSIONS[p];
-  return { error: `This needs the ${ROLE_LABELS[needs]} role. Ask an Owner on the Admins page.`, code: "forbidden", needs };
+  return { error: `This needs the ${ROLE_LABELS[needs]} role. Ask an Owner on Accounts › Admins.`, code: "forbidden", needs };
 };
 
 /** The signed-in admin for the rest of the request (admin.log records their role). */
@@ -93,7 +93,7 @@ export async function platformRoleFor(userId: string): Promise<{ email: string |
   return { email: clerk.primaryEmail(u).email, role: roleOfUser(u).role };
 }
 
-// ---------- the Admins page (/admin/admins) ----------
+// ---------- the Admins tab of Accounts (/admin/accounts?section=admins) ----------
 
 export class AdminRoleError extends Error { constructor(message: string, public status = 400) { super(message); } }
 

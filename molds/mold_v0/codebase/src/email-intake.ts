@@ -39,6 +39,7 @@ import { keys, objectStore } from "./storage.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
 import * as wire from "./mail-protocols.js";
+import { tracked } from "./scheduler-jobs.js";
 
 const MAX_RAW = 25 * 1024 * 1024;
 const maxPerPoll = () => Math.min(Math.max(Number(ENV.APP_EMAIL_INTAKE_MAX_MESSAGES) || 25, 1), 200);
@@ -221,7 +222,7 @@ export function startEmailIntake(everyMs = 60_000): boolean {
   const run = () => {
     if (busy) return;
     busy = true;
-    pollIntake().then((r) => { if (r.taken || r.failed) console.error(`mail intake: ${r.inboxes} mailbox(es), ${r.taken} message(s) taken in, ${r.failed} failed`); })
+    tracked("email_intake", () => pollIntake()).then((r) => { if (r.taken || r.failed) console.error(`mail intake: ${r.inboxes} mailbox(es), ${r.taken} message(s) taken in, ${r.failed} failed`); })
       .catch((e) => console.error("mail intake:", (e as Error).message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, everyMs);
