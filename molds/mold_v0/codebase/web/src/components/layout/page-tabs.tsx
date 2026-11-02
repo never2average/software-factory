@@ -1,12 +1,12 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import type { ComponentType } from 'react';
 import { cn } from '@/lib/utils';
 
 /** Tabs under a page title where each tab is its own page (a route), e.g. Billing → Plan & payment | Limits. */
 export function PageTabs({ items, className }: { items: { href: string; label: string; icon?: ComponentType<{ className?: string }> }[]; className?: string }) {
-  const path = usePathname();
+  const path = useConsolePathname();
   return (
     <nav aria-label='Sections' className={cn('-mt-1 mb-6 flex gap-1 overflow-x-auto border-b', className)}>
       {items.map((t) => {

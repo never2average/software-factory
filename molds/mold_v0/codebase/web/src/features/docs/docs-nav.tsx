@@ -3,7 +3,7 @@
 // highlighted, flat on the page (no rules or tinted boxes). It gets
 // only titles and hrefs as props (features/docs/docs-data.ts), never a page's body. Searching is the platform search.
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { useState } from 'react';
 import { IconChevronRight, IconMenu2 } from '@tabler/icons-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import type { DocNavGroup } from './docs-data';
 
 function NavTree({ groups, onNavigate }: { groups: DocNavGroup[]; onNavigate?: () => void }) {
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const [closed, setClosed] = useState<Set<string>>(() => new Set());
   const toggle = (title: string, open: boolean) =>
     setClosed((s) => {

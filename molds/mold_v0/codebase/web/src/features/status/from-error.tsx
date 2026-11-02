@@ -12,7 +12,7 @@
  *   5xx, or no answer        something went wrong / the server could not be reached, with Try again
  *   any other answer         the error page, in the server's own words (they say what to change)
  */
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { useEffect } from 'react';
 import { ApiError } from '@/lib/api-client';
 import { noAccountHandoff } from './no-account';
@@ -61,7 +61,7 @@ export interface ApiErrorStatusProps {
 /** The status page for an error a page's data load met. */
 export function ApiErrorStatus({ error, area, onRetry, frame = 'inline', level = 2 }: ApiErrorStatusProps) {
   const s = statusOf(error);
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const where = area ?? (areaOf(pathname) === 'admin' ? 'admin' : 'app');
   // Signed out: on to the sign-in page, back here after (the page says so meanwhile).
   useEffect(() => {
