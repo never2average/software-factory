@@ -110,16 +110,6 @@
       "responsiveness"
     ]
   },
-  "applications": [
-    "claudecode_web_internal",
-    "claudecode_web_replica",
-    "sf_gateway_probe",
-    "onfinance_hfc",
-    "onfinance_hfc_vm",
-    "compliance_os",
-    "octillion",
-    "maxwell"
-  ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
   "defaults": {
@@ -142,10 +132,8 @@
     },
     "vercel_team": "your-vercel-team",
     "postgres_scope": "fresh",
-    "workspace_name": "OnFinance",
     "operator_email": "operator@example.com",
     "secret_source_project": "live-web",
-    "agent_cli_scope": "@onfinance",
     "notify_domain": "example.com"
   },
   "sweep": {

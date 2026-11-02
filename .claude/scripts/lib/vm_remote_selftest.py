@@ -1269,7 +1269,7 @@ def _lane_scripts(check, docs, dep, typed, other):
         def stage(body):
             def opener(url, timeout=None): asked.append(url); return Resp(body)
             T.health_row = lambda url: real_row(url, opener)
-        T.subprocess.run = lambda *a, **k: CP(a, 0, "onfinance: tenant isolation PROVEN on the server's stored DATABASE_URL: 58/58\n", "")
+        T.subprocess.run = lambda *a, **k: CP(a, 0, "acme: tenant isolation PROVEN on the server's stored DATABASE_URL: 58/58\n", "")
         try:
             stage(json.dumps(HEALTH_DOC)); code, out, _ = run_main(T, ["vmr_deployed"])
             check("the rls.health row of a deployed vm_remote app is measured at its own address", code == 0 and asked == ["https://app.example.com/api/ops/health"]

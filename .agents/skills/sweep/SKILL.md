@@ -83,7 +83,7 @@ agent session) with the ticket's id, title, acceptance and these **builder rules
    tab of the reference is present) and says so in the PR.
 6. Builders never merge and never deploy: they open a PR whose description lists the checks run and their results.
 7. Never `pkill -f` or `killall` (a pattern matches idle shells and other builders); stop a process by its PID.
-8. Never commit git-ignored paths; never put customer names, emails, addresses or secrets in tracked files.
+8. Never commit git-ignored paths; never put customer names, emails, addresses or secrets in tracked files. Each builder's clone runs `python3 .claude/scripts/leakcheck.py install-hook` first, so git refuses a commit or push that names one of this machine's private values.
 9. A new database migration takes the next number above main's highest, and the PR says it changes live data.
 
 **Idle builders.** A builder whose branch and session show no progress for 60 minutes: nudge it once (ask what it is
