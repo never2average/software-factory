@@ -1163,7 +1163,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   by the kind's label and in the build's word for a run: an account's runs and latest runs (`orgDetail` `runs`), the
   weekly chart (Analytics), and FinOps' runs tab, named with the build's run noun ("Audits"), runs per kind with
   their cost over FinOps' period (`GET /spend/runs`, `src/compute-jobs.ts` `runKinds`; mold_v0-126 moved it there
-  from Health, whose old `?section=runs` link redirects to it); an account's month spend is its runs'. The runs tab
+  from Health, whose old `?section=runs` link redirects to it in a build with the session engine; without it Health has a Runs tab of its own again, mold_v0-204); an account's month spend is its runs'. The runs tab
   takes the place of FinOps' pricing Experiments tab, which shows only when the app has a pricing experiment (a live
   plan in one, or an account ever shown a variant: `src/experiments.ts` `anyPricingExperiment`,
   `GET /spend/experiments/any`), after the runs tab, or when a link opens it. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
@@ -1194,6 +1194,34 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   configuration's help wraps, so its Value, From and Variable columns stay on the page at 1440 px. `npm run
   test:admin-engine` proves a shell build and, run in a host pack's build, that every setting, provider and Compute
   figure is as before.
+- **Health's tabs in every app** (mold_v0-204, built): the staff console's Health (`/admin/health`) is a page of in-page
+  tabs (`UrlTabs`, `?section=`; no title above the strip). A build with the session engine keeps exactly its three
+  (Errors, Jobs, Sessions; its old `?section=runs` link still goes to FinOps), so an engine app's Health is unchanged
+  pixel for pixel. Without it (`web/src/features/admin/health-tabs.tsx`, `src/health-tabs.ts`, read-only staff routes
+  under `/api/admin/onboarding/health/`): **Errors** as before; **Runs** (in the build's word): four cards (runs, failure
+  rate, cost, median duration; the refused-and-retried runs of mold_v0-189 and the top error kinds said under them) and
+  one table, the failed runs (kind, agent or job, error kind with `output_missing`, the error cleaned, account, duration,
+  cost; views for agent, job, output missing and refused-and-retried) or, by the toolbar's picker, the kinds (runs,
+  failures per error kind, median and p95, cost); a failed run's peek lists its events (type, attempt, time and the
+  shell's own figures and words, never who asked or a value); **Scheduled work**: every job the shell runs that this
+  build has turned on (schedules and due dates, record clocks, email intake, the event outbox relay, webhook deliveries,
+  ledger checkpoints, encrypted-field batches, audit and workspace retention, run charges), each with its state (on time,
+  late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
+  `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
+  by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
+  process, every failure); **Deliveries**, only when a pack declares company email or the app has a developer surface:
+  emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
+  endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
+  `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
+  the Claude provider from `vaultStatus` read in a rolled-back read-only transaction: set or missing, never a value),
+  the key vault's providers, and the last deploy (the last migration applied, the commit on Vercel, the instance's
+  start) and the mold version (the shell's newest migration, the package version). Every error shown is cut short and
+  has addresses, links, credentials and key-like text taken out (`safeError`). Proof: `npm run test:health-tabs`, and
+  `npm run test:admin-sections` (the engine's tabs as before).
+- **Accounts › Admins** (mold_v0-204, built): the platform's staff and their roles are the Admins tab of Accounts
+  (`/admin/accounts?section=admins`, `web/src/features/admin/accounts-tabs.tsx`: Accounts | Admins, the same tab strip
+  as Health's), in every app; the sidebar has no Admins entry and `/admin/admins` is gone (the console's not-found page,
+  no redirect). The staff guide's Accounts row says so.
 - **The key vault from the factory, read-only** (mold_v0-173, built): `npm run operator:vault-status [-- --json] [-- --all]`
   (`scripts/operator/vault-status.ts`, `src/vault-status.ts`) says, per key vault provider the build reads (as the Key
   vault page lists them: `src/vault-providers.ts` `providerInBuild`, moved out of `src/platform-keys.ts`), its name,
