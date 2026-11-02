@@ -283,9 +283,9 @@ another project's, and Vercel would not reveal it anyway. Consequences (task mol
 | Item | Status |
 |---|---|
 | VM runtime | provisioned on node 24, docker 29.8, Playwright chromium; the mold typechecks and builds |
-| Vercel | logged in; `claudecode-web`, `-api`, `-workflow` deployed for the replica |
-| claudecode_web_internal | retired placeholder; its Supabase + Blob went to the replica |
-| claudecode_web_replica | clone of live, deployed at `claudecode-web-opal.vercel.app`; **`reverted`** — the accessibility lane failed it on 2026-09-08 (task mold_v1-023) |
+| Vercel | logged in; `example-web`, `-api`, `-workflow` deployed for the replica |
+| example_internal | retired placeholder; its Supabase + Blob went to the replica |
+| example_replica | clone of live, deployed at `example-web-opal.vercel.app`; **`reverted`** — the accessibility lane failed it on 2026-09-08 (task mold_v1-023) |
 | Free tier | Supabase's free tier is exhausted (live + one factory app). Neon's is not, so `defaults.postgres_provider` is `neon` and app #2 onward costs nothing (mold_v1-015) |
 | RLS gate | built and proven on new databases (mold_v1-016). The replica's *deployed* build still connects as `postgres` with BYPASSRLS — it predates the gate and its `datastores.postgres` still says `supabase` with no `rls_verified` (mold_v1-026) |
 | Lanes | all five declared and runnable; run on the replica 2026-09-08: responsiveness **pass**, accessibility **fail** (1 of 2 checks), functional **fail** (15/20 pass, 4 fail — three are known mold defects 017/018/019, the fourth is the BYPASSRLS row), context **fail** (clone regression), load **skipped** at the time (stress harness landed afterwards, mold_v1-024) |

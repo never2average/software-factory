@@ -44,7 +44,7 @@ delete process.env.APP_STORAGE_DIR;
 delete process.env.APP_WORKER_INLINE_MAX_BYTES;
 const MiB = 1024 * 1024, PLATFORM_LIMIT = 4_500_000;
 
-/** Maxwell's .gitignore at its pin (OnFinance/Maxwell 5f7e77e22edd21d71e6806c9026273d94c392b65), verbatim. */
+/** Maxwell's .gitignore at its pin (the upstream Maxwell repository, commit 5f7e77e22edd21d71e6806c9026273d94c392b65), verbatim. */
 const MAXWELL_GITIGNORE = `node_modules
 # cloned application sources (manifests are committed, checkouts are not)
 applications/*/repos/*/

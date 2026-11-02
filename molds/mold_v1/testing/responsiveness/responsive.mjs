@@ -264,7 +264,7 @@ const INIT = () => {
     // This took the slowest event of ANY kind, and the slowest was always a `pointerover` Chromium fires 60-300 ms
     // into the load because the reused context's cursor sits where the new document appears: before hydration, on
     // a busy main thread, nothing a person did. So `interaction / keyboard` graded that load-time hover (median
-    // 232 ms, samples 128-304 ms, onfinance_hfc 2026-10-08T161911Z) while the six Tab presses it names took 32-56 ms.
+    // 232 ms, samples 128-304 ms, example_app 2026-10-08T161911Z) while the six Tab presses it names took 32-56 ms.
     new PerformanceObserver((l) => {
       for (const e of l.getEntries()) if (e.interactionId > 0 && e.duration > window.__inp) window.__inp = e.duration;
     }).observe({ type: "event", buffered: true, durationThreshold: 0 });

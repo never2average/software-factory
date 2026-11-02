@@ -17,9 +17,15 @@
   factory.py set <task_id> <field> <value>   e.g. set mold_v1-001 status done
   factory.py close <task_id> "<evidence>"    marks done and appends evidence; bumps product stage if advances_stage
   factory.py validate                    every state/*.json[l] file and every molds/*/testing/*/lane.json
-                                         checks its required fields + enums
+                                         checks its required fields + enums; and no tracked file holds one of this
+                                         machine's private values (leakcheck.py scan, mold_v0-198)
   factory.py validate --app-dir <dir>    only the four application files in <dir> (a fixture outside state/),
                                          against the same schemas and the same rules
+                                         (validate also fails when schemas/<mold>.app.schema.json is stale, mold_v0-190)
+  factory.py spec check <file> [--json]  is this app spec complete for its mold? plain "missing / not supported / wrong
+                                         value" lines; exit 0 complete, 1 not yet, 2 could not check (app_spec.py)
+  factory.py spec generate [--check]     regenerate schemas/<mold>.app.schema.json (--check: say if stale, write nothing)
+  factory.py spec apps [--json]          every application's state read as a spec: what each still lacks (read-only)
 """
 import json, sys, os, datetime, re, fcntl, contextlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -38,7 +44,9 @@ def read_tasks(m):
     p = tasks_path(m)
     return [json.loads(l) for l in open(p) if l.strip()] if os.path.exists(p) else []
 def write_tasks(m, ts):
-    # whole file to a temporary name, then renamed: a reader never sees half a backlog
+    # whole file to a temporary name, then renamed: a reader never sees half a backlog. state/tasks/ is this machine's
+    # own (git-ignored since mold_v0-198), so a fresh checkout makes it on the first write.
+    os.makedirs(os.path.dirname(tasks_path(m)), exist_ok=True)
     tmp = tasks_path(m) + ".tmp"
     with open(tmp, "w") as f:
         for t in ts: f.write(json.dumps(t)+"\n")
@@ -61,7 +69,11 @@ def tasks_lock(m):
 def all_tasks(): return {t["task_id"]: t for m in molds() for t in read_tasks(m)}
 def blocked_by(t, idx):
     return [d for d in t.get("depends_on", []) if idx.get(d, {}).get("status") != "done"]
-def products(): return load(os.path.join(ST,"products.json"))
+def products():
+    """state/products.json: this machine's own (git-ignored since mold_v0-198). A fresh checkout reads the example
+    until its first write (or until the operator copies it), so status and validate still run."""
+    p = os.path.join(ST, "products.json")
+    return load(p if os.path.exists(p) else os.path.join(ST, "products.example.json"))
 def cmd_status(a):
     """One row per product. A mold can carry several (same codebase, different brand), and they share
     that mold's backlog, so the task counts repeat across its products. With an app id: its runs (cmd_app_status)."""
@@ -903,6 +915,18 @@ def _app_errors(app, adir):
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
              + _single_service(app, docs) + _app_profile(app, docs) + _branding(app, docs))
     return errs, docs
+def _spec_schemas():
+    """mold_v0-190: the app-spec schemas are generated from the molds and the factory's schemas; a stale one is a finding."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path: sys.path.insert(0, here)
+    import app_spec
+    return app_spec.stale(ROOT)
+def cmd_spec(a):
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path: sys.path.insert(0, here)
+    import app_spec
+    if not a or a[0] not in ("check", "generate", "apps"): sys.exit(__doc__)
+    sys.exit(app_spec.main(a))
 def cmd_validate(a):
     if "--app-dir" in a:
         d = os.path.abspath(a[a.index("--app-dir") + 1]) if a.index("--app-dir") + 1 < len(a) else sys.exit(__doc__)
@@ -935,8 +959,18 @@ def cmd_validate(a):
     errs += _vm_remote_hosts(apps)
     errs += _repositories(apps)
     errs += _lane_specs()
+    errs += _spec_schemas()
+    errs += _leaks()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
+
+def _leaks():
+    """mold_v0-198: this machine's private values (state/factory.local.json, state/leak-denylist.txt, its application
+    ids) in any tracked file, by .claude/scripts/leakcheck.py. A finding names `local value #n`, never the value; a
+    machine with no local values has nothing to look for."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import leakcheck
+    return leakcheck.validate_errors(ROOT)
 
 # ---- doctor: is this machine ready to run the factory? ------------------------------------------------------------
 PLACEHOLDER = re.compile(r"your-|yourcompany|you@|example\.com$|^<|^$", re.I)
@@ -987,6 +1021,14 @@ def doctor_items():
             blank = [k for k, x in want.items() if not isinstance(x, str) or PLACEHOLDER.search(x.strip())]
             add(f"{rel} filled", not blank, "value", f"{rel} still lacks the operator's own value for {', '.join(blank)} "
                 f"(state/factory.local.example.json shows each one). Ask the operator for them, one at a time.")
+    if os.path.isdir(os.path.join(ROOT, ".git")):   # mold_v0-198: this machine's private values never reach a commit or a push
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import leakcheck
+        add("leak check hooks installed (pre-commit, commit-msg, pre-push)", leakcheck.hook_installed(ROOT), "tool",
+            "Install them once in this checkout: python3 .claude/scripts/leakcheck.py install-hook")
+    add("state/products.json present", os.path.exists(os.path.join(ST, "products.json")), "value",
+        "This machine's product records are its own (never committed). On a new factory machine: "
+        "cp state/products.example.json state/products.json, then define the products there (docs/PRODUCTS.md).")
     for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active" or _in_tree(m["mold_id"])]:
         mid = m["mold_id"]; cb = os.path.join(ROOT, "molds", mid, "codebase")
         if _in_tree(mid):
@@ -1186,7 +1228,7 @@ def self_test():
 
 if __name__ == "__main__":
     cmds = {"status":cmd_status,"tasks":cmd_tasks,"next":cmd_next,"add":cmd_add,"set":cmd_set,"close":cmd_close,"validate":cmd_validate,
-            "doctor":cmd_doctor}
+            "doctor":cmd_doctor,"spec":cmd_spec}
     if sys.argv[1:2] == ["--self-test"]: sys.exit(self_test())
     if len(sys.argv)<2 or sys.argv[1] not in cmds: sys.exit(__doc__)
     services.script_start("factory.py", sys.argv[1:])
