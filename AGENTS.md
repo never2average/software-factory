@@ -22,6 +22,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
 | The person asks | Open | Runs |
 |---|---|---|
 | "Make an app from this brief", "mint X" | `mint` | `mint.py new <app> --brief briefs/<app>.md`, then `mint.py <app> run` |
+| "Check this app spec", "mint X from this spec" | `mint` | `factory.py spec check <file>`, then `mint.py new <app> --spec <file>` (docs/APP_SPEC.md) |
 | "Where does X stand?", "what's left?" | `mint` | `mint.py <app> --json`, `mint.py list --json` |
 | "What's next on the backlog?", log or close work | `task` | `factory.py next <mold_id>`, `factory.py add`, `factory.py close` |
 | "Can X deploy?", "deploy X" | `provision` | `provision.py <app>` (check), `provision.py <app> --deploy` |
@@ -61,7 +62,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
 
 ## What needs an explicit yes
 
-Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `validate`; `mint.py list` and `mint.py <app> [--json]`; `sweep.py plan` and `clean --dry-run`; every check, `status`, `--list` and `--dry-run`; `provision.py <app>` (the check) and `--capacity`; `repo.py <app> status`; `mold.py check`. Local edits to the factory's own state as part of the job you were given (a brief, `mint.py new`, intake, a task note) are fine.
+Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `validate`, `spec check`, `spec apps`; `mint.py list` and `mint.py <app> [--json]`; `sweep.py plan` and `clean --dry-run`; every check, `status`, `--list` and `--dry-run`; `provision.py <app>` (the check) and `--capacity`; `repo.py <app> status`; `mold.py check`. Local edits to the factory's own state as part of the job you were given (a brief, `mint.py new`, intake, a task note) are fine.
 
 **Always ask first, naming the app and what will happen, and wait for a plain yes:**
 
