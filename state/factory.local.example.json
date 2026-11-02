@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). workspace_name and agent_cli_scope: a new application's default workspace name and the npm organisation its agent package is published under (optional; kept here because they name your organisation). legacy_names: {current: old} spellings of state keys older applications still carry (optional). sweep: this machine's own sweep choices (optional; .claude/scripts/sweep.py merges them over state/factory.json's sweep block): which apps' mold-moved redeploys are pre-approved (auto_deploy) or allowed once parity is proven (parity_deploy), and any trains or gated tickets.",
+  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). workspace_name and agent_cli_scope: a new application's default workspace name and the npm organisation its agent package is published under (optional; kept here because they name your organisation). legacy_names: {current: old} spellings of state keys older applications still carry (optional). sweep: this machine's own sweep choices (optional; .claude/scripts/sweep.py merges them over state/factory.json's sweep block): which apps' mold-moved redeploys are pre-approved (auto_deploy) or allowed once parity is proven (parity_deploy), and any trains or gated tickets. org_one: org #1 of your mold_v1 applications, the workspace your own people land in (optional; lib/org_one.py): its workspace id, its Google Workspace hosted domain and your company's name, written to each deploy as DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN / WORKSPACE_OPERATOR_COMPANY for a mold that reads them; an app's infrastructure runtime_env overrides it by those names. An application whose data was written under an id must keep that id.",
   "defaults": {
     "operator_email": "you@yourcompany.com",
     "notify_domain": "yourcompany.com",
@@ -18,6 +18,11 @@
     "web": "your-live-web-project",
     "api": "your-live-api-project",
     "workflow": "your-live-workflow-project"
+  },
+  "org_one": {
+    "id": "org-yourcompany",
+    "domain": "yourcompany.com",
+    "company": "Your Company"
   },
   "sweep": {
     "auto_deploy": [
