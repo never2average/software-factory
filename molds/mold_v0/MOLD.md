@@ -2366,7 +2366,7 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   Requests tab, `read_audit_trail` with `trail: platform`), staff shown as their pseudonym and without addresses.
   The worker API (runs) and cron are machine traffic, not entries.
 - **Retention.** `retention_days` (default 400) for the data trail, `platform_retention_days` (default the same) for
-  the platform trail: pruned 5,000 rows a trail per call, hourly on a server and from the Vercel cron.
+  the platform trail: pruned 5,000 rows a trail per call, hourly on a server and after each Vercel cron tick (`/api/cron/autoscale`).
 - **Separate from usage metering.** `mcp_events`, `compute_events` and `run_events` are unchanged (billing, analytics,
   the factory board's `run_spend.py` and `app_usage.py`).
 - **Off** (the default): nothing is written (not even a sequence row), no route is mounted, no console page or sidebar

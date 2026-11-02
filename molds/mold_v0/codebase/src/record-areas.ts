@@ -340,8 +340,9 @@ export async function listPlatform(area: RecordArea, opts?: RecordQuery | { limi
 
 async function listWorkspace(orgId: number, area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {
   const p = queryOf(area, opts);
-  if (isLive(area)) return (await live()).listLive(area, orgId, p);
-  return listTable(area, orgId, p);
+  // The data trail (mold_v0-197): one entry per page of a workspace's records, never one per row, never their values.
+  return auditAs(orgId, async () => (isLive(area) ? (await live()).listLive(area, orgId, p) : listTable(area, orgId, p)),
+    (page) => ({ action: "list", pack: area.pack, area: area.name, rows: page.records.length }));
 }
 
 export async function getPlatform(area: RecordArea, key: string): Promise<RecordRow | null> {
@@ -364,8 +365,9 @@ async function readWorkspace(orgId: number, area: RecordArea, key: string): Prom
   });
 }
 async function getWorkspace(orgId: number, area: RecordArea, key: string): Promise<RecordRow | null> {
-  if (isLive(area)) return (await live()).getLive(area, orgId, checkKey(key));
-  return (await readWorkspace(orgId, area, key))?.record ?? null;
+  // The data trail (mold_v0-197): one read of a record (a sealed area's is a reveal), never its values.
+  return auditAs(orgId, async () => (isLive(area) ? (await live()).getLive(area, orgId, checkKey(key)) : (await readWorkspace(orgId, area, key))?.record ?? null),
+    (r) => (r ? { action: isSealedArea(area) ? "reveal" : "read", pack: area.pack, area: area.name, key: r.key } : null));
 }
 
 /**
@@ -375,14 +377,12 @@ async function getWorkspace(orgId: number, area: RecordArea, key: string): Promi
 export const listFor = (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR) => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  // The data trail (mold_v0-197): one entry per page of a workspace's records, never one per row, never their values.
-  return a.scope === "platform" ? listPlatform(a, opts) : auditAs(orgId, () => listWorkspace(orgId, a, opts), (p) => ({ action: "list", pack: a.pack, area: a.name, rows: p.records.length }));
+  return a.scope === "platform" ? listPlatform(a, opts) : listWorkspace(orgId, a, opts);
 };
 export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
-  // The data trail (mold_v0-197): a sealed area's record read is a reveal.
-  return a.scope === "platform" ? getPlatform(a, key) : auditAs(orgId, () => getWorkspace(orgId, a, key), (r) => (r ? { action: isSealedArea(a) ? "reveal" : "read", pack: a.pack, area: a.name, key: r.key } : null));
+  return a.scope === "platform" ? getPlatform(a, key) : getWorkspace(orgId, a, key);
 };
 
 /**

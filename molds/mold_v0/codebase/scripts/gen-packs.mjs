@@ -1298,12 +1298,14 @@ if (loaded.length === entries.length) {
 // (src/shell-tools.ts, mold_v0-067: refused here at build, not only when the server starts). The tools the settings
 // withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
-const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES, AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
+const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
 const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
-  // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
-  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...AUDIT_TOOL_NAMES];
+  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES];
   const own = new Map();
+  // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
+  const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
+  shell.push(...AUDIT_TOOL_NAMES);
   for (const p of loaded) for (const t of p.definition.tools ?? []) {
     if (!t || typeof t.name !== "string") continue;
     if (shell.includes(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already a shell tool\`);

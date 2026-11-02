@@ -21,6 +21,8 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   "workspace_schedules", "workspace_notices",
   // mold_v0-019 price per run: the run charges ledger
   "run_charges",
+  // mold_v0-197 the audit trails (src/audit-trail.ts, their only writer)
+  "audit_data_events", "audit_platform_events",
   // mold_v0-004 the built-in sign-in's memberships and invitations (platform-only tables that carry org_id)
   "auth_memberships", "auth_invitations",
   // mold_v0-013 the built-in MCP authorization server's grants (a person in one workspace; platform-only, carries org_id)
@@ -34,9 +36,7 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-036 on-premises runners and a workspace's runner location
   "onprem_runners", "workspace_runner_settings",
   // mold_v0-182 a run's transfers through object storage
-  "run_transfers",
-  // mold_v0-197 the audit trails (src/audit-trail.ts, their only writer)
-  "audit_data_events", "audit_platform_events"];
+  "run_transfers"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

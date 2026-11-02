@@ -9,7 +9,7 @@ import { answersOf } from "./access-request.js";
 import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 import { proxyHops } from "./proxy-trust.js";
 import { appRouter, customerSession } from "./app.js";
-import { anyTrailOn, auditAdminRouter, auditAppRouter, auditCaller, auditRequests, pruneAudit } from "./audit-trail.js";
+import { auditAdminRouter, auditAppRouter, auditCaller, auditRequests } from "./audit-trail.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
@@ -192,9 +192,7 @@ export function createApp() {
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
     const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
-    // The audit trails' retention (mold_v0-197): only when one is on.
-    const audit = anyTrailOn() ? { audit: await pruneAudit().catch((e) => ({ error: (e as Error).message })) } : {};
-    res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...audit });
+    res.json({ tick, pruned, ...host, rls, schedules, ...charges });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).

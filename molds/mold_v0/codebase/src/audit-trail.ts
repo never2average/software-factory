@@ -139,6 +139,11 @@ export function auditRequests(): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!anyTrailOn()) return next();
     const path = req.path;
+    // The Vercel cron's tick (src/http.ts /api/cron/autoscale): the trails' retention, once it answered (authorized).
+    if (path === "/api/cron/autoscale") {
+      res.on("finish", () => { if (res.statusCode === 200) keepAliveAudit(pruneAudit().catch((e) => console.error(`audit trail prune: ${(e as Error).message}`))); });
+      return next();
+    }
     const channel = channelOf(path);
     if (!channel) return next();
     const run = channel === "run" ? /^\/api\/(worker|runner)\/runs\/([^/]+)/.exec(path)?.[2] : undefined;
@@ -262,12 +267,13 @@ const FLUSH_MS = 200, FLUSH_AT = 200, KEEP_MAX = 20_000;
 let dataQueue: DataRow[] = [], platformQueue: PlatformRow[] = [];
 let timer: NodeJS.Timeout | null = null, flushing: Promise<void> | null = null;
 function enqueueData(row: DataRow) { dataQueue.push(row); kick(); }
+/** On Vercel, the function stays up until `p` settles (src/telemetry.ts keepAlive); elsewhere nothing. */
+const keepAliveAudit = (p: Promise<unknown>) => void import("./telemetry.js").then((t) => t.keepAlive(p)).catch(() => {});
 function kick(now = false) {
   if (!dataQueue.length && !platformQueue.length) return;
   startPruning();
   if (now || dataQueue.length + platformQueue.length >= FLUSH_AT) {
-    const p = flushAudit();
-    void import("./telemetry.js").then((t) => t.keepAlive(p)).catch(() => {});
+    keepAliveAudit(flushAudit());
     return;
   }
   timer ??= setTimeout(() => { timer = null; void flushAudit(); }, FLUSH_MS);
