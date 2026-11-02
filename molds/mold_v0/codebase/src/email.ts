@@ -627,6 +627,15 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
 
 // ---------- sign-in (mold_v0-004, 083: src/builtin-auth.ts builds no message of its own) ----------
 
+/**
+ * The test email a workspace's own sender sends from its Test button (mold_v0-192, src/company-email.ts testSender): to
+ * the address the owner typed, through that sender only (never logged in email_log: it is the workspace's own mail).
+ */
+export function senderTestMessage(providerLabel: string) {
+  const text = lines("Hi,", emailWords().t`This is a test email from your workspace's own sender (${providerLabel}) in {product}. It works: {product}'s emails to your workspace's people now come from this address.`, sign());
+  return { subject: emailWords().t`Test email from {product}`, text, html: htmlOf(text) };
+}
+
 /** A sign-in code: to the address that asked, only when it may sign in (the caller decides); the code is in the text, never the subject or the log. */
 export function signInCode(c: { id: number | string; to: string; code: string; minutes: number }) {
   return sendLater({ kind: "sign_in_code", to: c.to, idempotencyKey: `sign-in-code:${c.id}`,

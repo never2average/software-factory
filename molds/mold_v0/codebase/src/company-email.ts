@@ -80,7 +80,7 @@ function checkSettings(provider: Provider, use: "sender" | "inbox", b: Record<st
   }
   if (provider === "smtp") {
     const host = text(b.host, 253, "host", true)!.toLowerCase();
-    if (!wire.isHostName(host)) throw new PackError("host: a host name, such as smtp.example.com", 400);
+    if (!wire.isHostName(host)) throw new PackError("host: a host name, such as mail.example.com", 400);
     const port = Number(b.port ?? (use === "sender" ? 587 : 993));
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new PackError("port: 1 to 65535", 400);
     const security = String(b.security ?? (port === 465 || port === 993 ? "tls" : "starttls"));
@@ -223,7 +223,8 @@ export async function testSender(orgId: number, b: { to?: unknown }) {
   try {
     secret = await unseal(orgId, r.slot, r.provider, r.sealed);
     const s = r.settings;
-    if (to) await deliverVia(r, secret, { to, subject: "Test email", text: `This is a test email from your workspace's own sender (${PROVIDER_LABELS[r.provider]}). It works.`, html: `<p>This is a test email from your workspace's own sender (${PROVIDER_LABELS[r.provider]}). It works.</p>` });
+    // Its words are the email adapter's (src/email.ts, the one place a message is written).
+    if (to) { const { senderTestMessage } = await import("./email.js"); await deliverVia(r, secret, { to, ...senderTestMessage(PROVIDER_LABELS[r.provider]) }); }
     else if (r.provider === "smtp") await wire.smtpCheck({ host: String(s.host), port: Number(s.port), security: s.security as wire.Security, username: (s.username as string | null) ?? null }, secret);
     else if (r.provider === "graph") await wire.graphCheck({ tenant_id: String(s.tenant_id), client_id: String(s.client_id), mailbox: String(s.mailbox) }, secret ?? "", null);
     else await wire.gmailCheck({ mailbox: String(s.mailbox) }, secret ?? "", null);
