@@ -20,7 +20,7 @@ import { useMediaQuery } from '@/hooks/use-media-query';
 import { useClerk, useUser } from '@/lib/auth';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import * as React from 'react';
 import { Icons } from '../icons';
 import { OrgSwitcher } from '../org-switcher';
@@ -49,7 +49,7 @@ function usePlatformAdmin(area: string) {
 }
 
 export default function AppSidebar() {
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const { isOpen } = useMediaQuery();
   const { user } = useUser();
   const { signOut } = useClerk();

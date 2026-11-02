@@ -36,6 +36,9 @@ const Ctx = createContext<ColorModeContext | null>(null);
  * flips the page to the default and back.
  */
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // Next's own pathname, not lib/console-path.tsx's (this provider is above the not-found page that sets it): on a
+  // rewritten unknown address it is /_not-found on the server, but nothing drawn depends on it before the stored mode is
+  // read (the resolved mode is the default either way), so hydration matches.
   const pathname = usePathname();
   const inConsole = isConsolePath(pathname);
   const [state, setState] = useState<{ mode: ColorMode; prefersDark: boolean } | null>(null);

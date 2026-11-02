@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Icons } from '../icons';
@@ -12,7 +12,7 @@ import { TOP_BAR_CONTROL, TOP_BAR_LABELLED } from './top-bar';
  * box's height, radius and border at every width (mold_v0-177); on a phone, its icon alone.
  */
 export function DocsButton() {
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const { area } = useNav();
   const href = area === 'admin' ? '/admin/docs' : '/app/docs';
   const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -26,7 +26,7 @@ export function DocsButton() {
 
 /** Admin only, beside Docs: connect an AI client to the admin MCP server (/admin/connect). */
 export function McpButton() {
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const { area } = useNav();
   if (area !== 'admin') return null;
   const active = pathname === '/admin/connect';

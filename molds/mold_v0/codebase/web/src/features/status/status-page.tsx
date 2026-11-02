@@ -12,7 +12,8 @@
  * data-status-page (the kind) and data-status-code mark it for tests and the lanes.
  */
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { useId, type ReactNode } from 'react';
 import { BrandLogo, BrandMark } from '@/components/brand';
 import { Icons } from '@/components/icons';
@@ -44,7 +45,7 @@ type Action = { key: string; label: string; href?: string; onClick?: () => void;
 
 export function StatusPage({ kind, area: areaProp, frame = 'inline', level, role, email, staff, onRetry, detail }: StatusPageProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
   const area = areaProp ?? areaOf(pathname);
   const t = statusText(kind, { role, email, area });
   const id = useId();

@@ -3,7 +3,8 @@
 // this replicates what staff check daily, from the records the app already keeps. Range and filters live in the URL,
 // so a filtered view can be shared; both views share the toolbar, the Filters popover and the export.
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { IconFilter } from '@tabler/icons-react';
 import { toast } from 'sonner';
@@ -133,7 +134,7 @@ const filterQuery = (f: Filters) =>
 
 /** Range and filters from the URL; writes replace the entry so Back leaves the page instead of undoing a filter. */
 function useReportParams() {
-  const params = useSearchParams(), router = useRouter(), pathname = usePathname();
+  const params = useSearchParams(), router = useRouter(), pathname = useConsolePathname();
   const s = params.toString();
   const { range, filters } = useMemo(() => {
     const p = new URLSearchParams(s);

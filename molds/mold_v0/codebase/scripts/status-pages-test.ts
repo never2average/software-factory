@@ -16,6 +16,9 @@
 // 4. Unknown addresses: the site's, the portal's, the admin console's, sign-in's, a pack page, a record area, a doc, a
 //    host page: 404 and the not-found page, inside the area's shell where there is one; never the API's own text; drawn
 //    on the server (mold_v0-155): the page's HTML carries it and its links.
+// 4b. Hydrated cleanly (mold_v0-206): the site's, the portal's and the admin console's not-found pages, the console's mode
+//    Light and Dark, come up with no page error and nothing on the console (React's #418 among them); the server's HTML is
+//    drawn for the address, never for /_not-found, the route the proxy rewrote it to.
 // 5. Denied: /admin and any address under it for someone who is not platform staff is a 403 that names them and leads
 //    to their account; staff see the admin console's 404 for an unknown address there.
 // 6. The data hooks (on /app/usage with the session engine, else /app/billing: the page this build serves, mold_v0-159):
@@ -335,8 +338,48 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     assert.match(html, /data-status-page="not_found"/, `${url}: the not-found page in the server's HTML`);
     assert.match(html, /<a [^>]*href="\/[^"]*"[^>]*>[^<]*(Go to|home)/i, `${url}: its link home in the server's HTML`);
     assert.doesNotMatch(html, /id="__next_error__"/, `${url}: never Next's empty error shell`);
+    // Drawn for the address the browser has (mold_v0-206), never for Next's not-found route it was rewritten to: the
+    // trail and the sidebar the server draws are the ones the browser hydrates (else React's #418).
+    const rewritten = html.search(/_not-found/);
+    assert.equal(rewritten, -1, `${url}: the server's HTML names /_not-found (drawn for the rewritten route, not ${url}): ${html.slice(Math.max(0, rewritten - 300), rewritten + 100).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")}`);
+    const trail = /<nav aria-label="breadcrumb"[\s\S]*?<\/nav>/.exec(html)?.[0]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (url.startsWith("/app/") || url.startsWith("/admin/")) assert.ok(trail && trail.startsWith(url.startsWith("/app/") ? "Account" : "Admin"), `${url}: the trail drawn for the address (got ${JSON.stringify(trail)})`);
   }
   ok("unknown addresses: the site's, sign-in's and every portal and admin route (pages, packs, records, docs, host pages) are a 404 with the not-found page, inside the area's shell where there is one; drawn on the server (in the page's HTML, its links with it)");
+
+  // 4b. Hydrated cleanly (mold_v0-206): the not-found page drawn on the server for an unknown address, the site's, the
+  // portal's and the admin console's, comes up in the browser with no page error and nothing on the console (React's
+  // #418, a hydration mismatch, among them), with the console's stored mode Light and Dark.
+  {
+    const seen: string[] = [];
+    let documentStatus = 0;
+    for (const mode of ["light", "dark"] as const) {
+      for (const [who, url] of [[null, "/no-such-page-anywhere"], [null, "/console-status/not-found"], [w.owner, "/app/no-such-page"], [w.staff, "/admin/no-such-page"], [w.staff, "/admin/admins"]] as const) {
+        const c = await ctxFor(who);
+        try {
+          await c.addInitScript((m: string) => { try { localStorage.setItem("console-color-mode", m); } catch { /* no storage */ } }, mode);
+          const p = await c.newPage();
+          const errors: string[] = [];
+          p.on("pageerror", (e: Error) => errors.push(`page error: ${e.message}`));
+          p.on("console", (m: any) => {
+            if (m.type() !== "error") return;
+            // The browser's own line for the document's 404 status (the status this page is meant to have) is no error of the page's.
+            if (/^Failed to load resource: the server responded with a status of 404/.test(m.text()) && m.location()?.url === `${origin}${url}`) { documentStatus++; return; }
+            errors.push(`console: ${m.text()}`);
+          });
+          const res = await p.goto(url, { waitUntil: "networkidle" });
+          assert.equal(res?.status(), 404, `${url} (${mode}): HTTP ${res?.status()}`);
+          await p.locator('[data-status-page="not_found"]').first().waitFor({ timeout: 20000 });
+          await p.waitForTimeout(1000);
+          if (url.startsWith("/app") || url.startsWith("/admin"))
+            assert.equal(await p.evaluate(() => document.documentElement.classList.contains("dark")), mode === "dark", `${url}: the console's stored mode, ${mode}`);
+          assert.deepEqual(errors, [], `${url} (${mode}): no page or console error`);
+          seen.push(`${url} ${mode}`);
+        } finally { await c.close(); }
+      }
+    }
+    ok(`unknown addresses hydrate cleanly: ${seen.length} loads (the site's, the portal's and the admin console's not-found pages, light and dark), no page error and nothing on the console${documentStatus ? ` (but the browser's own line for the document's 404, ${documentStatus}x)` : ""}`);
+  }
 
   // 5. denied: the admin console for someone who is not platform staff.
   for (const url of ["/admin", "/admin/accounts", "/admin/no-such-page"])

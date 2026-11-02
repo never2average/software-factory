@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
 
@@ -32,7 +32,7 @@ const RECORDS = /^\/(admin|app)\/records$/;
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 
 export function useBreadcrumbs() {
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
 
   const breadcrumbs = useMemo(() => {
     // Check if we have a custom mapping for this exact path

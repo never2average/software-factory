@@ -6,7 +6,8 @@
 // names a section on the other page goes there.
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import { cn } from '@/lib/utils';
 
 export const money = (x: number) => `$${x.toFixed(2)}`;
@@ -67,7 +68,7 @@ export function goToSection(section: string | null | undefined) {
  * a filter). A write that names a section also scrolls to it. Needs a Suspense boundary above it (useSearchParams).
  */
 export function useComputeParams() {
-  const params = useSearchParams(), router = useRouter(), pathname = usePathname();
+  const params = useSearchParams(), router = useRouter(), pathname = useConsolePathname();
   const s = params.toString();
   const p = useMemo(() => new URLSearchParams(s), [s]);
   const write = (patch: Record<string, string | null | undefined>) => {
@@ -111,7 +112,7 @@ export function useScrollTo(section: string, ready: boolean) {
  * of the page and scrolls to that section instead, every time it is clicked. Any other link behaves as usual.
  */
 export function SectionLink({ href, onClick, ...rest }: Omit<ComponentProps<typeof Link>, 'href'> & { href: string }) {
-  const section = sectionOf(href, usePathname());
+  const section = sectionOf(href, useConsolePathname());
   return <Link href={href} scroll={section ? false : undefined} onClick={(e) => { onClick?.(e); goToSection(section); }} {...rest} />;
 }
 

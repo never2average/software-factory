@@ -18,7 +18,7 @@ import { mergeProps } from '@base-ui/react/merge-props';
 import { useRender } from '@base-ui/react/use-render';
 import { VariantProps, cva } from 'class-variance-authority';
 import { Icons } from '@/components/icons';
-import { usePathname } from 'next/navigation';
+import { useConsolePathname } from '@/lib/console-path';
 import * as React from 'react';
 
 const INFOBAR_WIDTH = '22rem';
@@ -84,7 +84,7 @@ function InfobarProvider({
   const [content, setContent] = React.useState<InfobarContent | null>(null);
   const [contentPathname, setContentPathname] = React.useState<string | null>(null);
   const [isPathnameChanging, setIsPathnameChanging] = React.useState(false);
-  const pathname = usePathname();
+  const pathname = useConsolePathname();
 
   // This is the internal state of the infobar.
   // We use openProp and setOpenProp for control from outside the component.
