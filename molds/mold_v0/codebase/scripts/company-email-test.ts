@@ -136,7 +136,7 @@ try {
     msg(1, { from: "Regulator <notices@regulator.example>", subject: "Circular 1", text: "Please comply by Friday.", messageId: `c1-${STAMP}@regulator.example`, attachments: [att("circular-1.pdf", "first")] }),
     msg(2, { from: "customer@bank.example", subject: "Audit request", text: "Body two", html: "<p>Body <b>two</b></p>", messageId: SHARED_ID }),
     msg(3, { from: "old@regulator.example", subject: "Too old", text: "old", date: new Date(NOW.getTime() - 30 * day) }),
-    msg(4, { from: "big@regulator.example", subject: "Many files", text: "files", attachments: [att("a.pdf", "a"), att("b.pdf", "b"), att("c.pdf", "c"), { name: "huge.bin", type: "application/octet-stream", data: Buffer.alloc(300 * 1024, 1) }] }),
+    msg(4, { from: "big@regulator.example", subject: "Many files", text: "files", attachments: [att("a.pdf", "a"), att("b.pdf", "b"), att("c.pdf", "c"), { name: "huge.bin", type: "application/octet-stream", data: Buffer.alloc(300 * 1024, 1) }, att("e.pdf", "e")] }),
   ];
   const aArchive: FakeMessage[] = [msg(1, { from: "x@y.example", subject: "Archived: never read", text: "no" })];
   const bInbox: FakeMessage[] = [msg(1, { from: "b-reg@regulator.example", subject: "B only", text: "for B", messageId: `b1-${STAMP}@regulator.example` })];
@@ -169,7 +169,7 @@ try {
     ] }] as never,
     email: { sender: { allow: true }, intake: { area: "mf_mail", label: "Regulatory mail", folder: "INBOX", body_chars: 200, backfill_days: 7,
       fields: { from: "sender", from_domain: "sender_domain", date: "sent_on", body: "summary", attachments: "files", attachment_count: "file_count", mailbox: "mailbox" },
-      set: { kind: "other" }, attachments: { max_bytes: 200 * 1024, max_count: 3 } } },
+      set: { kind: "other" }, attachments: { max_bytes: 200 * 1024, max_count: 4 } } },
   });
   setPacksForTest([{ manifest: { id: "mailfix", name: "Mail fixture", version: "1", entry: null, migrations: null, words: {}, dir: "packs/mailfix" }, definition: fixture }]);
   assert.equal(ce.companyEmailWired(), true);
@@ -264,7 +264,7 @@ try {
       assert.match(c1.key, /^mail-[0-9a-f]{24}$/);
       assert.equal(byTitle["Audit request"]!.data.summary, "Body two", "the plain part, not the HTML");
       const many = byTitle["Many files"]!.data.files as { name: string; skipped?: string }[];
-      assert.deepEqual(many.map((f) => [f.name, f.skipped ?? null]), [["a.pdf", null], ["b.pdf", null], ["c.pdf", null], ["huge.bin", "more than 3 attachments"]]);
+      assert.deepEqual(many.map((f) => [f.name, f.skipped ?? null]), [["a.pdf", null], ["b.pdf", null], ["c.pdf", null], ["huge.bin", "larger than 200 KB"], ["e.pdf", "more than 4 attachments"]]);
       assert.equal(byTitle["Many files"]!.data.file_count, 3);
       const listB = await withTenant(B.orgId, () => rec.listFor(B.orgId, "mf_mail", { limit: 50 }));
       assert.deepEqual(listB.records.map((r) => r.title), ["B only"], "B's poll wrote B's records only");
@@ -295,11 +295,13 @@ try {
       const shown = await req("GET", "/api/email", bearer(ownerB));
       assert.equal(shown.body.inboxes[0].status, "error"); assert.match(shown.body.inboxes[0].hint, /Sign-in failed/);
       await req("PUT", "/api/email/inboxes", bearer(ownerB), { id: ib.body.id, provider: "smtp", settings: imapSettings("intake-b"), secret: C.IMAP_B });
+      const [kept] = await db.query<{ cursor: { uidvalidity?: string } }>("SELECT cursor FROM workspace_email_inboxes WHERE id = $1", [ib.body.id]);
+      assert.equal(kept!.cursor.uidvalidity, "3", "a new secret for the same mailbox keeps its read position");
       // The vault locked: nothing is polled.
       const key = process.env.APP_VAULT_KEY; delete process.env.APP_VAULT_KEY;
       assert.equal((await intake.pollIntake(new Date())).ran, false);
       process.env.APP_VAULT_KEY = key;
-      console.log("✓ IMAP intake: records with the pack's fields, attachments kept (too many listed, not kept), only INBOX, read only (EXAMINE, BODY.PEEK, nothing changed), each message once (re-poll, new UIDVALIDITY), a wrong password backs off, a locked vault polls nothing");
+      console.log("✓ IMAP intake: records with the pack's fields, attachments kept (too large or past the count listed, not kept), only INBOX, read only (EXAMINE, BODY.PEEK, nothing changed), each message once (re-poll, new UIDVALIDITY), a wrong password backs off, a locked vault polls nothing");
     }
 
     // ---------- 6. Graph and Gmail intakes ----------

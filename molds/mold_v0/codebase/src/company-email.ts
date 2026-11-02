@@ -314,7 +314,8 @@ export async function putInbox(orgId: number, by: string, b: Record<string, unkn
   const sealed = keep ? prev!.sealed : await seal(orgId, slot, provider, checkSecret(provider, b.secret));
   const enabled = b.enabled === undefined ? prev?.enabled ?? true : b.enabled === true;
   // Another mailbox, account or provider: its read position starts again (the ledger still drops what was read).
-  const same = prev && prev.provider === provider && JSON.stringify({ ...prev.settings }) === JSON.stringify(settings);
+  const canon = (x: Settings) => JSON.stringify(Object.keys(x).sort().map((k) => [k, x[k] ?? null]));
+  const same = prev && prev.provider === provider && canon(prev.settings) === canon(settings);
   const db = await getDb();
   if (prev) {
     await asPlatform(() => db.query(
