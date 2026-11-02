@@ -34,7 +34,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-036 on-premises runners and a workspace's runner location
   "onprem_runners", "workspace_runner_settings",
   // mold_v0-182 a run's transfers through object storage
-  "run_transfers"];
+  "run_transfers",
+  // mold_v0-197 the audit trails (src/audit-trail.ts, their only writer)
+  "audit_data_events", "audit_platform_events"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

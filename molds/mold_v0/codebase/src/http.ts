@@ -8,7 +8,8 @@ import * as mail from "./email.js";
 import { answersOf } from "./access-request.js";
 import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 import { proxyHops } from "./proxy-trust.js";
-import { appRouter } from "./app.js";
+import { appRouter, customerSession } from "./app.js";
+import { anyTrailOn, auditAdminRouter, auditAppRouter, auditCaller, auditRequests, pruneAudit } from "./audit-trail.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
@@ -111,6 +112,9 @@ export function createApp() {
   // X-Forwarded-For entry, which any client writes.
   app.set("trust proxy", proxyHops());
   app.disable("x-powered-by");
+  // The audit trails (mold_v0-197, src/audit-trail.ts), first: every API, MCP and admin request gets its door and actor,
+  // and with the platform trail on, its entry. Both off (the default): it passes every request straight on.
+  app.use(auditRequests());
   // Origin first (src/origin.ts, DNS-rebinding protection): a browser page from a foreign origin gets a 403 on every MCP
   // endpoint, the admin MCP included, before any credential is looked at and before any database read.
   app.use(["/mcp", ...ADMIN_MCP_PATHS], mcpOriginGuard);
@@ -188,7 +192,9 @@ export function createApp() {
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
     const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
-    res.json({ tick, pruned, ...host, rls, schedules, ...charges });
+    // The audit trails' retention (mold_v0-197): only when one is on.
+    const audit = anyTrailOn() ? { audit: await pruneAudit().catch((e) => ({ error: (e as Error).message })) } : {};
+    res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...audit });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -268,6 +274,8 @@ export function createApp() {
   app.use("/api/sparklines", sparklineAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
+  // The access log (mold_v0-197, src/audit-trail.ts): a workspace's owners read its trails; nothing mounted with both off.
+  app.use("/api/audit", auditAppRouter(customerSession));
 
   // ---------- a host pack's public routes (src/host.ts), then the in-chat tips component's webhook (mold_v0-143, src/tips.ts: only when it is on) ----------
   for (const h of hosts()) h.routes?.public?.(app);
@@ -381,6 +389,7 @@ export function createApp() {
     if (!(await mcpGate(req, res, org0))) return;
     const org: Org = { ...org0, client: clientOf(req.get("user-agent")) };
     res.locals.org = org.slug;
+    auditCaller(org);
     transcripts().warm(); // a user is here: have transcript search awake by the time they ask for evidence
     for (const e of connectorEvents(req.body, req.get("user-agent"))) recordMcpEvent(org, e);
     // The account's and the person's context for this caller (src/account-context.ts, mold_v0-142: the memory
@@ -553,6 +562,8 @@ export function createApp() {
     next();
   });
   admin.use(express.json({ limit: "64kb" }));
+  // The audit trails for platform staff (mold_v0-197): the platform trail fleet-wide, a workspace's data trail.
+  admin.use("/audit", auditAdminRouter());
   admin.get("/keyvault/providers", async (_req, res) => void res.json({ providers: await kv.listProviders() }));
   admin.put("/keyvault/providers/:slug", need("keys"), async (req, res) => void res.json(await kv.upsertProvider({ ...req.body, slug: String(req.params.slug) })));
   admin.get("/keyvault/credentials", async (_req, res) => void res.json({ credentials: await kv.listCredentials() }));

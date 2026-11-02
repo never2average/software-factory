@@ -13,6 +13,7 @@
  * spreadsheet would read as a formula (it starts with =, +, -, @, a tab or a carriage return) is written with a leading
  * apostrophe. RFC 4180 quoting, CRLF line ends, no byte-order mark (the MCP answer is text).
  */
+import { auditAs } from "./audit-trail.js";
 import type { RecordQuery, RecordRow } from "./pack-api.js";
 import { PackError } from "./pack-api.js";
 import { dataApi, type DataCaller } from "./data-api.js";
@@ -55,6 +56,11 @@ export const exportRow = (fields: readonly Field[], r: Pick<RecordRow, "key" | "
 export async function exportArea(caller: DataCaller, area: string, q: Pick<RecordQuery, "filter" | "sort" | "after"> = {},
   limits: { rows: number; bytes: number } = { rows: EXPORT_MAX_ROWS, bytes: EXPORT_MAX_BYTES }) {
   const a = areaOrThrow(area);
+  // The data trail (mold_v0-197): one export entry with how many records left, not the pages it read to make it.
+  if (a.scope === "workspace") return auditAs(caller.orgId, () => exportPages(caller, a, q, limits), (r) => ({ action: "export", pack: a.pack, area: a.name, rows: r.records }));
+  return exportPages(caller, a, q, limits);
+}
+async function exportPages(caller: DataCaller, a: ReturnType<typeof areaOrThrow>, q: Pick<RecordQuery, "filter" | "sort" | "after">, limits: { rows: number; bytes: number }) {
   const fields = a.fields as Field[];
   const header = exportHeader(fields);
   let csv = header, bytes = Buffer.byteLength(header), count = 0;

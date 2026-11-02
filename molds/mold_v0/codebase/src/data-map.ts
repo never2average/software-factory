@@ -15,6 +15,7 @@
  * console has no page for it (operator decision, mold_v0-099: an About page is not part of the mold).
  * Nothing here returns or logs a secret value: credential fields, platform secrets and vault keys appear by name only.
  */
+import { auditDataMapRows, auditSettings } from "./audit-trail.js";
 import { DEPLOY_FACTS } from "./deploy-facts.generated.js";
 import { packs, type InstalledPack } from "./packs.js";
 import { PROFILE, type Profile } from "./profile.js";
@@ -113,6 +114,8 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     const store = facts?.object_store;
     const usesStore = list_.some((p) => (p.definition.agentJobKinds ?? []).length || (p.definition.jobKinds ?? []).some((k) => k.workspace));
     rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else the bucket a platform owner saved in Key vault › Object storage (sealed in the key vault), else a directory named by APP_STORAGE_DIR${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
+    // The audit trails that are on (mold_v0-197, src/audit-trail.ts): none, nothing said.
+    rows.push(...auditDataMapRows(auditSettings(profile)));
     sections.push({ id: "data", title: "Where data is stored", rows });
   }
 

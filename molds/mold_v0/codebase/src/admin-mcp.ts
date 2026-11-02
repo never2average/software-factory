@@ -45,6 +45,7 @@ import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js"
 import { reserveAdminTools } from "./packs.js";
 import type { AdminShellToolName, SameNames } from "./shell-tools.js";
 import { labelledAnswers } from "./access-request.js";
+import { auditAdminTools, auditStaff, withAuditActor } from "./audit-trail.js";
 import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 
 /** update_setting's example key: a shell setting, or in a build with the session engine (a host pack's tables) the
@@ -296,6 +297,8 @@ export function adminTools(): Record<string, AdminTool> {
     const template = w.summary_template;
     if (template !== undefined) at[1].summary = (d) => fillTemplate(template, summaryValues(d));
   }
+  // The audit trails' reads (mold_v0-197, src/audit-trail.ts): only when a trail is on, after the shell's reads.
+  for (const [name, t] of Object.entries(auditAdminTools())) out.push([name, t]);
   for (const h of hosts()) for (const [name, t] of Object.entries(h.adminMcp?.tools ?? {})) {
     if (out.some(([n]) => n === name)) throw new Error(`host pack ${h.id}: admin tool ${name} is already the shell's`);
     let lastRead = -1;
@@ -323,7 +326,10 @@ const redact = (v: any): any => typeof v === "string" ? v.replace(SECRETISH, (m,
   : Array.isArray(v) ? v.map(redact) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([k, x]) => !(DROP.has(k) && typeof x === "string")).map(([k, x]) => [k, redact(x)])) : v;
 
 /** One row per call in admin_access_log, like every /api/admin request (never the arguments). */
-function audit(c: AdminCaller, name: string, status: number) {
+function audit(c: AdminCaller, name: string, status: number, args?: Args) {
+  // The platform trail (mold_v0-197): a staff action, with the account it named (never the other arguments).
+  const slug = [args?.slug, args?.org_slug, args?.org].find((x) => typeof x === "string") as string | undefined;
+  auditStaff(c.actor, c.role, name, status, c.ip, slug ?? null);
   void getDb().then((db) => db.query("INSERT INTO admin_access_log (actor, method, path, status, ip) VALUES ($1, $2, $3, $4, $5)",
     [c.actor.replace(/[^\w.@ :-]/g, "").slice(0, 80) || "admin", "MCP", `/admin/mcp/${name}`, status, (c.ip ?? "").slice(0, 64)])).catch(() => {});
 }
@@ -338,14 +344,15 @@ export async function runAdminTool(c: AdminCaller, name: AdminToolName, args: Ar
 export async function runAdminToolWith(c: AdminCaller, name: string, t: AdminTool, args: Args): Promise<CallToolResult> {
   const changes = t.needs !== "read";
   if (!can(c.role, t.needs)) {
-    audit(c, name, 403);
+    audit(c, name, 403, args);
     if (changes) adminContext.run({ role: c.role }, () => onboarding.log(c.actor, "mcp.refused", null, { tool: name, needs: PERMISSIONS[t.needs] }));
     return { isError: true, content: [{ type: "text", text: `${name} refused: you are ${ROLE_LABELS[c.role]}. ${refusal(t.needs).error}` }] };
   }
   try {
-    const data = await adminContext.run({ role: c.role }, () => t.run(args ?? {}, c));
+    // Staff reading or changing a workspace's records through a tool: the data trail names them (mold_v0-197).
+    const data = await withAuditActor("admin_mcp", { kind: "staff", id: c.actor, scopes: ["staff", `platform:${c.role}`] }, () => adminContext.run({ role: c.role }, () => t.run(args ?? {}, c)));
     const structured = fitPayload(redact(JSON.parse(JSON.stringify(data ?? {}))));
-    audit(c, name, 200);
+    audit(c, name, 200, args);
     if (changes) adminContext.run({ role: c.role }, () => onboarding.log(c.actor, "mcp.tool", typeof args?.slug === "string" ? args.slug : null,
       { tool: name, ...pick(args ?? {}, ["id", "price_id", "key", "simulation_id", "session_id", "dry_run"]) }));
     const note = structured.truncated ? " (Shortened to fit: narrow the filters or lower limit for the rest.)" : "";
@@ -360,7 +367,7 @@ export async function runAdminToolWith(c: AdminCaller, name: string, t: AdminToo
     const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code) ? `The request could not be completed (database error ${e.code}).`
       : known ? e.message : "Internal error";
     if (!known) console.error(`admin mcp ${name}:`, e);
-    audit(c, name, status);
+    audit(c, name, status, args);
     return { isError: true, content: [{ type: "text", text: redact(message) }] };
   }
 }
