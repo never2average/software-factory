@@ -293,13 +293,25 @@
       }
     },
     "budgets": {
-      "x-not-supported": "mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)"
+      "not": {},
+      "x-not-supported": "mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)",
+      "description": "Not supported: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none).",
+      "markdownDescription": "**Not supported**: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none).",
+      "errorMessage": "Not supported: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)."
     },
     "profile": {
-      "x-not-supported": "mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)"
+      "not": {},
+      "x-not-supported": "mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)",
+      "description": "Not supported: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none).",
+      "markdownDescription": "**Not supported**: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none).",
+      "errorMessage": "Not supported: mold_v1 takes no profile settings from an app (molds/mold_v1/branding/rules.json names none)."
     },
     "run_keys": {
-      "x-not-supported": "mold_v1 has no job runs: its keys are the inference provider's (inference.provider)"
+      "not": {},
+      "x-not-supported": "mold_v1 has no job runs: its keys are the inference provider's (inference.provider)",
+      "description": "Not supported: mold_v1 has no job runs: its keys are the inference provider's (inference.provider).",
+      "markdownDescription": "**Not supported**: mold_v1 has no job runs: its keys are the inference provider's (inference.provider).",
+      "errorMessage": "Not supported: mold_v1 has no job runs: its keys are the inference provider's (inference.provider)."
     },
     "developer_surface": {
       "$ref": "#/$defs/developer_surface"
@@ -354,7 +366,11 @@
       "then": {
         "properties": {
           "developer_surface": {
-            "x-not-supported": "it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)"
+            "not": {},
+            "x-not-supported": "it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)",
+            "description": "Not supported: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out).",
+            "markdownDescription": "**Not supported**: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out).",
+            "errorMessage": "Not supported: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)."
           }
         }
       }
@@ -420,7 +436,11 @@
           "deploy": {
             "properties": {
               "server": {
-                "x-not-supported": "only an app on a server of its own (vm_remote) names a server"
+                "not": {},
+                "x-not-supported": "only an app on a server of its own (vm_remote) names a server",
+                "description": "Not supported: only an app on a server of its own (vm_remote) names a server.",
+                "markdownDescription": "**Not supported**: only an app on a server of its own (vm_remote) names a server.",
+                "errorMessage": "Not supported: only an app on a server of its own (vm_remote) names a server."
               }
             }
           }

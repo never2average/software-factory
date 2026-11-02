@@ -153,13 +153,25 @@
           "markdownDescription": "Who may open the admin console: addresses, or *@domain. A brief's Admins: line."
         },
         "name": {
-          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state"
+          "not": {},
+          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state",
+          "description": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "markdownDescription": "**Not supported**: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "errorMessage": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state."
         },
         "owner": {
-          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state"
+          "not": {},
+          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state",
+          "description": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "markdownDescription": "**Not supported**: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "errorMessage": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state."
         },
         "members": {
-          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state"
+          "not": {},
+          "x-not-supported": "mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state",
+          "description": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "markdownDescription": "**Not supported**: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state.",
+          "errorMessage": "Not supported: mold_v0 has organisations of its own, made in its admin console or by its org:create script, not workspaces written from state."
         }
       }
     },
@@ -599,7 +611,11 @@
           "markdownDescription": "The landing page at / (the shell's src/landing.ts sections): plain text, true/false, numbers and lists. The build checks its sections."
         },
         "limits": {
-          "x-not-supported": "say limits in the spec's top-level `budgets` block, which is written to profile.limits"
+          "not": {},
+          "x-not-supported": "say limits in the spec's top-level `budgets` block, which is written to profile.limits",
+          "description": "Not supported: say limits in the spec's top-level `budgets` block, which is written to profile.limits.",
+          "markdownDescription": "**Not supported**: say limits in the spec's top-level `budgets` block, which is written to profile.limits.",
+          "errorMessage": "Not supported: say limits in the spec's top-level `budgets` block, which is written to profile.limits."
         }
       }
     },
@@ -702,7 +718,11 @@
       "then": {
         "properties": {
           "developer_surface": {
-            "x-not-supported": "it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)"
+            "not": {},
+            "x-not-supported": "it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)",
+            "description": "Not supported: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out).",
+            "markdownDescription": "**Not supported**: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out).",
+            "errorMessage": "Not supported: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)."
           }
         }
       }

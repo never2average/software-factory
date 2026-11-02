@@ -166,6 +166,11 @@ def _common(mold, root):
       }}
     return defs, product
 
+def NS(reason):
+    """A setting this mold does not have: refused by editors too (`not: {}`), with the reason on hover and as the error."""
+    return {"not": {}, "x-not-supported": reason, "description": f"Not supported: {reason}.", "markdownDescription": f"**Not supported**: {reason}.",
+            "errorMessage": f"Not supported: {reason}."}
+
 def _rule(text, cond, then):
     return {"x-rule": text, "if": cond, "then": then}
 
@@ -174,7 +179,7 @@ def _embedded_rules():
     return [
       _rule("an embedded app is built into another product, so its developers need the developer surface and every request must be audited",
             emb, {"required": ["developer_surface", "audit"], "properties": {"audit": {"required": ["platform"], "properties": {"platform": {"const": True}}}}}),
-      _rule("the developer surface is for kind embedded only", {"not": emb}, {"properties": {"developer_surface": {"x-not-supported": "it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)"}}}),
+      _rule("the developer surface is for kind embedded only", {"not": emb}, {"properties": {"developer_surface": NS("it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)")}}),
     ]
 
 def _base(mold, root, title, desc_md):
@@ -300,7 +305,7 @@ def schema_v0(root):
             profile_props[k] = {"type": "object", **D("The landing page at / (the shell's src/landing.ts sections): plain text, true/false, numbers and lists. The build checks its sections.")}
         else:
             profile_props[top] = {**D(f"{k}: a profile field this mold lets an app set (molds/mold_v0/branding/rules.json); the factory checks it.")}
-    profile_props["limits"] = {"x-not-supported": "say limits in the spec's top-level `budgets` block, which is written to profile.limits"}
+    profile_props["limits"] = NS("say limits in the spec's top-level `budgets` block, which is written to profile.limits")
     run_keys = {
       "type": "object", "additionalProperties": False, "title": "Keys the runs need (names, never values)",
       **D("Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
@@ -339,7 +344,7 @@ def schema_v0(root):
                       "properties": {
                         "platform_admins": {"type": "array", "minItems": 1, "uniqueItems": True, "items": {"$ref": "#/$defs/admin_entry"},
                                             **D("Who may open the admin console: addresses, or *@domain. A brief's Admins: line.")},
-                        **{k: {"x-not-supported": nn.get("workspaces", "mold_v0 makes no workspace from state")} for k in ("name", "owner", "members")}}},
+                        **{k: NS(nn.get("workspaces", "mold_v0 makes no workspace from state")) for k in ("name", "owner", "members")}}},
         "budgets": {"type": "object", "additionalProperties": False, "minProperties": 1, "title": "Spending and rate limits",
                     **D("The app's limits over the shell's defaults (written to profile.limits): runs.budget_usd_max is the most one run may spend (US$), "
                         "runs.kind_month_budget_usd the most one job kind may spend per company per month. Each is capped by the factory's ceiling.",
@@ -427,8 +432,8 @@ def schema_v1(root):
                                       {"type": "object", "additionalProperties": False, "required": ["id", "path"], "properties": {
                                           "id": {"type": "string", "pattern": pid}, "path": {"type": "string", "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$",
                                                                                            **D("The pack's directory (with its pack.json), from the factory's root.")}}}]}},
-        "budgets": {"x-not-supported": ns}, "profile": {"x-not-supported": ns},
-        "run_keys": {"x-not-supported": "mold_v1 has no job runs: its keys are the inference provider's (inference.provider)"},
+        "budgets": NS(ns), "profile": NS(ns),
+        "run_keys": NS("mold_v1 has no job runs: its keys are the inference provider's (inference.provider)"),
         "developer_surface": {"$ref": "#/$defs/developer_surface"},
       },
       "allOf": _embedded_rules() + [
@@ -437,7 +442,7 @@ def schema_v1(root):
               {"properties": {"product": {"required": ["domain"]}, "deploy": {"required": ["server"]}}}),
         _rule("deploy.server is for target vm_remote only",
               {"properties": {"deploy": {"properties": {"target": {"enum": [t for t in targets if t != "vm_remote"]}}, "required": ["target"]}}, "required": ["deploy"]},
-              {"properties": {"deploy": {"properties": {"server": {"x-not-supported": "only an app on a server of its own (vm_remote) names a server"}}}}}),
+              {"properties": {"deploy": {"properties": {"server": NS("only an app on a server of its own (vm_remote) names a server")}}}}),
       ],
       "$defs": defs})
     _ = R  # read for the source hash: product_name_default is refused by branding.py's own check at mint time
