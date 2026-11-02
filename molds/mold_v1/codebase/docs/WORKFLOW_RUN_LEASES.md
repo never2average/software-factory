@@ -46,7 +46,7 @@ Defaults are safe for deployment; the variables are optional.
 ## Migration requirements
 
 Before adding `NOT NULL`, backfill existing `workflow_runs.org_id` and
-`workflow_run_journal.org_id` to `org-onfinance`. Add the lease, heartbeat, and
+`workflow_run_journal.org_id` to org #1's id (`DEFAULT_ORG`, lib/default-org.ts). Add the lease, heartbeat, and
 cancellation columns from `agent/lib/db/schema.ts`. For the journal:
 
 1. add `attempt integer NOT NULL DEFAULT 1` and

@@ -116,7 +116,7 @@ CREATE TABLE "implementation" (
 	"implementation_owner_email" text,
 	"rollout_governance_status" text,
 	"customer_launch_approver_email" text,
-	"onfinance_launch_approver_email" text,
+	"acmeco_launch_approver_email" text,
 	"launch_decision" text,
 	"launch_decision_date" text,
 	"implementation_progress_pct" double precision NOT NULL,

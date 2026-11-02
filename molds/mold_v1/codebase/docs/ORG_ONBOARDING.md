@@ -2,7 +2,10 @@
 
 How a company (a **workspace**, `org_id` at the schema level) is provisioned on
 the platform, how tenant isolation works, and the exact order to roll it out.
-The product is **Delivered**; the operator's own company is org #1 (`DEFAULT_ORG` in lib/org-context.ts).
+The product is **Delivered**; the operator's own company is org #1 (`DEFAULT_ORG`, lib/default-org.ts). Each deployment
+names its org #1 with `DEFAULT_ORG_ID` (its workspace id) and `DEFAULT_ORG_DOMAIN` (its Google Workspace hosted domain),
+set on the web app and the agent API alike; unset, neutral placeholders apply. A deployment keeps the id its data was
+written under: the org_id columns and the data room's `orgs/<id>/` folders carry it.
 
 This is the operator runbook for the multi-tenant layer added *above*
 `customers` / `people_roster` / `connectors` / `workflows`. Design plan:

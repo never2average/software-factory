@@ -511,6 +511,8 @@ def _env_file(check, tmp):
           + ("" if reads else " (this snapshot does not: none written; validate refuses the choice)"),
           (ca.get("ASR_MODEL"), ca.get("ASR_LANGUAGE"), ca.get("ASR_ENABLED")) == (("@cf/deepgram/nova-3", "hi", "true") if reads else (None, None, None)), {k: v for k, v in ca.items() if k.startswith("ASR")})
     check("  ...and config_pairs carries whatever settings() resolved", V.config_pairs(dict(Sa, asr={"ASR_MODEL": "m", "ASR_LANGUAGE": "auto", "ASR_ENABLED": "false"}))["ASR_LANGUAGE"] == "auto")
+    _o1 = V.config_pairs(dict(Sa, org_one={"DEFAULT_ORG_ID": "org-example", "DEFAULT_ORG_DOMAIN": "example.com"}))
+    check("config_pairs carries org #1 as settings() resolved it (lib/org_one.py)", _o1.get("DEFAULT_ORG_ID") == "org-example" and _o1.get("DEFAULT_ORG_DOMAIN") == "example.com")
     S = _settings(); c = V.config_pairs(S)
     check("the settings half of the env file holds no secret name", not (set(c) & set(V.SERVER_MADE)) and not (set(c) & set(V.operator_names(S))), sorted(c))
     check("  ...and carries the sandbox settings, the build-time flags and the loopback addresses", c["SANDBOX_BACKEND"] == "microsandbox" and c["SANDBOX_CPUS"] == "2" and c["SANDBOX_MEMORY_MIB"] == "1024"

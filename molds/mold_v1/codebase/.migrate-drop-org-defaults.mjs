@@ -8,7 +8,7 @@
  *   agent_configs · agent_profiles · chat_sessions · room_presence
  *   workflow_definitions · workflow_run_journal · workflow_runs
  *
- * all defaulting to 'org-onfinance' — which IS NOT A WORKSPACE. The real one is
+ * all defaulting to one fixed org id — which IS NOT A WORKSPACE. The real one is
  * 'org-desk-a'. So a forgotten org_id does not fail; it writes a row owned
  * by a workspace that does not exist, invisible to every tenant's filters and,
  * once the policy is fail-closed, unreadable by anyone forever. A default is
@@ -19,7 +19,7 @@
  * and the one raw-SQL insert (lib/workflow-journal.ts) passes it too. Nothing
  * relies on the default — it is pure hazard.
  *
- * Reversible:  ALTER TABLE <t> ALTER COLUMN org_id SET DEFAULT 'org-onfinance';
+ * Reversible:  ALTER TABLE <t> ALTER COLUMN org_id SET DEFAULT '<the default this removed>';
  *
  * Review the DDL, then run:  ! node .migrate-drop-org-defaults.mjs
  */

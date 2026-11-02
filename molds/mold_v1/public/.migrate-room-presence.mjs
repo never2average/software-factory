@@ -21,7 +21,7 @@ const sql = postgres(env.DATABASE_URL, { ssl: "require" });
 
 await sql`
   CREATE TABLE IF NOT EXISTS room_presence (
-    org_id text NOT NULL DEFAULT 'onfinance',
+    org_id text NOT NULL DEFAULT 'acmeco',
     room text NOT NULL,
     email text NOT NULL,
     activity text,

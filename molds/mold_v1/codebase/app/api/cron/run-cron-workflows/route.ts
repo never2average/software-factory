@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
   let ran = 0;
   for (const fire of fires) {
     if (ran >= PER_TICK) break;
-    // No fallback: org_id is NOT NULL, and the old default 'org-onfinance' is
+    // No fallback: org_id is NOT NULL, and the old default (a fixed org id) is
     // not a workspace — a fire routed there would resolve no rule, no workflow
     // and no run, silently.
     const fireOrg = fire.orgId;

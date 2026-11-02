@@ -1,0 +1,32 @@
+{
+  "$comment": "mold_v1's own settings in this repository. private_paths (mold_v0-200; .claude/scripts/lib/mold_private.py): files of the mold's source that hold this factory's organisation names and cannot be made neutral at the source, because they are migration history already applied to live databases. Each is git-ignored under codebase/ (.gitignore), so mold.py fetch and refresh still put the originals on a machine that has the source, and its deploys run them unchanged; this repository carries a neutral replacement of each under public/ (the same path), which `mold.py public mold_v1` puts in place where an original is absent. mold.py check compares every other path with the source.",
+  "mold_id": "mold_v1",
+  "private_paths": [
+    ".migrate-agent-configs.mjs",
+    ".migrate-agent-profiles.mjs",
+    ".migrate-chat-sessions.mjs",
+    ".migrate-debrand-approver.mjs",
+    ".migrate-org-tenancy.mjs",
+    ".migrate-rename-default-org.mjs",
+    ".migrate-room-presence.mjs",
+    ".migrate-workflow-definitions.mjs",
+    "drizzle/0000_eminent_thunderbolts.sql",
+    "drizzle/0014_tricky_grey_gargoyle.sql",
+    "drizzle/0023_provider_launch_approver.sql",
+    "drizzle/meta/0000_snapshot.json",
+    "drizzle/meta/0001_snapshot.json",
+    "drizzle/meta/0002_snapshot.json",
+    "drizzle/meta/0003_snapshot.json",
+    "drizzle/meta/0004_snapshot.json",
+    "drizzle/meta/0005_snapshot.json",
+    "drizzle/meta/0006_snapshot.json",
+    "drizzle/meta/0007_snapshot.json",
+    "drizzle/meta/0008_snapshot.json",
+    "drizzle/meta/0009_snapshot.json",
+    "drizzle/meta/0010_snapshot.json",
+    "drizzle/meta/0011_snapshot.json",
+    "drizzle/meta/0012_snapshot.json",
+    "drizzle/meta/0013_snapshot.json",
+    "drizzle/meta/0014_snapshot.json"
+  ]
+}
