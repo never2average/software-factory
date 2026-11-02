@@ -24,6 +24,10 @@
  * STORAGE_DRIVER=vercel-blob (`npm run test:storage-default`). Time and the one random value (the append-part nonce)
  * are pinned so the recording is exact, not approximate.
  *
+ * Re-recorded once, when org #1's id became a deployment setting (lib/default-org.ts): this test first passed against
+ * the 6f10b09 recording with DEFAULT_ORG_ID set to the id that recording was made under, and the new recording, made
+ * under the built-in id, differs from it only in that id and in what is derived from it (signed tokens, body digests).
+ *
  * It is a regression pin, so it passes on both sides by construction; a drift in any call fails it and prints the
  * first difference.
  */

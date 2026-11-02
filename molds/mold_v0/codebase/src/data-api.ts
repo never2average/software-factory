@@ -13,7 +13,7 @@
  */
 import type { AccountRole } from "./account-roles.js";
 import { PackError, type RecordInput, type RecordOperation, type RecordQuery } from "./pack-api.js";
-import { adminRecords, areaOrThrow, areaSummary, detailFor, getPlatform, listFor, listPlatform, recordAreas, workspaceRecords, type Actor } from "./record-areas.js";
+import { adminRecords, areaOrThrow, areaSummary, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, workspaceRecords, type Actor } from "./record-areas.js";
 
 /** Who a workspace call is for: the workspace (from the session or key, never from input), the person's role and id. */
 export interface DataCaller { orgId: number; role: AccountRole | null; userId: string | null }
@@ -49,6 +49,8 @@ export const dataApi = {
   move: async (c: DataCaller, area: string, key: string, to: unknown) => ({ record: await recordsFor(c, area).move(area, key, to as string) }),
   /** Delete a record; false when there was none. */
   delete: (c: DataCaller, area: string, key: string) => recordsFor(c, area).delete(area, key),
+  /** The values of a record's encrypted fields (mold_v0-194), for the roles allowed to reveal them; recorded in the data trail. */
+  reveal: (c: DataCaller, area: string, key: string, fields?: unknown) => revealFor(c.orgId, area, key, fields, actorOf(c)),
   /** Several writes to one pack's workspace areas as one transaction: every one of them, or none. */
   batch: async (c: DataCaller, ops: unknown) => {
     if (!Array.isArray(ops) || !ops.length) throw new PackError("operations: a list of 1 or more {op, area, key, ...}", 400);
@@ -103,6 +105,7 @@ export const DATA_API_OPERATIONS = [
   { name: "move", door: "workspace", action: "move", writes: true, description: "Move a record along its area's lifecycle." },
   { name: "delete", door: "workspace", action: "delete", writes: true, description: "Delete a record." },
   { name: "batch", door: "workspace", action: "create", writes: true, description: "Several writes as one transaction: all or none." },
+  { name: "reveal", door: "workspace", action: "read", writes: false, description: "The values of a record's encrypted fields, for the roles allowed to reveal them (each reveal in the data trail)." },
   { name: "areas", door: "admin", action: "read", writes: false, description: "The shared areas." },
   { name: "list", door: "admin", action: "read", writes: false, description: "A page of a shared area." },
   { name: "get", door: "admin", action: "read", writes: false, description: "One shared record." },

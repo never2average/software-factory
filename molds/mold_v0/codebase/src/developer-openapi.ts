@@ -7,6 +7,8 @@
  * operation carries `x-sdk` {group, method} so the SDKs name it the same in each language.
  * Checks (mold_v0-196) join here when they land: they are record areas of role check today, and listed as such.
  */
+import { declaredChecks } from "./checks.js";
+import { inputKind } from "./check-spec.js";
 import { API_VERSIONS, EVENT_CATALOG, TEST_EVENT, type EventName } from "./developer-config.js";
 import { currentApiVersion, developerSurface } from "./developer-surface.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
@@ -37,6 +39,10 @@ function fieldSchema(f: RecordArea["fields"][number]): Schema {
     }
   };
   const s = f.multiple ? { type: "array", items: one() } : one();
+  // mold_v0-194: an encrypted field reads as "[encrypted]" (sent back, or left out, it keeps its value); its value only
+  // through POST /v1/records/{area}/{key}/reveal.
+  if (f.encrypted) return { anyOf: [s, { type: "string", const: "[encrypted]" }], title: f.label, "x-encrypted": true,
+    description: `${f.help ? `${f.help} ` : ""}Encrypted: every read shows "[encrypted]"; reveal returns the value to the roles allowed.` };
   return { ...s, title: f.label, ...(f.help ? { description: f.help } : {}) };
 }
 
@@ -126,6 +132,20 @@ export function openApiDocument(serverUrl: string): Schema {
       body: body({ type: "object", required: ["operations"], properties: { operations: { type: "array", minItems: 1, maxItems: 1000, items: { type: "object", required: ["op", "area", "key"],
         properties: { op: { type: "string", enum: ["put", "create", "update", "move", "delete"] }, area: { type: "string" }, key: { type: "string" }, title: { type: ["string", "null"] }, data: { type: "object" }, to: { type: "string" } } } } } }),
       ok: json({ type: "object", required: ["data"], properties: { data: { type: "array", items: { type: "object" } } } }) }));
+
+  // ---------- declarative checks (mold_v0-196, src/checks.ts) ----------
+  for (const c of declaredChecks()) {
+    const props = Object.fromEntries(Object.entries(c.inputs ?? {}).map(([k, t]) => {
+      const { type } = inputKind(t);
+      return [k, type === "date" ? { type: "string", format: "date" } : type === "datetime" ? { type: "string", format: "date-time" } : { type }];
+    }));
+    const required = Object.entries(c.inputs ?? {}).filter(([, t]) => !inputKind(t).optional).map(([k]) => k);
+    add(`/v1/checks/${c.name}`, "post", operation({ method: "post", summary: c.label ?? c.description ?? `Check ${c.name}: yes or no.`, group: "checks", sdk: c.name, scope: `checks:${c.name}`,
+      body: body({ type: "object", properties: props, ...(required.length ? { required } : {}), additionalProperties: false }),
+      ok: json({ type: "object", required: ["data"], properties: { data: { type: "object", required: ["check", "allowed", "reason", "record_refs"], properties: {
+        check: { type: "string" }, allowed: { type: "boolean" }, reason: { type: "string" },
+        record_refs: { type: "array", items: { type: "object", properties: { area: { type: "string" }, key: { type: "string" } } } }, explanation: { type: "object" } } } } }) }));
+  }
 
   // ---------- runs ----------
   const kinds = jobKinds();

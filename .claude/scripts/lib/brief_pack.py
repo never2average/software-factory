@@ -180,8 +180,15 @@ def _field(body, n, c, kind="field"):
         elif head == "optional" and not arg: pass
         elif head in ("multiple", "many") and not arg: f["multiple"] = True
         elif head == "help": f["help"] = arg
+        # mold_v0-194: an encrypted field (`encrypted`, `searchable` for equality filters, `reveal owner, member`).
+        elif kind != "arg" and head == "encrypted" and not arg: f["encrypted"] = True
+        elif kind != "arg" and head == "searchable" and arg in ("", "equality"): f["searchable"] = "equality"
+        elif kind != "arg" and head == "reveal":
+            roles = _list(arg)
+            if not roles or any(r not in ("viewer", "member", "billing", "owner") for r in roles): c.err(n, f"reveal names roles: `reveal owner, member` (viewer, member, billing, owner)")
+            else: f["reveal_roles"] = roles
         elif kind == "arg" and head in ("from", "pattern", "default"): extra[head] = arg
-        else: c.err(n, f"{kind} {name}: unknown setting {part!r} (a type, required, multiple, help <text>" + (", from, pattern, default" if kind == "arg" else "") + ")")
+        else: c.err(n, f"{kind} {name}: unknown setting {part!r} (a type, required, multiple, help <text>" + (", from, pattern, default" if kind == "arg" else ", encrypted, searchable, reveal <roles>") + ")")
     return f, extra
 
 
@@ -1061,6 +1068,11 @@ def cross_errors(p):
             if ("min" in f or "max" in f) and t != "number": E(f"{fw}: min and max are for a number field")
             if "min" in f and "max" in f and f["min"] > f["max"]: E(f"{fw}: min is above max")
             if "max_length" in f and t != "text": E(f"{fw}: max_length is for a text field")
+            if (f.get("searchable") or f.get("reveal_roles")) and not f.get("encrypted"): E(f"{fw}: searchable and reveal are for an encrypted field")
+            if f.get("encrypted"):
+                if a.get("scope") != "workspace": E(f"{fw}: encrypted is for a workspace area's fields (a shared area has no workspace key)")
+                if t not in ("text", "number", "date", "boolean", "json", "enum") or f.get("multiple"): E(f"{fw}: an encrypted field is one text, number, date, boolean, json or enum value")
+                if (a.get("lifecycle") or {}).get("field") == f.get("name") or (a.get("due") or {}).get("field") == f.get("name"): E(f"{fw}: the lifecycle's or due date's field cannot be encrypted")
         lc = a.get("lifecycle")
         if lc:
             if a.get("scope") != "workspace": E(f"{w}: a lifecycle is for a workspace's own records")

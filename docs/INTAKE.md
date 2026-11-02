@@ -152,9 +152,14 @@ and, in a `## Profile` section (mold_v0-099), one per line:
 ```
 member_keys = false
 source_offer.upstreams.<pack id> = licensor_owned
+audit.data = true
+audit.platform = true
+audit.sign = true
 ```
 
-`member_keys` is `true` or `false`; an upstream setting names one of the app's own packs (`Packs:`) and the word
+`member_keys` is `true` or `false`; `audit.data`, `audit.platform` (mold_v0-197, the audit trails) and `audit.sign`
+(mold_v0-195, signed checkpoints of their hash chains; the app then needs `APP_LEDGER_SIGNING_KEY` set by name) are
+`true` or `false` and go to `profile.audit`; an upstream setting names one of the app's own packs (`Packs:`) and the word
 `licensor_owned`, nothing else; the shell's generator refuses a pack that pins no upstream.
 
 - The heading is exactly `## Profile` or `## Budgets` (a note in brackets after it is fine: `## Budgets (operator,
@@ -313,7 +318,7 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 
 | Section | Each entry |
 |---|---|
-| `## Records` | `### <area>: <Label>`, then bullets: `role: source\|check\|asset`, `scope: workspace\|platform`, `description: …`, `field <name>: <Label> \| <type> \| required \| multiple \| help <text>`, `columns: a, b`, `lifecycle: <enum field>`, `initial: <state>`, `transition: <from>, <from> -> <to> \| <Label> \| roles owner` (from may be `*`), `due: <date field> within 7 days \| notify owner`, `sealed: yes\|no`, `who can read\|create\|update\|move\|delete: member, owner` |
+| `## Records` | `### <area>: <Label>`, then bullets: `role: source\|check\|asset`, `scope: workspace\|platform`, `description: …`, `field <name>: <Label> \| <type> \| required \| multiple \| help <text> \| encrypted \| searchable \| reveal owner, member` (encrypted: mold_v0-194, a workspace area's text, number, date, boolean, json or enum field; `searchable` lets it be filtered by equality; `reveal` names who may see the value), `columns: a, b`, `lifecycle: <enum field>`, `initial: <state>`, `transition: <from>, <from> -> <to> \| <Label> \| roles owner` (from may be `*`), `due: <date field> within 7 days \| notify owner`, `sealed: yes\|no`, `who can read\|create\|update\|move\|delete: member, owner` |
 | `## Metrics` | `- <name>: <Label> \| count <area>` (or `sum <area>.<field>`, `average <area>.<field>`, `rate <area>`, `duration <area>`; `<area>` may be `run_results` or `runs`), then any of `\| where <field> in a, b and <field> < today`, `\| matching <conditions>` (a rate's numerator), `\| group by <field>`, `\| group by due <date field> soon 7`, `\| per week of created last 8` (day, week or month; `created`, `updated`, a date field or `state:<state>`), `\| from created to state:fixed as median in days`, `\| limit 10`, `\| unit usd`, `\| roles owner` |
 | `## Charts` | `- <name>: <Title> \| number\|bar\|stacked_bar\|line\|area\|table \| <metric>, <metric> \| ordinal` |
 | `## Tabs` | `- <id>: <Label> \| <kind> [<area or page>] \| icon shield \| group Audit \| views table, board, timeline, detail \| board by <field> \| timeline by <field> \| charts a, b \| roles owner, billing` (kinds: overview, area, runs, reports, credentials, usage, schedules, notices, setup, billing, profile, page) |

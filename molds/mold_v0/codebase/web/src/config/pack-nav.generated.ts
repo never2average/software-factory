@@ -54,6 +54,10 @@ export interface RecordFieldSpec {
   min?: number;
   max?: number;
   max_length?: number;
+  /** Encrypted at rest (mold_v0-194): every read shows "[encrypted]"; an explicit reveal returns the value. */
+  encrypted?: boolean;
+  reveal_roles?: string[];
+  searchable?: 'equality';
 }
 
 export const recordAreas: RecordAreaSpec[] = [];

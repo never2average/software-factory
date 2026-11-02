@@ -34,6 +34,8 @@ import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
 import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
+import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
+import type { RevealedFields } from "./pack-api.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
 export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
@@ -273,10 +275,13 @@ export const checkArgs = (kind: string, args: readonly z.input<typeof RecordFiel
 export function conform(area: RecordArea, data: Record<string, unknown>): { data: Record<string, unknown>; drift: string[] } {
   const out: Record<string, unknown> = {}, drift: string[] = [];
   for (const [k, v] of Object.entries(data ?? {})) {
-    if (k === STATE_TIMES) continue; // the shell's own (when each state was entered), never a field
+    // The shell's own keys (when each state was entered; mold_v0-194's tag and blind indexes): never a field (a field
+    // name starts with a letter).
+    if (k.startsWith("$")) continue;
     const f = area.fields.find((x) => x.name === k);
     if (!f) { drift.push(k); continue; }
-    if (v !== null && v !== undefined && !fits(f, v)) drift.push(k);
+    // An encrypted field (mold_v0-194) is shown masked: its type is the stored value's, never checked here.
+    if (v !== null && v !== undefined && !f.encrypted && !fits(f, v)) drift.push(k);
     out[k] = v;
   }
   return { data: out, drift: drift.sort() };
@@ -293,15 +298,36 @@ const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOStr
 async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promise<RecordRow> {
   // Sealed values open with the row's own workspace key only (a row sealed before its area stopped being sealed opens
   // too); a platform row is never sealed.
-  const raw = orgId !== null ? await openJson(orgId, row.data) : (row.data as Record<string, unknown>) ?? {};
+  let raw = orgId !== null ? await openJson(orgId, row.data) : (row.data as Record<string, unknown>) ?? {};
+  // Encrypted fields (mold_v0-194): never a value on any read, only the mask; an explicit reveal opens them (revealFor).
+  if (orgId !== null && needsMasking(area, raw)) raw = await maskFields(orgId, area, row.key, raw);
   const { data, drift } = conform(area, raw);
   const t = orgId !== null && isSealed(row.title) ? await open(orgId, row.title) : row.title;
   return { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}) };
 }
 
 /** A query (mold_v0-059) against an area's fields: limit, sort, filter, cursor (src/record-query.ts). */
-export const queryOf = (area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Parsed =>
-  parseQuery(area.fields as QField[], opts as RecordQuery, fits as (f: QField, v: unknown) => boolean, fitsOne as (f: QField, v: unknown) => boolean);
+export const queryOf = (area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Parsed => {
+  const p = parseQuery(area.fields as QField[], opts as RecordQuery, fits as (f: QField, v: unknown) => boolean, fitsOne as (f: QField, v: unknown) => boolean);
+  // mold_v0-194: an encrypted field is filtered by equality only, through its blind index, and never sorted on.
+  checkEncryptedQuery(area, p);
+  return p;
+};
+
+/**
+ * A query's equality conditions on encrypted fields (mold_v0-194) as conditions on their blind indexes in the stored row
+ * ("$bi:<field>", outside a sealed area's ciphertext too), keyed with this workspace's data key: so they run in SQL.
+ */
+async function blindConds(orgId: number, area: RecordArea, p: Parsed): Promise<{ p: Parsed; blind: Parsed["conds"] }> {
+  if (!hasEncryptedFields(area)) return { p, blind: [] };
+  const blind: Parsed["conds"] = [], rest: Parsed["conds"] = [];
+  for (const c of p.conds) {
+    if (c.target !== "field" || !isEncryptedField(area, c.name)) { rest.push(c); continue; }
+    const name = `${BLIND_PREFIX}${c.name}`;
+    blind.push({ target: "field", name, field: { name, type: "text" }, op: "eq", value: await withTenant(orgId, () => blindIndex(orgId, area, c.name, c.value)) });
+  }
+  return { p: { ...p, conds: rest }, blind };
+}
 
 /** At most this many rows of one workspace's sealed area are opened to filter or sort them in memory. */
 export const MEMORY_SCAN_LIMIT = 5000;
@@ -313,11 +339,14 @@ export const MEMORY_SCAN_LIMIT = 5000;
  * then the query's conditions and order (src/record-query.ts), so a filter, sort or cursor only narrows the caller's
  * rows. A sealed area's titles and data are ciphertext in the database: a query that reads them runs on the opened rows.
  */
-async function listTable(area: RecordArea, orgId: number | null, p: Parsed): Promise<RecordPage> {
-  if (orgId !== null && isSealedArea(area) && readsContent(p)) {
-    const all = await scanWorkspace(orgId, area, p.conds.filter((c) => c.target === "key"));
-    return pageInMemory(p, all);
+async function listTable(area: RecordArea, orgId: number | null, query: Parsed): Promise<RecordPage> {
+  // Equality on an encrypted field (mold_v0-194): its blind index, in SQL; the rest of the query as before.
+  const { p: open, blind } = orgId !== null ? await blindConds(orgId, area, query) : { p: query, blind: [] };
+  if (orgId !== null && isSealedArea(area) && readsContent(open)) {
+    const all = await scanWorkspace(orgId, area, [...open.conds.filter((c) => c.target === "key"), ...blind]);
+    return pageInMemory(open, all);
   }
+  const p: Parsed = blind.length ? { ...open, conds: [...open.conds, ...blind] } : open;
   const run = async () => {
     const params: unknown[] = orgId === null ? [area.pack, area.name] : [orgId, area.pack, area.name];
     const base = orgId === null ? ["pack = $1", "area = $2"] : ["org_id = $1", "pack = $2", "area = $3"];
@@ -412,6 +441,59 @@ export const getFor = async (orgId: number, name: string, key: string, actor: Ac
   const r = await getWorkspace(orgId, a, key);
   return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
 };
+// ---------- encrypted fields: reveal (mold_v0-194, src/encrypted-fields.ts) ----------
+
+/** Who may reveal an encrypted field: its reveal_roles, else the roles that may update the area's records. */
+export const revealRoles = (area: RecordArea, f: EncField): AccountRole[] =>
+  f.reveal_roles ? ACCOUNT_ROLES.filter((r) => (f.reveal_roles as readonly string[]).includes(r)) : allowedRoles(area, "update");
+export const mayReveal = (area: RecordArea, f: EncField, actor: Actor) =>
+  may(area, "read", actor) && (actor.role === null || revealRoles(area, f).includes(actor.role));
+
+/**
+ * The values of a record's encrypted fields, for `actor` (mold_v0-194): the area's read permission, then each asked
+ * field's reveal roles (an account key, or the shell, has no role limits, as for every shell rule). `fields` absent:
+ * every encrypted field the actor may reveal. One `reveal` entry in the data trail (never a value); a value that does
+ * not open (moved from another record or workspace) is refused, never shown.
+ */
+export async function revealFor(orgId: number, name: string, key: string, fields: unknown, actor: Actor = SYSTEM_ACTOR): Promise<RevealedFields> {
+  const area = areaOrThrow(name);
+  if (area.scope !== "workspace" || !hasEncryptedFields(area)) throw new PackError(`${area.label} has no encrypted fields`, 404);
+  assertMay(area, "read", actor);
+  const enc = encryptedFields(area);
+  let wanted: EncField[];
+  if (fields === undefined || fields === null) {
+    wanted = enc.filter((f) => mayReveal(area, f, actor));
+    if (!wanted.length) throw new PackError(`You can't reveal ${area.label}'s encrypted fields with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role.`, 403);
+  } else {
+    if (!Array.isArray(fields) || !fields.length || fields.length > enc.length || !fields.every((x) => typeof x === "string"))
+      throw new PackError(`fields: a list of ${area.label}'s encrypted fields (${enc.map((f) => f.name).join(", ")})`, 400);
+    wanted = [];
+    for (const n of new Set(fields as string[])) {
+      const f = enc.find((x) => x.name === n);
+      if (!f) throw new PackError(`${JSON.stringify(n.slice(0, 64))} is not an encrypted field of ${area.label} (${enc.map((x) => x.name).join(", ")})`, 400);
+      if (!mayReveal(area, f, actor)) {
+        const who = revealRoles(area, f).map((r) => ACCOUNT_ROLE_LABELS[r].toLowerCase());
+        throw new PackError(`You can't reveal ${f.name} of ${area.label} with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role${who.length ? ` (${who.join(", ")} can)` : ""}.`, 403);
+      }
+      wanted.push(f);
+    }
+  }
+  if (!vaultUnlocked()) throw new PackError(`${area.label}'s encrypted fields cannot be opened while the key vault is locked`, 503);
+  const row = await auditQuiet(() => readWorkspace(orgId, area, key));
+  if (!row) throw new PackError(`no ${area.name} record ${key}`, 404);
+  const out: Record<string, unknown> = {};
+  for (const f of wanted) {
+    const v = row.opened[f.name];
+    if (v === null || v === undefined) { out[f.name] = null; continue; }
+    // A value written before the field was encrypted (the migration has not reached the row yet) is still plain.
+    if (!isEnvelope(v)) { out[f.name] = v; continue; }
+    try { out[f.name] = await withTenant(orgId, () => decryptValue(orgId, area, row.record.key, f.name, v)); }
+    catch { throw new PackError(`field ${f.name} of ${area.label} record ${row.record.key} does not open with this workspace's key`, 409); }
+  }
+  auditData(orgId, { action: "reveal", pack: area.pack, area: area.name, key: row.record.key });
+  return { area: area.name, key: row.record.key, fields: out };
+}
+
 /**
  * Clocks (mold_v0-191, src/record-clocks.ts): a workspace area's records carry their deadlines on every read, except
  * inside a batch's transaction (its writes' answers are the store's own) and for an area read live from an API.
@@ -471,14 +553,25 @@ export interface WriteMeta { source: string; fingerprint: string; /** Staff forc
 
 /** Sealed values are never stored in the clear: a sealed area's write is refused while the key vault is locked. */
 const assertCanSeal = (area: RecordArea) => {
-  if (isSealedArea(area) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
+  if ((isSealedArea(area) || hasEncryptedFields(area)) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
 };
 
 async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, meta: WriteMeta | null = null, action: "move" | null = null): Promise<RecordRow> {
   let stored: Record<string, unknown> = data;
+  // Encrypted fields (mold_v0-194): each value sealed for this record and field, with its blind index and the tag.
+  let outside: Record<string, unknown> = {};
+  if (needsSealing(area, data)) {
+    assertCanSeal(area);
+    stored = await withTenant(orgId, () => sealFields(orgId, area, key, data));
+    if (isSealedArea(area)) {
+      // A sealed area's blind indexes and tag stay beside its ciphertext, so equality and the migration run in SQL.
+      outside = Object.fromEntries(Object.entries(stored).filter(([k]) => k.startsWith("$") && k !== STATE_TIMES));
+      stored = Object.fromEntries(Object.entries(stored).filter(([k]) => !(k in outside)));
+    }
+  }
   if (isSealedArea(area)) {
     assertCanSeal(area);
-    stored = await withTenant(orgId, () => sealJson(orgId, data));
+    stored = { ...(await withTenant(orgId, () => sealJson(orgId, stored))), ...outside };
     if (t) t = await withTenant(orgId, () => seal(orgId, t!));
   }
   const sealed = isSealed((stored as { _sealed?: unknown })._sealed);
@@ -486,9 +579,9 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     const db = await q();
     const [r] = prev === null
       ? await db.query<Row>(
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null])
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
         `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now()
@@ -499,6 +592,9 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     return toRecord(area, r, orgId);
   });
 }
+
+/** An append-only area's record (mold_v0-195): added once, never changed or deleted. */
+const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.label} records are append-only: ${key} is never changed or deleted once added`, 409);
 
 /** put: create or replace; create: only a new key (409 when it exists); update: only an existing key (404). */
 export type PutMode = "put" | "create" | "update";
@@ -512,12 +608,14 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   assertMay(area, "read", actor);
   const prev = await readWorkspace(orgId, area, key);
   if (prev && mode === "create") throw new PackError(`${area.label} record ${key} already exists`, 409);
+  if (prev && area.append_only) throw appendOnly(area, key); // mold_v0-195: added once, never changed
   if (!prev && mode === "update") throw new PackError(`no ${area.name} record ${key}`, 404);
   assertMay(area, prev ? "update" : "create", actor);
-  const given = value?.data;
+  // Encrypted fields (mold_v0-194): the mask, or a field left out, keeps the stored value; null clears it.
+  const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   const t = title(value?.title);
   if (!area.lifecycle) {
-    const r = await writeRow(orgId, area, key, t, await checkRecord(area, given, orgId, actor), prev, meta);
+    const r = await writeRow(orgId, area, key, t, { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, prev, meta);
     await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
     return r;
   }
@@ -531,7 +629,7 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
       : `a new ${area.label} record starts as ${JSON.stringify(state)}; it moves from there (records.move)`, 409);
   const rest = { ...(given as Record<string, unknown> ?? {}) };
   delete rest[field];
-  const data = await checkRecord(area, rest, orgId, actor, undefined, [field]);
+  const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
   const r = await writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, meta);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
@@ -573,6 +671,7 @@ async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: 
   if (source === null && isReadOnlyArea(area)) throw readOnly(area);
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
+  if (area.append_only) throw appendOnly(area, key); // mold_v0-195
   // A repository's writer deletes only rows it wrote itself (its prune).
   const gone = await withTenant(orgId, async () => (await (await q()).query(
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
@@ -737,6 +836,7 @@ export const workspaceRecords = (pack: string, orgId: number, actor: Actor = SYS
   move: (area, key, to) => moveWorkspace(orgId, pack, actor, area, key, to),
   delete: (area, key) => deleteWorkspace(orgId, pack, actor, area, key),
   batch: (ops) => batchWorkspace(orgId, pack, actor, ops),
+  reveal: (area, key, fields) => revealFor(orgId, area, key, fields, actor),
 });
 /** ctx.records for a pack's admin route: platform areas only; writes to the pack's own platform areas. */
 export const platformRecords = (pack: string): PlatformRecords => {

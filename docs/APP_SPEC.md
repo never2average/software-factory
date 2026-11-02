@@ -52,6 +52,13 @@ through the same check `factory.py validate` and the build use.
   gives at least one pack inline). mold_v1 records it only.
 - `audit.data` and `audit.platform` are separate toggles, both default `false` (mold_v0-197: mold_v0 writes them to the app's `profile.audit`; usage metering
   stays on regardless).
+- `audit.sign` (default `false`; mold_v0-195): signed checkpoints of the hash-chained trail entries (Ed25519 over Merkle roots, hourly
+  when there are new entries), written to `profile.audit.sign` (brief line `audit.sign = true`); the app needs `APP_LEDGER_SIGNING_KEY` in its
+  environment (`provision.py <app> --set-secret APP_LEDGER_SIGNING_KEY`; `npm run ledger:keygen -- --out <file>` makes one).
+- A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
+  date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
+  `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |
+  encrypted | searchable | reveal owner`. The pack schema refuses it elsewhere; molds/mold_v0/MOLD.md "Encrypted fields".
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on
   Vercel, `run_keys.sandbox` (`boat`). `compose_remote` needs `product.domain`. At least one platform administrator.

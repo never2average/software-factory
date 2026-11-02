@@ -242,6 +242,10 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
         await tx.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1000000000 + $1, 'system', 'read', 'record', 'system')", [o]);
         await tx.query("INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, actor_kind) VALUES ($1, 1000000000 + $1, $1, 'request', 'api', 'GET', '/probe', 'system')", [o]);
       }
+      // Chain and sign (mold_v0-195, 0033_ledger_chain): a signed checkpoint per organization.
+      if (has.has("ledger_checkpoints"))
+        await tx.query(`INSERT INTO ledger_checkpoints (scope_id, org_id, stream, n, from_seq, to_seq, entries, last_hash, merkle_root, prev_checkpoint, checkpoint_hash, key_id, signature, signed_at)
+          VALUES ($1, $1, 'data', 1, 1, 1, 1, '\\x00', '\\x00', '\\x00', '\\x00', 'probe', '\\x00', now())`, [o]);
     }
     if (product) await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -334,6 +338,14 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await refused("audit_platform_events: a tenant writes an entry", "INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, actor_kind) VALUES ($1, 1, $1, 'request', 'api', 'GET', '/x', 'system')", [a]);
       await refused("audit_platform_events: a tenant removes its own entry", "/* tenant: rls probe */ DELETE FROM audit_platform_events");
       await refused("audit_sequences: readable by a tenant query", "SELECT 1 FROM audit_sequences LIMIT 1");
+    }
+    // The signed checkpoints (mold_v0-195): tenant work reads its own and can neither write, change nor remove one; the
+    // chains' heads are out of its reach.
+    if (has.has("ledger_checkpoints")) {
+      await refused("ledger_checkpoints: a tenant writes a checkpoint", "INSERT INTO ledger_checkpoints (scope_id, org_id, stream, n, from_seq, to_seq, entries, last_hash, merkle_root, prev_checkpoint, checkpoint_hash, key_id, signature, signed_at) VALUES ($1, $1, 'data', 2, 2, 2, 1, '\\x00', '\\x00', '\\x00', '\\x00', 'x', '\\x00', now())", [a]);
+      await refused("ledger_checkpoints: a tenant changes its own checkpoint", "/* tenant: rls probe */ UPDATE ledger_checkpoints SET key_id = 'x'");
+      await refused("ledger_checkpoints: a tenant removes its own checkpoint", "/* tenant: rls probe */ DELETE FROM ledger_checkpoints");
+      await refused("ledger_heads: readable by a tenant query", "SELECT 1 FROM ledger_heads LIMIT 1");
     }
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);

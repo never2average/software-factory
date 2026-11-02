@@ -53,7 +53,7 @@ def sources(mold, root):
     s = ["state/application/app_id/application.schema.json", "state/application/app_id/infrastructure.schema.json", ".claude/scripts/app_spec.py"]
     if mold == "mold_v0":
         s += ["molds/mold_v0/mold.json", "molds/mold_v0/branding/rules.json", "molds/mold_v0/codebase/packs/pack.schema.json",
-              "molds/mold_v0/codebase/scripts/gen-packs.mjs", "molds/mold_v0/codebase/src/email.ts"]
+              "molds/mold_v0/codebase/scripts/gen-packs.mjs", "molds/mold_v0/codebase/src/email.ts", "molds/mold_v0/codebase/src/developer-config.ts"]
     else:
         s += ["molds/mold_v1/branding/rules.json", ".claude/scripts/packs.py", ".claude/scripts/intake.py"]
     return s
@@ -109,17 +109,27 @@ def _common(mold, root):
           "platform": {"type": "boolean", "default": False, "title": "Platform audit trail",
                        **D("Every API/MCP request and sign-in, with key, actor and scope, plus staff actions on accounts. Required (true) for kind embedded.",
                            "**Platform audit trail**: every API and MCP request and every sign-in, with the key, the actor and the scope, plus "
-                           "platform staff's actions on accounts. Default `false`; **must be `true` when `kind` is `embedded`**.")}}},
+                           "platform staff's actions on accounts. Default `false`; **must be `true` when `kind` is `embedded`**.")},
+          "sign": {"type": "boolean", "default": False, "title": "Chain and sign",
+                   **D("Signed checkpoints of the hash-chained trails (mold_v0-195): hourly Ed25519 signatures over Merkle roots, verifiable offline with the app's public key. Needs APP_LEDGER_SIGNING_KEY in the app's environment.",
+                       "**Chain and sign** (mold_v0-195): every trail entry is hash-chained in the database; with `sign: true` a scheduled job also "
+                       "signs checkpoints (an Ed25519 signature over the Merkle root of each window of entries, hourly when there are new ones), "
+                       "verifiable by the workspace's owners and offline with the public key at `/.well-known/ledger-keys.json`. "
+                       "Default `false`. The key, `APP_LEDGER_SIGNING_KEY`, is set in the app's environment by name (never in the database). "
+                       "mold_v1: recorded with the spec only.")}}},
       "developer_surface": {
         "type": "object", "additionalProperties": False, "required": ["events", "sdk_languages", "client_sessions"],
-        "title": "Developer surface (stub, mold_v0-193)",
-        **D("What a host application's developers build against when this app is embedded in it: the events it emits, the SDK "
-            "languages it ships, and the client sessions the host's backend mints. A STUB: its shape is fixed now and mold_v0-193 "
-            "implements it; until then it is recorded with the spec and has no effect. Required when kind is embedded.",
+        "title": "Developer surface (mold_v0-193)",
+        **D("What a host application's developers build against when this app is embedded in it: the events it emits to webhooks, the SDK "
+            "languages generated, the client sessions the host's backend mints, and optional inbound webhook receivers. mold_v0 builds it "
+            "(the REST API at /v1, /openapi.json, keys, client sessions, webhooks out and in, the SDKs): mint new --spec writes it into the "
+            "app's first inline pack as pack.json developer_surface. mold_v1: recorded with the spec only. Required when kind is embedded.",
             "What a **host application's developers** build against when this app is embedded in their product.\n\n"
-            "- `events`: what the embedded app tells the host about (name + meaning).\n- `sdk_languages`: the SDKs it ships.\n"
-            "- `client_sessions`: short-lived sessions the host's own backend mints for its signed-in users.\n\n"
-            "**Stub**: the shape is fixed now, **mold_v0-193** implements it. Required when `kind` is `embedded`."),
+            "- `events`: what the app sends to the host's webhooks (mold_v0: `record.created`, `record.updated`, `record.state_changed`, "
+            "`record.deleted`, `run.finished`, `clock.overdue`; a record event may name `areas`).\n- `sdk_languages`: the SDKs generated (mold_v0: "
+            "`typescript`, `python`).\n- `client_sessions`: short-lived sessions the host's own backend mints for its signed-in users.\n"
+            "- `webhooks_in` (optional): receivers that write a signed payload into a workspace record area.\n- `api_version` (optional): the dated version.\n\n"
+            "**mold_v0** implements it (mold_v0-193): `mint.py new --spec` writes it into the app's first inline pack. Required when `kind` is `embedded`."),
         "properties": {
           "events": {"type": "array", "minItems": 1, "maxItems": 100, "title": "Events the embedded app emits",
                      **D("Each event the embedded app emits to its host page and to the host's webhook: a dotted lower-case name and what it means.",
@@ -144,7 +154,21 @@ def _common(mold, root):
                                                       **D("The host pages allowed to embed the app: https origins like https://app.example.com."),
                                                       "items": {"type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]{2,5})?$", "x-hint": "an https origin like https://app.example.com"}},
                                   "scopes": {"type": "array", "uniqueItems": True, **D("What a client session may do, e.g. read, write, run. Absent: read and write."),
-                                             "items": {"type": "string", "pattern": "^[a-z][a-z0-9_:.-]{1,40}$"}}}}}},
+                                             "items": {"type": "string", "pattern": "^[a-z][a-z0-9_:.-]{1,40}$"}}}},
+          "webhooks_in": {"type": "array", "maxItems": 20, "title": "Inbound webhook receivers",
+                          **D("Optional: receivers that write a verified (Standard Webhooks) payload into one of the app's workspace record areas.",
+                              "Optional: each receiver writes a signed payload (or each item of a list in it) into a workspace record area: `name`, `area`, "
+                              "`key` / `title` / `fields` as JSON Pointers (`/id`), `items` (a pointer to a list), `types` (payload types it takes)."),
+                          "items": {"type": "object", "additionalProperties": False, "required": ["name", "area", "key", "fields"], "properties": {
+                              "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", **D("The receiver's name.")},
+                              "description": {"type": "string", "maxLength": 300, **D("What it receives.")},
+                              "area": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", **D("The workspace record area it writes.")},
+                              "items": {"type": "string", "pattern": "^(/([^~/]|~[01])*)*$", **D("A JSON Pointer to a list: each item is one record.")},
+                              "key": {"type": "string", "pattern": "^(/([^~/]|~[01])*)*$", **D("A JSON Pointer to the record's key.")},
+                              "title": {"type": "string", "pattern": "^(/([^~/]|~[01])*)*$", **D("A JSON Pointer to the record's title.")},
+                              "fields": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^(/([^~/]|~[01])*)*$"}, **D("Each field of the area, from a JSON Pointer.")},
+                              "types": {"type": "array", "items": {"type": "string"}, **D("Only payloads whose type is one of these are written.")}}}},
+          "api_version": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", **D("Optional: the dated API version new keys are pinned to (mold_v0: one of its API_VERSIONS).")}}},
     }
     product = {
       "type": "object", "additionalProperties": False, "required": ["name", "colour", "logo"], "title": "The product people see",
@@ -535,6 +559,7 @@ def problems(spec, root=ROOT, schema=None):
                     out.append(("missing", "budgets.runs.budget_usd_max", f"budgets.runs.budget_usd_max is {per_run:g} but job kind {p.get('id')}.{k.get('name')} may spend US${b:g} a run: raise the budget to at least {b:g}"))
                 if isinstance(mb, (int, float)) and isinstance(per_month, (int, float)) and mb > per_month:
                     out.append(("missing", "budgets.runs.kind_month_budget_usd", f"budgets.runs.kind_month_budget_usd is {per_month:g} but job kind {p.get('id')}.{k.get('name')} may spend US${mb:g} a month: raise it to at least {mb:g}"))
+        out += _developer_problems(spec, full, root)
         prof = {k: v for k, v in (spec.get("profile") or {}).items() if k != "limits"} if isinstance(spec.get("profile"), dict) else {}
         if prof and not any(x[1].startswith("profile") for x in out):   # the factory's own profile check (lib/app_profile.py), the one validate and the build run; budgets are the schema's
             for e in app_profile.problems(prof, mold, root, packs=[x for x in ids if isinstance(x, str)]):
@@ -681,6 +706,41 @@ def _read_back(spec, text, ids):
         out.append(("not supported", "profile", f"the brief's profile lines read back as {json.dumps(got)[:200]}, not the spec's {json.dumps(prof)[:200]} (nothing was written)"))
     return out
 
+def _developer_catalog(root):
+    """mold_v0's developer surface (codebase src/developer-config.ts, read without running it): (event names, SDK languages, API versions)."""
+    t = open(os.path.join(root, "molds", "mold_v0", "codebase", "src", "developer-config.ts")).read()
+    cat = re.search(r"EVENT_CATALOG = \{(.*?)\n\} as const", t, re.S).group(1)
+    events = re.findall(r'^\s*"([a-z_]+\.[a-z_]+)":', cat, re.M)
+    langs = re.findall(r'"([a-z]+)"', re.search(r"SDK_LANGUAGES = \[(.*?)\]", t).group(1))
+    versions = re.findall(r'"([0-9-]+)"', re.search(r"API_VERSIONS = \[(.*?)\]", t).group(1))
+    return events, langs, versions
+
+def _developer_problems(spec, full, root):
+    """mold_v0: the developer surface against what the mold builds (its events, SDK languages, versions) and where it goes (an inline pack)."""
+    ds = spec.get("developer_surface")
+    if spec.get("kind") != "embedded" or not isinstance(ds, dict): return []
+    out = []
+    events, langs, versions = _developer_catalog(root)
+    for i, e in enumerate(ds.get("events") or []):
+        if isinstance(e, dict) and e.get("name") not in events:
+            out.append(("wrong value", f"developer_surface.events[{i}].name", f"developer_surface.events[{i}].name: {e.get('name')!r} is not an event mold_v0 emits ({', '.join(events)})"))
+    for l in ds.get("sdk_languages") or []:
+        if l not in langs: out.append(("not supported", "developer_surface.sdk_languages", f"developer_surface.sdk_languages: mold_v0 generates {', '.join(langs)}, not {l}"))
+    if ds.get("api_version") is not None and ds["api_version"] not in versions:
+        out.append(("wrong value", "developer_surface.api_version", f"developer_surface.api_version: one of {', '.join(versions)}"))
+    inline = [p for p in full.get("packs") or [] if isinstance(p, dict) and isinstance(p.get("pack"), dict)]
+    if not inline:
+        out.append(("missing", "packs", "packs: an embedded app's developer surface is written into its pack, so give at least one pack inline ({\"id\", \"pack\"})"))
+    else:
+        areas = {a.get("name"): a for p in inline for a in (p["pack"].get("record_areas") or []) if isinstance(a, dict)}
+        for i, r in enumerate(ds.get("webhooks_in") or []):
+            a = areas.get((r or {}).get("area"))
+            if not a or a.get("scope") != "workspace":
+                out.append(("wrong value", f"developer_surface.webhooks_in[{i}].area", f"developer_surface.webhooks_in[{i}].area: {(r or {}).get('area')!r} is not a workspace record area of the app's inline packs"))
+        own = [p["id"] for p in inline if "developer_surface" in p["pack"]]
+        if own: out.append(("wrong value", "developer_surface", f"developer_surface: pack {own[0]} declares its own too: say it once (in the spec)"))
+    return out
+
 def write_inline_packs(spec, root):
     """mold_v0: each inline pack (or one given by a path outside packs/) written to packs/<id>/ where the brief path reads it.
     Never overwrites a different pack.json. -> [sentences] (problems)."""
@@ -688,6 +748,11 @@ def write_inline_packs(spec, root):
     full, probs, origin = resolve_packs(spec, root)
     if probs: return [m for _, _, m in probs]
     out = []
+    # An embedded app's developer surface (mold_v0-193) goes into its first inline pack: the build reads it from pack.json.
+    ds = spec.get("developer_surface") if spec.get("kind") == "embedded" else None
+    for p in full.get("packs") or []:
+        if ds and isinstance(p, dict) and isinstance(p.get("pack"), dict):
+            p["pack"] = {**p["pack"], "developer_surface": copy.deepcopy(ds)}; break
     for i, p in enumerate(full.get("packs") or []):
         if not isinstance(p, dict) or "pack" not in p: continue
         pid = p["id"]; f = _pack_file(pid, root); man = os.path.join(root, "packs", pid, "pack.json")
@@ -721,7 +786,7 @@ def spec_from_state(app_id, root):
         if prof.get("limits"): spec["budgets"] = prof.pop("limits")
         # profile.audit (mold_v0-197) is the spec's top-level audit; its retention days stay the state's own.
         if isinstance(prof.get("audit"), dict):
-            au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform") if isinstance(au.get(k), bool)}
+            au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform", "sign") if isinstance(au.get(k), bool)}
         if prof: spec["profile"] = prof
     else:
         ws = a.get("workspace") or {}; org = ws.get("org") or {}; me = ws.get("operator_self") or {}
@@ -773,6 +838,12 @@ def self_test():
                                   "client_sessions": {"ttl_seconds": 600, "allowed_origins": ["https://app.example.com"]}}
         e["audit"] = {"data": False, "platform": True}
         ok(problems(e) == [], f"{m}: kind embedded with the developer surface and audit.platform true is complete")
+        if m == "mold_v0":
+            x = copy.deepcopy(e); x["developer_surface"]["events"] = [{"name": "record.exploded", "description": "x"}]; x["developer_surface"]["sdk_languages"] = ["go"]
+            msgs = [y[2] for y in problems(x)]
+            ok(any("record.exploded" in y for y in msgs) and any("not go" in y for y in msgs), "mold_v0: an event it does not emit and an SDK it does not generate are refused")
+            x = copy.deepcopy(e); x["packs"] = []
+            ok(any("give at least one pack inline" in y[2] for y in problems(x)), "mold_v0: an embedded app's developer surface needs an inline pack to go into")
         e["audit"]["platform"] = False
         ok(any("audit.platform" in x[2] for x in problems(e)), f"{m}: kind embedded with audit.platform false is refused")
         if m == "mold_v0":   # mold_v0-197: the top-level audit becomes the brief's audit lines, read back into profile.audit
@@ -780,6 +851,9 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
             ok("audit.data = true" in lines and not any("platform" in l for l in lines)
                and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
+            lines, _ = _profile_lines({"audit": {"data": True, "sign": True}})   # mold_v0-195: chain and sign
+            ok("audit.sign = true" in lines and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True, "sign": True},
+               f"{m}: audit.sign true is written to profile.audit through the brief")
         t = copy.deepcopy(spec); t["developer_surface"] = e["developer_surface"]
         ok(any("not supported" == x[0] and "developer_surface" in x[1] for x in problems(t)), f"{m}: a developer surface on a tool is not supported")
         t = copy.deepcopy(spec); t["colour_typo"] = 1; del t["product"]["colour"]

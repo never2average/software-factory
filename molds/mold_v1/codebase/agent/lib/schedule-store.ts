@@ -72,7 +72,7 @@ export const scheduleRuleSchema = z.object({
   id: z.string(),
   // The workspace this rule belongs to. Lets the dispatcher skip a SUSPENDED
   // org's rules. Not nullable and not defaulted: the old default pointed at
-  // 'org-onfinance', which is not a workspace, so a rule that lost its org
+  // a fixed org id, which is not a workspace, so a rule that lost its org
   // became one nobody owned and nobody could fire.
   orgId: z.string(),
   customerId: z.string().nullable(),
@@ -208,7 +208,7 @@ function fallbackToRecord(r: FallbackRule): ScheduleRuleRecord {
 export interface CreateScheduleRuleInput {
   /**
    * The workspace the rule belongs to. REQUIRED — it used to default to
-   * 'org-onfinance', a workspace that does not exist, so a rule created by any
+   * a fixed org id, a workspace that does not exist, so a rule created by any
    * other workspace was filed where nobody could see or fire it.
    */
   orgId: string;
