@@ -557,7 +557,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Get set up</), at(/>Connect your AI client</), at(/>Where things stand</)];
       assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the headline row first, above the checklist, the connection card and the number card: ${order}`);
       const row = html.slice(order[0]!, order[1]!);
-      assert.match(row, /aria-label="Headline numbers"/, "a named section");
+      assert.match(html, /<section aria-label="Headline numbers"[^>]*data-sparklines="fixture_vulns\/overview"/, "a named section");
       assert.deepEqual(["Open vulnerabilities", "Overdue", "Average CVSS of open ones", "Found this week"].map((l) => row.includes(`>${l}</dt>`)), [true, true, true, true], "its four cards, in order");
       assert.equal([...row.matchAll(/<svg/g)].length, 4, "each with its sparkline");
       assert.match(row, /grid grid-cols-2 border-y lg:grid-cols-4/, "the list tabs' strip: two by two below a wide screen, four across on one");
