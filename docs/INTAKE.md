@@ -152,9 +152,14 @@ and, in a `## Profile` section (mold_v0-099), one per line:
 ```
 member_keys = false
 source_offer.upstreams.<pack id> = licensor_owned
+audit.data = true
+audit.platform = true
+audit.sign = true
 ```
 
-`member_keys` is `true` or `false`; an upstream setting names one of the app's own packs (`Packs:`) and the word
+`member_keys` is `true` or `false`; `audit.data`, `audit.platform` (mold_v0-197, the audit trails) and `audit.sign`
+(mold_v0-195, signed checkpoints of their hash chains; the app then needs `APP_LEDGER_SIGNING_KEY` set by name) are
+`true` or `false` and go to `profile.audit`; an upstream setting names one of the app's own packs (`Packs:`) and the word
 `licensor_owned`, nothing else; the shell's generator refuses a pack that pins no upstream.
 
 - The heading is exactly `## Profile` or `## Budgets` (a note in brackets after it is fine: `## Budgets (operator,

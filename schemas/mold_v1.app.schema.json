@@ -490,6 +490,13 @@
           "title": "Platform audit trail",
           "description": "Every API/MCP request and sign-in, with key, actor and scope, plus staff actions on accounts. Required (true) for kind embedded.",
           "markdownDescription": "**Platform audit trail**: every API and MCP request and every sign-in, with the key, the actor and the scope, plus platform staff's actions on accounts. Default `false`; **must be `true` when `kind` is `embedded`**."
+        },
+        "sign": {
+          "type": "boolean",
+          "default": false,
+          "title": "Chain and sign",
+          "description": "Signed checkpoints of the hash-chained trails (mold_v0-195): hourly Ed25519 signatures over Merkle roots, verifiable offline with the app's public key. Needs APP_LEDGER_SIGNING_KEY in the app's environment.",
+          "markdownDescription": "**Chain and sign** (mold_v0-195): every trail entry is hash-chained in the database; with `sign: true` a scheduled job also signs checkpoints (an Ed25519 signature over the Merkle root of each window of entries, hourly when there are new ones), verifiable by the workspace's owners and offline with the public key at `/.well-known/ledger-keys.json`. Default `false`. The key, `APP_LEDGER_SIGNING_KEY`, is set in the app's environment by name (never in the database). mold_v1: recorded with the spec only."
         }
       }
     },

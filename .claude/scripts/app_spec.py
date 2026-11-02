@@ -109,7 +109,14 @@ def _common(mold, root):
           "platform": {"type": "boolean", "default": False, "title": "Platform audit trail",
                        **D("Every API/MCP request and sign-in, with key, actor and scope, plus staff actions on accounts. Required (true) for kind embedded.",
                            "**Platform audit trail**: every API and MCP request and every sign-in, with the key, the actor and the scope, plus "
-                           "platform staff's actions on accounts. Default `false`; **must be `true` when `kind` is `embedded`**.")}}},
+                           "platform staff's actions on accounts. Default `false`; **must be `true` when `kind` is `embedded`**.")},
+          "sign": {"type": "boolean", "default": False, "title": "Chain and sign",
+                   **D("Signed checkpoints of the hash-chained trails (mold_v0-195): hourly Ed25519 signatures over Merkle roots, verifiable offline with the app's public key. Needs APP_LEDGER_SIGNING_KEY in the app's environment.",
+                       "**Chain and sign** (mold_v0-195): every trail entry is hash-chained in the database; with `sign: true` a scheduled job also "
+                       "signs checkpoints (an Ed25519 signature over the Merkle root of each window of entries, hourly when there are new ones), "
+                       "verifiable by the workspace's owners and offline with the public key at `/.well-known/ledger-keys.json`. "
+                       "Default `false`. The key, `APP_LEDGER_SIGNING_KEY`, is set in the app's environment by name (never in the database). "
+                       "mold_v1: recorded with the spec only.")}}},
       "developer_surface": {
         "type": "object", "additionalProperties": False, "required": ["events", "sdk_languages", "client_sessions"],
         "title": "Developer surface (mold_v0-193)",
@@ -779,7 +786,7 @@ def spec_from_state(app_id, root):
         if prof.get("limits"): spec["budgets"] = prof.pop("limits")
         # profile.audit (mold_v0-197) is the spec's top-level audit; its retention days stay the state's own.
         if isinstance(prof.get("audit"), dict):
-            au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform") if isinstance(au.get(k), bool)}
+            au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform", "sign") if isinstance(au.get(k), bool)}
         if prof: spec["profile"] = prof
     else:
         ws = a.get("workspace") or {}; org = ws.get("org") or {}; me = ws.get("operator_self") or {}
@@ -844,6 +851,9 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
             ok("audit.data = true" in lines and not any("platform" in l for l in lines)
                and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
+            lines, _ = _profile_lines({"audit": {"data": True, "sign": True}})   # mold_v0-195: chain and sign
+            ok("audit.sign = true" in lines and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True, "sign": True},
+               f"{m}: audit.sign true is written to profile.audit through the brief")
         t = copy.deepcopy(spec); t["developer_surface"] = e["developer_surface"]
         ok(any("not supported" == x[0] and "developer_surface" in x[1] for x in problems(t)), f"{m}: a developer surface on a tool is not supported")
         t = copy.deepcopy(spec); t["colour_typo"] = 1; del t["product"]["colour"]

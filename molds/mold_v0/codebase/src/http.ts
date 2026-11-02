@@ -10,6 +10,7 @@ import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 import { proxyHops } from "./proxy-trust.js";
 import { appRouter, customerSession } from "./app.js";
 import { auditAdminRouter, auditAppRouter, auditCaller, auditRequests } from "./audit-trail.js";
+import { ledgerAppRouter, ledgerKeysRoute } from "./ledger.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
@@ -289,6 +290,9 @@ export function createApp() {
   app.use("/api/developer", developerAppRouter());
   // The access log (mold_v0-197, src/audit-trail.ts): a workspace's owners read its trails; nothing mounted with both off.
   app.use("/api/audit", auditAppRouter(customerSession));
+  // Chain and sign (mold_v0-195, src/ledger.ts): owners verify their trail; the public keys are published. Nothing with audit.sign off.
+  app.use("/api/ledger", ledgerAppRouter(customerSession));
+  ledgerKeysRoute(app);
 
   // ---------- a host pack's public routes (src/host.ts), then the in-chat tips component's webhook (mold_v0-143, src/tips.ts: only when it is on) ----------
   for (const h of hosts()) h.routes?.public?.(app);

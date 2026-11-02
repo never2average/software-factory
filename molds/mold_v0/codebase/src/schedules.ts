@@ -38,6 +38,7 @@ import { requireFeature, featureRefusal, workspaceEntitlements } from "./entitle
 import { retentionSweep, retentionWired, type RetentionReport } from "./workspace-retention.js";
 import { ENV } from "./env-names.js";
 import { clockAreas, clockCheck, stepWords, type ClockReport } from "./record-clocks.js";
+import { checkpointTick, signOn, type LedgerTick } from "./ledger.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -565,15 +566,17 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 
 // ---------- both, from the cron entry and the server's loop ----------
 
-export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; retention?: RetentionReport | { error: string } }> {
+export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; retention?: RetentionReport | { error: string }; ledger?: LedgerTick | { error: string } }> {
   const schedules = await tickSchedules(now);
   const due = await dueCheck(now);
   // Record clocks (mold_v0-191, src/record-clocks.ts): with a clock area, at most every 15 minutes.
   const clocks = clockAreas().length ? { clocks: await clockCheck(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
+  // Signed checkpoints (mold_v0-195, src/ledger.ts): with audit.sign on, each stream with new entries every checkpoint_minutes.
+  const ledger = signOn() ? { ledger: await checkpointTick(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) })) } : {};
   // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
-  if (!retentionWired()) return { schedules, due, ...clocks };
+  if (!retentionWired()) return { schedules, due, ...clocks, ...ledger };
   const retention = await retentionSweep(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) }));
-  return { schedules, due, ...clocks, retention };
+  return { schedules, due, ...clocks, ...ledger, retention };
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -581,7 +584,7 @@ let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
   if (timer || (ENV.APP_SCHEDULER ?? "on").toLowerCase() === "off") return false;
-  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired()) return false;
+  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired() && !signOn()) return false;
   const run = () => {
     if (busy) return;
     busy = true;
@@ -589,6 +592,8 @@ export function startScheduler(everyMs = 60_000): boolean {
       if (r.schedules.fired || r.due.ran) console.error(`scheduler: ${r.schedules.fired} schedule(s) fired, ${r.schedules.runs} run(s) started${r.due.ran ? `; due check: ${r.due.posted} notice(s), ${r.due.emailed} email(s)` : ""}`);
       const ck = r.clocks;
       if (ck && "ran" in ck && ck.ran && (ck.steps || ck.changes)) console.error(`scheduler: clocks: ${ck.records} record(s), ${ck.changes} change(s), ${ck.steps} step(s), ${ck.notices} notice(s), ${ck.emailed} email(s)${ck.errors ? `, ${ck.errors} error(s)` : ""}`);
+      const lg = r.ledger;
+      if (lg && "ran" in lg && (lg.checkpoints || lg.refused.length)) console.error(`scheduler: ledger: ${lg.checkpoints} checkpoint(s) signed${lg.refused.length ? `, ${lg.refused.length} refused` : ""}`);
       const kept = r.retention;
       if (kept && "ran" in kept && kept.ran) console.error(`scheduler: workspace retention: ${kept.stores} store(s), ${kept.deleted} version(s) expired, ${kept.objects_removed} object(s) removed${kept.failed ? `, ${kept.failed} store(s) failed` : ""}`);
     }).catch((e) => console.error("scheduler tick:", (e as Error).message)).finally(() => { busy = false; });
