@@ -1,0 +1,71 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json",
+  "$comment": "An example mold_v0 app spec (schemas/examples/). Check it: python3 .claude/scripts/factory.py spec check schemas/examples/mold_v0.example.app.json",
+  "app_id": "example_reviews",
+  "mold_id": "mold_v0",
+  "kind": "tool",
+  "audit": { "data": true, "platform": false },
+  "product": {
+    "name": "Example Reviews",
+    "colour": "#1F6F5C",
+    "logo": "schemas/examples/example-logo.svg",
+    "tagline": "Agent-run reviews of your applications",
+    "domain": "reviews.example.com"
+  },
+  "deploy": { "target": "vercel" },
+  "workspace": { "platform_admins": ["ops@example.com", "*@admins.example.com"] },
+  "budgets": { "runs": { "budget_usd_max": 20, "kind_month_budget_usd": 300 } },
+  "profile": {
+    "member_keys": true,
+    "email_from_address": "hello@example.com",
+    "legal": { "company_name": "Example Ltd", "contact_email": "legal@example.com", "effective_date": "2026-11-01" }
+  },
+  "run_keys": { "model": "anthropic", "sandbox": "boat", "object_storage": "vault" },
+  "packs": [
+    {
+      "id": "example_reviews",
+      "pack": {
+        "id": "example_reviews",
+        "name": "Example reviews",
+        "version": "0.1.0",
+        "description": "Applications to review and the reviews an agent writes about them.",
+        "words": { "workspace": "team", "run": "review" },
+        "record_areas": [
+          {
+            "name": "example_apps",
+            "label": "Applications",
+            "role": "asset",
+            "scope": "workspace",
+            "fields": [
+              { "name": "url", "label": "Address", "type": "text", "required": true },
+              { "name": "repository", "label": "Repository", "type": "text" }
+            ]
+          }
+        ],
+        "job_kinds": [
+          {
+            "name": "review_app",
+            "label": "Review an application",
+            "description": "An agent reads the application's repository and writes a review.",
+            "runner": "agent-workspace",
+            "providers": ["anthropic"],
+            "max_attempts": 1,
+            "budget_usd": 10,
+            "month_budget_usd": 300,
+            "egress": ["github.com"],
+            "args": [
+              { "name": "app", "label": "Application", "type": "reference", "to": "example_apps", "required": true }
+            ],
+            "agent": {
+              "repository": "https://git.example.com/agents/reviewer",
+              "commit": "0123456789abcdef0123456789abcdef01234567",
+              "command": ["node", "review.mjs"],
+              "validate": { "command": ["node", "validate.mjs"] },
+              "write_back": ["reviews"]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

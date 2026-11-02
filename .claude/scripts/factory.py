@@ -20,6 +20,11 @@
                                          checks its required fields + enums
   factory.py validate --app-dir <dir>    only the four application files in <dir> (a fixture outside state/),
                                          against the same schemas and the same rules
+                                         (validate also fails when schemas/<mold>.app.schema.json is stale, mold_v0-190)
+  factory.py spec check <file> [--json]  is this app spec complete for its mold? plain "missing / not supported / wrong
+                                         value" lines; exit 0 complete, 1 not yet, 2 could not check (app_spec.py)
+  factory.py spec generate [--check]     regenerate schemas/<mold>.app.schema.json (--check: say if stale, write nothing)
+  factory.py spec apps [--json]          every application's state read as a spec: what each still lacks (read-only)
 """
 import json, sys, os, datetime, re, fcntl, contextlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -903,6 +908,18 @@ def _app_errors(app, adir):
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
              + _single_service(app, docs) + _app_profile(app, docs) + _branding(app, docs))
     return errs, docs
+def _spec_schemas():
+    """mold_v0-190: the app-spec schemas are generated from the molds and the factory's schemas; a stale one is a finding."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path: sys.path.insert(0, here)
+    import app_spec
+    return app_spec.stale(ROOT)
+def cmd_spec(a):
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path: sys.path.insert(0, here)
+    import app_spec
+    if not a or a[0] not in ("check", "generate", "apps"): sys.exit(__doc__)
+    sys.exit(app_spec.main(a))
 def cmd_validate(a):
     if "--app-dir" in a:
         d = os.path.abspath(a[a.index("--app-dir") + 1]) if a.index("--app-dir") + 1 < len(a) else sys.exit(__doc__)
@@ -935,6 +952,7 @@ def cmd_validate(a):
     errs += _vm_remote_hosts(apps)
     errs += _repositories(apps)
     errs += _lane_specs()
+    errs += _spec_schemas()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 
@@ -1186,7 +1204,7 @@ def self_test():
 
 if __name__ == "__main__":
     cmds = {"status":cmd_status,"tasks":cmd_tasks,"next":cmd_next,"add":cmd_add,"set":cmd_set,"close":cmd_close,"validate":cmd_validate,
-            "doctor":cmd_doctor}
+            "doctor":cmd_doctor,"spec":cmd_spec}
     if sys.argv[1:2] == ["--self-test"]: sys.exit(self_test())
     if len(sys.argv)<2 or sys.argv[1] not in cmds: sys.exit(__doc__)
     services.script_start("factory.py", sys.argv[1:])
