@@ -89,7 +89,7 @@ def checks(check, tmp):
     check("the recorded read parses: facts, six sysstat activities, journal lines, sandboxes",
           data["facts"].get("VCPU") == "4" and set(data["sar"]) == {"load", "cpu_psi", "mem_psi", "mem", "swap", "cpu"}
           and len(data["journal"]) > 1000 and len(data["vms"]) > 100, (data["facts"], sorted(data["sar"]), len(data["journal"]), len(data["vms"])))
-    unit = "sf-onfinance-hfc-vm"
+    unit = "sf-example-vm"
     dw = C.deploy_windows(data["journal"], unit, now)
     check("each deploy (the API stopped until it started again) becomes a window left out", len(dw) == 6 and all(b > a for a, b in dw), dw)
     m, extra = C.measure(data, since, now, dw)

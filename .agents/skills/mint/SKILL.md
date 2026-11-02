@@ -38,6 +38,19 @@ application's surface (default agent profile, subagent configs, workflow definit
 
 The package, report and handoff stations read a `vm_remote` application's address from `vm_remote.production_url`.
 
+## Starting from an app spec
+
+A person (or their editor) may describe the app as one JSON file against its mold's schema
+(`schemas/<mold_id>.app.schema.json`; docs/APP_SPEC.md). Check it, then mint it:
+
+```
+python3 .claude/scripts/factory.py spec check <file>          # exit 0 complete; 1: each "missing / not supported" line is what to ask for
+python3 .claude/scripts/mint.py new <app_id> --spec <file>    # writes briefs/<app_id>.md from it, then the brief path as below
+```
+
+Ask the person only for what `spec check` names, one thing at a time. `factory.py spec apps` reads every app's state as a
+spec and says what each still lacks (read-only).
+
 ## Starting from a conversation
 
 1. Ask the person to describe the product in their own words. Write it to `briefs/<app_id>.md` yourself. Lines the

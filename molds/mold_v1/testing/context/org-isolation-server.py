@@ -146,7 +146,12 @@ def self_test():
           argv[0] == "ssh" and argv[-1] == exact and "BatchMode=yes" in argv, argv[-1][-120:])
     S2 = dict(S, user="deploy", sudo="sudo ")
     check("a non-root SSH account reads the root-only env file through sudo", remote_argv(S2)[-1].startswith("sudo python3 -c "), remote_argv(S2)[-1][:40])
-    check("refuses an application that is not vm_remote", settings_for("onfinance_hfc") is None if os.path.isdir(os.path.join(ROOT, "state/application/onfinance_hfc")) else True)
+    apps = os.path.join(ROOT, "state", "application")   # any application on this machine that is not on its own server
+    def _target(a):
+        try: return json.load(open(os.path.join(apps, a, "infrastructure.json"))).get("target")
+        except (OSError, ValueError): return "vm_remote"
+    other = next((a for a in (sorted(os.listdir(apps)) if os.path.isdir(apps) else []) if a != "app_id" and _target(a) != "vm_remote"), None)
+    check("refuses an application that is not vm_remote", settings_for(other) is None if other else True)
     print(f"org-isolation-server self-test: {ok}/{ok + fail} cases passed")
     return 1 if fail else 0
 

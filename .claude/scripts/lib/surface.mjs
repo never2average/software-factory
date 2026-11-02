@@ -152,7 +152,7 @@ async function apply(url, state, only = null) {
   // Org-scoped tables are written INSIDE a transaction that names the workspace (set_config('app.org_id', …, true)),
   // exactly as the app's own withOrgDb does. This goes through app_rw on purpose, and under fail_closed RLS a
   // write that names no workspace is refused: on a fresh database every scoped insert failed with "new row
-  // violates row-level security policy" (found on onfinance_hfc, 2026-09-19; the replica never hit it because
+  // violates row-level security policy" (found on example_app, 2026-09-19; the replica never hit it because
   // its rows arrived by snapshot restore through the admin role).
   const SCOPED = new Set(["people_roster", "agent_profiles", "agent_configs", "workflow_definitions", "workflows"]);
   const up = async (label, fn) => {

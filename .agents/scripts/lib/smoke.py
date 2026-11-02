@@ -22,7 +22,7 @@ the agent API behind it, the model credential and the database, not a subagent.
 NEVER ANOTHER'S ADDRESS (mold_v1-239). Before the session is even looked up, the address must be one Vercel files under
 this app's web project (lib/vercel_addr.py guard_app; an app on its own server is not asked). Otherwise the check
 fails with "refusing to send anything to <host>" and nothing is sent: on 2026-10-12 the address in state was another
-account's compliance-os.vercel.app.
+account's example-compliance.vercel.app.
 
 NEVER A CUSTOMER'S WORKSPACE. The only workspace ever named is the operator's own, from state. If the session on
 hand is not a member of it the check stops before sending anything ("needs a sign-in": it is the wrong person's

@@ -25,8 +25,8 @@ python3 .claude/scripts/lib/vercel_addr.py <project> --scope <team>             
 ## Addresses are read, never made from a name (mold_v1-239)
 
 A `*.vercel.app` name is global across every Vercel account: when `<project>.vercel.app` is someone else's, Vercel
-gives our project another one (on 2026-10-12, compliance-os got `compliance-os-neon.vercel.app` because another
-account's "Compliance OS" held `compliance-os.vercel.app`). So the factory never derives an address from a project
+gives our project another one (on 2026-10-12, example-compliance got `example-compliance-neon.vercel.app` because another
+account's product held `example-compliance.vercel.app`). So the factory never derives an address from a project
 name (`lib/vercel_addr.py`):
 
 - **Before a first deploy**, a new app whose `<project>`, `<project>-api` or `<project>-workflow` name is served by

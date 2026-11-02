@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). legacy_names: {current: old} spellings of state keys older applications still carry (optional). sweep: this machine's own sweep choices (optional; .claude/scripts/sweep.py merges them over state/factory.json's sweep block): which apps' mold-moved redeploys are pre-approved (auto_deploy) or allowed once parity is proven (parity_deploy), and any trains or gated tickets.",
+  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). workspace_name and agent_cli_scope: a new application's default workspace name and the npm organisation its agent package is published under (optional; kept here because they name your organisation). legacy_names: {current: old} spellings of state keys older applications still carry (optional). sweep: this machine's own sweep choices (optional; .claude/scripts/sweep.py merges them over state/factory.json's sweep block): which apps' mold-moved redeploys are pre-approved (auto_deploy) or allowed once parity is proven (parity_deploy), and any trains or gated tickets.",
   "defaults": {
     "operator_email": "you@yourcompany.com",
     "notify_domain": "yourcompany.com",
@@ -7,7 +7,9 @@
     "vm": {
       "host": "203.0.113.10"
     },
-    "secret_source_project": "your-live-web-project"
+    "secret_source_project": "your-live-web-project",
+    "workspace_name": "Your Company",
+    "agent_cli_scope": "@your-npm-scope"
   },
   "mold_sources": {
     "mold_v1": "https://github.com/your-org/your-mold-source.git"

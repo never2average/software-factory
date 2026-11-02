@@ -929,8 +929,8 @@ def owner_email(app_id):
 
 # ---- ADDRESSES: read from Vercel and verified as ours, never derived from a project name (mold_v1-239) -------------------
 # A *.vercel.app name is global across every Vercel account. This file used to assume a project named X answers at
-# https://X.vercel.app (stable_url). On 2026-10-12 compliance-os.vercel.app and compliance-os-api.vercel.app were
-# someone else's: Vercel had given our projects compliance-os-neon / compliance-os-api-ten instead, the health checks
+# https://X.vercel.app (stable_url). On 2026-10-12 example-compliance.vercel.app and example-compliance-api.vercel.app were
+# someone else's: Vercel had given our projects example-compliance-neon / example-compliance-api-ten instead, the health checks
 # read the stranger's site, WEB_ORIGIN and NEXT_PUBLIC_EVE_API_URL were written with the stranger's address, and had
 # health passed the smoke test would have sent the operator's session there. Now every address is read back from
 # Vercel (the project's domains on the deployment's alias list, lib/vercel_addr.py) and every request that carries a
@@ -1240,7 +1240,7 @@ GIT_LINK_MSG = ("{project} is still connected to git ({link}); every push would 
 
 def disconnect_git(project, mold_dir):
     """A project the CLI creates from inside a git checkout is auto-connected to that repo.
-    The mold lives inside the factory repo, so claudecode-web-api/-workflow were linked to
+    The mold lives inside the factory repo, so example-web-api/-workflow were linked to
     never2average/software-factory and every push started a PRODUCTION build of the factory
     root: `eve: command not found` (eve preset) / `No Next.js version detected` (nextjs preset).
     14 ERROR production deployments each, and the workflow build overwrites the build cache the
@@ -2290,7 +2290,7 @@ def smoke_preflight(app_id, app, infra, before):
     if not any((r or {}).get("id") for r in before["projects"].values()): return
     # An app that never finished a deploy (not `stamped`: a first deploy that failed, reverted) serves nobody yet, so
     # it is treated as a first deploy: deploy, then ask for the sign-in after it (exit 3, deployed and healthy).
-    # Only an app that is live (stamped) needs the sign-in before it is redeployed (2026-10-12, compliance_os).
+    # Only an app that is live (stamped) needs the sign-in before it is redeployed (2026-10-12, example_compliance).
     if app.get("status") != "stamped":
         print(f"  sign-in: not needed before this deploy ({app_id} is {app.get('status') or 'not stamped'}, not live); "
               f"the smoke test after it asks for one if none is on hand"); return
@@ -2690,7 +2690,7 @@ GUIDE = {
              "Then give ONLY the address at that domain, e.g. signin@yourdomain.com — the display name is this app's own "
              "brand and is filled in for you",
     "why": "Resend rejects a sender whose domain it has not verified, so every login code would bounce",
-    "shape": (r"^(?:[^<>@]*[^<>@\s]\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),   # the display name may contain spaces: brand_sender writes "OnFinance AI <…>"
+    "shape": (r"^(?:[^<>@]*[^<>@\s]\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),   # the display name may contain spaces: brand_sender writes "Acme Research <…>"
   },
   "GOOGLE_CLIENT_ID": {
     "what": "the Google client id for the 'Continue with Google' button (an identifier, public by construction — it ships in the browser bundle)",
@@ -3063,7 +3063,7 @@ def _refuse_live_or_shared_project(app_id, infra):
             op = (load(f).get("vercel") or {}).get("project", "")
             ost = load(os.path.join(ST, "application", o, "application.json")).get("status")
         except Exception: continue
-        if ost in ("retired", "dropped"): continue   # it deploys nothing, so it shares nothing (claudecode_web_internal)
+        if ost in ("retired", "dropped"): continue   # it deploys nothing, so it shares nothing (example_internal)
         if op and op == proj: others.append(o)
     if others:
         sys.exit(f"{app_id}: {', '.join(others)} already deploy to the Vercel project {proj}. One project is one "
@@ -3433,22 +3433,22 @@ def self_test():
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
     self_test_agent(check)
     # mold_v1-239: the address after a deploy is READ from Vercel, against the 2026-10-12 world (someone else holds
-    # compliance-os.vercel.app; Vercel gave our project compliance-os-neon). The old stable_url() answered the stranger's.
-    V = vercel_addr.FakeVercel(); V.strangers = {"compliance-os.vercel.app": "someone else's Compliance OS"}
-    V.add("compliance-os", ["compliance-os-neon.vercel.app"]); V.add("other-app", ["other-app.vercel.app"])
+    # example-compliance.vercel.app; Vercel gave our project example-compliance-neon). The old stable_url() answered the stranger's.
+    V = vercel_addr.FakeVercel(); V.strangers = {"example-compliance.vercel.app": "someone else's product"}
+    V.add("example-compliance", ["example-compliance-neon.vercel.app"]); V.add("other-app", ["other-app.vercel.app"])
     _saved = globals()["_addr_api"]; globals()["_addr_api"] = lambda *a_, **k_: V.api
     _env = os.environ.pop("FACTORY_REHEARSAL", None)
     try:
-        cli = "Production: https://compliance-os-abc123-team.vercel.app [2m]\nAliased: https://compliance-os.vercel.app [3s]"
+        cli = "Production: https://example-compliance-abc123-team.vercel.app [2m]\nAliased: https://example-compliance.vercel.app [3s]"
         check("alias reading: after the deploy the address is the one Vercel files under the project, not <project>.vercel.app",
-              _deployed_address("compliance-os", cli, None, {"vercel": {"team": "t"}}) == "https://compliance-os-neon.vercel.app")
-        try: got = _deployed_address("compliance-os", "Production: https://other-app-abc123-team.vercel.app", None, {"vercel": {"team": "t"}}); check("a deployment of another project is never read as ours", False, got)
+              _deployed_address("example-compliance", cli, None, {"vercel": {"team": "t"}}) == "https://example-compliance-neon.vercel.app")
+        try: got = _deployed_address("example-compliance", "Production: https://other-app-abc123-team.vercel.app", None, {"vercel": {"team": "t"}}); check("a deployment of another project is never read as ours", False, got)
         except SystemExit as e: check("a deployment of another project is never read as ours (stops, nothing sent)", "Nothing was sent" in str(e), e)
-        check("the guard refuses the stranger's address for the web project", not _guard({"target": "vercel", "vercel": {"team": "t", "project": "compliance-os"}}, "https://compliance-os.vercel.app", "web")[0])
-        check("the front door is the verified address when no own domain was switched to", _front_door({"vercel": {"project": "compliance-os"}}, "https://compliance-os-neon.vercel.app", None) == "https://compliance-os-neon.vercel.app")
+        check("the guard refuses the stranger's address for the web project", not _guard({"target": "vercel", "vercel": {"team": "t", "project": "example-compliance"}}, "https://example-compliance.vercel.app", "web")[0])
+        check("the front door is the verified address when no own domain was switched to", _front_door({"vercel": {"project": "example-compliance"}}, "https://example-compliance-neon.vercel.app", None) == "https://example-compliance-neon.vercel.app")
         check("  ...and an own domain Vercel does not file under the project is not the front door",
-              _front_door({"target": "vercel", "vercel": {"project": "compliance-os", "custom_domain": "compliance.example.com", "production_url": "https://compliance.example.com"}},
-                          "https://compliance-os-neon.vercel.app", None) == "https://compliance-os-neon.vercel.app")
+              _front_door({"target": "vercel", "vercel": {"project": "example-compliance", "custom_domain": "compliance.example.com", "production_url": "https://compliance.example.com"}},
+                          "https://example-compliance-neon.vercel.app", None) == "https://example-compliance-neon.vercel.app")
     finally:
         globals()["_addr_api"] = _saved
         if _env is not None: os.environ["FACTORY_REHEARSAL"] = _env
@@ -3766,7 +3766,7 @@ def self_test_release(check):
               code == 0 and prod() == good and prod() != latest and st()["status"] == "reverted" and inf()["vercel"]["rollback"]["by"].startswith("the operator"),
               (out[-600:], prod(), good, latest))
         # an app that is not live (reverted just above) with no sign-in on hand deploys like a first deploy, and asks
-        # for the sign-in after it (2026-10-12, compliance_os)
+        # for the sign-in after it (2026-10-12, example_compliance)
         os.remove(session); n0 = ndeps()
         code, out = go("app1", "--deploy")
         check("a redeploy of an app that is not live, no sign-in on hand: deployed, then exit 3 asking for the sign-in",
@@ -4015,8 +4015,8 @@ def _main(a):
             # One Vercel project is ONE env namespace and app_rw is a CLUSTER-GLOBAL role, so provisioning
             # the second app rewrites the first app's DATABASE_URL and rotates the password out from under
             # its running build. intake.py already refuses this shape for self_hosted; there is no reason
-            # it is safe here. (claudecode_web_internal and claudecode_web_replica were both configured
-            # onto claudecode-web; internal is retired, which is why only one of them is live.)
+            # it is safe here. (example_internal and example_replica were both configured
+            # onto example-web; internal is retired, which is why only one of them is live.)
             sys.exit(f"{app_id}: {', '.join(others)} already deploy to the Vercel project {proj}. One project is one "
                      f"environment namespace and one app_rw password, so provisioning this app would rewrite that "
                      f"app's DATABASE_URL and rotate its database password. Give this app its own project in "
