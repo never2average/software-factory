@@ -166,6 +166,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // global settings (pure data), the admin MCP's words and the Setup page's steps and workflow (mold_v0-140: src/settings.ts,
   // src/admin-mcp.ts, src/app.ts; carried to the server as src/hosts.generated.ts PACK_CONFIG)
   "settings", "admin_mcp", "setup",
+  // the company's own email: a workspace's sender and mailbox intake (mold_v0-192, src/company-email-config.ts)
+  "email",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
   "account_stages",
   // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
