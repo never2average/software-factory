@@ -46,7 +46,9 @@
  *   audit              optional (mold_v0-197, src/audit-trail.ts): the two audit trails, {"data": true, "platform": false,
  *                      "retention_days": 400, "platform_retention_days": 400}; each trail off unless true (off: nothing is
  *                      written and no page, route or tool appears); retention_days (default 400) keeps the data trail,
- *                      platform_retention_days (default retention_days) the platform trail
+ *                      platform_retention_days (default retention_days) the platform trail; sign (mold_v0-195,
+ *                      src/ledger.ts; default false): signed checkpoints of the hash-chained entries every
+ *                      checkpoint_minutes (5 to 1440, default 60) with new entries, with APP_LEDGER_SIGNING_KEY
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
@@ -90,6 +92,10 @@ export interface ProfileAudit {
   platform?: boolean;
   retention_days?: number;
   platform_retention_days?: number;
+  /** Chain and sign (mold_v0-195, src/ledger.ts): signed checkpoints of the hash chains; default false. */
+  sign?: boolean;
+  /** How often a stream with new entries is signed, in minutes (5 to 1440; default 60). */
+  checkpoint_minutes?: number;
 }
 
 /**

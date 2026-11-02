@@ -486,9 +486,9 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     const db = await q();
     const [r] = prev === null
       ? await db.query<Row>(
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null])
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
         `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now()
@@ -499,6 +499,9 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     return toRecord(area, r, orgId);
   });
 }
+
+/** An append-only area's record (mold_v0-195): added once, never changed or deleted. */
+const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.label} records are append-only: ${key} is never changed or deleted once added`, 409);
 
 /** put: create or replace; create: only a new key (409 when it exists); update: only an existing key (404). */
 export type PutMode = "put" | "create" | "update";
@@ -512,6 +515,7 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   assertMay(area, "read", actor);
   const prev = await readWorkspace(orgId, area, key);
   if (prev && mode === "create") throw new PackError(`${area.label} record ${key} already exists`, 409);
+  if (prev && area.append_only) throw appendOnly(area, key); // mold_v0-195: added once, never changed
   if (!prev && mode === "update") throw new PackError(`no ${area.name} record ${key}`, 404);
   assertMay(area, prev ? "update" : "create", actor);
   const given = value?.data;
@@ -573,6 +577,7 @@ async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: 
   if (source === null && isReadOnlyArea(area)) throw readOnly(area);
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
+  if (area.append_only) throw appendOnly(area, key); // mold_v0-195
   // A repository's writer deletes only rows it wrote itself (its prune).
   const gone = await withTenant(orgId, async () => (await (await q()).query(
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",

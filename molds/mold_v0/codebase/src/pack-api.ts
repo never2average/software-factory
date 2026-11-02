@@ -748,6 +748,14 @@ export const RecordAreaSchema = z.object({
    * vault is locked; a filter or sort over a sealed area runs on the opened rows, never in the database.
    */
   sealed: z.boolean().optional(),
+  /**
+   * Append-only (mold_v0-195): a record is added once and never changed, moved or deleted through any door (the record
+   * store refuses). With `chain: true` the database enforces it too and hash-chains the area's records per workspace
+   * (sql/migrations/0035_ledger_chain.sql; src/ledger.ts), signed in checkpoints when the profile's audit.sign is on.
+   * Workspace areas of the shell's own tables only: no lifecycle (a move changes a record), no repository.
+   */
+  append_only: z.boolean().optional(),
+  chain: z.boolean().optional(),
   /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
   rows: z.string().max(500).optional(),
   /** In words, where a shared row's version comes from (an upstream commit, a date). */
@@ -790,6 +798,10 @@ export const RecordAreaSchema = z.object({
   if (a.role === "asset" && a.scope === "platform") bad("an asset area holds a workspace's private data: workspace scope only", "scope");
   if (a.sealed && a.scope === "platform") bad("a shared (platform) area has no workspace key to seal it with: sealed is for workspace areas", "sealed");
   if (a.sealed === false && a.role === "asset") bad("an asset area is always sealed", "sealed");
+  if (a.chain && !a.append_only) bad("chain needs append_only: true (a chained record is never changed)", "chain");
+  if (a.append_only && a.scope !== "workspace") bad("append_only is for a workspace's own records (a shared area is written by staff)", "append_only");
+  if (a.append_only && a.lifecycle) bad("an append-only area has no lifecycle: a move changes a record", "append_only");
+  if (a.append_only && a.repository) bad("an append-only area keeps its records in the shell's own tables, not a repository's", "append_only");
   if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
   if (!(a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c))) bad("list_columns must name declared fields", "list_columns");
   if (!(a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field))) bad("a link's field must be a declared field", "links");

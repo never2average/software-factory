@@ -36,7 +36,7 @@ import { asPlatform, withTenant } from "./tenant-scope.js";
 
 // ---------------------------------------------------------------- settings
 
-export interface AuditSettings { data: boolean; platform: boolean; retention_days: number; platform_retention_days: number }
+export interface AuditSettings { data: boolean; platform: boolean; retention_days: number; platform_retention_days: number; sign: boolean; checkpoint_minutes: number }
 /** profile.json `audit` (src/profile.ts ProfileAudit): both trails off unless set; 400 days of each kept by default. */
 export const DEFAULT_RETENTION_DAYS = 400;
 let testSettings: Partial<AuditSettings> | null = null;
@@ -44,7 +44,9 @@ export function auditSettings(profile?: { audit?: Partial<AuditSettings> }): Aud
   const p = profile ? { ...(profile.audit ?? {}) } : { ...((PROFILE as { audit?: Partial<AuditSettings> }).audit ?? {}), ...(testSettings ?? {}) };
   const days = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 3650 ? v : d);
   const retention = days(p.retention_days, DEFAULT_RETENTION_DAYS);
-  return { data: p.data === true, platform: p.platform === true, retention_days: retention, platform_retention_days: days(p.platform_retention_days, retention) };
+  // Chain and sign (mold_v0-195, src/ledger.ts): signed checkpoints, every checkpoint_minutes (default 60) with new entries.
+  const mins = typeof p.checkpoint_minutes === "number" && Number.isInteger(p.checkpoint_minutes) && p.checkpoint_minutes >= 5 && p.checkpoint_minutes <= 1440 ? p.checkpoint_minutes : 60;
+  return { data: p.data === true, platform: p.platform === true, retention_days: retention, platform_retention_days: days(p.platform_retention_days, retention), sign: p.sign === true, checkpoint_minutes: mins };
 }
 export const dataTrailOn = () => auditSettings().data;
 export const platformTrailOn = () => auditSettings().platform;
@@ -610,9 +612,11 @@ export function auditAdminTools(): Record<string, { title: string; description: 
 }
 
 /** What DATA-MAP.md says of the trails that are on (src/data-map.ts); nothing when both are off. */
-export function auditDataMapRows(s: Pick<AuditSettings, "data" | "platform" | "retention_days" | "platform_retention_days">): { item: string; detail: string }[] {
+export function auditDataMapRows(s: Pick<AuditSettings, "data" | "platform" | "retention_days" | "platform_retention_days"> & { sign?: boolean }): { item: string; detail: string }[] {
   const rows: { item: string; detail: string }[] = [];
   if (s.data) rows.push({ item: "Data trail", detail: `in the database, per workspace under row-level security: who listed, read, revealed, exported or changed which record, file or run's results, when and through which door; never a field's value. Read by the workspace's owners (console, CSV, MCP); kept ${s.retention_days} days` });
   if (s.platform) rows.push({ item: "Platform trail", detail: `in the database: every API and MCP request and sign-in (the key's id and prefix, never the key; the actor, scopes, result and latency) and staff actions on an account. Read fleet-wide by the platform's staff and per workspace by its owners; kept ${s.platform_retention_days} days` });
+  // Chain and sign (mold_v0-195, src/ledger.ts): checkpoints hold hashes and signatures only, never an entry's values.
+  if (s.sign) rows.push({ item: "Signed checkpoints", detail: "in the database, per workspace under row-level security: hashes of the audit entries and of chained records, and Ed25519 signatures over them (no values); the signing key stays in the app's environment, never in the database. Kept as long as the workspace" });
   return rows;
 }
