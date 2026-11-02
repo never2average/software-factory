@@ -2606,6 +2606,55 @@ route and MCP tool, members refused, tenant isolation, the published keys; off; 
 Python verifier), `npm run test:migrations` (0035 backfill, sequence, rollback), `npm run check:rls` (a tenant reads its
 own checkpoints only and cannot write, change or remove one; the heads are out of its reach).
 
+## Encrypted fields (mold_v0-194)
+
+A record area's field may be declared **encrypted** in pack.json (or `definePack`), so its value is never shown or
+stored in the clear, only revealed on purpose:
+
+```json
+{ "name": "ref", "label": "Reference", "type": "text", "encrypted": true, "searchable": "equality", "reveal_roles": ["owner"] }
+```
+
+- **Where.** A workspace area's field (a shared area has no workspace key) whose rows are in the shell's own tables (not a
+  `workspace_files`, `upstream_catalog` or `http_api` repository); types text, number, date, boolean, json or a single
+  enum. Never the lifecycle's, due date's, a link's or a clock's field, a job kind's argument, nor a field a metric or a
+  tab computes, groups, sorts or filters by (refused by the pack schema and at build, `src/packs.ts`
+  `encryptedFieldProblems`). The brief line: `field <name>: <Label> | text | encrypted | searchable | reveal owner`.
+- **Encryption.** Each value is envelope-encrypted on its own (`src/encrypted-fields.ts`) with the workspace's data key,
+  which is kept only wrapped by the app's vault key (`APP_VAULT_KEY`, `org_keys`): the same `sealBytes` (AES-256-GCM)
+  the company email's secrets and the workspace store use, no second scheme. Stored as `encf:v1:<base64>`, the
+  additional data binding it to its workspace, pack, area, record key and field (moved anywhere else, it does not open).
+  A write is refused (503) while the vault is locked. Rotating the vault key (`npm run keyvault -- rekey` with
+  `APP_VAULT_KEY_PREVIOUS`) re-wraps the data keys and never touches a field's ciphertext.
+- **Never shown.** Every read carries `[encrypted]` in the value's place (null stays null): the console's lists, record
+  pages and Export CSV, the data API, the generated MCP tools (`list_`, `get_`, `export_`, `list_records`, `get_record`),
+  the developer API (`/v1`), webhooks' record events, and a pack's own `ctx.records`. The data trail never held values;
+  nothing logs one. A write may send the mask back, or leave the field out: the stored value is kept; null clears it;
+  input that looks like an envelope is refused.
+- **Reveal.** `POST /api/data/:area/:key/reveal` `{fields?}`, `POST /v1/records/:area/:key/reveal`, the generated MCP
+  tool `<prefix>_reveal_<area>` (offered only to roles that may reveal one of its fields) and `ctx.records.reveal(area,
+  key, fields?)`. The caller needs the area's read permission and, per field, one of its `reveal_roles` (default: the
+  roles that may update the area's records); an account or developer key has no role limits, as everywhere. Each reveal
+  is a `reveal` entry of the data trail (when `audit.data` is on): person, door, area and key, never the value.
+- **Equality only.** `searchable: "equality"` keeps a blind index beside the value (`$bi:<field>`: HMAC-SHA256 under a
+  key derived from the workspace's data key, `orgcrypto.orgMac`), outside a sealed area's ciphertext too, so a filter
+  `{field: value}` runs in SQL. Every other operator (`ne`, `in`, `prefix`, `contains`, comparisons, `exists`) and a sort
+  on an encrypted field are refused (400). The same value has a different index in each workspace. A declarative check
+  compares an encrypted field through `equalsByIndex` (equality, never the value).
+- **The migration.** Each stored row carries the tag of the declaration it was written under (`$enc`). When a pack newly
+  marks a field encrypted (or searchable), reads mask the old plain values at once, and the scheduler's tick (every
+  minute on a server, the cron on Vercel; `src/encrypted-fields-migration.ts`) rewrites the rows whose tag differs, 500 a
+  tick: idempotent (a value already sealed is kept; each UPDATE a compare-and-set on the row's version), resumable (the
+  work left is exactly the rows whose tag differs), quiet (no updated_at, title or sealing change, no webhook; one data
+  trail entry per workspace and batch). A field no longer encrypted is opened back the same way. A chained area's rows
+  (mold_v0-195) never change: values stored before the field was encrypted stay as stored, masked on every read. No
+  schema migration: values, indexes and the tag live in `workspace_records.data`.
+
+Proof: `npm run test:encrypted-fields` (the declaration; round trip; every output grepped for the values: lists, record
+pages, exports, MCP, developer API, webhooks received and queued, the data trail, every log line; reveal by role and
+audited; the blind index for equality only and per workspace; key rotation re-wraps without re-encrypting; tenant
+isolation; the migration in resumed batches, idempotent, and un-marking).
+
 ## How the factory runs it
 
 mold_v0 is a **single-service mold**: [mold.json](mold.json) says so, and every factory script hands such an app to

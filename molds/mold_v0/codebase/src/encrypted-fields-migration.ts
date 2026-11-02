@@ -13,6 +13,8 @@
  *   quiet        nothing else of the row changes (not its updated_at, title or sealing); no record event is told; one
  *                data trail entry per workspace and batch (an `update` keyed "encrypt:fields", how many rows), no value.
  *   locked vault nothing runs (a value is never sealed without the vault).
+ *   chained      a chained area's rows (mold_v0-195) never change: their values written before the field was encrypted
+ *                stay as they were stored (masked on every read like any other); new rows are sealed when written.
  *
  * Reads never wait for it: a value not yet sealed is masked like any other (src/encrypted-fields.ts maskFields).
  */
@@ -68,7 +70,7 @@ export async function encryptFieldsTick(opts: { batch?: number } = {}): Promise<
       const rows = await asPlatform(() => db.query<Raw>(
         `/* tenant: the encrypted-fields migration reads one area's rows of every workspace; each row is rewritten under withTenant for its own org_id */
          SELECT id::text AS id, org_id, key, data, xmin::text AS rev FROM workspace_records
-          WHERE pack = $1 AND area = $2 AND (data ->> '${FIELDS_TAG}') IS DISTINCT FROM $3 AND id > $4 ORDER BY id LIMIT $5`,
+          WHERE pack = $1 AND area = $2 AND (data ->> '${FIELDS_TAG}') IS DISTINCT FROM $3 AND NOT chained AND id > $4 ORDER BY id LIMIT $5`,
         [area.pack, area.name, tag, after, left]));
       cursors.set(id, rows.length < left ? 0 : Number(rows.at(-1)!.id)); // a short page ends the pass: start over next time
       left -= rows.length;
@@ -93,7 +95,7 @@ export async function encryptFieldsTick(opts: { batch?: number } = {}): Promise<
     }
     report.pending += Number((await asPlatform(() => db.query<{ n: number }>(
       `/* tenant: a count of one area's rows across workspaces still to migrate (no value read) */
-       SELECT count(*)::int AS n FROM workspace_records WHERE pack = $1 AND area = $2 AND (data ->> '${FIELDS_TAG}') IS DISTINCT FROM $3 AND org_id IS NOT NULL`,
+       SELECT count(*)::int AS n FROM workspace_records WHERE pack = $1 AND area = $2 AND (data ->> '${FIELDS_TAG}') IS DISTINCT FROM $3 AND NOT chained AND org_id IS NOT NULL`,
       [area.pack, area.name, tag])))[0]?.n ?? 0);
   }
   return report;
