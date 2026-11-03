@@ -229,8 +229,9 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
       "/admin/accounts/acme?section=team": "/admin/accounts", "/admin/records/audit_controls/k-1": "/admin/records/audit_controls",
     }, ABSENT);
     // With zero packs the pages a pack brings (Activity, Credentials, Notices, Schedules, a pack's tab) are not found.
+    // (The staff's /admin/activity is no route at all since mold_v0-211: not walked.)
     expect("zero packs", walk(zero), { "/app": "/app", "/app/billing": "/app/billing", "/app/usage": "/app/usage", "/app/profile": "/app/profile", "/admin/health": "/admin/health" },
-      new RegExp(`${ABSENT.source}|^/app/(activity|credentials|notices|schedules|vulnerabilities)(\\?|$)|^/admin/activity$`));
+      new RegExp(`${ABSENT.source}|^/app/(activity|credentials|notices|schedules|vulnerabilities)(\\?|$)`));
     console.log(`✓ the active entry (mold_v0-213): ${n} pages of both consoles each light exactly one entry, the right one (in-page tabs, a record's page, a filter, ?journey=, Accounts › Admins); Docs none`);
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
