@@ -336,7 +336,8 @@ function WebhooksTab() {
             { key: 'total', label: 'Deliveries', type: 'number', className: 'w-24 text-right', keep: true, value: (r) => r.total, render: (r) => num(r.total) },
             { key: 'succeeded', label: 'Delivered', type: 'number', className: 'w-24 text-right', value: (r) => r.succeeded, render: (r) => num(r.succeeded) },
             { key: 'failed', label: 'Failed', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.failed, render: (r) => (r.failed ? <span className='text-destructive'>{num(r.failed)}</span> : '0') },
-            { key: 'pending', label: 'Pending', type: 'number', className: 'w-20 text-right', value: (r) => r.pending, render: (r) => (r.retrying ? `${num(r.pending)} (${num(r.retrying)} retrying)` : num(r.pending)) },
+            { key: 'pending', label: 'Pending', type: 'number', className: 'w-20 text-right', value: (r) => r.pending, render: (r) => num(r.pending) },
+            { key: 'retrying', label: 'Retrying', type: 'number', className: 'w-20 text-right', value: (r) => r.retrying, render: (r) => (r.retrying ? <span className='text-amber-600 dark:text-amber-400'>{num(r.retrying)}</span> : '0') },
             { key: 'attempts', label: 'Attempts', type: 'number', className: 'w-24 text-right', value: (r) => r.attempts, render: (r) => num(r.attempts) },
             { key: 'last_at', label: 'Last', type: 'date', className: 'w-28', value: (r) => r.last_at, render: (r) => <When d={r.last_at} className='text-sm' /> }
           ]}
