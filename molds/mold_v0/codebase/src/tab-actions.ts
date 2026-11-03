@@ -39,9 +39,9 @@ const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => a
 const session = (res: Response) => res.locals.session as Session;
 
 /** A field as the console's form draws it (an argument of a kind, a field of an area). */
-type FormField = { name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
+export type FormField = { name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
   multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null };
-const formField = (raw: unknown): FormField => {
+export const formField = (raw: unknown): FormField => {
   const f = RecordFieldSchema.parse(raw);
   return { name: f.name, label: f.label, type: f.type, help: f.help ?? null, required: f.required === true,
     options: f.options ? f.options.map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })) : null,

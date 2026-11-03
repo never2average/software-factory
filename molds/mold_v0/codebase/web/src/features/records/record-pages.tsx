@@ -128,7 +128,7 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<Recor
 }
 
 /** A field's value in the peek: a reference to a record this page can show links to it. */
-function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown }) {
+export function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown }) {
   const to = f.type === 'reference' ? f.to : area.links.find((l) => l.field === f.name)?.area;
   const keys = (Array.isArray(v) ? v : [v]).filter((k): k is string => typeof k === 'string' && k !== '');
   if (to && keys.length && findRecordArea(base, to)) return (
@@ -140,7 +140,7 @@ function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 
 }
 
 /** The empty state inside the table: what fills the area and, for staff, where to fill it now. */
-function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
+export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
   const repos = useRepositories(base === 'admin');
   const e = recordEmptyText(area, base, base === 'admin' ? repoOf(area.name, repos.data?.repositories) : null);
   return <div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={e} id={`records-${area.name}-empty`} /></div>;
@@ -153,7 +153,7 @@ function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admi
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, fab }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, fab, rowAction }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -161,6 +161,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   summary?: ReactNode;
   /** The tab's primary floating action (mold_v0-208, features/tabs/action-fab.tsx): the table ends above it. */
   fab?: ReactNode;
+  /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
+  rowAction?: (r: RecordRow) => ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
   compact?: boolean;
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
@@ -189,7 +191,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       primary={source ? source.primary : data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
       empty={clocked && overdueOnly ? 'Nothing is overdue.' : empty}
       detailTitle={(r) => r.title || r.key}
-      detailActions={(r) => { const href = detailHref(r); return href ? <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button> : null; }}
+      detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
       detail={(r) => (
         <dl>
           {r.version && <Field label='Version'>{r.version}</Field>}

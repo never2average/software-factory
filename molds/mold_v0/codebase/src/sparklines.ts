@@ -14,7 +14,7 @@ import { metricRoles, metricUnit, RUN_SOURCES, sparkPlan, sparkSeries, SPARK_WEE
 import { bucketsOf, buildViews, computeSpec, type MetricAnswer, type MetricOptions, type Sealed } from "./metrics.js";
 import { packOpWithheld } from "./mcp-withheld.js";
 import { PackError } from "./pack-api.js";
-import type { Actor } from "./record-areas.js";
+import { SYSTEM_ACTOR, type Actor } from "./record-areas.js";
 import { fill } from "./vocabulary.js";
 
 export interface SparkAnswer {
@@ -36,8 +36,11 @@ const overOf = (m: SpecMetric) => ((RUN_SOURCES as readonly string[]).includes(m
 const lastOf = (a: MetricAnswer) => a.series?.[0]?.values.at(-1) ?? null;
 const valuesOf = (a: MetricAnswer) => a.series?.[0]?.values ?? [];
 
-/** The four cards of `tab` for one workspace, as `actor` may read them. `now` fixes "this week" (tests pass their own). */
-export async function computeSparklines(orgId: number, tab: SpecTab, actor: Actor, now = new Date()): Promise<SparkAnswers> {
+/**
+ * The four cards of `tab` for one workspace, as `actor` may read them. `now` fixes "this week" (tests pass their own).
+ * orgId null: no workspace (a staff record page's cards over a shared area, areaSparklines below).
+ */
+export async function computeSparklines(orgId: number | null, tab: SpecTab, actor: Actor, now = new Date()): Promise<SparkAnswers> {
   const b = buildViews();
   const readable = (m: SpecMetric) => !packOpWithheld(m.pack, "metrics") && (actor.role === null || metricRoles(m, b.areas).includes(actor.role));
   const plan = sparkPlan(tab, b, { readable, fill, label: tabLabel(tab, b) });
@@ -87,4 +90,18 @@ export function running(total: number, weekly: (number | null)[]): number[] {
     after += weekly[i] ?? 0;
   }
   return out;
+}
+
+/**
+ * A staff record page's four cards (mold_v0-212; GET /api/admin/records/_console/<area>/sparklines, src/record-routes.ts):
+ * a shared (platform) area's, exactly as an area tab over it would show them (sparkPlan's defaults: its records, new in
+ * the last 7 days, two of its pack's metrics over it, then changed in the last 7 days and its main enum's commonest
+ * value), over the area's shared rows. They name no workspace, so the query runs as platform work (staff only); every
+ * metric is readable by staff, as every staff GET is.
+ */
+export async function areaSparklines(area: string, now = new Date()): Promise<SparkAnswers> {
+  const a = buildViews().areas.find((x) => x.name === area && x.scope === "platform");
+  if (!a) throw new PackError("Not found", 404);
+  const tab = { kind: "area", id: `records_${a.name}`, area: a.name, pack: a.pack } as SpecTab;
+  return computeSparklines(null, tab, SYSTEM_ACTOR, now);
 }
