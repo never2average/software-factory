@@ -1204,11 +1204,12 @@ export type Chart = z.output<typeof ChartSchema>;
  * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
  *   overview      the tab's `charts` (mold_v0-063); `include` makes it a home page (mold_v0-134): with `setup` it is
  *                 drawn as the Setup page (mold_v0-172: the checklist of the setup steps and the packs' onboarding
- *                 steps, each with its prompt, the connection card and the `rail` cards beside it, the charts below);
- *                 `notices` the records due soon (below the checklist, or a `rail` card). A tab that includes setup
- *                 is drawn at /app itself (mold_v0-175; its /app/<id> redirects there), `charts_title` the heading
- *                 above its charts; /app/notices then redirects to the tab, and a build refuses a setup or a notices
- *                 tab beside it (its page would only redirect here)
+ *                 steps, each with its prompt, the connection card and the `rail` cards beside it); `notices` the
+ *                 records due soon (below the checklist, or a `rail` card). A tab that includes setup is drawn at
+ *                 /app itself (mold_v0-175; its /app/<id> redirects there); /app/notices then redirects to the tab,
+ *                 and a build refuses a setup or a notices tab beside it (its page would only redirect here). Since
+ *                 mold_v0-207 a home tab's `charts` (and `charts_title`) are accepted and not drawn: the home page has
+ *                 no charts grid (its headline row, the Due soon card and the rail's number cards stay)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
  *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
@@ -1309,6 +1310,61 @@ export const TabAreaSchema = z.object({
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type TabArea = z.output<typeof TabAreaSchema>;
+/**
+ * A list tab's primary action (mold_v0-208): one floating button at the bottom right of the tab's page, in the brand's
+ * primary colour, that opens an existing form of the shell, never one of the pack's own:
+ *   start_run       start a run of one of the pack's job kinds (`job_kind`), or of one picked from `job_kinds` (2 to
+ *                   20, in that order), or from every kind of the pack when neither is given: the kind's arguments
+ *                   (args) as a form, then the record it runs over and its environment when the kind takes them; the
+ *                   run starts as the generated start_<kind> tool starts it (src/tab-actions.ts). On an area, runs or
+ *                   reports tab
+ *   new_schedule    the schedules page's Add a schedule form, its run kind preset to `job_kind` (one the pack itself
+ *                   schedules) when given. On a schedules tab
+ *   create_record   a new record of `area` (one of the pack's own workspace areas, not read from a repository): its
+ *                   key, title and fields, through the data API's create (POST /api/data/<area>). On an area tab
+ *   link            (mold_v0-213) a plain link, `label` and `href` both required: an /app page of the build, an
+ *                   https:// or mailto: address (the empty state's rules), for a list nobody adds to by hand but whose
+ *                   rows a setting brings (a mailbox connected on Settings › Email). On any list tab
+ * `label` is the button's words (a phone shows the icon alone, the label its accessible name); absent, the shell's
+ * ("Start {run}", "Generate <report>", "New schedule", "Add <record>"). The button is shown only to a role that may do
+ * the action (the start tool's permission, manage for a schedule, the area's create roles), and the server refuses the
+ * rest anyway; a link is everyone's who sees the tab.
+ *
+ * Every list tab has one by default (mold_v0-213; src/metric-spec.ts tabAction): `action` absent is the shell's own,
+ * from what the tab shows; `action: false` (with `reason`, required, documented and shown nowhere) is none.
+ */
+export const TAB_ACTION_KINDS = ["start_run", "new_schedule", "create_record", "link"] as const;
+/** The tab kinds that are lists (mold_v0-213): each has a primary action, its own, the shell's default, or none with a reason. */
+export const LIST_TAB_KINDS = ["area", "runs", "reports", "schedules"] as const;
+/** The tab kinds each action is for (mold_v0-208). */
+export const TAB_ACTION_TABS: Record<(typeof TAB_ACTION_KINDS)[number], readonly string[]> = {
+  start_run: ["area", "runs", "reports"], new_schedule: ["schedules"], create_record: ["area"], link: LIST_TAB_KINDS,
+};
+export const TabActionSchema = z.object({
+  kind: z.enum(TAB_ACTION_KINDS, { error: () => `an action is one of ${TAB_ACTION_KINDS.join(", ")}` }),
+  label: emptyText(40).optional(),
+  job_kind: name.optional(),
+  job_kinds: z.array(name).min(2, "2 to 20 job kinds (one: job_kind)").max(20).optional(),
+  area: name.optional(),
+  href: z.string().min(1).max(500).superRefine((h, ctx) => { const p = hrefProblem(h); if (p) ctx.addIssue({ code: "custom", message: p }); }).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((a, ctx) => {
+  const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (a.kind === "link") {
+    if (a.label === undefined) bad("a link action names its label", "label");
+    if (a.href === undefined) bad("a link action names where it goes (href)", "href");
+    for (const k of ["job_kind", "job_kinds", "area"] as const) if (a[k] !== undefined) bad(`${k} is not for a link action`, k);
+    return;
+  }
+  if (a.href !== undefined) bad("href is for a link action", "href");
+  if (a.job_kind !== undefined && a.job_kinds !== undefined) bad("one job kind (job_kind) or a picker of several (job_kinds), not both", "job_kinds");
+  if (a.job_kinds && new Set(a.job_kinds).size !== a.job_kinds.length) bad("a job kind is listed twice", "job_kinds");
+  if (a.kind !== "start_run" && a.job_kinds !== undefined) bad("job_kinds is for a start_run action", "job_kinds");
+  if (a.kind === "create_record" && a.job_kind !== undefined) bad("job_kind is for a start_run or new_schedule action", "job_kind");
+  if (a.kind === "create_record" && a.area === undefined) bad("a create_record action names its record area (area)", "area");
+  if (a.kind !== "create_record" && a.area !== undefined) bad("area is for a create_record action", "area");
+});
+export type TabAction = z.output<typeof TabActionSchema>;
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -1336,11 +1392,15 @@ export const TabSchema = z.object({
    * On a home tab (mold_v0-203): 1 to 4 of them, the headline row above its columns. Absent there: no row.
    */
   sparklines: z.array(name).min(1, "1 to 4 metric names").max(4, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab").optional(),
-  /** A home tab's heading above its charts, below both columns (mold_v0-175); none by default. */
+  /** A home tab's heading above its charts (mold_v0-175); accepted, not drawn since mold_v0-207 (no charts on the home page). */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
+  /** The tab's primary floating action (mold_v0-208): TabActionSchema; false for none (mold_v0-213), with `reason`. */
+  action: z.union([TabActionSchema, z.literal(false)]).optional(),
+  /** Why a list tab has no primary action (`action: false`, mold_v0-213): required with it, documented and shown nowhere. */
+  reason: z.string().trim().min(1).max(300).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -1373,6 +1433,12 @@ export const TabSchema = z.object({
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
   if (t.empty && t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") bad("empty is for an area, runs or reports tab", "empty");
+  if (t.action && TAB_ACTION_TABS[t.action.kind] && !TAB_ACTION_TABS[t.action.kind].includes(t.kind))
+    bad(`a ${t.action.kind} action is for ${TAB_ACTION_TABS[t.action.kind].join(", ")} tabs`, "action", "kind");
+  // mold_v0-213: no action on a list tab is said with its reason; a reason is only for that.
+  if (t.action === false && !(LIST_TAB_KINDS as readonly string[]).includes(t.kind)) bad(`action: false is for a list tab (${LIST_TAB_KINDS.join(", ")}): other tabs have no action`, "action");
+  if (t.action === false && t.reason === undefined) bad("action: false says why the tab has no primary action (reason)", "reason");
+  if (t.reason !== undefined && t.action !== false) bad("reason is for action: false (why a list tab has no primary action)", "reason");
   if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
   if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
   if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
@@ -1778,6 +1844,33 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     else if (!SECTION_KINDS.includes(x.kind as never)) problems.push(at(`tab ${t.id}: sections ${id}: an in-page tab is an area, runs, reports or schedules tab; ${id} is a ${x.kind} tab`));
     else if (inSections.has(id) && inSections.get(id) !== t.id) problems.push(at(`tab ${t.id}: sections ${id}: tab ${inSections.get(id)} shows it already`));
     inSections.set(id, t.id);
+  }
+  // A tab's primary action (mold_v0-208): this pack's own job kinds (none gated by an approval: the console's form has
+  // no preview to approve), a kind the pack itself schedules for a new schedule, this pack's own writable workspace area.
+  const ownKinds = [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])] as { name?: string; approval?: unknown }[];
+  for (const t of p.tabs ?? []) {
+    const a = t?.action as { kind?: string; job_kind?: string; job_kinds?: string[]; area?: string } | false | undefined;
+    if (!a || typeof a !== "object") continue;
+    const where = `tab ${t.id}: action ${a.kind}`;
+    if (a.kind === "start_run" || a.kind === "new_schedule") {
+      if (!ownKinds.length) problems.push(at(`${where}: this pack declares no job kind to start`));
+      for (const k of [...(a.job_kind ? [a.job_kind] : []), ...(a.job_kinds ?? [])]) {
+        const kind = ownKinds.find((x) => x?.name === k);
+        if (!kind) problems.push(at(`${where}: job kind ${k} is not one this pack declares`));
+        else if (a.kind === "start_run" && kind.approval) problems.push(at(`${where}: job kind ${k} waits for an approval of its preview: start it from an AI client with that approval`));
+      }
+    }
+    if (a.kind === "new_schedule") {
+      const scheduled = new Set((p.schedules ?? []).map((s) => s?.job_kind));
+      if (!scheduled.size) problems.push(at(`${where}: this pack schedules no job kind (schedules), so a workspace adds no schedule of its own`));
+      else if (a.job_kind && !scheduled.has(a.job_kind)) problems.push(at(`${where}: job kind ${a.job_kind} is not one this pack schedules (a workspace adds schedules of the kinds its pack schedules)`));
+    }
+    if (a.kind === "create_record" && a.area) {
+      const ar = (p.recordAreas ?? []).find((x) => x?.name === a.area) as { scope?: string; repository?: string } | undefined;
+      if (!ar) problems.push(at(`${where}: this pack declares no record area ${a.area}`));
+      else if (ar.scope !== "workspace") problems.push(at(`${where}: ${a.area} is a shared area: a workspace adds records only to its own areas`));
+      else if (ar.repository !== undefined) problems.push(at(`${where}: ${a.area} is read from repository ${ar.repository}: its records are not added by hand`));
+    }
   }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.checks, CheckSchema, "checks");

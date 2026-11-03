@@ -28,6 +28,9 @@ import { useNav } from './nav-context';
 import { BrandMark } from '@/components/brand';
 import { profile } from '@/config/profile.generated';
 import { hiddenConsoleUrls } from '@/config/pack-nav.generated';
+import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
+import { useSearchParams } from 'next/navigation';
+import { cn } from '@/lib/utils';
 
 /**
  * Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link; a build that hides
@@ -48,6 +51,17 @@ function usePlatformAdmin(area: string) {
   return is;
 }
 
+/** The page's query, read below a Suspense boundary (useSearchParams), so the sidebar renders the same on the server. */
+function SearchProbe({ onChange }: { onChange: (search: string) => void }) {
+  const params = useSearchParams();
+  const search = params?.toString() ?? '';
+  React.useEffect(() => onChange(search), [search, onChange]);
+  return null;
+}
+
+/** An active entry stands out (mold_v0-213): the brand's colour behind it, its words in it, a bar at its edge. */
+const ACTIVE = 'data-active:bg-primary/10 data-active:text-primary data-active:font-semibold dark:data-active:bg-primary/20 data-active:shadow-[inset_3px_0_0_var(--primary)] data-active:hover:bg-primary/15 data-active:hover:text-primary';
+
 export default function AppSidebar() {
   const pathname = useConsolePathname();
   const { isOpen } = useMediaQuery();
@@ -59,8 +73,15 @@ export default function AppSidebar() {
   // A declared sidebar that lists API keys (mold_v0-133, a keys tab) has it in its group: not again in the footer.
   const keysInNav = groups.some((g) => g.items.some((i) => i.url === '/app/keys'));
   const base = area === 'admin' ? '/admin' : '/app';
-  // A module is active on its own page and its sub-pages; the area's home only on itself.
-  const active = (url: string) => pathname === url || (url !== base && pathname.startsWith(`${url}/`));
+  // Exactly one entry is active (mold_v0-213, src/lib/active-nav.ts): the page's own, or the one it belongs to (a
+  // record's page its list's, an in-page tab or a filter its page's, a sub-page its module's); the area's home only on itself.
+  const [search, setSearch] = React.useState('');
+  const footer = [...(area === 'portal' && memberKeysOn && !keysInNav ? ['/app/keys'] : []), `${base}/profile`];
+  const urls = React.useMemo(() => navUrls(filteredGroups, footer), [filteredGroups, footer.join(' ')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const activeUrl = activeNavUrl(search ? `${pathname}?${search}` : pathname, urls, navOptions(area === 'admin' ? 'admin' : 'portal'));
+  const active = (url: string) => url === activeUrl;
+  // The footer's Profile is lit only when the sidebar has no Profile entry of its own (one entry lit, never two).
+  const profileInNav = urls.slice(0, urls.length - footer.length).includes(`${base}/profile`);
 
   React.useEffect(() => {
     // Side effects based on sidebar state changes
@@ -85,6 +106,7 @@ export default function AppSidebar() {
           <OrgSwitcher />
         )}
       </SidebarHeader>
+      <React.Suspense fallback={null}><SearchProbe onChange={setSearch} /></React.Suspense>
       <SidebarContent className='overflow-x-hidden'>
         {filteredGroups.map((group) => (
           <SidebarGroup key={group.label || 'ungrouped'} className='py-0 group-data-[collapsible=icon]:py-1.5'>
@@ -96,7 +118,8 @@ export default function AppSidebar() {
                 return item?.items && item?.items?.length > 0 ? (
                   <Collapsible
                     key={item.title}
-                    defaultOpen={item.isActive}
+                    // A group holding the active entry opens on load (mold_v0-213).
+                    defaultOpen={item.isActive || active(item.url) || !!item.items?.some((x) => active(x.url))}
                     render={<SidebarMenuItem />}
                   >
                     <CollapsibleTrigger
@@ -104,7 +127,7 @@ export default function AppSidebar() {
                         <SidebarMenuButton
                           tooltip={item.title}
                           isActive={active(item.url)}
-                          className='group/collapsible'
+                          className={cn('group/collapsible', ACTIVE)}
                         />
                       }
                     >
@@ -118,7 +141,8 @@ export default function AppSidebar() {
                           <SidebarMenuSubItem key={subItem.title}>
                             <SidebarMenuSubButton
                               render={<Link href={subItem.url} aria-label={subItem.title} />}
-                              isActive={pathname === subItem.url}
+                              isActive={active(subItem.url)}
+                              className={ACTIVE}
                             >
                               <span>{subItem.title}</span>
                             </SidebarMenuSubButton>
@@ -139,6 +163,7 @@ export default function AppSidebar() {
                       }
                       tooltip={item.title}
                       isActive={!item.external && active(item.url)}
+                      className={ACTIVE}
                     >
                       <Icon />
                       <span>{item.title}</span>
@@ -169,14 +194,14 @@ export default function AppSidebar() {
             // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are, unless the profile
             // turns member keys off (mold_v0-099).
             <SidebarMenuItem>
-              <SidebarMenuButton size='sm' tooltip='API keys' isActive={pathname === '/app/keys'} render={<Link href='/app/keys' />}>
+              <SidebarMenuButton size='sm' tooltip='API keys' isActive={active('/app/keys')} className={ACTIVE} render={<Link href='/app/keys' />}>
                 <Icons.lock />
                 <span>API keys</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
           <SidebarMenuItem className='group/me'>
-            <SidebarMenuButton tooltip='Profile' className='h-10' isActive={pathname === `${base}/profile`} render={<Link href={`${base}/profile`} aria-label='Your profile' />}>
+            <SidebarMenuButton tooltip='Profile' className={cn('h-10', ACTIVE)} isActive={!profileInNav && active(`${base}/profile`)} render={<Link href={`${base}/profile`} aria-label='Your profile' />}>
               {user && <UserAvatarProfile className='size-7 rounded-lg' showInfo compact user={user} />}
             </SidebarMenuButton>
             <button

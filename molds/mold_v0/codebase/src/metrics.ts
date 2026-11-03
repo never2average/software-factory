@@ -24,7 +24,7 @@ import { PackError, type Metric } from "./pack-api.js";
 import { columnOf, metricRoles, metricUnit, pointOf, RUN_SOURCES, viewsOf, type BuildViews, type Column, type RunSource, type SpecArea, type SpecMetric } from "./metric-spec.js";
 import { packs } from "./packs.js";
 import { findArea, may, type Actor } from "./record-areas.js";
-import { withTenant } from "./tenant-scope.js";
+import { asPlatform, withTenant } from "./tenant-scope.js";
 
 /** Rows of a sealed area opened and evaluated in code, at most. */
 export const MAX_SEALED_ROWS = 5000;
@@ -227,7 +227,7 @@ type Cell = { k: string | null; b: string | null; v: number | null; n: number };
 /** A metric's cells, and (group_by_list "each", where a row may sit in several groups) the rows it read. */
 type Cells = { cells: Cell[]; rows?: number };
 
-async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Promise<Cells> {
+async function runSql(orgId: number | null, m: SpecMetric, src: Source, now: Date): Promise<Cells> {
   // One statement per call: the cells (grouped), or for "each" also the rows read (the same rows, not grouped).
   const statement = (grouped: boolean) => {
     const q = new Sql();
@@ -260,7 +260,7 @@ async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Pro
     GROUP BY 1, 2${bounded ? ` ORDER BY 3 DESC NULLS LAST, 1 LIMIT ${q.p(m.limit + 1)}` : ""}`, params: q.params };
   };
   const db = await getDb();
-  return withTenant(orgId, () => db.transaction(async (tx) => {
+  return scoped(orgId, () => db.transaction(async (tx) => {
     await tx.query(`SET LOCAL statement_timeout = ${METRIC_TIMEOUT_MS}`);
     const c = statement(true);
     const cells = await tx.query<Cell>(c.sql, c.params);
@@ -270,6 +270,12 @@ async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Pro
     return { cells, rows: Number(r?.n ?? 0) };
   }));
 }
+
+/**
+ * Where a metric's queries run: inside the workspace's tenant scope, or (orgId null: a staff page's cards over a shared
+ * area, mold_v0-212) as platform work; computeSpec allows null only for a platform area, whose rows name no workspace.
+ */
+const scoped = <T>(orgId: number | null, fn: () => T): T => (orgId === null ? asPlatform(fn) : withTenant(orgId, fn));
 
 // ---------- the same rules in code, for sealed rows ----------
 
@@ -407,8 +413,8 @@ async function sealedRows(orgId: number, area: SpecArea): Promise<Sealed> {
   });
 }
 /** Does the workspace hold sealed rows in this area? (An asset area's always are; mold_v0-066 may seal others.) */
-async function hasSealed(orgId: number, area: SpecArea): Promise<boolean> {
-  if (area.scope !== "workspace") return false;
+async function hasSealed(orgId: number | null, area: SpecArea): Promise<boolean> {
+  if (area.scope !== "workspace" || orgId === null) return false;
   if (area.role === "asset") return true;
   const [r] = await withTenant(orgId, async () => (await getDb()).query<{ x: boolean }>(
     "SELECT EXISTS (SELECT 1 FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND sealed) AS x", [orgId, area.pack, area.name]));
@@ -421,7 +427,7 @@ const round = (v: number | null) => (v === null || !Number.isFinite(v) ? null : 
 const DUE_LABELS = (soon: number): Record<string, string> => ({ overdue: "Overdue", due_soon: `Due within ${soon} day${soon === 1 ? "" : "s"}`, later: "Later", none: "No date" });
 
 /** Group labels: an enum's option labels, Yes/No, due buckets, a referenced record's title (when the actor may read it). */
-async function labeler(orgId: number, m: SpecMetric, over: SpecArea | RunSource, keys: (string | null)[], actor: Actor): Promise<(k: string | null) => string> {
+async function labeler(orgId: number | null, m: SpecMetric, over: SpecArea | RunSource, keys: (string | null)[], actor: Actor): Promise<(k: string | null) => string> {
   if (m.group_by === undefined) return () => m.label;
   if (typeof m.group_by === "object") { const l = DUE_LABELS(m.group_by.soon_days); return (k) => l[k ?? "none"] ?? String(k); }
   const col = columnOf(over, m.group_by) as Column;
@@ -447,13 +453,15 @@ async function labeler(orgId: number, m: SpecMetric, over: SpecArea | RunSource,
 }
 
 /** The titles of some records of an area, in one query (a sealed title opened with the workspace's key). */
-async function titlesOf(orgId: number, a: NonNullable<ReturnType<typeof findArea>>, keys: string[]): Promise<Map<string, string>> {
+async function titlesOf(orgId: number | null, a: NonNullable<ReturnType<typeof findArea>>, keys: string[]): Promise<Map<string, string>> {
   const db = await getDb();
-  const rows = a.scope === "platform"
-    ? await withTenant(orgId, () => db.query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [a.pack, a.name, keys]))
+  // A staff page's cards (no workspace) name a workspace area's records by their keys.
+  if (orgId === null && a.scope !== "platform") return new Map();
+  const rows = a.scope === "platform" || orgId === null
+    ? await scoped(orgId, () => db.query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [a.pack, a.name, keys]))
     : await withTenant(orgId, () => db.query<{ key: string; title: string | null }>("SELECT key, title FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, a.pack, a.name, keys]));
   const out = new Map<string, string>();
-  for (const r of rows) if (r.title) out.set(r.key, isSealed(r.title) ? await withTenant(orgId, () => open(orgId, r.title!)) : r.title);
+  for (const r of rows) if (r.title) out.set(r.key, isSealed(r.title) && orgId !== null ? await withTenant(orgId, () => open(orgId, r.title!)) : r.title);
   return out;
 }
 
@@ -469,13 +477,15 @@ export type MetricOptions = { forceCode?: boolean; sealed?: Map<string, Promise<
  * A metric given whole (a declared one, or one the shell makes from a declaration: a card's weekly series, its default
  * cards; src/sparklines.ts), over an area or run source of the build, under the same rules as a declared one.
  */
-export async function computeSpec(orgId: number, m: SpecMetric, actor: Actor, now = new Date(), opts: MetricOptions = {}): Promise<MetricAnswer> {
+export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Actor, now = new Date(), opts: MetricOptions = {}): Promise<MetricAnswer> {
   if (actor.role !== null && !metricRoles(m, buildViews().areas).includes(actor.role)) throw new PackError(`Your role can't read ${m.label}.`, 403);
   const src = sourceOf(m);
+  // No workspace (mold_v0-212: a staff record page's cards): a shared area's rows only, never a clock (worked out per workspace).
+  if (orgId === null && !("area" in src && src.area.scope === "platform" && !m.clock)) throw new PackError(`${m.label} is counted per workspace`, 404);
   const over = overOf(src);
   let got: Cells, partial = false;
   // A metric over a clock's status (mold_v0-191) is counted in code: a deadline is worked out per record, never in SQL.
-  if ("area" in src && (opts.forceCode || m.clock || (await hasSealed(orgId, src.area)))) {
+  if ("area" in src && orgId !== null && (opts.forceCode || m.clock || (await hasSealed(orgId, src.area)))) {
     // One read of an area's sealed rows per request, shared by its metrics.
     const cache = opts.sealed ?? new Map<string, Promise<Sealed>>();
     if (!cache.has(src.area.name)) cache.set(src.area.name, sealedRows(orgId, src.area));

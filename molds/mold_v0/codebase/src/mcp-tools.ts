@@ -31,7 +31,7 @@ import { adminDataApi, DATA_API_OPERATIONS, dataApi, type DataCaller } from "./d
 import { getDb } from "./db.js";
 import { generateCatalog, plain, type CatalogPack, type GeneratedTool } from "./mcp-catalog.js";
 import { AgentJobKindSchema, JobKindSchema, PackError, type PackTool, type PackToolContext, type Workspace } from "./pack-api.js";
-import { declaredRuns, packs, runPackTool, workspaceDb, type InstalledPack } from "./packs.js";
+import { declaredRuns, packs, runPackTool, workspaceDb, workspaceOf, type InstalledPack } from "./packs.js";
 import { PROFILE } from "./profile.js";
 import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
@@ -272,6 +272,31 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
   return { app, done: list.done, total: list.total, steps, next,
     message: `${hello} ${list.done} of ${list.total} setup steps are done. Next: ${nextStep.label}.${nextStep.help ? ` ${nextStep.help}` : ""} How: ${nextStep.how}. ` +
       `Tell the user their next step in one or two sentences and offer this prompt to type: "${prompt}"` };
+}
+
+/**
+ * The generated start_<kind> tool of one of a pack's job kinds on the customer door (mold_v0-208: a tab's floating action
+ * starts runs through it), or null when the pack withholds it or moved it to the admin MCP.
+ */
+export function startToolOf(pack: string, kind: string): GeneratedTool | null {
+  return generatedTools().find((t) => t.op === "start" && t.pack === pack && t.kind === kind && t.door === "workspace" && !t.admin_only) ?? null;
+}
+
+/**
+ * A run started from the console (mold_v0-208, src/tab-actions.ts) exactly as the generated start tool starts one: its
+ * own input schema (unknown keys refused, the kind's arguments typed, the target record and environment), the same
+ * permission check and handler, the session's workspace under its row-level security. Not an MCP call, so it adds no
+ * MCP activity of its own; the run records who asked, as any run does.
+ */
+export async function startFromConsole(org: Org, t: GeneratedTool, input: unknown): Promise<{ run: unknown }> {
+  const parsed = z.strictObject(t.input).safeParse(input ?? {});
+  if (!parsed.success) throw new PackError(parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ").slice(0, 500), 400);
+  const ws = workspaceOf(org);
+  const actor = { role: org.role ?? null, userId: org.userId ?? null };
+  const { workspaceRuns } = await import("./runs.js");
+  const ctx = { pack: t.pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(t.pack, org.orgId, actor),
+    runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, org.userId ?? null, org), org.orgId, actor) };
+  return (await withTenant(org.orgId, () => handle(t, ws, parsed.data as Record<string, unknown>, ctx))) as { run: unknown };
 }
 
 /** A generated customer tool as a pack tool (src/packs.ts runPackTool runs it). */

@@ -1,6 +1,6 @@
 /**
  * The staff console's Health tabs in a build without the session engine (mold_v0-204; web/src/features/admin/
- * health-tabs.tsx): Runs, Scheduled work, Deliveries and Status, beside Errors (src/insights.ts). A build with the
+ * health-tabs.tsx): Runs, Scheduled work, Email Delivery (?section=deliveries) and Status, beside Errors (src/insights.ts). A build with the
  * engine keeps its own tabs (Errors, Jobs, Sessions) as they were; these routes answer there too, unused.
  *
  * Staff only (the admin router's guard, `/api/admin/onboarding/health/*`), read only, and never a person's data, an
@@ -34,6 +34,7 @@ import { vaultUnlocked } from "./keyvault.js";
 import { vaultStatus, type RawConn } from "./vault-status.js";
 import { loadMigrations } from "./migrate.js";
 import { word } from "./vocabulary.js";
+import { healthSamplingOn } from "./health-samples.js";
 
 const n = (v: unknown) => Number(v ?? 0) || 0;
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
@@ -169,6 +170,7 @@ export const JOB_SPECS: readonly JobSpec[] = [
   { id: "audit_retention", label: "Audit retention", about: "Removes audit entries older than the app's retention.", on: () => { const s = auditSettings(); return s.data || s.platform; }, every: () => (onVercel() ? 300 : 3600) },
   { id: "workspace_retention", label: "Workspace store retention", about: "Expires old versions of the workspaces' stored files (daily).", on: () => retentionWired(), every: () => (onVercel() ? 300 : 60) },
   { id: "run_charges", label: "Run charges", about: "Hands pending run charges to billing.", on: () => runBillingOn(), every: () => (onVercel() ? 300 : 60) },
+  { id: "health_samples", label: "Health samples", about: "Samples the live checks for Health › Status's graphs every few minutes and drops samples older than 35 days.", on: () => healthSamplingOn(), every: () => (onVercel() ? 300 : 240) },
 ];
 /** The jobs this build runs (the same conditions as the loops that start them). */
 export const enabledJobs = () => JOB_SPECS.filter((j) => { try { return j.on(); } catch { return false; } });
@@ -189,7 +191,7 @@ export async function healthScheduled() {
   return { runtime: onVercel() ? "vercel" : "server", jobs };
 }
 
-// ---------------------------------------------------------------- Deliveries
+// ---------------------------------------------------------------- Email Delivery (the tab's section id: deliveries)
 
 export const deliveriesOn = () => companyEmailWired() || !!developerSurface();
 
@@ -243,7 +245,7 @@ export async function healthDeliveries(q: Record<string, unknown>) {
 
 class Rollback extends Error {}
 /** The key vault's status (src/vault-status.ts) over a transaction of the app's own pool, read only and rolled back. */
-async function vaultReport() {
+export async function vaultReport() {
   let out: Awaited<ReturnType<typeof vaultStatus>> | null = null;
   await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     // vaultStatus opens and rolls back its own transaction on a raw connection: here the transaction is the pool's,

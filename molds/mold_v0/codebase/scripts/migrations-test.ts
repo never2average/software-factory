@@ -917,6 +917,24 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} scheduler jobs: its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Health › Status's samples (mold_v0-210, health_samples, found by name): numbers and states, closed to tenant work;
+  // its rollback drops it with its rows, leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "health_samples")!.version;
+    const d = await shellAt(kind);
+    await d.query("INSERT INTO health_samples (window_seconds, up, db_ms, rls, storage, runs_ended, runs_failed) VALUES (300, true, 3, 'ok', 'none', 4, 1)");
+    await assert.rejects(d.query("INSERT INTO health_samples (window_seconds, up, rls, storage) VALUES (300, true, 'someone', 'none')"), /check|violates/i, "a state outside its set is refused");
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_health_samples.sql`), "utf8");
+    await d.exec(rb);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_health_samples")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} health samples: states checked; its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

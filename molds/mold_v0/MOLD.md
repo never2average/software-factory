@@ -353,6 +353,19 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
   (`testing/console/world.mts`) writes them into its throwaway database so the pages are graded with rows; a deployed
   build never writes them. `npm run test:record-pages` checks the empty states, the staff guide and the samples rule.
+  **The staff record pages are the standard list** (mold_v0-212; `web/src/features/records/staff-records.tsx`):
+  `/admin/records/<area>` has no title or description above it; it reads as a customer's list tab does (mold_v0-208):
+  the area's four cards (`GET /api/admin/records/_console/<area>/sparklines`, `src/sparklines.ts` `areaSparklines`: an
+  area tab's defaults over the shared rows, counted as platform work since they name no workspace; staff read every
+  card), the search row, the table, a row opening the record beside the list. Where staff may write, **New record** is
+  the primary floating action (the tab action's create form, `CreateRecordForm`) and an open record has **Edit** (its
+  title and fields, data the form does not show kept); both write through `/api/admin/data`, whose checks are unchanged.
+  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create and edit only for an area no
+  repository fills (an upstream catalog's registry, such as a regulators list, stays read only on the console: its
+  rows are its index's), with no encrypted field, for a role with `library`, the staff tool not withheld. The record's
+  own page (`/admin/records/<area>/<key>`) is one details card: key, every field by its label (references linked),
+  version, updated, its clocks' timeline and its links, with Edit on the same terms. No pack declares anything for it.
+  `npm run test:record-areas` checks the cards and the offer per role; `npm run test:record-pages` the layout.
   **Every customer list is that table (mold_v0-176).** An area tab's table view (`RecordTableView`, the same component
   as the list page: a merged tab's rows too, a row opening the record of the first of its areas), the `runs` and
   `reports` tabs (`web/src/features/tabs/runs.tsx`: kind in the pack's words, status, the asset record it ran over,
@@ -1219,7 +1232,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Deliveries**, only when a pack declares company email or the app has a developer surface:
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface (its webhooks are shown there too, for now):
   emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
   endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
   `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
@@ -1228,6 +1241,28 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   start) and the mold version (the shell's newest migration, the package version). Every error shown is cut short and
   has addresses, links, credentials and key-like text taken out (`safeError`). Proof: `npm run test:health-tabs`, and
   `npm run test:admin-sections` (the engine's tabs as before).
+- **Health › Status as a grid of graphs** (mold_v0-210, built): the Status tab (`/admin/health?section=status`) is a grid
+  (three columns from 1280 px, two from 768 px, one on a phone; the console's own charts, `components/ui/chart`,
+  recharts, in `components/layout/chart-grid` boxes) with one graph per signal, its current state as its headline
+  (e.g. "Up · 4 ms") and one 24h / 7d / 30d switch for the whole grid: database latency, API latency (p50 and p95), the
+  health check (an uptime band: the share of samples up per bucket, grey where there was no sample), the row-level
+  security probe and object storage (bands), the key vault's providers set and missing, the Claude provider's errors
+  and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate and, only when
+  the app has deliveries, the delivery failure rate; the last deploy and the mold version are a line above it, not a
+  graph. The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
+  work, `src/rls.ts` NO_ACCESS; rollback: `sql/rollback/0038_health_samples.sql`, which drops it with its rows), one
+  row every 4 minutes at most across processes (`src/health-samples.ts`): a server's own loop (`startHealthSampler`)
+  and, on Vercel, the cron entry, so history exists without the long-running server; each sample is tracked as the
+  scheduled job `health_samples` and prunes samples older than 35 days. A sample is numbers and states only (no free
+  text column: `rls` and `storage` are checked against their sets), never an address, a secret or a person. The API's
+  latency is this process's requests since the sample before (a request's duration, nothing else; not `/healthz` or
+  the cron entry), else the MCP requests' times every instance recorded (`mcp_events.ms`); the Claude provider's
+  counters are the day's so far (`gateway_model_usage`), turned into differences per sample; refusals are the runs'
+  refused-and-retried events. Staff only: `GET /api/admin/onboarding/health/history?range=24h|7d|30d`. Only in a build
+  without the session engine (`APP_SCHEDULER=off` turns the loop off too): an engine build such as Octillion has
+  neither the sampling nor these tabs, so its Health is unchanged. Proof: `npm run test:health-tabs` (sampling,
+  throttle, retention, buckets, numbers and states only, closed to tenant queries), `npm run test:migrations`
+  (rollback), `npm run check:rls`.
 - **Accounts › Admins** (mold_v0-204, built): the platform's staff and their roles are the Admins tab of Accounts
   (`/admin/accounts?section=admins`, `web/src/features/admin/accounts-tabs.tsx`: Accounts | Admins, the same tab strip
   as Health's), in every app; the sidebar has no Admins entry and `/admin/admins` is gone (the console's not-found page,
@@ -1611,7 +1646,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   exactly those, in order, grouped by `group` (a group shared by packs is one section); with none it is the shell's own,
   unchanged (`npm run test:console-tabs` compares the zero-pack and the no-tab sidebars with snapshots taken before 058).
   Kinds: `overview` (charts), `area` (a record area's `views`: table, board by a single-choice enum, the lifecycle's
-  field by default, timeline by a date field or updated, detail; its charts above), `runs`, `reports` (finished runs and
+  field by default, timeline by a date field or updated, detail; no charts since mold_v0-208), `runs`, `reports` (finished runs and
   their results), and the shell's own pages `credentials`, `usage`, `schedules`, `notices`, `setup`, `billing`,
   `profile`, `team` and `keys` (the Team part of Billing and the person's own API keys, mold_v0-133; a build refuses
   `keys` when member keys are off; two packs' tabs that open one shell page are one sidebar entry, the first's), or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
@@ -1672,13 +1707,15 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   while open, its prompt in a Copy prompt box (a pack step's pack.json `prompt`, the get_started tool's "say"; the
   current one highlighted, done ones checked), then tips when the build has them; the right column is the "Connect your
   AI client" card (pick a client, the URL with Copy URL, Test my connection), then the tab's `rail`, up to two cards in
-  order: `journeys` (the journey picker: every build has journeys, mold_v0-175: "Get set up", the setup steps
-  themselves, always first, then the journeys component's when pack.json `journeys` turns it on), `notices` (the records due soon, the first
+  order: `journeys` (since mold_v0-207 the **Due soon** card, below; the journey selector it once was is the main
+  column's heading), `notices` (the records due soon, the first
   five then "Show all"; `DueSoonCard` in `web/src/features/schedules/notices-page.tsx`; needs `include: notices`), or
   `chart:<name>` (one of the pack's `number` charts as a card of its tiles, with a link to the pack's other overview
-  tab that lists it). Without `rail` the second card is the journey picker (the Setup page's own layout, zero packs
-  included: Get set up alone there). Included `notices` no card shows follow the checklist (`DueSoonSection`); the tab's
-  `charts` come below both columns, under its `charts_title` when it has one (mold_v0-175; Maxwell's "Numbers"). The
+  tab that lists it). Without `rail` the second card is the Due soon card (the Setup page's own layout, zero packs
+  included). Included `notices` no card shows follow the checklist (`DueSoonSection`, headed "Notices" in a build with a
+  clock, beside the Due soon card). **No charts on the home page** (mold_v0-207): the tab's `charts` and `charts_title`
+  are accepted (a pack stays valid: its metrics still drive the headline row, the list tabs' cards and the rail's number
+  cards) and not drawn; a build does not refuse them, so packs written before keep building. The
   tab is drawn at `/app` itself (mold_v0-175, `web/src/app/app/page.tsx`): its own `/app/<id>` and `/app/notices` (and
   every address under it) redirect to `/app` (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
   too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
@@ -1689,8 +1726,26 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   home tab with charts. **The sidebar** shows no heading for a group of one entry named like the group (mold_v0-175:
   `web/src/components/layout/app-sidebar.tsx`; a pack's Overview tab in an Overview group is one entry).
   `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
-  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, its charts;
-  then every step done).
+  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, no charts
+  grid; then every step done).
+  **The journey selector and the Due soon card** (mold_v0-207). The main column's heading is the journey selector, for
+  every build: a button with the selected journey's name ("Get set up" by default), its progress and a chevron, opening
+  a listbox (`role="listbox"`, options with `aria-selected`, the active one by `aria-activedescendant`; a search box,
+  `role="combobox"`, past six) of every journey with its progress (1/9); Enter, Space or the arrows open it, the arrows,
+  Home and End move, Enter picks, Escape closes back to the heading. Picking one switches the steps below and keeps
+  `?journey=<id>` (`JourneyMenu` in `web/src/features/portal/setup.tsx`). A home tab whose `rail` leaves out `journeys`
+  keeps a plain "Get set up" heading. The right column's second card is **Due soon**
+  (`web/src/features/records/due-soon-card.tsx`, the Connect card's style): the records coming due or overdue across the
+  workspace, from the record clocks (`GET /api/records/due-soon`, `src/record-clocks.ts` `dueAcross`): one row per record
+  and clock that is overdue or due soon, overdue first, then the soonest deadline, six at most, each with its title, area
+  and clock, a badge (Overdue Nd, Due soon) and a relative date, a link to the record's page; View all opens the area's
+  list (its own tab, inside its sections tab when it has one, else `/app/records/<area>`) with the Overdue filter on
+  (`?overdue=1`, now kept in the address) when something is overdue. The server reads each area inside the workspace's
+  tenant scope, only the clock areas the person's role may read and whose list no pack withholds (a sealed area while
+  the vault is locked is skipped). Nothing due: a calm line ("Nothing is due or overdue"). **No card** in a build with
+  no clock (Octillion: a card that could never fill would only promise a feature the app does not have) nor for a role
+  that may read no clock area (as a tab is never shown to a role that may not read it). `npm run test:record-clocks`
+  checks the route (order, the default six, two workspaces, a role that may not read the area, signed out).
   **A sections tab** (mold_v0-175): `{"kind": "sections", "sections": ["<tab id>", ...]}` draws several of the pack's
   own tabs (area, runs, reports or schedules: 2 to 6) as one page with an in-page tab strip (`Tabs`, line variant)
   above the selected one's charts, views and table (`SectionsTab` in `web/src/features/tabs/tab-page.tsx`; the table is
@@ -1703,8 +1758,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   on `/api/records/tabs/<pack>/<tab>` (never by the page: paging stays right); a field the area lacks is refused.
   `npm run test:declarative-packs` refuses those and checks the URLs, the sidebar and the redirects.
   **A list tab's four cards** (mold_v0-181): every area, runs, reports and schedules tab (on its own page or as an
-  in-page tab) shows four cards directly below its toolbar (the row with search, Filter and Export CSV) and above its
-  table (above a board or a timeline, which have no toolbar), each a label, a value and a sparkline of the last 12
+  in-page tab) shows four cards first, then its toolbar (the row with search, Filter and Export CSV), then its table
+  (mold_v0-208: the cards moved above the search row, in the console's shared table, `RecordView`'s `summary`, so every
+  list that draws cards reads the same: the Access log, Health's tabs, FinOps and Compute; above a board or a timeline,
+  which have no toolbar), each a label, a value and a sparkline of the last 12
   weeks (`web/src/features/tabs/sparklines.tsx`, drawn as the console's headline numbers: `StatStrip` with `quad`, four
   across from a wide screen and two by two below it, one fixed height with placeholders while they load, each card's
   value and trend said in words for a screen reader). pack.json `sparklines` on such a tab names exactly 4 of the pack's
@@ -1731,7 +1788,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **A home tab's headline row** (mold_v0-203): pack.json `sparklines` on the home tab (an `overview` that includes
   `setup`) names 1 to 4 of the pack's metrics, drawn as the same cards (`TabSparklines`, `StatStrip` with `quad`: four
   across from a wide screen, two by two below it, in the console's light or dark theme) in a row at the very top of the
-  Overview, above the checklist or journey and the right column (the connection card, the journey picker). The same
+  Overview, above the checklist or journey and the right column (the connection card, the Due soon card). The same
   rules as a list tab's cards (a declared metric, never grouped, weeks to draw, never twice) and the same route
   (`GET /api/sparklines/<pack>/<home tab>`, mounted for it too; the home tab is every role's, each card refused alone to
   a role that may not read its metric). The registry carries the list as the tab's `headline`; a number the row shows is
@@ -1740,6 +1797,52 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   stays). Without it, no row: the page is unchanged. gen-packs refuses more than 4, none, one on an overview that is not
   the home tab, and the list tab's other refusals; `npm run test:declarative-packs` checks those and the registry, `npm
   run test:console-tabs` draws the row above both columns and the number card without its numbers.
+  **A list tab is its cards, its search row and its table** (mold_v0-208): an area tab draws no charts (`charts` on an
+  area tab stays valid and is ignored: the console's registry carries none for it and the guide lists none; a pack's
+  charts are an overview's), so no chart grid sits above or around a list. Why ignored and not refused: every pack
+  written before (Maxwell's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
+  pack change, not a broken build.
+  **A list tab's floating action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
+  config only: `{"kind": "start_run", "label"?, "job_kind"? | "job_kinds"?}` on an area, runs or reports tab (one of
+  the pack's job kinds, a picker of 2 to 20 in order, or every kind of the pack; never one gated by an approval),
+  `{"kind": "new_schedule", "label"?, "job_kind"?}` on a schedules tab (a kind the pack itself schedules, preset in the
+  form) or `{"kind": "create_record", "label"?, "area"}` on an area tab (one of the pack's own workspace areas, not read
+  from a repository). It opens the shell's existing ways in, never a pack's own form: a run starts exactly as the
+  generated `start_<kind>` MCP tool starts it (its input schema, its permission, its handler: `src/mcp-tools.ts`
+  `startFromConsole`, behind `POST /api/tab-actions/<pack>/<tab>/start`, `src/tab-actions.ts`), with the kind's `args`
+  as a form (typed as record fields), the asset record it runs over and its environment when the kind takes them; a
+  schedule through the schedules page's Add a schedule form (in a drawer, in place of the form below the list); a record
+  through the data API's create (`POST /api/data/<area>`), its key, title and fields. The button
+  (`web/src/features/tabs/action-fab.tsx`) is the brand's primary colour, fixed at the bottom right 1.5rem from the
+  window's edges plus the safe-area insets, an icon and its label from `sm` up and the icon alone on a phone (its
+  label the accessible name); the list's height leaves its space free below the pager (`RecordView` `fab`,
+  `FAB_SPACE`), so it never covers the last row or the pager. It is shown only to a role that may use it
+  (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
+  roles and `edit`), and the server refuses the rest. The route is mounted only when a tab has an action (since
+  mold_v0-213 every list tab's by default), so a build without a list tab (zero packs, Octillion) answers nothing and
+  its MCP surface is unchanged. gen-packs refuses an
+  unknown kind or key, an undeclared or doubled job kind, one whose start tool the pack withholds (mcp), a picker of
+  one, both `job_kind` and `job_kinds`, an action
+  on the wrong kind of tab, a schedule with no kind the pack schedules, a missing, shared, undeclared or
+  repository-read area, and a label with braces; `npm run test:declarative-packs` proves those and the registry.
+  **Every list tab has its primary action by default** (mold_v0-213): an area, runs, reports or schedules tab with no
+  `action` gets the shell's, from what it shows (`src/metric-spec.ts` `tabAction`, the same resolution in the build's
+  registry and in `src/tab-actions.ts`): an area tab "Add <its area's singular>" (`create_record`, the create drawer)
+  when the area is the pack's own, the workspace's (not shared), not read from a repository and its create tool is
+  offered to a workspace; a runs tab "Start {run}" with the picker of every kind a workspace may start (no approval,
+  its start tool offered); a reports tab "Generate <the tab's singular>" with the pack's report kinds, when it has one;
+  a schedules tab "New schedule" when the pack schedules a kind. A declared action without a label gets the same
+  words. Who sees the button is unchanged (the server's checks: the area's create roles and `edit`, the start tool's
+  permission, `manage`). A pack overrides with its own `action`, or opts out with `"action": false` and a required
+  `reason` (plain text, at most 300 characters: why the list has nothing to press; documented in pack.json, carried
+  nowhere, shown nowhere). A fourth kind, `{"kind": "link", "label", "href"}` (both required; an /app path, an https://
+  or a mailto: address, the empty state's rules), is a plain link on any list tab, everyone's who sees it, for a list
+  whose rows a setting brings (Maxwell's Private communications: "Connect mailbox", Settings › Email). gen-packs prints
+  every shown list tab left without an action, and why, as a warning (`gen-packs: warning: N list tab(s) without a
+  primary action:`, one line per tab: the opt-out's reason, or what kept the default away: a shared area, a
+  repository, a withheld create tool, no startable or report kind, nothing scheduled). gen-packs refuses a link without
+  its label or href or with a job kind or area, `action: false` without a reason or off a list tab, and a reason
+  without it; `npm run test:declarative-packs` proves those, each default and the warning.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -2177,6 +2280,20 @@ or is listed twice, a shell page a tab already opens, one the build lacks or hid
 orders its own tabs). Without tabs or a declared sidebar the shell's own sidebar joins a pack's group to the shell group
 of the same heading and lists each page once (`mergeNav`, `web/src/config/nav-config.ts`); a declared API keys entry
 takes the footer's place. `npm run test:console-sidebar`.
+
+**The active sidebar entry (mold_v0-213).** Each console lights exactly one entry for the page drawn
+(`web/src/lib/active-nav.ts` `activeNavUrl`, used by `components/layout/app-sidebar.tsx` for the customer and the staff
+console): the entry whose page it is, its query a subset of the page's (an in-page tab's `?tab=`, a filter's
+`?overdue=1`, the home page's `?journey=`, Accounts' `?section=admins` keep their page's entry), else the longest entry
+the page is under (`/admin/accounts/<slug>` under Accounts); the area's home only on itself, or, with no entry of its
+own, the sidebar's first. A record's own page (`/app/records/<area>/<key>`) lights the tab that lists its area (its own
+unfiltered tab first, then a filtered one, then one that merges it; an in-page tab's page), and a few pages outside the
+sidebar light the page they are reached from (`PORTAL_HOMES`, `ADMIN_HOMES`: Journeys the home page, Connected apps
+Profile, Schedules a tab sidebar's runs tab). The footer's API keys and Profile count as entries, lit only when the
+groups have none of their own. A collapsible entry holding the active one opens on load, and the active entry stands
+out: the brand's colour behind it and in its words, and a bar at its edge, in either theme, also in the phone's sheet.
+`npm run test:console-sidebar` walks every console route of a tab build and of a zero-pack build (pages a build lacks
+without a feature, and Docs, excepted) and asserts exactly one entry lit, the right one.
 
 **Connected apps (mold_v0-087).** `/app/connected-apps`: each person's own AI apps signed in to `/mcp`. Under the built-in
 sign-in (the server is the authorization server, mold_v0-013) it lists every connected app across the person's
@@ -2625,7 +2742,7 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   declares it; its fields typed as an area's are) drawn by `RecordTableView` (`web/src/features/records/record-pages.tsx`,
   what every record area's page and tab draws) through its data adapter (`RecordSource`: rows from the trail's own
   route, Download CSV in place of Export CSV, the record column as the entry's time). So it has everything an area's
-  page has: the search row with the trail's four cards under it (`GET /api/audit/<trail>/sparklines`, staff
+  page has: the trail's four cards above the search row (mold_v0-208) (`GET /api/audit/<trail>/sparklines`, staff
   `/api/admin/audit/platform/sparklines` and `/api/admin/audit/data/<workspace>/sparklines`, `src/audit-trail.ts`
   `trailSparklines`: this week's entries, changes, exports and reveals, people and keys; or requests, sign-ins, refused
   or failed, average latency; each with twelve weeks, counts only), filters on who, action, area, door and the date

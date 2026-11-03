@@ -4,13 +4,21 @@
  *
  *   /api/records                  a signed-in person of a workspace (the portal's session check, src/app.ts): the
  *                                 areas, a page of an area, one record with its links, a page of a merged tab
- *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts). Read only: no
+ *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts), the records due soon
+ *                                 across its clock areas (/api/records/due-soon, mold_v0-207). Read only: no
  *                                 route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
- *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete"
+ *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete".
+ *                                 mold_v0-212, the staff record page (web/src/features/records/staff-records.tsx):
+ *                                 GET _console/<area>/sparklines  its four cards (src/sparklines.ts areaSparklines)
+ *                                 GET _console/<area>/form        what the page offers this staff role: create and edit
+ *                                                                 (never for an area a repository fills, whose rows its
+ *                                                                 index writes; the role's "library"; the staff tool not
+ *                                                                 withheld) and the area's fields as the form draws them.
+ *                                                                 The writes themselves go to /api/admin/data, unchanged.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
-import { assertGuarded, need } from "./admin-roles.js";
+import { assertGuarded, can, need, type PlatformRole } from "./admin-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { GeneratedOp } from "./mcp-catalog.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
@@ -19,6 +27,7 @@ import { PackError, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
 import { auditListPurpose } from "./audit-trail.js";
+import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -60,6 +69,9 @@ export function recordAppRouter(): Router {
     }
     return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
   }));
+  // The home page's Due soon card (mold_v0-207; src/record-clocks.ts dueAcross): records coming due or overdue across
+  // the clock areas this person may read and whose list no pack withholds. Not an area name (those take no "-").
+  r.get("/due-soon", answer(async (req, res) => dueAcross(org(res), actor(res), { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), withheld: (a) => areaOpWithheld(a, "list") })));
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
@@ -83,6 +95,22 @@ export function recordAdminRouter(): Router {
     return a;
   };
   r.get("/areas", need("read"), answer(async () => ({ areas: recordAreas().map(areaSummary) })));
+  // The staff record page (mold_v0-212): "_console" is no area's name (an area's starts with a letter).
+  r.get("/_console/:area/sparklines", need("read"), open("admin_list"), answer(async (req) =>
+    (await import("./sparklines.js")).areaSparklines(platformArea(String(req.params.area)).name)));
+  r.get("/_console/:area/form", need("read"), open("admin_list"), answer(async (req, res) => {
+    const a = platformArea(String(req.params.area));
+    const { formField } = await import("./tab-actions.js");
+    // Hand writes on the console: an area no repository fills (a repository's rows are its index's), an encrypted field's
+    // value never round-tripped through a form, the role's "library" (as /api/admin/data checks), the staff tool not withheld.
+    const writable = !a.repo && !a.fields.some((f) => f.encrypted) && can(res.locals.adminRole as PlatformRole | undefined, "library");
+    return {
+      area: a.name, label: a.label,
+      create: writable && !areaOpWithheld(a.name, "admin_create"),
+      edit: writable && !areaOpWithheld(a.name, "admin_update"),
+      fields: a.fields.map(formField),
+    };
+  }));
   r.get("/:area", need("read"), open("admin_list"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     return { area: areaSummary(a), ...(await listPlatform(a, { limit: req.query.limit, after: req.query.after })) };

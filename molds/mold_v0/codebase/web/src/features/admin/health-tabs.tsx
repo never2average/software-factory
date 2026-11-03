@@ -1,8 +1,9 @@
 'use client';
 // Health's tabs beside Errors in a build without the session engine (mold_v0-204; GET /api/admin/onboarding/health/*,
-// src/health-tabs.ts): Runs, Scheduled work, Deliveries (only when the app sends company email or webhooks) and Status.
-// Each is a list tab: the toolbar (search, the tab's own picker, filters), its four cards under it, then one table
-// (RecordView). Staff only, read only; nothing here shows an address, a subject or a key.
+// src/health-tabs.ts): Runs, Scheduled work, Email Delivery (only when the app sends company email or webhooks; its
+// webhooks are shown there too, for now) and Status. The first three are list tabs: the toolbar (search, the tab's own
+// picker, filters), its four cards under it, then one table (RecordView). Status is a grid of graphs (mold_v0-210).
+// Staff only, read only; nothing here shows an address, a subject or a key.
 import { useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { StatStrip } from '@/components/layout/section';
@@ -10,6 +11,10 @@ import { RecordView, type RecordCol, type RecordViewDef } from '@/components/lay
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
+import { Box } from '@/components/layout/chart-grid';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
 import { developerConsole, emailPortalNav } from '@/config/pack-nav.generated';
 import { W } from '@/lib/vocabulary';
 import { num, usd } from '@/lib/display-format';
@@ -17,12 +22,12 @@ import { useAdmin } from './lib';
 import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
 
-/** Deliveries is a tab only when the app sends mail of a workspace's own or webhooks (the server's deliveriesOn). */
+/** Email Delivery is a tab only when the app sends mail of a workspace's own or webhooks (the server's deliveriesOn). */
 export const deliveriesTab = (): boolean => emailPortalNav.length > 0 || developerConsole.on;
 
 /** Health's tabs in a build without the session engine, in order (Errors first: the page's default). */
 export const healthTabsShell = (): readonly (readonly [string, string])[] => [
-  ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Deliveries'] as const] : []), ['status', 'Status']
+  ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Email Delivery'] as const] : []), ['status', 'Status']
 ];
 
 const dash = <span className='text-muted-foreground'>—</span>;
@@ -239,7 +244,7 @@ function ScheduledTab() {
   );
 }
 
-// ---------------------------------------------------------------- Deliveries
+// ---------------------------------------------------------------- Email Delivery (?section=deliveries)
 
 interface EmailRow { kind: string; total: number; sent: number; failed: number; skipped: number; sending: number; last_at: string | null; last_failed_at: string | null }
 interface HookRow { event: string; total: number; succeeded: number; failed: number; pending: number; attempts: number; last_at: string | null }
@@ -331,61 +336,215 @@ function DeliveriesTab() {
 
 // ---------------------------------------------------------------- Status
 
+// A grid of graphs (mold_v0-210; GET /health/status, the live checks, and /health/history, the samples the scheduler
+// keeps every few minutes for 35 days, src/health-samples.ts): one per signal, its current state as its headline, one
+// 24 hours / 7 days / 30 days switch for the whole grid; the last deploy and the mold version as a line above it.
+// Numbers and states only: no address, no key, no person.
+
 interface Check { id: string; label: string; state: 'ok' | 'warn' | 'bad' | 'off'; value: string; detail: string | null }
-interface Provider { slug: string; name: string; category: string; set: 'yes' | 'no'; enabled: boolean; backend: string; note: string | null; keys: number; last_changed_at: string | null; last_used_at: string | null }
+interface Provider { slug: string; name: string; set: 'yes' | 'no' }
 interface StatusData {
   checks: Check[]; providers: Provider[];
   release: { runtime: string; commit: string | null; instance_started_at: string; last_migration: { version: number; name: string; applied_at: string | null } | null; mold: { schema: string | null; package: string | null } };
 }
+interface Sample { at: string; up: boolean; db_ms: number | null; api_p50_ms: number | null; api_p95_ms: number | null; rls: string; storage: string; vault_set: number; vault_missing: number; scheduler_lag_s: number | null }
+export interface HistoryBucket {
+  at: string; samples: number; up_pct: number | null; db_ms: number | null; api_p50_ms: number | null; api_p95_ms: number | null; rls_ok: number | null; storage_ok: number | null;
+  vault_set: number | null; vault_missing: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; scheduler_lag_s: number | null;
+  runs_ended: number; runs_failed: number; run_failure_pct: number | null; deliveries_total: number; deliveries_failed: number; delivery_failure_pct: number | null;
+}
+interface History {
+  range: HistoryRange; bucket_seconds: number; every_seconds: number; retention_days: number; deliveries: boolean; samples: number; latest: Sample | null;
+  totals: { up_pct: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; runs_ended: number; runs_failed: number; deliveries_total: number; deliveries_failed: number };
+  buckets: HistoryBucket[];
+}
+type HistoryRange = '24h' | '7d' | '30d';
+const RANGES: readonly (readonly [HistoryRange, string])[] = [['24h', '24h'], ['7d', '7d'], ['30d', '30d']];
+const RANGE_WORD: Record<HistoryRange, string> = { '24h': 'the last 24 hours', '7d': 'the last 7 days', '30d': 'the last 30 days' };
 const CHECK_TONE: Record<Check['state'], Tone> = { ok: 'ok', warn: 'warn', bad: 'bad', off: 'neutral' };
-const CHECK_WORD: Record<Check['state'], string> = { ok: 'OK', warn: 'Attention', bad: 'Failing', off: 'Not used' };
+const OK = 'var(--chart-1)', WARN = 'var(--chart-4)', BAD = 'var(--destructive)', NONE = 'var(--muted)';
+const ms = (v: number | null | undefined) => (v == null ? '—' : `${num(v)} ms`);
+const pct1 = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v * 10) / 10}%`);
+const plural = (n: number, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
 
 function StatusTab() {
-  const { data, error, isLoading } = useAdmin<StatusData>('/health/status', { refetchInterval: 60_000 });
-  const [pick, setPick] = useState<'checks' | 'providers'>('checks');
-  const r = data?.release;
-  const set = data?.providers.filter((p) => p.set === 'yes').length ?? 0;
-  const summary = (
-    <StatStrip quad items={[
-      { label: 'Checks passing', value: data ? `${data.checks.filter((c) => c.state === 'ok').length} of ${data.checks.filter((c) => c.state !== 'off').length}` : '—' },
-      { label: 'Keys set', value: data ? `${set} of ${data.providers.length}` : '—', href: '/admin/keys' },
-      { label: 'Last deploy', value: r?.last_migration?.applied_at ? <When d={r.last_migration.applied_at} /> : '—',
-        hint: r ? [r.commit && `commit ${r.commit}`, `instance up since ${new Date(r.instance_started_at).toLocaleString()}`].filter(Boolean).join(' · ') : undefined },
-      { label: 'Mold version', value: r?.mold.schema ? r.mold.schema.slice(0, 4) : '—', hint: r ? [r.mold.schema, r.mold.package && `package ${r.mold.package}`].filter(Boolean).join(' · ') : undefined }
-    ]} />
-  );
-  const filters = <Picker label='Show' value={pick} onChange={setPick} options={[['checks', 'Live checks'], ['providers', 'Key vault providers']]} />;
-  const loading = isLoading || !data;
+  const [range, setRange] = useState<HistoryRange>('24h');
+  const live = useAdmin<StatusData>('/health/status', { refetchInterval: 60_000 });
+  const hist = useAdmin<History>(`/health/history?range=${range}`, { refetchInterval: 60_000, keep: true });
+  const h = hist.data, d = live.data;
+  const check = (id: string) => d?.checks.find((c) => c.id === id);
+  const lastAt = h?.latest?.at;
+  const tick = (iso: string) => new Date(iso).toLocaleString(undefined, range === '24h' ? { hour: '2-digit', minute: '2-digit' } : { month: 'short', day: 'numeric' });
+  const label = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const b = h?.buckets ?? [];
+  const t = h?.totals;
+  const db = check('database'), rls = check('rls'), store = check('object_storage'), vault = check('vault'), claude = check('claude');
+  const set = d ? d.providers.filter((p) => p.set === 'yes').length : h?.latest?.vault_set ?? null;
+  const missing = d ? d.providers.length - (set ?? 0) : h?.latest?.vault_missing ?? null;
+  const loading = !h || !d;
+  const props = { buckets: b, tick, label, loading };
   return (
-    <>
-      <ErrorBox error={error} />
-      {pick === 'checks' ? (
-        <RecordView<Check>
-          id='admin-health-status' noun='checks' compact rows={data?.checks ?? []} rowKey={(c) => c.id} loading={loading} summary={summary} filters={filters}
-          cols={[
-            { key: 'label', label: 'Check', type: 'text', title: true, keep: true, value: (c) => c.label, render: (c) => <span className='font-medium'>{c.label}</span> },
-            { key: 'state', label: 'State', type: 'select', className: 'w-32', keep: true, value: (c) => c.state, options: (Object.keys(CHECK_WORD) as Check['state'][]).map((v) => ({ value: v, label: CHECK_WORD[v] })),
-              render: (c) => <StatusBadge tone={CHECK_TONE[c.state]}>{CHECK_WORD[c.state]}</StatusBadge> },
-            { key: 'value', label: 'Now', type: 'text', keep: true, value: (c) => c.value, render: (c) => c.value },
-            { key: 'detail', label: 'Detail', type: 'text', value: (c) => c.detail, render: (c) => (c.detail ? <span className='text-muted-foreground line-clamp-2 max-w-md text-sm whitespace-normal' title={c.detail}>{c.detail}</span> : dash) }
-          ]}
-          searchText={(c) => `${c.label} ${c.value} ${c.detail ?? ''}`} searchPlaceholder='Search checks' empty='No checks.'
-        />
-      ) : (
-        <RecordView<Provider>
-          id='admin-health-providers' noun='providers' compact rows={data?.providers ?? []} rowKey={(p) => p.slug} loading={loading} summary={summary} filters={filters}
-          cols={[
-            { key: 'name', label: 'Provider', type: 'text', title: true, keep: true, value: (p) => p.name, render: (p) => <span className='font-medium'>{p.name}</span> },
-            { key: 'category', label: 'Category', type: 'select', className: 'w-36', value: (p) => p.category, render: (p) => p.category },
-            { key: 'set', label: 'Key', type: 'select', className: 'w-28', keep: true, value: (p) => p.set, options: [{ value: 'yes', label: 'Set' }, { value: 'no', label: 'Missing' }],
-              render: (p) => <StatusBadge tone={p.set === 'yes' ? 'ok' : 'warn'}>{p.set === 'yes' ? 'Set' : 'Missing'}</StatusBadge> },
-            { key: 'note', label: 'Note', type: 'text', value: (p) => p.note, render: (p) => (p.note ? <span className='text-muted-foreground text-sm'>{p.note}</span> : dash) },
-            { key: 'last_used_at', label: 'Last used', type: 'date', className: 'w-28', value: (p) => p.last_used_at, render: (p) => <When d={p.last_used_at} className='text-sm' /> },
-            { key: 'last_changed_at', label: 'Last changed', type: 'date', className: 'w-28', hidden: true, value: (p) => p.last_changed_at, render: (p) => <When d={p.last_changed_at} className='text-sm' /> }
-          ]}
-          searchText={(p) => `${p.name} ${p.category} ${p.note ?? ''}`} searchPlaceholder='Search providers' empty='No provider in this build.'
-        />
+    <div className='flex flex-col gap-3' data-health-status>
+      <ErrorBox error={live.error ?? hist.error} />
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <ReleaseLine r={d?.release} />
+        <ToggleGroup aria-label='Period' variant='outline' size='sm' spacing={0} value={[range]} onValueChange={(v: unknown[]) => { if (v[0]) setRange(v[0] as HistoryRange); }}>
+          {RANGES.map(([v, l]) => <ToggleGroupItem key={v} value={v} aria-label={RANGE_WORD[v]} className='px-3'>{l}</ToggleGroupItem>)}
+        </ToggleGroup>
+      </div>
+      {h && !h.samples && (
+        <p className='text-muted-foreground text-sm'>No samples in {RANGE_WORD[range]} yet: the scheduler takes one every {Math.round(h.every_seconds / 60)} minutes and keeps them {h.retention_days} days. The headlines are live.</p>
       )}
-    </>
+      <div className='grid border-t border-l md:grid-cols-2 xl:grid-cols-3'>
+        <SignalBox title='Database latency' tone={db ? CHECK_TONE[db.state] : undefined}
+          headline={db ? `${db.state === 'bad' ? 'Down' : 'Up'} · ${db.value.replace(/^answered in /, '')}` : '—'} sub={db?.detail}>
+          <Lines {...props} series={[{ key: 'db_ms', label: 'Answer time', color: 'var(--chart-2)' }]} format={ms} />
+        </SignalBox>
+        <SignalBox title='API latency' headline={h?.latest ? `p50 ${ms(h.latest.api_p50_ms)} · p95 ${ms(h.latest.api_p95_ms)}` : '—'} sub='Requests in the window before each sample; the slowest bucket’s p95.'>
+          <Lines {...props} series={[{ key: 'api_p50_ms', label: 'p50', color: 'var(--chart-2)' }, { key: 'api_p95_ms', label: 'p95', color: 'var(--chart-3)' }]} format={ms} />
+        </SignalBox>
+        <SignalBox title='Health check' tone={db ? (db.state === 'bad' ? 'bad' : 'ok') : undefined}
+          headline={db ? `${db.state === 'bad' ? 'Down' : 'Up'}${t?.up_pct != null ? ` · ${pct1(t.up_pct)} over ${range}` : ''}` : '—'} sub='Share of samples with the database answering; a gap is no sample (the app was not running).'>
+          <Band {...props} k='up_pct' what='Up' />
+        </SignalBox>
+        <SignalBox title='Row-level security probe' tone={rls ? CHECK_TONE[rls.state] : undefined} headline={rls ? cap(rls.value) : '—'} sub={rls?.detail}>
+          <Band {...props} k='rls_ok' what='Probe passing' />
+        </SignalBox>
+        <SignalBox title='Object storage' tone={store ? CHECK_TONE[store.state] : undefined} headline={store ? cap(store.value) : '—'} sub='Share of samples with a store set.'>
+          <Band {...props} k='storage_ok' what='Set' />
+        </SignalBox>
+        <SignalBox title='Key vault providers' tone={vault ? CHECK_TONE[vault.state] : undefined}
+          headline={set == null ? '—' : `${num(set)} set · ${num(missing ?? 0)} missing`} sub={vault ? `${cap(vault.value)}.` : undefined}
+          action={<a href='/admin/keys' className='text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline'>Key vault</a>}>
+          <Stacked {...props} series={[{ key: 'vault_set', label: 'Set', color: OK }, { key: 'vault_missing', label: 'Missing', color: WARN }]} />
+        </SignalBox>
+        <SignalBox title='Claude provider' tone={claude ? CHECK_TONE[claude.state] : undefined}
+          headline={claude ? `${cap(claude.value)}${t ? ` · ${plural(t.claude_errors, 'error')}, ${plural(t.claude_refusals, 'refusal')}` : ''}` : '—'}
+          sub={t ? `${plural(t.claude_requests, 'request')} in ${RANGE_WORD[range]}.` : undefined}>
+          <Bars {...props} series={[{ key: 'claude_errors', label: 'Errors', color: BAD }, { key: 'claude_refusals', label: 'Refusals', color: WARN }]} />
+        </SignalBox>
+        <SignalBox title='Scheduler lag' tone={h?.latest?.scheduler_lag_s ? (h.latest.scheduler_lag_s > 600 ? 'bad' : 'warn') : h?.latest ? 'ok' : undefined}
+          headline={h?.latest ? (h.latest.scheduler_lag_s == null ? 'No job has run' : h.latest.scheduler_lag_s ? `Late · ${dur(h.latest.scheduler_lag_s)}` : 'On time · 0 s') : '—'}
+          sub='The most any scheduled job is behind its cadence.' action={<a href='/admin/health?section=scheduled' className='text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline'>Scheduled work</a>}>
+          <Lines {...props} series={[{ key: 'scheduler_lag_s', label: 'Lag', color: 'var(--chart-4)' }]} format={(v) => dur(v)} area />
+        </SignalBox>
+        <SignalBox title={`${W.Run} failure rate`} tone={t ? (t.runs_failed ? 'warn' : 'ok') : undefined}
+          headline={t ? (t.runs_ended ? `${pct1((t.runs_failed / t.runs_ended) * 100)} · ${num(t.runs_failed)} of ${num(t.runs_ended)}` : `No ${W.runs} ended`) : '—'} sub={`${W.Runs} that ended in ${RANGE_WORD[range]}.`}>
+          <Bars {...props} series={[{ key: 'run_failure_pct', label: 'Failed', color: BAD }]} format={pct1} />
+        </SignalBox>
+        {(h?.deliveries ?? deliveriesTab()) && (
+          <SignalBox title='Delivery failure rate' tone={t ? (t.deliveries_failed ? 'warn' : 'ok') : undefined}
+            headline={t ? (t.deliveries_total ? `${pct1((t.deliveries_failed / t.deliveries_total) * 100)} · ${num(t.deliveries_failed)} of ${num(t.deliveries_total)}` : 'Nothing sent') : '—'}
+            sub={`Emails${developerConsole.on ? ' and webhooks' : ''} settled in ${RANGE_WORD[range]}.`}>
+            <Bars {...props} series={[{ key: 'delivery_failure_pct', label: 'Failed', color: BAD }]} format={pct1} />
+          </SignalBox>
+        )}
+      </div>
+      {lastAt && <p className='text-muted-foreground text-xs'>Last sample <When d={lastAt} className='inline' />; one every {Math.round((h?.every_seconds ?? 300) / 60)} minutes, kept {h?.retention_days} days.</p>}
+    </div>
+  );
+}
+
+const cap = (s: string) => (s === 'ok' ? 'OK' : s ? s[0]!.toUpperCase() + s.slice(1) : s);
+
+/** The last deploy and the mold version: a small line, not a chart. */
+function ReleaseLine({ r }: { r: StatusData['release'] | undefined }) {
+  if (!r) return <Skeleton className='h-4 w-80' />;
+  return (
+    <p className='text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs' data-release>
+      <span>Last deploy</span>{r.last_migration?.applied_at ? <When d={r.last_migration.applied_at} className='text-foreground inline' /> : <span>—</span>}
+      {r.commit && <><span aria-hidden>·</span><span>commit <Mono>{r.commit}</Mono></span></>}
+      <span aria-hidden>·</span><span>mold <Mono>{r.mold.schema ?? '—'}</Mono>{r.mold.package ? ` (package ${r.mold.package})` : ''}</span>
+      <span aria-hidden>·</span><span>instance up since {new Date(r.instance_started_at).toLocaleString()}</span>
+    </p>
+  );
+}
+
+/** One cell of the grid: the signal's name, its current state as the headline, then its graph. */
+function SignalBox({ title, headline, sub, tone, action, children }: { title: string; headline: ReactNode; sub?: ReactNode; tone?: Tone; action?: ReactNode; children: ReactNode }) {
+  const dot = tone === 'ok' ? 'bg-emerald-500' : tone === 'warn' ? 'bg-amber-500' : tone === 'bad' ? 'bg-destructive' : 'bg-muted-foreground/40';
+  return (
+    <Box title={title} action={action} className='gap-2'>
+      <div className='-mt-1 flex min-w-0 items-center gap-2' data-headline>
+        <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+        <span className='truncate text-lg font-semibold tabular-nums'>{headline}</span>
+      </div>
+      {sub && <p className='text-muted-foreground -mt-1 line-clamp-1 text-xs' title={typeof sub === 'string' ? sub : undefined}>{sub}</p>}
+      {children}
+    </Box>
+  );
+}
+
+type Key = keyof HistoryBucket;
+interface GraphProps { buckets: HistoryBucket[]; tick: (iso: string) => string; label: (iso: string) => string; loading: boolean }
+const H = 'aspect-auto h-[140px] w-full';
+const axis = (tick: (iso: string) => string) => <XAxis dataKey='at' tickLine={false} axisLine={false} tickMargin={6} minTickGap={32} tickFormatter={tick} fontSize={11} />;
+const empty = (b: HistoryBucket[]) => !b.some((x) => x.samples);
+const NoData = () => <div className='text-muted-foreground flex h-[140px] items-center justify-center text-xs'>No samples yet</div>;
+
+function Lines({ buckets, tick, label, loading, series, format, area }: GraphProps & { series: { key: Key; label: string; color: string }[]; format: (v: number) => string; area?: boolean }) {
+  if (loading) return <Skeleton className='h-[140px]' />;
+  if (empty(buckets)) return <NoData />;
+  const config = Object.fromEntries(series.map((s) => [s.key, { label: s.label, color: s.color }])) satisfies ChartConfig;
+  return (
+    <ChartContainer config={config} className={H}>
+      <AreaChart data={buckets} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+        <CartesianGrid vertical={false} />
+        {axis(tick)}
+        <YAxis width={44} tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v: number) => format(v)} />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent labelFormatter={(_, p) => label(String(p?.[0]?.payload?.at ?? ''))} formatter={(v, n) => `${config[n as string]?.label ?? n} ${format(Number(v))}`} indicator='dot' />} />
+        {series.map((s) => <Area key={s.key} dataKey={s.key} type='monotone' connectNulls={false} stroke={s.color} strokeWidth={1.75} fill={s.color} fillOpacity={area ? 0.25 : 0.08} isAnimationActive={false} />)}
+      </AreaChart>
+    </ChartContainer>
+  );
+}
+
+function Bars({ buckets, tick, label, loading, series, format = (v) => num(v) }: GraphProps & { series: { key: Key; label: string; color: string }[]; format?: (v: number) => string }) {
+  if (loading) return <Skeleton className='h-[140px]' />;
+  if (empty(buckets)) return <NoData />;
+  const config = Object.fromEntries(series.map((s) => [s.key, { label: s.label, color: s.color }])) satisfies ChartConfig;
+  return (
+    <ChartContainer config={config} className={H}>
+      <BarChart data={buckets} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+        <CartesianGrid vertical={false} />
+        {axis(tick)}
+        <YAxis width={44} tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} tickFormatter={(v: number) => format(v)} />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent labelFormatter={(_, p) => label(String(p?.[0]?.payload?.at ?? ''))} formatter={(v, n) => `${config[n as string]?.label ?? n} ${format(Number(v))}`} indicator='dashed' />} />
+        {series.map((s) => <Bar key={s.key} dataKey={s.key} stackId='a' fill={s.color} isAnimationActive={false} />)}
+      </BarChart>
+    </ChartContainer>
+  );
+}
+
+function Stacked(p: GraphProps & { series: { key: Key; label: string; color: string }[] }) {
+  return <Bars {...p} />;
+}
+
+/** An uptime band: one bar per bucket, full height, coloured by the share of samples that passed (grey: no sample). */
+function Band({ buckets, tick, label, loading, k, what }: GraphProps & { k: Key; what: string }) {
+  if (loading) return <Skeleton className='h-[140px]' />;
+  if (empty(buckets)) return <NoData />;
+  const data = buckets.map((x) => ({ at: x.at, v: 1, pct: x[k] as number | null }));
+  const color = (v: number | null) => (v == null ? NONE : v >= 99.9 ? OK : v >= 90 ? WARN : BAD);
+  return (
+    <div className='flex h-[140px] flex-col justify-center gap-2'>
+      <ChartContainer config={{ v: { label: what, color: OK } }} className='aspect-auto h-[64px] w-full'>
+        <BarChart data={data} margin={{ left: 0, right: 0, top: 0, bottom: 0 }} barCategoryGap={1}>
+          {axis(tick)}
+          <YAxis hide domain={[0, 1]} />
+          <ChartTooltip cursor={false} content={<ChartTooltipContent hideIndicator labelFormatter={(_, p) => label(String(p?.[0]?.payload?.at ?? ''))}
+            formatter={(_, __, item) => { const v = (item?.payload as { pct: number | null } | undefined)?.pct; return v == null ? 'No sample' : `${what} ${pct1(v)} of samples`; }} />} />
+          <Bar dataKey='v' radius={2} isAnimationActive={false}>
+            {data.map((x) => <Cell key={x.at} fill={color(x.pct)} />)}
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+      <div className='text-muted-foreground flex items-center gap-3 text-[11px]'>
+        <span className='flex items-center gap-1'><span className='size-2 rounded-sm' style={{ background: OK }} />all</span>
+        <span className='flex items-center gap-1'><span className='size-2 rounded-sm' style={{ background: WARN }} />some</span>
+        <span className='flex items-center gap-1'><span className='size-2 rounded-sm' style={{ background: BAD }} />under 90%</span>
+        <span className='flex items-center gap-1'><span className='bg-muted size-2 rounded-sm' />no sample</span>
+      </div>
+    </div>
   );
 }

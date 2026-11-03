@@ -2,8 +2,9 @@
 // A tab a pack declares (mold_v0-058), at /app/<tab> (mold_v0-132): the shell draws it from pack.json alone.
 //   overview   the tab's charts (mold_v0-063; ./charts.tsx). One that includes setup is the build's home (mold_v0-134,
 //              mold_v0-172): the Setup page's own layout (the checklist, the connection card and the cards of its
-//              pack.json rail on the right; the notices it includes below the checklist unless a card shows them), its
-//              charts below both columns
+//              pack.json rail on the right; the notices it includes below the checklist unless a card shows them). Its
+//              charts are not drawn there (mold_v0-207: the headline row above, the Due soon card, the rail's number
+//              cards say what the page needs; a chart is for an overview tab without setup or an area tab)
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date); the tab's charts
 //              above. The table is the console's database table (mold_v0-176: RecordTableView, as the record pages and
 //              Accounts): a row opens the record beside the list, with Open record for its page when the tab has the
@@ -12,8 +13,10 @@
 //   runs       the workspace's runs; reports: finished runs and their results (./runs.tsx: the same database table)
 //   sections   one page of several area tabs (mold_v0-175: pack.json `sections`), an in-page tab strip above the
 //              selected one's charts, views and table (?tab=<id>)
-// Every list (area, runs, reports, schedules) shows four cards below its toolbar (mold_v0-181; ./sparklines.tsx): the
-// tab's pack.json `sparklines`, else the shell's for its kind.
+// Every list (area, runs, reports, schedules) is its four cards (mold_v0-181; ./sparklines.tsx: the tab's pack.json
+// `sparklines`, else the shell's for its kind), then its search row, then its table (mold_v0-208: the cards first; an
+// area tab draws no charts, whatever its pack.json `charts` says), and the tab's primary floating action when pack.json
+// declares one (`action`; ./action-fab.tsx).
 // An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
@@ -25,7 +28,9 @@ import PageContainer from '@/components/layout/page-container';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
-import { FloatPanel, SetupPage } from '@/features/portal/setup';
+import { SetupPage } from '@/features/portal/setup';
+import { FloatPanel } from '@/features/portal/float-panel';
+import { buildHasClocks } from '@/features/records/due-soon-card';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
 import { SchedulesBody } from '@/features/schedules/schedules-page';
 import { Icons } from '@/components/icons';
@@ -39,6 +44,7 @@ import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { RunsTable } from './runs';
 import { TabSparklines } from './sparklines';
+import { TabActionFab } from './action-fab';
 import { httpError } from '@/features/status/from-error';
 import { StatusPage } from '@/features/status/status-page';
 
@@ -114,22 +120,21 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
 
 /**
  * The build's home (mold_v0-134, mold_v0-172): an overview tab that includes setup draws the Setup page's layout, the
- * same for every build. Its rail's cards follow the connection card (journeys, notices, chart:<name>); the notices it
- * includes and no card shows follow the checklist; its charts come below both columns (under its charts_title, when it
- * has one: mold_v0-175). It has no title of its own (the Setup page has none): its sections name themselves. It is drawn
- * at /app itself (mold_v0-175, web/src/app/app/page.tsx).
+ * same for every build. Its rail's cards follow the connection card (journeys: the Due soon card, mold_v0-207; notices,
+ * chart:<name>); the notices it includes and no card shows follow the checklist. Its `charts` (and charts_title) are not
+ * drawn (mold_v0-207: the home page has no charts grid; a pack that lists them stays valid, its metrics still drive the
+ * headline row, the list tabs' cards and the rail's number cards). It has no title of its own (the Setup page has
+ * none): its sections name themselves. It is drawn at /app itself (mold_v0-175, web/src/app/app/page.tsx).
  */
 function HomeTab({ tab }: { tab: PackTabSpec }) {
   // Its headline row (mold_v0-203: pack.json sparklines on the home tab), drawn as a list tab's four cards. A number its
-  // cards show is not shown again in a number chart below or on the right (one idea once per page); a number chart left
-  // with none is left out. Other charts (a bar, a line) draw a breakdown or a trend, not the same number, and stay.
+  // cards show is not shown again in a rail's number card (one idea once per page); a card left with none is left out.
   const top = tab.headline ?? [];
   const once = (c: PackChartSpec): PackChartSpec | null => {
     if (c.type !== 'number' || !top.length) return c;
     const metrics = c.metrics.filter((n) => !top.includes(n));
     return !metrics.length ? null : metrics.length === c.metrics.length ? c : { ...c, metrics };
   };
-  const charts = useMemo(() => tabCharts(tab).map(once).filter((c): c is PackChartSpec => !!c), [tab]);
   const rail = tab.rail;
   const notices = (tab.include ?? []).includes('notices');
   const cards: Record<string, React.ReactNode> = {};
@@ -143,10 +148,8 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
   }
   return (
     <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined}
-      main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection /> : undefined}
-      below={charts.length ? (tab.charts_title
-        ? <section aria-labelledby='home-charts' className='mt-10 flex flex-col gap-4'><h2 id='home-charts' className='text-lg font-semibold tracking-tight'>{tab.charts_title}</h2><ChartGrid charts={charts} /></section>
-        : <div className='mt-10'><ChartGrid charts={charts} /></div>) : undefined} />
+      // Beside the Due soon card (the records' deadlines, mold_v0-207), the notices are named as what they are.
+      main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection title={buildHasClocks ? 'Notices' : undefined} /> : undefined} />
   );
 }
 
@@ -207,12 +210,16 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   const views = (tab.views ?? ['table', 'detail']).filter((v): v is 'table' | 'board' | 'timeline' => v !== 'detail');
   const detail = (tab.views ?? ['table', 'detail']).includes('detail');
   const [view, setView] = useState<'table' | 'board' | 'timeline'>(views[0] ?? 'table');
+  // A record added or a run started from the tab's floating action (mold_v0-208): the list is read again.
+  const [round, setRound] = useState(0);
+  const fab = tab.action ? <TabActionFab tab={tab} onDone={() => setRound((n) => n + 1)} /> : null;
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
   const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
   const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
-    <div className='flex flex-col gap-6'>
-      <ChartGrid charts={tabCharts(tab)} />
+    // mold_v0-208: a list tab is its cards, its search row and its table (no charts); a board or a timeline, whose list
+    // ends where the page does, keeps its floating action's height free below it.
+    <div className={table || !fab ? 'flex flex-col gap-6' : 'flex flex-col gap-6 pb-24'}>
       {/* The views' switch, and Export CSV for the board and the timeline (the table has its own, in its toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
@@ -238,13 +245,14 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
       )}
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}
         className={table ? undefined : 'flex flex-col gap-3'}>
-      {/* The four cards (mold_v0-181): below the table's toolbar; a board or a timeline has none, so above it. */}
+      {/* The four cards (mold_v0-181): above the table's toolbar (inside it); a board or a timeline has none, so above it. */}
       {!table && <TabSparklines tab={tab} />}
-      {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
-        : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
+      {!table && fab}
+      {view === 'board' && tab.board_by ? <BoardView key={round} src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
+        : view === 'timeline' ? <TimelineView key={round} src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
-          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} compact={!tab.charts.length}
-            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />}
+          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} fab={fab ?? undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
@@ -271,7 +279,7 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
       <TabsContent value={current.id}>
         {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
           : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
-          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} /> : null}
+          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}
       </TabsContent>
     </Tabs>
   );

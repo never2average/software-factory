@@ -519,6 +519,19 @@ export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "crede
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
 
+/**
+ * A union's problems as the branch that was meant (mold_v0-213: a tab's `action` is an action or false): when every other
+ * branch fails at its root only (the value is not that kind of thing), that branch's own problems, each at its path.
+ */
+type Issue = { path: PropertyKey[]; message: string; code?: string; errors?: Issue[][] };
+function flatIssues(issues: readonly Issue[]): Issue[] {
+  return issues.flatMap((i) => {
+    if (i.code !== "invalid_union" || !i.errors?.length) return [i];
+    const meant = i.errors.filter((b) => !b.every((x) => x.path.length === 0 && (x.code === "invalid_value" || x.code === "invalid_type")));
+    return meant.length === 1 ? flatIssues(meant[0]!.map((x) => ({ ...x, path: [...i.path, ...x.path] }))) : [i];
+  });
+}
+
 export class PackJsonError extends Error {
   constructor(public problems: string[]) { super(problems.join("\n")); }
 }
@@ -526,7 +539,7 @@ export class PackJsonError extends Error {
 /** Check a pack.json against the schema; every problem as "path: message". */
 export function checkPackJson(json: unknown): PackJson {
   const r = PackJsonSchema.safeParse(json);
-  if (!r.success) throw new PackJsonError(r.error.issues.map((i) => `${where(i.path) || "pack.json"}: ${i.message}`));
+  if (!r.success) throw new PackJsonError(flatIssues(r.error.issues as unknown as Issue[]).map((i) => `${where(i.path) || "pack.json"}: ${i.message}`));
   return json as PackJson;
 }
 

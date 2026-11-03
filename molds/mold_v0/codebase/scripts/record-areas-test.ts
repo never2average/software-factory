@@ -185,6 +185,23 @@ try {
     assert.equal((await get("/api/admin/records/fixture_sources", sa)).status, 403, "a customer session is not staff");
     assert.equal((await get("/api/admin/records/fixture_sources", viewerTok)).body.records[0].version, "2026-10", "staff read shared areas");
     assert.equal((await get("/api/admin/records/fixture_apps", viewerTok)).status, 404, "a workspace area is not listed across workspaces here");
+    // mold_v0-212: the staff record page's four cards (a shared area's, counted over its shared rows) and what the page
+    // offers each role (create and edit need "library"; the writes stay /api/admin/data's).
+    {
+      const cards = await get("/api/admin/records/_console/fixture_sources/sparklines", viewerTok);
+      assert.equal(cards.status, 200, "staff read a shared area's cards");
+      const shared = (await get("/api/admin/records/fixture_sources", viewerTok)).body.records.length;
+      assert.deepEqual(cards.body.cards.map((c: any) => c.id), ["_records", "_new_7d", "_changed_7d", "_changed_30d"], "the area tab's default cards (no enum, no metric)");
+      assert.deepEqual([cards.body.cards[0].value, cards.body.cards[0].series.length], [shared, 12], "its records, with twelve weeks");
+      assert.ok(cards.body.cards.every((c: any) => !c.error), "every card computed without a workspace");
+      assert.equal((await get("/api/admin/records/_console/fixture_sources/sparklines", sa)).status, 403, "a customer session is not staff");
+      assert.equal((await get("/api/admin/records/_console/fixture_apps/sparklines", viewerTok)).status, 404, "a workspace area has no staff cards");
+      const form = async (tok: string) => (await get("/api/admin/records/_console/fixture_sources/form", tok)).body;
+      assert.deepEqual([(await form(viewerTok)).create, (await form(viewerTok)).edit], [false, false], "a viewer is offered no write");
+      const op = await form(operatorTok);
+      assert.deepEqual([op.create, op.edit, op.fields.map((f: any) => f.name)], [true, true, ["body", "issuer"]], "an operator (library): New record and Edit, the area's fields");
+      assert.equal((await get("/api/admin/records/_console/fixture_apps/form", operatorTok)).status, 404, "a workspace area: none");
+    }
     const put = (tok: string, body: unknown) => http.req("PUT", "/api/admin/records/fixture_sources/s2", { authorization: `Bearer ${tok}` }, body);
     assert.equal((await put(viewerTok, { title: "Two", data: { body: "b" } })).status, 403, "a viewer cannot write");
     assert.equal((await put(operatorTok, { title: "Two", data: { body: "b" }, version: "2026-11" })).status, 200, "an operator (library) writes");
@@ -195,7 +212,7 @@ try {
     assert.equal((await http.req("POST", "/api/admin/packs/fixture_audit/index", { authorization: `Bearer ${operatorTok}` }, { key: "s3" })).status, 200);
     assert.equal((await rec.getFor(A.orgId, "fixture_sources", "s3"))?.version, "v2");
     assert.equal((await get("/api/admin/packs/fixture_audit/peek", viewerTok)).status, 403, "a pack admin route cannot list workspace areas through ctx.records");
-    console.log("✓ HTTP: list and detail data per workspace (401 signed out, 404 across workspaces), no customer writes; staff write shared areas with library");
+    console.log("✓ HTTP: list and detail data per workspace (401 signed out, 404 across workspaces), no customer writes; staff write shared areas with library; the staff page's cards and its create and edit for library");
   } finally {
     await http.close();
   }
