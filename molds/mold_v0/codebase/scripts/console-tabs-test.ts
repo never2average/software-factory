@@ -469,14 +469,14 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     else {
       const open = await renderHome(chrome, hweb, false), done = await renderHome(chrome, hweb, true);
       const at = (html: string, re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
-      // The Setup page's layout (mold_v0-172): the main column (the checklist), then the right column (the connection
-      // card, then the rail's cards in order). No charts below both (mold_v0-207): the tab's charts are not drawn.
-      const order = [at(open, />Get set up</), at(open, />Connect your AI client</), at(open, />Where things stand</), at(open, />Due soon</), open.length];
-      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the checklist, the connection card, the number card, the notices card: ${order}`);
-      assert.doesNotMatch(open, /data-chart-cell|class="grid border-t border-l|aria-label="Open vulnerabilities by severity\./, "no charts grid on the home page (mold_v0-207)");
+      // The Setup page's layout (mold_v0-172), one flat grid in a phone's order (mold_v0-214): the connection card, the
+      // steps cell (the checklist), then the rail's cards in order. No charts (mold_v0-207): the tab's charts are not drawn.
+      const order = [at(open, />Connect your AI client</), at(open, />Get set up</), at(open, />Where things stand</), at(open, />Due soon</), open.length];
+      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the connection card, the checklist, the number card, the notices card: ${order}`);
+      assert.doesNotMatch(open, /data-chart-cell|class="grid border-t border-l lg:grid-cols-2|aria-label="Open vulnerabilities by severity\./, "no charts grid on the home page (mold_v0-207)");
       assert.doesNotMatch(open, /role="radiogroup"|aria-haspopup="listbox"/, "a rail without journeys: no journey selector, a plain heading");
       assert.doesNotMatch(open, /<h1/, "no page title: the Setup page has none");
-      const setup = open.slice(order[0]!, order[1]!);
+      const setup = open.slice(order[1]!, order[2]!);
       assert.equal([...setup.matchAll(/<ol class="mt-3">/g)].length, 1, "one list (mold_v0-146), not the pack's and the shell's");
       assert.match(setup, /1 of 5 steps done\./, "its progress across the setup steps and the packs' steps");
       const order146 = ["Join your team", "Add the connector to your AI client", "Switch the tools on", "Ask Fixture something", "Add a first application"].map((l) => setup.indexOf(l));
@@ -489,7 +489,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
       assert.match(setup, /These steps tick themselves as you go\./, "the footer");
-      const rail = open.slice(order[1]!, order[4]!);
+      const rail = open.slice(order[0]!, order[1]!);
       assert.match(rail, /Pick your client.*Copy URL.*Test my connection/s, "the connection card: pick, copy, test");
       const numbers = open.slice(order[2]!, order[3]!);
       assert.deepEqual(["Open", "Overdue", "Mean time to fix", "Fixed"].map((l) => numbers.includes(`>${l}</dt>`)), [true, true, true, true], "the number chart's tiles");
@@ -555,17 +555,31 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
           card("mean_cvss_open", "Average CVSS of open ones", "number", "weekly", 7.2), card("opened_per_week", "Found this week", "count", "latest", 3)] };
       const html = await renderHome(chrome2, tweb, false, { "/api/sparklines/fixture_vulns/overview": cards }, "home-top");
       const at = (re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
-      const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Get set up</), at(/>Connect your AI client</), at(/>Where things stand</)];
-      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the headline row first, above the checklist, the connection card and the number card: ${order}`);
-      const row = html.slice(order[0]!, order[1]!);
+      const order = [at(/data-sparklines="fixture_vulns\/overview"/), at(/>Connect your AI client</), at(/>Get set up</), at(/>Where things stand</)];
+      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the headline row first, then the connection card, the checklist and the number card (mold_v0-214: a phone's order): ${order}`);
+      const row = html.slice(order[0]!, html.indexOf("</section>", order[0]!));
       assert.match(html, /<section aria-label="Headline numbers"[^>]*data-sparklines="fixture_vulns\/overview"/, "a named section");
       assert.deepEqual(["Open vulnerabilities", "Overdue", "Average CVSS of open ones", "Found this week"].map((l) => row.includes(`>${l}</dt>`)), [true, true, true, true], "its four cards, in order");
       assert.equal([...row.matchAll(/<svg/g)].length, 4, "each with its sparkline");
       assert.match(row, /grid grid-cols-2 border-y lg:grid-cols-4/, "the list tabs' strip: two by two below a wide screen, four across on one");
       const rail = html.slice(order[3]!, at(/>Due soon</));
       assert.deepEqual(["Open", "Overdue", "Mean time to fix", "Fixed"].map((l) => rail.includes(`>${l}</dt>`)), [false, false, true, true], "the number card leaves out what the row shows");
-      assert.doesNotMatch(html, /class="grid border-t border-l/, "and no charts grid below (mold_v0-207)");
-      console.log("✓ rendered headline row (mold_v0-203): four cards with sparklines above the checklist and the right column; the numbers it shows left out of the number card; no charts grid");
+      assert.doesNotMatch(html, /class="grid border-t border-l lg:grid-cols-2/, "and no charts grid below (mold_v0-207)");
+      // One flat grid (mold_v0-214): every part a cell with shared 1px lines; no floating card, shadow, gap or pinned column.
+      const grid = /<div class="([^"]*)" data-home-grid="[^"]*">/.exec(html);
+      assert.ok(grid, "the page is one grid");
+      assert.match(grid![1]!, /\bgrid\b[\s\S]*\bborder-t border-l\b/, "drawn as the console's grids: a top and left line");
+      assert.doesNotMatch(grid![1]!, /\bgap-/, "no gaps between cells");
+      const kids = (h: string) => [...h.matchAll(/<(?:div|section) class="([^"]*)"[^>]*>/g)].map((m) => m[1]!);
+      const cells = kids(html).filter((c) => /\bborder-r border-b\b/.test(c));
+      assert.ok(cells.some((c) => /lg:col-span-2/.test(c) && /\[&(?:amp;)?_dl\]:border-y-0/.test(c)), "the headline row: a cell across both columns, the strip's own top and bottom lines the grid's");
+      assert.ok(cells.some((c) => /lg:col-start-2 lg:row-start-2/.test(c)), "the connection card: a cell of the right column");
+      assert.ok(cells.some((c) => /lg:row-span-2/.test(c) && /\bp-4\b/.test(c)), "the steps: a cell beside it, as tall as the right column");
+      assert.ok(cells.some((c) => /divide-y/.test(c)) && /data-home-rail/.test(html), "the rail: a cell, its cards divided by a line");
+      const home = html.slice(grid!.index);
+      assert.deepEqual(kids(home).filter((c) => /shadow-xl|rounded-xl|sticky/.test(c)), [], "no floating card, shadow or pinned column");
+      console.log("✓ rendered headline row (mold_v0-203): four cards with sparklines above the connection card, the checklist and the rail; the numbers it shows left out of the number card; no charts grid");
+      console.log("✓ one flat grid (mold_v0-214): headline across both columns, Connect, the steps and the rail as cells with shared lines; no gaps, shadows, floating cards or pinned column");
     }
     // 5e. the journey selector and the Due soon card (mold_v0-207): a home tab whose rail has the journeys slot, in a
     // build whose findings area declares a clock. The heading is a button opening a listbox; the slot is Due soon,
@@ -589,15 +603,15 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const at = (re: RegExp) => { const m = re.exec(html); return m ? m.index : -1; };
       assert.match(html, /<h2[^>]*><button[^>]*aria-haspopup="listbox"[^>]*aria-expanded="false"[^>]*>[\s\S]{0,200}Get set up/, "the main column's heading is the journey selector, closed, reading Get set up");
       assert.doesNotMatch(html, /role="radiogroup"/, "no Journeys card");
-      const order = [at(/aria-haspopup="listbox"/), at(/>Connect your AI client</), at(/>Due soon</), at(/>Where things stand</)];
-      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the selector heading, the connection card, Due soon in the journeys slot, then the number card: ${order}`);
+      const order = [at(/>Connect your AI client</), at(/aria-haspopup="listbox"/), at(/>Due soon</), at(/>Where things stand</)];
+      assert.ok(order.every((x) => x >= 0) && order.every((x, i) => i === 0 || x > order[i - 1]!), `the connection card, the selector heading, Due soon in the journeys slot, then the number card (mold_v0-214: a phone's order): ${order}`);
       const card = html.slice(order[2]!, order[3]!);
       assert.deepEqual([...card.matchAll(/data-due-row="([a-z_]+)"/g)].map((m) => m[1]), ["overdue", "overdue", "due_soon"], "overdue first, then due soon");
       assert.match(card, /href="\/app\/records\/audit_findings\/f9"/, "each row links to its record's page");
       assert.match(card, /Open port on the API[\s\S]*Vulnerabilities · Fix by[\s\S]*Overdue 10d[\s\S]*10 days ago/, "title, area and clock, badge, relative date");
       assert.match(card, /href="\/app\/vulnerabilities\?overdue=1"[^>]*>View all</, "View all: the area's list with the Overdue filter on");
       assert.match(html, /data-home-section="notices"[\s\S]*>Notices</, "the notices section, beside the Due soon card, is named Notices");
-      assert.doesNotMatch(html, /class="grid border-t border-l/, "no charts grid");
+      assert.doesNotMatch(html, /class="grid border-t border-l lg:grid-cols-2/, "no charts grid");
       // Nothing due: a calm empty state; no clock area this role may read: no card.
       const calm = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [] } }, "home-journeys-empty");
       assert.match(calm, /data-due-soon-empty[\s\S]*Nothing is due or overdue/, "nothing due: a calm line");

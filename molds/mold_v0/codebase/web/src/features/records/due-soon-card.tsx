@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Icons } from '@/components/icons';
 import { packTabs, recordAreas } from '@/config/pack-nav.generated';
-import { FloatPanel } from '@/features/portal/float-panel';
+import { GridCell } from '@/features/portal/grid-cell';
 import { ErrorState, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -63,7 +63,7 @@ export function DueSoonClocksCard() {
   }) : [];
   const one = viewAll.length === 1 ? viewAll[0] : null;
   return (
-    <FloatPanel title='Due soon' icon={<Icons.calendar />}
+    <GridCell title='Due soon' icon={<Icons.calendar />}
       description={data && data.total > 0 ? `${data.overdue ? `${data.overdue} overdue, ` : ''}${data.total - data.overdue} due soon` : 'Deadlines coming up across this workspace.'}
       action={one ? <Link href={one.href} className='text-primary shrink-0 text-xs font-medium hover:underline' data-due-soon-all>View all</Link> : undefined}>
       {error ? <ErrorState error={error} /> : !data ? (
@@ -104,6 +104,6 @@ export function DueSoonClocksCard() {
           </div>
         )}
       </>)}
-    </FloatPanel>
+    </GridCell>
   );
 }
