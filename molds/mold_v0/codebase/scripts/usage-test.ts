@@ -7,7 +7,8 @@
 //  2. A workspace's page (GET /api/usage): calls per tool with errors and p50/p95, errors by class, members, clients,
 //     and its runs with their tool calls, model requests and cost; nothing of the other workspace.
 //  3. Daily and weekly active people and week-over-week retention.
-//  4. The operator's page (every workspace, platform admins only; a member gets 401/403).
+//  4. No staff page: the every-workspace report (GET /api/admin/onboarding/usage) is gone (mold_v0-211); a member is
+//     still refused at the admin router, a platform admin gets a 404.
 //  5. Words: a pack's words replace the shell's on the pages.
 //  6. Recording never blocks or fails the call: a call whose record cannot be written still answers.
 import assert from "node:assert/strict";
@@ -95,17 +96,14 @@ try {
       console.log("✓ daily and weekly active people and week-over-week retention");
     }
 
-    // ---------- 4. the operator's page ----------
+    // ---------- 4. no staff page (mold_v0-211) ----------
     {
       const r = await w.http.req("GET", "/api/admin/onboarding/usage", { authorization: `Bearer ${ta}` });
-      assert.ok([401, 403].includes(r.status), `a member cannot read the operator page (${r.status})`);
+      assert.ok([401, 403].includes(r.status), `a member is refused at the admin router (${r.status})`);
       const admin = await w.http.adminToken("viewer");
-      const op = await (await w.http.req("GET", "/api/admin/onboarding/usage", { authorization: `Bearer ${admin}` })).json() as any;
-      const wa = op.workspaces.find((x: any) => x.slug === A.org.slug), wb = op.workspaces.find((x: any) => x.slug === B.org.slug);
-      assert.ok(wa && wa.calls === 4 && wa.errors === 1 && wa.runs === 1 && Math.abs(wa.run_cost_usd - 2 * PER_REQUEST_USD) < 1e-6, "per workspace: A");
-      assert.ok(wb && wb.calls === 5 && wb.runs === 0, "per workspace: B");
-      assert.ok(op.totals.calls >= 9 && op.tools.length > 0 && Array.isArray(op.retention), "every workspace's calls per tool and retention");
-      console.log("✓ the operator page: every workspace (calls, errors, people, p95, runs, run cost), platform admins only");
+      const op = await w.http.req("GET", "/api/admin/onboarding/usage", { authorization: `Bearer ${admin}` });
+      assert.equal(op.status, 404, "the every-workspace report is gone");
+      console.log("✓ no staff usage report: GET /api/admin/onboarding/usage answers 404");
     }
 
     // ---------- 5. words ----------

@@ -724,15 +724,16 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`sql/migrations/0009_usage_and_limits.sql` widens the `gateway_usage` policy to the workspace's runs), never
   another's: `check:rls` probes it. A schedule's runs (`requested_by` `schedule:<id>`) count in the account's figures
   and show as "Schedule", never against a member's own limit. `npm run test:run-spend` proves it with two workspaces.
-- **Usage pages in neutral words** (mold_v0-008, built; `src/usage-report.ts`, `src/usage-routes.ts`): each MCP call
+- **Usage page in neutral words** (mold_v0-008, built; `src/usage-report.ts`, `src/usage-routes.ts`): each MCP call
   records its workspace, member or key id, client name and version (from its User-Agent), tool, outcome, error class,
   latency and request and answer sizes (`mcp_events`; never arguments or answers; recording is fire-and-forget and never
-  fails the call). `GET /api/usage` (the workspace's members) and `GET /api/admin/onboarding/usage` (every workspace,
-  platform admins) give calls per tool with errors and p50/p95, errors by class, clients, daily and weekly active people,
-  week-over-week retention, per member or per workspace calls, runs and run cost, and per run its tool calls (events of
-  type `tool_call` or `tool.<name>`), model requests, tokens and cost. The console's `/app/activity` and
-  `/admin/activity` show them in the build's words (a pack's `words` for workspace, member, run, tool call, key), in the
+  fails the call). `GET /api/usage` (the workspace's members) gives calls per tool with errors and p50/p95, errors by
+  class, clients, daily and weekly active people, week-over-week retention, per member calls, runs and run cost, and per
+  run its tool calls (events of type `tool_call` or `tool.<name>`), model requests, tokens and cost. The console's
+  `/app/activity` shows them in the build's words (a pack's `words` for workspace, member, run, tool call, key), in the
   sidebar once the build has a pack; the existing Usage, Billing and Spend pages show runs only when there are any.
+  The staff's every-workspace Activity page (`/admin/activity`, `GET /api/admin/onboarding/usage`) was removed in
+  mold_v0-211: staff read use across accounts on Analytics and spend on FinOps; `/admin/activity` is the console's 404.
   Spend per person is for billing roles (owners, billing managers); everyone else sees the workspace's figures and
   their own.
   `npm run test:usage`.

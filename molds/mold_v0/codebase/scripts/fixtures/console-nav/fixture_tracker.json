@@ -219,17 +219,6 @@
      "items": []
     }
    ]
-  },
-  {
-   "label": "Activity",
-   "items": [
-    {
-     "title": "Activity",
-     "url": "/admin/activity",
-     "icon": "chartLine",
-     "items": []
-    }
-   ]
   }
  ]
 }

@@ -23,7 +23,7 @@ import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
-import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
+import { usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter, sparklineAppRouter } from "./view-routes.js";
 import { tabActionAppRouter } from "./tab-actions.js";
@@ -707,8 +707,6 @@ export function createApp() {
   ob.post("/orgs/:slug/keys/:id/rotate", need("delete"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.rotateKey(adminActor(req, res), slug(req), Number(req.params.id))));
   // Platform analytics and health across every account (src/insights.ts).
   ob.get("/analytics", async (req, res) => void res.json(await platformAnalytics(req.query)));
-  // Usage in neutral words, every workspace (mold_v0-008, src/usage-routes.ts): read only.
-  ob.get("/usage", usageAdminRoute());
   // Every failure in the period, paged: ?kind=tool|session|onboarding&offset&limit, plus the /analytics filters.
   ob.get("/analytics/errors", async (req, res) => void res.json(await platformErrors(req.query)));
   // Health's tabs beside Errors in a build without the session engine (mold_v0-204, src/health-tabs.ts): runs, the

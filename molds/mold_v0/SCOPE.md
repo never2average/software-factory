@@ -106,7 +106,7 @@ turns it into shell, or builds it where nothing exists yet.
 - **Generalised by.** mold_v0-041, **built** (token lifetime per run kind, so a long run's token does not expire
   mid-run; cost per run; a run's budget across its attempts), mold_v0-053, **built** (run spend in the account's month figures, budgets and spend pages; `src/run-spend.ts`),
   mold_v0-008, **built** (usage pages per run, member and workspace, in neutral words: `src/usage-report.ts`,
-  `/api/usage`, `/app/activity`, `/admin/activity`).
+  `/api/usage`, `/app/activity`; the staff's `/admin/activity` was removed in mold_v0-211).
 
 ### Vaults, including per-workspace credentials
 
