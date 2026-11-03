@@ -13,10 +13,11 @@
 //   4. The customer lists (mold_v0-176): a run's row in words (web/src/features/tabs/run-rows.ts), and every customer list
 //      page drawing the console's database table (RecordView), none linking to a staff page.
 //   5. A list tab's four cards (mold_v0-181): a card's number and its trend in words (web/src/features/tabs/spark-words.ts),
-//      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them below its
-//      toolbar.
+//      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them first:
+//      the cards, then the search row, then the table (mold_v0-208: RecordView draws its summary above its toolbar), and
+//      an area tab drawing no charts.
 //   6. The Access log (mold_v0-205): the records' own table over the audit trails as a read-only system area (the data
-//      adapter, RecordSource), with the trail's four cards under the search row, its filters (who, action, area, door,
+//      adapter, RecordSource), with the trail's four cards above the search row, its filters (who, action, area, door,
 //      the date range), the column picker, Download CSV and the row drawer; no table of its own.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -144,12 +145,22 @@ assert.equal(sw.trendWords({ series: [null, 3, null], unit: "count", mode: "week
 const cards = src("features/tabs/sparklines.tsx");
 assert.match(cards, /<StatStrip quad items=\{items\} \/>/, "the cards are the console's headline numbers (StatStrip), four across or two by two");
 assert.match(cards, /\/api\/sparklines\//, "numbers from the server, for this workspace and role");
-assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: below its toolbar");
+assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: its cards as the table's summary");
 assert.match(tab, /!table && <TabSparklines tab=\{tab\} \/>/, "a board or a timeline: above it");
 assert.match(tab, /<RunsTable tab=\{tab\} reports=\{tab\.kind === 'reports'\} summary=\{<TabSparklines tab=\{tab\} \/>\} \/>/, "a runs or reports tab");
-assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} \/>/, "a schedules section");
-for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table, below its toolbar`);
-ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them below its toolbar (a board or timeline: above it)");
+assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} action=\{current\.action\} \/>/, "a schedules section");
+for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table`);
+// mold_v0-208: the shared table draws its summary first, then the search row (the toolbar), then the table.
+{
+  const rv = src("components/layout/record-view.tsx").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  const at = (re: RegExp) => { const m = re.exec(rv); assert.ok(m, `record-view.tsx has ${re}`); return m.index; };
+  const order = [at(/\{summary && <div className='flex shrink-0 flex-col'>\{summary\}<\/div>\}/), at(/<Input type='search'/), at(/<Table className=/)];
+  assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, `the cards, then the search row, then the table: ${order}`);
+  assert.equal(rv.match(/\{summary &&/g)?.length, 1, "the summary is drawn once");
+  const area = /function AreaTab[\s\S]*?\n}\n/.exec(tab)![0];
+  assert.doesNotMatch(area, /ChartGrid/, "an area tab draws no charts: its cards, its search row, its table");
+}
+ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them first, then its search row, then its table (a board or timeline: above it); an area tab draws no charts");
 
 // 6. The Access log on the records table (mold_v0-205).
 {
@@ -157,7 +168,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const code = log.replace(/\/\/.*$/gm, "");
   assert.match(code, /<RecordTableView /, "the access log draws the records pages' table");
   assert.doesNotMatch(code, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
-  assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, below the search row");
+  assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, above the search row (the table's summary)");
   assert.match(code, /primary: <CsvLink href=\{csv\} \/>/, "Download CSV: the server's file of every entry");
   assert.match(code, /title: \{ label: 'When', type: 'date'/, "the entry's time: sorted and filtered by date range");
   for (const [name, type] of [["actor", "enum"], ["action", "enum"], ["area", "enum"], ["channel", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);

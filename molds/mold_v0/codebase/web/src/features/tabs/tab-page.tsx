@@ -251,7 +251,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
       {view === 'board' && tab.board_by ? <BoardView key={round} src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
         : view === 'timeline' ? <TimelineView key={round} src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
-          <RecordTableView key={round} area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail}
+          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
             exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} fab={fab ?? undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
