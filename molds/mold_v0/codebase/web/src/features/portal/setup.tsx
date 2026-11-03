@@ -1,7 +1,9 @@
 'use client';
 // /app Setup & training, every build's home (mold_v0-172: a home tab, an overview tab that includes setup, draws this
 // same layout with its own right-column cards). Right column: the connection string (with a live connection test), then
-// the journey selector (or a home tab's cards: pack.json rail). Main column: the selected journey, then tips. "Get set up"
+// the Due soon card (mold_v0-207: records coming due or overdue, from the record clocks; or a home tab's cards: pack.json
+// rail). Main column: the selected journey, under its heading, which is the journey selector (mold_v0-207: a dropdown
+// listing every journey with its progress; ?journey=<id>), then tips. "Get set up"
 // is the setup timeline and recent problems (workflow coverage lives on /app/adoption); the other journeys (managed on
 // /admin, src/playbooks.ts) show their stages, marked from real tool calls. It is one list (mold_v0-146): the shell's
 // setup steps and the packs' onboarding steps, merged in order (setup-steps.ts), every step with its description and,
@@ -16,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Section } from '@/components/layout/section';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@/components/ui/native-select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
@@ -29,6 +32,10 @@ import { mergeSetupSteps, stepProgress, type ChecklistStep, type PackSetupStep, 
 import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
 import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
+import { DueSoonClocksCard } from '@/features/records/due-soon-card';
+import { FloatPanel } from './float-panel';
+
+export { FloatPanel };
 
 interface Setup {
   steps: ShellSetupStep[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
@@ -53,11 +60,13 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
 /**
  * The home page's layout (mold_v0-172: every build's, the Setup page's and a home tab's alike). `rail`: the cards below
  * the connection card, in order (a home tab's pack.json rail: journeys, notices, chart:<name>; `cards` draws all but
- * journeys); left out, the journey picker. Every build has journeys (mold_v0-175): the picker always offers "Get set up"
- * (these setup steps), then the journeys component's when pack.json journeys turns it on. `main`: what follows the checklist in the main
- * column (a home tab's records due soon); `below`: what follows both columns, full width (a home tab's charts).
+ * journeys); left out, the journeys slot alone. The journeys slot (mold_v0-207) is the Due soon card, and the journey
+ * selector is the main column's heading. Every build has journeys (mold_v0-175): the selector always offers "Get set up"
+ * (these setup steps), then the journeys component's when pack.json journeys turns it on; a rail without journeys has
+ * neither (the heading reads Get set up). `main`: what follows the checklist in the main column (a home tab's notices).
+ * Nothing is drawn below both columns (mold_v0-207: a home tab's charts are not drawn on the home page).
  */
-export function SetupPage({ rail, cards, main, below, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; below?: React.ReactNode; top?: React.ReactNode } = {}) {
+export function SetupPage({ rail, cards, main, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; top?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
   // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys and the
@@ -70,10 +79,12 @@ export function SetupPage({ rail, cards, main, below, top }: { rail?: readonly s
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
   const steps = s ? mergeSetupSteps(s.steps, pack.data?.steps ?? []) : [];
   const progress = stepProgress(steps);
-  const picker = showPicker && <JourneyPicker key='journeys' setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+  // The journey selector is the main column's heading (mold_v0-207); the journeys slot of the right column, Due soon.
+  const heading = showPicker ? <JourneyMenu setup={progress} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
     void setSelected(id === 'setup' ? null : id);
     if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
-  }} />;
+  }} /> : 'Get set up';
+  const due = <DueSoonClocksCard key='journeys' />;
   return (
     <PageContainer>
       {/* A home tab's headline row (mold_v0-203), above both columns: it loads on its own, at a fixed height. */}
@@ -82,31 +93,20 @@ export function SetupPage({ rail, cards, main, below, top }: { rail?: readonly s
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
             {selected === 'setup' || !journey ? (<>
-              <Checklist steps={steps} title='Get set up' anchored={pack.data !== null} />
+              <Checklist steps={steps} title={heading} anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
-            </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
+            </>) : <JourneyView key={journey.id} j={journey} title={heading} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
             {main}
             {tipsOn() && <TipsSection />}
           </div>
-          {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
+          {/* Floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and Due soon. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            {rail === undefined ? picker : rail.map((x) => (x === 'journeys' ? picker : <Fragment key={x}>{cards?.[x]}</Fragment>))}
+            {rail === undefined ? due : rail.map((x) => (x === 'journeys' ? due : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
         </div>
-        {below}
       </>)}
     </PageContainer>
-  );
-}
-
-/** A floating panel for the pinned right column (a home tab's cards too: mold_v0-172). */
-export function FloatPanel({ title, icon, description, className, children }: { title: string; icon?: React.ReactNode; description?: React.ReactNode; className?: string; children: React.ReactNode }) {
-  return (
-    <section className={cn('bg-card flex min-w-0 flex-col gap-3 rounded-xl border p-4 shadow-xl shadow-black/30', className)}>
-      <div><h2 className='flex items-center gap-2 text-sm font-semibold tracking-tight'>{icon && <span className='text-primary [&_svg]:size-4'>{icon}</span>}{title}</h2>{description && <p className='text-muted-foreground text-xs'>{description}</p>}</div>
-      {children}
-    </section>
   );
 }
 
@@ -244,60 +244,94 @@ function CodeLine({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** Pick what the main column shows: getting set up, or one of the journeys, each with its progress. */
 /** Journeys beyond this many get a search box. */
 const SEARCH_FROM = 6;
 
-function JourneyPicker({ setup, journeys, selected, onSelect }: { setup: { done: number; total: number }; journeys: Journey[]; selected: string; onSelect: (id: string) => void }) {
-  const [q, setQ] = useState('');
-  const items = [{ id: 'setup', name: 'Get set up', goal: 'Connect your client and try the workflow once', done: setup.done, total: setup.total },
+interface JourneyItem { id: string; name: string; goal: string; done: number; total: number }
+
+/**
+ * The journey selector (mold_v0-207): the main column's heading. A button with the selected journey's name ("Get set up"
+ * by default) and a chevron opens a listbox of every journey with its progress (1/9), a search box above it past
+ * SEARCH_FROM. Picking one switches the steps below (?journey=<id>). Keyboard: Enter, Space or the arrows open it (the
+ * popover moves focus into the list, or the search box); Up, Down, Home and End move; Enter (or Space without a search
+ * box) picks; Escape closes and returns focus to the heading.
+ */
+function JourneyMenu({ setup, journeys, selected, onSelect }: { setup: { done: number; total: number }; journeys: Journey[]; selected: string; onSelect: (id: string) => void }) {
+  const items: JourneyItem[] = [{ id: 'setup', name: 'Get set up', goal: 'Connect your client and try the workflow once', done: setup.done, total: setup.total },
     ...journeys.map((j) => ({ id: j.id, name: j.name, goal: j.outcome, done: j.done, total: j.total }))];
+  const current = items.find((j) => j.id === selected) ?? items[0]!;
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [active, setActive] = useState(0);
+  const search = items.length > SEARCH_FROM;
   const needle = q.trim().toLowerCase();
-  const [all, setAll] = useState(false);
   const matches = needle ? items.filter((j) => `${j.name} ${j.goal}`.toLowerCase().includes(needle)) : items;
-  // Fit the pinned column: past SEARCH_FROM, show the first few (and the selected one) until searched or expanded.
-  const shown = needle || all || matches.length <= SEARCH_FROM ? matches
-    : [...matches.slice(0, SEARCH_FROM - 1), ...matches.slice(SEARCH_FROM - 1).filter((j) => j.id === selected)];
+  const uid = useId();
+  const listId = `${uid}-journeys`;
+  const optId = (i: number) => `${uid}-journey-${i}`;
+  const inputRef = useRef<HTMLInputElement>(null), listRef = useRef<HTMLUListElement>(null);
+  const many = capWord(text('journeys.many'));
+  const openChange = (next: boolean) => {
+    if (next) { setQ(''); setActive(Math.max(0, items.findIndex((j) => j.id === current.id))); }
+    setOpen(next);
+  };
+  useEffect(() => { if (open) document.getElementById(optId(active))?.scrollIntoView({ block: 'nearest' }); }, [open, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pick = (j: JourneyItem) => { setOpen(false); if (j.id !== current.id) onSelect(j.id); };
+  const onKey = (e: React.KeyboardEvent) => {
+    const n = matches.length;
+    const move = (i: number) => { e.preventDefault(); setActive(n ? (i + n) % n : 0); };
+    if (e.key === 'ArrowDown') move(active + 1);
+    else if (e.key === 'ArrowUp') move(active - 1);
+    else if (e.key === 'Home' && !search) move(0);
+    else if (e.key === 'End' && !search) move(n - 1);
+    else if (e.key === 'Enter' || (e.key === ' ' && !search)) { e.preventDefault(); const j = matches[active]; if (j) pick(j); }
+  };
+  const activeId = matches[active] ? optId(active) : undefined;
   return (
-    <FloatPanel title={capWord(text('journeys.many'))} icon={<Icons.route />} description='Real use cases as step-by-step pipelines. Pick one to replicate it.' >
-      {items.length > SEARCH_FROM && (
-        <div className='relative'>
-          <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
-          <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${items.length} ${text('journeys.many')}`} aria-label={`Search ${text('journeys.many')}`} className='h-8 pl-8 text-sm' />
-        </div>
-      )}
-      <div role='radiogroup' aria-label={capWord(text('journeys.one'))} className='flex flex-col gap-0.5'>
-        {shown.length === 0 && <p className='text-muted-foreground px-2 py-3 text-sm'>No {text('journeys.one')} matches “{q}”.</p>}
-        {shown.map((j) => {
-          const on = j.id === selected, complete = j.total > 0 && j.done >= j.total;
-          return (
-            <button key={j.id} type='button' role='radio' aria-checked={on} onClick={() => onSelect(j.id)}
-              title={j.goal}
-              className={cn('flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
-                on ? 'border-primary bg-primary/5' : 'hover:bg-muted/60 border-transparent')}>
-              <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-full border-2', complete ? 'border-primary bg-primary text-primary-foreground' : on ? 'border-primary' : 'border-muted-foreground/40')}>
-                {complete && <Icons.check className='size-3' />}
-              </span>
-              <span className='min-w-0 flex-1 truncate text-sm font-medium'>{j.name}</span>
-              <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{j.done}/{j.total}</span>
-            </button>
-          );
-        })}
-      </div>
-      {!needle && matches.length > shown.length && (
-        <button type='button' onClick={() => setAll(true)} className='text-primary self-start px-3 text-xs font-medium hover:underline'>
-          Show all {matches.length} {text('journeys.many')}
-        </button>
-      )}
-      {!needle && all && matches.length > SEARCH_FROM && (
-        <button type='button' onClick={() => setAll(false)} className='text-muted-foreground self-start px-3 text-xs hover:underline'>Show fewer</button>
-      )}
-    </FloatPanel>
+    <Popover open={open} onOpenChange={openChange}>
+      <PopoverTrigger data-journey-menu render={<button type='button' aria-haspopup='listbox' aria-expanded={open} aria-controls={open ? listId : undefined}
+        onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openChange(true); } }}
+        className='hover:bg-muted/60 focus-visible:ring-ring -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-left outline-hidden focus-visible:ring-2' />}>
+        {/* A short name stays on one line (the heading sizes to it); a long one wraps at its spaces. */}
+        <span className={current.name.length > 28 ? 'break-words' : 'whitespace-nowrap'}>{current.name}</span>
+        <span className='text-muted-foreground shrink-0 text-xs font-normal tabular-nums'>{current.done}/{current.total}</span>
+        <Icons.chevronDown aria-hidden className={cn('text-muted-foreground size-4 shrink-0 transition-transform', open && 'rotate-180')} />
+        <span className='sr-only'>: choose a {text('journeys.one')}</span>
+      </PopoverTrigger>
+      <PopoverContent align='start' initialFocus={search ? inputRef : listRef} className='w-80 max-w-[calc(100vw-2rem)] gap-1.5 p-1.5' data-journey-list>
+        {search && (
+          <div className='relative'>
+            <Icons.search aria-hidden className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
+            <Input ref={inputRef} type='search' role='combobox' aria-expanded aria-controls={listId} aria-autocomplete='list' aria-activedescendant={activeId}
+              value={q} onChange={(e) => { setQ(e.target.value); setActive(0); }} onKeyDown={onKey}
+              placeholder={`Search ${items.length} ${text('journeys.many')}`} aria-label={`Search ${text('journeys.many')}`} className='h-8 pl-8 text-sm' />
+          </div>
+        )}
+        <ul ref={listRef} id={listId} role='listbox' aria-label={many} tabIndex={search ? -1 : 0} aria-activedescendant={search ? undefined : activeId}
+          onKeyDown={search ? undefined : onKey} className='flex max-h-80 flex-col gap-0.5 overflow-y-auto outline-hidden'>
+          {matches.length === 0 && <li role='presentation' className='text-muted-foreground px-2 py-3 text-sm'>No {text('journeys.one')} matches “{q}”.</li>}
+          {matches.map((j, i) => {
+            const on = j.id === current.id, complete = j.total > 0 && j.done >= j.total;
+            return (
+              <li key={j.id} id={optId(i)} role='option' aria-selected={on} title={j.goal} data-journey={j.id}
+                onMouseMove={() => setActive(i)} onClick={() => pick(j)}
+                className={cn('flex cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 text-sm', i === active && 'bg-muted', on && 'font-medium')}>
+                <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-full border-2', complete ? 'border-primary bg-primary text-primary-foreground' : on ? 'border-primary' : 'border-muted-foreground/40')}>
+                  {complete ? <Icons.check className='size-3' /> : on && <span className='bg-primary size-1.5 rounded-full' />}
+                </span>
+                <span className='min-w-0 flex-1 truncate'>{j.name}</span>
+                <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{j.done}/{j.total}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 /** A use case as a pipeline: what it gets you, a worked example, and each stage's prompt, tool and expected result. */
-function JourneyView({ j, onChanged, note }: { j: Journey; onChanged: () => void; note: string | null }) {
+function JourneyView({ j, title, onChanged, note }: { j: Journey; title: React.ReactNode; onChanged: () => void; note: string | null }) {
   const [busy, setBusy] = useState<string | null>(null);
   // Stages with no tool are marked by hand, for the whole account (and counted in journey analytics).
   const toggle = (id: string, done: boolean) => {
@@ -308,7 +342,7 @@ function JourneyView({ j, onChanged, note }: { j: Journey; onChanged: () => void
   const isDone = (x: Stage) => x.done;
   const done = j.stages.filter(isDone).length;
   return (
-    <TimelineSection title={j.name} done={done} total={j.total} noun='stages'
+    <TimelineSection title={title} done={done} total={j.total} noun='stages'
       items={j.stages.map((x) => {
         const ok = isDone(x);
         // A stage whose tool starts work (pack.json journeys.launch): a viewer gets the note, not the prompt.
@@ -365,7 +399,7 @@ interface TimelineItem { id: string; label: string; done: boolean; body: React.R
  * item says what it is and, while open, what to type (mold_v0-172: a home tab's checklist is this one too).
  */
 function TimelineSection({ title, done, total, noun, items, footer }: {
-  title: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
+  title: React.ReactNode; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
 }) {
   const pct = Math.round((done / Math.max(1, total)) * 100);
   const current = items.find((x) => !x.done)?.id;
@@ -421,7 +455,7 @@ function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
  * description and, while open, the words to type in an AI client (mold_v0-172: a pack step's pack.json prompt too).
  */
 function Checklist({ steps, title, anchored }: {
-  steps: ChecklistStep[]; title: string;
+  steps: ChecklistStep[]; title: React.ReactNode;
   /** The packs' steps are in: scroll to a linked one. */
   anchored: boolean;
 }) {

@@ -17,7 +17,8 @@
 // 5. Tenant isolation: the check for one workspace never reads or writes another's; a workspace's scope cannot write
 //    another's clock rows or events, nor change an event; each workspace's notices, emails, pages and tool are its own.
 // 6. Reads: /api/records pages and records carry their clocks and history; the record tools and list_due_records; a
-//    metric over a clock's status; the default cards of a list tab gain Overdue.
+//    metric over a clock's status; the default cards of a list tab gain Overdue; the home page's Due soon card
+//    (/api/records/due-soon, mold_v0-207).
 import assert from "node:assert/strict";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 
@@ -395,8 +396,37 @@ try {
       assert.deepEqual(cards.map((c) => c.id).slice(0, 2), ["_records", "_overdue"]);
       const od = cards.find((c) => c.id === "_overdue")!;
       assert.equal((await computeSpec(A.orgId, od.value, SYSTEM_ACTOR, NOWR)).value, 3, "the Overdue card");
+      // The home page's Due soon card (mold_v0-207): every clock area and clock at once, overdue first, then the
+      // soonest due; the workspace's own; the areas the role may read only.
+      const ds = await (await http.req("GET", "/api/records/due-soon?limit=50", h(memberA))).json();
+      assert.deepEqual(ds.areas.map((a: any) => a.name), ["dl_items"]);
+      assert.deepEqual(ds.records.filter((r: any) => r.clock === "fix_by").map((r: any) => r.key), ["a-old", "a-capped", "a-soon"], "fix_by: overdue, soonest deadline first");
+      assert.ok(ds.records.every((r: any) => ["overdue", "due_soon"].includes(r.status) && r.area_label === "Items" && r.clock_label), "only overdue or due soon, each with its area and clock");
+      const rank = (r: any) => (r.status === "overdue" ? 0 : 1);
+      assert.ok(ds.records.every((r: any, i: number) => i === 0 || rank(ds.records[i - 1]) < rank(r) || (rank(ds.records[i - 1]) === rank(r) && ds.records[i - 1].due_at <= r.due_at)), "overdue first, then by deadline");
+      assert.equal(ds.total, ds.records.length);
+      assert.equal(ds.records.find((r: any) => r.key === "a-old" && r.clock === "fix_by").title, "Stale secret");
+      const ds6 = await (await http.req("GET", "/api/records/due-soon", h(memberA))).json();
+      assert.equal(ds6.records.length, Math.min(6, ds.total), "six at most by default");
+      const dsB = await (await http.req("GET", "/api/records/due-soon?limit=50", h(ownerB))).json();
+      assert.deepEqual([...new Set(dsB.records.map((r: any) => r.key))], ["b-high"], "B's own only");
+      assert.equal((await http.req("GET", "/api/records/due-soon")).status, 401, "signed in only");
+      rc.setClockNowForTest(() => NOW0);
+      const early = await (await http.req("GET", "/api/records/due-soon?limit=50", h(memberA))).json();
+      const firstSoon = early.records.findIndex((r: any) => r.status === "due_soon");
+      assert.ok(firstSoon > 0 && early.records.slice(firstSoon).every((r: any) => r.status === "due_soon"), "overdue rows before due soon ones");
+      assert.ok(early.records.some((r: any) => r.key === "a-soon" && r.clock === "fix_by" && r.status === "due_soon"));
+      rc.setClockNowForTest(() => NOWR);
+      // An area the role may not read is left out: none to show, and no area named.
+      setPacksForTest([{ manifest: { id: "fixture_deadlines", name: "Fixture deadlines", version: "1", entry: null, migrations: null, words: {}, dir: "." } as never,
+        definition: definePack({ id: "fixture_deadlines", recordAreas: [{ ...AREA, permissions: { read: ["owner"] } }] as never }) }]);
+      const denied = await (await http.req("GET", "/api/records/due-soon", h(memberA))).json();
+      assert.deepEqual([denied.areas, denied.records], [[], []], "a member who may not read the area sees none of it");
+      const owned = await (await http.req("GET", "/api/records/due-soon", h(ownerA))).json();
+      assert.ok(owned.records.length > 0, "the owner still does");
+      setPacksForTest([{ manifest: { id: "fixture_deadlines", name: "Fixture deadlines", version: "1", entry: null, migrations: null, words: {}, dir: "." } as never, definition: def }]);
       void listFor; void detailFor; void ownerA;
-      console.log("✓ reads: pages and records carry each clock (status, due date), the record page its history, notices the latest step; list_records says when each is due; list_due_records lists a workspace's own, soonest first; a metric and the list tab's Overdue card count overdue records per workspace");
+      console.log("✓ reads: pages and records carry each clock (status, due date), the record page its history, notices the latest step; list_records says when each is due; list_due_records lists a workspace's own, soonest first; a metric and the list tab's Overdue card count overdue records per workspace; the home page's Due soon card lists every clock's overdue then due-soon records, the workspace's own, for the roles that may read them");
     }
   } finally {
     rc.setClockNowForTest(null);

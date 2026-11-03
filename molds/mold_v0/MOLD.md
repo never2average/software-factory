@@ -1231,7 +1231,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Deliveries**, only when a pack declares company email or the app has a developer surface:
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface (its webhooks are shown there too, for now):
   emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
   endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
   `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
@@ -1240,6 +1240,28 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   start) and the mold version (the shell's newest migration, the package version). Every error shown is cut short and
   has addresses, links, credentials and key-like text taken out (`safeError`). Proof: `npm run test:health-tabs`, and
   `npm run test:admin-sections` (the engine's tabs as before).
+- **Health › Status as a grid of graphs** (mold_v0-210, built): the Status tab (`/admin/health?section=status`) is a grid
+  (three columns from 1280 px, two from 768 px, one on a phone; the console's own charts, `components/ui/chart`,
+  recharts, in `components/layout/chart-grid` boxes) with one graph per signal, its current state as its headline
+  (e.g. "Up · 4 ms") and one 24h / 7d / 30d switch for the whole grid: database latency, API latency (p50 and p95), the
+  health check (an uptime band: the share of samples up per bucket, grey where there was no sample), the row-level
+  security probe and object storage (bands), the key vault's providers set and missing, the Claude provider's errors
+  and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate and, only when
+  the app has deliveries, the delivery failure rate; the last deploy and the mold version are a line above it, not a
+  graph. The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
+  work, `src/rls.ts` NO_ACCESS; rollback: `sql/rollback/0038_health_samples.sql`, which drops it with its rows), one
+  row every 4 minutes at most across processes (`src/health-samples.ts`): a server's own loop (`startHealthSampler`)
+  and, on Vercel, the cron entry, so history exists without the long-running server; each sample is tracked as the
+  scheduled job `health_samples` and prunes samples older than 35 days. A sample is numbers and states only (no free
+  text column: `rls` and `storage` are checked against their sets), never an address, a secret or a person. The API's
+  latency is this process's requests since the sample before (a request's duration, nothing else; not `/healthz` or
+  the cron entry), else the MCP requests' times every instance recorded (`mcp_events.ms`); the Claude provider's
+  counters are the day's so far (`gateway_model_usage`), turned into differences per sample; refusals are the runs'
+  refused-and-retried events. Staff only: `GET /api/admin/onboarding/health/history?range=24h|7d|30d`. Only in a build
+  without the session engine (`APP_SCHEDULER=off` turns the loop off too): an engine build such as Octillion has
+  neither the sampling nor these tabs, so its Health is unchanged. Proof: `npm run test:health-tabs` (sampling,
+  throttle, retention, buckets, numbers and states only, closed to tenant queries), `npm run test:migrations`
+  (rollback), `npm run check:rls`.
 - **Accounts › Admins** (mold_v0-204, built): the platform's staff and their roles are the Admins tab of Accounts
   (`/admin/accounts?section=admins`, `web/src/features/admin/accounts-tabs.tsx`: Accounts | Admins, the same tab strip
   as Health's), in every app; the sidebar has no Admins entry and `/admin/admins` is gone (the console's not-found page,
@@ -1684,13 +1706,15 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   while open, its prompt in a Copy prompt box (a pack step's pack.json `prompt`, the get_started tool's "say"; the
   current one highlighted, done ones checked), then tips when the build has them; the right column is the "Connect your
   AI client" card (pick a client, the URL with Copy URL, Test my connection), then the tab's `rail`, up to two cards in
-  order: `journeys` (the journey picker: every build has journeys, mold_v0-175: "Get set up", the setup steps
-  themselves, always first, then the journeys component's when pack.json `journeys` turns it on), `notices` (the records due soon, the first
+  order: `journeys` (since mold_v0-207 the **Due soon** card, below; the journey selector it once was is the main
+  column's heading), `notices` (the records due soon, the first
   five then "Show all"; `DueSoonCard` in `web/src/features/schedules/notices-page.tsx`; needs `include: notices`), or
   `chart:<name>` (one of the pack's `number` charts as a card of its tiles, with a link to the pack's other overview
-  tab that lists it). Without `rail` the second card is the journey picker (the Setup page's own layout, zero packs
-  included: Get set up alone there). Included `notices` no card shows follow the checklist (`DueSoonSection`); the tab's
-  `charts` come below both columns, under its `charts_title` when it has one (mold_v0-175; Maxwell's "Numbers"). The
+  tab that lists it). Without `rail` the second card is the Due soon card (the Setup page's own layout, zero packs
+  included). Included `notices` no card shows follow the checklist (`DueSoonSection`, headed "Notices" in a build with a
+  clock, beside the Due soon card). **No charts on the home page** (mold_v0-207): the tab's `charts` and `charts_title`
+  are accepted (a pack stays valid: its metrics still drive the headline row, the list tabs' cards and the rail's number
+  cards) and not drawn; a build does not refuse them, so packs written before keep building. The
   tab is drawn at `/app` itself (mold_v0-175, `web/src/app/app/page.tsx`): its own `/app/<id>` and `/app/notices` (and
   every address under it) redirect to `/app` (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
   too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
@@ -1701,8 +1725,26 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   home tab with charts. **The sidebar** shows no heading for a group of one entry named like the group (mold_v0-175:
   `web/src/components/layout/app-sidebar.tsx`; a pack's Overview tab in an Overview group is one entry).
   `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
-  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, its charts;
-  then every step done).
+  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, no charts
+  grid; then every step done).
+  **The journey selector and the Due soon card** (mold_v0-207). The main column's heading is the journey selector, for
+  every build: a button with the selected journey's name ("Get set up" by default), its progress and a chevron, opening
+  a listbox (`role="listbox"`, options with `aria-selected`, the active one by `aria-activedescendant`; a search box,
+  `role="combobox"`, past six) of every journey with its progress (1/9); Enter, Space or the arrows open it, the arrows,
+  Home and End move, Enter picks, Escape closes back to the heading. Picking one switches the steps below and keeps
+  `?journey=<id>` (`JourneyMenu` in `web/src/features/portal/setup.tsx`). A home tab whose `rail` leaves out `journeys`
+  keeps a plain "Get set up" heading. The right column's second card is **Due soon**
+  (`web/src/features/records/due-soon-card.tsx`, the Connect card's style): the records coming due or overdue across the
+  workspace, from the record clocks (`GET /api/records/due-soon`, `src/record-clocks.ts` `dueAcross`): one row per record
+  and clock that is overdue or due soon, overdue first, then the soonest deadline, six at most, each with its title, area
+  and clock, a badge (Overdue Nd, Due soon) and a relative date, a link to the record's page; View all opens the area's
+  list (its own tab, inside its sections tab when it has one, else `/app/records/<area>`) with the Overdue filter on
+  (`?overdue=1`, now kept in the address) when something is overdue. The server reads each area inside the workspace's
+  tenant scope, only the clock areas the person's role may read and whose list no pack withholds (a sealed area while
+  the vault is locked is skipped). Nothing due: a calm line ("Nothing is due or overdue"). **No card** in a build with
+  no clock (Octillion: a card that could never fill would only promise a feature the app does not have) nor for a role
+  that may read no clock area (as a tab is never shown to a role that may not read it). `npm run test:record-clocks`
+  checks the route (order, the default six, two workspaces, a role that may not read the area, signed out).
   **A sections tab** (mold_v0-175): `{"kind": "sections", "sections": ["<tab id>", ...]}` draws several of the pack's
   own tabs (area, runs, reports or schedules: 2 to 6) as one page with an in-page tab strip (`Tabs`, line variant)
   above the selected one's charts, views and table (`SectionsTab` in `web/src/features/tabs/tab-page.tsx`; the table is
@@ -1745,7 +1787,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **A home tab's headline row** (mold_v0-203): pack.json `sparklines` on the home tab (an `overview` that includes
   `setup`) names 1 to 4 of the pack's metrics, drawn as the same cards (`TabSparklines`, `StatStrip` with `quad`: four
   across from a wide screen, two by two below it, in the console's light or dark theme) in a row at the very top of the
-  Overview, above the checklist or journey and the right column (the connection card, the journey picker). The same
+  Overview, above the checklist or journey and the right column (the connection card, the Due soon card). The same
   rules as a list tab's cards (a declared metric, never grouped, weeks to draw, never twice) and the same route
   (`GET /api/sparklines/<pack>/<home tab>`, mounted for it too; the home tab is every role's, each card refused alone to
   a role that may not read its metric). The registry carries the list as the tab's `headline`; a number the row shows is
