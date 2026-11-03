@@ -26,6 +26,7 @@ import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter, sparklineAppRouter } from "./view-routes.js";
+import { tabActionAppRouter } from "./tab-actions.js";
 import { workspaceFileAppRouter } from "./workspace-files.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
@@ -284,6 +285,8 @@ export function createApp() {
   app.use("/api/runs", runAppRouter());
   // A list tab's four cards (mold_v0-181): with no list tab nothing is mounted.
   app.use("/api/sparklines", sparklineAppRouter());
+  // A list tab's floating action (mold_v0-208, src/tab-actions.ts): with no tab declaring one nothing is mounted.
+  app.use("/api/tab-actions", tabActionAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
   // ---------- the developer surface of an embedded app (mold_v0-193, src/developer-*.ts): /v1, /openapi.json and the
