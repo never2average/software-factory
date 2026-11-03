@@ -4,7 +4,7 @@
 // up to DUE_SOON_ROWS, each row its record's title, area and clock, a badge and a relative date, a link to the record's
 // page; View all opens the area's list (its Overdue filter on when something is overdue). The server reads the
 // workspace's own records only (its tenant scope), of the areas this person's role may read.
-//   No clock in the build (Octillion): no card. A clock area left nothing to read for this role: no card either, as a
+//   No clock in the build: no card. A clock area left nothing to read for this role: no card either, as a
 //   tab is never shown to a role that may not read it. Nothing due: a calm line, never an alarm.
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
