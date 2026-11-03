@@ -419,7 +419,28 @@ const dayOf = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.te
 const textOf = (v: unknown, max = 200) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 const intOf = (v: unknown) => { const n = Number(v); return v !== undefined && v !== null && v !== "" && Number.isSafeInteger(n) && n > 0 ? n : null; };
 
-export interface DataTrailRow { seq: number; at: string; actor_kind: ActorKind; actor_id: string | null; key_id: number | null; action: DataAction; target: DataTarget; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: Channel }
+/**
+ * The Action and Actor columns (mold_v0-209: the trails' tables, their CSV and the row drawer). Actor is who did it, in
+ * words: its kind (user, key, staff, agent run, system) and its display (the person, staff's pseudonym, the key's prefix
+ * or number, the run's id). Action is what was done: a data entry's own action; a platform entry's from its kind, method
+ * and path (sign-in, tool call, read, change, delete, check).
+ */
+const ACTOR_WORD: Record<string, string> = { user: "User", key: "Key", staff: "Staff", agent_run: "Agent run", system: "System" };
+export function actorLabel(kind: string, id: string | null, key: string | null): string {
+  if (kind === "system") return "System";
+  const shown = kind === "key" ? key ?? id : id ?? key;
+  return `${ACTOR_WORD[kind] ?? kind}${shown ? ` · ${shown}` : ""}`;
+}
+export function platformAction(kind: string, method: string, path: string): string {
+  if (kind === "sign_in") return "sign-in";
+  if (method === "CHECK") return "check";
+  if (method === "MCP" || /^\/(admin\/)?mcp\b/.test(path)) return /tools\/call|^\/admin\/mcp\//.test(path) ? "tool call" : "MCP request";
+  if (method === "GET" || method === "HEAD") return "read";
+  if (method === "DELETE") return "delete";
+  return "change";
+}
+
+export interface DataTrailRow { seq: number; at: string; actor_kind: ActorKind; actor_id: string | null; key_id: number | null; action: DataAction; actor: string; target: DataTarget; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: Channel }
 /** One workspace's data trail, newest first (under row-level security: only its own rows can come back). `before`: a seq. */
 export async function readDataTrail(orgId: number, q: TrailQuery = {}): Promise<{ entries: DataTrailRow[]; next: number | null }> {
   const limit = limitOf(q), params: unknown[] = [orgId], where: string[] = [];
@@ -435,11 +456,11 @@ export async function readDataTrail(orgId: number, q: TrailQuery = {}): Promise<
     `SELECT seq, at, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel FROM audit_data_events
       WHERE org_id = $1${where.map((w) => ` AND ${w}`).join("")} ORDER BY seq DESC LIMIT $${params.length}`, params));
   const more = rows.length > limit;
-  const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString() }));
+  const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) }));
   return { entries, next: more ? entries[entries.length - 1]!.seq : null };
 }
 
-export interface PlatformTrailRow { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; channel: Channel; method: string; path: string; key_id: number | null; key_prefix: string | null;
+export interface PlatformTrailRow { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; action: string; actor: string; channel: Channel; method: string; path: string; key_id: number | null; key_prefix: string | null;
   actor_kind: ActorKind; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null }
 /**
  * The platform trail, newest first: one workspace's slice (`orgId`, under row-level security; staff named by the
@@ -470,8 +491,11 @@ export async function readPlatformTrail(orgId: number | null, q: TrailQuery = {}
   const entries: PlatformTrailRow[] = [];
   for (const r of page) {
     const staffInWorkspace = orgId !== null && r.actor_kind === "staff" && r.actor_id && !String(r.actor_id).startsWith("staff:");
-    entries.push({ seq: Number(r.seq), at: new Date(r.at).toISOString(), org_id: r.org_id, workspace: r.workspace ?? null, kind: r.kind, channel: r.channel, method: r.method, path: r.path,
-      key_id: r.key_id, key_prefix: r.key_prefix ?? null, actor_kind: r.actor_kind, actor_id: staffInWorkspace ? await pseudonym(r.actor_id, orgId!) : r.actor_id,
+    const actorId: string | null = staffInWorkspace ? await pseudonym(r.actor_id, orgId!) : r.actor_id;
+    entries.push({ seq: Number(r.seq), at: new Date(r.at).toISOString(), org_id: r.org_id, workspace: r.workspace ?? null, kind: r.kind,
+      action: platformAction(r.kind, r.method, r.path), actor: actorLabel(r.actor_kind, actorId, r.key_prefix ? `${r.key_prefix}…` : r.key_id == null ? null : `#${r.key_id}`),
+      channel: r.channel, method: r.method, path: r.path,
+      key_id: r.key_id, key_prefix: r.key_prefix ?? null, actor_kind: r.actor_kind, actor_id: actorId,
       scopes: Array.isArray(r.scopes) ? r.scopes : typeof r.scopes === "string" ? r.scopes.replace(/^\{|\}$/g, "").split(",").filter(Boolean).map((s: string) => s.replace(/^"|"$/g, "")) : [],
       status: r.status, latency_ms: r.latency_ms, ...(orgId === null ? { ip: r.ip ?? null } : {}) });
   }
@@ -542,8 +566,9 @@ const csvCell = (v: unknown): string => {
 };
 const csvLine = (cells: unknown[]) => `${cells.map(csvCell).join(",")}\r\n`;
 export const CSV_MAX_ROWS = 50_000;
-const DATA_COLS: (keyof DataTrailRow)[] = ["seq", "at", "actor_kind", "actor_id", "key_id", "action", "target", "pack", "area", "record_key", "rows", "channel"];
-const PLATFORM_COLS: (keyof PlatformTrailRow)[] = ["seq", "at", "workspace", "kind", "channel", "method", "path", "key_prefix", "actor_kind", "actor_id", "scopes", "status", "latency_ms"];
+// Action and Actor first after the time (mold_v0-209), then the raw fields they are made from.
+const DATA_COLS: (keyof DataTrailRow)[] = ["seq", "at", "action", "actor", "actor_kind", "actor_id", "key_id", "target", "pack", "area", "record_key", "rows", "channel"];
+const PLATFORM_COLS: (keyof PlatformTrailRow)[] = ["seq", "at", "workspace", "action", "actor", "channel", "method", "path", "key_prefix", "actor_kind", "actor_id", "scopes", "status", "latency_ms"];
 /** A trail as CSV, newest first, paged through the readers above (at most CSV_MAX_ROWS rows). */
 export async function trailCsv(which: "data" | "platform", orgId: number | null, q: TrailQuery = {}): Promise<{ csv: string; rows: number; more: boolean }> {
   const cols = which === "data" ? DATA_COLS : [...PLATFORM_COLS, ...(orgId === null ? ["ip" as const] : [])];

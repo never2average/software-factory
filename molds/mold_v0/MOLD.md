@@ -2638,6 +2638,14 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   access / Requests switch above the table). The separate page and its sidebar entry are gone: the old address is
   the normal not-found page, no redirect, and nothing links to it. The staff `/admin/access-log` is unchanged (its own
   sidebar entry under Security; the staff guide says what it is for). Proof: `npm run test:record-pages` (section 7).
+- **Action and Actor columns** (mold_v0-209): both trails' tables (Billing's tab and `/admin/access-log`) show **Action**
+  (what was done: a data entry's list, read, reveal, export, create, update, move or delete; a platform entry's read,
+  change, delete, tool call, MCP request, sign-in or check, from its kind, method and path) and **Actor** (who did it:
+  User, Key, Staff, Agent run or System, with the person, staff's pseudonym, the key's prefix or number, or the run's
+  id), where the platform trail had Kind and Who. The server words both (`src/audit-trail.ts` `actorLabel`,
+  `platformAction`) on every entry it returns (`action`, `actor`), so the table, its filters and sort, the row drawer,
+  the MCP tool's answer and the CSV (`seq,at,action,actor,…` for the data trail, `seq,at,workspace,action,actor,…` for
+  the platform trail; the raw actor kind and id follow) read the same words. Proof: `npm run test:audit-trail`.
 
 Proof: `npm run test:audit-trail` (gen-packs' check of the setting; both off, each alone, both on; tenant isolation by
 route, MCP tool and the tenant role; no value in either trail; one entry per list; a 250-operation batch in at most two

@@ -194,7 +194,11 @@ async function inner() {
       assert.ok(next.body.entries[0].seq < page.body.entries[2].seq + 0 || next.body.entries[0].seq === page.body.entries[2].seq - 1, "pages continue from before");
       const csv = await app.req("GET", "/api/audit/data.csv", A.owner);
       assert.equal(csv.status, 200);
-      assert.match(csv.text, /^(\ufeff)?seq,at,actor_kind,actor_id,key_id,action,target,pack,area,record_key,rows,channel\r\n/);
+      // Action and Actor (mold_v0-209): what was done, and who in words, after the time; then the raw fields.
+      assert.match(csv.text, /^(\ufeff)?seq,at,action,actor,actor_kind,actor_id,key_id,target,pack,area,record_key,rows,channel\r\n/);
+      const listed = (await app.req("GET", "/api/audit/data?limit=500", A.owner)).body.entries as any[];
+      assert.ok(listed.length && listed.every((e: any) => typeof e.actor === "string" && (e.actor_kind === "system" ? e.actor === "System" : e.actor.startsWith({ user: "User", key: "Key", staff: "Staff", agent_run: "Agent run" }[e.actor_kind as string]!))),
+        "each entry's Actor: its kind and display in words");
       assert.equal(csv.text.trim().split("\r\n").length, all.length + 1, "the CSV holds every entry");
       assert.equal((await app.req("GET", "/api/audit/platform", A.owner)).status, 404, "the platform trail's route is not there");
       // The Access log's four cards (mold_v0-205): this week's counts and twelve weeks, owners only, counts never contents.
@@ -277,6 +281,15 @@ async function inner() {
       assert.ok(slice.body.entries.length && slice.body.entries.every((e: any) => e.org_id === A.org.orgId), "a workspace's owners read their own slice only");
       const staffSeen = slice.body.entries.filter((e: any) => e.actor_kind === "staff");
       assert.ok(staffSeen.length >= 2 && staffSeen.every((e: any) => e.actor_id.startsWith("staff:") && !("ip" in e)), "staff appear in the slice as a pseudonym, without addresses");
+      // Action and Actor (mold_v0-209): the platform trail's Kind became the two columns.
+      assert.ok(staffSeen.every((e: any) => e.actor === `Staff · ${e.actor_id}`), "staff's Actor: Staff and the pseudonym");
+      const toolCall = slice.body.entries.find((e: any) => e.path.includes("tools/call:fixture_vulns_list_audit_findings"));
+      assert.ok(toolCall && toolCall.action === "tool call" && /^Key · oct_.*…$/.test(toolCall.actor), `an MCP tool call: Action "tool call", Actor the key's prefix (${toolCall?.action}, ${toolCall?.actor})`);
+      const posted = slice.body.entries.find((e: any) => e.path === "/api/data/audit_findings" && e.method === "POST");
+      assert.ok(posted && posted.action === "change" && posted.actor.startsWith("User · "), "a console write: Action change, Actor the person");
+      const pcsv = await app.req("GET", "/api/audit/platform.csv", A.owner);
+      assert.equal(pcsv.status, 200);
+      assert.match(pcsv.text, /^(\ufeff)?seq,at,workspace,action,actor,channel,method,path,key_prefix,actor_kind,actor_id,scopes,status,latency_ms\r\n/, "the CSV: Action and Actor columns");
       assert.equal((await app.req("GET", "/api/audit/data", A.owner)).status, 404, "the data trail's route is not there");
       // The cards (mold_v0-205): the owner's slice counts its own requests; staff read the fleet's.
       const sc = await app.req("GET", "/api/audit/platform/sparklines", A.owner);

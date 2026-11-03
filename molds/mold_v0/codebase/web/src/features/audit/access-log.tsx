@@ -2,7 +2,10 @@
 // The access log (mold_v0-197; src/audit-trail.ts): the audit trails on the records pages' own table (mold_v0-205). Each
 // trail is a read-only system area (no pack declares it, nothing writes it from here) drawn by RecordTableView, the
 // component every record area's page and tab draws, through its data adapter (features/records/record-pages.tsx
-// RecordSource): the search row with the trail's four cards under it (GET /api/audit/<trail>/sparklines), filters on
+// RecordSource): the search row with the trail's four cards under it (the list tabs' order, cards above search where the
+// table draws them so), an Action and an Actor column on both trails (mold_v0-209: what was done, and who did it in words,
+// from the server: src/audit-trail.ts actorLabel, platformAction; each filtered and sorted, both in the CSV and the
+// drawer) (GET /api/audit/<trail>/sparklines), filters on
 // who, action, area, door and the date range, the column picker, Download CSV (the server's own file: every entry,
 // not only the loaded pages) and a row drawer with the entry's details. Billing's Access log tab (/app/billing?tab=access-log,
 // mold_v0-209; features/portal/billing.tsx) is one workspace's, for its owners (GET /api/audit/data, /api/audit/platform:
@@ -19,8 +22,8 @@ import { Sparklines } from '@/features/tabs/sparklines';
 import { useAccountRole } from '@/features/portal/role';
 import { dataTrailOn, platformTrailOn } from './config';
 
-interface DataEntry { seq: number; at: string; actor_kind: string; actor_id: string | null; key_id: number | null; action: string; target: string; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: string }
-interface PlatformEntry { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; channel: string; method: string; path: string; key_id: number | null; key_prefix: string | null;
+interface DataEntry { seq: number; at: string; actor_kind: string; actor_id: string | null; key_id: number | null; action: string; actor: string; target: string; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: string }
+interface PlatformEntry { seq: number; at: string; org_id: number | null; workspace: string | null; kind: string; action: string; actor: string; channel: string; method: string; path: string; key_id: number | null; key_prefix: string | null;
   actor_kind: string; actor_id: string | null; scopes: string[]; status: number | null; latency_ms: number | null; ip?: string | null }
 type Page<T> = { entries: T[]; next: number | string | null };
 
@@ -43,7 +46,6 @@ async function loadAll<T>(url: string, row: (e: T) => RecordRow): Promise<{ reco
 }
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
-const who = (kind: string, id: string | null) => (kind === 'system' ? 'System' : kind === 'agent_run' ? `Agent run ${id ?? ''}` : id ?? kind);
 const opts = (xs: string[]) => xs.map((value) => ({ value }));
 const CHANNELS = opts(['console', 'api', 'mcp', 'admin_console', 'admin_mcp', 'run', 'system']);
 const ACTOR_KINDS = opts(['user', 'key', 'staff', 'agent_run', 'system']);
@@ -53,28 +55,28 @@ const systemArea = (name: string, label: string, fields: RecordFieldSpec[], list
   ({ pack: '_system', name, label, description: null, role: 'source', scope: 'workspace', fields, list_columns: list, links: [], lifecycle: null });
 
 const DATA_AREA = systemArea('access_log', 'Access log', [
-  f('actor', 'Who', 'enum'),
   f('action', 'Action', 'enum', { options: ['list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete'] }),
+  f('actor', 'Actor', 'enum'),
   f('area', 'Area', 'enum'),
   f('record_key', 'Record or file', 'text'),
   f('rows', 'Rows', 'number'),
   f('channel', 'Through', 'enum', { options: CHANNELS }),
-  f('target', 'Kind', 'enum', { options: ['record', 'file', 'run_result'] }),
+  f('target', 'Target', 'enum', { options: ['record', 'file', 'run_result'] }),
   f('pack', 'Pack', 'enum'),
   f('actor_kind', 'Actor kind', 'enum', { options: ACTOR_KINDS }),
   f('key_id', 'Key', 'text'),
-], ['actor', 'action', 'area', 'record_key', 'rows', 'channel']);
+], ['action', 'actor', 'area', 'record_key', 'rows', 'channel']);
 const dataRow = (e: DataEntry): RecordRow => ({
   key: `#${e.seq}`, title: when(e.at), updated_at: e.at,
-  data: { at: e.at, actor: who(e.actor_kind, e.actor_id), action: e.action, area: e.area, record_key: e.record_key, rows: e.rows, channel: e.channel,
+  data: { at: e.at, action: e.action, actor: e.actor, area: e.area, record_key: e.record_key, rows: e.rows, channel: e.channel,
     target: e.target, pack: e.pack, actor_kind: e.actor_kind, key_id: e.key_id == null ? null : `#${e.key_id}` }
 });
 
 const platformArea = (fleet: boolean) => systemArea(fleet ? 'platform_trail' : 'request_log', 'Requests', [
   ...(fleet ? [f('workspace', 'Workspace', 'enum')] : []),
-  f('kind', 'Kind', 'enum', { options: ['request', 'sign_in', 'staff'] }),
+  f('action', 'Action', 'enum', { options: opts(['read', 'change', 'delete', 'tool call', 'MCP request', 'sign-in', 'check']) }),
+  f('actor', 'Actor', 'enum'),
   f('request', 'Request', 'text'),
-  f('actor', 'Who', 'enum'),
   f('key', 'Key', 'text'),
   f('status', 'Result', 'number'),
   f('latency_ms', 'Latency (ms)', 'number'),
@@ -82,10 +84,10 @@ const platformArea = (fleet: boolean) => systemArea(fleet ? 'platform_trail' : '
   f('scopes', 'Scopes', 'text'),
   f('actor_kind', 'Actor kind', 'enum', { options: ACTOR_KINDS }),
   ...(fleet ? [f('ip', 'Address', 'text')] : []),
-], [...(fleet ? ['workspace'] : []), 'kind', 'request', 'actor', 'key', 'status', 'latency_ms']);
+], [...(fleet ? ['workspace'] : []), 'action', 'actor', 'request', 'key', 'status', 'latency_ms']);
 const platformRow = (e: PlatformEntry): RecordRow => ({
   key: `#${e.seq}${e.ip !== undefined && e.workspace ? ` · ${e.workspace}` : ''}`, title: when(e.at), updated_at: e.at,
-  data: { at: e.at, workspace: e.workspace, kind: e.kind, request: `${e.method} ${e.path}`, actor: who(e.actor_kind, e.actor_id), key: e.key_prefix ? `${e.key_prefix}…` : null,
+  data: { at: e.at, workspace: e.workspace, action: e.action, actor: e.actor, request: `${e.method} ${e.path}`, key: e.key_prefix ? `${e.key_prefix}…` : null,
     status: e.status, latency_ms: e.latency_ms, channel: e.channel, scopes: e.scopes.join(', ') || null, actor_kind: e.actor_kind, ...(e.ip !== undefined ? { ip: e.ip } : {}) }
 });
 

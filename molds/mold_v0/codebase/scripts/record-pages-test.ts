@@ -20,7 +20,8 @@
 //      the date range), the column picker, Download CSV and the row drawer; no table of its own.
 //   7. The Access log is Billing's 4th tab (mold_v0-209): People, Teams, Budget rules, then Access log (?tab=access-log),
 //      shown only where the profile turns audit.data on and only to the workspace's owners, with no title of its own;
-//      /app/access-log is gone (no page, no route, no sidebar entry, no link), the staff /admin/access-log stays.
+//      /app/access-log is gone (no page, no route, no sidebar entry, no link), the staff /admin/access-log stays. Both
+//      trails' tables have an Action and an Actor column (the platform trail's Kind split in two).
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -185,6 +186,12 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const body = log.slice(log.indexOf("export function WorkspaceAccessLog("), log.indexOf("export function OperatorAccessLogPage("));
   assert.ok(body.length > 0 && !/PageContainer|pageTitle/.test(body), "no title above the tab strip: the tab has no page title of its own");
   assert.match(body, /<TrailTable /);
+  // Action and Actor (mold_v0-209): both trails' tables have the two columns where the platform trail had Kind.
+  assert.equal((log.match(/f\('action', 'Action', 'enum'/g) ?? []).length, 2, "an Action column on both trails, filtered by its values");
+  assert.equal((log.match(/f\('actor', 'Actor', 'enum'\)/g) ?? []).length, 2, "an Actor column on both trails, filtered by its values");
+  assert.doesNotMatch(log, /'Kind'|'Who'/, "no Kind or Who column left");
+  assert.match(log, /\['action', 'actor', 'area'/); assert.match(log, /'action', 'actor', 'request'/);
+  assert.match(log, /action: e\.action, actor: e\.actor/, "the row's Action and Actor are the server's words (the drawer shows both)");
   const { existsSync: exists } = await import("node:fs");
   assert.ok(!exists(path.join(WEB, "app", "app", "access-log")), "no /app/access-log page");
   assert.ok(exists(path.join(WEB, "app", "admin", "access-log", "page.tsx")), "the staff /admin/access-log stays");
