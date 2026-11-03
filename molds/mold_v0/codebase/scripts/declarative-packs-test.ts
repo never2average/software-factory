@@ -329,6 +329,8 @@ try {
     no("a record action on a shared area", withTabs([{ id: "apps", kind: "area", area: "tracker_apps", action: { kind: "create_record", area: "tracker_policies" } }]), /tab apps: action create_record: tracker_policies is a shared area/);
     no("a record action on an undeclared area", withTabs([{ id: "apps", kind: "area", area: "tracker_apps", action: { kind: "create_record", area: "tracker_nope" } }]), /tab apps: action create_record: this pack declares no record area tracker_nope/);
     no("a label with braces", withTabs([runs({ kind: "start_run", label: "Start {run}" })]), /tabs\[0\]\.action\.label: no braces/);
+    no("a kind whose start tool the pack withholds", withTabs([runs({ kind: "start_run", job_kind: "tracker_scan" })], (j) => { j.mcp = { exclude: ["fixture_tracker_start_tracker_scan"] }; }),
+      /tab runs: action start_run: job kind tracker_scan's start tool is withheld \(mcp\)/);
     // Accepted: each kind of action, carried into the console's registry with its words.
     const ok = tryPack(withTabs([runs({ kind: "start_run", label: "Start scan", job_kind: "tracker_scan" }), { id: "when", kind: "schedules", label: "Schedule", action: { kind: "new_schedule", label: "Schedule scan", job_kind: "tracker_scan" } },
       { id: "apps", kind: "area", area: "tracker_apps", action: { kind: "create_record", area: "tracker_apps" }, charts: [] }, { id: "plain", kind: "runs", label: "Plain" }]));
@@ -345,7 +347,7 @@ try {
     assert.equal(charted.r.status, 0, `an area tab's charts still build: ${charted.r.stderr}`);
     const ct = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(charted.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual([ct.apps.charts, ct.home.charts], [[], ["summary"]], "an area tab's charts are not drawn; an overview's are");
-    console.log(`✓ a list tab's floating action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared or doubled job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
+    console.log(`✓ a list tab's floating action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
   }
 
   // ---------- 2e. a sections tab: several tabs of the pack as one page's in-page tabs (mold_v0-175) ----------

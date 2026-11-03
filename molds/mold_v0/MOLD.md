@@ -1764,7 +1764,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
   roles and `edit`), and the server refuses the rest. The route is mounted only when a pack declares an action, so a
   build without one (zero packs, Octillion) answers nothing and its MCP surface is unchanged. gen-packs refuses an
-  unknown kind or key, an undeclared or doubled job kind, a picker of one, both `job_kind` and `job_kinds`, an action
+  unknown kind or key, an undeclared or doubled job kind, one whose start tool the pack withholds (mcp), a picker of
+  one, both `job_kind` and `job_kinds`, an action
   on the wrong kind of tab, a schedule with no kind the pack schedules, a missing, shared, undeclared or
   repository-read area, and a label with braces; `npm run test:declarative-packs` proves those and the registry.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules

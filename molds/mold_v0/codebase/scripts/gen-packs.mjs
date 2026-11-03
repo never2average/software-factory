@@ -1395,6 +1395,17 @@ let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
+// A tab's floating action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
+// kind whose start tool is withheld, a record area whose create tool is. The console would only hide the button.
+for (const t of packViews.tabs ?? []) {
+  const a = t.action;
+  if (!a) continue;
+  const kinds = a.kind === "start_run" ? [...(a.job_kind ? [a.job_kind] : []), ...(a.job_kinds ?? [])] : [];
+  for (const k of kinds) if (withheld.some((w) => w.pack === t.pack && w.op === "start" && w.kind === k))
+    fail("packs", `pack ${t.pack}: tab ${t.id}: action start_run: job kind ${k}'s start tool is withheld (mcp): a workspace cannot start it`);
+  if (a.kind === "create_record" && listWithheld(a.area, "create"))
+    fail("packs", `pack ${t.pack}: tab ${t.id}: action create_record: ${a.area}'s create tool is withheld (mcp): a workspace cannot add to it`);
+}
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
 /** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
 const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
