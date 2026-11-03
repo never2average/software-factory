@@ -100,9 +100,8 @@ export const developerConsole = {
   "inbound": false
 };
 
-/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
+/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
 export const usagePortalNav: NavGroup[] = [];
-export const usageAdminNav: NavGroup[] = [];
 
 /** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */
 export interface PackMetricSpec {

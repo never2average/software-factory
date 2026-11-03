@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { developerPortalNav, emailPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { developerPortalNav, emailPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
@@ -39,9 +39,7 @@ export const adminNav: NavGroup[] = [
   ]),
   // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their shared record areas (mold_v0-047).
   ...packAdminNav,
-  ...recordAdminNav,
-  // Usage in neutral words (mold_v0-008), when the build has a pack.
-  ...usageAdminNav
+  ...recordAdminNav
 ];
 
 /** A shell page the build hides (mold_v0-130, src/console-pages.ts), or one under it: left out of the sidebar. */

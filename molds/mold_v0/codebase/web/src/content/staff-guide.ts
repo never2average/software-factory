@@ -43,8 +43,7 @@ const PAGE_USE: Record<string, string> = {
   '/admin/finops': 'Revenue, plans and measured spend: model use, compute hours and storage, by account or by provider.',
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',
   '/admin/repositories': 'Where the shared record areas get their rows: each catalog\'s pin, when it was last indexed, and Index now.',
-  '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.',
-  '/admin/activity': fill('{Tool_calls} and {run} spend across every {workspace}, per {member} and per {run}.')
+  '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.'
 };
 
 const md = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();

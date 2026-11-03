@@ -1,7 +1,7 @@
 /**
- * Usage pages in neutral words (mold_v0-008): tool calls and cost per run, per member and per workspace, for one
- * workspace (its members; GET /api/usage, the console's /app/activity) and for the operator (every workspace; GET
- * /api/admin/onboarding/usage, /admin/activity). From what the shell already records:
+ * Usage in neutral words (mold_v0-008): tool calls and cost per run and per member, for one workspace (its members;
+ * GET /api/usage, the console's /app/activity; its runs also feed the Usage page, src/app.ts). The operator's
+ * every-workspace report (/admin/activity) was removed in mold_v0-211. From what the shell already records:
  *
  *   mcp_events  one row per MCP request (src/analytics.ts recordMcpEvent): workspace, member (or key id), client name and
  *               version, tool, outcome, error class, latency, request and answer sizes. Never arguments or results.
@@ -10,12 +10,12 @@
  *
  * Figures: calls per tool with errors and p50/p95 latency; errors by class; daily and weekly active people (a member,
  * or a key with no member) and week-over-week retention (of the people active one ISO week, how many were active the
- * next); per member (workspace) or per workspace (operator): calls, errors, runs and run cost; per run: its kind,
+ * next); per member: calls, errors, runs and run cost; per run: its kind,
  * status, who started it, its tool calls, model requests, tokens and cost.
  *
  * The words come from the build: a pack may show "workspace" as "company" or "run" as "audit" (pack.json `words`);
- * with no pack, the shell's own. Workspace reports name the workspace in every query and run under its row-level
- * security (the caller is inside withTenant); the operator's are platform reads, for platform admins only.
+ * with no pack, the shell's own. Reports name the workspace in every query and run under its row-level security (the
+ * caller is inside withTenant).
  */
 import { getDb } from "./db.js";
 import { genericVocabulary } from "./vocabulary.js";
@@ -48,35 +48,35 @@ type Range = ReturnType<typeof usageRange>;
 // Staff acting for a workspace (mold_v0-067, user_id staff:...) are in its log but are none of its people.
 const PERSON = "CASE WHEN e.user_id LIKE 'staff:%' THEN NULL ELSE coalesce('m:' || e.user_id, 'k:' || e.key_id::text, 'w') END";
 
-/** Tool calls in [start, end): per tool, totals, errors by class, active people, retention; for one workspace or all. */
-async function callFigures(orgId: number | null, R: Range) {
+/** One workspace's tool calls in [start, end): per tool, totals, errors by class, active people, retention. */
+async function callFigures(orgId: number, R: Range) {
   const db = await getDb();
-  const where = `e.method = 'tools/call' AND e.at >= $1 AND e.at < $2${orgId != null ? " AND e.org_id = $3" : ""}`;
-  const who = orgId != null ? PERSON : `e.org_id::text || ':' || ${PERSON}`;
-  const p = orgId != null ? [R.start, R.end, orgId] : [R.start, R.end];
+  const where = "e.method = 'tools/call' AND e.at >= $1 AND e.at < $2 AND e.org_id = $3";
+  const who = PERSON;
+  const p = [R.start, R.end, orgId];
   // Retention reads the week before the range too, so the first week has a previous one.
-  const wp = orgId != null ? [new Date(+R.start - 7 * DAY), R.end, orgId] : [new Date(+R.start - 7 * DAY), R.end];
+  const wp = [new Date(+R.start - 7 * DAY), R.end, orgId];
   const [tools, totals, classes, daily, weekly, clients] = await Promise.all([
     db.query<{ name: string; calls: number; errors: number; p50: number | null; p95: number | null; req: number | null; res: number | null }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT e.name, count(*)::int AS calls, count(*) FILTER (WHERE NOT e.ok)::int AS errors,
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT e.name, count(*)::int AS calls, count(*) FILTER (WHERE NOT e.ok)::int AS errors,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY e.ms) AS p50, percentile_cont(0.95) WITHIN GROUP (ORDER BY e.ms) AS p95,
               avg(e.req_bytes) AS req, avg(e.res_bytes) AS res
          FROM mcp_events e WHERE ${where} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 200`, p),
     db.query<{ calls: number; errors: number; p50: number | null; p95: number | null; people: number }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT count(*)::int AS calls, count(*) FILTER (WHERE NOT e.ok)::int AS errors,
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT count(*)::int AS calls, count(*) FILTER (WHERE NOT e.ok)::int AS errors,
               percentile_cont(0.5) WITHIN GROUP (ORDER BY e.ms) AS p50, percentile_cont(0.95) WITHIN GROUP (ORDER BY e.ms) AS p95,
               count(DISTINCT ${who})::int AS people
          FROM mcp_events e WHERE ${where}`, p),
     db.query<{ class: string; n: number }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT coalesce(e.error_class, 'error') AS class, count(*)::int AS n FROM mcp_events e WHERE ${where} AND NOT e.ok GROUP BY 1 ORDER BY 2 DESC`, p),
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT coalesce(e.error_class, 'error') AS class, count(*)::int AS n FROM mcp_events e WHERE ${where} AND NOT e.ok GROUP BY 1 ORDER BY 2 DESC`, p),
     db.query<{ day: string; people: number; calls: number }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(DISTINCT ${who})::int AS people, count(*)::int AS calls
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(DISTINCT ${who})::int AS people, count(*)::int AS calls
          FROM mcp_events e WHERE ${where} GROUP BY 1 ORDER BY 1`, p),
     db.query<{ week: string; person: string }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT DISTINCT to_char(date_trunc('week', e.at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS week, ${who} AS person
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT DISTINCT to_char(date_trunc('week', e.at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS week, ${who} AS person
          FROM mcp_events e WHERE ${where}`, wp),
     db.query<{ name: string | null; version: string | null; calls: number }>(
-      `/* tenant: a workspace's report names e.org_id = $3 (in where); the operator's reads every workspace */ SELECT e.client_name AS name, e.client_version AS version, count(*)::int AS calls FROM mcp_events e WHERE ${where}
+      `/* tenant: the workspace's report names e.org_id = $3 (in where) */ SELECT e.client_name AS name, e.client_version AS version, count(*)::int AS calls FROM mcp_events e WHERE ${where}
         GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 20`, p),
   ]);
   const t = totals[0] ?? { calls: 0, errors: 0, p50: null, p95: null, people: 0 };
@@ -173,30 +173,3 @@ export async function workspaceUsageReport(orgId: number, q: { from?: unknown; t
   return { range: { from: R.from, to: R.to }, words: usageWords(), ...calls, members: rows, runs };
 }
 
-/** The operator's usage page: every workspace, platform admins only. */
-export async function operatorUsageReport(q: { from?: unknown; to?: unknown; days?: unknown } = {}) {
-  const R = usageRange(q);
-  const db = await getDb();
-  const [calls, perWs, runs] = await Promise.all([
-    callFigures(null, R),
-    db.query<{ org_id: number; slug: string; name: string; calls: number; errors: number; people: number; p95: number | null }>(
-      `/* tenant: internal: operator usage page, every workspace */ SELECT o.id AS org_id, o.slug, o.name, count(e.id)::int AS calls,
-              count(e.id) FILTER (WHERE NOT e.ok)::int AS errors, count(DISTINCT ${PERSON}) FILTER (WHERE e.id IS NOT NULL)::int AS people,
-              percentile_cont(0.95) WITHIN GROUP (ORDER BY e.ms) AS p95
-         FROM organizations o LEFT JOIN mcp_events e ON e.org_id = o.id AND e.method = 'tools/call' AND e.at >= $1 AND e.at < $2
-        GROUP BY 1, 2, 3`, [R.start, R.end]),
-    db.query<{ org_id: number; runs: number; tool_calls: number; requests: number; usd: number }>(
-      `/* tenant: internal: operator usage page, every workspace */ SELECT r.org_id, count(*)::int AS runs, sum(${RUN_TOOL_CALLS})::int AS tool_calls,
-              sum(${RUN_GW("requests")})::int AS requests, sum(${RUN_USD})::float AS usd
-         FROM runs r WHERE r.created_at >= $1 AND r.created_at < $2 GROUP BY 1`, [R.start, R.end]),
-  ]);
-  const runsOf = new Map(runs.map((r) => [Number(r.org_id), r]));
-  const workspaces = perWs.map((w) => {
-    const r = runsOf.get(Number(w.org_id));
-    return { slug: w.slug, name: w.name, calls: n(w.calls), errors: n(w.errors), people: n(w.people), p95_ms: w.p95 == null ? null : Math.round(Number(w.p95)),
-      runs: n(r?.runs), run_tool_calls: n(r?.tool_calls), run_requests: n(r?.requests), run_cost_usd: r6(n(r?.usd)) };
-  }).filter((w) => w.calls || w.runs).sort((a, b) => b.run_cost_usd - a.run_cost_usd || b.calls - a.calls || a.slug.localeCompare(b.slug));
-  return { range: { from: R.from, to: R.to }, words: usageWords(), ...calls, workspaces,
-    runs: { runs: workspaces.reduce((a, w) => a + w.runs, 0), cost_usd: r6(workspaces.reduce((a, w) => a + w.run_cost_usd, 0)),
-      tool_calls: workspaces.reduce((a, w) => a + w.run_tool_calls, 0) } };
-}

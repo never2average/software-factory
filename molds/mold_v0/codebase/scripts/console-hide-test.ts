@@ -84,8 +84,8 @@ try {
     assert.ok(!p.packTabs.some((t) => t.kind === "usage"), "nor is it a tab page");
     assert.ok(!JSON.stringify(p.guide).includes('"kind":"usage"'), "the customer guide does not list it");
     assert.deepEqual(redirects(copy), [{ source: "/app/activity", destination: "/app", permanent: false }, { source: "/app/activity/:path*", destination: "/app", permanent: false }]);
-    assert.deepEqual(urls(p.adminNav), urls(p0.adminNav), "the staff console is unchanged (its Activity page stays)");
-    assert.ok(urls(p.adminNav).includes("/admin/activity"));
+    assert.deepEqual(urls(p.adminNav), urls(p0.adminNav), "the staff console is unchanged");
+    assert.ok(!urls(p0.adminNav).includes("/admin/activity") && !urls(p.adminNav).includes("/admin/activity"), "the staff console has no Activity page (mold_v0-211)");
     console.log("✓ a pack with tabs hides activity: its usage tab leaves the sidebar, the tab pages and the guide; /app/activity redirects to /app; /admin is unchanged");
   }
 

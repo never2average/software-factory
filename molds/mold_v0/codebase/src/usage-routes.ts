@@ -1,10 +1,11 @@
 /**
- * The neutral usage pages over HTTP (mold_v0-008; src/usage-report.ts):
+ * The neutral usage page over HTTP (mold_v0-008; src/usage-report.ts):
  *
  *   GET /api/usage          a signed-in person of the workspace: its own figures (members, runs), ?from&to or ?days.
  *                           The workspace is the session's (src/app.ts customerSession), and the request runs under its
  *                           row-level security: another workspace's rows cannot be read whatever the query says.
- *   GET /api/admin/onboarding/usage   platform admins (inside the admin router): every workspace.
+ *
+ * (The platform admins' every-workspace report, GET /api/admin/onboarding/usage, went with /admin/activity in mold_v0-211.)
  *
  * Read only; nothing is stored. Members are named by the workspace's own team list (email), else "Former member";
  * a key with no member is "Key <id>".
@@ -12,7 +13,7 @@
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { canAccount } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
-import { operatorUsageReport, workspaceUsageReport } from "./usage-report.js";
+import { workspaceUsageReport } from "./usage-report.js";
 
 export function usageAppRouter(): Router {
   const r = express.Router();
@@ -40,11 +41,4 @@ export function usageAppRouter(): Router {
   });
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;
-}
-
-/** Mounted inside the admin router (/api/admin/onboarding/usage), behind its platform-admin check. */
-export function usageAdminRoute() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try { res.json(await operatorUsageReport(req.query)); } catch (e) { next(e); }
-  };
 }

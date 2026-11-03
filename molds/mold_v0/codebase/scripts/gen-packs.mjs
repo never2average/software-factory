@@ -2288,14 +2288,13 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const developerPortalNav: NavGroup[] = ${json(developerFacts ? [{ label: "Settings", items: [{ title: "Developers", url: "/app/developers", icon: "code", items: [] }] }] : [])};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
   `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length })};\n` +
-  // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
-  // tools or runs. With zero packs the sidebar is the shell's own.
-  // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's. A host pack's mcp block (mold_v0-137:
-  // its server instructions and slash commands) adds no tool or run, so it alone does not count.
-  (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).some((k) => !(p.host && k === "mcp"))) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
-    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
-    `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
-    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
+  // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
+  // tools or runs. With zero packs the sidebar is the shell's own; a build may hide it (mold_v0-130). The staff's
+  // every-workspace Activity page is gone (mold_v0-211). A host pack's mcp block (mold_v0-137: its server instructions
+  // and slash commands) adds no tool or run, so it alone does not count.
+  (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).some((k) => !(p.host && k === "mcp"))) ? "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
+    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n`
+    : "\n/** The workspace's Activity page (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\n") +
   viewsModule());
 // The share image (mold_v0-093; web/src/features/site/share-image.tsx): its words and alternative text, or the brand's own picture.
 files.set(path.join(OUT, "web", "src", "config", "share-image.generated.ts"), HEADER +

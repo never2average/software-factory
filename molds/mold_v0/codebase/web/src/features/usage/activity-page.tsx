@@ -1,14 +1,14 @@
 'use client';
 // Activity (mold_v0-008; src/usage-report.ts): tool calls and cost per run, per member and per workspace, in the build's
 // own words (a pack may call a workspace a "company" or a run an "audit"). /app/activity is one workspace's (its members),
-// from GET /api/usage; /admin/activity is every workspace's, from GET /api/admin/onboarding/usage.
+// from GET /api/usage. (The staff's every-workspace page, /admin/activity, was removed in mold_v0-211.)
 import { useEffect, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { StatStrip } from '@/components/layout/section';
 import { Box, RankBars, top } from '@/components/layout/chart-grid';
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { adminApi, apiClient } from '@/lib/api-client';
+import { apiClient } from '@/lib/api-client';
 import { num, usd } from '@/lib/display-format';
 import { RunTable } from '@/features/portal/usage';
 
@@ -28,11 +28,6 @@ interface WorkspaceReport extends Calls {
     by_kind: { kind: string; runs: number; tool_calls: number; cost_usd: number }[];
     recent: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[] };
 }
-interface OperatorReport extends Calls {
-  workspaces: { slug: string; name: string; calls: number; errors: number; people: number; p95_ms: number | null; runs: number; run_tool_calls: number; run_cost_usd: number }[];
-  runs: { runs: number; cost_usd: number; tool_calls: number };
-}
-
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const plural = (s: string) => (s.endsWith('s') ? s : `${s}s`);
 const ms = (v: number | null) => (v == null ? '—' : `${num(v)} ms`);
@@ -117,33 +112,6 @@ export function WorkspaceActivityPage() {
             </Box>
           )}
         </>} />
-      )}
-    </PageContainer>
-  );
-}
-
-/** /admin/activity: every workspace. */
-export function OperatorActivityPage() {
-  const [range, setRange] = useState<DateRange>(last30);
-  const { data, error } = useReport((q) => adminApi<OperatorReport>('GET', `/usage?${q}`), range);
-  return (
-    <PageContainer pageTitle='Activity' pageDescription='Tool calls and run spend across every workspace.' pageHeaderAction={<DateRangePicker value={range} onChange={setRange} />}>
-      {error ? <p className='text-destructive text-sm'>{error.message}</p> : !data ? <p className='text-muted-foreground text-sm'>Loading…</p> : (
-        <CallFigures r={data} extra={
-          <Box title={`Per ${data.words.workspace}`} description={`${cap(plural(data.words.tool_call))}, people, latency, ${plural(data.words.run)} and their spend.`}>
-            {data.workspaces.length ? (
-              <Table>
-                <TableHeader><TableRow><TableHead>{cap(data.words.workspace)}</TableHead><TableHead className='text-right'>Calls</TableHead><TableHead className='text-right'>Errors</TableHead>
-                  <TableHead className='text-right'>People</TableHead><TableHead className='text-right'>p95</TableHead><TableHead className='text-right'>{cap(plural(data.words.run))}</TableHead>
-                  <TableHead className='text-right'>Spend</TableHead></TableRow></TableHeader>
-                <TableBody>{data.workspaces.map((x) => (
-                  <TableRow key={x.slug}><TableCell>{x.name}</TableCell><TableCell className='text-right tabular-nums'>{num(x.calls)}</TableCell><TableCell className='text-right tabular-nums'>{num(x.errors)}</TableCell>
-                    <TableCell className='text-right tabular-nums'>{num(x.people)}</TableCell><TableCell className='text-right tabular-nums'>{ms(x.p95_ms)}</TableCell>
-                    <TableCell className='text-right tabular-nums'>{num(x.runs)}</TableCell><TableCell className='text-right tabular-nums'>{usd(x.run_cost_usd)}</TableCell></TableRow>))}</TableBody>
-              </Table>
-            ) : <p className='text-muted-foreground py-10 text-center text-sm'>No activity in this period.</p>}
-          </Box>
-        } />
       )}
     </PageContainer>
   );

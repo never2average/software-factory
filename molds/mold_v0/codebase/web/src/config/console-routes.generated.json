@@ -6,7 +6,6 @@
     "/admin/access-log",
     "/admin/accounts",
     "/admin/accounts/[slug]",
-    "/admin/activity",
     "/admin/analytics",
     "/admin/compute",
     "/admin/configuration",
