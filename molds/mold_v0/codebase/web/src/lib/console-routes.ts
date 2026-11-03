@@ -67,8 +67,8 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   // The journeys and in-chat tips components' pages (mold_v0-143): only where a pack turns them on.
   '/app/journeys': () => journeysOn(),
   '/admin/journeys': () => journeysOn() || tipsOn(),
-  // The access log (mold_v0-197): only where the profile turns an audit trail on.
-  '/app/access-log': () => auditOn(),
+  // The staff access log (mold_v0-197): only where the profile turns an audit trail on. (The customers' is Billing's
+  // Access log tab since mold_v0-209; its old page is gone.)
   '/admin/access-log': () => auditOn(),
   // The developer surface's console (mold_v0-201): only in an embedded app (a pack declares developer_surface).
   '/app/developers': () => developerConsole.on,

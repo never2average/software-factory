@@ -1,12 +1,15 @@
 'use client';
 // /app Billing: this month (plan, spend against the cap; for a member, their own budget and the rules in
-// plain words; for an admin, a banner from 80% of the allowance or when the pace runs out) above three tabs. People: one
+// plain words; for an admin, a banner from 80% of the allowance or when the pace runs out) above its tabs, each held in
+// ?tab= (people, the default, teams, rules, access-log). People: one
 // searchable table of who is in the account, their role, access, team, limit, what is left and what limits them (invite,
 // roles, limits and suspension in each row's ⋯ menu; "own settings only" narrows it to the exceptions). Teams: a
 // searchable table of team budgets (deleting one first shows what it changes). Budget rules (admins): one table of the
 // rules that matter (the allowance, how people share it, the buffer, who can launch, run limits, team budgets and
 // people's own settings), who set each and when; each row's Edit saves through the endpoint that owns that rule, which
-// checks it. Plans and cards are Stripe's; people are Clerk's.
+// checks it. Access log (mold_v0-209; the workspace's owners, only where the profile turns audit.data on): the audit
+// trails on the records table (features/audit/access-log.tsx); it was its own page until then, now gone.
+// Plans and cards are Stripe's; people are Clerk's.
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -23,6 +26,8 @@ import { appApi } from '@/lib/api-client';
 import { money, num, usd } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
+import { WorkspaceAccessLog } from '@/features/audit/access-log';
+import { dataTrailOn } from '@/features/audit/config';
 import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type AccountRoleInfo } from './role';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { profile } from '@/config/profile.generated';
@@ -87,6 +92,15 @@ function Block({ id, title, action, children }: { id?: string; title: string; ac
 }
 
 const urlParam = (k: string) => (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get(k));
+const BILLING_TABS = ['people', 'teams', 'rules', 'access-log'];
+/** The open tab in the address (?tab=<id>; People, the first, has none), so a reload or a shared link opens it again. */
+function tabToUrl(tab: string) {
+  const q = new URLSearchParams(window.location.search);
+  if (tab === 'people') q.delete('tab'); else q.set('tab', tab);
+  if (tab !== 'people') q.delete('filter');
+  const qs = q.toString();
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+}
 
 export function BillingPage() {
   const { data: b, error } = useOrgLoad(() => appApi<Billing>('GET', '/billing'));
@@ -96,23 +110,31 @@ export function BillingPage() {
   const reload = () => { reloadTeam(); reloadLimits(); };
   // ?tab=people&filter=exceptions opens People with everyone who has their own settings.
   // (The tabs only render once billing has loaded, in the browser, so reading the URL here can't mismatch the server's HTML.)
-  const [tab, setTab] = useState(() => { const v = urlParam('tab'); return v && ['people', 'teams', 'rules'].includes(v) ? v : 'people'; });
+  // ?tab=access-log opens the Access log (owners, where the profile turns audit.data on).
+  const [tab, setTabState] = useState(() => { const v = urlParam('tab'); return v && BILLING_TABS.includes(v) ? v : 'people'; });
+  const setTab = (v: string) => { setTabState(v); tabToUrl(v); };
+  const { role, loaded: roleLoaded } = useAccountRole();
+  const logTab = dataTrailOn() && role === 'owner';
+  // Until /me answers, an asked-for Access log waits (it shows nothing); then a person who may not read it gets People.
+  const shown = tab === 'access-log' && !logTab && (roleLoaded || !dataTrailOn()) ? 'people' : tab;
   const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>(() => (urlParam('filter') === 'exceptions' ? 'exceptions' : 'all'));
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !b ? <LoadingCards count={3} /> : (
         <div className='flex w-full flex-col gap-6'>
           <ThisMonth b={b} u={u ?? undefined} l={l ?? undefined} />
-          {/* People, Teams and Budget rules as tabs: the two tables get the full width and height they need. */}
-          <Tabs value={tab} onValueChange={(v) => setTab(String(v))} className='gap-4'>
+          {/* People, Teams, Budget rules and Access log as tabs: the tables get the full width and height they need. */}
+          <Tabs value={shown} onValueChange={(v) => setTab(String(v))} className='gap-4'>
             <TabsList variant='line' className='gap-6 p-0'>
               <TabsTrigger value='people' className='flex-none px-0'>People</TabsTrigger>
               <TabsTrigger value='teams' className='flex-none px-0'>Teams</TabsTrigger>
               {l?.can_manage && <TabsTrigger value='rules' className='flex-none px-0'>Budget rules</TabsTrigger>}
+              {logTab && <TabsTrigger value='access-log' className='flex-none px-0'>Access log</TabsTrigger>}
             </TabsList>
             <TabsContent value='people'><People t={t ?? undefined} l={l ?? undefined} reload={reload} filter={peopleFilter} setFilter={setPeopleFilter} /></TabsContent>
             <TabsContent value='teams'>{l ? <Teams l={l} reload={reload} /> : <LoadingCards count={1} />}</TabsContent>
             {l?.can_manage && <TabsContent value='rules'><Rules l={l as AdminLimits} b={b} reload={reload} /></TabsContent>}
+            {dataTrailOn() && <TabsContent value='access-log'><WorkspaceAccessLog /></TabsContent>}
           </Tabs>
         </div>
       )}
