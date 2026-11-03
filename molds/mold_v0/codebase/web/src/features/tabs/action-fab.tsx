@@ -277,7 +277,13 @@ function StartRunForm({ tab, kinds, onDone }: { tab: TabRef; kinds: StartKind[];
   );
 }
 
-function CreateRecordForm({ area, onDone }: { area: { name: string; label: string; fields: FormField[] }; onDone: () => void }) {
+/**
+ * A new record's key, title and fields; `post` sends it (default: the workspace's data API; mold_v0-212, a staff record
+ * page: the shared area's /api/admin/data).
+ */
+export function CreateRecordForm({ area, onDone, post }: {
+  area: { name: string; label: string; fields: FormField[] }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
+}) {
   const [key, setKey] = useState('');
   const [title, setTitle] = useState('');
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -287,7 +293,8 @@ function CreateRecordForm({ area, onDone }: { area: { name: string; label: strin
     if (problem) return void toast.error(problem);
     setBusy(true);
     try {
-      await send('POST', `/api/data/${encodeURIComponent(area.name)}`, { key: key.trim(), ...(title.trim() ? { title: title.trim() } : {}), data });
+      const body = { key: key.trim(), ...(title.trim() ? { title: title.trim() } : {}), data };
+      await (post ? post(body) : send('POST', `/api/data/${encodeURIComponent(area.name)}`, body));
       toast.success('Added');
       onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }

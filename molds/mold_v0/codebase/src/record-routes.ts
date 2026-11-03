@@ -8,10 +8,17 @@
  *                                 across its clock areas (/api/records/due-soon, mold_v0-207). Read only: no
  *                                 route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
- *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete"
+ *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete".
+ *                                 mold_v0-212, the staff record page (web/src/features/records/staff-records.tsx):
+ *                                 GET _console/<area>/sparklines  its four cards (src/sparklines.ts areaSparklines)
+ *                                 GET _console/<area>/form        what the page offers this staff role: create and edit
+ *                                                                 (never for an area a repository fills, whose rows its
+ *                                                                 index writes; the role's "library"; the staff tool not
+ *                                                                 withheld) and the area's fields as the form draws them.
+ *                                                                 The writes themselves go to /api/admin/data, unchanged.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
-import { assertGuarded, need } from "./admin-roles.js";
+import { assertGuarded, can, need, type PlatformRole } from "./admin-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { GeneratedOp } from "./mcp-catalog.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
@@ -88,6 +95,22 @@ export function recordAdminRouter(): Router {
     return a;
   };
   r.get("/areas", need("read"), answer(async () => ({ areas: recordAreas().map(areaSummary) })));
+  // The staff record page (mold_v0-212): "_console" is no area's name (an area's starts with a letter).
+  r.get("/_console/:area/sparklines", need("read"), open("admin_list"), answer(async (req) =>
+    (await import("./sparklines.js")).areaSparklines(platformArea(String(req.params.area)).name)));
+  r.get("/_console/:area/form", need("read"), open("admin_list"), answer(async (req, res) => {
+    const a = platformArea(String(req.params.area));
+    const { formField } = await import("./tab-actions.js");
+    // Hand writes on the console: an area no repository fills (a repository's rows are its index's), an encrypted field's
+    // value never round-tripped through a form, the role's "library" (as /api/admin/data checks), the staff tool not withheld.
+    const writable = !a.repo && !a.fields.some((f) => f.encrypted) && can(res.locals.adminRole as PlatformRole | undefined, "library");
+    return {
+      area: a.name, label: a.label,
+      create: writable && !areaOpWithheld(a.name, "admin_create"),
+      edit: writable && !areaOpWithheld(a.name, "admin_update"),
+      fields: a.fields.map(formField),
+    };
+  }));
   r.get("/:area", need("read"), open("admin_list"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     return { area: areaSummary(a), ...(await listPlatform(a, { limit: req.query.limit, after: req.query.after })) };
