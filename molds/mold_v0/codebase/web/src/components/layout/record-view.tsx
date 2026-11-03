@@ -1,5 +1,5 @@
 'use client';
-// A Notion-style database page: view tabs, a toolbar (full-width search, filters, sort, properties, group, the primary
+// A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, the primary
 // action), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and a side peek.
 // Clicking a row narrows the table to 40% and opens the record beside it; Escape or ✕ closes it, j/k walk the list. On
 // small screens the record replaces the table, with a way back. Every database feature is opt-in, so simple pages stay simple.
@@ -46,7 +46,7 @@ const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 
 
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, fab
 }: {
   rows: readonly T[];
   rowKey: (row: T) => string;
@@ -85,8 +85,16 @@ export function RecordView<T>({
   /** Controls which record is open (a deep link; a page that pauses refresh while one is); omitted, the view keeps it. */
   openKey?: string | null;
   onOpenChange?: (key: string | null) => void;
-  /** Headline numbers between the toolbar and the table (a StatStrip or two). */
+  /**
+   * Headline numbers above the toolbar (a StatStrip or two; a list tab's four cards). mold_v0-208: every list reads cards,
+   * then the search row, then the table (before, the cards sat between the toolbar and the table).
+   */
   summary?: ReactNode;
+  /**
+   * The page's primary floating action (mold_v0-208, features/tabs/action-fab.tsx): drawn fixed at the bottom right, so
+   * the table and its pager end above it (the space it takes is kept free below them) and it never covers the last row.
+   */
+  fab?: ReactNode;
 }) {
   const ns = (s: string) => (id ? `rv:${id}:${s}` : null);
   const [q, setQ] = useState('');
@@ -238,18 +246,21 @@ export function RecordView<T>({
   const [fitH, setFitH] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (!compact) return;
-    const fit = () => { const el = fitRef.current; if (el && el.offsetParent !== null) setFitH(Math.max(256, window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - 24)); };
+    // A floating action (fab) keeps its own height free below the pager (FAB_SPACE), so it never covers a row.
+    const fit = () => { const el = fitRef.current; if (el && el.offsetParent !== null) setFitH(Math.max(256, window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - (fab ? FAB_SPACE : 24))); };
     fit();
     window.addEventListener('resize', fit);
     // A table in a tab that starts hidden measures as if at the top: measure again once it is shown.
     const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) fit(); });
     if (fitRef.current) io.observe(fitRef.current);
     return () => { window.removeEventListener('resize', fit); io.disconnect(); };
-  }, [compact]);
+  }, [compact, !!fab]);
 
   return (
     // Fills the page below the header (header 3.5–4rem plus the page's padding): the table frame never scrolls or shrinks.
-    <div ref={fitRef} style={compact && fitH ? { height: fitH } : undefined} className={cn('flex min-w-0 flex-col gap-3', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
+    <div ref={fitRef} style={compact && fitH ? { height: fitH } : undefined} data-fab={fab ? '' : undefined}
+      className={cn('flex min-w-0 flex-col gap-3', compact ? 'min-h-[16rem]' : fab ? 'h-[calc(100svh-10rem)] min-h-[24rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
+      {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
       <div className='flex flex-wrap items-center gap-2'>
         <div className='relative min-w-48 flex-1'>
           <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
@@ -263,7 +274,6 @@ export function RecordView<T>({
         )}
         {primaryNode}
       </div>
-      {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
 
       {selRows.length > 0 ? (
         <div className='flex min-h-8 shrink-0 flex-wrap items-center gap-1 text-sm leading-none'>
@@ -381,9 +391,16 @@ export function RecordView<T>({
           </aside>
         )}
       </div>
+      {fab}
     </div>
   );
 }
+
+/**
+ * What a floating action takes below a list (mold_v0-208): its 3.5rem button, 1.5rem from the window's edge and the
+ * safe area, and a gap, in pixels; the list's height leaves this free.
+ */
+export const FAB_SPACE = 104;
 
 function MenuItem({ a, sep }: { a: RowAction; sep: boolean }) {
   return (<>

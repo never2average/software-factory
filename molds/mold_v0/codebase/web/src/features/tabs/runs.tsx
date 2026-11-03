@@ -20,6 +20,7 @@ import { fill } from '@/lib/vocabulary';
 import { formatValue } from './charts';
 import { EmptyState } from './empty';
 import { ExportRowsButton } from './export';
+import { TabActionFab } from './action-fab';
 import { duration, FINISHED, JOB_KINDS, lowerFirst, RESULT_LABELS, resultCounts, RUN_STATUSES, runKindLabel, runSeconds, runStatusText, runTarget, targetLabel, when, type Run } from './run-rows';
 
 type Ref = { area: string; key: string };
@@ -102,11 +103,11 @@ export function RunResults({ id }: { id: string }) {
 
 /** The runs (or, `reports`, the finished runs) of the workspace as the database table. */
 export function RunsTable({ tab, reports, summary }: {
-  tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty'>; reports: boolean;
-  /** Between the toolbar and the table: the tab's four cards (mold_v0-181, ./sparklines.tsx). */
+  tab: Pick<PackTabSpec, 'pack' | 'id' | 'label' | 'empty' | 'action'>; reports: boolean;
+  /** Above the toolbar: the tab's four cards (mold_v0-181, ./sparklines.tsx; mold_v0-208: cards, search, table). */
   summary?: ReactNode;
 }) {
-  const { data, error } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=200'), []);
+  const { data, error, reload } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=200'), []);
   const runs = useMemo(() => {
     const all = data?.runs ?? [];
     return reports ? all.filter((r) => FINISHED.has(r.status) && r.status !== 'cancelled') : all;
@@ -117,6 +118,7 @@ export function RunsTable({ tab, reports, summary }: {
   return (
     <RecordView<Run>
       id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}
+      fab={tab.action ? <TabActionFab tab={tab} onDone={reload} /> : undefined}
       rows={runs} rowKey={(r) => r.id} cols={cols} loading={!data}
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${runStatusText(r)} ${runTarget(r)?.key ?? ''} ${r.id}`}

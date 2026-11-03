@@ -12,8 +12,10 @@
 //   runs       the workspace's runs; reports: finished runs and their results (./runs.tsx: the same database table)
 //   sections   one page of several area tabs (mold_v0-175: pack.json `sections`), an in-page tab strip above the
 //              selected one's charts, views and table (?tab=<id>)
-// Every list (area, runs, reports, schedules) shows four cards below its toolbar (mold_v0-181; ./sparklines.tsx): the
-// tab's pack.json `sparklines`, else the shell's for its kind.
+// Every list (area, runs, reports, schedules) is its four cards (mold_v0-181; ./sparklines.tsx: the tab's pack.json
+// `sparklines`, else the shell's for its kind), then its search row, then its table (mold_v0-208: the cards first; an
+// area tab draws no charts, whatever its pack.json `charts` says), and the tab's primary floating action when pack.json
+// declares one (`action`; ./action-fab.tsx).
 // An area tab offers Export CSV (mold_v0-108; ./export.tsx): every row it reads, as the generated export_<area> tool writes it.
 // Records come from /api/records (src/record-routes.ts), runs from /api/runs (src/view-routes.ts): read only, for this
 // workspace, as the person's role may read them. The sidebar shows a tab only to the roles that may read what it shows;
@@ -39,6 +41,7 @@ import { tabRecordsUrl, viewArea, withSource } from './merged';
 import { tabCharts } from './registry';
 import { RunsTable } from './runs';
 import { TabSparklines } from './sparklines';
+import { TabActionFab } from './action-fab';
 import { httpError } from '@/features/status/from-error';
 import { StatusPage } from '@/features/status/status-page';
 
@@ -207,12 +210,16 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   const views = (tab.views ?? ['table', 'detail']).filter((v): v is 'table' | 'board' | 'timeline' => v !== 'detail');
   const detail = (tab.views ?? ['table', 'detail']).includes('detail');
   const [view, setView] = useState<'table' | 'board' | 'timeline'>(views[0] ?? 'table');
+  // A record added or a run started from the tab's floating action (mold_v0-208): the list is read again.
+  const [round, setRound] = useState(0);
+  const fab = tab.action ? <TabActionFab tab={tab} onDone={() => setRound((n) => n + 1)} /> : null;
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
   const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
   const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
-    <div className='flex flex-col gap-6'>
-      <ChartGrid charts={tabCharts(tab)} />
+    // mold_v0-208: a list tab is its cards, its search row and its table (no charts); a board or a timeline, whose list
+    // ends where the page does, keeps its floating action's height free below it.
+    <div className={table || !fab ? 'flex flex-col gap-6' : 'flex flex-col gap-6 pb-24'}>
       {/* The views' switch, and Export CSV for the board and the timeline (the table has its own, in its toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
@@ -238,13 +245,14 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
       )}
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}
         className={table ? undefined : 'flex flex-col gap-3'}>
-      {/* The four cards (mold_v0-181): below the table's toolbar; a board or a timeline has none, so above it. */}
+      {/* The four cards (mold_v0-181): above the table's toolbar (inside it); a board or a timeline has none, so above it. */}
       {!table && <TabSparklines tab={tab} />}
-      {view === 'board' && tab.board_by ? <BoardView src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
-        : view === 'timeline' ? <TimelineView src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
+      {!table && fab}
+      {view === 'board' && tab.board_by ? <BoardView key={round} src={src} by={tab.board_by} detail={detail} empty={tab.empty} merged={!!tab.areas} />
+        : view === 'timeline' ? <TimelineView key={round} src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
-          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} compact={!tab.charts.length}
-            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />}
+          <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} fab={fab ?? undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>
@@ -271,7 +279,7 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
       <TabsContent value={current.id}>
         {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
           : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
-          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} /> : null}
+          : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}
       </TabsContent>
     </Tabs>
   );

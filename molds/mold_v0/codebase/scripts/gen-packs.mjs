@@ -1395,6 +1395,17 @@ let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
+// A tab's floating action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
+// kind whose start tool is withheld, a record area whose create tool is. The console would only hide the button.
+for (const t of packViews.tabs ?? []) {
+  const a = t.action;
+  if (!a) continue;
+  const kinds = a.kind === "start_run" ? [...(a.job_kind ? [a.job_kind] : []), ...(a.job_kinds ?? [])] : [];
+  for (const k of kinds) if (withheld.some((w) => w.pack === t.pack && w.op === "start" && w.kind === k))
+    fail("packs", `pack ${t.pack}: tab ${t.id}: action start_run: job kind ${k}'s start tool is withheld (mcp): a workspace cannot start it`);
+  if (a.kind === "create_record" && listWithheld(a.area, "create"))
+    fail("packs", `pack ${t.pack}: tab ${t.id}: action create_record: ${a.area}'s create tool is withheld (mcp): a workspace cannot add to it`);
+}
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
 /** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
 const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
@@ -2390,7 +2401,8 @@ function packGuideData() {
     onboarding: facts.flatMap(({ f }) => (f?.onboarding ?? []).map((st) => ({ label: st.label, help: st.help, prompt: st.prompt }))),
     get_started: tools.filter((t) => t.op === "get_started").map((t) => t.name),
     tabs: shownTabs().map((t) => ({ group: t.group ?? "", label: t.label, kind: t.kind, description: t.description ?? null,
-      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle), ...(t.include?.length ? { include: t.include } : {}),
+      // A list tab draws no charts (mold_v0-208: its four cards, the search row, the table): only an overview's are said.
+      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.kind === "overview" ? t.charts ?? [] : []).map(chartTitle), ...(t.include?.length ? { include: t.include } : {}),
       // A sections tab's in-page tabs, by their labels (mold_v0-175).
       ...(t.kind === "sections" ? { sections: (t.sections ?? []).map((id) => shownTabs().find((x) => x.pack === t.pack && x.id === id)?.label).filter(Boolean) } : {}) })),
     areas: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => {
@@ -2447,7 +2459,8 @@ function viewsModule() {
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
       columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
-    charts: t.charts ?? [],
+    // mold_v0-208: a list tab is its four cards, the search row and the table: an area tab's charts are not drawn.
+    charts: t.kind === "area" ? [] : t.charts ?? [],
     ...(t.include?.length ? { include: t.include } : {}),
     ...(t.rail?.length ? { rail: t.rail } : {}),
     ...(t.charts_title ? { charts_title: t.charts_title } : {}),
@@ -2457,6 +2470,8 @@ function viewsModule() {
     ...(t.filter ? { filtered: true } : {}),
     ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
+    // The tab's primary floating action (mold_v0-208): what its button says and opens (the server says who may use it).
+    ...(t.action ? { action: { kind: t.action.kind, label: t.action.label ?? null, ...(t.action.job_kind ? { job_kind: t.action.job_kind } : {}), ...(t.action.area ? { area: t.action.area } : {}) } } : {}),
   }));
   const groups = [];
   // A declared sidebar (mold_v0-133): exactly its groups and entries, in order.
@@ -2501,7 +2516,9 @@ function viewsModule() {
     "  /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */\n" +
     "  sections?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
-    "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
+    "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n" +
+    "  /** The tab's primary floating action (mold_v0-208; web/src/features/tabs/action-fab.tsx): a run, a schedule or a record. */\n" +
+    "  action?: { kind: 'start_run' | 'new_schedule' | 'create_record'; label: string | null; job_kind?: string; area?: string };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;

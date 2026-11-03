@@ -289,7 +289,7 @@ try {
     assert.ok(!nav.portalNav.flatMap((g) => g.items).some((i: any) => /pick-rate$|\/app\/personas|\/app\/tasks$|\/app\/context/.test(i.url) && !tabUrls.has(i.url)), "none of the shell's own product pages");
     assert.deepEqual(nav.params.map((p) => p.page), ["pick-rate", "tasks", "products", "simulations",
       "overview", "vulnerabilities", "applications", "controls", "audits", "reports"], "each tab with a page is a page of the flat route (/app/<id>)");
-    assert.deepEqual([nav.vulnerabilities.views, nav.vulnerabilities.board_by, nav.vulnerabilities.timeline_by, nav.vulnerabilities.charts], [["table", "board", "timeline", "detail"], "state", "due", ["severity", "due"]], "an area tab: its views, a board by the lifecycle's field");
+    assert.deepEqual([nav.vulnerabilities.views, nav.vulnerabilities.board_by, nav.vulnerabilities.timeline_by, nav.vulnerabilities.charts], [["table", "board", "timeline", "detail"], "state", "due", []], "an area tab: its views, a board by the lifecycle's field; no charts (mold_v0-208: a list tab is its cards, search row and table)");
     assert.equal(nav.billing, null, "a shell page's tab has no page of its own");
     // Empty states (mold_v0-107): the pack's own where it says one, the shell's default in the build's words for the rest.
     const empty = Object.fromEntries(nav.packTabs.filter((t: any) => t.pack === "fixture_vulns").map((t: any) => [t.id, t.empty ?? null]));
