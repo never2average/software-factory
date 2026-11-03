@@ -1204,11 +1204,12 @@ export type Chart = z.output<typeof ChartSchema>;
  * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
  *   overview      the tab's `charts` (mold_v0-063); `include` makes it a home page (mold_v0-134): with `setup` it is
  *                 drawn as the Setup page (mold_v0-172: the checklist of the setup steps and the packs' onboarding
- *                 steps, each with its prompt, the connection card and the `rail` cards beside it, the charts below);
- *                 `notices` the records due soon (below the checklist, or a `rail` card). A tab that includes setup
- *                 is drawn at /app itself (mold_v0-175; its /app/<id> redirects there), `charts_title` the heading
- *                 above its charts; /app/notices then redirects to the tab, and a build refuses a setup or a notices
- *                 tab beside it (its page would only redirect here)
+ *                 steps, each with its prompt, the connection card and the `rail` cards beside it); `notices` the
+ *                 records due soon (below the checklist, or a `rail` card). A tab that includes setup is drawn at
+ *                 /app itself (mold_v0-175; its /app/<id> redirects there); /app/notices then redirects to the tab,
+ *                 and a build refuses a setup or a notices tab beside it (its page would only redirect here). Since
+ *                 mold_v0-207 a home tab's `charts` (and `charts_title`) are accepted and not drawn: the home page has
+ *                 no charts grid (its headline row, the Due soon card and the rail's number cards stay)
  *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
  *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
  *                 updated, the default), detail (rows open the record's page); `charts` above them. `columns` (any area
@@ -1336,7 +1337,7 @@ export const TabSchema = z.object({
    * On a home tab (mold_v0-203): 1 to 4 of them, the headline row above its columns. Absent there: no row.
    */
   sparklines: z.array(name).min(1, "1 to 4 metric names").max(4, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab").optional(),
-  /** A home tab's heading above its charts, below both columns (mold_v0-175); none by default. */
+  /** A home tab's heading above its charts (mold_v0-175); accepted, not drawn since mold_v0-207 (no charts on the home page). */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),

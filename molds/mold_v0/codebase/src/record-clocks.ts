@@ -15,6 +15,7 @@
  *                due_dates group); it reassigns or raises through the record store (the area's fields and lifecycle
  *                rules, as the shell)
  *   the tool     list_due_records (with at least one clock area): a workspace's records by clock status, soonest first
+ *   the card     dueAcross (mold_v0-207): the home page's Due soon card, every clock area the person may read at once
  *
  * Sealed areas: their rows are opened with the workspace's own key inside its scope, never in SQL; a notice keeps the
  * title sealed and an email names the record by its key. With the key vault locked a sealed area is skipped and counted.
@@ -365,6 +366,58 @@ export async function dueRecords(orgId: number, areaName: string, opts: { clock?
       records: shown.map((h, i) => ({ key: h.key, title: titles[i] ?? null, status: h.view.status, due_at: h.view.due_at, overdue: h.view.overdue, overdue_days: h.view.overdue_days })),
     };
   });
+}
+
+/** The rows the home page's Due soon card shows at most (mold_v0-207), and the most a caller may ask for. */
+export const DUE_SOON_ROWS = 6;
+const DUE_SOON_MAX = 50;
+const RANK: Partial<Record<ClockStatus, number>> = { overdue: 0, due_soon: 1 };
+
+/**
+ * A workspace's records coming due or overdue across every clock area the person may read (mold_v0-207: the home
+ * page's Due soon card, GET /api/records/due-soon): one row per record and clock that is overdue or due soon, overdue
+ * first, then the soonest deadline. Each area is read inside the workspace's tenant scope (its own rows and clock
+ * memory only), as list_due_records reads it; an area the role may not read, or whose list a pack withholds, is left
+ * out, and a sealed area while the key vault is locked is skipped. `areas`: the clock areas this person may read (none:
+ * the card has nothing it could ever show).
+ */
+export async function dueAcross(orgId: number, actor: Actor, opts: { limit?: number; withheld?: (area: string) => boolean } = {}, now = clockNow()) {
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts.limit) || DUE_SOON_ROWS)), DUE_SOON_MAX);
+  const areas = clockAreas().filter((a) => may(a, "read", actor) && !opts.withheld?.(a.name));
+  type Hit = { area: ClockArea; key: string; title: string | null; view: ClockView };
+  const hit: Hit[] = [];
+  let partial = false;
+  const skipped: string[] = [];
+  for (const area of areas) {
+    if (isSealedArea(area) && !vaultUnlocked()) { skipped.push(area.name); continue; }
+    await withTenant(orgId, async () => {
+      const db = await getDb();
+      const rows = await db.query<{ key: string; title: string | null; data: unknown; created_at: Date | string }>(
+        "SELECT key, title, data, created_at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY id DESC LIMIT $4", [orgId, area.pack, area.name, SCAN_MAX + 1]);
+      if (rows.length > SCAN_MAX) partial = true;
+      const mem = await memories(db, orgId, area, null);
+      for (const r of rows.slice(0, SCAN_MAX)) {
+        let rec: ClockRecord;
+        try { rec = recordOf(area, await openJson(orgId, r.data), r.created_at); } catch { continue; }
+        for (const c of area.clocks) {
+          const view = observe(c, rec, mem.get(memKey(r.key, c.name)) ?? null, now).view;
+          if (RANK[view.status] !== undefined) hit.push({ area, key: r.key, title: r.title, view });
+        }
+      }
+    });
+  }
+  hit.sort((a, b) => RANK[a.view.status]! - RANK[b.view.status]! || (a.view.due_at ?? "9").localeCompare(b.view.due_at ?? "9")
+    || a.area.name.localeCompare(b.area.name) || a.key.localeCompare(b.key) || a.view.name.localeCompare(b.view.name));
+  const shown = hit.slice(0, limit);
+  const titles = await Promise.all(shown.map((h) => (isSealedArea(h.area) ? Promise.resolve(null) : isSealed(h.title) ? open(orgId, h.title!).catch(() => null) : Promise.resolve(h.title))));
+  return {
+    as_of: now.toISOString(), total: hit.length, overdue: hit.filter((h) => h.view.status === "overdue").length, partial, skipped,
+    areas: areas.map((a) => ({ name: a.name, label: a.label, clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) })),
+    records: shown.map((h, i) => ({
+      area: h.area.name, area_label: h.area.label, key: h.key, title: titles[i] ?? null, clock: h.view.name, clock_label: h.view.label,
+      status: h.view.status, due_at: h.view.due_at, due_on: h.view.due_on, overdue: h.view.overdue, overdue_days: h.view.overdue_days,
+    })),
+  };
 }
 
 // ---------- metrics ----------

@@ -6,7 +6,8 @@
 // The list is the console's database table (RecordView, as on Accounts; mold_v0-170), and so is every customer list of
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
+import { parseAsBoolean, useQueryState } from 'nuqs';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
@@ -166,8 +167,11 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
 }) {
   const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
   const cols = useMemo(() => columnsOf(area, source), [area, source]);
-  // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on.
-  const [overdueOnly, setOverdueOnly] = useState(false);
+  // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
+  // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on.
+  const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsBoolean.withDefault(false));
+  const overdueOnly = overdueParam;
+  const setOverdueOnly = (on: boolean) => void setOverdueParam(on ? true : null);
   const clocked = !!area.clocks?.length;
   const overdue = useMemo(() => (clocked ? (data?.records ?? []).filter(isOverdue) : []), [clocked, data]);
   const shown = clocked && overdueOnly ? overdue : data?.records ?? [];
