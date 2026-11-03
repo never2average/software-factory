@@ -292,7 +292,8 @@ function JourneyMenu({ setup, journeys, selected, onSelect }: { setup: { done: n
       <PopoverTrigger data-journey-menu render={<button type='button' aria-haspopup='listbox' aria-expanded={open} aria-controls={open ? listId : undefined}
         onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openChange(true); } }}
         className='hover:bg-muted/60 focus-visible:ring-ring -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-left outline-hidden focus-visible:ring-2' />}>
-        <span className='break-words'>{current.name}</span>
+        {/* A short name stays on one line (the heading sizes to it); a long one wraps at its spaces. */}
+        <span className={current.name.length > 28 ? 'break-words' : 'whitespace-nowrap'}>{current.name}</span>
         <span className='text-muted-foreground shrink-0 text-xs font-normal tabular-nums'>{current.done}/{current.total}</span>
         <Icons.chevronDown aria-hidden className={cn('text-muted-foreground size-4 shrink-0 transition-transform', open && 'rotate-180')} />
         <span className='sr-only'>: choose a {text('journeys.one')}</span>
