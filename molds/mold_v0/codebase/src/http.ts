@@ -94,6 +94,7 @@ import { freshPlatformHarnesses } from "./harnesses.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
 import { tracked } from "./scheduler-jobs.js";
+import { healthSamplingOn, noteRequestMs, sampleHealth, startHealthSampler, stopHealthSampler } from "./health-samples.js";
 
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -134,6 +135,14 @@ export function createApp() {
   // The upstream catalogs not indexed at their pin (mold_v0-128, src/repository-index.ts): once per instance, in the
   // background from its first request (kept alive past the answer on Vercel); never delays or fails a request.
   app.use((_req, _res, next) => { startCatalogIndexing(telemetry.keepAlive); next(); });
+  // The API's latency for Health › Status's graphs (mold_v0-210, src/health-samples.ts): each request's duration in this
+  // process, nothing else (no address, no caller); not the health check or the cron entry. Only where Health samples.
+  if (healthSamplingOn()) app.use((req, res, next) => {
+    if (req.path === "/healthz" || req.path.startsWith("/api/cron/")) return next();
+    const t0 = performance.now();
+    res.on("finish", () => noteRequestMs(performance.now() - t0));
+    next();
+  });
 
   app.get("/healthz", async (_req, res) => {
     if (draining) return void res.status(503).json({ ok: false, draining: true }); // rolling deploy: stop routing here
@@ -205,7 +214,9 @@ export function createApp() {
     const charges = rc.runBillingOn() ? { run_charges: await tracked("run_charges", () => rc.deliverCharges()).catch((e) => ({ error: (e as Error).message })) } : {};
     // Webhooks out (mold_v0-193, src/developer-webhooks.ts): retries due and runs that ended; only with a developer surface.
     const hooksTick = await webhookTick().catch((e) => ({ error: (e as Error).message }));
-    res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...(hooksTick ? { webhooks: hooksTick } : {}) });
+    // Health › Status's history (mold_v0-210, src/health-samples.ts): a server samples from its own loop; on Vercel, here.
+    const health = healthSamplingOn() ? { health_samples: await tracked("health_samples", () => sampleHealth()).catch((e) => ({ error: (e as Error).message })) } : {};
+    res.json({ tick, pruned, ...host, rls, schedules, ...charges, ...(hooksTick ? { webhooks: hooksTick } : {}), ...health });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -714,6 +725,8 @@ export function createApp() {
     res.json(await h.healthDeliveries(req.query as Record<string, unknown>));
   });
   ob.get("/health/status", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthStatus()));
+  // Health › Status's graphs (mold_v0-210, src/health-samples.ts): ?range=24h|7d|30d, the samples in buckets.
+  ob.get("/health/history", async (req, res) => void res.json(await (await import("./health-samples.js")).healthHistory(req.query as Record<string, unknown>)));
   // A host pack's console routes (src/host.ts; the product's journeys, libraries, agent mix and settings, loss reasons),
   // behind the same guard, log and permission check (roles.assertGuarded below covers them).
   for (const h of hosts()) h.routes?.onboarding?.(ob, { need, actor: adminActor });
@@ -913,6 +926,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`  archive       ${!archiving ? "off" : storageInEnv() ? "on (traces + research to the bucket in R2_*)" : "on while Key vault › Object storage is set (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");
+    // Health › Status's samples (mold_v0-210): every 4 minutes, kept 35 days; in a build without the session engine.
+    if (startHealthSampler()) console.error("  health        samples every 4 minutes for Health › Status (APP_SCHEDULER=off to disable)");
     // The mail intake (mold_v0-192): each workspace's connected mailboxes, every minute; APP_EMAIL_INTAKE=off disables.
     if (startEmailIntake()) console.error("  mail intake   on (every minute; APP_EMAIL_INTAKE=off to disable)");
     // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.
@@ -931,6 +946,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void stopAutoscaler();
     stopArchiver();
     stopScheduler();
+    stopHealthSampler();
     stopChargeDelivery();
     stopWebhookLoop();
     void telemetry.flush();

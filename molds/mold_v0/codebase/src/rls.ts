@@ -98,6 +98,8 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "event_outbox", "developer_events",
   // What the shell's scheduled work last did (mold_v0-204, 0037_scheduler_jobs): platform bookkeeping.
   "scheduler_jobs",
+  // Health › Status's samples (mold_v0-210, 0038_health_samples): numbers and states, platform bookkeeping.
+  "health_samples",
   // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
   "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
 
