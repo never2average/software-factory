@@ -18,7 +18,8 @@
 //      stage, no pack runs, no new field on its rows
 // Every build: the console lists FinOps' runs tab in the Experiments slot. Health: the session engine's Errors, Jobs
 // and Sessions with its old runs link redirecting to FinOps; without the engine, Errors, Runs, Scheduled work,
-// Email Delivery (with company email or webhooks; mold_v0-210 renamed it from Deliveries) and Status (mold_v0-204).
+// Email Delivery (with company email or a developer surface; mold_v0-210 renamed it from Deliveries), Webhook Delivery
+// (with a developer surface, mold_v0-215) and Status (mold_v0-204).
 import "./lib/test-world.js";
 // The build's packs registered as a process registers them: the session engine's words are its host pack's pack.json
 // account_stages (mold_v0-121), which reach the server through src/hosts.ts.
@@ -219,8 +220,17 @@ try {
     assert.match(health, /ENGINE_HEALTH \? \[\['errors', 'Errors'\], \['jobs', 'Jobs'\], \['sessions', 'Sessions'\]\] : healthTabsShell\(\)/, "the engine's Health: Errors, Jobs, Sessions, as before");
     assert.match(health, /ENGINE_HEALTH \? \{ runs: '\/admin\/finops\?section=runs' \} : \{\}/, "the engine's old runs link still goes to FinOps");
     const tabs = readFileSync(path.join(ROOT, "web/src/features/admin/health-tabs.tsx"), "utf8");
-    assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\), \['status', 'Status'\]/, "the shell's Health tabs");
-    assert.match(tabs, /emailPortalNav\.length > 0 \|\| developerConsole\.on/, "Email Delivery only with company email or webhooks");
+    assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\),\s*\.\.\.\(webhooksTab\(\) \? \[\['webhooks', 'Webhook Delivery'\] as const\] : \[\]\), \['status', 'Status'\]/, "the shell's Health tabs, in order: Errors, Runs, Scheduled work, Email Delivery, Webhook Delivery, Status");
+    assert.match(tabs, /deliveriesTab = \(\): boolean => emailPortalNav\.length > 0 \|\| developerConsole\.on/, "Email Delivery only with company email or a developer surface");
+    assert.match(tabs, /webhooksTab = \(\): boolean => developerConsole\.on;/, "Webhook Delivery only with a developer surface (mold_v0-215)");
+    // Email Delivery is emails only: its tab has no webhook card or view; the webhook ones are Webhook Delivery's.
+    const emailTab = tabs.slice(tabs.indexOf('function DeliveriesTab'), tabs.indexOf('// ---------------------------------------------------------------- Webhook Delivery'));
+    assert.ok(emailTab.length > 0 && !/[Ww]ebhook|[Ee]ndpoint|hooks_/.test(emailTab), "Email Delivery shows email only");
+    const hookTab = tabs.slice(tabs.indexOf('function WebhooksTab'));
+    for (const card of ['Webhooks delivered', 'Webhooks failed', 'Pending or retrying', 'Endpoints switched off']) assert.ok(hookTab.includes(`label: '${card}'`), `Webhook Delivery's card: ${card}`);
+    assert.match(hookTab, /\['webhooks', 'Webhook deliveries'\], \['endpoints', 'Endpoints switched off'\]/, "Webhook Delivery's Show views");
+    assert.match(tabs, /title='Email failure rate'/, "Status: the email graph");
+    assert.match(tabs, /\(h\?\.webhooks \?\? webhooksTab\(\)\) && \(\s*<SignalBox title='Webhook failure rate'/, "Status: the webhook graph, only with webhooks");
     console.log("✓ console: FinOps' runs tab in the Experiments slot (Experiments only with an experiment); the engine's Health as before, the shell's Health tabs");
   }
   console.log("admin-sections: ok");

@@ -710,7 +710,7 @@ export function createApp() {
   // Every failure in the period, paged: ?kind=tool|session|onboarding&offset&limit, plus the /analytics filters.
   ob.get("/analytics/errors", async (req, res) => void res.json(await platformErrors(req.query)));
   // Health's tabs beside Errors in a build without the session engine (mold_v0-204, src/health-tabs.ts): runs, the
-  // scheduler's jobs, deliveries and the live checks. Read only, staff only, never an address or a secret.
+  // scheduler's jobs, email and webhook deliveries and the live checks. Read only, staff only, never an address or a secret.
   ob.get("/health/runs", async (req, res) => void res.json(await (await import("./health-tabs.js")).healthRuns(req.query as Record<string, unknown>)));
   ob.get("/health/runs/:id/events", async (req, res) => {
     try { res.json(await (await import("./health-tabs.js")).healthRunEvents(String(req.params.id))); }
@@ -719,8 +719,14 @@ export function createApp() {
   ob.get("/health/scheduled", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthScheduled()));
   ob.get("/health/deliveries", async (req, res) => {
     const h = await import("./health-tabs.js");
-    if (!h.deliveriesOn()) return void res.status(404).json({ error: "This app sends no deliveries of its own (no company email, no webhooks)" });
+    if (!h.deliveriesOn()) return void res.status(404).json({ error: "This app sends no email of its own (no company email, no developer surface)" });
     res.json(await h.healthDeliveries(req.query as Record<string, unknown>));
+  });
+  // Webhook Delivery (mold_v0-215): only in an app with a developer surface (its declared events go out as webhooks).
+  ob.get("/health/webhooks", async (req, res) => {
+    const h = await import("./health-tabs.js");
+    if (!h.webhooksOn()) return void res.status(404).json({ error: "This app sends no webhooks (no developer surface)" });
+    res.json(await h.healthWebhooks(req.query as Record<string, unknown>));
   });
   ob.get("/health/status", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthStatus()));
   // Health › Status's graphs (mold_v0-210, src/health-samples.ts): ?range=24h|7d|30d, the samples in buckets.

@@ -15,6 +15,7 @@ export const STAFF_GUIDE_SLUG = 'staff-guide';
 /** The session engine's build keeps its Health words; without it Health has more tabs (mold_v0-204, features/admin/health-tabs.tsx). */
 const ENGINE = ['products', 'scenarios', 'simulations', 'agent_sessions'].every((t) => HOST_TABLES.includes(t));
 const DELIVERIES = emailPortalNav.length > 0 || developerConsole.on;
+const WEBHOOKS = developerConsole.on;
 
 const titleCase = (s: string) => s.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
 /**
@@ -38,7 +39,7 @@ const PAGE_USE: Record<string, string> = {
   '/admin/journeys': fill('The messages that bring people back to a step they have not taken.'),
   '/admin/analytics': fill('Use across every {account}: active {accounts} and people, {tool_calls}, new {accounts} and how each changes week to week.'),
   '/admin/health': ENGINE ? fill('What failed, newest first: {tool_call} errors and latency and failed agent sessions, each with its {account} and client.')
-    : fill(`What failed, newest first: {tool_call} errors and latency, each with its {account} and client. Its tabs: {Runs} (failures by kind and error kind, durations, cost, each failed {run}'s events), Scheduled work (every job the app runs: last run, last success, lag and last error)${DELIVERIES ? ', Email Delivery (emails and webhooks by status, endpoints switched off)' : ''} and Status (a graph per signal over 24 hours, 7 days or 30 days, each with its state now: database and API latency, the health check, the row-level security probe, object storage, the key vault, the Claude provider\'s errors and refusals, scheduler lag, the {run} failure rate${DELIVERIES ? ', the delivery failure rate' : ''}; the last deploy and the mold version above them).`),
+    : fill(`What failed, newest first: {tool_call} errors and latency, each with its {account} and client. Its tabs: {Runs} (failures by kind and error kind, durations, cost, each failed {run}'s events), Scheduled work (every job the app runs: last run, last success, lag and last error)${DELIVERIES ? ', Email Delivery (emails by kind and status: sent, failed, not sent)' : ''}${WEBHOOKS ? ', Webhook Delivery (webhook deliveries by event and status, endpoints switched off)' : ''} and Status (a graph per signal over 24 hours, 7 days or 30 days, each with its state now: database and API latency, the health check, the row-level security probe, object storage, the key vault, the Claude provider\'s errors and refusals, scheduler lag, the {run} failure rate${DELIVERIES ? ', the email failure rate' : ''}${WEBHOOKS ? ', the webhook failure rate' : ''}; the last deploy and the mold version above them).`),
   '/admin/compute': fill('The capacity that runs the {runs}: limits in force, what is running and what failed.'),
   '/admin/finops': 'Revenue, plans and measured spend: model use, compute hours and storage, by account or by provider.',
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',

@@ -413,7 +413,8 @@ export function AdminAnalytics({ view = 'analytics' }: { view?: 'analytics' | 'h
 /**
  * Health's tabs: errors (this report), and the session engine's Jobs and Sessions record tables (?section=jobs|sessions),
  * exactly as they were; in a build without it (mold_v0-204, ./health-tabs.tsx), Runs, Scheduled work, Email Delivery (only
- * when the app sends company email or webhooks) and Status after Errors (?section=runs|scheduled|deliveries|status).
+ * when the app sends company email or has a developer surface), Webhook Delivery (mold_v0-215: only with a developer
+ * surface) and Status after Errors (?section=runs|scheduled|deliveries|webhooks|status).
  */
 const ENGINE_HEALTH = sessionEngine();
 const HEALTH_TABS: readonly (readonly [string, string])[] = ENGINE_HEALTH ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']] : healthTabsShell();

@@ -1,8 +1,9 @@
 'use client';
 // Health's tabs beside Errors in a build without the session engine (mold_v0-204; GET /api/admin/onboarding/health/*,
-// src/health-tabs.ts): Runs, Scheduled work, Email Delivery (only when the app sends company email or webhooks; its
-// webhooks are shown there too, for now) and Status. The first three are list tabs: the toolbar (search, the tab's own
-// picker, filters), its four cards under it, then one table (RecordView). Status is a grid of graphs (mold_v0-210).
+// src/health-tabs.ts): Runs, Scheduled work, Email Delivery (only when the app sends company email or has a developer
+// surface; emails only), Webhook Delivery (mold_v0-215: only with a developer surface) and Status. The list tabs show
+// their four cards, then the search and the tab's own picker and filters, then one table (RecordView). Status is a grid
+// of graphs (mold_v0-210).
 // Staff only, read only; nothing here shows an address, a subject or a key.
 import { useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
@@ -22,12 +23,15 @@ import { useAdmin } from './lib';
 import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
 
-/** Email Delivery is a tab only when the app sends mail of a workspace's own or webhooks (the server's deliveriesOn). */
+/** Email Delivery is a tab only when the app sends mail of a workspace's own or has a developer surface (the server's deliveriesOn). */
 export const deliveriesTab = (): boolean => emailPortalNav.length > 0 || developerConsole.on;
+/** Webhook Delivery is a tab only when the app has a developer surface: its declared events go out as webhooks (the server's webhooksOn). */
+export const webhooksTab = (): boolean => developerConsole.on;
 
 /** Health's tabs in a build without the session engine, in order (Errors first: the page's default). */
 export const healthTabsShell = (): readonly (readonly [string, string])[] => [
-  ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Email Delivery'] as const] : []), ['status', 'Status']
+  ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Email Delivery'] as const] : []),
+  ...(webhooksTab() ? [['webhooks', 'Webhook Delivery'] as const] : []), ['status', 'Status']
 ];
 
 const dash = <span className='text-muted-foreground'>—</span>;
@@ -46,6 +50,7 @@ export function HealthTab({ tabs, tab }: { tabs: readonly (readonly [string, str
         {tab === 'runs' && <RunsTab />}
         {tab === 'scheduled' && <ScheduledTab />}
         {tab === 'deliveries' && <DeliveriesTab />}
+        {tab === 'webhooks' && <WebhooksTab />}
         {tab === 'status' && <StatusTab />}
       </div>
     </PageContainer>
@@ -247,58 +252,81 @@ function ScheduledTab() {
 // ---------------------------------------------------------------- Email Delivery (?section=deliveries)
 
 interface EmailRow { kind: string; total: number; sent: number; failed: number; skipped: number; sending: number; last_at: string | null; last_failed_at: string | null }
-interface HookRow { event: string; total: number; succeeded: number; failed: number; pending: number; attempts: number; last_at: string | null }
-interface Endpoint { id: string; account: string; events: number; reason: string | null; failure_streak: number; first_failure_at: string | null; disabled_at: string | null }
-interface DeliveriesData { email: boolean; webhooks: boolean; emails: EmailRow[]; deliveries: HookRow[]; disabled_endpoints: Endpoint[];
-  daily: { day: string; emails_sent: number; emails_failed: number; hooks_succeeded: number; hooks_failed: number }[] }
+interface DeliveriesData { email: boolean; emails: EmailRow[];
+  totals: { tried: number; sent: number; failed: number; skipped: number; sending: number; kinds: number; failure_pct: number };
+  daily: { day: string; sent: number; failed: number; skipped: number }[] }
 const EMAIL_KIND: Record<string, string> = {
   request_received: 'Request received', request_alert: 'Request alert', request_declined: 'Request declined', request_approved: 'Welcome',
   submission_alert: 'Submission alert', submission_accepted: 'Submission accepted', submission_declined: 'Submission declined',
   budget_80: 'Budget 80%', budget_100: 'Budget 100%', due_soon: 'Due soon', test: 'Test', sign_in_code: 'Sign-in code', invitation: 'Invitation'
 };
+const emailKind = (k: string) => EMAIL_KIND[k] ?? k;
 
+/** Emails only (mold_v0-215: webhooks have their own tab): sent, failed, not sent (skipped) and the kinds, then one table. */
 function DeliveriesTab() {
   const [range, setRange] = useState<DateRange>(last30);
   const { data, error, isLoading } = useAdmin<DeliveriesData>(`/health/deliveries?${rangeQuery(range)}`, { keep: true });
-  const [pick, setPick] = useState<'emails' | 'webhooks' | 'endpoints'>(developerConsole.on && !emailPortalNav.length ? 'webhooks' : 'emails');
-  const sum = (k: keyof DeliveriesData['daily'][number]) => (data ? data.daily.reduce((a, d) => a + Number(d[k]), 0) : null);
-  const line = (k: keyof DeliveriesData['daily'][number]) => data?.daily.map((d) => Number(d[k]));
-  const hooks = developerConsole.on;
+  const t = data?.totals;
+  const line = (k: 'sent' | 'failed' | 'skipped') => data?.daily.map((d) => d[k]);
+  const top = data?.emails[0];
   const summary = (
     <StatStrip quad items={[
-      { label: 'Emails sent', value: sum('emails_sent') == null ? '—' : num(sum('emails_sent')), spark: line('emails_sent') },
-      { label: 'Emails failed', value: sum('emails_failed') == null ? '—' : num(sum('emails_failed')), spark: line('emails_failed') },
-      ...(hooks ? [
-        { label: 'Webhooks delivered', value: sum('hooks_succeeded') == null ? '—' : num(sum('hooks_succeeded')), spark: line('hooks_succeeded') },
-        { label: 'Endpoints switched off', value: data ? num(data.disabled_endpoints.length) : '—', spark: line('hooks_failed'), hint: data ? `${num(sum('hooks_failed'))} deliveries failed` : undefined }
-      ] : [
-        { label: 'Email kinds', value: data ? num(data.emails.length) : '—' },
-        { label: 'Emails skipped', value: data ? num(data.emails.reduce((a, e) => a + e.skipped, 0)) : '—' }
-      ])
+      { label: 'Emails sent', value: t ? num(t.sent) : '—', spark: line('sent'), hint: t && t.sending ? `${num(t.sending)} sending` : undefined },
+      { label: 'Emails failed', value: t ? num(t.failed) : '—', spark: line('failed'), hint: t && t.failed ? `${t.failure_pct}% of those settled` : undefined },
+      { label: 'Not sent', value: t ? num(t.skipped) : '—', spark: line('skipped'), hint: t && t.skipped ? 'Refused before sending: emails off, no sender or no address' : undefined },
+      { label: 'Email kinds', value: t ? num(t.kinds) : '—', hint: top ? `Most: ${emailKind(top.kind)} (${num(top.total)})` : undefined }
     ]} />
   );
-  const options: (readonly ['emails' | 'webhooks' | 'endpoints', string])[] = [['emails', 'Emails by kind'], ...(hooks ? [['webhooks', 'Webhook deliveries'] as const, ['endpoints', 'Endpoints switched off'] as const] : [])];
-  const filters = <><Picker label='Show' value={pick} onChange={setPick} options={options} /><DateRangePicker value={range} onChange={setRange} /></>;
+  const filters = <DateRangePicker value={range} onChange={setRange} />;
+  return (
+    <>
+      <ErrorBox error={error} />
+      <RecordView<EmailRow>
+        id='admin-health-emails' noun='kinds' exportName='health-emails' compact defaultSort={[{ key: 'total', dir: 'desc' }]}
+        rows={data?.emails ?? []} rowKey={(r) => r.kind} loading={isLoading || !data} summary={summary} filters={filters}
+        cols={[
+          { key: 'kind', label: 'Kind', type: 'text', title: true, keep: true, value: (r) => emailKind(r.kind), render: (r) => <span className='font-medium'>{emailKind(r.kind)}</span> },
+          { key: 'total', label: 'Tried', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.total, render: (r) => num(r.total) },
+          { key: 'sent', label: 'Sent', type: 'number', className: 'w-20 text-right', value: (r) => r.sent, render: (r) => num(r.sent) },
+          { key: 'failed', label: 'Failed', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.failed, render: (r) => (r.failed ? <span className='text-destructive'>{num(r.failed)}</span> : '0') },
+          { key: 'skipped', label: 'Not sent', type: 'number', className: 'w-20 text-right', value: (r) => r.skipped, render: (r) => num(r.skipped) },
+          { key: 'last_at', label: 'Last', type: 'date', className: 'w-28', value: (r) => r.last_at, render: (r) => <When d={r.last_at} className='text-sm' /> },
+          { key: 'last_failed_at', label: 'Last failure', type: 'date', className: 'w-28', value: (r) => r.last_failed_at, render: (r) => <When d={r.last_failed_at} className='text-sm' /> }
+        ]}
+        searchText={(r) => `${emailKind(r.kind)} ${r.kind}`} searchPlaceholder='Search email kinds' empty='No emails in this period.'
+      />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- Webhook Delivery (?section=webhooks)
+
+interface HookRow { event: string; total: number; succeeded: number; failed: number; pending: number; retrying: number; attempts: number; last_at: string | null }
+interface Endpoint { id: string; account: string; events: number; reason: string | null; failure_streak: number; first_failure_at: string | null; disabled_at: string | null }
+interface WebhooksData { webhooks: boolean; deliveries: HookRow[]; disabled_endpoints: Endpoint[];
+  totals: { total: number; succeeded: number; failed: number; pending: number; retrying: number; attempts: number; events: number; endpoints_off: number; failure_pct: number };
+  daily: { day: string; succeeded: number; failed: number; pending: number }[] }
+
+/** Webhooks out (mold_v0-215): delivered, failed, pending or retrying, endpoints switched off; the Show picker chooses the table. */
+function WebhooksTab() {
+  const [range, setRange] = useState<DateRange>(last30);
+  const { data, error, isLoading } = useAdmin<WebhooksData>(`/health/webhooks?${rangeQuery(range)}`, { keep: true });
+  const [pick, setPick] = useState<'webhooks' | 'endpoints'>('webhooks');
+  const t = data?.totals;
+  const line = (k: 'succeeded' | 'failed' | 'pending') => data?.daily.map((d) => d[k]);
+  const summary = (
+    <StatStrip quad items={[
+      { label: 'Webhooks delivered', value: t ? num(t.succeeded) : '—', spark: line('succeeded'), hint: t && t.events ? `${plural(t.events, 'event type')}` : undefined },
+      { label: 'Webhooks failed', value: t ? num(t.failed) : '—', spark: line('failed'), hint: t && t.failed ? `${t.failure_pct}% of those settled` : undefined },
+      { label: 'Pending or retrying', value: t ? num(t.pending) : '—', spark: line('pending'), hint: t && t.pending ? `${num(t.retrying)} retrying with a backoff` : undefined },
+      { label: 'Endpoints switched off', value: t ? num(t.endpoints_off) : '—', hint: t && t.endpoints_off ? 'After repeated failures; the workspace turns them back on' : undefined }
+    ]} />
+  );
+  const filters = <><Picker label='Show' value={pick} onChange={setPick} options={[['webhooks', 'Webhook deliveries'], ['endpoints', 'Endpoints switched off']]} /><DateRangePicker value={range} onChange={setRange} /></>;
   const loading = isLoading || !data;
   return (
     <>
       <ErrorBox error={error} />
-      {pick === 'emails' && (
-        <RecordView<EmailRow>
-          id='admin-health-emails' noun='kinds' exportName='health-emails' compact defaultSort={[{ key: 'total', dir: 'desc' }]}
-          rows={data?.emails ?? []} rowKey={(r) => r.kind} loading={loading} summary={summary} filters={filters}
-          cols={[
-            { key: 'kind', label: 'Kind', type: 'text', title: true, keep: true, value: (r) => EMAIL_KIND[r.kind] ?? r.kind, render: (r) => <span className='font-medium'>{EMAIL_KIND[r.kind] ?? r.kind}</span> },
-            { key: 'total', label: 'Tried', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.total, render: (r) => num(r.total) },
-            { key: 'sent', label: 'Sent', type: 'number', className: 'w-20 text-right', value: (r) => r.sent, render: (r) => num(r.sent) },
-            { key: 'failed', label: 'Failed', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.failed, render: (r) => (r.failed ? <span className='text-destructive'>{num(r.failed)}</span> : '0') },
-            { key: 'skipped', label: 'Skipped', type: 'number', className: 'w-20 text-right', value: (r) => r.skipped, render: (r) => num(r.skipped) },
-            { key: 'last_at', label: 'Last', type: 'date', className: 'w-28', value: (r) => r.last_at, render: (r) => <When d={r.last_at} className='text-sm' /> },
-            { key: 'last_failed_at', label: 'Last failure', type: 'date', className: 'w-28', value: (r) => r.last_failed_at, render: (r) => <When d={r.last_failed_at} className='text-sm' /> }
-          ]}
-          searchText={(r) => `${EMAIL_KIND[r.kind] ?? r.kind} ${r.kind}`} searchPlaceholder='Search email kinds' empty='No emails in this period.'
-        />
-      )}
       {pick === 'webhooks' && (
         <RecordView<HookRow>
           id='admin-health-webhooks' noun='events' exportName='health-webhook-deliveries' compact defaultSort={[{ key: 'total', dir: 'desc' }]}
@@ -308,7 +336,7 @@ function DeliveriesTab() {
             { key: 'total', label: 'Deliveries', type: 'number', className: 'w-24 text-right', keep: true, value: (r) => r.total, render: (r) => num(r.total) },
             { key: 'succeeded', label: 'Delivered', type: 'number', className: 'w-24 text-right', value: (r) => r.succeeded, render: (r) => num(r.succeeded) },
             { key: 'failed', label: 'Failed', type: 'number', className: 'w-20 text-right', keep: true, value: (r) => r.failed, render: (r) => (r.failed ? <span className='text-destructive'>{num(r.failed)}</span> : '0') },
-            { key: 'pending', label: 'Pending', type: 'number', className: 'w-20 text-right', value: (r) => r.pending, render: (r) => num(r.pending) },
+            { key: 'pending', label: 'Pending', type: 'number', className: 'w-20 text-right', value: (r) => r.pending, render: (r) => (r.retrying ? `${num(r.pending)} (${num(r.retrying)} retrying)` : num(r.pending)) },
             { key: 'attempts', label: 'Attempts', type: 'number', className: 'w-24 text-right', value: (r) => r.attempts, render: (r) => num(r.attempts) },
             { key: 'last_at', label: 'Last', type: 'date', className: 'w-28', value: (r) => r.last_at, render: (r) => <When d={r.last_at} className='text-sm' /> }
           ]}
@@ -352,10 +380,11 @@ export interface HistoryBucket {
   at: string; samples: number; up_pct: number | null; db_ms: number | null; api_p50_ms: number | null; api_p95_ms: number | null; rls_ok: number | null; storage_ok: number | null;
   vault_set: number | null; vault_missing: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; scheduler_lag_s: number | null;
   runs_ended: number; runs_failed: number; run_failure_pct: number | null; deliveries_total: number; deliveries_failed: number; delivery_failure_pct: number | null;
+  webhooks_total: number; webhooks_failed: number; webhook_failure_pct: number | null;
 }
 interface History {
-  range: HistoryRange; bucket_seconds: number; every_seconds: number; retention_days: number; deliveries: boolean; samples: number; latest: Sample | null;
-  totals: { up_pct: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; runs_ended: number; runs_failed: number; deliveries_total: number; deliveries_failed: number };
+  range: HistoryRange; bucket_seconds: number; every_seconds: number; retention_days: number; deliveries: boolean; webhooks: boolean; samples: number; latest: Sample | null;
+  totals: { up_pct: number | null; claude_errors: number; claude_refusals: number; claude_requests: number; runs_ended: number; runs_failed: number; deliveries_total: number; deliveries_failed: number; webhooks_total: number; webhooks_failed: number };
   buckets: HistoryBucket[];
 }
 type HistoryRange = '24h' | '7d' | '30d';
@@ -433,10 +462,19 @@ function StatusTab() {
           <Bars {...props} series={[{ key: 'run_failure_pct', label: 'Failed', color: BAD }]} format={pct1} />
         </SignalBox>
         {(h?.deliveries ?? deliveriesTab()) && (
-          <SignalBox title='Delivery failure rate' tone={t ? (t.deliveries_failed ? 'warn' : 'ok') : undefined}
+          <SignalBox title='Email failure rate' tone={t ? (t.deliveries_failed ? 'warn' : 'ok') : undefined}
             headline={t ? (t.deliveries_total ? `${pct1((t.deliveries_failed / t.deliveries_total) * 100)} · ${num(t.deliveries_failed)} of ${num(t.deliveries_total)}` : 'Nothing sent') : '—'}
-            sub={`Emails${developerConsole.on ? ' and webhooks' : ''} settled in ${RANGE_WORD[range]}.`}>
+            sub={`Emails sent or failed in ${RANGE_WORD[range]}.`}
+            action={<a href='/admin/health?section=deliveries' className='text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline'>Email Delivery</a>}>
             <Bars {...props} series={[{ key: 'delivery_failure_pct', label: 'Failed', color: BAD }]} format={pct1} />
+          </SignalBox>
+        )}
+        {(h?.webhooks ?? webhooksTab()) && (
+          <SignalBox title='Webhook failure rate' tone={t ? (t.webhooks_failed ? 'warn' : 'ok') : undefined}
+            headline={t ? (t.webhooks_total ? `${pct1((t.webhooks_failed / t.webhooks_total) * 100)} · ${num(t.webhooks_failed)} of ${num(t.webhooks_total)}` : 'Nothing delivered') : '—'}
+            sub={`Webhook deliveries that succeeded or failed in ${RANGE_WORD[range]}.`}
+            action={<a href='/admin/health?section=webhooks' className='text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline'>Webhook Delivery</a>}>
+            <Bars {...props} series={[{ key: 'webhook_failure_pct', label: 'Failed', color: BAD }]} format={pct1} />
           </SignalBox>
         )}
       </div>
