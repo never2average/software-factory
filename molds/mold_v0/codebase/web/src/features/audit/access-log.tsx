@@ -4,8 +4,9 @@
 // component every record area's page and tab draws, through its data adapter (features/records/record-pages.tsx
 // RecordSource): the search row with the trail's four cards under it (GET /api/audit/<trail>/sparklines), filters on
 // who, action, area, door and the date range, the column picker, Download CSV (the server's own file: every entry,
-// not only the loaded pages) and a row drawer with the entry's details. /app/access-log is one workspace's, for its
-// owners (GET /api/audit/data, /api/audit/platform: its data trail and its slice of the platform trail);
+// not only the loaded pages) and a row drawer with the entry's details. Billing's Access log tab (/app/billing?tab=access-log,
+// mold_v0-209; features/portal/billing.tsx) is one workspace's, for its owners (GET /api/audit/data, /api/audit/platform:
+// its data trail and its slice of the platform trail);
 // /admin/access-log is the platform trail fleet-wide and any workspace's data trail, for platform staff
 // (GET /api/admin/audit/*). Never a record's values: the trails hold none.
 import { useEffect, useMemo, useState } from 'react';
@@ -122,23 +123,28 @@ function Tabs({ tab, set }: { tab: Tab; set: (t: Tab) => void }) {
   );
 }
 
-/** /app/access-log: this workspace's trails, for its owners. */
-export function WorkspaceAccessLogPage() {
+/** Billing's Access log tab (mold_v0-209): this workspace's trails, for its owners. No page title of its own (the tab
+ *  strip is the page's heading); with both trails on, a Data access / Requests switch above the trail's table. */
+export function WorkspaceAccessLog() {
   const [tab, setTab] = useState<Tab>(dataTrailOn() ? 'data' : 'platform');
   const { role, loaded } = useAccountRole();
   const platform = useMemo(() => platformArea(false), []);
+  if (!loaded) return null;
+  if (role !== 'owner') return <p className='text-muted-foreground text-sm'>Only the workspace&apos;s owners read its access log.</p>;
   return (
-    <PageContainer pageTitle='Access log' pageHeaderAction={<Tabs tab={tab} set={setTab} />}
-      pageDescription={tab === 'data'
-        ? 'Who listed, read, revealed, exported or changed which records, files and run results, when and through which door. Never their contents.'
-        : 'Every API and MCP request and sign-in in this workspace, with the key, the person, the result and how long it took, and staff actions on it.'}>
-      {!loaded ? null : role !== 'owner' ? <p className='text-muted-foreground text-sm'>Only the workspace&apos;s owners read its access log.</p>
-        : tab === 'data'
-          ? <TrailTable area={DATA_AREA} base='app' url='/api/audit/data' csv='/api/audit/data.csv' cards='/api/audit/data/sparklines' row={dataRow as (e: never) => RecordRow}
-              hidden={DATA_HIDDEN} noun='entries' id='app-access-log-data' />
-          : <TrailTable area={platform} base='app' url='/api/audit/platform' csv='/api/audit/platform.csv' cards='/api/audit/platform/sparklines' row={platformRow as (e: never) => RecordRow}
-              hidden={PLATFORM_HIDDEN} noun='requests' id='app-access-log-platform' />}
-    </PageContainer>
+    <div className='flex flex-col gap-4'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <p className='text-muted-foreground text-sm'>{tab === 'data'
+          ? 'Who listed, read, revealed, exported or changed which records, files and run results, when and through which door. Never their contents.'
+          : 'Every API and MCP request and sign-in in this workspace, with the key, the person, the result and how long it took, and staff actions on it.'}</p>
+        <Tabs tab={tab} set={setTab} />
+      </div>
+      {tab === 'data'
+        ? <TrailTable area={DATA_AREA} base='app' url='/api/audit/data' csv='/api/audit/data.csv' cards='/api/audit/data/sparklines' row={dataRow as (e: never) => RecordRow}
+            hidden={DATA_HIDDEN} noun='entries' id='app-access-log-data' />
+        : <TrailTable area={platform} base='app' url='/api/audit/platform' csv='/api/audit/platform.csv' cards='/api/audit/platform/sparklines' row={platformRow as (e: never) => RecordRow}
+            hidden={PLATFORM_HIDDEN} noun='requests' id='app-access-log-platform' />}
+    </div>
   );
 }
 

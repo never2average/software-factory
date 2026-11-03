@@ -44,7 +44,8 @@ const PAGE_USE: Record<string, string> = {
   '/admin/configuration': 'Every global setting but capacity, edited in place, each with where its value comes from.',
   '/admin/repositories': 'Where the shared record areas get their rows: each catalog\'s pin, when it was last indexed, and Index now.',
   '/admin/keys': 'Every key the platform uses, one row per provider. A key is typed once and shown only as a hint after that.',
-  '/admin/activity': fill('{Tool_calls} and {run} spend across every {workspace}, per {member} and per {run}.')
+  '/admin/activity': fill('{Tool_calls} and {run} spend across every {workspace}, per {member} and per {run}.'),
+  '/admin/access-log': fill('The audit trails: every API and MCP request, sign-in and staff action across every {workspace}, and one {workspace}\'s data trail by its slug. Never a record\'s contents. A {workspace}\'s owners read their own on the Access log tab of their Billing page.')
 };
 
 const md = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();

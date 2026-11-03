@@ -8,8 +8,8 @@
  *              read, reveal, export, create, update, move, delete), on what (the area or store, the record's key or the
  *              file's path, how many rows), when and through which door. A read is one entry per list or detail, never
  *              one per row, and never with the record's contents: no field value is ever written here.
- *              Per workspace, under row-level security: the workspace's owners read it on the console's Access log
- *              page, as CSV, and through the MCP tool read_audit_trail; platform staff through the admin MCP.
+ *              Per workspace, under row-level security: the workspace's owners read it on Billing's Access log
+ *              tab (mold_v0-209), as CSV, and through the MCP tool read_audit_trail; platform staff through the admin MCP.
  *   platform   the platform usage trail: every API and MCP request and sign-in (the key's id and prefix, never the key;
  *              the actor, the scopes it acted with, the result code and the latency), and every staff action on an
  *              account (the admin console's API and the admin MCP's tools). The operator reads it fleet-wide (admin
