@@ -353,6 +353,19 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
   (`testing/console/world.mts`) writes them into its throwaway database so the pages are graded with rows; a deployed
   build never writes them. `npm run test:record-pages` checks the empty states, the staff guide and the samples rule.
+  **The staff record pages are the standard list** (mold_v0-212; `web/src/features/records/staff-records.tsx`):
+  `/admin/records/<area>` has no title or description above it; it reads as a customer's list tab does (mold_v0-208):
+  the area's four cards (`GET /api/admin/records/_console/<area>/sparklines`, `src/sparklines.ts` `areaSparklines`: an
+  area tab's defaults over the shared rows, counted as platform work since they name no workspace; staff read every
+  card), the search row, the table, a row opening the record beside the list. Where staff may write, **New record** is
+  the primary floating action (the tab action's create form, `CreateRecordForm`) and an open record has **Edit** (its
+  title and fields, data the form does not show kept); both write through `/api/admin/data`, whose checks are unchanged.
+  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create and edit only for an area no
+  repository fills (an upstream catalog's registry, such as a regulators list, stays read only on the console: its
+  rows are its index's), with no encrypted field, for a role with `library`, the staff tool not withheld. The record's
+  own page (`/admin/records/<area>/<key>`) is one details card: key, every field by its label (references linked),
+  version, updated, its clocks' timeline and its links, with Edit on the same terms. No pack declares anything for it.
+  `npm run test:record-areas` checks the cards and the offer per role; `npm run test:record-pages` the layout.
   **Every customer list is that table (mold_v0-176).** An area tab's table view (`RecordTableView`, the same component
   as the list page: a merged tab's rows too, a row opening the record of the first of its areas), the `runs` and
   `reports` tabs (`web/src/features/tabs/runs.tsx`: kind in the pack's words, status, the asset record it ran over,
