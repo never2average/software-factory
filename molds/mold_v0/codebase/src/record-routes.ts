@@ -4,7 +4,8 @@
  *
  *   /api/records                  a signed-in person of a workspace (the portal's session check, src/app.ts): the
  *                                 areas, a page of an area, one record with its links, a page of a merged tab
- *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts). Read only: no
+ *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts), the records due soon
+ *                                 across its clock areas (/api/records/due-soon, mold_v0-207). Read only: no
  *                                 route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
  *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete"
@@ -19,6 +20,7 @@ import { PackError, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
 import { auditListPurpose } from "./audit-trail.js";
+import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -60,6 +62,9 @@ export function recordAppRouter(): Router {
     }
     return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
   }));
+  // The home page's Due soon card (mold_v0-207; src/record-clocks.ts dueAcross): records coming due or overdue across
+  // the clock areas this person may read and whose list no pack withholds. Not an area name (those take no "-").
+  r.get("/due-soon", answer(async (req, res) => dueAcross(org(res), actor(res), { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), withheld: (a) => areaOpWithheld(a, "list") })));
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };

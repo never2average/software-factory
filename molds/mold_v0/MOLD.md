@@ -1693,13 +1693,15 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   while open, its prompt in a Copy prompt box (a pack step's pack.json `prompt`, the get_started tool's "say"; the
   current one highlighted, done ones checked), then tips when the build has them; the right column is the "Connect your
   AI client" card (pick a client, the URL with Copy URL, Test my connection), then the tab's `rail`, up to two cards in
-  order: `journeys` (the journey picker: every build has journeys, mold_v0-175: "Get set up", the setup steps
-  themselves, always first, then the journeys component's when pack.json `journeys` turns it on), `notices` (the records due soon, the first
+  order: `journeys` (since mold_v0-207 the **Due soon** card, below; the journey selector it once was is the main
+  column's heading), `notices` (the records due soon, the first
   five then "Show all"; `DueSoonCard` in `web/src/features/schedules/notices-page.tsx`; needs `include: notices`), or
   `chart:<name>` (one of the pack's `number` charts as a card of its tiles, with a link to the pack's other overview
-  tab that lists it). Without `rail` the second card is the journey picker (the Setup page's own layout, zero packs
-  included: Get set up alone there). Included `notices` no card shows follow the checklist (`DueSoonSection`); the tab's
-  `charts` come below both columns, under its `charts_title` when it has one (mold_v0-175; Maxwell's "Numbers"). The
+  tab that lists it). Without `rail` the second card is the Due soon card (the Setup page's own layout, zero packs
+  included). Included `notices` no card shows follow the checklist (`DueSoonSection`, headed "Notices" in a build with a
+  clock, beside the Due soon card). **No charts on the home page** (mold_v0-207): the tab's `charts` and `charts_title`
+  are accepted (a pack stays valid: its metrics still drive the headline row, the list tabs' cards and the rail's number
+  cards) and not drawn; a build does not refuse them, so packs written before keep building. The
   tab is drawn at `/app` itself (mold_v0-175, `web/src/app/app/page.tsx`): its own `/app/<id>` and `/app/notices` (and
   every address under it) redirect to `/app` (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
   too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
@@ -1710,8 +1712,26 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   home tab with charts. **The sidebar** shows no heading for a group of one entry named like the group (mold_v0-175:
   `web/src/components/layout/app-sidebar.tsx`; a pack's Overview tab in an Overview group is one entry).
   `npm run test:declarative-packs` refuses those and checks the registry and the redirects; `npm run test:console-tabs`
-  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, its charts;
-  then every step done).
+  draws the tab (the checklist with its prompts, the connection card, a number card and the notices card, no charts
+  grid; then every step done).
+  **The journey selector and the Due soon card** (mold_v0-207). The main column's heading is the journey selector, for
+  every build: a button with the selected journey's name ("Get set up" by default), its progress and a chevron, opening
+  a listbox (`role="listbox"`, options with `aria-selected`, the active one by `aria-activedescendant`; a search box,
+  `role="combobox"`, past six) of every journey with its progress (1/9); Enter, Space or the arrows open it, the arrows,
+  Home and End move, Enter picks, Escape closes back to the heading. Picking one switches the steps below and keeps
+  `?journey=<id>` (`JourneyMenu` in `web/src/features/portal/setup.tsx`). A home tab whose `rail` leaves out `journeys`
+  keeps a plain "Get set up" heading. The right column's second card is **Due soon**
+  (`web/src/features/records/due-soon-card.tsx`, the Connect card's style): the records coming due or overdue across the
+  workspace, from the record clocks (`GET /api/records/due-soon`, `src/record-clocks.ts` `dueAcross`): one row per record
+  and clock that is overdue or due soon, overdue first, then the soonest deadline, six at most, each with its title, area
+  and clock, a badge (Overdue Nd, Due soon) and a relative date, a link to the record's page; View all opens the area's
+  list (its own tab, inside its sections tab when it has one, else `/app/records/<area>`) with the Overdue filter on
+  (`?overdue=1`, now kept in the address) when something is overdue. The server reads each area inside the workspace's
+  tenant scope, only the clock areas the person's role may read and whose list no pack withholds (a sealed area while
+  the vault is locked is skipped). Nothing due: a calm line ("Nothing is due or overdue"). **No card** in a build with
+  no clock (Octillion: a card that could never fill would only promise a feature the app does not have) nor for a role
+  that may read no clock area (as a tab is never shown to a role that may not read it). `npm run test:record-clocks`
+  checks the route (order, the default six, two workspaces, a role that may not read the area, signed out).
   **A sections tab** (mold_v0-175): `{"kind": "sections", "sections": ["<tab id>", ...]}` draws several of the pack's
   own tabs (area, runs, reports or schedules: 2 to 6) as one page with an in-page tab strip (`Tabs`, line variant)
   above the selected one's charts, views and table (`SectionsTab` in `web/src/features/tabs/tab-page.tsx`; the table is
@@ -1754,7 +1774,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **A home tab's headline row** (mold_v0-203): pack.json `sparklines` on the home tab (an `overview` that includes
   `setup`) names 1 to 4 of the pack's metrics, drawn as the same cards (`TabSparklines`, `StatStrip` with `quad`: four
   across from a wide screen, two by two below it, in the console's light or dark theme) in a row at the very top of the
-  Overview, above the checklist or journey and the right column (the connection card, the journey picker). The same
+  Overview, above the checklist or journey and the right column (the connection card, the Due soon card). The same
   rules as a list tab's cards (a declared metric, never grouped, weeks to draw, never twice) and the same route
   (`GET /api/sparklines/<pack>/<home tab>`, mounted for it too; the home tab is every role's, each card refused alone to
   a role that may not read its metric). The registry carries the list as the tab's `headline`; a number the row shows is

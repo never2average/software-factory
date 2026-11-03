@@ -13,7 +13,7 @@ import { ExportRowsButton } from '@/features/tabs/export';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
-import { FloatPanel } from '@/features/portal/setup';
+import { FloatPanel } from '@/features/portal/float-panel';
 import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
 
@@ -132,14 +132,14 @@ export function NoticesPage() {
 }
 
 /** The notices as a section of a home tab (mold_v0-134): the first five, then a button for the rest. */
-export function DueSoonSection() {
+export function DueSoonSection({ title = 'Due soon' }: { title?: string } = {}) {
   return (
     <section aria-labelledby='home-notices-title' data-home-section='notices' className='flex min-w-0 flex-col gap-3'>
       <div>
-        <h2 id='home-notices-title' className='text-base font-semibold tracking-tight'>Due soon</h2>
+        <h2 id='home-notices-title' className='text-base font-semibold tracking-tight'>{title}</h2>
         <p className='text-muted-foreground text-sm'>{DESCRIPTION}</p>
       </div>
-      <NoticesList limit={5} label='Due soon' />
+      <NoticesList limit={5} label={title} />
     </section>
   );
 }
