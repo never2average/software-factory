@@ -9,7 +9,7 @@
 //   4. Runs: by kind (agent or not), failures by error kind (output_missing included), the refused-and-retried runs
 //      (mold_v0-189) and how they ended, durations, cost, the recent failed runs (no address in an error) and one run's
 //      events (figures only: who asked is never shown)
-//   5. Deliveries: emails by kind and status (never an address or a subject), webhook deliveries by status, endpoints
+//   5. Email Delivery (?section=deliveries): emails by kind and status (never an address or a subject), webhook deliveries by status, endpoints
 //      switched off (never their address)
 //   6. Status: database, the row-level security probe, object storage, the key vault and the Claude provider, the last
 //      migration and the release; never a key's value
@@ -105,7 +105,7 @@ try {
   await assert.rejects(h.healthRunEvents("run_nope"), /not found/);
   ok("Runs: kinds (agent or not), failures by error kind with output_missing, refused-and-retried and how they ended, durations, cost, recent failures, events without people");
 
-  // ---------- 5. Deliveries ----------
+  // ---------- 5. Email Delivery ----------
   await db.query(`INSERT INTO email_log (kind, to_hash, to_domain, subject, status, idempotency_key, error) VALUES
     ('sign_in_code', 'h1', 'example.org', 'Your code 123456', 'sent', 'k1', NULL), ('sign_in_code', 'h2', 'example.org', 'Your code', 'failed', 'k2', 'bounced for bob@example.org'),
     ('due_soon', 'h3', 'example.org', 'Due soon: secret project', 'skipped', 'k3', 'off')`);
@@ -117,7 +117,7 @@ try {
   const sic = del.emails.find((e) => e.kind === "sign_in_code")!;
   assert.equal(sic.sent, 1); assert.equal(sic.failed, 1);
   assert.ok(!JSON.stringify(del).includes("example.org") && !JSON.stringify(del).includes("Your code") && !JSON.stringify(del).includes("secret project"), "no address, domain or subject");
-  ok(`Deliveries: emails by kind and status${del.webhooks ? ", webhook deliveries by status, endpoints switched off" : " (no developer surface in this build: webhooks left out)"}; no address or subject`);
+  ok(`Email Delivery: emails by kind and status${del.webhooks ? ", webhook deliveries by status, endpoints switched off" : " (no developer surface in this build: webhooks left out)"}; no address or subject`);
 
   // ---------- 6. Status ----------
   const st = await h.healthStatus();
@@ -149,7 +149,7 @@ try {
     const [row] = await db.query<Record<string, unknown>>("SELECT * FROM health_samples");
     assert.ok(row, "one sample written");
     assert.equal(row!.up, true); assert.ok(Number(row!.db_ms) >= 0);
-    assert.equal(Number(row!.runs_ended), 2); assert.equal(Number(row!.runs_failed), 1); assert.equal(Number(row!.claude_refusals), 1);
+    assert.equal(Number(row!.runs_ended), 2); assert.equal(Number(row!.runs_failed), 1); assert.equal(Number(row!.claude_refusals), 3, "the three refused-and-retried events of the window (two from the Runs check)");
     assert.equal(Number(row!.claude_requests_day), 40); assert.equal(Number(row!.claude_errors_day), 3);
     assert.equal(Number(row!.api_requests), 5); assert.equal(Number(row!.api_p50_ms), 30); assert.equal(Number(row!.api_p95_ms), 1000);
     assert.ok(["ok", "failed", "error", "not run"].includes(String(row!.rls)) && ["env", "vault", "dir", "none"].includes(String(row!.storage)));
