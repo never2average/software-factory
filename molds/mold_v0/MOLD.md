@@ -2591,8 +2591,8 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   target, pack, area or store, the record's key or the file's path, how many rows, when, and the door (console, api,
   mcp, admin_console, admin_mcp, run, system). A list or an export is **one entry per page or file, never one per row**,
   and an entry never holds a field's value or a title; a sealed area's read is a `reveal`; a batch's entries are written
-  only when it commits. Per workspace under row-level security: the workspace's owners read it on the console's
-  **Access log** page (`/app/access-log`; Download CSV), `GET /api/audit/data[.csv]`, and the
+  only when it commits. Per workspace under row-level security: the workspace's owners read it on Billing's
+  **Access log** tab (`/app/billing?tab=access-log`, mold_v0-209; Download CSV), `GET /api/audit/data[.csv]`, and the
   MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
   MCP's `read_audit_trail` (by slug).
 - **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
@@ -2621,7 +2621,7 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   MCP caller, `src/builtin-auth.ts` sessions, `src/admin-mcp.ts` staff tools). Rollback:
   `sql/rollback/0031_audit_trails.sql` (refuses while entries exist unless `app.audit_rollback_drop` is on).
 
-- **The Access log page is the records pages' table** (mold_v0-205): each trail is a read-only system area (no pack
+- **The Access log is the records pages' table** (mold_v0-205): each trail is a read-only system area (no pack
   declares it; its fields typed as an area's are) drawn by `RecordTableView` (`web/src/features/records/record-pages.tsx`,
   what every record area's page and tab draws) through its data adapter (`RecordSource`: rows from the trail's own
   route, Download CSV in place of Export CSV, the record column as the entry's time). So it has everything an area's
@@ -2632,6 +2632,21 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   range, the column picker (the entry's kind, pack, actor kind and key on request), sort, a pager and a row drawer with
   the entry's details. /admin/access-log is the same table (the platform trail fleet-wide; a workspace's data trail by
   its slug). Owners only, never a value, each workspace's own rows under row-level security, as before.
+- **The customers' Access log is Billing's 4th tab** (mold_v0-209): Billing's in-page tabs are People, Teams, Budget
+  rules (admins) and **Access log**, each held in `?tab=` (`/app/billing?tab=access-log`; People, the first, has none).
+  The tab shows only where the profile turns `audit.data` on, and only to the workspace's owners (anyone else asking for
+  it gets People); no title above the strip, the same `RecordTableView` page as before (with both trails on, its Data
+  access / Requests switch above the table). The separate page and its sidebar entry are gone: the old address is
+  the normal not-found page, no redirect, and nothing links to it. The staff `/admin/access-log` is unchanged (its own
+  sidebar entry under Security; the staff guide says what it is for). Proof: `npm run test:record-pages` (section 7).
+- **Action and Actor columns** (mold_v0-209): both trails' tables (Billing's tab and `/admin/access-log`) show **Action**
+  (what was done: a data entry's list, read, reveal, export, create, update, move or delete; a platform entry's read,
+  change, delete, tool call, MCP request, sign-in or check, from its kind, method and path) and **Actor** (who did it:
+  User, Key, Staff, Agent run or System, with the person, staff's pseudonym, the key's prefix or number, or the run's
+  id), where the platform trail had Kind and Who. The server words both (`src/audit-trail.ts` `actorLabel`,
+  `platformAction`) on every entry it returns (`action`, `actor`), so the table, its filters and sort, the row drawer,
+  the MCP tool's answer and the CSV (`seq,at,action,actor,…` for the data trail, `seq,at,workspace,action,actor,…` for
+  the platform trail; the raw actor kind and id follow) read the same words. Proof: `npm run test:audit-trail`.
 
 Proof: `npm run test:audit-trail` (gen-packs' check of the setting; both off, each alone, both on; tenant isolation by
 route, MCP tool and the tenant role; no value in either trail; one entry per list; a 250-operation batch in at most two

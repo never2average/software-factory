@@ -45,8 +45,11 @@ const cell = (s: string) => s.replace(/\|/g, '\\|');
 const connectText = (setupPage: string) => `Connect your AI client to this ${fill('{workspace}')}'s MCP server from the **${setupPage}** page: pick your client, follow its
 one step, then press **Test my connection**. ${keysOff ? 'Every client signs in with your account (OAuth): there is no key to copy.' : `Clients that sign in (OAuth) need no key; the others send an API key in a
 header, never in a URL.`} The public install pages at \`/install\` show every client's setup.`;
+/** The data trail (mold_v0-197, profile `audit.data`): its owners read it on Billing's Access log tab (mold_v0-209). */
+const dataTrail = ((profile as Readonly<Record<string, unknown>>).audit as { data?: boolean } | undefined)?.data === true;
 const ACCOUNT_TEXT = `**Team** lists the account's people and their roles (owner, billing manager, member, viewer). **Usage** shows tool calls
-and spend; **Billing** the plan and this month's model spend against its allowance.`;
+and spend; **Billing** the plan and this month's model spend against its allowance.${dataTrail ? ` Owners read who listed, read, exported or changed
+which records on Billing's **Access log** tab ([open it](/app/billing?tab=access-log)), and download it as CSV.` : ''}`;
 const shellMarkdown = (catalog: ToolCatalog) => `
 ## Getting started
 

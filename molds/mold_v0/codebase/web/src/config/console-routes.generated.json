@@ -27,7 +27,6 @@
     "/admin/spend",
     "/app",
     "/app/[page]",
-    "/app/access-log",
     "/app/activity",
     "/app/billing",
     "/app/billing/limits",
