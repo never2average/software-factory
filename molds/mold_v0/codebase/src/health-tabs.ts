@@ -1,6 +1,6 @@
 /**
  * The staff console's Health tabs in a build without the session engine (mold_v0-204; web/src/features/admin/
- * health-tabs.tsx): Runs, Scheduled work, Deliveries and Status, beside Errors (src/insights.ts). A build with the
+ * health-tabs.tsx): Runs, Scheduled work, Email Delivery (?section=deliveries) and Status, beside Errors (src/insights.ts). A build with the
  * engine keeps its own tabs (Errors, Jobs, Sessions) as they were; these routes answer there too, unused.
  *
  * Staff only (the admin router's guard, `/api/admin/onboarding/health/*`), read only, and never a person's data, an
@@ -191,7 +191,7 @@ export async function healthScheduled() {
   return { runtime: onVercel() ? "vercel" : "server", jobs };
 }
 
-// ---------------------------------------------------------------- Deliveries
+// ---------------------------------------------------------------- Email Delivery (the tab's section id: deliveries)
 
 export const deliveriesOn = () => companyEmailWired() || !!developerSurface();
 

@@ -1218,7 +1218,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Deliveries**, only when a pack declares company email or the app has a developer surface:
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface (its webhooks are shown there too, for now):
   emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
   endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
   `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
@@ -1227,6 +1227,28 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   start) and the mold version (the shell's newest migration, the package version). Every error shown is cut short and
   has addresses, links, credentials and key-like text taken out (`safeError`). Proof: `npm run test:health-tabs`, and
   `npm run test:admin-sections` (the engine's tabs as before).
+- **Health › Status as a grid of graphs** (mold_v0-210, built): the Status tab (`/admin/health?section=status`) is a grid
+  (three columns from 1280 px, two from 768 px, one on a phone; the console's own charts, `components/ui/chart`,
+  recharts, in `components/layout/chart-grid` boxes) with one graph per signal, its current state as its headline
+  (e.g. "Up · 4 ms") and one 24h / 7d / 30d switch for the whole grid: database latency, API latency (p50 and p95), the
+  health check (an uptime band: the share of samples up per bucket, grey where there was no sample), the row-level
+  security probe and object storage (bands), the key vault's providers set and missing, the Claude provider's errors
+  and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate and, only when
+  the app has deliveries, the delivery failure rate; the last deploy and the mold version are a line above it, not a
+  graph. The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
+  work, `src/rls.ts` NO_ACCESS; rollback: `sql/rollback/0038_health_samples.sql`, which drops it with its rows), one
+  row every 4 minutes at most across processes (`src/health-samples.ts`): a server's own loop (`startHealthSampler`)
+  and, on Vercel, the cron entry, so history exists without the long-running server; each sample is tracked as the
+  scheduled job `health_samples` and prunes samples older than 35 days. A sample is numbers and states only (no free
+  text column: `rls` and `storage` are checked against their sets), never an address, a secret or a person. The API's
+  latency is this process's requests since the sample before (a request's duration, nothing else; not `/healthz` or
+  the cron entry), else the MCP requests' times every instance recorded (`mcp_events.ms`); the Claude provider's
+  counters are the day's so far (`gateway_model_usage`), turned into differences per sample; refusals are the runs'
+  refused-and-retried events. Staff only: `GET /api/admin/onboarding/health/history?range=24h|7d|30d`. Only in a build
+  without the session engine (`APP_SCHEDULER=off` turns the loop off too): an engine build such as Octillion has
+  neither the sampling nor these tabs, so its Health is unchanged. Proof: `npm run test:health-tabs` (sampling,
+  throttle, retention, buckets, numbers and states only, closed to tenant queries), `npm run test:migrations`
+  (rollback), `npm run check:rls`.
 - **Accounts › Admins** (mold_v0-204, built): the platform's staff and their roles are the Admins tab of Accounts
   (`/admin/accounts?section=admins`, `web/src/features/admin/accounts-tabs.tsx`: Accounts | Admins, the same tab strip
   as Health's), in every app; the sidebar has no Admins entry and `/admin/admins` is gone (the console's not-found page,
