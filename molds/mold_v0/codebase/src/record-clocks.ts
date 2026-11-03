@@ -409,7 +409,8 @@ export async function dueAcross(orgId: number, actor: Actor, opts: { limit?: num
   hit.sort((a, b) => RANK[a.view.status]! - RANK[b.view.status]! || (a.view.due_at ?? "9").localeCompare(b.view.due_at ?? "9")
     || a.area.name.localeCompare(b.area.name) || a.key.localeCompare(b.key) || a.view.name.localeCompare(b.view.name));
   const shown = hit.slice(0, limit);
-  const titles = await Promise.all(shown.map((h) => (isSealedArea(h.area) ? Promise.resolve(null) : isSealed(h.title) ? open(orgId, h.title!).catch(() => null) : Promise.resolve(h.title))));
+  // A sealed title is opened with the workspace's own key, as list_due_records does (never stored opened).
+  const titles = await Promise.all(shown.map((h) => (isSealed(h.title) ? open(orgId, h.title!).catch(() => null) : Promise.resolve(h.title))));
   return {
     as_of: now.toISOString(), total: hit.length, overdue: hit.filter((h) => h.view.status === "overdue").length, partial, skipped,
     areas: areas.map((a) => ({ name: a.name, label: a.label, clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) })),
