@@ -370,7 +370,7 @@ try {
       area("apps", "tracker_apps"), area("findings", "tracker_findings", { action: { kind: "link", label: "Connect mailbox", href: "/app/settings/email" } }),
       area("policies", "tracker_policies"), area("quiet", "tracker_apps", { label: "Quiet", action: false, reason: "Rows arrive from the nightly import." }),
       { id: "scans", kind: "runs", label: "Scans" }, { id: "reports", kind: "reports", label: "Scan reports" }, { id: "when", kind: "schedules", label: "Schedule" },
-    ], (j) => { j.job_kinds[0].report = { path: "out/report.md", label: "Scan report", format: "markdown" }; }));
+    ], (j) => { j.job_kinds[0].report = { path: "findings/report.md", label: "Scan report", format: "markdown" }; }));
     assert.equal(ok.r.status, 0, `defaults build: ${ok.r.stderr}`);
     const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
     const got = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
