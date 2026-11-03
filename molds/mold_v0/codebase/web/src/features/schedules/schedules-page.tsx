@@ -3,6 +3,8 @@
 // copied into the workspace; owners turn them off and on, change when they run (UTC) and over which records, and add
 // their own. Everyone else in the workspace sees them, with the last time each ran. The list is the console's database
 // table (mold_v0-176): a row opens the schedule beside it, where owners change when it runs or remove one they added.
+// A schedules tab's floating action (mold_v0-208: pack.json tabs[].action new_schedule) opens the Add a schedule form in
+// a drawer, its run kind preset, in place of the form below the list; shown to the owners who may add one.
 import { useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -10,10 +12,14 @@ import { Section } from '@/components/layout/section';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { JOB_KINDS } from '@/config/build-facts.generated';
 import { EmptyState } from '@/features/tabs/empty';
+import { ActionSheet, Fab, actionLabel } from '@/features/tabs/action-fab';
+import { packTabs, type PackTabSpec } from '@/config/pack-nav.generated';
 import { ExportRowsButton } from '@/features/tabs/export';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Icons } from '@/components/icons';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { ErrorState, When, fail, useOrgLoad } from '@/features/portal/shared';
@@ -44,22 +50,33 @@ const assetWords = (s: Schedule) => (!s.assets ? 'the workspace' : s.assets.keys
 export function SchedulesPage() {
   return (
     <PageContainer pageTitle='Schedules' pageDescription='When runs start by themselves. Times are cron expressions in UTC; a time missed while nothing was running runs once, not once per missed time.'>
-      <SchedulesBody />
+      {/* A pack's own schedules tab opens this page (it is not an in-page tab): its floating action is drawn here. */}
+      <SchedulesBody action={packTabs.find((t) => t.kind === 'schedules' && t.url === '/app/schedules' && t.action)?.action} />
     </PageContainer>
   );
 }
 
 /** The page's body (mold_v0-175: also an in-page tab of a pack's sections tab, with its four cards: mold_v0-181). */
-export function SchedulesBody({ summary }: { summary?: ReactNode } = {}) {
+export function SchedulesBody({ summary, action }: { summary?: ReactNode; action?: PackTabSpec['action'] } = {}) {
   const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
   const cols = useMemo(() => (data ? columns(data, reload) : []), [data, reload]);
+  const [adding, setAdding] = useState(false);
+  // The floating action (mold_v0-208) for those who may add a schedule, when there is a kind to schedule.
+  const canAdd = !!data?.can_manage && data.kinds.length > 0;
+  const fab = action?.kind === 'new_schedule' && canAdd ? (<>
+    <Fab label={actionLabel(action)} icon={<Icons.calendar />} onClick={() => setAdding(true)} />
+    <ActionSheet open={adding} onOpenChange={setAdding} title={actionLabel(action)}
+      description='When it runs is a cron expression in UTC (minute hour day month weekday), at most every 5 minutes. Optionally, which records it runs over: one run per record.'>
+      <AddScheduleForm data={data!} preset={action.job_kind} stacked onAdded={async () => { setAdding(false); await reload(); }} />
+    </ActionSheet>
+  </>) : undefined;
   return (
     <>
       {error ? <ErrorState error={error} /> : (
         <div className='flex flex-col gap-10'>
           {/* The console's database table (mold_v0-176, as on Accounts): a row opens the schedule beside the list. */}
           <RecordView<Schedule>
-            id='app-schedules' compact noun='schedules' properties summary={summary}
+            id='app-schedules' compact noun='schedules' properties summary={summary} fab={fab}
             rows={data?.schedules ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
             searchText={(s) => `${s.label ?? ''} ${s.name} ${kindLabel(s)} ${s.cron} ${assetWords(s)}`}
             searchPlaceholder='Search schedules'
@@ -67,13 +84,13 @@ export function SchedulesBody({ summary }: { summary?: ReactNode } = {}) {
             primary={data?.schedules.length ? <ExportRowsButton name='schedules' rows={data.schedules} cols={cols} /> : undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-schedules' empty={{
               title: 'No schedules yet.',
-              text: data?.can_manage && data.kinds.length ? 'Add one below: pick what runs, and when (UTC).' : 'An owner of this workspace adds them.',
+              text: data?.can_manage && data.kinds.length ? (fab ? `${actionLabel(action!)}: pick what runs, and when (UTC).` : 'Add one below: pick what runs, and when (UTC).') : 'An owner of this workspace adds them.',
               cta: null
             }} /></div>}
             detailTitle={(s) => s.label ?? s.name}
             detail={(s) => <ScheduleDetail key={s.id} s={s} canManage={!!data?.can_manage} onChanged={reload} />}
           />
-          {data?.can_manage && data.kinds.length > 0 && <AddSchedule data={data} onAdded={reload} />}
+          {canAdd && !fab && <AddSchedule data={data} onAdded={reload} />}
         </div>
       )}
     </>
@@ -145,7 +162,20 @@ function ScheduleDetail({ s, canManage, onChanged }: { s: Schedule; canManage: b
 }
 
 function AddSchedule({ data, onAdded }: { data: Data; onAdded: () => unknown }) {
-  const [kind, setKind] = useState(`${data.kinds[0]!.pack}/${data.kinds[0]!.name}`);
+  return (
+    <Section title='Add a schedule' description='A run kind, when it runs (minute hour day month weekday, UTC, at most every 5 minutes) and, optionally, which records it runs over: one run per record.'>
+      <AddScheduleForm data={data} onAdded={onAdded} />
+    </Section>
+  );
+}
+
+/**
+ * The Add a schedule form: below the list, in a row; or in the floating action's drawer (mold_v0-208: `stacked`, one
+ * labelled field a line, the kinds by their labels, `preset` the kind chosen first).
+ */
+function AddScheduleForm({ data, onAdded, preset, stacked = false }: { data: Data; onAdded: () => unknown; preset?: string; stacked?: boolean }) {
+  const first = data.kinds.find((k) => k.name === preset) ?? data.kinds[0]!;
+  const [kind, setKind] = useState(`${first.pack}/${first.name}`);
   const [name, setName] = useState('');
   const [cron, setCron] = useState('0 6 * * *');
   const [area, setArea] = useState('');
@@ -162,23 +192,23 @@ function AddSchedule({ data, onAdded }: { data: Data; onAdded: () => unknown }) 
       await onAdded();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  const row = (label: string, id: string, control: ReactNode) => (stacked
+    ? <div className='flex flex-col gap-1.5'><Label htmlFor={id}>{label}</Label>{control}</div> : control);
   return (
-    <Section title='Add a schedule' description='A run kind, when it runs (minute hour day month weekday, UTC, at most every 5 minutes) and, optionally, which records it runs over: one run per record.'>
-      <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void add(); }}>
-        <NativeSelect value={kind} onChange={(e) => { setKind(e.target.value); setArea(''); }} aria-label='Run kind'>
-          {data.kinds.map((k) => <NativeSelectOption key={`${k.pack}/${k.name}`} value={`${k.pack}/${k.name}`}>{k.pack}/{k.name}</NativeSelectOption>)}
-        </NativeSelect>
-        <Input className='w-44' placeholder='name (e.g. nightly_check)' value={name} onChange={(e) => setName(e.target.value)} aria-label='Schedule name' />
-        <Input className='w-36 font-mono text-xs' value={cron} onChange={(e) => setCron(e.target.value)} aria-label='When (cron, UTC)' />
-        {areas.length > 0 && (
-          <NativeSelect value={area} onChange={(e) => setArea(e.target.value)} aria-label='Records'>
+      <form className={stacked ? 'flex flex-col gap-4' : 'flex flex-wrap items-end gap-2'} onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        {row('Runs', 'schedule-kind', <NativeSelect id='schedule-kind' className={stacked ? 'w-full' : undefined} value={kind} onChange={(e) => { setKind(e.target.value); setArea(''); }} aria-label='Run kind'>
+          {data.kinds.map((k) => <NativeSelectOption key={`${k.pack}/${k.name}`} value={`${k.pack}/${k.name}`}>{stacked ? kindLabel({ pack: k.pack, job_kind: k.name }) : `${k.pack}/${k.name}`}</NativeSelectOption>)}
+        </NativeSelect>)}
+        {row('Name', 'schedule-name', <Input id='schedule-name' className={stacked ? undefined : 'w-44'} placeholder='name (e.g. nightly_check)' value={name} onChange={(e) => setName(e.target.value)} aria-label='Schedule name' />)}
+        {row('When (cron, UTC)', 'schedule-cron', <Input id='schedule-cron' className={stacked ? 'font-mono text-xs' : 'w-36 font-mono text-xs'} value={cron} onChange={(e) => setCron(e.target.value)} aria-label='When (cron, UTC)' />)}
+        {areas.length > 0 && row('Records', 'schedule-area', (
+          <NativeSelect id='schedule-area' className={stacked ? 'w-full' : undefined} value={area} onChange={(e) => setArea(e.target.value)} aria-label='Records'>
             <NativeSelectOption value=''>the workspace</NativeSelectOption>
             {areas.map((a) => <NativeSelectOption key={a.name} value={a.name}>{a.label}</NativeSelectOption>)}
           </NativeSelect>
-        )}
-        {area && <Input className='w-56' placeholder='record keys (blank: every record)' value={keys} onChange={(e) => setKeys(e.target.value)} aria-label='Record keys' />}
-        <Button type='submit' size='sm' disabled={busy || !name || !cron}>Add</Button>
+        ))}
+        {area && row('Record keys', 'schedule-keys', <Input id='schedule-keys' className={stacked ? undefined : 'w-56'} placeholder='record keys (blank: every record)' value={keys} onChange={(e) => setKeys(e.target.value)} aria-label='Record keys' />)}
+        <Button type='submit' size='sm' className={stacked ? 'self-start' : undefined} disabled={busy || !name || !cron}>Add</Button>
       </form>
-    </Section>
   );
 }

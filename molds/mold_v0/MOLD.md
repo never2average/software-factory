@@ -1610,7 +1610,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   exactly those, in order, grouped by `group` (a group shared by packs is one section); with none it is the shell's own,
   unchanged (`npm run test:console-tabs` compares the zero-pack and the no-tab sidebars with snapshots taken before 058).
   Kinds: `overview` (charts), `area` (a record area's `views`: table, board by a single-choice enum, the lifecycle's
-  field by default, timeline by a date field or updated, detail; its charts above), `runs`, `reports` (finished runs and
+  field by default, timeline by a date field or updated, detail; no charts since mold_v0-208), `runs`, `reports` (finished runs and
   their results), and the shell's own pages `credentials`, `usage`, `schedules`, `notices`, `setup`, `billing`,
   `profile`, `team` and `keys` (the Team part of Billing and the person's own API keys, mold_v0-133; a build refuses
   `keys` when member keys are off; two packs' tabs that open one shell page are one sidebar entry, the first's), or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
@@ -1722,8 +1722,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   on `/api/records/tabs/<pack>/<tab>` (never by the page: paging stays right); a field the area lacks is refused.
   `npm run test:declarative-packs` refuses those and checks the URLs, the sidebar and the redirects.
   **A list tab's four cards** (mold_v0-181): every area, runs, reports and schedules tab (on its own page or as an
-  in-page tab) shows four cards directly below its toolbar (the row with search, Filter and Export CSV) and above its
-  table (above a board or a timeline, which have no toolbar), each a label, a value and a sparkline of the last 12
+  in-page tab) shows four cards first, then its toolbar (the row with search, Filter and Export CSV), then its table
+  (mold_v0-208: the cards moved above the search row, in the console's shared table, `RecordView`'s `summary`, so every
+  list that draws cards reads the same: the Access log, Health's tabs, FinOps and Compute; above a board or a timeline,
+  which have no toolbar), each a label, a value and a sparkline of the last 12
   weeks (`web/src/features/tabs/sparklines.tsx`, drawn as the console's headline numbers: `StatStrip` with `quad`, four
   across from a wide screen and two by two below it, one fixed height with placeholders while they load, each card's
   value and trend said in words for a screen reader). pack.json `sparklines` on such a tab names exactly 4 of the pack's
@@ -1759,6 +1761,33 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   stays). Without it, no row: the page is unchanged. gen-packs refuses more than 4, none, one on an overview that is not
   the home tab, and the list tab's other refusals; `npm run test:declarative-packs` checks those and the registry, `npm
   run test:console-tabs` draws the row above both columns and the number card without its numbers.
+  **A list tab is its cards, its search row and its table** (mold_v0-208): an area tab draws no charts (`charts` on an
+  area tab stays valid and is ignored: the console's registry carries none for it and the guide lists none; a pack's
+  charts are an overview's), so no chart grid sits above or around a list. Why ignored and not refused: every pack
+  written before (Maxwell's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
+  pack change, not a broken build.
+  **A list tab's floating action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
+  config only: `{"kind": "start_run", "label"?, "job_kind"? | "job_kinds"?}` on an area, runs or reports tab (one of
+  the pack's job kinds, a picker of 2 to 20 in order, or every kind of the pack; never one gated by an approval),
+  `{"kind": "new_schedule", "label"?, "job_kind"?}` on a schedules tab (a kind the pack itself schedules, preset in the
+  form) or `{"kind": "create_record", "label"?, "area"}` on an area tab (one of the pack's own workspace areas, not read
+  from a repository). It opens the shell's existing ways in, never a pack's own form: a run starts exactly as the
+  generated `start_<kind>` MCP tool starts it (its input schema, its permission, its handler: `src/mcp-tools.ts`
+  `startFromConsole`, behind `POST /api/tab-actions/<pack>/<tab>/start`, `src/tab-actions.ts`), with the kind's `args`
+  as a form (typed as record fields), the asset record it runs over and its environment when the kind takes them; a
+  schedule through the schedules page's Add a schedule form (in a drawer, in place of the form below the list); a record
+  through the data API's create (`POST /api/data/<area>`), its key, title and fields. The button
+  (`web/src/features/tabs/action-fab.tsx`) is the brand's primary colour, fixed at the bottom right 1.5rem from the
+  window's edges plus the safe-area insets, an icon and its label from `sm` up and the icon alone on a phone (its
+  label the accessible name); the list's height leaves its space free below the pager (`RecordView` `fab`,
+  `FAB_SPACE`), so it never covers the last row or the pager. It is shown only to a role that may use it
+  (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
+  roles and `edit`), and the server refuses the rest. The route is mounted only when a pack declares an action, so a
+  build without one (zero packs, Octillion) answers nothing and its MCP surface is unchanged. gen-packs refuses an
+  unknown kind or key, an undeclared or doubled job kind, one whose start tool the pack withholds (mcp), a picker of
+  one, both `job_kind` and `job_kinds`, an action
+  on the wrong kind of tab, a schedule with no kind the pack schedules, a missing, shared, undeclared or
+  repository-read area, and a label with braces; `npm run test:declarative-packs` proves those and the registry.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -2610,8 +2639,8 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   target, pack, area or store, the record's key or the file's path, how many rows, when, and the door (console, api,
   mcp, admin_console, admin_mcp, run, system). A list or an export is **one entry per page or file, never one per row**,
   and an entry never holds a field's value or a title; a sealed area's read is a `reveal`; a batch's entries are written
-  only when it commits. Per workspace under row-level security: the workspace's owners read it on the console's
-  **Access log** page (`/app/access-log`; Download CSV), `GET /api/audit/data[.csv]`, and the
+  only when it commits. Per workspace under row-level security: the workspace's owners read it on Billing's
+  **Access log** tab (`/app/billing?tab=access-log`, mold_v0-209; Download CSV), `GET /api/audit/data[.csv]`, and the
   MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
   MCP's `read_audit_trail` (by slug).
 - **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
@@ -2640,17 +2669,32 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   MCP caller, `src/builtin-auth.ts` sessions, `src/admin-mcp.ts` staff tools). Rollback:
   `sql/rollback/0031_audit_trails.sql` (refuses while entries exist unless `app.audit_rollback_drop` is on).
 
-- **The Access log page is the records pages' table** (mold_v0-205): each trail is a read-only system area (no pack
+- **The Access log is the records pages' table** (mold_v0-205): each trail is a read-only system area (no pack
   declares it; its fields typed as an area's are) drawn by `RecordTableView` (`web/src/features/records/record-pages.tsx`,
   what every record area's page and tab draws) through its data adapter (`RecordSource`: rows from the trail's own
   route, Download CSV in place of Export CSV, the record column as the entry's time). So it has everything an area's
-  page has: the search row with the trail's four cards under it (`GET /api/audit/<trail>/sparklines`, staff
+  page has: the trail's four cards above the search row (mold_v0-208) (`GET /api/audit/<trail>/sparklines`, staff
   `/api/admin/audit/platform/sparklines` and `/api/admin/audit/data/<workspace>/sparklines`, `src/audit-trail.ts`
   `trailSparklines`: this week's entries, changes, exports and reveals, people and keys; or requests, sign-ins, refused
   or failed, average latency; each with twelve weeks, counts only), filters on who, action, area, door and the date
   range, the column picker (the entry's kind, pack, actor kind and key on request), sort, a pager and a row drawer with
   the entry's details. /admin/access-log is the same table (the platform trail fleet-wide; a workspace's data trail by
   its slug). Owners only, never a value, each workspace's own rows under row-level security, as before.
+- **The customers' Access log is Billing's 4th tab** (mold_v0-209): Billing's in-page tabs are People, Teams, Budget
+  rules (admins) and **Access log**, each held in `?tab=` (`/app/billing?tab=access-log`; People, the first, has none).
+  The tab shows only where the profile turns `audit.data` on, and only to the workspace's owners (anyone else asking for
+  it gets People); no title above the strip, the same `RecordTableView` page as before (with both trails on, its Data
+  access / Requests switch above the table). The separate page and its sidebar entry are gone: the old address is
+  the normal not-found page, no redirect, and nothing links to it. The staff `/admin/access-log` is unchanged (its own
+  sidebar entry under Security; the staff guide says what it is for). Proof: `npm run test:record-pages` (section 7).
+- **Action and Actor columns** (mold_v0-209): both trails' tables (Billing's tab and `/admin/access-log`) show **Action**
+  (what was done: a data entry's list, read, reveal, export, create, update, move or delete; a platform entry's read,
+  change, delete, tool call, MCP request, sign-in or check, from its kind, method and path) and **Actor** (who did it:
+  User, Key, Staff, Agent run or System, with the person, staff's pseudonym, the key's prefix or number, or the run's
+  id), where the platform trail had Kind and Who. The server words both (`src/audit-trail.ts` `actorLabel`,
+  `platformAction`) on every entry it returns (`action`, `actor`), so the table, its filters and sort, the row drawer,
+  the MCP tool's answer and the CSV (`seq,at,action,actor,…` for the data trail, `seq,at,workspace,action,actor,…` for
+  the platform trail; the raw actor kind and id follow) read the same words. Proof: `npm run test:audit-trail`.
 
 Proof: `npm run test:audit-trail` (gen-packs' check of the setting; both off, each alone, both on; tenant isolation by
 route, MCP tool and the tenant role; no value in either trail; one entry per list; a 250-operation batch in at most two

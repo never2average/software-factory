@@ -13,11 +13,16 @@
 //   4. The customer lists (mold_v0-176): a run's row in words (web/src/features/tabs/run-rows.ts), and every customer list
 //      page drawing the console's database table (RecordView), none linking to a staff page.
 //   5. A list tab's four cards (mold_v0-181): a card's number and its trend in words (web/src/features/tabs/spark-words.ts),
-//      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them below its
-//      toolbar.
+//      and every list a tab draws (an area's table, a board or timeline, runs, reports, schedules) showing them first:
+//      the cards, then the search row, then the table (mold_v0-208: RecordView draws its summary above its toolbar), and
+//      an area tab drawing no charts.
 //   6. The Access log (mold_v0-205): the records' own table over the audit trails as a read-only system area (the data
-//      adapter, RecordSource), with the trail's four cards under the search row, its filters (who, action, area, door,
+//      adapter, RecordSource), with the trail's four cards above the search row, its filters (who, action, area, door,
 //      the date range), the column picker, Download CSV and the row drawer; no table of its own.
+//   7. The Access log is Billing's 4th tab (mold_v0-209): People, Teams, Budget rules, then Access log (?tab=access-log),
+//      shown only where the profile turns audit.data on and only to the workspace's owners, with no title of its own;
+//      /app/access-log is gone (no page, no route, no sidebar entry, no link), the staff /admin/access-log stays. Both
+//      trails' tables have an Action and an Actor column (the platform trail's Kind split in two).
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -144,12 +149,22 @@ assert.equal(sw.trendWords({ series: [null, 3, null], unit: "count", mode: "week
 const cards = src("features/tabs/sparklines.tsx");
 assert.match(cards, /<StatStrip quad items=\{items\} \/>/, "the cards are the console's headline numbers (StatStrip), four across or two by two");
 assert.match(cards, /\/api\/sparklines\//, "numbers from the server, for this workspace and role");
-assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: below its toolbar");
+assert.match(tab, /summary=\{<TabSparklines tab=\{tab\} \/>\}/, "an area tab's table: its cards as the table's summary");
 assert.match(tab, /!table && <TabSparklines tab=\{tab\} \/>/, "a board or a timeline: above it");
 assert.match(tab, /<RunsTable tab=\{tab\} reports=\{tab\.kind === 'reports'\} summary=\{<TabSparklines tab=\{tab\} \/>\} \/>/, "a runs or reports tab");
-assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} \/>/, "a schedules section");
-for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table, below its toolbar`);
-ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them below its toolbar (a board or timeline: above it)");
+assert.match(tab, /<SchedulesBody key=\{current\.id\} summary=\{<TabSparklines tab=\{current\} \/>\} action=\{current\.action\} \/>/, "a schedules section");
+for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx", "features/schedules/schedules-page.tsx"]) assert.match(src(file), /summary=\{summary\}/, `${file}: passes the cards to the table`);
+// mold_v0-208: the shared table draws its summary first, then the search row (the toolbar), then the table.
+{
+  const rv = src("components/layout/record-view.tsx").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  const at = (re: RegExp) => { const m = re.exec(rv); assert.ok(m, `record-view.tsx has ${re}`); return m.index; };
+  const order = [at(/\{summary && <div className='flex shrink-0 flex-col'>\{summary\}<\/div>\}/), at(/<Input type='search'/), at(/<Table className=/)];
+  assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, `the cards, then the search row, then the table: ${order}`);
+  assert.equal(rv.match(/\{summary &&/g)?.length, 1, "the summary is drawn once");
+  const area = /function AreaTab[\s\S]*?\n}\n/.exec(tab)![0];
+  assert.doesNotMatch(area, /ChartGrid/, "an area tab draws no charts: its cards, its search row, its table");
+}
+ok("a list tab's cards: a number and its trend in words (running total or week by week, rising, falling or steady, minutes under an hour); every list a tab draws shows them first, then its search row, then its table (a board or timeline: above it); an area tab draws no charts");
 
 // 6. The Access log on the records table (mold_v0-205).
 {
@@ -157,7 +172,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const code = log.replace(/\/\/.*$/gm, "");
   assert.match(code, /<RecordTableView /, "the access log draws the records pages' table");
   assert.doesNotMatch(code, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
-  assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, below the search row");
+  assert.match(code, /summary=\{<Sparklines url=\{cards\}/, "its four cards, above the search row (the table's summary)");
   assert.match(code, /primary: <CsvLink href=\{csv\} \/>/, "Download CSV: the server's file of every entry");
   assert.match(code, /title: \{ label: 'When', type: 'date'/, "the entry's time: sorted and filtered by date range");
   for (const [name, type] of [["actor", "enum"], ["action", "enum"], ["area", "enum"], ["channel", "enum"]]) assert.match(code, new RegExp(`f\\('${name}', '[^']+', '${type}'`), `a ${name} filter`);
@@ -166,4 +181,38 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(rp, /source \? source\.load\(\) : loadAll\(url, rows\)/, "the table reads a data adapter's rows in place of a records route");
   assert.match(rp, /export interface RecordSource/);
   ok("the Access log is the records table over a read-only system area: search, four cards, filters on who, action, area, door and date, column picker, Download CSV, a row drawer");
+}
+
+// 7. The Access log as Billing's tab (mold_v0-209).
+{
+  const billing = src("features/portal/billing.tsx").replace(/\/\/.*$/gm, "");
+  const triggers = [...billing.matchAll(/<TabsTrigger value='([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(triggers, ["people", "teams", "rules", "access-log"], "Billing's tabs: People, Teams, Budget rules, then Access log");
+  assert.match(billing, /const logTab = dataTrailOn\(\) && role === 'owner';/, "the Access log tab: audit.data on, owners only");
+  assert.match(billing, /\{logTab && <TabsTrigger value='access-log'[^>]*>Access log<\/TabsTrigger>\}/);
+  assert.match(billing, /<TabsContent value='access-log'><WorkspaceAccessLog \/><\/TabsContent>/, "the tab draws the same records table page");
+  assert.match(billing, /const BILLING_TABS = \['people', 'teams', 'rules', 'access-log'\];/, "?tab= opens each tab");
+  assert.match(billing, /q\.set\('tab', tab\)/, "the open tab is kept in the address");
+  const log = src("features/audit/access-log.tsx").replace(/\/\/.*$/gm, "");
+  const body = log.slice(log.indexOf("export function WorkspaceAccessLog("), log.indexOf("export function OperatorAccessLogPage("));
+  assert.ok(body.length > 0 && !/PageContainer|pageTitle/.test(body), "no title above the tab strip: the tab has no page title of its own");
+  assert.match(body, /<TrailTable /);
+  // Action and Actor (mold_v0-209): both trails' tables have the two columns where the platform trail had Kind.
+  assert.equal((log.match(/f\('action', 'Action', 'enum'/g) ?? []).length, 2, "an Action column on both trails, filtered by its values");
+  assert.equal((log.match(/f\('actor', 'Actor', 'enum'\)/g) ?? []).length, 2, "an Actor column on both trails, filtered by its values");
+  assert.doesNotMatch(log, /'Kind'|'Who'/, "no Kind or Who column left");
+  assert.match(log, /\['action', 'actor', 'area'/); assert.match(log, /'action', 'actor', 'request'/);
+  assert.match(log, /action: e\.action, actor: e\.actor/, "the row's Action and Actor are the server's words (the drawer shows both)");
+  const { existsSync: exists } = await import("node:fs");
+  assert.ok(!exists(path.join(WEB, "app", "app", "access-log")), "no /app/access-log page");
+  assert.ok(exists(path.join(WEB, "app", "admin", "access-log", "page.tsx")), "the staff /admin/access-log stays");
+  const routes = JSON.parse(src("config/console-routes.generated.json")) as { routes: string[] };
+  assert.ok(!routes.routes.includes("/app/access-log") && routes.routes.includes("/admin/access-log"), "the route list: /admin/access-log only");
+  assert.doesNotMatch(src("lib/console-routes.ts"), /'\/app\/access-log'/);
+  assert.doesNotMatch(src("components/layout/portal-frame.tsx"), /withAuditNav|access-log/, "no Access log sidebar entry in the customer portal");
+  const { readdirSync, statSync } = await import("node:fs");
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const f = path.join(d, n); return statSync(f).isDirectory() ? walk(f) : [f]; });
+  const linking = walk(WEB).filter((f) => /\.(tsx?|json|md)$/.test(f) && readFileSync(f, "utf8").includes("/app/access-log"));
+  assert.deepEqual(linking, [], "nothing in the console links to /app/access-log");
+  ok("the Access log is Billing's 4th tab (?tab=access-log; audit.data on, owners only, no title of its own); /app/access-log is gone, /admin/access-log stays");
 }

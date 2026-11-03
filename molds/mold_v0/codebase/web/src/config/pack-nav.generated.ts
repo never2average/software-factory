@@ -159,6 +159,8 @@ export interface PackTabSpec {
   sections?: string[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
   empty?: { title: string; text: string; cta: { label: string; href: string } | null };
+  /** The tab's primary floating action (mold_v0-208; web/src/features/tabs/action-fab.tsx): a run, a schedule or a record. */
+  action?: { kind: 'start_run' | 'new_schedule' | 'create_record'; label: string | null; job_kind?: string; area?: string };
 }
 export const packTabs: PackTabSpec[] = [];
 

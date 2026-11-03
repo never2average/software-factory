@@ -1310,6 +1310,44 @@ export const TabAreaSchema = z.object({
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type TabArea = z.output<typeof TabAreaSchema>;
+/**
+ * A list tab's primary action (mold_v0-208): one floating button at the bottom right of the tab's page, in the brand's
+ * primary colour, that opens an existing form of the shell, never one of the pack's own:
+ *   start_run       start a run of one of the pack's job kinds (`job_kind`), or of one picked from `job_kinds` (2 to
+ *                   20, in that order), or from every kind of the pack when neither is given: the kind's arguments
+ *                   (args) as a form, then the record it runs over and its environment when the kind takes them; the
+ *                   run starts as the generated start_<kind> tool starts it (src/tab-actions.ts). On an area, runs or
+ *                   reports tab
+ *   new_schedule    the schedules page's Add a schedule form, its run kind preset to `job_kind` (one the pack itself
+ *                   schedules) when given. On a schedules tab
+ *   create_record   a new record of `area` (one of the pack's own workspace areas, not read from a repository): its
+ *                   key, title and fields, through the data API's create (POST /api/data/<area>). On an area tab
+ * `label` is the button's words (a phone shows the icon alone, the label its accessible name); absent, the shell's
+ * ("Start a {run}", "New schedule", "New record"). The button is shown only to a role that may do the action (the
+ * start tool's permission, manage for a schedule, the area's create roles), and the server refuses the rest anyway.
+ */
+export const TAB_ACTION_KINDS = ["start_run", "new_schedule", "create_record"] as const;
+/** The tab kinds each action is for (mold_v0-208). */
+export const TAB_ACTION_TABS: Record<(typeof TAB_ACTION_KINDS)[number], readonly string[]> = {
+  start_run: ["area", "runs", "reports"], new_schedule: ["schedules"], create_record: ["area"],
+};
+export const TabActionSchema = z.object({
+  kind: z.enum(TAB_ACTION_KINDS, { error: () => `an action is one of ${TAB_ACTION_KINDS.join(", ")}` }),
+  label: emptyText(40).optional(),
+  job_kind: name.optional(),
+  job_kinds: z.array(name).min(2, "2 to 20 job kinds (one: job_kind)").max(20).optional(),
+  area: name.optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((a, ctx) => {
+  const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (a.job_kind !== undefined && a.job_kinds !== undefined) bad("one job kind (job_kind) or a picker of several (job_kinds), not both", "job_kinds");
+  if (a.job_kinds && new Set(a.job_kinds).size !== a.job_kinds.length) bad("a job kind is listed twice", "job_kinds");
+  if (a.kind !== "start_run" && a.job_kinds !== undefined) bad("job_kinds is for a start_run action", "job_kinds");
+  if (a.kind === "create_record" && a.job_kind !== undefined) bad("job_kind is for a start_run or new_schedule action", "job_kind");
+  if (a.kind === "create_record" && a.area === undefined) bad("a create_record action names its record area (area)", "area");
+  if (a.kind !== "create_record" && a.area !== undefined) bad("area is for a create_record action", "area");
+});
+export type TabAction = z.output<typeof TabActionSchema>;
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -1342,6 +1380,8 @@ export const TabSchema = z.object({
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
+  /** The tab's primary floating action (mold_v0-208): TabActionSchema. */
+  action: TabActionSchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -1374,6 +1414,8 @@ export const TabSchema = z.object({
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
   if (t.empty && t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") bad("empty is for an area, runs or reports tab", "empty");
+  if (t.action && TAB_ACTION_TABS[t.action.kind] && !TAB_ACTION_TABS[t.action.kind].includes(t.kind))
+    bad(`a ${t.action.kind} action is for ${TAB_ACTION_TABS[t.action.kind].join(", ")} tabs`, "action", "kind");
   if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
   if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
   if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
@@ -1779,6 +1821,33 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     else if (!SECTION_KINDS.includes(x.kind as never)) problems.push(at(`tab ${t.id}: sections ${id}: an in-page tab is an area, runs, reports or schedules tab; ${id} is a ${x.kind} tab`));
     else if (inSections.has(id) && inSections.get(id) !== t.id) problems.push(at(`tab ${t.id}: sections ${id}: tab ${inSections.get(id)} shows it already`));
     inSections.set(id, t.id);
+  }
+  // A tab's primary action (mold_v0-208): this pack's own job kinds (none gated by an approval: the console's form has
+  // no preview to approve), a kind the pack itself schedules for a new schedule, this pack's own writable workspace area.
+  const ownKinds = [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])] as { name?: string; approval?: unknown }[];
+  for (const t of p.tabs ?? []) {
+    const a = t?.action as { kind?: string; job_kind?: string; job_kinds?: string[]; area?: string } | undefined;
+    if (!a || typeof a !== "object") continue;
+    const where = `tab ${t.id}: action ${a.kind}`;
+    if (a.kind === "start_run" || a.kind === "new_schedule") {
+      if (!ownKinds.length) problems.push(at(`${where}: this pack declares no job kind to start`));
+      for (const k of [...(a.job_kind ? [a.job_kind] : []), ...(a.job_kinds ?? [])]) {
+        const kind = ownKinds.find((x) => x?.name === k);
+        if (!kind) problems.push(at(`${where}: job kind ${k} is not one this pack declares`));
+        else if (a.kind === "start_run" && kind.approval) problems.push(at(`${where}: job kind ${k} waits for an approval of its preview: start it from an AI client with that approval`));
+      }
+    }
+    if (a.kind === "new_schedule") {
+      const scheduled = new Set((p.schedules ?? []).map((s) => s?.job_kind));
+      if (!scheduled.size) problems.push(at(`${where}: this pack schedules no job kind (schedules), so a workspace adds no schedule of its own`));
+      else if (a.job_kind && !scheduled.has(a.job_kind)) problems.push(at(`${where}: job kind ${a.job_kind} is not one this pack schedules (a workspace adds schedules of the kinds its pack schedules)`));
+    }
+    if (a.kind === "create_record" && a.area) {
+      const ar = (p.recordAreas ?? []).find((x) => x?.name === a.area) as { scope?: string; repository?: string } | undefined;
+      if (!ar) problems.push(at(`${where}: this pack declares no record area ${a.area}`));
+      else if (ar.scope !== "workspace") problems.push(at(`${where}: ${a.area} is a shared area: a workspace adds records only to its own areas`));
+      else if (ar.repository !== undefined) problems.push(at(`${where}: ${a.area} is read from repository ${ar.repository}: its records are not added by hand`));
+    }
   }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.checks, CheckSchema, "checks");

@@ -154,12 +154,14 @@ function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admi
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, fab }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
-  /** Between the toolbar and the table: a tab's four cards (mold_v0-181, features/tabs/sparklines.tsx). */
+  /** Above the toolbar: a tab's four cards (mold_v0-181, features/tabs/sparklines.tsx; mold_v0-208: cards, search, table). */
   summary?: ReactNode;
+  /** The tab's primary floating action (mold_v0-208, features/tabs/action-fab.tsx): the table ends above it. */
+  fab?: ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
   compact?: boolean;
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
@@ -180,7 +182,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
-      id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} defaultSort={source?.defaultSort}
+      id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} fab={fab} defaultSort={source?.defaultSort}
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
