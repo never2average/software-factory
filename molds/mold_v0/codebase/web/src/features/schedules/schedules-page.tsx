@@ -12,7 +12,7 @@ import { Section } from '@/components/layout/section';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { JOB_KINDS } from '@/config/build-facts.generated';
 import { EmptyState } from '@/features/tabs/empty';
-import { ActionSheet, Fab, actionLabel } from '@/features/tabs/action-fab';
+import { ActionSheet, Fab, LinkFab, actionLabel } from '@/features/tabs/action-fab';
 import { packTabs, type PackTabSpec } from '@/config/pack-nav.generated';
 import { ExportRowsButton } from '@/features/tabs/export';
 import { Badge } from '@/components/ui/badge';
@@ -69,7 +69,7 @@ export function SchedulesBody({ summary, action }: { summary?: ReactNode; action
       description='When it runs is a cron expression in UTC (minute hour day month weekday), at most every 5 minutes. Optionally, which records it runs over: one run per record.'>
       <AddScheduleForm data={data!} preset={action.job_kind} stacked onAdded={async () => { setAdding(false); await reload(); }} />
     </ActionSheet>
-  </>) : undefined;
+  </>) : action?.kind === 'link' ? <LinkFab action={action} /> : undefined;
   return (
     <>
       {error ? <ErrorState error={error} /> : (
@@ -84,7 +84,7 @@ export function SchedulesBody({ summary, action }: { summary?: ReactNode; action
             primary={data?.schedules.length ? <ExportRowsButton name='schedules' rows={data.schedules} cols={cols} /> : undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-schedules' empty={{
               title: 'No schedules yet.',
-              text: data?.can_manage && data.kinds.length ? (fab ? `${actionLabel(action!)}: pick what runs, and when (UTC).` : 'Add one below: pick what runs, and when (UTC).') : 'An owner of this workspace adds them.',
+              text: data?.can_manage && data.kinds.length ? (fab && action?.kind === 'new_schedule' ? `${actionLabel(action)}: pick what runs, and when (UTC).` : 'Add one below: pick what runs, and when (UTC).') : 'An owner of this workspace adds them.',
               cta: null
             }} /></div>}
             detailTitle={(s) => s.label ?? s.name}

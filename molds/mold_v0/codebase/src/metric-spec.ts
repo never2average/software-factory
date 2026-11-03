@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -188,7 +188,9 @@ export interface BuildViews {
   stores?: readonly string[];
   /** The packs' onboarding steps and job kinds, for the tabs' empty states (mold_v0-107). */
   steps?: readonly { pack: string; id: string; label: string; help?: string; done_when: string }[];
-  kinds?: readonly { pack: string; name: string; label?: string }[];
+  kinds?: readonly { pack: string; name: string; label?: string; approval?: boolean; report?: boolean }[];
+  /** The job kinds each pack schedules (its declared schedules): a schedules tab's default action (mold_v0-213). */
+  scheduled?: readonly { pack: string; kind: string }[];
 }
 
 /** Every problem with the build's metrics, charts and tabs, each naming its pack. Empty when they are sound. */
@@ -494,8 +496,66 @@ export function tabEmpty(t: SpecTab, b: Pick<BuildViews, "areas" | "steps" | "ki
   return { title: d.title, text, cta };
 }
 
+/** "Findings" -> "finding", "Private communications" -> "private communication", "Policies" -> "policy" (its last word). */
+export function singularOf(label: string): string {
+  const w = lowerFirst(label.trim());
+  if (/ies$/.test(w)) return `${w.slice(0, -3)}y`;
+  if (/(ss|us|is)$/.test(w)) return w;
+  if (/(ches|shes|sses|xes|zes)$/.test(w)) return w.slice(0, -2);
+  return w.endsWith("s") ? w.slice(0, -1) : w;
+}
+
+/**
+ * A list tab's primary action (mold_v0-213), resolved: the pack's own (`action`), none (`action: false`, its `reason`),
+ * or the shell's default from what the tab shows:
+ *   area       Add <its area's singular>: a new record of the tab's own area (create_record), when the area is this
+ *              pack's, the workspace's own (not shared), not read from a repository and its create tool is offered to a
+ *              workspace (`creatable`: on the customer MCP, not withheld). Who may: the area's create roles (the server)
+ *   runs       Start {run}: a picker of every kind of the pack a workspace may start (no approval, its start tool offered)
+ *   reports    Generate <the tab's singular>: a picker of the pack's report kinds (those that write a report), startable
+ *   schedules  New schedule: when the pack schedules a kind
+ * Every default is labelled here (the build's words through `fill`). `reason` says why a list tab has none (the build
+ * lists them as a warning); other kinds of tab are not lists and have neither.
+ */
+export interface ResolvedAction { action: TabAction | null; reason: string | null; declared: boolean }
+export function tabAction(t: SpecTab, b: Pick<BuildViews, "areas" | "kinds" | "scheduled">, o: { creatable: (area: string) => boolean; startable: (pack: string, kind: string) => boolean; fill: (text: string) => string }): ResolvedAction {
+  if (!(LIST_TAB_KINDS as readonly string[]).includes(t.kind)) return { action: null, reason: null, declared: false };
+  if (t.action === false) return { action: null, reason: t.reason ?? "declared none", declared: true };
+  const none = (reason: string): ResolvedAction => ({ action: null, reason, declared: false });
+  // The pack's own, labelled with the shell's words for its kind when it gives none.
+  if (t.action) {
+    const a = t.action, area = a.area ? b.areas.find((x) => x.name === a.area) : undefined;
+    const label = a.label ?? (a.kind === "create_record" ? `Add ${singularOf(area?.label ?? a.area ?? "record")}` : a.kind === "new_schedule" ? "New schedule"
+      : t.kind === "reports" ? `Generate ${singularOf(tabLabel(t, b))}` : o.fill("Start {run}"));
+    return { action: { ...a, label }, reason: null, declared: true };
+  }
+  const kinds = (b.kinds ?? []).filter((k) => k.pack === t.pack && !k.approval && o.startable(t.pack, k.name));
+  const picker = (names: string[]) => (names.length === 1 ? { job_kind: names[0]! } : names.length > 20 ? {} : { job_kinds: names });
+  if (t.kind === "area") {
+    const own = tabArea(t) ?? "";
+    const a = b.areas.find((x) => x.name === own);
+    if (!a) return none(`its area ${own} is not in this build`);
+    if (a.pack !== t.pack) return none(`its area ${own} is pack ${a.pack}'s: a tab adds to its own pack's areas`);
+    if (a.scope !== "workspace") return none(`${own} is shared by every workspace (read-only to them): declare action, or action: false with a reason`);
+    if (a.repository !== undefined) return none(`${own} is read from repository ${a.repository}, not added by hand: declare action (a run that brings its rows), or action: false with a reason`);
+    if (!o.creatable(own)) return none(`${own}'s create tool is not offered to a workspace (withheld, or the area takes no writes): declare action, or action: false with a reason`);
+    return { action: { kind: "create_record", area: own, label: `Add ${singularOf(a.label)}` }, reason: null, declared: false };
+  }
+  if (t.kind === "runs") {
+    if (!kinds.length) return none(o.fill("no job kind of the pack a {workspace} may start"));
+    return { action: { kind: "start_run", label: o.fill("Start {run}"), ...picker(kinds.map((k) => k.name)) }, reason: null, declared: false };
+  }
+  if (t.kind === "reports") {
+    const reports = kinds.filter((k) => k.report);
+    if (!reports.length) return none(o.fill("no report kind of the pack a {workspace} may start"));
+    return { action: { kind: "start_run", label: `Generate ${singularOf(tabLabel(t, b))}`, ...picker(reports.map((k) => k.name)) }, reason: null, declared: false };
+  }
+  if (!(b.scheduled ?? []).some((x) => x.pack === t.pack)) return none(o.fill("the pack schedules no job kind, so a {workspace} adds no schedule"));
+  return { action: { kind: "new_schedule", label: "New schedule" }, reason: null, declared: false };
+}
+
 /** A build's views from its installed packs' definitions (validated), for checkViews and the engine. */
-export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[]; onboarding?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
+export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[]; onboarding?: unknown[]; schedules?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
   const flat = <T>(k: "recordAreas" | "metrics" | "charts" | "tabs", schema: z.ZodType<T>) =>
     packs.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ ...(schema.parse(x) as object), pack: p.id }) as T & { pack: string }));
   const areas = flat("recordAreas", RecordAreaSchema) as SpecArea[];
@@ -505,7 +565,11 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     credentials: packs.reduce((n, p) => n + (p.definition.credentials?.length ?? 0), 0),
     dueAreas: areas.filter((a) => a.due || (a.clocks?.length ?? 0) > 0).length,
     steps: packs.flatMap((p) => (p.definition.onboarding ?? []).map((x) => ({ ...(x as { id: string; label: string; help?: string; done_when: string }), pack: p.id }))),
-    kinds: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].map((k) => ({ pack: p.id, name: (k as { name: string }).name, label: (k as { label?: string }).label }))),
+    kinds: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].map((k) => {
+      const x = k as { name: string; label?: string; approval?: unknown; report?: unknown };
+      return { pack: p.id, name: x.name, label: x.label, approval: !!x.approval, report: !!x.report };
+    })),
+    scheduled: packs.flatMap((p) => (p.definition.schedules ?? []).map((x) => ({ pack: p.id, kind: (x as { job_kind: string }).job_kind }))),
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
     ...(pages ? { pages } : {}),
   };

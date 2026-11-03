@@ -316,7 +316,8 @@ try {
     const withTabs = (tabs: Record<string, unknown>[], edit: (j: any) => void = () => {}) => variant((j) => { j.tabs = tabs; edit(j); });
     const runs = (action: unknown) => ({ id: "runs", kind: "runs", label: "Scans", action });
     no("an unknown kind", withTabs([runs({ kind: "open_drawer" })]), /tabs\[0\]\.action\.kind: an action is one of start_run, new_schedule, create_record/);
-    no("an unknown key", withTabs([runs({ kind: "start_run", href: "/x" })]), /tabs\[0\]\.action: Unrecognized key/);
+    no("an unknown key", withTabs([runs({ kind: "start_run", target: "/x" })]), /tabs\[0\]\.action: Unrecognized key/);
+    no("an href on a start action", withTabs([runs({ kind: "start_run", href: "/x" })]), /tabs\[0\]\.action\.href: href is for a link action/);
     no("a job kind the pack does not declare", withTabs([runs({ kind: "start_run", job_kind: "tracker_nope" })]), /tab runs: action start_run: job kind tracker_nope is not one this pack declares/);
     no("a picker naming an undeclared kind", withTabs([runs({ kind: "start_run", job_kinds: ["tracker_scan", "tracker_nope"] })]), /tab runs: action start_run: job kind tracker_nope is not one this pack declares/);
     no("job_kind and job_kinds", withTabs([runs({ kind: "start_run", job_kind: "tracker_scan", job_kinds: ["tracker_scan", "tracker_x"] })]), /tabs\[0\]\.action\.job_kinds: one job kind \(job_kind\) or a picker of several \(job_kinds\), not both/);
@@ -339,8 +340,9 @@ try {
     const got = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual(got.runs.action, { kind: "start_run", label: "Start scan", job_kind: "tracker_scan" }, "a start action and its kind");
     assert.deepEqual(got.when.action, { kind: "new_schedule", label: "Schedule scan", job_kind: "tracker_scan" }, "a schedule action and its preset kind");
-    assert.deepEqual(got.apps.action, { kind: "create_record", label: null, area: "tracker_apps" }, "a record action and its area; the shell's words by default");
-    assert.ok(!("action" in got.plain), "a tab with no action carries none");
+    assert.deepEqual(got.apps.action, { kind: "create_record", label: "Add application", area: "tracker_apps" }, "a record action and its area; the shell's words by default (mold_v0-213: Add <its area's singular>)");
+    assert.equal(got.plain.action?.kind, "start_run", "a runs tab with no action has the shell's (mold_v0-213)");
+    assert.match(got.plain.action?.label ?? "", /^Start \S/, "labelled Start {run}");
     assert.match(nav, /action\?: \{ kind: 'start_run' \| 'new_schedule' \| 'create_record'/, "the spec's type has the action");
     // mold_v0-208: an area tab draws no charts (its cards, its search row, its table); its pack.json charts stay valid.
     const charted = tryPack(variant((j) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }]; j.tabs = [{ id: "apps", kind: "area", area: "tracker_apps", charts: ["summary"] }, { id: "home", kind: "overview", charts: ["summary"] }]; }));
@@ -348,6 +350,45 @@ try {
     const ct = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(charted.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual([ct.apps.charts, ct.home.charts], [[], ["summary"]], "an area tab's charts are not drawn; an overview's are");
     console.log(`✓ a list tab's floating action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
+  }
+
+  // ---------- 2d''. every list tab's primary action by default; a link; none with a reason (mold_v0-213) ----------
+  {
+    let m = 0;
+    const no = (what: string, json: unknown, re: RegExp) => { refused(`action: ${what}`, tryPack(json), re); m++; };
+    const withTabs = (tabs: Record<string, unknown>[], edit: (j: any) => void = () => {}) => variant((j) => { j.tabs = tabs; edit(j); });
+    const area = (id: string, a: string, extra: Record<string, unknown> = {}) => ({ id, kind: "area", area: a, ...extra });
+    no("a link with no href", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Connect" } })]), /tabs\[0\]\.action\.href: a link action names where it goes/);
+    no("a link with no label", withTabs([area("apps", "tracker_apps", { action: { kind: "link", href: "/app/settings/email" } })]), /tabs\[0\]\.action\.label: a link action names its label/);
+    no("a link to a script", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Go", href: "javascript:alert(1)" } })]), /tabs\[0\]\.action\.href: a path of this site/);
+    no("a link with a job kind", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Go", href: "/app", job_kind: "tracker_scan" } })]), /tabs\[0\]\.action\.job_kind: job_kind is not for a link action/);
+    no("action: false without a reason", withTabs([area("apps", "tracker_apps", { action: false })]), /tabs\[0\]\.reason: action: false says why/);
+    no("a reason without action: false", withTabs([area("apps", "tracker_apps", { reason: "because" })]), /tabs\[0\]\.reason: reason is for action: false/);
+    no("action: false off a list tab", withTabs([{ id: "home", kind: "overview", include: ["setup"], action: false, reason: "x" }]), /tabs\[0\]\.action: action: false is for a list tab/);
+    // Accepted: the shell's defaults from what each tab shows, a link, none with its reason; the build lists those without.
+    const ok = tryPack(withTabs([
+      area("apps", "tracker_apps"), area("findings", "tracker_findings", { action: { kind: "link", label: "Connect mailbox", href: "/app/settings/email" } }),
+      area("policies", "tracker_policies"), area("quiet", "tracker_apps", { label: "Quiet", action: false, reason: "Rows arrive from the nightly import." }),
+      { id: "scans", kind: "runs", label: "Scans" }, { id: "reports", kind: "reports", label: "Scan reports" }, { id: "when", kind: "schedules", label: "Schedule" },
+    ], (j) => { j.job_kinds[0].report = { path: "findings/report.md", label: "Scan report", format: "markdown" }; }));
+    assert.equal(ok.r.status, 0, `defaults build: ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const got = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
+    assert.deepEqual(got.apps.action, { kind: "create_record", label: "Add application", area: "tracker_apps" }, "an area tab: Add <its singular>");
+    assert.deepEqual(got.findings.action, { kind: "link", label: "Connect mailbox", href: "/app/settings/email" }, "a link, carried with its address");
+    assert.ok(!("action" in got.policies), "a shared area read from a repository: none by default");
+    assert.ok(!("action" in got.quiet), "action: false: none");
+    assert.deepEqual([got.scans.action.kind, got.scans.action.job_kind], ["start_run", "tracker_scan"], "a runs tab: Start {run}, its one kind");
+    assert.deepEqual(got.reports.action, { kind: "start_run", label: "Generate scan report", job_kind: "tracker_scan" }, "a reports tab: Generate <its singular>, the report kind");
+    assert.deepEqual(got.when.action, { kind: "new_schedule", label: "New schedule" }, "a schedules tab: New schedule");
+    assert.ok(!/"reason"|no_action/.test(nav), "a reason is shown nowhere: not in the console's registry");
+    assert.match(ok.r.stdout, /gen-packs: warning: 2 list tab\(s\) without a primary action:\n  fixture_tracker\/policies \(Policies\): tracker_policies is shared by every workspace[^\n]*\n  fixture_tracker\/quiet \(Quiet\): action: false: Rows arrive from the nightly import\./,
+      `the build lists every list tab without an action, and why: ${ok.r.stdout}`);
+    // No report kind: a reports tab has none, and says so.
+    const plain = tryPack(withTabs([{ id: "reports", kind: "reports", label: "Reports" }]));
+    assert.equal(plain.r.status, 0, plain.r.stderr);
+    assert.match(plain.r.stdout, /fixture_tracker\/reports \(Reports\): no report kind of the pack/, "no report kind: listed with its reason");
+    console.log(`✓ every list tab's primary action (mold_v0-213): ${m} malformed ones refused (a link without its href or label, to a script, with a job kind; action: false without a reason, a reason without it, off a list tab); the shell's defaults (Add <record>, Start {run}, Generate <report>, New schedule), a link carried, none with its reason listed as a warning and shown nowhere`);
   }
 
   // ---------- 2e. a sections tab: several tabs of the pack as one page's in-page tabs (mold_v0-175) ----------

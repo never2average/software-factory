@@ -8,7 +8,10 @@
 //                  environment when the kind takes them; started as the generated start_<kind> tool starts a run
 //   create_record  a new record's key, title and fields, through the data API (POST /api/data/<area>)
 //   new_schedule   the schedules page's Add a schedule form (features/schedules/schedules-page.tsx draws its button)
+//   link           (mold_v0-213) a page or an address, e.g. Settings › Email for a list a connected mailbox fills
+// Every list tab has one unless its pack says none (mold_v0-213: the build resolves the shell's default, labelled).
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -50,19 +53,32 @@ type TabRef = Pick<PackTabSpec, 'pack' | 'id' | 'action'>;
 
 /** The words a tab's action shows when the pack gives none. */
 export const actionLabel = (a: NonNullable<PackTabSpec['action']>) =>
-  a.label ?? (a.kind === 'start_run' ? fill('Start a {run}') : a.kind === 'new_schedule' ? 'New schedule' : 'New record');
+  a.label ?? (a.kind === 'start_run' ? fill('Start {run}') : a.kind === 'new_schedule' ? 'New schedule' : a.kind === 'link' ? 'Open' : 'New record');
+
+const FAB_CLASS = 'fixed right-[calc(1.5rem+env(safe-area-inset-right))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] z-40 size-14 gap-2 rounded-full p-0 text-sm font-medium shadow-lg sm:w-auto sm:px-5 [&_svg]:size-5';
 
 /**
  * The floating button itself: fixed bottom right, 1.5rem from the window's edges plus the safe-area insets; a 3.5rem
  * circle with the icon on a phone, the icon and the label from sm up.
  */
-export function Fab({ label, icon, onClick }: { label: string; icon: ReactNode; onClick: () => void }) {
-  return (
-    <Button type='button' onClick={onClick} aria-label={label} title={label} data-fab=''
-      className='fixed right-[calc(1.5rem+env(safe-area-inset-right))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] z-40 size-14 gap-2 rounded-full p-0 text-sm font-medium shadow-lg sm:w-auto sm:px-5 [&_svg]:size-5'>
+export function Fab({ label, icon, onClick, href }: { label: string; icon: ReactNode; onClick?: () => void; href?: string }) {
+  // A link action (mold_v0-213): the same button, as a link (a page of the console, or an address in a new tab).
+  if (href) return (
+    <Button aria-label={label} title={label} data-fab='' className={FAB_CLASS} nativeButton={false}
+      render={href.startsWith('/') ? <Link href={href} /> : <a href={href} target='_blank' rel='noopener noreferrer' />}>
       {icon}<span className='hidden sm:inline'>{label}</span>
     </Button>
   );
+  return (
+    <Button type='button' onClick={onClick} aria-label={label} title={label} data-fab='' className={FAB_CLASS}>
+      {icon}<span className='hidden sm:inline'>{label}</span>
+    </Button>
+  );
+}
+
+/** A link action's button (mold_v0-213): no form and nothing to ask the server, everyone's who sees the tab. */
+export function LinkFab({ action }: { action: NonNullable<PackTabSpec['action']> }) {
+  return action.kind === 'link' && action.href ? <Fab label={actionLabel(action)} icon={<Icons.arrowRight />} href={action.href} /> : null;
 }
 
 /** A drawer from the right (a phone: the whole width) holding one of the action's forms. */
@@ -88,10 +104,11 @@ export function ActionSheet({ open, onOpenChange, title, description, children }
  */
 export function TabActionFab({ tab, onDone }: { tab: TabRef; onDone?: () => unknown }) {
   const a = tab.action;
-  const { data } = useOrgLoad(() => (a && a.kind !== 'new_schedule'
+  const { data } = useOrgLoad(() => (a && a.kind !== 'new_schedule' && a.kind !== 'link'
     ? send<ActionSpec>('GET', `/api/tab-actions/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`).catch(() => null)
     : Promise.resolve(null)), [tab.pack, tab.id]);
   const [open, setOpen] = useState(false);
+  if (a?.kind === 'link') return <LinkFab action={a} />;
   if (!a || !data || !data.allowed) return null;
   const label = actionLabel(a);
   const done = () => { setOpen(false); void onDone?.(); };

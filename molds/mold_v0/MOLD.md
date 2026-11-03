@@ -1817,12 +1817,31 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   label the accessible name); the list's height leaves its space free below the pager (`RecordView` `fab`,
   `FAB_SPACE`), so it never covers the last row or the pager. It is shown only to a role that may use it
   (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
-  roles and `edit`), and the server refuses the rest. The route is mounted only when a pack declares an action, so a
-  build without one (zero packs, Octillion) answers nothing and its MCP surface is unchanged. gen-packs refuses an
+  roles and `edit`), and the server refuses the rest. The route is mounted only when a tab has an action (since
+  mold_v0-213 every list tab's by default), so a build without a list tab (zero packs, Octillion) answers nothing and
+  its MCP surface is unchanged. gen-packs refuses an
   unknown kind or key, an undeclared or doubled job kind, one whose start tool the pack withholds (mcp), a picker of
   one, both `job_kind` and `job_kinds`, an action
   on the wrong kind of tab, a schedule with no kind the pack schedules, a missing, shared, undeclared or
   repository-read area, and a label with braces; `npm run test:declarative-packs` proves those and the registry.
+  **Every list tab has its primary action by default** (mold_v0-213): an area, runs, reports or schedules tab with no
+  `action` gets the shell's, from what it shows (`src/metric-spec.ts` `tabAction`, the same resolution in the build's
+  registry and in `src/tab-actions.ts`): an area tab "Add <its area's singular>" (`create_record`, the create drawer)
+  when the area is the pack's own, the workspace's (not shared), not read from a repository and its create tool is
+  offered to a workspace; a runs tab "Start {run}" with the picker of every kind a workspace may start (no approval,
+  its start tool offered); a reports tab "Generate <the tab's singular>" with the pack's report kinds, when it has one;
+  a schedules tab "New schedule" when the pack schedules a kind. A declared action without a label gets the same
+  words. Who sees the button is unchanged (the server's checks: the area's create roles and `edit`, the start tool's
+  permission, `manage`). A pack overrides with its own `action`, or opts out with `"action": false` and a required
+  `reason` (plain text, at most 300 characters: why the list has nothing to press; documented in pack.json, carried
+  nowhere, shown nowhere). A fourth kind, `{"kind": "link", "label", "href"}` (both required; an /app path, an https://
+  or a mailto: address, the empty state's rules), is a plain link on any list tab, everyone's who sees it, for a list
+  whose rows a setting brings (Maxwell's Private communications: "Connect mailbox", Settings › Email). gen-packs prints
+  every shown list tab left without an action, and why, as a warning (`gen-packs: warning: N list tab(s) without a
+  primary action:`, one line per tab: the opt-out's reason, or what kept the default away: a shared area, a
+  repository, a withheld create tool, no startable or report kind, nothing scheduled). gen-packs refuses a link without
+  its label or href or with a job kind or area, `action: false` without a reason or off a list tab, and a reason
+  without it; `npm run test:declarative-packs` proves those, each default and the warning.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -2260,6 +2279,20 @@ or is listed twice, a shell page a tab already opens, one the build lacks or hid
 orders its own tabs). Without tabs or a declared sidebar the shell's own sidebar joins a pack's group to the shell group
 of the same heading and lists each page once (`mergeNav`, `web/src/config/nav-config.ts`); a declared API keys entry
 takes the footer's place. `npm run test:console-sidebar`.
+
+**The active sidebar entry (mold_v0-213).** Each console lights exactly one entry for the page drawn
+(`web/src/lib/active-nav.ts` `activeNavUrl`, used by `components/layout/app-sidebar.tsx` for the customer and the staff
+console): the entry whose page it is, its query a subset of the page's (an in-page tab's `?tab=`, a filter's
+`?overdue=1`, the home page's `?journey=`, Accounts' `?section=admins` keep their page's entry), else the longest entry
+the page is under (`/admin/accounts/<slug>` under Accounts); the area's home only on itself, or, with no entry of its
+own, the sidebar's first. A record's own page (`/app/records/<area>/<key>`) lights the tab that lists its area (its own
+unfiltered tab first, then a filtered one, then one that merges it; an in-page tab's page), and a few pages outside the
+sidebar light the page they are reached from (`PORTAL_HOMES`, `ADMIN_HOMES`: Journeys the home page, Connected apps
+Profile, Schedules a tab sidebar's runs tab). The footer's API keys and Profile count as entries, lit only when the
+groups have none of their own. A collapsible entry holding the active one opens on load, and the active entry stands
+out: the brand's colour behind it and in its words, and a bar at its edge, in either theme, also in the phone's sheet.
+`npm run test:console-sidebar` walks every console route of a tab build and of a zero-pack build (pages a build lacks
+without a feature, and Docs, excepted) and asserts exactly one entry lit, the right one.
 
 **Connected apps (mold_v0-087).** `/app/connected-apps`: each person's own AI apps signed in to `/mcp`. Under the built-in
 sign-in (the server is the authorization server, mold_v0-013) it lists every connected app across the person's

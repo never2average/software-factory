@@ -1,7 +1,8 @@
 /**
  * A list tab's primary floating action (mold_v0-208; pack.json `tabs[].action`, src/pack-api.ts TabActionSchema): what
- * the console's button (web/src/features/tabs/action-fab.tsx) asks before it shows itself, and the run it starts. Mounted
- * only when a pack declares an action, so a build without one answers nothing here.
+ * the console's button (web/src/features/tabs/action-fab.tsx) asks before it shows itself, and the run it starts. Every
+ * list tab has one by default (mold_v0-213: src/metric-spec.ts tabAction, the same resolution as the build's registry);
+ * mounted only when a tab has one, so a build without a list tab (zero packs, a host pack's) answers nothing here.
  *
  *   GET  /api/tab-actions/<pack>/<tab>         the tab's action as this person may use it: {kind, label, allowed, ...}
  *                                              start_run: the kinds they may start, each with its arguments (typed as
@@ -22,10 +23,11 @@ import { canAccount } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { Org } from "./auth.js";
 import { buildViews } from "./metrics.js";
-import { tabRoles, type SpecTab } from "./metric-spec.js";
+import { tabAction, tabRoles, type SpecTab } from "./metric-spec.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
-import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema } from "./pack-api.js";
+import { generatedTools, permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
+import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema, type TabAction } from "./pack-api.js";
+import { fill } from "./vocabulary.js";
 import { packs } from "./packs.js";
 import { findArea, may, recordAreas } from "./record-areas.js";
 
@@ -54,9 +56,30 @@ const kindsOf = (pack: string) => {
   return [...(def?.jobKinds ?? []).map((k) => JobKindSchema.parse(k)), ...(def?.agentJobKinds ?? []).map((k) => AgentJobKindSchema.parse(k))];
 };
 
+/**
+ * Each tab's action as the build's registry has it (mold_v0-213): the pack's own, else the shell's default from what the
+ * tab shows (src/metric-spec.ts tabAction), its create and start tools those the customer MCP offers. Memoised per build.
+ */
+let resolved: { from: unknown; actions: Map<string, TabAction> } | null = null;
+function actionsOf(): Map<string, TabAction> {
+  const b = buildViews();
+  if (resolved?.from === b) return resolved.actions;
+  const tools = generatedTools().filter((t) => t.door === "workspace" && !t.admin_only);
+  const creatable = new Set(tools.filter((t) => t.op === "create").map((t) => t.area));
+  const startable = new Set(tools.filter((t) => t.op === "start").map((t) => `${t.pack}/${t.kind}`));
+  const actions = new Map<string, TabAction>();
+  for (const t of b.tabs) {
+    const r = tabAction(t, b, { creatable: (a) => creatable.has(a), startable: (p, k) => startable.has(`${p}/${k}`), fill });
+    if (r.action) actions.set(`${t.pack}/${t.id}`, r.action);
+  }
+  resolved = { from: b, actions };
+  return actions;
+}
+const actionOf = (t: SpecTab): TabAction => actionsOf().get(`${t.pack}/${t.id}`)!;
+
 /** The kinds a start_run action offers, in its order: its job_kind, its job_kinds, else every kind of the pack. */
 const actionKinds = (t: SpecTab) => {
-  const a = t.action!;
+  const a = actionOf(t);
   const all = kindsOf(t.pack).filter((k) => !(k as { approval?: unknown }).approval);
   const names = a.job_kind ? [a.job_kind] : a.job_kinds ?? all.map((k) => k.name);
   return names.map((n) => all.find((k) => k.name === n)).filter((k): k is (typeof all)[number] => !!k);
@@ -72,7 +95,7 @@ const environmentsOf = (input: z.ZodRawShape): string[] | null => {
 
 export function tabActionAppRouter(): Router {
   const r = express.Router();
-  if (!buildViews().tabs.some((t) => t.action)) return r;
+  if (!actionsOf().size) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(express.json({ limit: "256kb" }));
   r.use(customerSession);
@@ -81,7 +104,7 @@ export function tabActionAppRouter(): Router {
     ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next()));
   const tabOf = (req: Request, res: Response): SpecTab => {
     const b = buildViews();
-    const t = b.tabs.find((x) => x.pack === String(req.params.pack) && x.id === String(req.params.tab) && x.action);
+    const t = b.tabs.find((x) => x.pack === String(req.params.pack) && x.id === String(req.params.tab) && actionsOf().has(`${x.pack}/${x.id}`));
     if (!t) throw new PackError("Not found", 404);
     const role = session(res).accountRole ?? null;
     if (role !== null && !tabRoles(t, b).includes(role)) throw new PackError("Your role can't open this tab.", 403);
@@ -94,7 +117,9 @@ export function tabActionAppRouter(): Router {
     .filter((x): x is { k: typeof x.k; tool: NonNullable<typeof x.tool> } => !!x.tool && permitted(x.tool, roleOf(res)));
 
   r.get("/:pack/:tab", answer(async (req, res) => {
-    const t = tabOf(req, res), a = t.action!, role = roleOf(res);
+    const t = tabOf(req, res), a = actionOf(t), role = roleOf(res);
+    // A link (mold_v0-213) is everyone's who sees the tab: nothing to check.
+    if (a.kind === "link") return { kind: a.kind, label: a.label ?? null, allowed: true, href: a.href ?? null };
     if (a.kind === "start_run") {
       const assets = recordAreas().filter((x) => x.pack === t.pack && x.role === "asset" && x.scope === "workspace").map((x) => ({ name: x.name, label: x.label }));
       const kinds = startable(t, res).map(({ k, tool }) => ({
@@ -114,7 +139,7 @@ export function tabActionAppRouter(): Router {
 
   r.post("/:pack/:tab/start", answer(async (req, res) => {
     const t = tabOf(req, res);
-    if (t.action!.kind !== "start_run") throw new PackError("This tab's action does not start a run", 404);
+    if (actionOf(t).kind !== "start_run") throw new PackError("This tab's action does not start a run", 404);
     const body = (req.body ?? {}) as { kind?: unknown; input?: unknown };
     const found = startable(t, res).find((x) => x.k.name === body.kind);
     if (!found) throw new PackError("Your role can't start this, or the tab does not offer it.", 403);

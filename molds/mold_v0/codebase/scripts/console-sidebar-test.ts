@@ -13,6 +13,9 @@
 //    malformed sidebar.
 // 5. The shell's own sidebar (no tabs, no declared sidebar): a pack's group named like a shell group joins it and a page
 //    already in the sidebar is not listed again (mergeNav).
+// 6. The active entry (mold_v0-213, web/src/lib/active-nav.ts): every console route of a build, both consoles, with
+//    its in-page tabs (?tab=), a record's own page, a filtered view (?overdue=1), the home page with ?journey= and the
+//    staff console's Accounts › Admins: exactly one entry lit, the right one; a page outside the sidebar (Docs) none.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -148,6 +151,87 @@ try {
     assert.equal(new Set(labels).size, labels.length, `one group per heading: ${labels.join(", ")}`);
     assert.equal(new Set(urls).size, urls.length, `one entry per page: ${urls.join(", ")}`);
     console.log("✓ the shell's own sidebar: one group per heading, one entry per page");
+  }
+  // ---------- 6. exactly one active entry on every page (mold_v0-213) ----------
+  {
+    // A Maxwell-like build: in-page tabs (a sections tab), a filtered tab of an area listed elsewhere, a page that moved
+    // into another's tabs; and the shell's own sidebar with zero packs.
+    const copy = built("active", ["fixture_vulns"], (_id, j) => {
+      j.tabs.push({ id: "fixes", kind: "area", area: "audit_findings", label: "Fixes", filter: { state: { in: ["fixed", "accepted"] } } },
+        { id: "workbench", kind: "sections", label: "Workbench", group: "Audit", sections: ["applications", "fixes"] });
+    });
+    const zero = built("active-zero", []);
+    const ACTIVE_PROBE = `import { adminNav, portalNav } from '@/config/nav-config';
+import { packTabs } from '@/config/pack-nav.generated';
+import routes from '@/config/console-routes.generated.json';
+import packRoutes from '@/config/pack-routes.generated.json';
+import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
+import { readFileSync } from 'node:fs';
+const redirected = (p: string) => packRoutes.redirects.some((r) => r.source === p || (r.source.endsWith('/:path*') && p.startsWith(r.source.slice(0, -7))));
+// A page that only redirects is never drawn (its own page.tsx: redirect() and nothing to draw).
+const redirectOnly = (route: string) => { const f = readFileSync('src/app' + route + '/page.tsx', 'utf8'); return /\\bredirect\\(/.test(f) && !/return\\s*\\(?\\s*</.test(f); };
+const pages: string[] = [];
+for (const r of routes.routes as string[]) {
+  if (!/^\\/(app|admin)(\\/|$)/.test(r) || /\\[\\.\\.\\.missing\\]|\\/host\\//.test(r) || redirectOnly(r)) continue;
+  if (r === '/app/[page]') { pages.push(...packTabs.map((t) => t.url).filter((u) => u.startsWith('/app/'))); continue; }
+  if (r.includes('/records/[area]')) {
+    const areas = r.startsWith('/app') ? [...new Set(packTabs.flatMap((t) => (t.areas ?? []).map((a) => a.area).concat(t.area ?? [])))] : adminNav.flatMap((g) => g.items).map((i) => /^\\/admin\\/records\\/([^/?]+)$/.exec(i.url)?.[1]).filter((x): x is string => !!x);
+    for (const a of areas) pages.push(r.replace('[area]', a).replace('[key]', 'k-1'));
+    continue;
+  }
+  if (r === '/admin/packs/[pack]/[page]') { pages.push(...adminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => u.startsWith('/admin/packs/'))); continue; }
+  pages.push(r.replace('[slug]', 'acme').replace('/[[...section]]', ''));
+}
+pages.push('/app?journey=first-audit', '/app/vulnerabilities?overdue=1', '/admin/accounts?section=admins', '/admin/accounts/acme?section=team');
+const walk = (area: 'portal' | 'admin', groups: typeof portalNav) => {
+  const base = area === 'admin' ? '/admin' : '/app';
+  // As the sidebar draws them: the footer's API keys and Profile are lit only when the groups have no entry of their own.
+  const own = navUrls(groups, []);
+  const urls = navUrls(groups, [...(area === 'portal' ? ['/app/keys'] : []), base + '/profile'].filter((u) => !own.includes(u)));
+  return Object.fromEntries(pages.filter((p) => p === base || p.startsWith(base + '/') || p.startsWith(base + '?')).filter((p) => !redirected(p.split('?')[0]!))
+    .map((p) => [p, { lit: urls.filter((u) => u === activeNavUrl(p, urls, navOptions(area))), urls }]));
+};
+process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalNav), admin: walk('admin', adminNav) }));
+`;
+    const walk = (c: string) => {
+      const web = path.join(c, "web"), file = path.join(web, "probe-active.tsx");
+      writeFileSync(file, ACTIVE_PROBE);
+      try {
+        const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        assert.equal(r.status, 0, `active probe: ${r.stderr.slice(0, 2000)}`);
+        return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1)) as Record<"portal" | "admin", Record<string, { lit: string[]; urls: string[] }>>;
+      } finally { rmSync(file, { force: true }); }
+    };
+    // Outside every sidebar: the guide (the header's Docs button opens it), and pages a build without the feature lacks.
+    const OUTSIDE = /^\/(app|admin)\/docs(\/|$)/;
+    let n = 0;
+    const expect = (name: string, got: ReturnType<typeof walk>, want: Record<string, string>, absent: RegExp = /^$/) => {
+      const bad: string[] = [];
+      for (const area of ["portal", "admin"] as const) for (const [page, { lit, urls }] of Object.entries(got[area])) {
+        n++;
+        if (OUTSIDE.test(page) || (absent.test(page) && !lit.length)) { if (lit.length) bad.push(`${page} is outside the sidebar, yet lights [${lit.join(", ")}]`); continue; }
+        if (lit.length !== 1) bad.push(`${page}: exactly one entry lit, got [${lit.join(", ")}] of ${urls.join(" ")}`);
+        else if (want[page] && lit[0] !== want[page]) bad.push(`${page} lights ${lit[0]}, not ${want[page]}`);
+      }
+      assert.deepEqual(bad, [], `${name}: every page lights exactly its one entry`);
+      for (const page of Object.keys(want)) assert.ok(page in got.portal || page in got.admin, `${name}: ${page} was walked`);
+    };
+    // Pages a build has only with a feature it lacks here (a mailbox, the developer surface, a workspace store, the
+    // account context, a data repository, an audit trail): each is not found in such a build; with the feature it has its own entry.
+    const ABSENT = /^\/app\/(settings\/email|developers|files|context)$|^\/admin\/(repositories|access-log)$/;
+    expect("tabs", walk(copy), {
+      "/app": "/app/overview", "/app?journey=first-audit": "/app/overview", "/app/journeys": "/app/overview",
+      "/app/workbench?tab=fixes": "/app/workbench", "/app/workbench?tab=applications": "/app/workbench",
+      "/app/records/audit_findings/k-1": "/app/vulnerabilities", "/app/records/audit_apps/k-1": "/app/workbench",
+      "/app/vulnerabilities?overdue=1": "/app/vulnerabilities", "/app/billing": "/app/billing", "/app/profile": "/app/profile",
+      "/app/connected-apps": "/app/profile",
+      "/admin": "/admin", "/admin/accounts?section=admins": "/admin/accounts", "/admin/accounts/acme": "/admin/accounts",
+      "/admin/accounts/acme?section=team": "/admin/accounts", "/admin/records/audit_controls/k-1": "/admin/records/audit_controls",
+    }, ABSENT);
+    // With zero packs the pages a pack brings (Activity, Credentials, Notices, Schedules, a pack's tab) are not found.
+    expect("zero packs", walk(zero), { "/app": "/app", "/app/billing": "/app/billing", "/app/usage": "/app/usage", "/app/profile": "/app/profile", "/admin/health": "/admin/health" },
+      new RegExp(`${ABSENT.source}|^/app/(activity|credentials|notices|schedules|vulnerabilities)(\\?|$)|^/admin/activity$`));
+    console.log(`✓ the active entry (mold_v0-213): ${n} pages of both consoles each light exactly one entry, the right one (in-page tabs, a record's page, a filter, ?journey=, Accounts › Admins); Docs none`);
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {
