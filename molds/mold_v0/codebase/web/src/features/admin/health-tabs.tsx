@@ -445,7 +445,7 @@ function StatusTab() {
   );
 }
 
-const cap = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
+const cap = (s: string) => (s === 'ok' ? 'OK' : s ? s[0]!.toUpperCase() + s.slice(1) : s);
 
 /** The last deploy and the mold version: a small line, not a chart. */
 function ReleaseLine({ r }: { r: StatusData['release'] | undefined }) {
