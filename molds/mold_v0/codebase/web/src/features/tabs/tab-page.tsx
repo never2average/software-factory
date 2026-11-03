@@ -29,7 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
 import { SetupPage } from '@/features/portal/setup';
-import { FloatPanel } from '@/features/portal/float-panel';
+import { GridCell } from '@/features/portal/grid-cell';
 import { buildHasClocks } from '@/features/records/due-soon-card';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
 import { SchedulesBody } from '@/features/schedules/schedules-page';
@@ -111,10 +111,10 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
   if (chart.metrics.some((n) => { const r = results.get(n); return !!r && 'error' in r && r.status === 403; })) return null;
   const more = packTabs.find((t) => t.pack === home.pack && t.kind === 'overview' && t.id !== home.id && t.charts.includes(chart.name));
   return (
-    <FloatPanel title={chart.title} icon={<Icons.chartBar />} description={chart.description ?? undefined}>
+    <GridCell title={chart.title} icon={<Icons.chartBar />} description={chart.description ?? undefined}>
       {error ? <ErrorState error={error} /> : <ChartTiles chart={chart} results={results} compact />}
       {more && <Link href={more.url} className='text-primary self-start text-xs font-medium hover:underline'>Open {more.label}</Link>}
-    </FloatPanel>
+    </GridCell>
   );
 }
 

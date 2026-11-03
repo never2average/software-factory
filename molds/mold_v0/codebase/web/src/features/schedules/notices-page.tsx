@@ -13,7 +13,7 @@ import { ExportRowsButton } from '@/features/tabs/export';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
-import { FloatPanel } from '@/features/portal/float-panel';
+import { GridCell } from '@/features/portal/grid-cell';
 import { Icons } from '@/components/icons';
 import { httpError } from '@/features/status/from-error';
 
@@ -153,7 +153,7 @@ export function DueSoonCard() {
   const [all, setAll] = useState(false);
   const shown = data ? (all ? data.notices : data.notices.slice(0, 5)) : [];
   return (
-    <FloatPanel title='Due soon' icon={<Icons.calendar />} description='Records due soon. Checked once a day; owners also get them by email.'>
+    <GridCell title='Due soon' icon={<Icons.calendar />} description='Records due soon. Checked once a day; owners also get them by email.'>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={1} /> : !data.notices.length ? <p className='text-muted-foreground text-sm'>Nothing is due soon.</p> : (
         <>
           <ul className='flex flex-col gap-0.5' aria-label='Due soon'>
@@ -174,6 +174,6 @@ export function DueSoonCard() {
           )}
         </>
       )}
-    </FloatPanel>
+    </GridCell>
   );
 }

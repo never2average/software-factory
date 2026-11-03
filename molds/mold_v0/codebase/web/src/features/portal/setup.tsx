@@ -1,7 +1,7 @@
 'use client';
 // /app Setup & training, every build's home (mold_v0-172: a home tab, an overview tab that includes setup, draws this
-// same layout with its own right-column cards). Right column: the connection string (with a live connection test), then
-// the Due soon card (mold_v0-207: records coming due or overdue, from the record clocks; or a home tab's cards: pack.json
+// same layout with its own right-column cards), one flat grid of cells (mold_v0-214). Right column: the connection string
+// (with a live connection test), then the Due soon card (mold_v0-207: records coming due or overdue, from the record clocks; or a home tab's cards: pack.json
 // rail). Main column: the selected journey, under its heading, which is the journey selector (mold_v0-207: a dropdown
 // listing every journey with its progress; ?journey=<id>), then tips. "Get set up"
 // is the setup timeline and recent problems (workflow coverage lives on /app/adoption); the other journeys (managed on
@@ -33,9 +33,7 @@ import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
 import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
 import { DueSoonClocksCard } from '@/features/records/due-soon-card';
-import { FloatPanel } from './float-panel';
-
-export { FloatPanel };
+import { GridCell } from './grid-cell';
 
 interface Setup {
   steps: ShellSetupStep[]; done: number; total: number; clients: { client: string; last: string }[]; calls: number;
@@ -85,13 +83,22 @@ export function SetupPage({ rail, cards, main, top }: { rail?: readonly string[]
     if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
   }} /> : 'Get set up';
   const due = <DueSoonClocksCard key='journeys' />;
+  // One flat grid (mold_v0-214): the headline row, the connection card, the steps column and the rail are its cells,
+  // sharing 1px lines (the console's `grid border-t border-l`, each cell `border-r border-b`); no shadows, no floating
+  // cards, nothing pinned, no gaps. In the source order a phone stacks them: the headline numbers (a glance), then
+  // Connect (nothing else on the page works until a client is connected, and it was first on a phone before), then the
+  // steps, then the rail (Due soon: what needs doing once set up). On a wide screen the steps take the left column
+  // beside Connect and, below it, the rail, which stretches to the steps' height so the grid closes square.
+  const cell = 'min-w-0 border-r border-b';
   return (
     <PageContainer>
-      {/* A home tab's headline row (mold_v0-203), above both columns: it loads on its own, at a fixed height. */}
-      {top && <div className='mb-8 w-full'>{top}</div>}
-      {error ? <ErrorState error={error} /> : !s || !pack.settled ? <LoadingCards count={4} /> : (<>
-        <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
-          <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
+      <div className='grid w-full border-t border-l lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_auto_1fr] xl:grid-cols-[minmax(0,1fr)_24rem]' data-home-grid>
+        {/* A home tab's headline row (mold_v0-203), across both columns: it loads on its own, at a fixed height. Its
+            cards keep their own dividing lines; the strip's top and bottom lines are the grid's. Nothing to show: no cell. */}
+        {top && <div className={cn(cell, 'empty:hidden lg:col-span-2 [&_dl]:border-y-0 [&_dl>div]:p-4!')}>{top}</div>}
+        {error ? <div className={cn(cell, 'p-4 lg:col-span-2')}><ErrorState error={error} /></div> : !s || !pack.settled ? <div className={cn(cell, 'p-4 lg:col-span-2')}><LoadingCards count={4} /></div> : (<>
+          <ConnectionBox s={s} onConnected={reload} className={cn(cell, 'lg:col-start-2 lg:row-start-2')} />
+          <div className={cn(cell, 'flex flex-col gap-8 p-4 lg:col-start-1 lg:row-span-2 lg:row-start-2')}>
             {selected === 'setup' || !journey ? (<>
               <Checklist steps={steps} title={heading} anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
@@ -99,23 +106,23 @@ export function SetupPage({ rail, cards, main, top }: { rail?: readonly string[]
             {main}
             {tipsOn() && <TipsSection />}
           </div>
-          {/* Floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and Due soon. */}
-          <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
-            <ConnectionBox s={s} onConnected={reload} />
+          {/* The rail: Due soon and a home tab's cards, one cell each, a line between them (a card with nothing to show
+              draws nothing). On a wide screen it fills down to the steps' end, so it is drawn even when empty there. */}
+          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3')} data-home-rail>
             {rail === undefined ? due : rail.map((x) => (x === 'journeys' ? due : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
-        </div>
-      </>)}
+        </>)}
+      </div>
     </PageContainer>
   );
 }
 
-/** The connection string, always in view: copy it, then prove the client reaches the server. */
-function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }) {
+/** The connection string, the grid's first cell beside the steps: copy it, then prove the client reaches the server. */
+function ConnectionBox({ s, onConnected, className }: { s: Setup; onConnected: () => void; className?: string }) {
   return (
-    <FloatPanel title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
+    <GridCell className={className} title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
       <ConnectSteps s={s} onConnected={onConnected} />
-    </FloatPanel>
+    </GridCell>
   );
 }
 
