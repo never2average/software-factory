@@ -1232,9 +1232,14 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   late, failing, not run yet), cadence, last run, last success, lag and last error, kept by `src/scheduler-jobs.ts`
   `tracked` in `scheduler_jobs` (`sql/migrations/0037_scheduler_jobs.sql`, platform bookkeeping closed to tenant work)
   by whichever process ran it, a server's loops or the Vercel cron entry (a success at most every 30 s per job and
-  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface (its webhooks are shown there too, for now):
-  emails by kind and status (never an address, a domain or a subject), webhook deliveries by event and status, and the
-  endpoints switched off (account, reason, failures in a row; never their address); **Status**: the live checks as
+  process, every failure; rollback: `sql/rollback/0037_scheduler_jobs.sql`, which drops it with its rows); **Email Delivery** (`?section=deliveries`; named Deliveries until mold_v0-210), only when a pack declares company email or the app has a developer surface, emails only
+  (mold_v0-215): four cards (sent, failed with the failure rate, not sent: skipped before sending, and the kinds) and
+  the emails by kind and status (never an address, a domain or a subject); **Webhook Delivery** (`?section=webhooks`,
+  `GET /api/admin/onboarding/health/webhooks`, mold_v0-215), only when the app has a developer surface (kind
+  embedded: its declared events go out as webhooks): four cards (delivered, failed, pending or retrying, endpoints
+  switched off) and, by its Show picker, the webhook deliveries by event and status or the endpoints switched off
+  (account, reason, failures in a row; never their address). Tab order: Errors, Runs, Scheduled work, Email Delivery,
+  Webhook Delivery, Status (each only when it applies); **Status**: the live checks as
   `/healthz` says them (database, the row-level security probe, at most hourly, object storage, the key vault and
   the Claude provider from `vaultStatus` read in a rolled-back read-only transaction: set or missing, never a value),
   the key vault's providers, and the last deploy (the last migration applied, the commit on Vercel, the instance's
@@ -1247,8 +1252,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (e.g. "Up · 4 ms") and one 24h / 7d / 30d switch for the whole grid: database latency, API latency (p50 and p95), the
   health check (an uptime band: the share of samples up per bucket, grey where there was no sample), the row-level
   security probe and object storage (bands), the key vault's providers set and missing, the Claude provider's errors
-  and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate and, only when
-  the app has deliveries, the delivery failure rate; the last deploy and the mold version are a line above it, not a
+  and refusals, scheduler lag (the most any job is behind, from `scheduler_jobs`), the run failure rate, the email failure rate (only when the app has Email Delivery) and the webhook
+  failure rate (mold_v0-215, only with a developer surface: each sample counts the webhook deliveries settled and failed
+  apart from the emails, `webhooks_total` and `webhooks_failed`, `sql/migrations/0039_health_samples_webhooks.sql`;
+  rollback: `sql/rollback/0039_health_samples_webhooks.sql`, which drops the two columns); the last deploy and the mold version are a line above it, not a
   graph. The history is `health_samples` (`sql/migrations/0038_health_samples.sql`, platform bookkeeping closed to tenant
   work, `src/rls.ts` NO_ACCESS; rollback: `sql/rollback/0038_health_samples.sql`, which drops it with its rows), one
   row every 4 minutes at most across processes (`src/health-samples.ts`): a server's own loop (`startHealthSampler`)

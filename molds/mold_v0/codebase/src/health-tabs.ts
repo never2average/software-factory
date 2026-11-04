@@ -1,6 +1,7 @@
 /**
  * The staff console's Health tabs in a build without the session engine (mold_v0-204; web/src/features/admin/
- * health-tabs.tsx): Runs, Scheduled work, Email Delivery (?section=deliveries) and Status, beside Errors (src/insights.ts). A build with the
+ * health-tabs.tsx): Runs, Scheduled work, Email Delivery (?section=deliveries), Webhook Delivery (?section=webhooks, mold_v0-215)
+ * and Status, beside Errors (src/insights.ts). A build with the
  * engine keeps its own tabs (Errors, Jobs, Sessions) as they were; these routes answer there too, unused.
  *
  * Staff only (the admin router's guard, `/api/admin/onboarding/health/*`), read only, and never a person's data, an
@@ -193,50 +194,83 @@ export async function healthScheduled() {
 
 // ---------------------------------------------------------------- Email Delivery (the tab's section id: deliveries)
 
+/** Email Delivery is a tab when the app sends mail of a workspace's own, or has a developer surface (its people's mail). */
 export const deliveriesOn = () => companyEmailWired() || !!developerSurface();
+/** Webhook Delivery (mold_v0-215) is a tab when the app has a developer surface: its declared events go out as webhooks. */
+export const webhooksOn = () => !!developerSurface();
 
-/** Email sends by kind and status, webhook deliveries by status and the endpoints switched off: counts, never an address. */
+/** Email sends by kind and status, and by day: counts, never an address, a domain or a subject. */
 export async function healthDeliveries(q: Record<string, unknown>) {
   const range = reportRange(q);
   const p = [range.start, range.end];
-  const hooks = !!developerSurface();
   return asPlatform(async () => {
     const db = await getDb();
-    const [emails, emailDaily, deliveries, hookDaily, disabled] = await Promise.all([
+    const [emails, emailDaily] = await Promise.all([
       db.query<Record<string, unknown>>(
         `SELECT kind, count(*) AS total, count(*) FILTER (WHERE status = 'sent') AS sent, count(*) FILTER (WHERE status = 'failed') AS failed,
                 count(*) FILTER (WHERE status = 'skipped') AS skipped, count(*) FILTER (WHERE status = 'sending') AS sending, max(at) AS last_at,
                 max(at) FILTER (WHERE status = 'failed') AS last_failed_at
            FROM email_log WHERE at >= $1 AND at < $2 GROUP BY kind`, p),
       db.query<Record<string, unknown>>(
-        `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) FILTER (WHERE status = 'sent') AS sent, count(*) FILTER (WHERE status = 'failed') AS failed
+        `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) FILTER (WHERE status = 'sent') AS sent, count(*) FILTER (WHERE status = 'failed') AS failed,
+                count(*) FILTER (WHERE status = 'skipped') AS skipped
            FROM email_log WHERE at >= $1 AND at < $2 GROUP BY 1`, p),
-      hooks ? db.query<Record<string, unknown>>(
-        `/* tenant: internal: admin Health (staff), every account's webhook deliveries, by event and status */
-         SELECT event_type, count(*) AS total, count(*) FILTER (WHERE status = 'succeeded') AS succeeded, count(*) FILTER (WHERE status = 'failed') AS failed,
-                count(*) FILTER (WHERE status = 'pending') AS pending, coalesce(sum(attempts), 0) AS attempts, max(created_at) AS last_at
-           FROM webhook_deliveries WHERE created_at >= $1 AND created_at < $2 GROUP BY event_type`, p) : Promise.resolve([]),
-      hooks ? db.query<Record<string, unknown>>(
-        `/* tenant: internal: admin Health (staff), every account's webhook deliveries, by day */
-         SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) FILTER (WHERE status = 'succeeded') AS succeeded, count(*) FILTER (WHERE status = 'failed') AS failed
-           FROM webhook_deliveries WHERE created_at >= $1 AND created_at < $2 GROUP BY 1`, p) : Promise.resolve([]),
-      hooks ? db.query<Record<string, unknown>>(
-        `/* tenant: internal: admin Health (staff), every account's endpoints switched off */
-         SELECT e.id, o.name AS account, cardinality(e.events) AS events, e.disabled_reason, e.failure_streak, e.first_failure_at, e.updated_at
-           FROM webhook_endpoints e JOIN organizations o ON o.id = e.org_id WHERE e.status = 'disabled' ORDER BY e.updated_at DESC LIMIT 200`) : Promise.resolve([]),
     ]);
-    const ed = new Map(emailDaily.map((d) => [String(d.day), d])), hd = new Map(hookDaily.map((d) => [String(d.day), d]));
+    const ed = new Map(emailDaily.map((d) => [String(d.day), d]));
+    const rows = emails.map((r) => ({ kind: String(r.kind), total: n(r.total), sent: n(r.sent), failed: n(r.failed), skipped: n(r.skipped), sending: n(r.sending),
+      last_at: iso(r.last_at), last_failed_at: iso(r.last_failed_at) })).sort((a, b) => b.total - a.total);
+    const sum = (k: "total" | "sent" | "failed" | "skipped" | "sending") => rows.reduce((a, r) => a + r[k], 0);
+    const settled = sum("sent") + sum("failed");
     return {
       range: { from: range.from, to: range.to, days: range.days },
-      email: companyEmailWired() || emails.length > 0, webhooks: hooks,
-      emails: emails.map((r) => ({ kind: String(r.kind), total: n(r.total), sent: n(r.sent), failed: n(r.failed), skipped: n(r.skipped), sending: n(r.sending),
-        last_at: iso(r.last_at), last_failed_at: iso(r.last_failed_at) })).sort((a, b) => b.total - a.total),
-      deliveries: deliveries.map((r) => ({ event: String(r.event_type), total: n(r.total), succeeded: n(r.succeeded), failed: n(r.failed), pending: n(r.pending),
-        attempts: n(r.attempts), last_at: iso(r.last_at) })).sort((a, b) => b.total - a.total),
+      email: companyEmailWired() || emails.length > 0,
+      totals: { tried: sum("total"), sent: sum("sent"), failed: sum("failed"), skipped: sum("skipped"), sending: sum("sending"), kinds: rows.length,
+        failure_pct: settled ? Math.round((sum("failed") / settled) * 1000) / 10 : 0 },
+      emails: rows,
+      daily: days(range.start, range.days).map((day) => ({ day, sent: n(ed.get(day)?.sent), failed: n(ed.get(day)?.failed), skipped: n(ed.get(day)?.skipped) })),
+    };
+  });
+}
+
+// ---------------------------------------------------------------- Webhook Delivery (the tab's section id: webhooks)
+
+/** Webhook deliveries by event and status, by day, and the endpoints switched off: counts, never an endpoint's address. */
+export async function healthWebhooks(q: Record<string, unknown>) {
+  const range = reportRange(q);
+  const p = [range.start, range.end];
+  return asPlatform(async () => {
+    const db = await getDb();
+    const [deliveries, hookDaily, disabled] = await Promise.all([
+      db.query<Record<string, unknown>>(
+        `/* tenant: internal: admin Health (staff), every account's webhook deliveries, by event and status */
+         SELECT event_type, count(*) AS total, count(*) FILTER (WHERE status = 'succeeded') AS succeeded, count(*) FILTER (WHERE status = 'failed') AS failed,
+                count(*) FILTER (WHERE status = 'pending') AS pending, count(*) FILTER (WHERE status = 'pending' AND attempts > 0) AS retrying,
+                coalesce(sum(attempts), 0) AS attempts, max(created_at) AS last_at
+           FROM webhook_deliveries WHERE created_at >= $1 AND created_at < $2 GROUP BY event_type`, p),
+      db.query<Record<string, unknown>>(
+        `/* tenant: internal: admin Health (staff), every account's webhook deliveries, by day */
+         SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                count(*) FILTER (WHERE status = 'failed') AS failed, count(*) FILTER (WHERE status = 'pending') AS pending
+           FROM webhook_deliveries WHERE created_at >= $1 AND created_at < $2 GROUP BY 1`, p),
+      db.query<Record<string, unknown>>(
+        `/* tenant: internal: admin Health (staff), every account's endpoints switched off */
+         SELECT e.id, o.name AS account, cardinality(e.events) AS events, e.disabled_reason, e.failure_streak, e.first_failure_at, e.updated_at
+           FROM webhook_endpoints e JOIN organizations o ON o.id = e.org_id WHERE e.status = 'disabled' ORDER BY e.updated_at DESC LIMIT 200`),
+    ]);
+    const hd = new Map(hookDaily.map((d) => [String(d.day), d]));
+    const rows = deliveries.map((r) => ({ event: String(r.event_type), total: n(r.total), succeeded: n(r.succeeded), failed: n(r.failed), pending: n(r.pending),
+      retrying: n(r.retrying), attempts: n(r.attempts), last_at: iso(r.last_at) })).sort((a, b) => b.total - a.total);
+    const sum = (k: "total" | "succeeded" | "failed" | "pending" | "retrying" | "attempts") => rows.reduce((a, r) => a + r[k], 0);
+    const settled = sum("succeeded") + sum("failed");
+    return {
+      range: { from: range.from, to: range.to, days: range.days },
+      webhooks: webhooksOn(),
+      totals: { total: sum("total"), succeeded: sum("succeeded"), failed: sum("failed"), pending: sum("pending"), retrying: sum("retrying"), attempts: sum("attempts"),
+        events: rows.length, endpoints_off: disabled.length, failure_pct: settled ? Math.round((sum("failed") / settled) * 1000) / 10 : 0 },
+      deliveries: rows,
       disabled_endpoints: disabled.map((r) => ({ id: String(r.id), account: String(r.account ?? ""), events: n(r.events), reason: r.disabled_reason ? safeError(r.disabled_reason) : null,
         failure_streak: n(r.failure_streak), first_failure_at: iso(r.first_failure_at), disabled_at: iso(r.updated_at) })),
-      daily: days(range.start, range.days).map((day) => ({ day, emails_sent: n(ed.get(day)?.sent), emails_failed: n(ed.get(day)?.failed),
-        hooks_succeeded: n(hd.get(day)?.succeeded), hooks_failed: n(hd.get(day)?.failed) })),
+      daily: days(range.start, range.days).map((day) => ({ day, succeeded: n(hd.get(day)?.succeeded), failed: n(hd.get(day)?.failed), pending: n(hd.get(day)?.pending) })),
     };
   });
 }

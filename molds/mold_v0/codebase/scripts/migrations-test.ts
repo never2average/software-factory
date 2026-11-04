@@ -935,6 +935,26 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} health samples: states checked; its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Health › Status's webhook graph (mold_v0-215, health_samples_webhooks, found by name): two count columns on the
+  // samples, never negative; its rollback drops them with their figures, leaves exactly what the migration before left,
+  // and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "health_samples_webhooks")!.version;
+    const d = await shellAt(kind);
+    await d.query("INSERT INTO health_samples (window_seconds, up, rls, storage, deliveries_total, deliveries_failed, webhooks_total, webhooks_failed) VALUES (300, true, 'ok', 'none', 3, 1, 5, 2)");
+    await assert.rejects(d.query("INSERT INTO health_samples (window_seconds, up, rls, storage, webhooks_failed) VALUES (300, true, 'ok', 'none', -1)"), /check|violates/i, "a negative count is refused");
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_health_samples_webhooks.sql`), "utf8");
+    await d.exec(rb);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    assert.equal(Number((await d.query<{ n: number }>("SELECT count(*) AS n FROM health_samples"))[0]!.n), 1, "the samples stay, without the webhook columns");
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_health_samples_webhooks")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} health samples' webhook columns: counts checked; its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

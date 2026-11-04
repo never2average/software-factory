@@ -9,18 +9,22 @@
 //   4. Runs: by kind (agent or not), failures by error kind (output_missing included), the refused-and-retried runs
 //      (mold_v0-189) and how they ended, durations, cost, the recent failed runs (no address in an error) and one run's
 //      events (figures only: who asked is never shown)
-//   5. Email Delivery (?section=deliveries): emails by kind and status (never an address or a subject), webhook deliveries by status, endpoints
-//      switched off (never their address)
+//   5. Email Delivery (?section=deliveries): emails only (mold_v0-215), by kind and status, with the cards' totals (never an
+//      address or a subject); Webhook Delivery (?section=webhooks, mold_v0-215): only with a developer surface, webhook
+//      deliveries by event and status (pending and retrying), the cards' totals, endpoints switched off (never their
+//      address)
 //   6. Status: database, the row-level security probe, object storage, the key vault and the Claude provider, the last
 //      migration and the release; never a key's value
-//   7. Status history (mold_v0-210, src/health-samples.ts, 0038_health_samples): a sample is taken (runs ended and
-//      failed, the Claude provider's refusals and errors, deliveries, the API's latency in this process), at most every
+//   7. Status history (mold_v0-210, src/health-samples.ts, 0038_health_samples, 0039_health_samples_webhooks): a sample
+//      is taken (runs ended and failed, the Claude provider's refusals and errors, emails and webhooks apart (mold_v0-215),
+//      the API's latency in this process), at most every
 //      4 minutes across processes; samples older than 35 days are pruned; the history is bucketed per range (24h, 7d,
 //      30d), an uptime band, the Claude counters as differences; the table holds only numbers and states (no text but
 //      two enumerated states), is closed to tenant work and read only by the staff routes
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { cleanup, STAMP } from "./lib/test-world.js";
+import { installEmbedded } from "./lib/embedded-fixture.js";
 
 const DAY = 86_400_000;
 const ago = (days: number, mins = 0) => new Date(Date.now() - days * DAY - mins * 60_000).toISOString();
@@ -113,19 +117,44 @@ try {
     ('we_1', $1, 'https://hooks.example.org/private-path', '{record.created}', 'sealed', 'disabled', 'disabled after 5 days of failures at https://hooks.example.org/private-path', 40)`, [org.orgId]);
   await db.query(`INSERT INTO webhook_deliveries (id, org_id, endpoint_id, event_type, dedupe_key, payload, status, attempts) VALUES
     ('d1', $1, 'we_1', 'record.created', 'a', '{}', 'succeeded', 1), ('d2', $1, 'we_1', 'record.created', 'b', '{}', 'failed', 8), ('d3', $1, 'we_1', 'run.finished', 'c', '{}', 'pending', 1)`, [org.orgId]);
+  await db.query("UPDATE webhook_deliveries SET attempts = 0 WHERE id = 'd3'");
+  await db.query(`INSERT INTO webhook_deliveries (id, org_id, endpoint_id, event_type, dedupe_key, payload, status, attempts) VALUES
+    ('d4', $1, 'we_1', 'run.finished', 'd', '{}', 'pending', 3)`, [org.orgId]);
   const del = await h.healthDeliveries({ days: "30" });
   const sic = del.emails.find((e) => e.kind === "sign_in_code")!;
   assert.equal(sic.sent, 1); assert.equal(sic.failed, 1);
+  assert.deepEqual(del.totals, { tried: 3, sent: 1, failed: 1, skipped: 1, sending: 0, kinds: 2, failure_pct: 50 }, "the email cards: sent, failed (of those settled), not sent, kinds");
+  assert.equal(del.daily.length, 30); assert.equal(del.daily.reduce((a, d) => a + d.sent + d.failed + d.skipped, 0), 3);
+  assert.ok(!/webhook|endpoint|hook|deliveries/i.test(Object.keys(del).join(" ")) && !/record\.created|run\.finished|we_1/.test(JSON.stringify(del)), "Email Delivery is emails only: no webhook figure");
   assert.ok(!JSON.stringify(del).includes("example.org") && !JSON.stringify(del).includes("Your code") && !JSON.stringify(del).includes("secret project"), "no address, domain or subject");
-  ok(`Email Delivery: emails by kind and status${del.webhooks ? ", webhook deliveries by status, endpoints switched off" : " (no developer surface in this build: webhooks left out)"}; no address or subject`);
+  ok("Email Delivery: emails only, by kind and status, the cards' totals (sent, failed, not sent, kinds); no address or subject");
+
+  // Webhook Delivery: off with zero packs (no developer surface), on with the embedded fixture.
+  assert.equal(h.webhooksOn(), false, "zero packs: no Webhook Delivery tab");
+  await installEmbedded();
+  try {
+    assert.equal(h.webhooksOn(), true, "an embedded app's developer surface: Webhook Delivery is a tab");
+    assert.equal(h.deliveriesOn(), true, "and Email Delivery still is (its people's mail)");
+    const hooks = await h.healthWebhooks({ days: "30" });
+    assert.equal(hooks.webhooks, true);
+    assert.deepEqual(hooks.totals, { total: 4, succeeded: 1, failed: 1, pending: 2, retrying: 1, attempts: 12, events: 2, endpoints_off: 1, failure_pct: 50 },
+      "the webhook cards: delivered, failed, pending or retrying, endpoints switched off");
+    const rc = hooks.deliveries.find((d) => d.event === "record.created")!, rf = hooks.deliveries.find((d) => d.event === "run.finished")!;
+    assert.equal(rc.succeeded, 1); assert.equal(rc.failed, 1); assert.equal(rf.pending, 2); assert.equal(rf.retrying, 1);
+    assert.equal(hooks.disabled_endpoints.length, 1); assert.equal(hooks.disabled_endpoints[0]!.failure_streak, 40);
+    assert.ok(!/hooks\.example\.org|private-path/.test(JSON.stringify(hooks)), "never an endpoint's address (its reason cleaned)");
+    assert.equal(hooks.daily.length, 30); assert.equal(hooks.daily.reduce((a, d) => a + d.succeeded + d.failed + d.pending, 0), 4);
+    assert.ok(!/sign_in_code|due_soon/.test(JSON.stringify(hooks)), "no email in Webhook Delivery");
+  } finally { await installEmbedded(null); }
+  ok("Webhook Delivery: only with a developer surface; deliveries by event and status (pending and retrying), the cards' totals, endpoints switched off without their address");
 
   // ---------- 6. Status ----------
   const st = await h.healthStatus();
   const ids = st.checks.map((c) => c.id);
   assert.deepEqual(ids, ["database", "rls", "object_storage", "vault", "claude"]);
   assert.equal(st.checks[0]!.state, "ok");
-  assert.ok(st.release.last_migration && st.release.last_migration.name === "health_samples", JSON.stringify(st.release));
-  assert.match(st.release.mold.schema ?? "", /^0038_health_samples$/);
+  assert.ok(st.release.last_migration && st.release.last_migration.name === "health_samples_webhooks", JSON.stringify(st.release));
+  assert.match(st.release.mold.schema ?? "", /^0039_health_samples_webhooks$/);
   assert.ok(!/sk-|whsec_|BEGIN PRIVATE/.test(JSON.stringify(st)), "never a key");
   ok(`Status: ${st.checks.map((c) => `${c.id} ${c.state}`).join(", ")}; last migration ${st.release.last_migration?.version}`);
 
@@ -163,6 +192,14 @@ try {
     // At most every 4 minutes across processes; a forced one is the test's.
     assert.equal((await hs.sampleHealth()).sampled, false, "not again within 4 minutes");
     assert.equal((await hs.sampleHealth({ now: new Date(Date.now() + 5 * 60_000) })).sampled, true, "again after 4 minutes");
+    assert.equal(row!.deliveries_total, null, "zero packs: no email of its own, no email figure"); assert.equal(row!.webhooks_total, null, "zero packs: no webhook figure");
+    // Emails and webhooks apart (mold_v0-215): with the embedded fixture, the email figure counts emails only, the webhook figure webhooks only.
+    await installEmbedded();
+    try {
+      const m = await hs.measure(new Date(), new Date(Date.now() - 3_600_000));
+      assert.equal(m.deliveries_total, 2, "emails sent or failed (the skipped one is not settled)"); assert.equal(m.deliveries_failed, 1);
+      assert.equal(m.webhooks_total, 2, "webhook deliveries succeeded or failed (pending ones are not settled)"); assert.equal(m.webhooks_failed, 1);
+    } finally { await installEmbedded(null); }
     // Retention: 35 days.
     await db.query("INSERT INTO health_samples (at, window_seconds, up, rls, storage) VALUES (now() - interval '40 days', 300, true, 'ok', 'none'), (now() - interval '34 days', 300, true, 'ok', 'none')");
     assert.equal(await hs.pruneHealthSamples(), 1, "the sample older than 35 days is pruned, the 34-day one kept");
@@ -176,6 +213,8 @@ try {
       [a, up, req, err, failed]);
     // Within one UTC day (the counters are per day): three samples 5 minutes apart, just now.
     await put(at(12), true, 10, 1, 0); await put(at(7), false, 15, 1, 2); await put(at(2), true, 25, 4, 1);
+    // Emails and webhooks apart, each its own graph (mold_v0-215).
+    await db.query("UPDATE health_samples SET deliveries_total = 4, deliveries_failed = 1, webhooks_total = 10, webhooks_failed = 3");
     const day = await hs.healthHistory({ range: "24h" }, now);
     assert.equal(day.range, "24h"); assert.equal(day.buckets.length, 48); assert.equal(day.samples, 3);
     assert.equal(day.totals.up_pct, 66.7, "one of three samples down");
@@ -184,6 +223,10 @@ try {
     if (sameDay) { assert.equal(day.totals.claude_requests, 15, "differences of the day's counters"); assert.equal(day.totals.claude_errors, 3); }
     assert.ok(day.buckets.filter((b) => b.samples).every((b) => b.up_pct != null && b.rls_ok === 100 && b.storage_ok === 100));
     assert.equal(day.latest?.vault_set, 3);
+    assert.equal(day.totals.deliveries_total, 12); assert.equal(day.totals.deliveries_failed, 3, "the email graph: emails only");
+    assert.equal(day.totals.webhooks_total, 30); assert.equal(day.totals.webhooks_failed, 9, "the webhook graph: webhooks only");
+    assert.ok(day.buckets.filter((b) => b.samples).every((b) => b.webhook_failure_pct === 30 && b.delivery_failure_pct === 25), "each graph its own failure rate");
+    assert.equal(day.webhooks, false, "zero packs: no webhook graph");
     assert.equal((await hs.healthHistory({ range: "7d" }, now)).buckets.length, 56);
     assert.equal((await hs.healthHistory({ range: "30d" }, now)).buckets.length, 60);
     assert.equal((await hs.healthHistory({ range: "drop table" }, now)).range, "24h", "an unknown range is 24h");
