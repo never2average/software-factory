@@ -126,7 +126,8 @@ function Tabs({ tab, set }: { tab: Tab; set: (t: Tab) => void }) {
 }
 
 /** Billing's Access log tab (mold_v0-209): this workspace's trails, for its owners. No page title of its own (the tab
- *  strip is the page's heading); with both trails on, a Data access / Requests switch above the trail's table. */
+ *  strip is the page's heading) and no description above the list (mold_v0-231); with both trails on, a Data access /
+ *  Requests switch above the trail's cards. */
 export function WorkspaceAccessLog() {
   const [tab, setTab] = useState<Tab>(dataTrailOn() ? 'data' : 'platform');
   const { role, loaded } = useAccountRole();
@@ -135,12 +136,7 @@ export function WorkspaceAccessLog() {
   if (role !== 'owner') return <p className='text-muted-foreground text-sm'>Only the workspace&apos;s owners read its access log.</p>;
   return (
     <div className='flex flex-col gap-4'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <p className='text-muted-foreground text-sm'>{tab === 'data'
-          ? 'Who listed, read, revealed, exported or changed which records, files and run results, when and through which door. Never their contents.'
-          : 'Every API and MCP request and sign-in in this workspace, with the key, the person, the result and how long it took, and staff actions on it.'}</p>
-        <Tabs tab={tab} set={setTab} />
-      </div>
+      <Tabs tab={tab} set={setTab} />
       {tab === 'data'
         ? <TrailTable area={DATA_AREA} base='app' url='/api/audit/data' csv='/api/audit/data.csv' cards='/api/audit/data/sparklines' row={dataRow as (e: never) => RecordRow}
             hidden={DATA_HIDDEN} noun='entries' id='app-access-log-data' />
@@ -150,7 +146,8 @@ export function WorkspaceAccessLog() {
   );
 }
 
-/** /admin/access-log: the platform trail across every workspace, and one workspace's data trail by its slug. */
+/** /admin/access-log: the platform trail across every workspace, and one workspace's data trail by its slug. A list
+ *  page (mold_v0-231): no title or description above it; the Requests / Data access switch, then the trail's cards. */
 export function OperatorAccessLogPage() {
   const [tab, setTab] = useState<Tab>(platformTrailOn() ? 'platform' : 'data');
   const [slug, setSlug] = useState('');
@@ -158,22 +155,23 @@ export function OperatorAccessLogPage() {
   useEffect(() => { if (tab === 'platform') setShown(null); }, [tab]);
   const fleet = useMemo(() => platformArea(true), []);
   return (
-    <PageContainer pageTitle='Access log' pageHeaderAction={<Tabs tab={tab} set={setTab} />}
-      pageDescription={tab === 'platform' ? 'Every API and MCP request and sign-in across every workspace, and every staff action on an account.'
-        : "A workspace's data trail: who read or changed which records, files and run results. Never their contents."}>
-      {tab === 'platform'
-        ? <TrailTable area={fleet} base='admin' url='/api/admin/audit/platform' csv='/api/admin/audit/platform.csv' cards='/api/admin/audit/platform/sparklines'
-            row={platformRow as (e: never) => RecordRow} hidden={PLATFORM_HIDDEN_FLEET} noun='requests' id='admin-access-log-platform' />
-        : (
-          <div className='flex flex-col gap-4'>
-            <form className='flex max-w-md gap-2' onSubmit={(e) => { e.preventDefault(); setShown(slug.trim() || null); }}>
-              <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder='Workspace slug' aria-label='Workspace slug' />
-              <Button type='submit' size='sm'>Show</Button>
-            </form>
-            {shown && <TrailTable area={DATA_AREA} base='admin' url={`/api/admin/audit/data/${encodeURIComponent(shown)}`} csv={`/api/admin/audit/data/${encodeURIComponent(shown)}/csv`}
-              cards={`/api/admin/audit/data/${encodeURIComponent(shown)}/sparklines`} row={dataRow as (e: never) => RecordRow} hidden={DATA_HIDDEN} noun='entries' id='admin-access-log-data' />}
-          </div>
-        )}
+    <PageContainer>
+      <div className='flex flex-col gap-4'>
+        <Tabs tab={tab} set={setTab} />
+        {tab === 'platform'
+          ? <TrailTable area={fleet} base='admin' url='/api/admin/audit/platform' csv='/api/admin/audit/platform.csv' cards='/api/admin/audit/platform/sparklines'
+              row={platformRow as (e: never) => RecordRow} hidden={PLATFORM_HIDDEN_FLEET} noun='requests' id='admin-access-log-platform' />
+          : (
+            <div className='flex flex-col gap-4'>
+              <form className='flex max-w-md gap-2' onSubmit={(e) => { e.preventDefault(); setShown(slug.trim() || null); }}>
+                <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder='Workspace slug' aria-label='Workspace slug' />
+                <Button type='submit' size='sm'>Show</Button>
+              </form>
+              {shown && <TrailTable area={DATA_AREA} base='admin' url={`/api/admin/audit/data/${encodeURIComponent(shown)}`} csv={`/api/admin/audit/data/${encodeURIComponent(shown)}/csv`}
+                cards={`/api/admin/audit/data/${encodeURIComponent(shown)}/sparklines`} row={dataRow as (e: never) => RecordRow} hidden={DATA_HIDDEN} noun='entries' id='admin-access-log-data' />}
+            </div>
+          )}
+      </div>
     </PageContainer>
   );
 }
