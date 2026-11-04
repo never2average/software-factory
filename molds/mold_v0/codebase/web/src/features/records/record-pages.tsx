@@ -23,6 +23,7 @@ import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
+import { useImportAction } from './workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
@@ -180,7 +181,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, rowAction, detailNote }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowAction, detailNote }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -188,6 +189,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   summary?: ReactNode;
   /** The tab's primary action (mold_v0-208, features/tabs/tab-action.tsx): the search row's last control (mold_v0-217). */
   toolbarAction?: ReactNode;
+  /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, next to Export in the search row. */
+  importAction?: ReactNode;
   /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
   rowAction?: (r: RecordRow) => ReactNode;
   /** An open record's first lines (mold_v0-221: a staff row's provenance and an override's mark, features/records/staff-records.tsx). */
@@ -219,10 +222,11 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
       // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
-      primary={source ? source.primary : ({ rows: view, narrowed }) => (
+      primary={source ? source.primary : ({ rows: view, narrowed }) => (<>
         <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
           keys={narrowed ? view.map((r) => r.key) : null} />
-      )}
+        {importAction}
+      </>)}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
@@ -252,11 +256,14 @@ export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string 
   // A record added from the primary action: the list is read again.
   const [round, setRound] = useState(0);
   const { button, card } = useAreaAction(area, () => setRound((n) => n + 1));
+  // mold_v0-234: Import, where the area's contract grants it to this person: its button beside Export, its card in the list's place.
+  const imp = useImportAction(area, () => setRound((n) => n + 1));
   if (card) return card;
+  if (imp.card) return imp.card;
   return (
     <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
       summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-      toolbarAction={button ?? undefined} />
+      toolbarAction={button ?? undefined} importAction={imp.button} />
   );
 }
 

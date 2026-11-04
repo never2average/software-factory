@@ -8,14 +8,13 @@
 // Export (its search row, just left of the primary action) writes the view: when search or a filter narrows the list,
 // the file holds those rows alone (the same pages are read, so the data trail records the export as before).
 // mold_v0-235: on a workspace's list Export shows only to the roles that may export (an area's contract may narrow it
-// below read; the server refuses the rest), and mold_v0-234: Import sits beside it where the area's contract grants
-// import to the person's role (features/records/workspace-import.tsx).
+// below read; the server refuses the rest). mold_v0-234's Import is its own button beside it (features/records/
+// workspace-import.tsx useImportAction), placed by the list.
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { exportWithheldAreas, recordAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
-import { WorkspaceImportButton } from '@/features/records/workspace-import';
 import { downloadText, today } from '@/lib/csv';
 
 type Row = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string };
@@ -68,8 +67,7 @@ type ExportProps = {
 
 /**
  * The Export CSV button: nothing when the area's pack withholds its export (mold_v0-067 mcp settings). On a workspace's
- * list (/api/records) it follows the person's role: Export for the roles that may export, Import beside it for the
- * roles the area's contract lets import.
+ * list (/api/records) it follows the person's role: shown to the roles that may export (mold_v0-235).
  */
 export function ExportCsvButton(props: ExportProps) {
   return props.url.startsWith('/api/records') ? <WorkspaceListData {...props} /> : <ExportControl {...props} />;
@@ -77,18 +75,9 @@ export function ExportCsvButton(props: ExportProps) {
 
 function WorkspaceListData(props: ExportProps) {
   const { role, loaded } = useAccountRole();
-  const specs = props.areas.map((n) => recordAreas.find((a) => a.name === n));
   // Until the role is known nothing is hidden (the server refuses what the role may not do).
-  const exportable = !loaded || !role || specs.every((s) => !s?.export_roles || s.export_roles.includes(role));
-  const one = specs.length === 1 ? specs[0] : undefined;
-  const importable = !!(loaded && role && one?.scope === 'workspace' && one.import_roles?.includes(role));
-  if (!importable) return exportable ? <ExportControl {...props} /> : null;
-  return (
-    <div className='flex min-w-0 flex-wrap items-center gap-2'>
-      <WorkspaceImportButton area={{ name: one!.name, label: one!.label }} compact={props.compact} />
-      {exportable && <ExportControl {...props} />}
-    </div>
-  );
+  const exportable = !loaded || !role || props.areas.every((n) => { const s = recordAreas.find((a) => a.name === n); return !s?.export_roles || s.export_roles.includes(role); });
+  return exportable ? <ExportControl {...props} /> : null;
 }
 
 function ExportControl({ url, area, name, rows, areas, keys, compact = false }: ExportProps) {

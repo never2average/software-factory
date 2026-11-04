@@ -44,6 +44,7 @@ import { tabCharts } from './registry';
 import { RunsTable } from './runs';
 import { TabSparklines } from './sparklines';
 import { useTabAction } from './tab-action';
+import { useImportAction } from '@/features/records/workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { StatusPage } from '@/features/status/status-page';
 
@@ -209,13 +210,15 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   const [round, setRound] = useState(0);
   // mold_v0-217: its button in the search row, its form a full card in the list's place while open (?start=1, ?new=1).
   const { button: action, card } = useTabAction(tab.action ? tab : null, () => setRound((n) => n + 1));
+  // mold_v0-234: Import on a tab of one area whose contract grants it to this person (beside Export; its card ?import=1).
+  const imp = useImportAction(area && !tab.areas ? area : null, () => setRound((n) => n + 1));
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
   const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
   const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
     // mold_v0-208: a list tab is its cards, its search row and its table (no charts). mold_v0-217: the tab's primary
     // action is the table's search row's last control; a board or a timeline has it in the views' row, after Export CSV.
-    card ? card : <div className='flex flex-col gap-6'>
+    card ? card : imp.card ? imp.card : <div className='flex flex-col gap-6'>
       {/* The views' switch, and Export CSV and the action for the board and the timeline (the table has its own toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
@@ -239,6 +242,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         {!table && (
           <div className='flex flex-wrap items-center gap-2'>
             <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />
+            {imp.button}
             {action}
           </div>
         )}
@@ -252,7 +256,7 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         : view === 'timeline' ? <TimelineView key={round} src={src} by={tab.timeline_by ?? 'updated'} badge={area.lifecycle?.field ?? (tab.areas ? tab.board_by ?? null : null)} detail={detail} empty={tab.empty} />
         : views.length ? (
           <RecordTableView area={area} base='app' url={src.url} rows={src.rows} id={`app-tab-${tab.pack}-${tab.id}`} open={detail} key={round}
-            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined}
+            exportName={`${tab.pack}-${tab.id}`} exportAreas={exportAreas} summary={<TabSparklines tab={tab} />} toolbarAction={action ?? undefined} importAction={imp.button}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={`empty-${area.name}`} /></div>} />
         ) : null}
       </div>

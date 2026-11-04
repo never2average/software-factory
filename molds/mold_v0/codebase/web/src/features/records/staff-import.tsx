@@ -101,6 +101,8 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone, workspace =
   const [map, setMap] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
+  // A workspace's import (mold_v0-234): what it wrote, shown in the card until Back to the list.
+  const [result, setResult] = useState<Report | null>(null);
   const rows = useMemo(() => (file && map._key ? file.rows.map((r) => ({
     key: r[map._key],
     ...(map._title ? { title: r[map._title] } : {}),
@@ -126,7 +128,7 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone, workspace =
       if (!preview) { setPreview(await post(url, { rows, dry_run: true }, headers)); return; }
       const done = await post(url, { rows, dry_run: false }, headers);
       toast.success(`Imported ${done.written} ${done.written === 1 ? noun : `${noun}s`}${done.counts.invalid ? `; ${done.counts.invalid} invalid skipped` : ''}`);
-      onDone();
+      if (workspace) setResult(done); else onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   const target = (id: string, label: string, required = false) => (
@@ -137,6 +139,19 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone, workspace =
         {file?.columns.map((c) => <NativeSelectOption key={c} value={c}>{c}</NativeSelectOption>)}
       </NativeSelect>
     </div>
+  );
+  if (result) return (
+    <CardForm onSubmit={onDone} submit={<Button type='submit' data-import-back=''><Icons.check />Back to the list</Button>}>
+      <section className='flex flex-col gap-2' data-import-done=''>
+        <h3 className='text-sm font-medium'>Imported</h3>
+        <p className='text-sm' data-import-written=''>
+          {result.written} {result.written === 1 ? noun : `${noun}s`} written to {area.label}
+          {(['create', 'update', 'unchanged', 'invalid'] as Action[]).some((a) => result.counts[a])
+            ? `: ${(['create', 'update', 'unchanged', 'invalid'] as Action[]).filter((a) => result.counts[a]).map((a) => `${result.counts[a]} ${a === 'create' ? 'new' : a === 'update' ? 'updated' : a === 'invalid' ? 'invalid, skipped' : 'unchanged'}`).join(' · ')}.` : '.'}
+        </p>
+        <p className='text-muted-foreground text-xs'>Each record was written as you, and shows in the list now.</p>
+      </section>
+    </CardForm>
   );
   return (
     <CardForm onSubmit={submit} submit={

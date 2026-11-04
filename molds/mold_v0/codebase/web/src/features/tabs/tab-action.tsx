@@ -96,7 +96,7 @@ export function LinkAction({ action }: { action: NonNullable<PackTabSpec['action
 
 /**
  * Whether the page shows an action's card (mold_v0-217), kept in the address: `start` (?start=1) for a run, `new`
- * (?new=1) for a record or a schedule, `import` (?import=1, mold_v0-221) for a staff record page's import. Opening adds a history entry, so Back returns to the list; closing replaces it.
+ * (?new=1) for a record or a schedule, `import` (?import=1) for an import (a staff record page's, mold_v0-221; a workspace list's, mold_v0-234). Opening adds a history entry, so Back returns to the list; closing replaces it.
  */
 export function useActionOpen(name: 'start' | 'new' | 'import'): [boolean, (open: boolean) => void] {
   const [on, set] = useQueryState(name, parseAsFlag.withDefault(false));
