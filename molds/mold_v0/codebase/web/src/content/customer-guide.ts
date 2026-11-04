@@ -128,11 +128,11 @@ connects in to your network, and you open no port.
 - It takes only this ${fill('{workspace}')}'s runs, and only the runs that need your network. Every other run stays hosted.
 - Each run gets a sandbox of its own on your machine, locked down as a hosted run is: it reaches the app, the hosts its
   kind needs, and only the private hosts and networks you allow.
-- Its credential is kept on your machine; you can revoke the runner at any time from **Credentials**, and it stops at once.
+- Its credential is kept on your machine; you can revoke the runner at any time from **Settings › Credentials**, and it stops at once.
 
 ## Install it
 
-1. On **Credentials**, under **On-premises runner**, type a name and press **Add a runner**. Copy the command it shows:
+1. On **Settings › Credentials**, open **On-premises runner**, type a name and press **Add a runner**. Copy the command it shows:
    its token works once and is not shown again.
 2. On a Linux machine inside your network with Docker, paste the command. Replace the example in \`APP_RUNNER_ALLOW\`
    with what runs may reach, separated by spaces: a host (\`vault.corp.example\`), every host under a domain
@@ -141,7 +141,7 @@ connects in to your network, and you open no port.
 
 ## Health and revoking
 
-**Credentials** shows each runner's status, when it was last seen, how many runs it is carrying out and the private
+**Settings › Credentials** (its **On-premises runner** row) shows each runner's status, when it was last seen, how many runs it is carrying out and the private
 hosts it allows. **Revoke** stops it at once: the runs it was carrying out go back to the queue, and the runner removes
 its sandboxes and stops. **Run them hosted** sends these runs back to the hosted runners.`,
 };

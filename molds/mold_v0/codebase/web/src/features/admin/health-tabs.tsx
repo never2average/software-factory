@@ -16,7 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Box } from '@/components/layout/chart-grid';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
-import { developerConsole, emailPortalNav } from '@/config/pack-nav.generated';
+import { developerConsole, settingsPage } from '@/config/pack-nav.generated';
 import { W } from '@/lib/vocabulary';
 import { num, usd } from '@/lib/display-format';
 import { useAdmin } from './lib';
@@ -24,7 +24,7 @@ import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
 
 /** Email Delivery is a tab only when the app sends mail of a workspace's own or has a developer surface (the server's deliveriesOn). */
-export const deliveriesTab = (): boolean => emailPortalNav.length > 0 || developerConsole.on;
+export const deliveriesTab = (): boolean => settingsPage.email || developerConsole.on;
 /** Webhook Delivery is a tab only when the app has a developer surface: its declared events go out as webhooks (the server's webhooksOn). */
 export const webhooksTab = (): boolean => developerConsole.on;
 

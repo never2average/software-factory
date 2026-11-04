@@ -1,5 +1,5 @@
 'use client';
-// The workspace's on-premises runners on /app/credentials (mold_v0-036; src/onprem-runner-routes.ts at /api/runners).
+// The workspace's on-premises runners on Settings › Credentials (mold_v0-036, mold_v0-218: its row's details card; src/onprem-runner-routes.ts at /api/runners).
 // Shown only when a kind of the build may need the workspace's private network (the API answers 404 otherwise): where
 // those runs go (hosted, or on one of the workspace's own runners), each runner's health, and for owners adding a
 // runner (its one-time token and install command, shown once) and revoking one, at once.
@@ -46,8 +46,15 @@ const STATUS: Record<Status, [label: string, variant: 'default' | 'secondary' | 
   revoked: ['Revoked', 'outline']
 };
 
-export function RunnersSection() {
-  const { data, reload } = useOrgLoad(() => call<View>('GET'));
+/** The runners as Settings › Credentials lists them (mold_v0-218): null when no kind needs a private network. */
+export type RunnersView = View;
+export const runnersCall = () => call<View>('GET');
+/** What the on-premises runner is for, in one sentence. */
+export const RUNNER_PURPOSE = "Runs that need your own network go to a runner you install there; it connects out and takes only this workspace's runs.";
+
+export function RunnersSection({ bare, onChanged }: { bare?: boolean; onChanged?: () => unknown } = {}) {
+  const { data, reload: reloadOwn } = useOrgLoad(() => call<View>('GET'));
+  const reload = async () => { await reloadOwn(); await onChanged?.(); };
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<Created | null>(null);
@@ -68,10 +75,11 @@ export function RunnersSection() {
     try { await call('PUT', '/location', { location }); toast.success(location === 'on_premises' ? 'These runs now go to your own runner' : 'These runs now run hosted'); await reload(); }
     catch (e) { fail(e); } finally { setBusy(false); }
   };
-  return (
-    <Section title='On-premises runner' description={<>Some runs need to reach systems inside your own network ({data.kinds.map((k) => k.label).join(', ')}).
-      A runner you install there connects out to this app (nothing connects in), takes only this workspace&apos;s runs, and reaches only the hosts you allow.</>}>
+  const description = <>Some runs need to reach systems inside your own network ({data.kinds.map((k) => k.label).join(', ')}).
+      A runner you install there connects out to this app (nothing connects in), takes only this workspace&apos;s runs, and reaches only the hosts you allow.</>;
+  const body = (
       <div className='flex flex-col gap-4'>
+        {bare && <p className='text-muted-foreground text-sm'>{description}</p>}
         <div className='flex flex-wrap items-center gap-2 text-sm'>
           <span>These runs go to</span>
           <Badge variant='secondary'>{data.location === 'on_premises' ? 'Your on-premises runner' : 'Hosted (default)'}</Badge>
@@ -121,6 +129,6 @@ export function RunnersSection() {
           </form>
         ) : <p className='text-muted-foreground text-xs'>An owner of this workspace adds and revokes runners.</p>}
       </div>
-    </Section>
   );
+  return bare ? body : <Section title='On-premises runner' description={description}>{body}</Section>;
 }

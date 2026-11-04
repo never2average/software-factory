@@ -24,7 +24,7 @@ import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
 import { journeysOn, tipsOn } from '../features/journeys/config';
 import { auditOn } from '../features/audit/config';
-import { developerConsole } from '../config/pack-nav.generated';
+import { developerConsole, settingsPage } from '../config/pack-nav.generated';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -72,6 +72,8 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   '/admin/access-log': () => auditOn(),
   // The developer surface's console (mold_v0-201): only in an embedded app (a pack declares developer_surface).
   '/app/developers': () => developerConsole.on,
+  // Settings (mold_v0-218): its Credentials and Email tabs, when the build has one of them.
+  '/app/settings': () => settingsPage.credentials || settingsPage.email,
 };
 
 /**

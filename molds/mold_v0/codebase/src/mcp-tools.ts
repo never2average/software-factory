@@ -250,7 +250,7 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
       }
       case "credential": {
         const c = (pack.definition.credentials ?? []).find((x) => x.name === arg);
-        return `give ${plain(c?.label ?? arg, 80)} on the console's Credentials page (${at("/credentials")}); a secret is never typed into the chat`;
+        return `give ${plain(c?.label ?? arg, 80)} on the console's Settings › Credentials tab (${at("/settings?tab=credentials")}); a secret is never typed into the chat`;
       }
       default: return "";
     }

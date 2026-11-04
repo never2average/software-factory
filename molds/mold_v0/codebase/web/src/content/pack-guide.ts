@@ -180,7 +180,7 @@ function recordsMarkdown(d: PackGuideData): string {
 function runsMarkdown(d: PackGuideData): string {
   const tool = (op: string) => d.tools.filter((t) => t.op === op).map((t) => code(t.name));
   const kinds = d.kinds.map((k) => [`## ${k.label}`, k.description ? sentence(k.description) : '',
-    k.credentials.length ? `It uses: ${list(k.credentials.map((c) => `**${c}**`))} (set on **Credentials**).` : '',
+    k.credentials.length ? `It uses: ${list(k.credentials.map((c) => `**${c}**`))} (set on **Settings › Credentials**).` : '',
     k.report !== null ? fill(`It writes a report${k.report ? ` (**${k.report}**)` : ''}, which you read on **Reports** or from your AI client once the {run} has succeeded.`) : '',
     k.approval ? fill(`It starts only after a **${k.approval}** {run} has succeeded and was approved.`) : '',
     `Start it from your AI client: ${code(k.start)}.`].filter(Boolean).join('\n\n'));
@@ -198,7 +198,7 @@ function runsMarkdown(d: PackGuideData): string {
     workspace: () => fill('one for the whole {workspace}'), asset: (a) => `one for each record of ${a}`, environment: (a) => `one for each record of ${a} and environment`,
   };
   const credentials = d.credentials.length
-    ? fill(`## Credentials\n\nA {run} reaches your own systems only with what you give it on **Credentials**. A value is stored encrypted (only its last 4 characters are ever shown again) and given only to the {runs} that use it.\n\n`) +
+    ? fill(`## Credentials\n\nA {run} reaches your own systems only with what you give it on **Settings › Credentials**. A value is stored encrypted (only its last 4 characters are ever shown again) and given only to the {runs} that use it.\n\n`) +
       d.credentials.map((c) => `- **${c.label}** (${BOUND[c.bound_to]!(c.area)})${c.help ? `: ${sentence(c.help)}` : '.'}`).join('\n')
     : '';
   return [fill(`A {run} is work {product} does for your {workspace} in the background. Ask your AI client to start one${d.schedules.length ? ' (or let a schedule start it)' : ''}, then follow it until it ends.`),

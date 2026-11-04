@@ -1,5 +1,5 @@
 'use client';
-// The workspace's GitHub connection on /app/credentials (mold_v0-014; src/github-app-routes.ts at /api/github-app). Shown
+// The workspace's GitHub connection on Settings › Credentials (mold_v0-014, mold_v0-218: its row's details card; src/github-app-routes.ts at /api/github-app). Shown
 // only when a pack's credential field asks for a GitHub App and the platform has one set up: owners connect an
 // installation (GitHub's own install page, then back here), see its account and repositories, narrow each record's runs
 // to some of them, and disconnect. No token is ever shown: runs get a short-lived one each, read-only.
@@ -54,10 +54,12 @@ const OUTCOME: Record<string, [ok: boolean, text: string]> = {
   failed: [false, 'Connecting GitHub failed: try again.']
 };
 
-export function GithubAppSection() {
-  const { data, reload } = useOrgLoad(() => call<View>('GET'));
-  const [busy, setBusy] = useState(false);
-  // The install's return: say what happened once, then drop it from the address.
+/** The GitHub connection as Settings › Credentials lists it (mold_v0-218): null when no field asks for a GitHub App. */
+export type GithubView = View;
+export const githubCall = () => call<View>('GET');
+
+/** The install's return (?github=<code>): say what happened once, then drop it from the address (the tab stays). */
+export function useGithubOutcome() {
   useEffect(() => {
     const u = new URL(window.location.href);
     const code = u.searchParams.get('github');
@@ -67,6 +69,12 @@ export function GithubAppSection() {
     u.searchParams.delete('github');
     window.history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
   }, []);
+}
+
+export function GithubAppSection({ bare, onChanged }: { bare?: boolean; onChanged?: () => unknown } = {}) {
+  const { data, reload: reloadOwn } = useOrgLoad(() => call<View>('GET'));
+  const reload = async () => { await reloadOwn(); await onChanged?.(); };
+  const [busy, setBusy] = useState(false);
   if (!data || !data.available) return null;
   const i = data.installation;
   const connect = async () => {
@@ -80,8 +88,8 @@ export function GithubAppSection() {
     try { await call('DELETE'); toast.success('Disconnected'); await reload(); } catch (e) { fail(e); } finally { setBusy(false); }
   };
   const areas = [...new Set(data.fields.filter((f) => f.bound_to !== 'workspace' && f.area).map((f) => f.area!))];
-  return (
-    <Section title='GitHub' description={<>Connect your GitHub organization instead of pasting tokens: each run gets its own short-lived, read-only token for the repositories you chose. Used by {data.fields.map((f) => f.label).join(', ')}.</>}>
+  const body = (
+    <>
       {i ? (
         <div className='flex flex-col gap-4'>
           <div className='flex flex-wrap items-center gap-2 text-sm'>
@@ -100,9 +108,16 @@ export function GithubAppSection() {
           <p className='text-muted-foreground text-xs'>Opens GitHub, where you pick the organization and repositories. Until you connect, runs use a pasted token below.</p>
         </div>
       ) : <p className='text-muted-foreground text-sm'>Not connected. An owner of this workspace connects GitHub.</p>}
-    </Section>
+    </>
+  );
+  if (bare) return body;
+  return (
+    <Section title='GitHub' description={<>{GITHUB_PURPOSE} Used by {data.fields.map((f) => f.label).join(', ')}.</>}>{body}</Section>
   );
 }
+
+/** What the GitHub connection is for, in one sentence. */
+export const GITHUB_PURPOSE = 'Connect your GitHub organization instead of pasting tokens: each run gets its own short-lived, read-only token for the repositories you chose.';
 
 /** Which repositories the runs for one record get (none listed: all of the installation's). */
 function Narrowing({ area, inst, canManage, onChanged }: { area: string; inst: Installation; canManage: boolean; onChanged: () => unknown }) {
