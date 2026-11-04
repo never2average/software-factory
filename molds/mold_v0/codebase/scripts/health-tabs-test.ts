@@ -153,8 +153,8 @@ try {
   const ids = st.checks.map((c) => c.id);
   assert.deepEqual(ids, ["database", "rls", "object_storage", "vault", "claude"]);
   assert.equal(st.checks[0]!.state, "ok");
-  assert.ok(st.release.last_migration && st.release.last_migration.name === "health_samples_webhooks", JSON.stringify(st.release));
-  assert.match(st.release.mold.schema ?? "", /^0039_health_samples_webhooks$/);
+  assert.ok(st.release.last_migration && st.release.last_migration.name === "email_files", JSON.stringify(st.release));
+  assert.match(st.release.mold.schema ?? "", /^0040_email_files$/);
   assert.ok(!/sk-|whsec_|BEGIN PRIVATE/.test(JSON.stringify(st)), "never a key");
   ok(`Status: ${st.checks.map((c) => `${c.id} ${c.state}`).join(", ")}; last migration ${st.release.last_migration?.version}`);
 
