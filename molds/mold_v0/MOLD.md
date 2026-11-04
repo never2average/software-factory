@@ -1834,7 +1834,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too. A
   list (an area, runs, reports or schedules tab, a records page) has no title or description above it, no count toggle
   in its toolbar (the Overdue filter is the Filter menu's rule, `?overdue=1`), and its cells show a status as plain
-  text, not a badge. It is shown only to a role that may use it
+  text, not a badge. Every area list has **Export** in its search row just left of the primary action (empty or not;
+  `web/src/features/tabs/export.tsx`, the same pages with `?audit=export`, so the data trail records it, and withheld where
+  the pack withholds the area's export): the export tool's file, or, when search or a filter narrows the list, its rows shown alone. It is shown only to a role that may use it
   (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
   roles and `edit`), and the server refuses the rest. The route is mounted only when a tab has an action (since
   mold_v0-213 every list tab's by default), so a build without a list tab (zero packs, Octillion) answers nothing and

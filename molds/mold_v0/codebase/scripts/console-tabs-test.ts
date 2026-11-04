@@ -636,7 +636,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0'/, "a normal primary button at the row's right end, square on a phone");
     assert.doesNotMatch(ta, /fixed|rounded-full|size-14|shadow-lg|<Sheet|Dialog|Popover/, "nothing fixed, round or lifted; no sheet, dialog or popover");
     assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='hidden sm:inline'>\{label\}<\/span>/, "the icon alone on a phone, the label its accessible name and title");
-    assert.match(ta, /useQueryState\(name, parseAsBoolean[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
+    assert.match(ta, /useQueryState\(name, parseAsFlag[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
     assert.match(ta, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>[\s\S]*Back to the list[\s\S]*<CardTitle[\s\S]*<CardContent[\s\S]*<CardFooter[\s\S]*\{submit\}\s*<Button type='button' variant='outline' onClick=\{cancel\}>Cancel<\/Button>/,
       "the form's card: a way back, the title and what will happen, the fields, then the submit and Cancel");
     assert.equal((ta.match(/<CardForm onSubmit=/g) ?? []).length, 2, "the start-run and create-record forms are the card's");
@@ -652,7 +652,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");
     assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
     assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
-    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text");
+    // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
+    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed");
+    assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
+    const ex = read("features/tabs/export.tsx");
+    assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
+    assert.match(ex, /audit=export/, "the data trail records it");
+    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text; Export on every area list just left of it, the view's rows when narrowed");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
