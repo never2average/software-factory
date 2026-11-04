@@ -2422,6 +2422,498 @@
                   "additionalProperties": false
                 }
               },
+              "contract": {
+                "type": "object",
+                "properties": {
+                  "provenance": {
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "staff",
+                        "people",
+                        "repository",
+                        "intake",
+                        "run"
+                      ]
+                    },
+                    "description": "Where the area's rows come from: staff, people, repository, intake, run (docs/RECORDS.md)"
+                  },
+                  "actions": {
+                    "type": "object",
+                    "properties": {
+                      "read": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "create": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "update": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "move": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "delete": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "reveal": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "export": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "import": {
+                        "anyOf": [
+                          {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "member",
+                                "billing",
+                                "owner"
+                              ]
+                            },
+                            "description": "The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "staff": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "delete"
+                                ],
+                                "description": "Platform staff with this permission (src/admin-roles.ts)"
+                              }
+                            },
+                            "required": [
+                              "staff"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "none": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300,
+                                "pattern": "^[^\\n\\r{}<>]*$",
+                                "description": "Why nobody may (shown nowhere; for people and the factory's spec check)"
+                              }
+                            },
+                            "required": [
+                              "none"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "read",
+                      "create",
+                      "update",
+                      "move",
+                      "delete",
+                      "reveal",
+                      "export",
+                      "import"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Every action, each the roles that may, {staff: permission} or {none: reason}"
+                  },
+                  "primary_action": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "create_record",
+                          "start_run",
+                          "link"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "none": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300,
+                            "pattern": "^[^\\n\\r{}<>]*$"
+                          }
+                        },
+                        "required": [
+                          "none"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "The area's list tab's primary action, or {none: reason} (no tab shows it, or the tab has none)"
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "provenance",
+                  "actions",
+                  "primary_action"
+                ],
+                "additionalProperties": false
+              },
               "samples": {
                 "maxItems": 20,
                 "type": "array",

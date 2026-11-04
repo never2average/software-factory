@@ -22,8 +22,10 @@
   factory.py validate --app-dir <dir>    only the four application files in <dir> (a fixture outside state/),
                                          against the same schemas and the same rules
                                          (validate also fails when schemas/<mold>.app.schema.json is stale, mold_v0-190)
-  factory.py spec check <file> [--json]  is this app spec complete for its mold? plain "missing / not supported / wrong
-                                         value" lines; exit 0 complete, 1 not yet, 2 could not check (app_spec.py)
+  factory.py spec check <file> [--json] [--records]
+                                         is this app spec complete for its mold? plain "missing / not supported / wrong
+                                         value" lines; exit 0 complete, 1 not yet, 2 could not check (app_spec.py);
+                                         mold_v0: each record area's contract (docs/RECORDS.md), printed with --records
   factory.py spec generate [--check]     regenerate schemas/<mold>.app.schema.json (--check: say if stale, write nothing)
   factory.py spec apps [--json]          every application's state read as a spec: what each still lacks (read-only)
 """

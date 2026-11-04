@@ -14,6 +14,20 @@
       "role": "asset",
       "scope": "workspace",
       "list_columns": ["address", "region", "contact_name", "access"],
+      "contract": {
+        "provenance": ["people"],
+        "actions": {
+          "read": ["viewer", "member", "billing", "owner"],
+          "export": ["viewer", "member", "billing", "owner"],
+          "create": ["member", "billing", "owner"],
+          "update": ["member", "billing", "owner"],
+          "delete": ["member", "billing", "owner"],
+          "move": { "none": "A site has no lifecycle" },
+          "reveal": { "none": "No encrypted field" },
+          "import": { "none": "The shell has no import for a team's own records yet" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "address", "label": "Address", "type": "text", "required": true, "max_length": 300 },
         { "name": "region", "label": "Region", "type": "enum", "options": [
@@ -34,6 +48,20 @@
       "role": "asset",
       "scope": "workspace",
       "list_columns": ["site", "category", "make", "last_serviced", "service_interval_days"],
+      "contract": {
+        "provenance": ["people"],
+        "actions": {
+          "read": ["viewer", "member", "billing", "owner"],
+          "export": ["viewer", "member", "billing", "owner"],
+          "create": ["member", "billing", "owner"],
+          "update": ["member", "billing", "owner"],
+          "delete": ["member", "billing", "owner"],
+          "move": { "none": "Equipment has no lifecycle" },
+          "reveal": { "none": "No encrypted field" },
+          "import": { "none": "The shell has no import for a team's own records yet" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "site", "label": "Site", "type": "reference", "to": "sites", "required": true },
         { "name": "category", "label": "Category", "type": "enum", "required": true, "options": [
@@ -56,6 +84,21 @@
       "role": "check",
       "scope": "workspace",
       "list_columns": ["priority", "state", "site", "technician", "reported_on"],
+      "contract": {
+        "$comment": "mold_v0-222, the worked example of docs/RECORDS.md: typed in by the team (New work order) or brought by the email intake; members move them along the lifecycle, only owners delete one.",
+        "provenance": ["people", "intake"],
+        "actions": {
+          "read": ["viewer", "member", "billing", "owner"],
+          "export": ["viewer", "member", "billing", "owner"],
+          "create": ["member", "owner"],
+          "update": ["member", "owner"],
+          "move": ["member", "owner"],
+          "delete": ["owner"],
+          "reveal": { "none": "No encrypted field" },
+          "import": { "none": "The shell has no import for a team's own records yet: requests arrive by email (the intake)" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "site", "label": "Site", "type": "reference", "to": "sites" },
         { "name": "equipment", "label": "Equipment", "type": "reference", "to": "equipment" },
@@ -133,6 +176,20 @@
       "role": "source",
       "scope": "workspace",
       "list_columns": ["work_order", "technician", "visited_on", "outcome", "hours_on_site"],
+      "contract": {
+        "provenance": ["people"],
+        "actions": {
+          "read": ["viewer", "member", "billing", "owner"],
+          "export": ["viewer", "member", "billing", "owner"],
+          "create": ["member", "billing", "owner"],
+          "update": ["member", "billing", "owner"],
+          "delete": ["member", "billing", "owner"],
+          "move": { "none": "A visit has no lifecycle" },
+          "reveal": { "none": "No encrypted field" },
+          "import": { "none": "The shell has no import for a team's own records yet" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "work_order", "label": "Work order", "type": "reference", "to": "work_orders", "required": true },
         { "name": "technician", "label": "Technician", "type": "person", "required": true },
