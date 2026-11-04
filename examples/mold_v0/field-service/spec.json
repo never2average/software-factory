@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json",
+  "$comment": "Wrenchline: a field-service maintenance tracker (examples/mold_v0/field-service). Check: python3 .claude/scripts/factory.py spec check examples/mold_v0/field-service/spec.json",
+  "app_id": "wrenchline",
+  "mold_id": "mold_v0",
+  "kind": "tool",
+  "audit": { "data": true, "platform": false, "sign": false },
+  "product": {
+    "name": "Wrenchline",
+    "colour": "#C2410C",
+    "logo": "examples/mold_v0/field-service/logo.svg",
+    "tagline": "Work orders, visits and reports for field-service teams",
+    "domain": "wrenchline.example.com"
+  },
+  "deploy": { "target": "vercel" },
+  "workspace": { "platform_admins": ["ops@example.com"] },
+  "budgets": {
+    "runs": { "budget_usd_max": 5, "kind_month_budget_usd": 150, "concurrency_per_workspace": 4, "live_per_workspace": 20 }
+  },
+  "profile": {
+    "member_keys": true,
+    "onprem_runners": false,
+    "email_from_address": "service@example.com",
+    "email": { "notifications": ["access_requests", "due_dates", "usage"] },
+    "legal": { "company_name": "Example Field Services Ltd", "contact_email": "legal@example.com", "effective_date": "2026-11-04" }
+  },
+  "run_keys": { "model": "anthropic", "sandbox": "boat", "object_storage": "vault" },
+  "packs": [
+    { "id": "wrenchline", "path": "examples/mold_v0/field-service/pack/pack.json" }
+  ]
+}

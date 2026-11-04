@@ -1,0 +1,334 @@
+{
+  "$comment": "Inkboard's deployment profile (examples/mold_v1/newsroom-calendar): a newsroom's desks as the accounts, its assignments as the tasks area (a unit of work with a copy deadline), the day's edition as the period that contains them, a story published on a desk as the deployments area. The data room keeps the desks' folders and the people's; the other domains are hidden.",
+  "vocabulary": {
+    "account": {
+      "singular": "desk",
+      "plural": "desks"
+    },
+    "member": {
+      "singular": "journalist",
+      "plural": "journalists"
+    },
+    "owner": "Desk editor",
+    "secondary_owner": "Deputy editor",
+    "account_context": "Desk"
+  },
+  "chat": {
+    "hero_lines": [
+      "{product}",
+      "What is due today?",
+      "Write the Metro briefing",
+      "What is nobody covering?",
+      "Which stories are at risk?"
+    ],
+    "empty_sections": {
+      "urgent": "Due within the hour",
+      "stalled": "Quiet desks"
+    }
+  },
+  "dataroom": {
+    "root_label": "Newsroom files",
+    "domains": {
+      "accounts": {
+        "label": "Desks",
+        "description": "One folder per desk: its briefings and the exports it drops in."
+      },
+      "platform": {
+        "visible": false
+      },
+      "deliveries": {
+        "label": "Corrections",
+        "visible": true
+      },
+      "solutions": {
+        "visible": false
+      },
+      "projects": {
+        "visible": false
+      },
+      "tickets": {
+        "visible": false
+      }
+    }
+  },
+  "persona": {
+    "base": false
+  },
+  "agent": {
+    "briefing": "This workspace is a newsroom. Desks are the accounts. Assignments are the stories a reporter owes by a copy deadline; each edition holds the assignments due for it. Every time you state carries its zone. An embargoed story is never described as publishable before its embargo lifts."
+  },
+  "work_periods": {
+    "mode": "team",
+    "label": {
+      "singular": "edition",
+      "plural": "editions"
+    },
+    "list_label": {
+      "singular": "edition",
+      "plural": "editions"
+    },
+    "length_days": 1,
+    "auto_rollover": true,
+    "workspace_can_set_length": false
+  },
+  "records": {
+    "hub": {
+      "label": "Calendar",
+      "icon": "calendar-check"
+    },
+    "areas": {
+      "tasks": {
+        "label": {
+          "singular": "assignment",
+          "plural": "assignments"
+        },
+        "description": "One story a reporter owes by its copy deadline.",
+        "fields": {
+          "title": {
+            "label": "Working title"
+          },
+          "notes": {
+            "label": "Brief"
+          },
+          "dueAt": {
+            "label": "Copy deadline",
+            "required": true
+          },
+          "assignee": {
+            "type": "person",
+            "label": "Reporter"
+          },
+          "priority": {
+            "label": "News value",
+            "options": [
+              {
+                "value": "high",
+                "label": "Lead",
+                "tone": "red"
+              },
+              {
+                "value": "normal",
+                "label": "Standard",
+                "tone": "slate"
+              },
+              {
+                "value": "low",
+                "label": "If space",
+                "tone": "sky"
+              }
+            ]
+          },
+          "stage": {
+            "type": "pick_list",
+            "label": "Stage",
+            "options": [
+              {
+                "value": "pitched",
+                "label": "Pitched",
+                "tone": "muted"
+              },
+              {
+                "value": "assigned",
+                "label": "Assigned",
+                "tone": "sky"
+              },
+              {
+                "value": "filed",
+                "label": "Filed",
+                "tone": "amber"
+              },
+              {
+                "value": "subbed",
+                "label": "Subbed",
+                "tone": "violet"
+              },
+              {
+                "value": "published",
+                "label": "Published",
+                "tone": "green"
+              },
+              {
+                "value": "spiked",
+                "label": "Spiked",
+                "tone": "muted"
+              }
+            ]
+          },
+          "slug": {
+            "type": "text",
+            "label": "Slug",
+            "max_length": 60,
+            "pattern": "^[a-z0-9-]+$",
+            "help": "Lower case with hyphens: bridge-vote."
+          },
+          "kind": {
+            "type": "pick_list",
+            "label": "Kind",
+            "options": [
+              {
+                "value": "News"
+              },
+              {
+                "value": "Feature"
+              },
+              {
+                "value": "Analysis"
+              },
+              {
+                "value": "Live blog"
+              },
+              {
+                "value": "Photo"
+              },
+              {
+                "value": "Video"
+              }
+            ]
+          },
+          "word_count": {
+            "type": "integer",
+            "label": "Words",
+            "min": 0,
+            "max": 20000
+          },
+          "embargo": {
+            "type": "datetime",
+            "label": "Embargoed until"
+          },
+          "legal_read": {
+            "type": "boolean",
+            "label": "Needs a legal read"
+          }
+        },
+        "lifecycle": {
+          "field": "stage",
+          "initial": "pitched",
+          "enforce": "warn",
+          "categories": {
+            "pitched": "backlog",
+            "assigned": "open",
+            "filed": "active",
+            "subbed": "active",
+            "published": "done",
+            "spiked": "cancelled"
+          },
+          "transitions": [
+            {
+              "from": [
+                "pitched"
+              ],
+              "to": "assigned",
+              "label": "Assign",
+              "requires": [
+                "assignee"
+              ]
+            },
+            {
+              "from": [
+                "assigned"
+              ],
+              "to": "filed",
+              "label": "File copy"
+            },
+            {
+              "from": [
+                "filed"
+              ],
+              "to": "subbed",
+              "label": "Sub",
+              "not_by": "assignee"
+            },
+            {
+              "from": [
+                "subbed"
+              ],
+              "to": "published",
+              "label": "Publish"
+            },
+            {
+              "from": "*",
+              "to": "spiked",
+              "label": "Spike",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "requires_comment": true
+            }
+          ]
+        },
+        "views": {
+          "default": "board",
+          "available": [
+            "board",
+            "table",
+            "timeline"
+          ],
+          "board": {
+            "by": "stage",
+            "card": {
+              "title": "title",
+              "meta": [
+                "dueAt",
+                "assignee"
+              ],
+              "badge": "priority"
+            }
+          },
+          "table": {
+            "columns": [
+              "title",
+              "stage",
+              "slug",
+              "kind",
+              "priority",
+              "cycleId",
+              "dueAt",
+              "assignee"
+            ]
+          },
+          "timeline": {
+            "start": "createdAt",
+            "end": "dueAt"
+          },
+          "create": {
+            "fields": [
+              "title",
+              "slug",
+              "dueAt",
+              "assignee",
+              "kind",
+              "priority",
+              "notes"
+            ],
+            "submit_label": "Add assignment"
+          }
+        }
+      }
+    }
+  },
+  "library": {
+    "sources": {
+      "inkboard": "library/inkboard"
+    }
+  },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Correction",
+        "plural": "Corrections"
+      },
+      "description": "A correction or update put into a published story on a desk, and whether it has landed everywhere the story ran.",
+      "id_label": "Correction id"
+    }
+  },
+  "specialists": {
+    "exclude": [
+      "customer-context",
+      "data-migration",
+      "deployment",
+      "evals",
+      "research"
+    ]
+  }
+}

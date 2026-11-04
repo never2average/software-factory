@@ -1,0 +1,274 @@
+{
+  "$schema": "../../../../molds/mold_v0/codebase/packs/pack.schema.json",
+  "$comment": "Flagwell's config-only pack (examples/mold_v0/feature-flags). JSON only; prompt.md describes the same product in words. The developer surface (keys, client sessions, webhooks, SDKs) is written into this pack from the spec's developer_surface by mint.py new --spec.",
+  "id": "flagwell",
+  "name": "Flagwell flags and experiments",
+  "version": "1.0.0",
+  "description": "Feature flags, rollouts and per-user overrides kept as append-only chained records, yes/no checks a product calls to ask whether a flag is on, experiments with decision clocks, releases received from CI, and an agent that writes an experiment's readout.",
+  "words": { "run": "readout", "runs": "readouts", "workspace": "project" },
+  "record_areas": [
+    {
+      "name": "flags",
+      "label": "Flags",
+      "description": "One feature flag; its record key is the flag key the product's code asks about.",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["flag_type", "status", "owner_team", "description"],
+      "fields": [
+        { "name": "description", "label": "What it controls", "type": "text", "required": true, "max_length": 500 },
+        { "name": "flag_type", "label": "Type", "type": "enum", "required": true, "options": [
+          { "value": "release", "label": "Release toggle" }, { "value": "experiment", "label": "Experiment" },
+          { "value": "ops", "label": "Operational switch" }, { "value": "permission", "label": "Permission" } ] },
+        { "name": "owner_team", "label": "Owning team", "type": "text", "max_length": 80 },
+        { "name": "remove_by", "label": "Remove by", "type": "date", "help": "When the code paths behind a release toggle should be gone." },
+        { "name": "status", "label": "Status", "type": "enum", "options": [
+          { "value": "active", "label": "Active" }, { "value": "deprecated", "label": "Deprecated" },
+          { "value": "archived", "label": "Archived" } ] }
+      ],
+      "lifecycle": {
+        "field": "status",
+        "initial": "active",
+        "transitions": [
+          { "from": ["active"], "to": "deprecated", "label": "Deprecate" },
+          { "from": ["deprecated"], "to": "archived", "label": "Archive", "roles": ["owner"] },
+          { "from": ["deprecated"], "to": "active", "label": "Bring back" }
+        ]
+      },
+      "clocks": [
+        {
+          "name": "cleanup",
+          "label": "Clean up by",
+          "starts": { "event": "created" },
+          "after": "90d",
+          "not_later_than": "remove_by",
+          "stops_when": { "field": "status", "in": ["archived"] },
+          "notify": ["owner"],
+          "remind": [ { "before": "14d" } ],
+          "escalate": [ { "after": "14d", "label": "Tell the owners again", "notify": ["owner"] } ]
+        }
+      ]
+    },
+    {
+      "name": "rollouts",
+      "label": "Rollouts",
+      "description": "Every change of a flag's state in one environment, appended and never edited: the latest one is the flag's state.",
+      "role": "source",
+      "scope": "workspace",
+      "append_only": true,
+      "chain": true,
+      "list_columns": ["flag", "environment", "enabled", "percentage", "changed_on"],
+      "fields": [
+        { "name": "flag", "label": "Flag", "type": "reference", "to": "flags", "required": true },
+        { "name": "environment", "label": "Environment", "type": "enum", "required": true, "options": [
+          { "value": "development", "label": "Development" }, { "value": "staging", "label": "Staging" },
+          { "value": "production", "label": "Production" } ] },
+        { "name": "enabled", "label": "On", "type": "boolean", "required": true },
+        { "name": "percentage", "label": "Share of users", "type": "number", "min": 0, "max": 100, "help": "The product's SDK buckets users by a hash of their id; 100 means everyone." },
+        { "name": "segment", "label": "Segment", "type": "text", "max_length": 200 },
+        { "name": "changed_on", "label": "Changed", "type": "date", "required": true },
+        { "name": "reason", "label": "Why", "type": "text", "max_length": 1000 }
+      ]
+    },
+    {
+      "name": "overrides",
+      "label": "User overrides",
+      "description": "A flag forced on or off for one end user, appended and never edited.",
+      "role": "source",
+      "scope": "workspace",
+      "append_only": true,
+      "chain": true,
+      "list_columns": ["flag", "environment", "enabled", "expires_on"],
+      "fields": [
+        { "name": "flag", "label": "Flag", "type": "reference", "to": "flags", "required": true },
+        { "name": "environment", "label": "Environment", "type": "enum", "required": true, "options": [
+          { "value": "development", "label": "Development" }, { "value": "staging", "label": "Staging" },
+          { "value": "production", "label": "Production" } ] },
+        { "name": "user_ref", "label": "User id", "type": "text", "required": true, "max_length": 200, "encrypted": true, "searchable": "equality", "reveal_roles": ["owner"] },
+        { "name": "enabled", "label": "On", "type": "boolean", "required": true },
+        { "name": "expires_on", "label": "Expires", "type": "date" },
+        { "name": "reason", "label": "Why", "type": "text", "max_length": 1000 }
+      ]
+    },
+    {
+      "name": "experiments",
+      "label": "Experiments",
+      "description": "A controlled test behind an experiment flag, from hypothesis to decision.",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": ["flag", "state", "primary_metric", "started_on", "result"],
+      "fields": [
+        { "name": "flag", "label": "Flag", "type": "reference", "to": "flags", "required": true },
+        { "name": "hypothesis", "label": "Hypothesis", "type": "text", "required": true, "max_length": 2000 },
+        { "name": "primary_metric", "label": "Primary metric", "type": "text", "required": true, "max_length": 120 },
+        { "name": "minimum_effect", "label": "Smallest effect worth shipping (%)", "type": "number", "min": 0, "max": 100 },
+        { "name": "started_on", "label": "Started", "type": "date" },
+        { "name": "decider", "label": "Decides", "type": "person" },
+        { "name": "state", "label": "State", "type": "enum", "options": [
+          { "value": "draft", "label": "Draft" }, { "value": "running", "label": "Running" },
+          { "value": "stopped", "label": "Stopped early" }, { "value": "concluded", "label": "Concluded" } ] },
+        { "name": "result", "label": "Result", "type": "enum", "options": [
+          { "value": "variant_wins", "label": "Variant wins" }, { "value": "control_wins", "label": "Control wins" },
+          { "value": "no_difference", "label": "No difference" }, { "value": "inconclusive", "label": "Inconclusive" } ] },
+        { "name": "metrics_export", "label": "Metrics export", "type": "file", "help": "The analytics export the readout agent reads (CSV)." }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "draft",
+        "transitions": [
+          { "from": ["draft"], "to": "running", "label": "Start" },
+          { "from": ["running"], "to": "stopped", "label": "Stop early", "roles": ["owner"] },
+          { "from": ["running"], "to": "concluded", "label": "Conclude" }
+        ]
+      },
+      "clocks": [
+        {
+          "name": "decide",
+          "label": "Decide by",
+          "starts": { "event": "entered", "state": "running" },
+          "after": "14d",
+          "stops_when": { "field": "state", "in": ["stopped", "concluded"] },
+          "assignee": "decider",
+          "notify": ["assignee", "owner"],
+          "remind": [ { "before": "3d" } ],
+          "escalate": [ { "after": "2d", "label": "Tell the owners", "notify": ["owner"] } ]
+        }
+      ]
+    },
+    {
+      "name": "releases",
+      "label": "Releases",
+      "description": "A deployment reported by the team's CI through an inbound webhook.",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["service", "environment", "commit", "deployed_on"],
+      "fields": [
+        { "name": "service", "label": "Service", "type": "text", "max_length": 120 },
+        { "name": "environment", "label": "Environment", "type": "text", "max_length": 40 },
+        { "name": "commit", "label": "Commit", "type": "text", "max_length": 64 },
+        { "name": "deployed_on", "label": "Deployed", "type": "text", "max_length": 40 }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "name": "is_flag_on",
+      "label": "Is this flag on in this environment?",
+      "description": "The latest rollout of the flag in the environment decides; an archived flag is always off.",
+      "inputs": { "flag": "string", "environment": "string" },
+      "rule": {
+        "area": "rollouts",
+        "match": { "flag": "$flag", "environment": "$environment" },
+        "latest_by": "updated_at",
+        "lookup": { "area": "flags", "as": "flag_rec", "key": "$flag" },
+        "require": [
+          { "field": "enabled", "eq": true, "label": "The latest rollout turned it on" },
+          { "field": "flag_rec.status", "ne": "archived", "label": "The flag is not archived" }
+        ]
+      },
+      "explain": true
+    },
+    {
+      "name": "is_on_for_user",
+      "label": "Is this flag forced on for this user?",
+      "description": "The latest unexpired override for the user decides; with no override, ask is_flag_on.",
+      "inputs": { "flag": "string", "environment": "string", "user": "string" },
+      "rule": {
+        "area": "overrides",
+        "match": { "flag": "$flag", "environment": "$environment", "user_ref": "$user" },
+        "latest_by": "updated_at",
+        "require": [
+          { "field": "enabled", "eq": true, "label": "The override turns it on" },
+          { "any": [ { "field": "expires_on", "exists": false }, { "field": "expires_on", "gt": "now" } ], "label": "The override has not expired" }
+        ]
+      },
+      "explain": true
+    }
+  ],
+  "credentials": [
+    {
+      "name": "analytics_token",
+      "label": "Analytics read token",
+      "help": "Optional: a read-only token for your analytics service, so the readout agent can pull fresh numbers instead of the uploaded export.",
+      "bound_to": "workspace",
+      "optional": true,
+      "deliver_as": { "env": "ANALYTICS_TOKEN" }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "experiment_readout",
+      "label": "Write an experiment readout",
+      "description": "Reads one experiment (its hypothesis, primary metric, smallest worthwhile effect and the metrics export, or the analytics service with the token) and writes the readout: the effect with its interval, whether it clears the smallest worthwhile effect, guardrail metrics, a plain recommendation, and what the data cannot say.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 2,
+      "budget_usd": 3,
+      "month_budget_usd": 90,
+      "concurrency_per_workspace": 2,
+      "egress": ["analytics.example.com"],
+      "credentials": ["analytics_token"],
+      "args": [ { "name": "experiment", "label": "Experiment", "type": "reference", "to": "experiments", "required": true } ],
+      "report": { "path": "out/readout.md", "label": "Experiment readout", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/experiment-readout",
+        "commit": "6666666666666666666666666666666666666666",
+        "command": ["python3", "readout.py", "--experiment", "{experiment}"],
+        "args": { "experiment": { "from": "scope.experiment" } },
+        "validate": { "command": ["python3", "validate_readout.py", "out/readout.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 900
+      }
+    }
+  ],
+  "onboarding": [
+    { "id": "first_flag", "label": "Create your first flag", "done_when": "record:flags" },
+    { "id": "first_rollout", "label": "Turn it on in development", "done_when": "record:rollouts" },
+    { "id": "ask_check", "label": "Ask is_flag_on from your code or your AI app", "done_when": "first_call" },
+    { "id": "connect_ai", "label": "Connect your AI app", "done_when": "connected" }
+  ],
+  "metrics": [
+    { "name": "active_flags", "label": "Active flags", "over": "flags", "where": [ { "field": "status", "op": "eq", "value": "active" } ] },
+    { "name": "stale_flags", "label": "Past clean-up date", "over": "flags", "clock": { "name": "cleanup", "is": ["overdue", "missed"] },
+      "where": [ { "field": "status", "op": "ne", "value": "archived" } ] },
+    { "name": "changes_per_week", "label": "Rollout changes", "over": "rollouts", "by_time": { "at": "created", "every": "week", "last": 8 } },
+    { "name": "running_experiments", "label": "Running experiments", "over": "experiments", "where": [ { "field": "state", "op": "eq", "value": "running" } ] },
+    { "name": "flags_by_type", "label": "Flags by type", "over": "flags", "group_by": "flag_type" },
+    { "name": "changes_by_environment", "label": "Changes by environment", "over": "rollouts", "group_by": "environment" },
+    { "name": "experiment_results", "label": "Experiment results", "over": "experiments", "group_by": "result",
+      "where": [ { "field": "state", "op": "eq", "value": "concluded" } ] },
+    { "name": "releases_per_week", "label": "Releases", "over": "releases", "by_time": { "at": "created", "every": "week", "last": 8 } },
+    { "name": "overrides_count", "label": "User overrides", "over": "overrides" }
+  ],
+  "charts": [
+    { "name": "headline", "title": "Flags at a glance", "type": "number", "metrics": ["active_flags", "stale_flags", "overrides_count", "running_experiments"] },
+    { "name": "types", "title": "Flags by type", "type": "bar", "metrics": ["flags_by_type"] },
+    { "name": "changes", "title": "Rollout changes and releases per week", "type": "line", "metrics": ["changes_per_week", "releases_per_week"] },
+    { "name": "environments", "title": "Changes by environment", "type": "bar", "metrics": ["changes_by_environment"] },
+    { "name": "results", "title": "How experiments ended", "type": "bar", "metrics": ["experiment_results"] }
+  ],
+  "tabs": [
+    { "id": "overview", "kind": "overview", "label": "Overview", "icon": "dashboard", "include": ["setup"],
+      "sparklines": ["active_flags", "stale_flags", "changes_per_week", "running_experiments"],
+      "charts": ["types", "changes", "environments", "results"] },
+    { "id": "flags", "kind": "area", "area": "flags", "label": "Flags", "icon": "adjustments", "group": "Flags",
+      "views": ["table", "detail"],
+      "action": { "kind": "create_record", "label": "New flag", "area": "flags" } },
+    { "id": "rollouts", "kind": "area", "area": "rollouts", "label": "Rollouts", "icon": "rocket", "group": "Flags",
+      "sparklines": ["changes_per_week", "active_flags", "overrides_count", "stale_flags"],
+      "action": { "kind": "create_record", "label": "Change a rollout", "area": "rollouts" } },
+    { "id": "overrides", "kind": "area", "area": "overrides", "label": "User overrides", "icon": "user", "group": "Flags",
+      "sparklines": ["overrides_count", "changes_per_week", "active_flags", "stale_flags"],
+      "action": { "kind": "create_record", "label": "Override for a user", "area": "overrides" } },
+    { "id": "experiments", "kind": "area", "area": "experiments", "label": "Experiments", "icon": "chartLine", "group": "Experiments",
+      "views": ["table", "detail"],
+      "action": { "kind": "create_record", "label": "New experiment", "area": "experiments" } },
+    { "id": "readouts", "kind": "reports", "label": "Readouts", "icon": "post", "group": "Experiments",
+      "action": { "kind": "start_run", "label": "Write a readout", "job_kind": "experiment_readout" } },
+    { "id": "releases", "kind": "area", "area": "releases", "label": "Releases", "icon": "code", "group": "Flags",
+      "sparklines": ["releases_per_week", "changes_per_week", "active_flags", "running_experiments"],
+      "action": false, "reason": "Releases arrive only from the team's CI through the inbound webhook (Settings > Developers); nobody types one in." }
+  ],
+  "mcp": {
+    "instructions": "Flagwell keeps a project's feature flags, their rollouts and per-user overrides (append-only, hash-chained), experiments and releases. To know whether a flag is on, call check_is_on_for_user first, then check_is_flag_on; never infer it from the lists. A flag change is a new rollout record, never an edit."
+  }
+}

@@ -8,7 +8,6 @@
 // the record it ran over. A reports tab lists the finished runs only, newest result first.
 import Link from 'next/link';
 import { useMemo, type ReactNode } from 'react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
@@ -20,7 +19,7 @@ import { fill } from '@/lib/vocabulary';
 import { formatValue } from './charts';
 import { EmptyState } from './empty';
 import { ExportRowsButton } from './export';
-import { TabActionFab } from './action-fab';
+import { useTabAction } from './tab-action';
 import { duration, FINISHED, JOB_KINDS, lowerFirst, RESULT_LABELS, resultCounts, RUN_STATUSES, runKindLabel, runSeconds, runStatusText, runTarget, targetLabel, when, type Run } from './run-rows';
 
 type Ref = { area: string; key: string };
@@ -34,11 +33,11 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 const dash = <span className='text-muted-foreground'>—</span>;
-// Red for a failed run, its kind of failure named where it needs saying (mold_v0-188: output missing) and its error as
-// the badge's title; the run's detail shows the error in full.
-const statusBadge = (r: Pick<Run, 'status' | 'error_kind' | 'error'>) => (
-  <Badge variant={r.status === 'failed' ? 'destructive' : r.status === 'succeeded' ? 'secondary' : 'outline'}
-    title={r.status === 'failed' && r.error ? r.error : undefined}>{runStatusText(r)}</Badge>
+// Red text for a failed run, its kind of failure named where it needs saying (mold_v0-188: output missing) and its error
+// as the title; the run's detail shows the error in full. mold_v0-217: plain text in the cell, no badge.
+const statusText = (r: Pick<Run, 'status' | 'error_kind' | 'error'>) => (
+  <span data-run-status={r.status} className={r.status === 'failed' ? 'text-destructive' : undefined}
+    title={r.status === 'failed' && r.error ? r.error : undefined}>{runStatusText(r)}</span>
 );
 
 function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
@@ -53,7 +52,7 @@ function columns(reports: boolean, runs: readonly Run[]): RecordCol<Run>[] {
       value: (r) => `${r.pack}/${r.kind}`,
       render: (r) => <span className='leading-snug font-medium'>{runKindLabel(r.pack, r.kind)}</span>
     },
-    { key: 'status', label: 'Status', type: 'select', options: RUN_STATUSES, keep: true, value: (r) => r.status, render: (r) => statusBadge(r) },
+    { key: 'status', label: 'Status', type: 'select', options: RUN_STATUSES, keep: true, value: (r) => r.status, render: (r) => statusText(r) },
     ...(anyTarget ? [{
       key: 'target', label: target, type: 'select', value: (r) => runTarget(r)?.key ?? null,
       render: (r) => { const t = runTarget(r); return t ? <span className='font-mono text-xs break-all'>{t.key}</span> : dash; }
@@ -92,7 +91,7 @@ export function RunResults({ id }: { id: string }) {
         {data.results.map((r, i) => (
           <TableRow key={i}>
             <TableCell className='whitespace-normal break-all'>{ref(r.check)}</TableCell><TableCell className='whitespace-normal break-all'>{ref(r.asset)}</TableCell>
-            <TableCell><Badge variant={r.status === 'fail' || r.status === 'error' ? 'destructive' : 'secondary'}>{RESULT_LABELS[r.status] ?? r.status}</Badge></TableCell>
+            <TableCell className={r.status === 'fail' || r.status === 'error' ? 'text-destructive' : undefined}>{RESULT_LABELS[r.status] ?? r.status}</TableCell>
             <TableCell className='font-mono text-xs break-all whitespace-normal'>{r.evidence_ref ?? '—'}</TableCell>
           </TableRow>
         ))}
@@ -108,17 +107,20 @@ export function RunsTable({ tab, reports, summary }: {
   summary?: ReactNode;
 }) {
   const { data, error, reload } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=200'), []);
+  // mold_v0-217: the action's button in the search row; its form a full card in the list's place while open (?start=1).
+  const { button: action, card } = useTabAction(tab.action ? tab : null, reload);
   const runs = useMemo(() => {
     const all = data?.runs ?? [];
     return reports ? all.filter((r) => FINISHED.has(r.status) && r.status !== 'cancelled') : all;
   }, [data, reports]);
   const cols = useMemo(() => columns(reports, runs), [reports, runs]);
+  if (card) return card;
   if (error) return <ErrorState error={error} />;
   const noun = lowerFirst(tab.label);
   return (
     <RecordView<Run>
       id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}
-      fab={tab.action ? <TabActionFab tab={tab} onDone={reload} /> : undefined}
+      toolbarAction={action ?? undefined}
       rows={runs} rowKey={(r) => r.id} cols={cols} loading={!data}
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${runStatusText(r)} ${runTarget(r)?.key ?? ''} ${r.id}`}

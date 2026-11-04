@@ -347,7 +347,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   platform areas). `check:rls` probes both tables; `npm run test:record-areas` proves it with two workspaces.
   The list page (mold_v0-170) is the console's database table (`RecordView`): the area's `list_columns` typed by their
   fields (an enum filters by its options, a date or number sorts as one), search, a record count, sorting and filters,
-  a row opening the record beside the list with **Open record** for its own page; empty, it says where the area's rows
+  a row opening the record as a full card in the list's place (mold_v0-217) with **Open record** for its own page; empty, it says where the area's rows
   come from (for staff: its data repository, what to press on Data repositories, the admin MCP's sync tool;
   `web/src/features/records/empty.ts`). The breadcrumb names the area by its label, as the sidebar does. An area of
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
@@ -357,22 +357,46 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `/admin/records/<area>` has no title or description above it; it reads as a customer's list tab does (mold_v0-208):
   the area's four cards (`GET /api/admin/records/_console/<area>/sparklines`, `src/sparklines.ts` `areaSparklines`: an
   area tab's defaults over the shared rows, counted as platform work since they name no workspace; staff read every
-  card), the search row, the table, a row opening the record beside the list. Where staff may write, **New record** is
-  the primary floating action (the tab action's create form, `CreateRecordForm`) and an open record has **Edit** (its
+  card), the search row, the table, a row opening the record as a full card in its place. Where staff may write, **New record** is
+  the primary action at the search row's right end (the tab action's create form, `CreateRecordForm`, as a full card) and an open record has **Edit** (its
   title and fields, data the form does not show kept); both write through `/api/admin/data`, whose checks are unchanged.
-  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create and edit only for an area no
-  repository fills (an upstream catalog's registry, such as a regulators list, stays read only on the console: its
-  rows are its index's), with no encrypted field, for a role with `library`, the staff tool not withheld. The record's
-  own page (`/admin/records/<area>/<key>`) is one details card: key, every field by its label (references linked),
+  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create, edit and import for an area
+  whose rows the shell stores (not read live) with no encrypted field, for a role with `library` (Operator and Owner),
+  the staff tool not withheld; remove with `delete` (Owner); the repository that fills it. The record's
+  own page (`/admin/records/<area>/<key>`) is one details card: key, where it comes from, every field by its label (references linked),
   version, updated, its clocks' timeline and its links, with Edit on the same terms. No pack declares anything for it.
   `npm run test:record-areas` checks the cards and the offer per role; `npm run test:record-pages` the layout.
+  **Staff rows on every shared area (mold_v0-221).** An area a repository fills (an upstream catalog's regulators or
+  control library) takes staff rows too: until then it was read only on the console, so staff had no way to add to it.
+  The primary action reads **New <noun>** (the area's label in the singular: New report format, New regulator,
+  New control) and opens the create card; **Import** beside it reads a CSV or JSON file in the browser, maps its
+  columns to the key, title and fields (matched by name or label first), previews each row from the server (create,
+  update, override, unchanged, or invalid with its problems; `POST /api/admin/records/_console/<area>/import`, dry run
+  by default, `src/record-import.ts`) and imports the valid rows that change something as staff rows in one
+  transaction, at most 1000 per file: idempotent by key (fields the file leaves out keep their values; the same file
+  again writes nothing). Every row an import writes is an `IMPORT` line of the staff access log (`admin_access_log`,
+  as every staff request and admin MCP call; `/admin/access-log`), and a staff entry of the platform trail when it is
+  on; shared rows belong to no workspace, so no workspace's data trail holds them. A row's **provenance** is `staff`
+  (written through a door: no `source`) or `repository`; the staff list and detail routes return it per row
+  (`src/record-areas.ts` `platformProvenance`). A repository's rows stay read only: **Edit** on one reads
+  **Override** and saves a staff row of the same key that wins over it, the repository's version kept behind it
+  (`platform_records.upstream`, `sql/migrations/0040_platform_record_overrides.sql`) and refreshed by every index; the
+  details card marks it **Overridden by staff** with what it stands over. **Remove** (Owner) deletes a staff row, or
+  removes an override and puts the repository's version back; a door's delete of a repository's row is refused (409).
+  A repository's index never overwrites, prunes or claims a staff row, forced or not (a forced index only passes the
+  prune guard); a key staff added first becomes an override once the repository has it, and an override whose key the
+  repository drops stays as a plain staff row. The platform roles (`src/admin-roles.ts`): Viewer reads; Support adds
+  access requests, invitations and tips; Operator adds the library (these writes and imports among it); Owner adds
+  deleting. `npm run test:data-repositories` (staff rows survive a sync, forced too; overrides win; removing restores),
+  `npm run test:record-import` (the offer per role, cells typed, the preview's outcomes and problems, the import,
+  idempotent, the access log), `npm run test:migrations` (0040 and its rollback).
   **Every customer list is that table (mold_v0-176).** An area tab's table view (`RecordTableView`, the same component
   as the list page: a merged tab's rows too, a row opening the record of the first of its areas), the `runs` and
   `reports` tabs (`web/src/features/tabs/runs.tsx`: kind in the pack's words, status, the asset record it ran over,
   started or finished, duration, results and cost; status and kind filter by their options; a row opens the run beside
   the list with its error and results and a link to that record), Schedules (a row opens the schedule, where owners
   change when it runs or remove one they added; the switch turns it on and off in its row), Notices (a row's menu
-  dismisses it) and Credentials (a credential per row, opening its values and the form beside the list) all draw
+  dismisses it) and Credentials (a credential per row, opening its values and the form as a full card in the list's place) all draw
   `RecordView`, with the page's own empty state guiding the person (a tab's `empty`) and nothing linking to a staff page.
   Boards and timelines stay as they were. Pages a build's original look gives a look of their own (API keys, Usage,
   Activity, Connected apps, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
@@ -686,7 +710,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `"onprem_runners": true` (profile.json; the factory's `application.json` `profile.onprem_runners`, app-settable in
   [branding/rules.json](branding/rules.json), the app spec's `profile.onprem_runners`, the brief line `onprem_runners =
   true`). **Off** (absent or false, whatever its kinds declare): `/api/runners`, `/api/runner/*` and the staff
-  `/api/admin/onboarding/runners` are not mounted (404, so enrolment is refused), the Credentials page has no runner
+  `/api/admin/onboarding/runners` are not mounted (404, so enrolment is refused), Settings › Credentials has no runner
   section (nor the Credentials entry for it alone), the admin Compute page no On-premises runners tab, the customer guide
   no On-premises runner page and /admin/docs no runner guide, the data map no on-premises rows, and every run is hosted
   (a run queued on premises before goes back to the hosted scaler). There are no runner MCP tools, so the MCP surfaces
@@ -826,7 +850,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   attachment_count, mailbox, message_id → the area's fields }, set: { field: constant }, body_chars, backfill_days,
   attachments: { max_bytes, max_count } }`; the area is one of the pack's own workspace areas not fed by a repository
   (checked by definePack and the build). A workspace's owners ("manage") configure it on the console's **Settings ›
-  Email** page (`/app/settings/email`, `/api/email`; the sidebar gets a Settings group, also in a build with tabs):
+  Email** tab (`/app/settings?tab=email`, `/api/email`; mold_v0-218: the Settings entry directly below Overview):
   **Sending**: one sender per workspace, SMTP (STARTTLS or SSL/TLS, AUTH PLAIN), Microsoft 365 (Graph `sendMail`, app-only
   client credentials) or Google Workspace (Gmail `messages.send`, a service-account key with domain-wide delegation,
   the JWT signed here). The email adapter's messages about one workspace (due dates, usage alerts, invitations to it, a
@@ -952,7 +976,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
 - **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
   (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
   or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
-  owners set the values in the console (`/app/credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
+  owners set the values in the console (Settings › Credentials, `/app/settings?tab=credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
   only when a field exists; an asset binding must name an asset record of their own workspace); no answer carries a
   value, owners see the last 4 characters and everyone else only which values are set; a file field takes a multi-line
   value (a key). Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
@@ -991,7 +1015,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     the key's SHA256 fingerprint; never a secret). Only the server reads them: the app's JSON Web Token (RS256, nine
     minutes) goes to GitHub's `/app/` endpoints only, and no run, session, answer, log or error carries the key or a
     secret.
-  - **Install** (`/app/credentials`, section GitHub, owners): `POST /api/github-app/install` gives GitHub's install
+  - **Install** (Settings › Credentials, the GitHub row's card, owners): `POST /api/github-app/install` gives GitHub's install
     address with a state signed by the client secret around a one-time nonce (its sha256 stored in `github_app_states`
     for that workspace and person, ten minutes). GitHub returns the browser to `GET /api/github-app/callback` with the
     installation id and a user-authorization code (the app must "Request user authorization (OAuth) during
@@ -1037,7 +1061,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   - **The client** is the platform's: its id and secret are key-vault entries of provider `oauth_clients` under the labels
     the provider names, set by an owner of the platform with Add a key on `/admin/keys`; the page's OAuth providers
     section shows which are set and the redirect address to register (`<console>/api/credential-connections/callback`), never a value.
-  - **Connect** (`/app/credentials`, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
+  - **Connect** (Settings › Credentials, the field's card, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
     environment): `POST /api/credential-connections/connect` gives the provider's sign-in address with the shared signed one-time state
     (bound to the person and the workspace, ten minutes, used once; the slot and the sealed PKCE verifier kept
     server-side). `GET /api/credential-connections/callback` refuses another workspace's session, another person, a changed, used or
@@ -1104,7 +1128,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `optional: true` (default false) and, in one line, what a value `adds` (only beside `optional`; the help's first
   sentence after a leading "Optional." is used when absent: `src/vault-providers.ts` `optionalAdds`). A run never waits
   for a credential (`src/runs.ts` records which were delivered and which were missing); `optional` says the runs are
-  meant to go ahead without it and do less. The company Credentials page and the admin Key vault (which lists every
+  meant to go ahead without it and do less. The company's Settings › Credentials and the admin Key vault (which lists every
   declared run credential, set or not, and offers them in Add a key) tag them Optional; `operator:vault-status` lists
   them apart from what the runs need (below).
 - **Run credentials and egress per company** (mold_v0-075, built): a file credential's path in a declared variable
@@ -1424,7 +1448,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `identity`; a step that does not fit (an index past the end, an index on an object, a property on a list) is no value.
   An index is idempotent (each row's `fingerprint`, keyed with the workspace's key for a sealed area, and its `source`
   are stored with it), one transaction, and prunes only rows it wrote; a row written or changed by hand is kept (and
-  counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index. For an upstream catalog an
+  counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index (a shared row never: staff rows
+  and overrides, mold_v0-221, above). For an upstream catalog an
   empty result over existing rows, or a prune of more than `prune.max_fraction` (0.5) of its rows, is refused unless
   staff force it; a workspace's committed files are the truth (no such guard). A sorted page's cursor is the sort and
   the last key only: the row's sort value is read again in the caller's scope (a row gone by then: 409). `npm run test:data-api`,
@@ -1809,7 +1834,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   charts are an overview's), so no chart grid sits above or around a list. Why ignored and not refused: every pack
   written before (Maxwell's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
   pack change, not a broken build.
-  **A list tab's floating action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
+  **A list tab's primary action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
   config only: `{"kind": "start_run", "label"?, "job_kind"? | "job_kinds"?}` on an area, runs or reports tab (one of
   the pack's job kinds, a picker of 2 to 20 in order, or every kind of the pack; never one gated by an approval),
   `{"kind": "new_schedule", "label"?, "job_kind"?}` on a schedules tab (a kind the pack itself schedules, preset in the
@@ -1820,10 +1845,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   as a form (typed as record fields), the asset record it runs over and its environment when the kind takes them; a
   schedule through the schedules page's Add a schedule form (in a drawer, in place of the form below the list); a record
   through the data API's create (`POST /api/data/<area>`), its key, title and fields. The button
-  (`web/src/features/tabs/action-fab.tsx`) is the brand's primary colour, fixed at the bottom right 1.5rem from the
-  window's edges plus the safe-area insets, an icon and its label from `sm` up and the icon alone on a phone (its
-  label the accessible name); the list's height leaves its space free below the pager (`RecordView` `fab`,
-  `FAB_SPACE`), so it never covers the last row or the pager. It is shown only to a role that may use it
+  (`web/src/features/tabs/tab-action.tsx`; mold_v0-217, before it floated at the window's bottom right) is a normal
+  primary button, the last control of the list's search row at its right end (`RecordView` `toolbarAction`; a board or
+  a timeline: after Export CSV in the views' row), the toolbar's button size, an icon and its label from `sm` up and the
+  icon alone on a phone (its label the accessible name and title), the row wrapping as it must. Its form opens as a full
+  card in the list's place (`ActionCard`, `CardForm`; the record details card's style): a way back, the title, a short
+  summary of what will happen, the fields, then the submit and Cancel. It is kept in the address (`?start=1` for a run,
+  `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
+  again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
+  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too. A
+  list (an area, runs, reports or schedules tab, a records page) has no title or description above it, no count toggle
+  in its toolbar (the Overdue filter is the Filter menu's rule, `?overdue=1`), and its cells show a status as plain
+  text, not a badge. Every area list has **Export** in its search row just left of the primary action (empty or not;
+  `web/src/features/tabs/export.tsx`, the same pages with `?audit=export`, so the data trail records it, and withheld where
+  the pack withholds the area's export): the export tool's file, or, when search or a filter narrows the list, its rows shown alone. It is shown only to a role that may use it
   (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
   roles and `edit`), and the server refuses the rest. The route is mounted only when a tab has an action (since
   mold_v0-213 every list tab's by default), so a build without a list tab (zero packs, Octillion) answers nothing and
@@ -2763,6 +2798,30 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   access / Requests switch above the table). The separate page and its sidebar entry are gone: the old address is
   the normal not-found page, no redirect, and nothing links to it. The staff `/admin/access-log` is unchanged (its own
   sidebar entry under Security; the staff guide says what it is for). Proof: `npm run test:record-pages` (section 7).
+- **Settings: Credentials and Email in one page** (mold_v0-218): the customer console's one **Settings** entry sits
+  directly below Overview (the console's home `/app`, or a pack's overview tab; else first), whatever the sidebar is
+  made of (the shell's, the packs' tabs or the profile's: a pack's `credentials` tab and a declared sidebar's
+  `credentials` both open it and leave their own place for it, their roles kept; `web/src/config/nav-config.ts`
+  `withSettings`). `/app/settings` has the in-page tabs **Credentials | Email** (`?tab=`, Credentials the default; no
+  title above the strip): Credentials when a pack declares a credential field or a kind that needs the workspace's
+  private network (and the build does not hide `credentials`: `console.hide` names the tab,
+  `/app/settings?tab=credentials`), Email when a pack declares `email`; one alone is its table with no strip; neither,
+  and there is no entry and the page is not found (gen-packs `settingsPage`, `web/src/lib/console-routes.ts` SHOWN).
+  Each tab is the standard list, full page: four cards, the search row, the table. **Credentials**
+  (`web/src/features/credentials/credentials-tab.tsx`): cards Set, Missing, Required missing, Changed in the last 7
+  days; a row per credential field (pasted or connected through OAuth), the GitHub connection and the on-premises runner
+  (each when the build has it): name, what it is for, bound to (workspace, each record of an area, or per environment),
+  status in words (Set, Missing, Optional), last changed and by whom; a row opens its full details card with Set,
+  Replace, Clear, Connect, Disconnect, Install and the runners' Add and Revoke, as before. Values stay write-only (owners
+  see a value's last 4 characters in its card, nothing more). **Email** (`web/src/features/email/email-tab.tsx`, owners;
+  anyone else reads that an owner sets it up): cards Mailboxes, Messages taken in, With an error, Sender (On, Off, Not
+  set); a row for the sender and each mailbox: provider, the address the workspace gave, the folder or label, status,
+  last checked, messages taken in, last error; the search row's **Add mailbox** and **Set sender** (until one is set;
+  mold_v0-217's `ToolbarAction`) open the shell's full card in the list's place (`ActionCard`, `CardForm`); a row's card holds On, Test, the form, Remove or Disconnect. The old
+  `/app/credentials` and `/app/settings/email` are gone with no redirect (the normal not-found page), as are their
+  sidebar entries; the OAuth and GitHub returns, the MCP get-started step, the guides and the console lead to
+  `/app/settings?tab=credentials`; a pack's link to the mailbox setting is `/app/settings?tab=email`. Proof: `npm run
+  test:record-pages` (section 9), `test:console-sidebar`, `test:console-tabs`.
 - **Action and Actor columns** (mold_v0-209): both trails' tables (Billing's tab and `/admin/access-log`) show **Action**
   (what was done: a data entry's list, read, reveal, export, create, update, move or delete; a platform entry's read,
   change, delete, tool call, MCP request, sign-in or check, from its kind, method and path) and **Actor** (who did it:

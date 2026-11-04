@@ -717,7 +717,9 @@ const platformAreaFor = (pack: string | null, name: string) => {
 
 /**
  * Platform staff (or a pack's admin route) writing a shared row. `pack` limits a pack to its own areas; null is the admin
- * API. A row written here is a hand row (no source): a repository's re-index never prunes it.
+ * API. A row written here is a hand row (no source; provenance "staff"): a repository's re-index never prunes or
+ * overwrites it. mold_v0-221: written over a repository's row it is an override, the repository's version kept behind
+ * it (`upstream`, sql/migrations/0040) until deletePlatform removes the override and puts that version back.
  */
 export async function putPlatform(pack: string | null, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
   const area = platformAreaFor(pack, name);
@@ -729,12 +731,15 @@ export async function putPlatform(pack: string | null, name: string, key: string
   return asPlatform(async () => {
     const db = await q();
     const params = [area.pack, area.name, key, t, JSON.stringify(data), version, meta?.source ?? null, meta?.fingerprint ?? null];
+    // What stays behind the row (mold_v0-221): a repository's write has nothing behind it; a hand write over a
+    // repository's row keeps that row; a hand write over a hand row keeps what was behind it.
+    const behind = (row: string, incoming: string) => `CASE WHEN ${incoming} IS NOT NULL THEN NULL WHEN ${row}.source IS NOT NULL THEN jsonb_build_object('title', ${row}.title, 'data', ${row}.data, 'version', ${row}.version, 'source', ${row}.source, 'fingerprint', ${row}.fingerprint) ELSE ${row}.upstream END`;
     const [r] = mode === "update"
-      ? await db.query<Row>(`UPDATE platform_records SET title = $4, data = $5, version = $6, source = $7, fingerprint = $8, updated_at = now()
+      ? await db.query<Row>(`UPDATE platform_records SET upstream = ${behind("platform_records", "$7::text")}, title = $4, data = $5, version = $6, source = $7, fingerprint = $8, updated_at = now()
           WHERE pack = $1 AND area = $2 AND key = $3 RETURNING key, title, data, version, updated_at`, params)
       : await db.query<Row>(
         `INSERT INTO platform_records (pack, area, key, title, data, version, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (pack, area, key) DO ${mode === "create" ? "NOTHING" : `UPDATE SET title = excluded.title, data = excluded.data, version = excluded.version, source = excluded.source, fingerprint = excluded.fingerprint, updated_at = now()${
+         ON CONFLICT (pack, area, key) DO ${mode === "create" ? "NOTHING" : `UPDATE SET upstream = ${behind("platform_records", "excluded.source")}, title = excluded.title, data = excluded.data, version = excluded.version, source = excluded.source, fingerprint = excluded.fingerprint, updated_at = now()${
            // A repository's writer replaces only its own rows: a row written by hand meanwhile stays (unless staff forced it).
            meta && !meta.claim ? " WHERE platform_records.source = excluded.source" : ""}`}
          RETURNING key, title, data, version, updated_at`, params);
@@ -743,11 +748,54 @@ export async function putPlatform(pack: string | null, name: string, key: string
     return toRecord(area, r, null);
   });
 }
+/**
+ * Delete a shared row. A repository's writer (`source`) deletes only rows it wrote (its prune). A door (staff, a pack's
+ * admin route) deletes only hand rows (mold_v0-221): a repository's row is read only (override it instead), and removing
+ * an override puts the repository's version kept behind it back (its title, fields, version, source and fingerprint).
+ */
 export async function deletePlatform(pack: string | null, name: string, key: string, source: string | null = null): Promise<boolean> {
   const area = platformAreaFor(pack, name);
   if (source === null && isReadOnlyArea(area)) throw readOnly(area);
-  return asPlatform(async () => (await (await q()).query(
-    "DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 AND ($4::text IS NULL OR source = $4) RETURNING id", [area.pack, area.name, checkKey(key), source])).length > 0);
+  checkKey(key);
+  return asPlatform(async () => {
+    const db = await q();
+    if (source !== null) return (await db.query("DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 AND source = $4 RETURNING id", [area.pack, area.name, key, source])).length > 0;
+    const restored = await db.query(`UPDATE platform_records SET title = upstream->>'title', data = COALESCE(upstream->'data', '{}'::jsonb), version = upstream->>'version',
+        source = upstream->>'source', fingerprint = upstream->>'fingerprint', upstream = NULL, updated_at = now()
+      WHERE pack = $1 AND area = $2 AND key = $3 AND source IS NULL AND upstream IS NOT NULL RETURNING id`, [area.pack, area.name, key]);
+    if (restored.length) return true;
+    const [row] = await db.query<{ source: string | null }>("SELECT source FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3", [area.pack, area.name, key]);
+    if (row?.source) throw new PackError(`${area.label} record ${key} comes from repository ${row.source}: read only (override it instead)`, 409);
+    return (await db.query("DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 AND source IS NULL RETURNING id", [area.pack, area.name, key])).length > 0;
+  });
+}
+
+/** Shared rows as stored, by key (mold_v0-221, src/record-import.ts): title, fields and source, for an import's plan. */
+export async function platformStored(area: RecordArea, keys: string[]): Promise<Map<string, { title: string | null; data: Record<string, unknown>; source: string | null }>> {
+  if (!keys.length || isLive(area)) return new Map();
+  const rows = await asPlatform(async () => (await q()).query<{ key: string; title: string | null; data: Record<string, unknown>; source: string | null }>(
+    "SELECT key, title, data, source FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY($3::text[])", [area.pack, area.name, keys]));
+  return new Map(rows.map((r) => [r.key, { title: r.title, data: r.data ?? {}, source: r.source }]));
+}
+/** Where a shared row comes from (mold_v0-221): the staff record pages' marks and Override. */
+export interface Provenance {
+  /** "staff": written by hand through a door; "repository": its repository's index wrote it. */
+  by: "staff" | "repository";
+  /** The repository whose row it is, or whose row a staff override stands over. */
+  repository: string | null;
+  /** A staff row over a repository's row: what the repository says (shown, never the row). */
+  overrides: { title: string | null; version: string | null } | null;
+}
+/** The provenance of shared rows by key (rows not found are left out). */
+export async function platformProvenance(area: RecordArea, keys: string[]): Promise<Map<string, Provenance>> {
+  if (!keys.length || isLive(area)) return new Map();
+  const rows = await asPlatform(async () => (await q()).query<{ key: string; source: string | null; up_source: string | null; up_title: string | null; up_version: string | null; overridden: boolean }>(
+    `SELECT key, source, upstream->>'source' AS up_source, upstream->>'title' AS up_title, upstream->>'version' AS up_version, upstream IS NOT NULL AS overridden
+     FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY($3::text[])`, [area.pack, area.name, keys]));
+  return new Map(rows.map((r) => [r.key, {
+    by: r.source ? "repository" : "staff", repository: r.source ?? r.up_source ?? null,
+    overrides: !r.source && r.overridden ? { title: r.up_title ?? null, version: r.up_version ?? null } : null,
+  } satisfies Provenance]));
 }
 
 // ---------- batches (mold_v0-066) ----------
@@ -810,40 +858,70 @@ async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: un
 
 async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   const ops = checkOps(raw, max);
-  return inTransaction(null, async () => {
-    const out: RecordOperationResult[] = [];
-    for (const [i, o] of ops.entries()) {
-      try {
-        if (o.op === "move") throw new PackError("a shared area has no lifecycle: its records do not move", 400);
-        if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deletePlatform(pack, o.area, o.key, source) });
-        else {
-          const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
-          out.push({ op: o.op, area: o.area, key: o.key, record: await putPlatform(pack, o.area, o.key, { title: o.title, data: o.data, version: o.version }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
-        }
-      } catch (e) { throw numbered(i, o, e); }
-    }
-    return out;
-  });
+  return inTransaction(null, () => platformOps(pack, ops, source, fingerprints, claim));
+}
+/** A shared batch's operations, inside its transaction (inTransaction). */
+async function platformOps(pack: string | null, ops: RecordOperation[], source: string | null, fingerprints: Map<string, string> | undefined, claim: boolean): Promise<RecordOperationResult[]> {
+  const out: RecordOperationResult[] = [];
+  for (const [i, o] of ops.entries()) {
+    try {
+      if (o.op === "move") throw new PackError("a shared area has no lifecycle: its records do not move", 400);
+      if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deletePlatform(pack, o.area, o.key, source) });
+      else {
+        const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
+        out.push({ op: o.op, area: o.area, key: o.key, record: await putPlatform(pack, o.area, o.key, { title: o.title, data: o.data, version: o.version }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
+      }
+    } catch (e) { throw numbered(i, o, e); }
+  }
+  return out;
 }
 
 // ---------- a repository's own writer (mold_v0-059; src/data-repositories.ts) ----------
 
-/** A row as its repository last wrote it: its key, its source and fingerprint (never its values). */
-export interface StoredMark { key: string; source: string | null; fingerprint: string | null }
+/**
+ * A row as its repository last wrote it: its key, its source and fingerprint (never its values); for a shared staff row
+ * (mold_v0-221), the source and fingerprint of the repository's version kept behind it.
+ */
+export interface StoredMark { key: string; source: string | null; fingerprint: string | null; behind_source?: string | null; behind_fingerprint?: string | null }
 /** The marks of every row of an area (the workspace's own for a workspace area). */
 export async function storedMarks(area: RecordArea, orgId: number | null): Promise<StoredMark[]> {
-  if (orgId === null) return asPlatform(async () => (await q()).query<StoredMark>("SELECT key, source, fingerprint FROM platform_records WHERE pack = $1 AND area = $2 ORDER BY key", [area.pack, area.name]));
+  if (orgId === null) return asPlatform(async () => (await q()).query<StoredMark>(
+    "SELECT key, source, fingerprint, upstream->>'source' AS behind_source, upstream->>'fingerprint' AS behind_fingerprint FROM platform_records WHERE pack = $1 AND area = $2 ORDER BY key", [area.pack, area.name]));
   return withTenant(orgId, async () => (await q()).query<StoredMark>("SELECT key, source, fingerprint FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY key", [orgId, area.pack, area.name]));
 }
 /**
  * Write a repository's index as one transaction (all of it or none): puts carry the source and their fingerprints; a
  * delete removes only a row of that source. Not reachable from any door: only src/data-repositories.ts calls it.
  */
-export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
-  if (!ops.length) return [];
+export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>, claim = false, behind: BehindOp[] = []): Promise<RecordOperationResult[]> {
+  if (!ops.length && !behind.length) return [];
+  // mold_v0-221: the repository's versions behind staff rows of shared areas, in the same transaction as its rows.
+  if (orgId === null) return inTransaction(null, async () => {
+    const out = ops.length ? await platformOps(pack, checkOps(ops, MAX_INDEX_BATCH), source, fingerprints, claim) : [];
+    for (const b of behind) await keepBehind(pack, source, b, fingerprints);
+    return out;
+  });
   // The data trail (mold_v0-197): an index's writes are one entry (its source and how many rows), not one per row.
-  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints, claim)
-    : auditAs(orgId, () => batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim), (r) => ({ action: "update", pack, area: null, key: `index:${source}`.slice(0, 200), rows: r.length }));
+  return auditAs(orgId, () => batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim), (r) => ({ action: "update", pack, area: null, key: `index:${source}`.slice(0, 200), rows: r.length }));
+}
+/**
+ * What a repository's index writes behind a shared staff row of one of its keys (mold_v0-221): "put" its version of
+ * the row (an override's repository version, refreshed; never the row staff see), "clear" when the repository no
+ * longer has the key (the staff row stays, nothing behind it).
+ */
+export type BehindOp = { op: "put"; area: string; key: string; title?: string | null; data: Record<string, unknown>; version?: string | null } | { op: "clear"; area: string; key: string };
+async function keepBehind(pack: string, source: string, b: BehindOp, fingerprints: Map<string, string>) {
+  const area = platformAreaFor(pack, b.area);
+  const db = await q();
+  if (b.op === "clear") {
+    await db.query("UPDATE platform_records SET upstream = NULL WHERE pack = $1 AND area = $2 AND key = $3 AND source IS NULL AND upstream->>'source' = $4", [area.pack, area.name, checkKey(b.key), source]);
+    return;
+  }
+  // Checked as the row would be (types, required fields), not its references: it is never read as a record until it is put back.
+  const data = checkData(area, b.data, `${area.name} record ${b.key}`);
+  await db.query(`UPDATE platform_records SET upstream = jsonb_build_object('title', $4::text, 'data', $5::jsonb, 'version', $6::text, 'source', $7::text, 'fingerprint', $8::text)
+    WHERE pack = $1 AND area = $2 AND key = $3 AND source IS NULL`,
+    [area.pack, area.name, checkKey(b.key), title(b.title), JSON.stringify(data), b.version == null ? null : String(b.version).slice(0, 120), source, fingerprints.get(`${b.area}\u0000${b.key}`) ?? null]);
 }
 
 /**

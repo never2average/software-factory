@@ -4,7 +4,7 @@
  *
  *   GET    /api/credential-connections            a signed-in person of the workspace: the providers and the workspace's connections
  *   POST   /api/credential-connections/connect    an owner: {pack, name, asset?, environment?} -> the provider's sign-in address
- *   GET    /api/credential-connections/callback   the provider sends the owner's browser back here; on to the Credentials page with a code
+ *   GET    /api/credential-connections/callback   the provider sends the owner's browser back here; on to Settings › Credentials with a code
  *   DELETE /api/credential-connections            an owner: {pack, name, asset?, environment?} disconnects that slot
  *
  *   staff (/api/admin/onboarding, oauthAdminRoutes): GET /oauth (providers, whether the vault holds their client values,
@@ -52,7 +52,7 @@ export function oauthRouter(): Router {
     return out;
   }));
   r.get("/callback", async (req, res) => {
-    const back = (code: string) => res.redirect(303, `${consoleUrl()}/app/credentials?oauth=${encodeURIComponent(code)}`);
+    const back = (code: string) => res.redirect(303, `${consoleUrl()}/app/settings?tab=credentials&oauth=${encodeURIComponent(code)}`);
     if (!can(res) || !S(res).user) return void back("not_owner");
     try {
       const out = await completeConnect({ org: S(res).org, user: S(res).user!, by: who(res) }, req.query as Record<string, unknown>);

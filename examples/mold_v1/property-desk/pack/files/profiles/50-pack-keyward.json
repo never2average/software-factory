@@ -1,0 +1,530 @@
+{
+  "$comment": "Keyward's deployment profile (examples/mold_v1/property-desk): buildings as the accounts, maintenance tickets as the tasks area (a unit of work with a fix-by date), the quarterly inspection round as the period that holds the tickets due in it, and each building's service contracts with vendors as the implementations area (a standing arrangement run for months, several per building).",
+  "vocabulary": {
+    "account": {
+      "singular": "building",
+      "plural": "buildings"
+    },
+    "member": {
+      "singular": "coordinator",
+      "plural": "coordinators"
+    },
+    "owner": "Building manager",
+    "secondary_owner": "Deputy manager",
+    "account_context": "Building"
+  },
+  "chat": {
+    "hero_lines": [
+      "{product}",
+      "What is urgent today?",
+      "Read the latest inspection",
+      "Which tickets are overdue?",
+      "Who covers plumbing here?"
+    ],
+    "empty_sections": {
+      "urgent": "Urgent tickets",
+      "stalled": "Buildings with overdue tickets"
+    }
+  },
+  "dataroom": {
+    "root_label": "Building files",
+    "domains": {
+      "accounts": {
+        "label": "Buildings",
+        "description": "One folder per building: its inspections, plans and certificates."
+      },
+      "platform": {
+        "visible": false
+      },
+      "deliveries": {
+        "label": "Planned works",
+        "visible": true
+      },
+      "solutions": {
+        "visible": false
+      },
+      "tickets": {
+        "visible": false
+      },
+      "projects": {
+        "label": "Service contracts"
+      }
+    }
+  },
+  "persona": {
+    "base": false
+  },
+  "agent": {
+    "briefing": "This workspace runs maintenance for residential buildings. Buildings are the accounts. Maintenance tickets each have a place in the building, a trade, a fix-by date and the vendor doing the work. Inspection rounds hold the tickets due each quarter. Service contracts say which vendor covers which trade at a building. Urgent defects come first. Never invent a vendor, a price or a place."
+  },
+  "work_periods": {
+    "mode": "team",
+    "label": {
+      "singular": "inspection round",
+      "plural": "inspection rounds"
+    },
+    "list_label": {
+      "singular": "round",
+      "plural": "rounds"
+    },
+    "length_days": 90,
+    "auto_rollover": true,
+    "workspace_can_set_length": true
+  },
+  "records": {
+    "hub": {
+      "label": "Maintenance",
+      "icon": "clipboard-check"
+    },
+    "areas": {
+      "tasks": {
+        "label": {
+          "singular": "maintenance ticket",
+          "plural": "maintenance tickets"
+        },
+        "description": "One defect to fix at a building, by its fix-by date.",
+        "fields": {
+          "title": {
+            "label": "Defect"
+          },
+          "notes": {
+            "label": "Details and evidence"
+          },
+          "dueAt": {
+            "label": "Fix by",
+            "required": true
+          },
+          "assignee": {
+            "type": "person",
+            "label": "Coordinator"
+          },
+          "priority": {
+            "label": "Severity",
+            "options": [
+              {
+                "value": "high",
+                "label": "Urgent or high",
+                "tone": "red"
+              },
+              {
+                "value": "normal",
+                "label": "Normal",
+                "tone": "slate"
+              },
+              {
+                "value": "low",
+                "label": "Low",
+                "tone": "sky"
+              }
+            ]
+          },
+          "stage": {
+            "type": "pick_list",
+            "label": "Stage",
+            "options": [
+              {
+                "value": "reported",
+                "label": "Reported",
+                "tone": "sky"
+              },
+              {
+                "value": "with_vendor",
+                "label": "With vendor",
+                "tone": "amber"
+              },
+              {
+                "value": "scheduled",
+                "label": "Visit booked",
+                "tone": "violet"
+              },
+              {
+                "value": "on_hold",
+                "label": "Waiting for access",
+                "tone": "red"
+              },
+              {
+                "value": "fixed",
+                "label": "Fixed",
+                "tone": "green"
+              },
+              {
+                "value": "verified",
+                "label": "Verified",
+                "tone": "green"
+              },
+              {
+                "value": "cancelled",
+                "label": "Cancelled",
+                "tone": "muted"
+              }
+            ]
+          },
+          "location": {
+            "type": "text",
+            "label": "Where",
+            "required": "on_create",
+            "max_length": 120,
+            "help": "The building's way: Flat 3B, Stair A, Corridor L2, Roof."
+          },
+          "trade": {
+            "type": "pick_list",
+            "label": "Trade",
+            "options": [
+              {
+                "value": "Plumbing"
+              },
+              {
+                "value": "Electrical"
+              },
+              {
+                "value": "Heating"
+              },
+              {
+                "value": "Lifts"
+              },
+              {
+                "value": "Fire safety"
+              },
+              {
+                "value": "Joinery"
+              },
+              {
+                "value": "Roofing"
+              },
+              {
+                "value": "Cleaning"
+              },
+              {
+                "value": "General"
+              }
+            ]
+          },
+          "vendor": {
+            "type": "text",
+            "label": "Vendor",
+            "max_length": 120
+          },
+          "quote": {
+            "type": "money",
+            "currency": "USD",
+            "label": "Quote",
+            "min": 0
+          },
+          "visit_on": {
+            "type": "date",
+            "label": "Visit booked for"
+          },
+          "inspection_ref": {
+            "type": "text",
+            "label": "From inspection",
+            "max_length": 120,
+            "help": "The report and line it came from."
+          },
+          "photos": {
+            "type": "file",
+            "label": "Photos"
+          }
+        },
+        "lifecycle": {
+          "field": "stage",
+          "initial": "reported",
+          "enforce": "warn",
+          "categories": {
+            "reported": "open",
+            "with_vendor": "active",
+            "scheduled": "active",
+            "on_hold": "blocked",
+            "fixed": "active",
+            "verified": "done",
+            "cancelled": "cancelled"
+          },
+          "transitions": [
+            {
+              "from": [
+                "reported"
+              ],
+              "to": "with_vendor",
+              "label": "Send to vendor",
+              "requires": [
+                "vendor",
+                "trade"
+              ]
+            },
+            {
+              "from": [
+                "with_vendor"
+              ],
+              "to": "scheduled",
+              "label": "Book the visit",
+              "requires": [
+                "visit_on"
+              ]
+            },
+            {
+              "from": [
+                "with_vendor",
+                "scheduled"
+              ],
+              "to": "on_hold",
+              "label": "Waiting for access",
+              "requires_comment": true
+            },
+            {
+              "from": [
+                "on_hold"
+              ],
+              "to": "scheduled",
+              "label": "Rebook",
+              "requires": [
+                "visit_on"
+              ]
+            },
+            {
+              "from": [
+                "scheduled"
+              ],
+              "to": "fixed",
+              "label": "Mark fixed"
+            },
+            {
+              "from": [
+                "fixed"
+              ],
+              "to": "verified",
+              "label": "Verify",
+              "not_by": "assignee"
+            },
+            {
+              "from": "*",
+              "to": "cancelled",
+              "label": "Cancel",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "requires_comment": true
+            }
+          ]
+        },
+        "views": {
+          "default": "table",
+          "available": [
+            "table",
+            "board",
+            "timeline"
+          ],
+          "table": {
+            "columns": [
+              "title",
+              "location",
+              "stage",
+              "priority",
+              "trade",
+              "vendor",
+              "dueAt",
+              "assignee"
+            ]
+          },
+          "board": {
+            "by": "stage",
+            "card": {
+              "title": "title",
+              "meta": [
+                "location",
+                "dueAt"
+              ],
+              "badge": "priority"
+            }
+          },
+          "timeline": {
+            "start": "createdAt",
+            "end": "dueAt"
+          },
+          "create": {
+            "fields": [
+              "title",
+              "location",
+              "dueAt",
+              "priority",
+              "trade",
+              "assignee",
+              "notes"
+            ],
+            "submit_label": "Log a defect"
+          }
+        }
+      },
+      "implementations": {
+        "per_account": "many",
+        "label": {
+          "singular": "service contract",
+          "plural": "service contracts"
+        },
+        "description": "A vendor's standing contract to cover one trade at one building, for months at a time.",
+        "columns": "listed",
+        "title": "{vendor_name} · {contract_trade}",
+        "fields": {
+          "implementationStage": {
+            "order": 10,
+            "label": "Status",
+            "options": [
+              {
+                "value": "Kickoff",
+                "label": "Tendering"
+              },
+              {
+                "value": "Pilot",
+                "label": "Trial period"
+              },
+              {
+                "value": "Steady State",
+                "label": "Active"
+              },
+              {
+                "value": "On Hold",
+                "label": "Suspended"
+              }
+            ]
+          },
+          "implementationRiskLevel": {
+            "order": 20,
+            "label": "Performance",
+            "default": "Green"
+          },
+          "implementationOwnerEmail": {
+            "order": 30,
+            "type": "person",
+            "label": "Contract owner",
+            "default": "{me}"
+          },
+          "vendor_name": {
+            "order": 40,
+            "type": "text",
+            "label": "Vendor",
+            "required": true,
+            "max_length": 120
+          },
+          "contract_trade": {
+            "order": 50,
+            "type": "pick_list",
+            "label": "Trade",
+            "required": true,
+            "options": [
+              {
+                "value": "Plumbing"
+              },
+              {
+                "value": "Electrical"
+              },
+              {
+                "value": "Heating"
+              },
+              {
+                "value": "Lifts"
+              },
+              {
+                "value": "Fire safety"
+              },
+              {
+                "value": "Joinery"
+              },
+              {
+                "value": "Roofing"
+              },
+              {
+                "value": "Cleaning"
+              },
+              {
+                "value": "General"
+              }
+            ]
+          },
+          "response_hours": {
+            "order": 60,
+            "type": "integer",
+            "label": "Emergency response (hours)",
+            "min": 1,
+            "max": 72
+          },
+          "renews_on": {
+            "order": 70,
+            "type": "date",
+            "label": "Renews on"
+          },
+          "annual_value": {
+            "order": 80,
+            "type": "money",
+            "currency": "USD",
+            "label": "Annual value",
+            "min": 0
+          },
+          "vendor_email": {
+            "order": 90,
+            "type": "email",
+            "label": "Vendor contact"
+          },
+          "blockerOwner": {
+            "hidden": true,
+            "fixed": "None"
+          },
+          "implementationProgressPct": {
+            "hidden": true,
+            "fixed": 0
+          }
+        },
+        "lifecycle": {
+          "field": "implementationStage",
+          "initial": "Kickoff",
+          "categories": {
+            "Kickoff": "open",
+            "Pilot": "active",
+            "Steady State": "done",
+            "On Hold": "blocked"
+          }
+        },
+        "views": {
+          "table": {
+            "columns": [
+              "account",
+              "vendor_name",
+              "contract_trade",
+              "implementationStage",
+              "response_hours",
+              "renews_on"
+            ]
+          }
+        },
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": false
+          }
+        }
+      }
+    }
+  },
+  "library": {
+    "sources": {
+      "keyward": "library/keyward"
+    }
+  },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Planned works",
+        "plural": "Planned works"
+      },
+      "description": "A planned change carried out at a building (a boiler replacement, a roof repair), then watched for problems.",
+      "id_label": "Works id"
+    }
+  },
+  "specialists": {
+    "exclude": [
+      "customer-context",
+      "data-migration",
+      "deployment",
+      "evals",
+      "research"
+    ]
+  }
+}

@@ -90,7 +90,7 @@ try {
     const areas = JSON.parse(/export const recordAreas[^=]*= ([\s\S]*?);\n/.exec(nav)![1]!);
     assert.deepEqual(areas.map((a: any) => [a.name, a.scope, a.lifecycle?.initial ?? null]), [["tracker_policies", "platform", null], ["tracker_apps", "workspace", null], ["tracker_findings", "workspace", "open"]]);
     assert.deepEqual(areas[2].links, [{ field: "app", area: "tracker_apps" }, { field: "policy", area: "tracker_policies" }], "reference fields are the area's links");
-    assert.match(nav, /"title": "Credentials"/, "the Credentials page appears for the declared field");
+    assert.match(nav, /export const settingsPage = \{\s*"credentials": true,\s*"email": false\s*\}/, "Settings › Credentials appears for the declared field (mold_v0-218)");
     console.log("✓ gen-packs builds a pack.json alone: 3 areas, a credential, 2 steps; the registry carries the compiled declarations and imports nothing");
 
     const id = "fixture_tracker";
@@ -144,7 +144,7 @@ try {
     no("a protocol-relative address", tabs({ cta: { label: "Go", href: "//evil.example/x" } }), /empty\.cta\.href: a path of this site has no \/\//);
     no("an href and an action", tabs({ cta: { label: "Go", href: "/app", action: "setup" } }), /empty\.cta: a call to action has either an href or an action/);
     no("neither href nor action", tabs({ cta: { label: "Go" } }), /empty\.cta: a call to action has either an href or an action/);
-    no("a link with no label", tabs({ cta: { href: "/app/credentials" } }), /empty\.cta\.label: a link names its label/);
+    no("a link with no label", tabs({ cta: { href: "/app/settings?tab=credentials" } }), /empty\.cta\.label: a link names its label/);
     no("an unknown action", tabs({ cta: { action: "delete:everything" } }), /empty\.cta\.action: setup, onboarding:/);
     no("a line break", tabs({ text: "One\nTwo" }), /empty\.text: plain text on one line/);
     no("a bidirectional override", tabs({ text: "Add ‮one" }), /empty\.text: plain text on one line/);
@@ -309,7 +309,7 @@ try {
     console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);
   }
 
-  // ---------- 2d'. a list tab's primary floating action (mold_v0-208: tabs[].action) ----------
+  // ---------- 2d'. a list tab's primary action (mold_v0-208: tabs[].action) ----------
   {
     let m = 0;
     const no = (what: string, json: unknown, re: RegExp) => { refused(`action: ${what}`, tryPack(json), re); m++; };
@@ -349,7 +349,7 @@ try {
     assert.equal(charted.r.status, 0, `an area tab's charts still build: ${charted.r.stderr}`);
     const ct = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(charted.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual([ct.apps.charts, ct.home.charts], [[], ["summary"]], "an area tab's charts are not drawn; an overview's are");
-    console.log(`✓ a list tab's floating action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
+    console.log(`✓ a list tab's primary action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
   }
 
   // ---------- 2d''. every list tab's primary action by default; a link; none with a reason (mold_v0-213) ----------
@@ -359,7 +359,7 @@ try {
     const withTabs = (tabs: Record<string, unknown>[], edit: (j: any) => void = () => {}) => variant((j) => { j.tabs = tabs; edit(j); });
     const area = (id: string, a: string, extra: Record<string, unknown> = {}) => ({ id, kind: "area", area: a, ...extra });
     no("a link with no href", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Connect" } })]), /tabs\[0\]\.action\.href: a link action names where it goes/);
-    no("a link with no label", withTabs([area("apps", "tracker_apps", { action: { kind: "link", href: "/app/settings/email" } })]), /tabs\[0\]\.action\.label: a link action names its label/);
+    no("a link with no label", withTabs([area("apps", "tracker_apps", { action: { kind: "link", href: "/app/settings?tab=email" } })]), /tabs\[0\]\.action\.label: a link action names its label/);
     no("a link to a script", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Go", href: "javascript:alert(1)" } })]), /tabs\[0\]\.action\.href: a path of this site/);
     no("a link with a job kind", withTabs([area("apps", "tracker_apps", { action: { kind: "link", label: "Go", href: "/app", job_kind: "tracker_scan" } })]), /tabs\[0\]\.action\.job_kind: job_kind is not for a link action/);
     no("action: false without a reason", withTabs([area("apps", "tracker_apps", { action: false })]), /tabs\[0\]\.reason: action: false says why/);
@@ -367,7 +367,7 @@ try {
     no("action: false off a list tab", withTabs([{ id: "home", kind: "overview", include: ["setup"], action: false, reason: "x" }]), /tabs\[0\]\.action: action: false is for a list tab/);
     // Accepted: the shell's defaults from what each tab shows, a link, none with its reason; the build lists those without.
     const ok = tryPack(withTabs([
-      area("apps", "tracker_apps"), area("findings", "tracker_findings", { action: { kind: "link", label: "Connect mailbox", href: "/app/settings/email" } }),
+      area("apps", "tracker_apps"), area("findings", "tracker_findings", { action: { kind: "link", label: "Connect mailbox", href: "/app/settings?tab=email" } }),
       area("policies", "tracker_policies"), area("quiet", "tracker_apps", { label: "Quiet", action: false, reason: "Rows arrive from the nightly import." }),
       { id: "scans", kind: "runs", label: "Scans" }, { id: "reports", kind: "reports", label: "Scan reports" }, { id: "when", kind: "schedules", label: "Schedule" },
     ], (j) => { j.job_kinds[0].report = { path: "findings/report.md", label: "Scan report", format: "markdown" }; }));
@@ -375,7 +375,7 @@ try {
     const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
     const got = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual(got.apps.action, { kind: "create_record", label: "Add application", area: "tracker_apps" }, "an area tab: Add <its singular>");
-    assert.deepEqual(got.findings.action, { kind: "link", label: "Connect mailbox", href: "/app/settings/email" }, "a link, carried with its address");
+    assert.deepEqual(got.findings.action, { kind: "link", label: "Connect mailbox", href: "/app/settings?tab=email" }, "a link, carried with its address");
     assert.ok(!("action" in got.policies), "a shared area read from a repository: none by default");
     assert.ok(!("action" in got.quiet), "action: false: none");
     assert.deepEqual([got.scans.action.kind, got.scans.action.job_kind], ["start_run", "tracker_scan"], "a runs tab: Start {run}, its one kind");

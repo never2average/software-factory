@@ -149,6 +149,12 @@ Your agent checks it with `python3 .claude/scripts/factory.py spec check <file>`
 and mints it with `python3 .claude/scripts/mint.py new <app_id> --spec <file>`. Examples: [`schemas/examples/`](schemas/examples/);
 how it works: [`docs/APP_SPEC.md`](docs/APP_SPEC.md).
 
+Not sure what to ask? [`docs/EXAMPLE_PROMPTS.md`](docs/EXAMPLE_PROMPTS.md) lists requests that worked end to end, from
+reshaping screens to adding documents to records.
+
+Shippable examples: [`examples/`](examples/) holds five whole apps (three on mold_v0, two on mold_v1), each a plain-words
+prompt, the spec it produces, its pack and logo, ready to copy and mint.
+
 ## Benchmarks
 
 How well can each coding agent run the factory, start to finish? Each agent gets the same requests a user would make, against a rehearsal factory with fake clouds, so it costs nothing and touches nothing real. It's scored on:

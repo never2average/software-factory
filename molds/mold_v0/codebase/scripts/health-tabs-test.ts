@@ -153,8 +153,10 @@ try {
   const ids = st.checks.map((c) => c.id);
   assert.deepEqual(ids, ["database", "rls", "object_storage", "vault", "claude"]);
   assert.equal(st.checks[0]!.state, "ok");
-  assert.ok(st.release.last_migration && st.release.last_migration.name === "health_samples_webhooks", JSON.stringify(st.release));
-  assert.match(st.release.mold.schema ?? "", /^0039_health_samples_webhooks$/);
+  // The shell's newest migration, whichever it is (mold_v0-221 added one after 0039).
+  const newest = (await (await import("../src/migrate.js")).loadMigrations()).at(-1)!;
+  assert.ok(st.release.last_migration && st.release.last_migration.name === newest.name, JSON.stringify(st.release));
+  assert.equal(st.release.mold.schema ?? "", `${String(newest.version).padStart(4, "0")}_${newest.name}`);
   assert.ok(!/sk-|whsec_|BEGIN PRIVATE/.test(JSON.stringify(st)), "never a key");
   ok(`Status: ${st.checks.map((c) => `${c.id} ${c.state}`).join(", ")}; last migration ${st.release.last_migration?.version}`);
 

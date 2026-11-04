@@ -180,7 +180,10 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
   "texts",
   // the developer surface of an embedded app (mold_v0-193, src/developer-config.ts; PACK_CONFIG and the guide's Developers pages)
-  "developer_surface"]);
+  "developer_surface",
+  // declarative yes/no checks answered from the records (mold_v0-196, src/check-spec.ts; src/pack-manifest.ts compiles them).
+  // Missing here until mold_v0-223, so a pack.json declaring checks was refused at build ("unknown field checks").
+  "checks"]);
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
@@ -1403,7 +1406,7 @@ let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
-// A tab's floating action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
+// A tab's primary action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
 // kind whose start tool is withheld, a record area whose create tool is. The console would only hide the button.
 for (const t of packViews.tabs ?? []) {
   const a = t.action;
@@ -1415,7 +1418,7 @@ for (const t of packViews.tabs ?? []) {
     fail("packs", `pack ${t.pack}: tab ${t.id}: action create_record: ${a.area}'s create tool is withheld (mcp): a workspace cannot add to it`);
 }
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
-/** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
+/** The credential fields the packs declare (mold_v0-034): the console's Settings › Credentials tab appears when there is one. */
 const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
 /** The onboarding steps the packs declare (mold_v0-011): the console's Setup page asks for them only when there is one. */
 const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []).map((st) => ({ pack: p.id, ...st })));
@@ -1425,7 +1428,7 @@ const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type ===
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due || a.clocks?.length).length; // due dates and clocks (mold_v0-191) post notices
 /**
- * Kinds that may need a workspace's private network (mold_v0-036): the Credentials page then shows the on-premises runner.
+ * Kinds that may need a workspace's private network (mold_v0-036): Settings › Credentials then shows the on-premises runner.
  * Counted only where the app's profile turns on-premises runners on (mold_v0-205, profile.json `onprem_runners: true`;
  * off by default): off, no runner section, admin tab, guide page or Credentials entry for them.
  */
@@ -1450,7 +1453,7 @@ const ACCESS_FIELDS = (() => {
   return r.fields;
 })();
 const workspaceItems = [
-  ...(credentialFields.length || privateNetworkKindCount ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
+  // Credentials (mold_v0-034) is Settings › Credentials since mold_v0-218: the Settings entry below Overview (settingsPage).
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
   // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
@@ -2043,7 +2046,7 @@ const appPageUrl = (id) => `/app/${id}`;
 /** A home tab (mold_v0-134): an overview that includes the Setup page's checklist, the build's home page. */
 const isHomeTab = (t) => t.kind === "overview" && (t.include ?? []).includes("setup");
 /** The shell's page a tab of each kind opens (the sidebar's entry for it). */
-const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
+const SHELL_PAGES = { credentials: "/app/settings", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile", team: "/app/team", keys: "/app/keys",
   "connected-apps": "/app/connected-apps" };
 /** The sections tab that shows a tab as one of its in-page tabs (mold_v0-175), or null. */
 const sectionParent = (t) => packViews.tabs.find((x) => x.kind === "sections" && x.pack === t.pack && (x.sections ?? []).includes(t.id)) ?? null;
@@ -2084,7 +2087,7 @@ const TAB_OWN_PAGE = new Set(["overview", "area", "runs", "reports", "sections"]
  */
 const SHELL_SIDEBAR = { setup: { label: "Setup", icon: "rocket" }, usage: { label: "Activity", icon: "chartLine" }, billing: { label: "Billing", icon: "billing" },
   profile: { label: "Profile", icon: "account" }, team: { label: "Team", icon: "teams" }, keys: { label: "API keys", icon: "lock" },
-  credentials: { label: "Credentials", icon: "lock" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" },
+  credentials: { label: "Settings", icon: "settings" }, schedules: { label: "Schedules", icon: "calendar" }, notices: { label: "Notices", icon: "notification" },
   "connected-apps": { label: "Connected apps", icon: "plug" } };
 {
   // API keys need member keys (mold_v0-133). (Two packs' tabs that open one shell page are one sidebar entry: below.)
@@ -2098,7 +2101,7 @@ const profileSidebar = (() => {
   const at = `${rel(PROFILE_FILE)} console.sidebar`;
   const tabs = shownTabs(), listed = new Set(), out = [];
   const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
-  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && "the build declares no credential field", schedules: !jobKindCount && "the build has no job kind to schedule",
+  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !packs.some((p) => p.json?.email) && "the build declares no credential field and no company email", schedules: !jobKindCount && "the build has no job kind to schedule",
     notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
     keys: profile.member_keys === false && "member API keys are off (profile.json member_keys)" };
   declared.forEach((g, i) => {
@@ -2295,15 +2298,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const packOnboardingSteps = ${onboardingSteps.length};\n\n` +
   "/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */\n" +
   `export const repositoryCount = ${packs.reduce((n, p) => n + Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length, 0)};\n\n` +
-  "/** Whether a kind of this build may need a workspace's private network (mold_v0-036): the Credentials page and the guide\n" +
+  "/** Whether a kind of this build may need a workspace's private network (mold_v0-036): Settings › Credentials and the guide\n" +
   " * then show the on-premises runner. */\n" +
   `export const onPremRunners = ${privateNetworkKindCount > 0};\n\n` +
   "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
   `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
-  // The company's own email (mold_v0-192, src/company-email.ts): Settings › Email, when a pack turns it on (pack.json
-  // email), after the sidebar whatever it is made of (the shell's, the packs' tabs or the profile's).
-  "\n/** Settings › Email (mold_v0-192): the workspace's own sender and mailboxes, when a pack declares pack.json email. */\n" +
-  `export const emailPortalNav: NavGroup[] = ${json(packs.some((p) => p.json?.email) ? [{ label: "Settings", items: [{ title: "Email", url: "/app/settings/email", icon: "mail", items: [] }] }] : [])};\n` +
+  // Settings (mold_v0-218): one /app page with in-page tabs, Credentials (mold_v0-034: a credential field, or a kind that
+  // may need the workspace's private network, unless the build hides it) and Email (mold_v0-192: the company's own
+  // email, when a pack turns it on); its one sidebar entry goes directly below Overview (web/src/config/nav-config.ts).
+  "\n/** Settings (mold_v0-218): which in-page tabs /app/settings has; neither, and there is no Settings page or entry. */\n" +
+  `export const settingsPage = ${json({ credentials: (credentialFields.length > 0 || privateNetworkKindCount > 0) && !HIDDEN.includes("credentials"), email: packs.some((p) => !!p.json?.email) })};\n` +
   // The developer surface's console (mold_v0-201, web/src/features/developer): Settings › Developers (keys, webhooks,
   // allowed origins, inbound sources), only in an embedded app (a pack declares developer_surface); a tool app has none.
   "\n/** Settings › Developers (mold_v0-201): the developer surface's console, only where a pack declares pack.json developer_surface. */\n" +
@@ -2461,7 +2465,7 @@ function shownTabsAlone() {
  * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
  */
 function viewsModule() {
-  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
+  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = shownTabs();
   const tabs = shown.map((t) => ({
@@ -2480,7 +2484,7 @@ function viewsModule() {
     ...(t.filter ? { filtered: true } : {}),
     ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
-    // The tab's primary floating action (mold_v0-208): what its button says and opens (the server says who may use it).
+    // The tab's primary action (mold_v0-208): what its button says and opens (the server says who may use it).
     // mold_v0-213: every list tab's, resolved (the pack's own or the shell's default from what the tab shows), labelled.
     ...(t.action ? { action: { kind: t.action.kind, label: t.action.label ?? null, ...(t.action.job_kind ? { job_kind: t.action.job_kind } : {}), ...(t.action.area ? { area: t.action.area } : {}), ...(t.action.href ? { href: t.action.href } : {}) } } : {}),
   }));
@@ -2528,7 +2532,7 @@ function viewsModule() {
     "  sections?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n" +
-    "  /** The tab's primary floating action (mold_v0-208; web/src/features/tabs/action-fab.tsx): a run, a schedule, a record or a link;\n   *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */\n" +
+    "  /** The tab's primary action (mold_v0-208; web/src/features/tabs/tab-action.tsx, the search row's last control): a run, a schedule, a record or a link;\n   *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */\n" +
     "  action?: { kind: 'start_run' | 'new_schedule' | 'create_record' | 'link'; label: string | null; job_kind?: string; area?: string; href?: string };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +
@@ -2561,4 +2565,12 @@ console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((
   const without = shownTabs().filter((t) => t.no_action);
   if (without.length) console.log(`gen-packs: warning: ${without.length} list tab(s) without a primary action:\n  ${without.map((t) =>
     `${t.pack}/${t.id} (${t.label}): ${t.no_action.declared ? "action: false: " : ""}${t.no_action.reason}`).join("\n  ")}`);
+}
+// A pack's link to a customer page that is gone (mold_v0-218: Credentials and Email are Settings' in-page tabs; their
+// old pages answer 404, with no redirect): a warning naming the address to link instead.
+{
+  const GONE = [[/^\/app\/credentials(\/|\?|#|$)/, "/app/settings?tab=credentials"], [/^\/app\/settings\/email(\/|\?|#|$)/, "/app/settings?tab=email"]];
+  const dead = packViews.tabs.flatMap((t) => [t.action?.href, t.empty?.cta?.href].filter((h) => typeof h === "string")
+    .flatMap((h) => GONE.filter(([re]) => re.test(h)).map(([, to]) => `${t.pack}/${t.id}: ${h} is gone (mold_v0-218): link ${to}`)));
+  if (dead.length) console.log(`gen-packs: warning: ${dead.length} link(s) to a page that is gone:\n  ${dead.join("\n  ")}`);
 }

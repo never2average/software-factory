@@ -70,14 +70,14 @@ function inConsole<T>(web: string, code: string, args: string[] = []): T {
     return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
   } finally { rmSync(file, { force: true }); }
 }
-const NAV = `import { portalNav, adminNav } from '@/config/nav-config';
+const NAV = `import { portalNav, adminNav, withSettings } from '@/config/nav-config';
 import { appPageParams } from '@/features/packs/registry';
 import { tabPageParams, findTab } from '@/features/tabs/registry';
 import { tabPortalNav, packTabs } from '@/config/pack-nav.generated';
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...appPageParams(), ...tabPageParams()],
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, withSettings: withSettings(tabPortalNav), packTabs, params: [...appPageParams(), ...tabPageParams()],
   vulnerabilities: findTab('vulnerabilities'), billing: findTab('billing') }));
 `;
-type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
+type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; withSettings: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
 const navOnly = (n: Nav) => JSON.stringify({ portalNav: n.portalNav, adminNav: n.adminNav }, null, 1);
 
 /** A headless Chrome on this machine: CHROME_BIN, else one a Playwright install left in its cache. */
@@ -270,15 +270,15 @@ try {
   const web = path.join(copy, "web");
   {
     const nav = inConsole<Nav>(web, NAV);
-    assert.deepEqual(nav.portalNav, nav.tabPortalNav, "the /app sidebar is the declared tabs");
+    assert.deepEqual(nav.portalNav, nav.withSettings, "the /app sidebar is the declared tabs (their credentials tab the one Settings entry below Overview, mold_v0-218)");
     const shape = nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url}`)]);
     assert.deepEqual(shape, [
-      ["Adoption", ["Pick rate /app/pick-rate", "Tasks /app/tasks", "Products /app/products", "Simulations /app/simulations"]],
+      ["Adoption", ["Pick rate /app/pick-rate", "Settings /app/settings", "Tasks /app/tasks", "Products /app/products", "Simulations /app/simulations"]],
       ["Account", ["Usage /app/activity", "Profile /app/profile"]],
       ["Audit", ["Overview /app/overview", "Vulnerabilities /app/vulnerabilities", "Applications /app/applications",
         "Controls /app/controls", "Audits /app/audits", "Reports /app/reports"]],
-      ["Workspace", ["Application tokens /app/credentials", "Due soon /app/notices", "Billing /app/billing"]],
-    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses; a page two packs' tabs open is listed once, by the first (mold_v0-133)");
+      ["Workspace", ["Due soon /app/notices", "Billing /app/billing"]],
+    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses; a page two packs' tabs open is listed once, by the first (mold_v0-133); the credentials tab is the one Settings entry, directly below the first overview (mold_v0-218)");
     const item = (t: string) => nav.portalNav.flatMap((g) => g.items).find((i: any) => i.title === t);
     assert.deepEqual(item("Applications").roles, ["member", "billing", "owner"], "an area a viewer may not read: its tab is not a viewer's");
     assert.deepEqual(item("Billing").roles, ["billing", "owner"], "a tab's own roles");
@@ -624,6 +624,41 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(none, /Connect your AI client/); assert.doesNotMatch(none, />Due soon<|data-due-soon-empty/, "a role that may read no clock area: no card");
       console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card; no Notices section or caption under the steps, /app/notices its own page (mold_v0-216)");
     }
+  }
+
+  // ---------- 3c. the tab's primary action in the search row; its form, an open record and a record page as full cards (mold_v0-217) ----------
+  {
+    const read = (f: string) => readFileSync(path.join(ROOT, "web", "src", f), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const rv = read("components/layout/record-view.tsx"), ta = read("features/tabs/tab-action.tsx"), tp = read("features/tabs/tab-page.tsx");
+    const rp = read("features/records/record-pages.tsx"), sc = read("features/schedules/schedules-page.tsx"), ru = read("features/tabs/runs.tsx");
+    assert.match(rv, /\{primaryNode\}\s*\{toolbarAction\}\s*<\/div>/, "RecordView: the action is the search row's last control");
+    assert.doesNotMatch(rv + ta + tp, /\bfab\b|FAB_SPACE|data-fab|pb-24|100svh-10rem/, "no floating action and no space kept free for one");
+    assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0'/, "a normal primary button at the row's right end, square on a phone");
+    assert.doesNotMatch(ta, /fixed|rounded-full|size-14|shadow-lg|<Sheet|Dialog|Popover/, "nothing fixed, round or lifted; no sheet, dialog or popover");
+    assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='hidden sm:inline'>\{label\}<\/span>/, "the icon alone on a phone, the label its accessible name and title");
+    assert.match(ta, /useQueryState\(name, parseAsFlag[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
+    assert.match(ta, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>[\s\S]*Back to the list[\s\S]*<CardTitle[\s\S]*<CardContent[\s\S]*<CardFooter[\s\S]*\{submit\}\s*<Button type='button' variant='outline' onClick=\{cancel\}>Cancel<\/Button>/,
+      "the form's card: a way back, the title and what will happen, the fields, then the submit and Cancel");
+    assert.equal((ta.match(/<CardForm onSubmit=/g) ?? []).length, 2, "the start-run and create-record forms are the card's");
+    assert.match(sc, /if \(stacked\) return <CardForm onSubmit=\{add\}/, "the new-schedule form too");
+    assert.match(sc, /useActionOpen\('new'\)/); assert.match(ru, /if \(card\) return card;/, "runs: the card in the list's place");
+    assert.match(tp, /card \? card : <div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
+    assert.match(tp, /<ExportCsvButton [^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Export CSV in the views' row");
+    assert.match(tp, /pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}/, "no title or description above a list tab");
+    assert.match(rv, /if \(current && detail\) return \([\s\S]*data-record-card='' role='region' aria-label='Record'/, "an open record: the full details card in the list's place");
+    assert.doesNotMatch(rv, /<aside|lg:w-\[40%\]/, "no peek beside a narrowed list");
+    assert.match(rp, /export function RecordDetailPage[\s\S]*data-record-card=''/, "a record's page: the same details card");
+    assert.doesNotMatch(rp + read("features/records/clocks.tsx"), /OverdueToggle|data-overdue-filter/, "no count toggle above the table");
+    assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");
+    assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
+    assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
+    // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
+    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed");
+    assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
+    const ex = read("features/tabs/export.tsx");
+    assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
+    assert.match(ex, /audit=export/, "the data trail records it");
+    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text; Export on every area list just left of it, the view's rows when narrowed");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------

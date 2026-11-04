@@ -27,7 +27,7 @@ there that is not regenerated fails `factory.py validate`:
   both:    state/application/app_id/{application,infrastructure}.schema.json (addresses, colours, domains, capabilities,
            dictation)
 """
-import ast, copy, hashlib, json, os, re, sys
+import shutil, ast, copy, hashlib, json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -826,9 +826,36 @@ def _developer_problems(spec, full, root):
         if own: out.append(("wrong value", "developer_surface", f"developer_surface: pack {own[0]} declares its own too: say it once (in the spec)"))
     return out
 
+def _tree(d):
+    """{relative path: bytes} of every file under d (no __pycache__ or .pyc)."""
+    out = {}
+    for base, dirs, files in os.walk(d):
+        dirs[:] = sorted(x for x in dirs if x != "__pycache__")
+        for n in files:
+            if not n.endswith(".pyc"): out[os.path.relpath(os.path.join(base, n), d)] = open(os.path.join(base, n), "rb").read()
+    return out
+
+def place_path_packs(spec, root):
+    """mold_v1 (mold_v0-223): a pack the spec gives by path (a directory with its pack.json, e.g. examples/<mold>/<app>/pack)
+    copied to packs/<id>/, where the brief path and packs.py read it. Never overwrites a different pack. -> [sentences]."""
+    out = []
+    for p in spec.get("packs") or []:
+        if not (isinstance(p, dict) and p.get("path") and p.get("id")): continue
+        src, dst = os.path.join(root, p["path"]), os.path.join(root, "packs", p["id"])
+        if os.path.normpath(src) == os.path.normpath(dst): continue
+        if not os.path.isfile(os.path.join(src, "pack.json")):
+            out.append(f"{p['path']} has no pack.json. Nothing was written."); continue
+        if os.path.isdir(dst):
+            if _tree(src) != _tree(dst): out.append(f"packs/{p['id']}/ already exists and differs from {p['path']}: point the spec at it by id, or use another id. Nothing was written.")
+            continue
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    return out
+
 def write_inline_packs(spec, root):
     """mold_v0: each inline pack (or one given by a path outside packs/) written to packs/<id>/ where the brief path reads it.
-    Never overwrites a different pack.json. -> [sentences] (problems)."""
+    Never overwrites a different pack.json. mold_v1: each pack given by path copied to packs/<id>/ (place_path_packs).
+    -> [sentences] (problems)."""
+    if spec.get("mold_id") == "mold_v1": return place_path_packs(spec, root)
     if spec.get("mold_id") != "mold_v0": return []
     full, probs, origin = resolve_packs(spec, root)
     if probs: return [m for _, _, m in probs]
@@ -989,6 +1016,16 @@ def self_test():
     t = copy.deepcopy(v0); t["packs"] = ["nope_not_here"]
     ok(any("not on this machine" in x[2] for x in problems(t)), "mold_v0: a pack named by id that is not on this machine is said")
     v1 = load(os.path.join(ROOT, SCHEMA_DIR, "examples", "mold_v1.example.app.json"))
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as r_:   # mold_v0-223: a mold_v1 pack given by path is placed in packs/<id>/ by mint new --spec
+        os.makedirs(os.path.join(r_, "ex", "pack", "files", "agent", "instructions"))
+        open(os.path.join(r_, "ex", "pack", "pack.json"), "w").write('{"pack_id": "zz-pack"}')
+        open(os.path.join(r_, "ex", "pack", "files", "agent", "instructions", "50-pack-zz-pack.md"), "w").write("x")
+        s_ = {"mold_id": "mold_v1", "packs": [{"id": "zz-pack", "path": "ex/pack"}]}
+        ok(write_inline_packs(s_, r_) == [] and os.path.isfile(os.path.join(r_, "packs", "zz-pack", "files", "agent", "instructions", "50-pack-zz-pack.md"))
+           and write_inline_packs(s_, r_) == [], "mold_v1: a pack given by path is copied to packs/<id>/ (and again is a no-op)")
+        open(os.path.join(r_, "ex", "pack", "pack.json"), "w").write('{"pack_id": "zz-pack", "changed": true}')
+        ok(any("differs" in x for x in write_inline_packs(s_, r_)), "mold_v1: a different pack already in packs/<id>/ is never overwritten")
     t = copy.deepcopy(v1); t["budgets"] = {"runs": {"budget_usd_max": 5}}
     ok(any(x[0] == "not supported" and x[1] == "budgets" for x in problems(t)), "mold_v1: budgets are not supported, with the reason")
     t = copy.deepcopy(v1); t["deploy"] = {"target": "vm_remote"}

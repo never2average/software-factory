@@ -6,32 +6,44 @@
 // records its links name, its clocks' timeline.
 //
 // Writes, only where the server says this staff role may make them (GET /api/admin/records/_console/<area>/form,
-// src/record-routes.ts: never an area a repository fills, the role's "library", the staff tool not withheld): a primary
-// floating New record button opening the create form (features/tabs/action-fab.tsx, as a tab's create_record action),
-// and Edit on an open record and on its page. Both go to /api/admin/data, whose checks are unchanged; read-only areas
-// (an upstream catalog's registry) show neither.
+// src/record-routes.ts: the role's "library", the staff tool not withheld, no encrypted field): a primary New <noun>
+// button at the search row's right end opening the create form as a full card (features/tabs/tab-action.tsx, as a tab's
+// create_record action), Import beside it (features/records/staff-import.tsx), and Edit on an open record and on its
+// page. mold_v0-221: every shared area, a repository's too. Rows staff add are staff rows (provenance staff) beside the
+// repository's, which stay read only: Edit on a repository's row is Override (a staff row of the same key that wins over
+// it until removed); Remove ("delete") deletes a staff row, or removes an override and puts the repository's version
+// back. The open record and the record's page say where a row comes from, and mark an override "Overridden by staff".
+// The writes go to /api/admin/data, whose checks are the record store's.
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Field } from '@/components/layout/record-view';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Icons } from '@/components/icons';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
-import { ActionSheet, CreateRecordForm, Fab, FieldsForm, fieldValues, type FormField } from '@/features/tabs/action-fab';
+import { ActionCard, CardForm, CreateRecordForm, FieldsForm, ToolbarAction, fieldValues, useActionOpen, type FormField } from '@/features/tabs/tab-action';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { ErrorState, fail, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { adminDataApi } from '@/lib/api-client';
 import { ClockSection, type ClockEvent } from './clocks';
+import { singular } from '@/features/tabs/run-rows';
 import { FieldValue, RecordEmpty, RecordTableView, type RecordRow } from './record-pages';
+import { ImportRecordsForm } from './staff-import';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 
 /** What the page offers this staff role (src/record-routes.ts `_console/<area>/form`). */
-interface StaffForm { area: string; label: string; create: boolean; edit: boolean; fields: FormField[] }
+interface StaffForm {
+  area: string; label: string; create: boolean; edit: boolean; import: boolean; remove: boolean;
+  /** The repository that fills the area (mold_v0-221: its rows read only, overridden by staff rows). */
+  repository: { name: string; kind: string } | null; fields: FormField[];
+}
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
 async function getJson<T>(url: string): Promise<T> {
@@ -41,7 +53,7 @@ async function getJson<T>(url: string): Promise<T> {
   return body;
 }
 
-const consoleUrl = (area: string, what: 'sparklines' | 'form') => `${recordsApi('admin')}/_console/${encodeURIComponent(area)}/${what}`;
+const consoleUrl = (area: string, what: 'sparklines' | 'form' | 'import') => `${recordsApi('admin')}/_console/${encodeURIComponent(area)}/${what}`;
 
 /** The create and edit this role may use on the area; null while it loads or when it cannot be read (nothing shown). */
 function useStaffForm(area: string): StaffForm | null {
@@ -49,30 +61,92 @@ function useStaffForm(area: string): StaffForm | null {
   return data ?? null;
 }
 
-/** A shared area's list: its cards, its search row, its table; New record and Edit where the role may write. */
+/** One of the area's records, in the singular: "Report formats" a report format; a label that is no plural, by the area's name. */
+export function nounOf(area: { name: string; label: string }): string {
+  const one = singular(area.label);
+  const s = one !== area.label ? one : singular(area.name.replace(/_/g, ' '));
+  return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
+}
+
+/** A staff row's write controls: Edit (Override on a repository's row) and Remove (Remove override) where the role may. */
+function RowActions({ area, form, row, edit, removed }: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }) {
+  const fromRepository = row.provenance?.by === 'repository', overrides = !!row.provenance?.overrides;
+  const remove = async () => {
+    const name = row.title || row.key;
+    if (!window.confirm(overrides ? `Remove the override of ${name}? The repository's version comes back.` : `Remove ${name} from ${area.label}? This cannot be undone.`)) return;
+    try {
+      await adminDataApi('DELETE', `/${encodeURIComponent(area.name)}/${encodeURIComponent(row.key)}`);
+      toast.success(overrides ? 'Override removed' : 'Removed');
+      removed();
+    } catch (e) { fail(e); }
+  };
+  return (<>
+    {form?.edit && <Button variant='outline' size='sm' onClick={edit} data-row-edit={fromRepository ? 'override' : 'edit'}><Icons.edit /> {fromRepository ? 'Override' : 'Edit'}</Button>}
+    {form?.remove && !fromRepository && <Button variant='outline' size='sm' onClick={() => void remove()} data-row-remove=''><Icons.trash /> {overrides ? 'Remove override' : 'Remove'}</Button>}
+  </>);
+}
+
+/** Where a shared row comes from (mold_v0-221): staff or its repository; an override marked, with what it stands over. */
+function ProvenanceFields({ row, form }: { row: RecordRow; form: StaffForm | null }) {
+  const p = row.provenance;
+  if (!p) return null;
+  return (<>
+    <Field label='Added by'>{p.by === 'repository' ? `Repository ${p.repository ?? ''} (read only${form?.edit ? ': Override to change it' : ''})` : 'Staff'}</Field>
+    {p.overrides && (
+      <Field label='Repository'>
+        <span className='flex flex-col items-start gap-1' data-overridden=''>
+          <Badge variant='secondary'><Icons.edit /> Overridden by staff</Badge>
+          <span className='text-muted-foreground text-xs'>Over {p.repository}’s {p.overrides.title ? `“${p.overrides.title}”` : 'row'}{p.overrides.version ? ` at ${p.overrides.version.slice(0, 12)}` : ''}, which comes back when the override is removed.</span>
+        </span>
+      </Field>
+    )}
+  </>);
+}
+
+const editTitle = (row: RecordRow) => `${row.provenance?.by === 'repository' ? 'Override' : 'Edit'} ${row.title || row.key}`;
+const editDescription = (area: RecordAreaSpec, row: RecordRow) => (row.provenance?.by === 'repository'
+  ? `A staff copy of this row of ${row.provenance.repository}, saved as a staff row that wins over it until removed; removing it puts the repository's version back.`
+  : `${area.label}: its title and fields, saved whole.`);
+
+/** A shared area's list: its cards, its search row, its table; New, Import and Edit where the role may write. */
 export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   const form = useStaffForm(area.name);
   const [round, setRound] = useState(0);
-  const [creating, setCreating] = useState(false);
+  // mold_v0-217: New and Edit are full cards in the list's place; New kept in the address (?new=1), Import too (?import=1).
+  const [creating, setCreating] = useActionOpen('new');
+  const [importing, setImporting] = useActionOpen('import');
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const reload = () => setRound((n) => n + 1);
+  const noun = nounOf(area);
   return (
     <PageContainer>
+      {form?.create && creating ? (
+        <ActionCard open onOpenChange={setCreating} title={`New ${noun}`} description={`A new ${noun} in ${area.label}, added to the list at once as a staff row.`}>
+          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
+            post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
+        </ActionCard>
+      ) : form?.import && importing ? (
+        <ActionCard open onOpenChange={setImporting} title={`Import ${noun}s`} description={`Rows of a CSV or JSON file as staff rows of ${area.label}: map its columns, preview, then import.`}>
+          <ImportRecordsForm area={area} fields={form.fields} noun={noun} url={consoleUrl(area.name, 'import')} onDone={() => { setImporting(false); reload(); }} />
+        </ActionCard>
+      ) : form?.edit && editing ? (
+        <ActionCard open onOpenChange={(o) => { if (!o) setEditing(null); }} title={editTitle(editing)} description={editDescription(area, editing)}>
+          <EditRecordForm area={area.name} fields={form.fields} row={editing} onDone={() => { setEditing(null); reload(); }} />
+        </ActionCard>
+      ) : (
       <RecordTableView key={round} area={area} base='admin' url={`${recordsApi('admin')}/${area.name}`} id={`admin-records-${area.name}`}
         empty={<RecordEmpty area={area} base='admin' />}
         summary={<Sparklines url={consoleUrl(area.name, 'sparklines')} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-        fab={form?.create ? <Fab label='New record' icon={<Icons.add />} onClick={() => setCreating(true)} /> : undefined}
-        rowAction={form?.edit ? (r) => <Button variant='outline' size='sm' onClick={() => setEditing(r)}><Icons.edit /> Edit</Button> : undefined} />
-      {form?.create && (
-        <ActionSheet open={creating} onOpenChange={setCreating} title='New record' description={area.label}>
-          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
-            post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
-        </ActionSheet>
-      )}
-      {form?.edit && editing && (
-        <ActionSheet open onOpenChange={(o) => { if (!o) setEditing(null); }} title={`Edit ${editing.title || editing.key}`} description={area.label}>
-          <EditRecordForm area={area.name} fields={form.fields} row={editing} onDone={() => { setEditing(null); reload(); }} />
-        </ActionSheet>
+        toolbarAction={form?.create || form?.import ? (<>
+          {form.import && (
+            <Button type='button' variant='outline' onClick={() => setImporting(true)} aria-label='Import' title='Import' data-toolbar-import='' className='shrink-0 max-sm:w-8 max-sm:px-0'>
+              <Icons.upload /><span className='hidden sm:inline'>Import</span>
+            </Button>
+          )}
+          {form.create && <ToolbarAction label={`New ${noun}`} icon={<Icons.add />} onClick={() => setCreating(true)} />}
+        </>) : undefined}
+        rowAction={form?.edit || form?.remove ? (r) => <RowActions area={area} form={form} row={r} edit={() => setEditing(r)} removed={reload} /> : undefined}
+        detailNote={(r) => <ProvenanceFields row={r} form={form} />} />
       )}
     </PageContainer>
   );
@@ -85,20 +159,31 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
   const form = useStaffForm(area.name);
   const [editing, setEditing] = useState(false);
   const listHref = `/admin/records/${area.name}`;
+  const router = useRouter();
   return (
     <PageContainer>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : form?.edit && editing ? (
+        <ActionCard open onOpenChange={setEditing} title={editTitle(data.record)} description={editDescription(area, data.record)}>
+          <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
+        </ActionCard>
+      ) : (
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
             <CardDescription>
               <Link className='inline-flex items-center gap-1 underline-offset-4 hover:underline' href={listHref}><Icons.chevronLeft className='size-3.5' />{area.label}</Link>
             </CardDescription>
             <CardTitle className='text-lg leading-snug break-words'>{data.record.title || data.record.key}</CardTitle>
-            {form?.edit && <CardAction><Button variant='outline' size='sm' onClick={() => setEditing(true)}><Icons.edit /> Edit</Button></CardAction>}
+            {(form?.edit || form?.remove) && (
+              <CardAction className='flex gap-2'>
+                <RowActions area={area} form={form} row={data.record} edit={() => setEditing(true)}
+                  removed={() => (data.record.provenance?.overrides ? void reload() : router.push(listHref))} />
+              </CardAction>
+            )}
           </CardHeader>
           <CardContent className='flex flex-col gap-6 py-2'>
             <dl>
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
+              <ProvenanceFields row={data.record} form={form} />
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
               {area.fields.map((f) => (
                 <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base='admin' f={f} v={data.record.data[f.name]} /></span></Field>
@@ -122,11 +207,6 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
           </CardContent>
         </Card>
       )}
-      {form?.edit && data && editing && (
-        <ActionSheet open onOpenChange={setEditing} title={`Edit ${data.record.title || data.record.key}`} description={area.label}>
-          <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
-        </ActionSheet>
-      )}
     </PageContainer>
   );
 }
@@ -143,7 +223,10 @@ function formValue(f: FormField, v: unknown): unknown {
   return String(v);
 }
 
-/** A record's title and fields, saved whole (PUT /api/admin/data/<area>/<key>); data the form does not show is kept. */
+/**
+ * A record's title and fields, saved whole (PUT /api/admin/data/<area>/<key>); data the form does not show is kept. On a
+ * repository's row (mold_v0-221) the save is an override: a staff row of the same key, the repository's kept behind it.
+ */
 function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: FormField[]; row: RecordRow; onDone: () => void }) {
   const [title, setTitle] = useState(row.title ?? '');
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((f) => [f.name, formValue(f, row.data[f.name])])));
@@ -160,7 +243,7 @@ function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: F
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <form className='flex flex-col gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy}><Icons.check /> {busy ? 'Saving…' : row.provenance?.by === 'repository' ? 'Save override' : 'Save'}</Button>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='edit-key'>Key</Label>
         <Input id='edit-key' value={row.key} readOnly disabled className='font-mono text-xs' />
@@ -170,7 +253,6 @@ function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: F
         <Input id='edit-title' value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
       <FieldsForm fields={fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='edit-field' />
-      <Button type='submit' disabled={busy} className='self-start'><Icons.check /> {busy ? 'Saving…' : 'Save'}</Button>
-    </form>
+    </CardForm>
   );
 }

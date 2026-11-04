@@ -1,5 +1,5 @@
 'use client';
-// A credential field connected through OAuth on /app/credentials (mold_v0-014; src/oauth-routes.ts at /api/credential-connections): its
+// A credential field connected through OAuth on Settings › Credentials (mold_v0-014, mold_v0-218: in its details card; src/oauth-routes.ts at /api/credential-connections): its
 // connections (per slot: the workspace, a record, a record's environment), each with when its token expires and whether
 // the provider still accepts it, a Connect button that opens the provider's own sign-in, and Disconnect. No token is
 // ever shown: runs get the access token, refreshed before it expires.

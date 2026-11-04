@@ -11,11 +11,21 @@
  *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete".
  *                                 mold_v0-212, the staff record page (web/src/features/records/staff-records.tsx):
  *                                 GET _console/<area>/sparklines  its four cards (src/sparklines.ts areaSparklines)
- *                                 GET _console/<area>/form        what the page offers this staff role: create and edit
- *                                                                 (never for an area a repository fills, whose rows its
- *                                                                 index writes; the role's "library"; the staff tool not
- *                                                                 withheld) and the area's fields as the form draws them.
- *                                                                 The writes themselves go to /api/admin/data, unchanged.
+ *                                 GET _console/<area>/form        what the page offers this staff role: create, edit
+ *                                                                 and import (the role's "library"; the staff tool not
+ *                                                                 withheld; no encrypted field), remove ("delete"), the
+ *                                                                 repository that fills the area, and the area's fields
+ *                                                                 as the form draws them. The writes themselves go to
+ *                                                                 /api/admin/data, unchanged.
+ *                                 mold_v0-221: every shared area, a repository's too: staff rows (provenance staff)
+ *                                 beside the repository's, which stay read only; Edit on a repository's row is an
+ *                                 Override (a staff row of the same key that wins until removed; removing it puts the
+ *                                 repository's version back: src/record-areas.ts putPlatform, deletePlatform). Each
+ *                                 row of the list and the detail carries its `provenance` (by, repository, overrides).
+ *                                 POST _console/<area>/import    {rows: [{key, title?, data}], dry_run?}: the import's
+ *                                                                 preview (dry_run, the default) or the import itself
+ *                                                                 ("library"; src/record-import.ts), each row it wrote
+ *                                                                 an IMPORT line of the staff access log.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { assertGuarded, can, need, type PlatformRole } from "./admin-roles.js";
@@ -28,7 +38,9 @@ import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
-import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
+import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, platformProvenance, putPlatform, recordAreas, type RecordArea } from "./record-areas.js";
+import { getDb } from "./db.js";
+import { auditStaffRows } from "./audit-trail.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -101,25 +113,40 @@ export function recordAdminRouter(): Router {
   r.get("/_console/:area/form", need("read"), open("admin_list"), answer(async (req, res) => {
     const a = platformArea(String(req.params.area));
     const { formField } = await import("./tab-actions.js");
-    // Hand writes on the console: an area no repository fills (a repository's rows are its index's), an encrypted field's
-    // value never round-tripped through a form, the role's "library" (as /api/admin/data checks), the staff tool not withheld.
-    const writable = !a.repo && !a.fields.some((f) => f.encrypted) && can(res.locals.adminRole as PlatformRole | undefined, "library");
+    const role = res.locals.adminRole as PlatformRole | undefined;
+    // Hand writes on the console (mold_v0-221: a repository's area too, as staff rows beside its rows): rows the shell
+    // stores (not read live), no encrypted field (its value never round-tripped through a form or a file), the role's
+    // "library" (as /api/admin/data checks), the staff tool not withheld.
+    const stored = !isReadOnlyArea(a) && a.repo?.kind !== "http_api";
+    const writable = stored && !a.fields.some((f) => f.encrypted) && can(role, "library");
+    const create = writable && !areaOpWithheld(a.name, "admin_create"), edit = writable && !areaOpWithheld(a.name, "admin_update");
     return {
       area: a.name, label: a.label,
-      create: writable && !areaOpWithheld(a.name, "admin_create"),
-      edit: writable && !areaOpWithheld(a.name, "admin_update"),
+      create, edit, import: create && edit,
+      remove: stored && can(role, "delete") && !areaOpWithheld(a.name, "admin_delete"),
+      repository: a.repo ? { name: a.repo.name, kind: a.repo.kind } : null,
       fields: a.fields.map(formField),
     };
   }));
+  // The import (mold_v0-221): its preview unless dry_run is false. Its body has its own size limit (src/http.ts).
+  r.post("/_console/:area/import", need("library"), open("admin_create", "admin_update"), answer(async (req, res) => {
+    const a = platformArea(String(req.params.area));
+    const body = (req.body ?? {}) as { rows?: unknown; dry_run?: unknown };
+    const { importRecords } = await import("./record-import.js");
+    const report = await importRecords(a, body.rows, { dryRun: body.dry_run !== false });
+    if (!report.dry_run) recordImport(a, report.rows.filter((x) => x.action === "create" || x.action === "update" || x.action === "override"), res);
+    return report;
+  }));
   r.get("/:area", need("read"), open("admin_list"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
-    return { area: areaSummary(a), ...(await listPlatform(a, { limit: req.query.limit, after: req.query.after })) };
+    const page = await listPlatform(a, { limit: req.query.limit, after: req.query.after });
+    return { area: areaSummary(a), ...page, records: await withProvenance(a, page.records) };
   }));
   r.get("/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     const record = await getPlatform(a, String(req.params.key));
     if (!record) throw new PackError("Not found", 404);
-    return { area: areaSummary(a), record, links: [] };
+    return { area: areaSummary(a), record: (await withProvenance(a, [record]))[0], links: [] };
   }));
   r.put("/:area/:key", need("library"), open("admin_create", "admin_update"), answer(async (req) =>
     ({ record: await putPlatform(null, platformArea(String(req.params.area)).name, String(req.params.key), req.body ?? {}) })));
@@ -128,4 +155,23 @@ export function recordAdminRouter(): Router {
   }));
   assertGuarded(r, "/api/admin/records");
   return r;
+}
+
+/** Each shared row with where it comes from (mold_v0-221): staff or its repository, and what a staff override stands over. */
+async function withProvenance<T extends { key: string }>(a: RecordArea, rows: T[]): Promise<(T & { provenance?: unknown })[]> {
+  const p = await platformProvenance(a, rows.map((r) => r.key));
+  return rows.map((r) => (p.has(r.key) ? { ...r, provenance: p.get(r.key) } : r));
+}
+
+/**
+ * An import's rows in the staff access log (admin_access_log, as every /api/admin request and admin MCP call): one IMPORT
+ * line per row written, after the request's own line; and the platform trail's staff entries when it is on.
+ */
+function recordImport(a: RecordArea, rows: { key: string; action: string }[], res: Response) {
+  if (!rows.length) return;
+  const actor = String(res.locals.adminActor ?? "unknown").replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
+  const paths = rows.map((x) => `/api/admin/records/${a.name}/${x.key} ${x.action}`.slice(0, 300));
+  void getDb().then((db) => db.query("INSERT INTO admin_access_log (actor, method, path, status, ip) SELECT $1, 'IMPORT', p, 200, $3 FROM unnest($2::text[]) AS p",
+    [actor, paths, String(res.req.ip ?? "").slice(0, 64)])).catch((e) => console.error(`admin access log: ${(e as Error).message}`));
+  auditStaffRows(actor, String(res.locals.adminRole ?? ""), paths);
 }

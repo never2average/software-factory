@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One line of a desk briefing (briefing-items.jsonl)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "title", "desk", "section", "source"],
+  "properties": {
+    "slug": { "type": "string", "description": "The story's slug, lower case with hyphens." },
+    "title": { "type": "string" },
+    "desk": { "type": "string" },
+    "section": { "type": "string", "enum": ["due_today", "embargoed", "unassigned", "at_risk", "published"] },
+    "deadline": { "type": ["string", "null"], "description": "ISO 8601 with its zone." },
+    "embargo": { "type": ["string", "null"] },
+    "embargo_state": { "type": ["string", "null"], "enum": ["none", "holding", "lifted", null] },
+    "reporter": { "type": ["string", "null"] },
+    "published_at": { "type": ["string", "null"] },
+    "risk": { "type": ["string", "null"], "description": "Why an at-risk item is at risk, in words." },
+    "minutes_to_deadline": { "type": ["integer", "null"] },
+    "zone_assumed": { "type": ["boolean", "null"] },
+    "source": { "type": "string", "description": "Where the line came from: a file and its row, event or line, or an assignment id." }
+  }
+}

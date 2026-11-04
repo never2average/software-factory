@@ -383,7 +383,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     await row.waitFor({ timeout: 20000 });
     assert.match(await row.innerText(), /browser\.example/, "the site under the company");
     await row.click();
-    const peek = p.locator('aside[aria-label="Record"]');
+    const peek = p.locator('[data-record-card][aria-label="Record"]');
     await peek.waitFor({ timeout: 10000 });
     const text = await peek.innerText();
     for (const re of [/Company website\s*browser\.example/, /Team size\s*11 to 50/, /Tools you use\s*Spreadsheets, An ERP/, /What should it do first\?\s*Reports\./])
