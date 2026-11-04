@@ -41,6 +41,7 @@ import { clockAreas, clockCheck, stepWords, type ClockReport } from "./record-cl
 import { encryptedAreas, encryptFieldsTick, type EncryptionReport } from "./encrypted-fields-migration.js";
 import { checkpointTick, signOn, type LedgerTick } from "./ledger.js";
 import { tracked } from "./scheduler-jobs.js";
+import { featureSetting } from "./feature-flags.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -58,9 +59,9 @@ export function defaultSchedules(): DefaultSchedule[] {
   cache = { from: list, list: list.flatMap((p) => (p.definition.schedules ?? []).map((s) => ({ ...ScheduleSchema.parse(s), pack: p.id }))) };
   return cache.list;
 }
-/** Check areas that declare due dates. */
+/** Check areas that declare due dates; none while the scheduled_alerts flag is off (mold_v0-219: no notice, no email). */
 export const dueAreas = (): (RecordArea & { due: NonNullable<RecordArea["due"]> })[] =>
-  recordAreas().filter((a): a is RecordArea & { due: NonNullable<RecordArea["due"]> } => !!a.due);
+  (featureSetting("scheduled_alerts") ? recordAreas() : []).filter((a): a is RecordArea & { due: NonNullable<RecordArea["due"]> } => !!a.due);
 /** The job kinds a pack schedules (it declares a default schedule of the kind): the ones owners may schedule too. */
 export const schedulableKinds = () => [...new Map(defaultSchedules().map((d) => [`${d.pack}/${d.job_kind}`, { pack: d.pack, name: d.job_kind }])).values()];
 /** Whether there is anything to schedule at all (a job kind in the build). */

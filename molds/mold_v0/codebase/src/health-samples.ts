@@ -16,7 +16,7 @@
  */
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
-import { sessionEngine } from "./host-tables.js";
+import { featureOn } from "./features.js";
 import { ENV } from "./env-names.js";
 import { probeFromCron, rlsProbeState } from "./rls.js";
 import { storageSource } from "./storage.js";
@@ -28,7 +28,8 @@ export const SAMPLE_EVERY_MS = 4 * 60_000;
 export const RETENTION_DAYS = 35;
 
 /** Sampling is on in a build without the session engine (an engine build keeps its own Health tabs). */
-export const healthSamplingOn = (): boolean => !sessionEngine();
+// The features registry (mold_v0-219): the health_history flag, asked for by a build without the session engine.
+export const healthSamplingOn = (): boolean => featureOn("health_history");
 
 // ---------------------------------------------------------------- the API's latency, in this process
 

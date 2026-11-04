@@ -794,6 +794,12 @@ export const RecordAreaSchema = z.object({
    */
   append_only: z.boolean().optional(),
   chain: z.boolean().optional(),
+  /**
+   * A Settings tab (mold_v0-219): the area's table shows in the customer console's Settings, in `group` (access,
+   * connections, automation or data_trust) under `label` (default the area's label), instead of in the Records group.
+   * Workspace areas only (a workspace's own settings), and never also a declared sidebar tab.
+   */
+  settings: z.object({ group: z.enum(["access", "connections", "automation", "data_trust"]), label: z.string().min(1).max(40).optional() }).strict().optional(),
   /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
   rows: z.string().max(500).optional(),
   /** In words, where a shared row's version comes from (an upstream commit, a date). */

@@ -47,6 +47,9 @@ import {
   spendColor,
   spendStatus,
   withLive,
+  appFlags,
+  parseFeatureRegistry,
+  type FeatureFlag,
 } from './board'
 
 const PANE = 'factory-board'
@@ -117,6 +120,7 @@ async function load($: $): Promise<Board> {
   const statuses = new Map<string, string>((factory.molds ?? []).map((m: any) => [String(m.mold_id), String(m.status ?? '')]))
 
   const apps: AppRow[] = []
+  let registry: FeatureFlag[] | undefined
   for (const entry of await $.fs.list(`${root}/state/application`)) {
     if (entry.kind !== 'dir' || entry.name === 'app_id') continue
     const dir = `${root}/state/application/${entry.name}`
@@ -126,7 +130,15 @@ async function load($: $): Promise<Board> {
         readJson($, `${dir}/infrastructure.json`),
         readJson($, `${dir}/datastores.json`).catch(() => ({})),
       ])
-      apps.push(appRow(entry.name, application, infrastructure, datastores, snapshots))
+      const row = appRow(entry.name, application, infrastructure, datastores, snapshots)
+      // mold_v0's capability flags (mold_v0-219): the registry is the mold's, the signals its packs' pack.json.
+      if (row.moldId === 'mold_v0') {
+        registry ??= parseFeatureRegistry(await readJson($, `${root}/molds/mold_v0/codebase/src/features.json`).catch(() => null))
+        const ids: string[] = Array.isArray(application.packs) ? application.packs.map(String) : []
+        const docs = await Promise.all(ids.map(p => readJson($, `${root}/packs/${p}/files/packs/${p}/pack.json`).catch(() => ({}))))
+        if (registry.length) row.flags = appFlags(application, docs, registry)
+      }
+      apps.push(row)
     } catch {
       // an app folder without its state files is not an app yet
     }
@@ -507,6 +519,7 @@ export const register: Register = on => {
               <Text dimColor>Google sign-in {app.google === 'hub' ? 'via hub' : 'ok'}</Text>
             )}
             <Text dimColor>· deployed {ago(app.deployedAt, now)}</Text>
+            {app.flags && <Text dimColor>· flags: {app.flags.length ? app.flags.join(', ') : 'none'}</Text>}
             <Text color={app.isCurrent ? 'success' : 'warning'}>
               {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind'}
             </Text>

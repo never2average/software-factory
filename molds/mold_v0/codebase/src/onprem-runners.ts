@@ -40,7 +40,7 @@ import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
 import { ENV } from "./env-names.js";
-import { onPremRunnersOn } from "./profile.js";
+import { featureOn } from "./features.js";
 
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -66,7 +66,8 @@ export const privateNetworkKinds = (): JobKind[] => jobKinds().filter((k) => (k 
  * Whether this build offers on-premises runners at all: the app's profile turns them on (`onprem_runners: true`,
  * mold_v0-205; off by default), a kind needs the private network, and APP_ONPREM_RUNNERS does not switch them off.
  */
-export const onPremAvailable = () => onPremRunnersOn() && (ENV.APP_ONPREM_RUNNERS ?? "").toLowerCase() !== "off" && privateNetworkKinds().length > 0;
+// The features registry (mold_v0-219): the onprem_runners flag, asked for by a kind with private_network: true.
+export const onPremAvailable = () => featureOn("onprem_runners") && (ENV.APP_ONPREM_RUNNERS ?? "").toLowerCase() !== "off" && privateNetworkKinds().length > 0;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ONLINE = () => `last_seen_at > now() - make_interval(secs => ${Math.round(ONPREM.onlineSeconds())})`;

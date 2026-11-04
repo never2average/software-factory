@@ -261,7 +261,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
 {
   const { existsSync: exists } = await import("node:fs");
   const page = src("features/settings/settings-page.tsx").replace(/\/\/.*$/gm, "");
-  assert.deepEqual([...page.matchAll(/<TabsTrigger value='([^']+)'/g)].map((m) => m[1]), ["credentials", "email"], "Settings' tabs: Credentials, then Email");
+  // Since mold_v0-219 its tabs are the features registry's (web/src/config/settings.ts, gen-packs settingsTabs): each kind drawn.
+  assert.match(page, /tabs\.map\(\(t\) => <TabsTrigger key=\{t\.id\} value=\{t\.id\}/, "Settings' tabs: the build's, in order");
+  for (const k of ["credentials", "email", "api_keys", "allowed_origins", "webhooks", "integrations", "alerts", "signing", "area"]) assert.match(page, new RegExp(`case '${k}'`), `Settings draws its ${k} tab`);
   assert.match(page, /useQueryState\('tab'/, "the open tab is kept in the address (?tab=)");
   assert.doesNotMatch(page, /pageTitle|pageDescription/, "no title above the tab strip");
   assert.match(page, /tabs\.length < 2 \?/, "one tab alone: its table, with no strip");
@@ -284,13 +286,13 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.ok(exists(path.join(WEB, "app", "app", "settings", "page.tsx")), "the /app/settings page");
   const routes = JSON.parse(src("config/console-routes.generated.json")) as { routes: string[] };
   assert.ok(routes.routes.includes("/app/settings") && !routes.routes.includes("/app/credentials") && !routes.routes.includes("/app/settings/email"), "the route list: /app/settings only");
-  assert.match(src("lib/console-routes.ts"), /'\/app\/settings': \(\) => settingsPage\.credentials \|\| settingsPage\.email/, "Settings is a page only with one of its tabs");
+  assert.match(src("lib/console-routes.ts"), /'\/app\/settings': \(\) => settingsLayout\(\) !== 'none'/, "Settings is a page only with a tab");
   const { readdirSync, statSync } = await import("node:fs");
   const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const f = path.join(d, n); return statSync(f).isDirectory() ? walk(f) : [f]; });
   const linking = walk(WEB).filter((f) => /\.(tsx?|json|md)$/.test(f) && /\/app\/credentials\b|\/app\/settings\/email/.test(readFileSync(f, "utf8")));
   assert.deepEqual(linking, [], "nothing in the console links to /app/credentials or /app/settings/email");
   for (const f of ["oauth-routes.ts", "github-app-routes.ts", "mcp-tools.ts"]) assert.doesNotMatch(readFileSync(path.join(WEB, "..", "..", "src", f), "utf8"), /\/app\/credentials\b|\/credentials"\)/, `src/${f}: leads to Settings › Credentials`);
-  ok("Settings: Credentials | Email as in-page tabs (?tab=, no title, one alone without a strip), each its four cards, search row and table, a row's details card, Add mailbox and Set sender; /app/credentials and /app/settings/email gone");
+  ok("Settings: its registry's tabs (Credentials | Email and the rest) as in-page tabs (?tab=, no title, one alone without a strip), each its four cards, search row and table, a row's details card, Add mailbox and Set sender; /app/credentials and /app/settings/email gone");
 }
 
 // 10. No title or description above a list (mold_v0-231; mold_v0-217's rule on every list page of both consoles).

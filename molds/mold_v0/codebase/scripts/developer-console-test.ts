@@ -1,12 +1,12 @@
-// The developer surface's console (mold_v0-201; web/src/features/developer, /app/developers), offline and without a
+// The developer surface's console (mold_v0-201; web/src/features/developer; Settings tabs since mold_v0-219), offline and without a
 // browser: build copies of the codebase with fixture packs, gen-packs run in each, the console's navigation and route
 // table read through tsx.
 //   npm run test:developer-console
 //
-// 1. An embedded app (fixture_embedded: a pack declares developer_surface, with webhooks_in): Settings › Developers in
-//    the sidebar, the page's route shown, the Inbound tab on; the shell's own pages unchanged around it.
-// 2. A tool app (a pack without developer_surface) and zero packs: no entry, no page (the route not shown), and the rest
-//    of the sidebar exactly as before (the same as a build of the same packs without this console's lines).
+// 1. An embedded app (fixture_embedded: a pack declares developer_surface, with webhooks_in): its four Settings tabs
+//    (API keys, Allowed origins in Access; Webhooks, Integrations in Connections), Settings in the sidebar; the old
+//    /app/developers page gone, with no redirect; with profile.json features.developer_surface false, none of them.
+// 2. A tool app (a pack without developer_surface) and zero packs: no developer tab and no Developers page.
 // 3. The page's plain helpers: its tabs (Inbound only with webhooks in), a delivery's payload as the log shows it (a
 //    credential-named field or a key or secret value masked), deliveries per day for the log's sparkline.
 // 4. The page's shape: every list is the console's database table (RecordView), every change an owner's (Allowed need
@@ -24,7 +24,7 @@ const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
 const ok = (m: string) => console.log(`✓ ${m}`);
 
 /** A build copy with these fixture packs; gen-packs run. */
-function built(name: string, packs: string[]) {
+function built(name: string, packs: string[], profile?: unknown) {
   const copy = path.join(TMP, name);
   const skip = new Set(["node_modules", ".pglite", ".git", ".next"]);
   cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) && src !== path.join(ROOT, "packs") });
@@ -32,18 +32,19 @@ function built(name: string, packs: string[]) {
   mkdirSync(path.join(copy, "packs"), { recursive: true });
   cpSync(path.join(ROOT, "packs", "pack.schema.json"), path.join(copy, "packs", "pack.schema.json"));
   for (const p of packs) cpSync(path.join(ROOT, "scripts", "fixtures", "packs", p), path.join(copy, "packs", p), { recursive: true });
+  if (profile !== undefined) writeFileSync(path.join(copy, "profile.json"), JSON.stringify(profile, null, 2));
   const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
   assert.equal(g.status, 0, `gen-packs (${name}): ${`${g.stdout}\n${g.stderr}`.slice(-1500)}`);
   return copy;
 }
 
 const PROBE = `import { portalNav } from '@/config/nav-config';
-import { developerConsole, developerPortalNav } from '@/config/pack-nav.generated';
+import { developerConsole, settingsTabs } from '@/config/pack-nav.generated';
 import routes from '@/config/console-routes.generated.json';
 import { SHOWN } from '@/lib/console-routes';
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, developerConsole, developerPortalNav, routes, shown: SHOWN['/app/developers']?.() ?? null }));
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, developerConsole, tabs: settingsTabs.map((t) => t.group + ':' + t.id), routes, shown: SHOWN['/app/developers']?.() ?? null }));
 `;
-function probe(copy: string): { portalNav: any[]; developerConsole: { on: boolean; inbound: boolean }; developerPortalNav: any[]; routes: any; shown: boolean | null } {
+function probe(copy: string): { portalNav: any[]; developerConsole: { on: boolean; inbound: boolean }; tabs: string[]; routes: any; shown: boolean | null } {
   const web = path.join(copy, "web");
   const file = path.join(web, "probe-developer.tsx");
   writeFileSync(file, PROBE);
@@ -60,22 +61,24 @@ try {
   // ---------- 1. an embedded app ----------
   const emb = probe(built("embedded", ["fixture_embedded"]));
   assert.deepEqual(emb.developerConsole, { on: true, inbound: true }, "the console is on, with its Inbound tab (the fixture declares webhooks_in)");
-  assert.ok(lines(emb.portalNav).includes("Settings: Developers /app/developers"), `Settings › Developers in the sidebar: ${lines(emb.portalNav).join(", ")}`);
-  assert.equal(lines(emb.portalNav).filter((x) => x.endsWith(" /app/developers")).length, 1, "one entry");
-  assert.equal(emb.shown, true, "the page's route is shown");
-  assert.ok(routeList(emb.routes).includes("/app/developers"), "the route is in the console's route table");
-  ok("an embedded app: Settings › Developers in the sidebar, its page shown, the Inbound tab on");
+  for (const t of ["access:api_keys", "access:allowed_origins", "connections:webhooks", "connections:integrations"]) assert.ok(emb.tabs.includes(t), `Settings has ${t}: ${emb.tabs.join(", ")}`);
+  assert.ok(lines(emb.portalNav).some((x) => / Settings \/app\/settings$/.test(x)), `Settings in the sidebar: ${lines(emb.portalNav).join(", ")}`);
+  assert.ok(!lines(emb.portalNav).some((x) => x.includes("/app/developers")), "no Developers entry");
+  assert.equal(emb.shown, null, "no /app/developers page at all");
+  assert.ok(!routeList(emb.routes).includes("/app/developers"), "the old route is gone (no redirect)");
+  const off = probe(built("embedded-off", ["fixture_embedded"], { features: { developer_surface: false } }));
+  assert.deepEqual([off.developerConsole, off.tabs.filter((t) => /api_keys|allowed_origins|webhooks|integrations/.test(t))], [{ on: false, inbound: false }, []], "features.developer_surface false: none of its tabs");
+  ok("an embedded app: API keys, Allowed origins, Webhooks and Integrations as Settings tabs, no Developers page; off with features.developer_surface false");
 
   // ---------- 2. a tool app, zero packs ----------
   for (const [name, packs] of [["tool", ["fixture_vulns"]], ["zero", []]] as const) {
     const p = probe(built(name, [...packs]));
     assert.deepEqual(p.developerConsole, { on: false, inbound: false }, `${name}: off`);
-    assert.deepEqual(p.developerPortalNav, [], `${name}: no Developers group`);
+    assert.deepEqual(p.tabs.filter((t) => /api_keys|allowed_origins|webhooks|integrations/.test(t)), [], `${name}: no developer tab`);
     assert.ok(!lines(p.portalNav).some((x) => x.includes("/app/developers")), `${name}: no entry`);
-    assert.equal(p.shown, false, `${name}: the page is not found`);
     assert.ok(!p.portalNav.some((g: any) => g.label === "Settings"), `${name}: no Settings group of its own (no email, no developer surface)`);
   }
-  ok("a tool app and zero packs: no Developers entry, the page not found, no Settings group added");
+  ok("a tool app and zero packs: no developer tab, no Developers entry, no Settings group added");
 
   // ---------- 3. the plain helpers ----------
   const w = await import(pathToFileURL(path.join(ROOT, "web", "src", "features", "developer", "words.ts")).href);
@@ -106,7 +109,7 @@ try {
   assert.doesNotMatch(src["keys.tsx"]!, /key_hash|\.key\b(?!_prefix)[^(]*<\/code>/, "a key is never drawn from the list");
   assert.match(src["webhooks.tsx"]!, /redacted\(d\.payload\)/, "the payload preview is masked");
   assert.match(src["webhooks.tsx"]!, /<StatStrip quad/, "the delivery log's numbers and sparklines");
-  assert.match(src["developer-page.tsx"]!, /<PageContainer>/, "a page of in-page tabs starts with its tab strip: no title above it (mold_v0-180)");
+  assert.doesNotMatch(src["developer-page.tsx"]!, /<PageContainer>|<TabsList/, "each part is a Settings tab (mold_v0-219): Settings' page draws the strip, no page or strip of its own");
   ok("the page: database tables, an owner's changes, secrets only once, a masked payload preview, the log's sparklines, no title above the tabs");
 
   console.log("DEVELOPER CONSOLE TEST PASS");

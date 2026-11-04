@@ -24,7 +24,7 @@ import { findTab } from '../features/tabs/registry';
 import { resolveContext } from '../features/context/config';
 import { journeysOn, tipsOn } from '../features/journeys/config';
 import { auditOn } from '../features/audit/config';
-import { developerConsole, settingsPage } from '../config/pack-nav.generated';
+import { settingsLayout } from '../config/settings';
 
 type Params = Record<string, string[]>;
 /** The packs' own URLs (each rewritten to its host page) and their old addresses (redirects); empty with no packs. */
@@ -70,10 +70,10 @@ export const SHOWN: Readonly<Record<string, () => boolean>> = {
   // The staff access log (mold_v0-197): only where the profile turns an audit trail on. (The customers' is Billing's
   // Access log tab since mold_v0-209; its old page is gone.)
   '/admin/access-log': () => auditOn(),
-  // The developer surface's console (mold_v0-201): only in an embedded app (a pack declares developer_surface).
-  '/app/developers': () => developerConsole.on,
-  // Settings (mold_v0-218): its Credentials and Email tabs, when the build has one of them.
-  '/app/settings': () => settingsPage.credentials || settingsPage.email,
+  // Settings (mold_v0-218, from the features registry since mold_v0-219): with a tab; past 5 tabs, a page per group.
+  // The developer surface's console is its tabs (mold_v0-219); its old /app/developers page is gone, with no redirect.
+  '/app/settings': () => settingsLayout() !== 'none',
+  '/app/settings/[group]': () => settingsLayout() === 'groups',
 };
 
 /**

@@ -2675,9 +2675,10 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
 - **The audit hook** (`src/developer-audit.ts`): every API request (credential, actor, scopes, status, request id) and
   every key and secret action is handed to `setPlatformAuditSink`, which the platform audit trail (mold_v0-197)
   registers; without it nothing is written.
-- **The console** (mold_v0-201, `web/src/features/developer`, `/app/developers`): Settings › Developers, only in an
-  embedded app (gen-packs writes `developerPortalNav` and `developerConsole` into `pack-nav.generated.ts`; in a tool app
-  both are empty, the page is not found and nothing else in the sidebar moves). A page of in-page tabs, each list the
+- **The console** (mold_v0-201, `web/src/features/developer`; Settings tabs since mold_v0-219): only in an embedded
+  app, its four parts are **Settings tabs** (below, "Features registry"): API keys and Allowed origins in Access, Webhooks
+  and Integrations (the inbound sources) in Connections. The old `/app/developers` page and its Developers sidebar entry
+  are gone, with no redirect (`developerConsole` in `pack-nav.generated.ts` still says whether it is on). Each tab is the
   console's database table (RecordView): **API keys** (made with a name, a scopes picker narrowing read, write and run to an
   area or kind, an expiry, secret or integration; shown once in a dialog with Copy; then only the prefix; Rotate with a
   grace, Revoke), **Webhooks** (add with the events picked; a row's peek edits the address and events, reveals the signing
@@ -2685,7 +2686,7 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
   endpoint's delivery log: status, attempts, answer and next retry, four numbers with the last two weeks' sparklines, and a
   delivery's peek with every attempt and its payload, any credential-named field masked), **Allowed origins** (the app's
   and the workspace's; add, remove) and **Inbound webhooks** (only with `webhooks_in`: add a source, its address and secret
-  shown once, the last 24 hours' deliveries from `GET /api/developer/sources/:id/deliveries`). Every role reads; every
+  shown once, the last 24 hours' deliveries from `GET /api/developer/sources/:id/deliveries`; the Integrations tab). Every role reads; every
   change is an owner's (`manage`), the buttons disabled with the role they need for anyone else. Proof: `npm run
   test:developer-console` (offline: the sidebar and route in an embedded, a tool and a zero-pack build; the helpers; the
   page's shape).
@@ -2739,6 +2740,61 @@ run in its unbranded lane copy `build/<app_id>.lane/` (`packs.py lane-copy`), as
   its config pack, with the engine pack `packs/apo`: "Engine packs and config packs") has the same surface as the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
   routes, the same console pages and navigation, and the same tables. The surface diff between the two must be empty,
   and the re-mint (mold_v0-029) must still pass smoke, `mcp:check` and the isolation sweep (mold_v0-039).
+
+## Features registry (mold_v0-219)
+
+One on/off flag for every optional capability of the shell, in **one registry**, `codebase/src/features.json`, read by
+the server's gates (`src/features.ts`, `src/feature-flags.ts`), the build (`scripts/gen-packs.mjs`, which writes
+`web/src/config/features.generated.ts` for the console), the factory (`.claude/scripts/lib/features.py`: the app spec's
+`features`, the brief's `features.<flag> = true|false` lines, `factory.py spec check` and `spec apps`) and the factory
+board. The app sets them in `profile.json` `features`, `{"<flag>": true|false}`.
+
+A capability is **on** only when something **asks for it** (a pack's declaration; the audit toggles always) **and** its
+flag is not `false`. Each flag's default keeps every existing app as it was: on where the capability was on whenever a
+pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.data`, `audit.platform`, `audit.sign`,
+`onprem_runners`) still read and must agree with `features` (the build refuses a contradiction).
+
+| Flag | Default | Asked for by | Gates (off: none of it) |
+|---|---|---|---|
+| `customer_key_vault` | on | a pack's `credentials` | Settings › Credentials; `/api/credentials`, `/api/credential-connections`, `/api/github-app`. Refused off while a job kind needs a credential that is not optional |
+| `company_email` | on | a pack's `email` (sender.allow or intake) | Settings › Email; `/api/email`; the intake job and tools; Health's Email Delivery |
+| `scheduled_alerts` | on | a due-date area, or clocks (with `record_clocks`) | due-date notices and emails; clock reminders and escalation steps; `/api/notices`, Notices; Settings › Alerts |
+| `record_clocks` | on | a workspace area's `clocks` | the clock check job, the records' `clocks`/`due`, clock columns, the Due soon card, `list_due_records`; a metric or tab counting by a clock is refused off |
+| `audit.data` | off | always | the data trail (Billing's Access log, `/api/audit/data`, `read_audit_trail`) |
+| `audit.platform` | off | always | the platform trail (`/admin/access-log`, `/api/audit/platform`, `read_platform_trail`) |
+| `audit.sign` | off | always; needs `audit.data` or `audit.platform` (refused alone) | checkpoints, `/api/ledger`, `/.well-known/ledger-keys.json`, `verify_audit_trail`; Settings › Signing |
+| `onprem_runners` | off | a kind with `private_network: true` | `/api/runners`, `/api/runner`, the runners section, staff's Runners tab |
+| `developer_surface` | on | a pack's `developer_surface` (the spec's `kind: embedded`) | `/v1`, `/openapi.json`, the outbox and webhook jobs; Settings › API keys, Allowed origins, Webhooks, Integrations; Health's Webhook Delivery |
+| `declarative_checks` | on | a pack's `checks` | `/api/checks`, `/v1/checks`, `check_<name>` |
+| `encrypted_fields` | on | an `encrypted: true` field | reveal routes and tools, the migration job. Refused off while a field is encrypted (never stored in the clear) |
+| `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
+| `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
+
+**`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
+for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
+with `embedded`); in a build the flag false turns a declared surface off. The spec's completeness rules add: `audit.sign`
+needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platform`.
+
+**Settings, from the registry.** Each capability that is on contributes its Settings tabs, in four fixed groups:
+**Access** (Credentials, API keys, Allowed origins), **Connections** (Email, Webhooks, Integrations), **Automation**
+(Alerts), **Data & trust** (Signing), each followed by the packs' own: a workspace record area declared
+`"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
+table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operational. The sidebar follows the
+tab count (`web/src/config/settings.ts`): **0** no Settings entry (Octillion); **1** one entry, `/app/settings` that table
+alone with no strip; **2 to 5** one entry directly below Overview, one in-page strip (Maxwell: Credentials | Email); **past
+5** a collapsible Settings entry with one item per group that has a tab, each `/app/settings/<group>` (`access`,
+`connections`, `automation`, `data-trust`) with its own strip. A tab is `?tab=<id>` on its page, the page's first bare
+(`/app/settings?tab=email`, `/app/settings/connections?tab=webhooks`); `/app/settings?tab=<id>` always works (past 5 it
+leads to the tab's group page). Every tab is the standard full-area table (cards, search row with its primary action,
+table, full card). **Alerts** lists, read only from the packs' declarations, each due date and clock step: when, who is
+told, what else it does. **Signing** lists the workspace's signed checkpoints (`GET /api/ledger/checkpoints`, owners) with
+the public key, and Verify now.
+
+Proof: `npm run test:features` (the registry; zero packs; a fixture asking for every capability with each flag turned:
+its routes, tools and jobs go or come and nothing else changes; the same per flag in build copies for the console's
+pages, sidebar and Settings tabs; the refusals), `npm run test:console-sidebar` (0, 1, 2 to 5 and past 5 tabs; a 9-tab
+build grouped; every Settings page lights its group's entry), `npm run test:developer-console`, `npm run test:zero-pack`
+(the zero-pack MCP surface stays `4e3e14917286b00c`).
 
 ## Audit trails (mold_v0-197)
 
@@ -3113,8 +3169,9 @@ at, each with its name, type and size, **Download**, and an inline preview. No p
   attachments kept as files on its record (nothing else of the record changes; the old `.mail/` copies are removed);
   what the window no longer holds is marked `not_found` and never looked for again. The ledger keeps only a hash of the
   Message-ID, so a message is found by reading the window, not by asking the mailbox for one id.
-- **Flags.** TODO(mold_v0-219): when the features registry lands, `document_preview` (default on) gates the card routes
-  and the console's cards.
+- **Flags.** The features registry's `document_preview` (mold_v0-219; default on, asked for by a file field or a field
+  previewing its document) gates the card routes (`previews` in `mountFileRoutes`: off, `404 document_preview_off`) and
+  the console's cards (`hasDocuments`); the files stay stored either way.
 
 Proof: `npm run test:record-files` (the declaration; a round trip sealed at rest under the workspace's prefix; never in
 lists, the record, exports, MCP, the data trail, the database or the logs; permission by area role, workspace, person,

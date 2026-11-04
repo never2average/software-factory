@@ -20,6 +20,8 @@ export type AppRow = {
   /** What the last deploy or --smoke found about "Continue with Google": '' when it was never checked. */
   google: '' | 'direct' | 'hub' | 'not_working' | 'unknown'
   checks: Check[]
+  /** mold_v0's capability flags that are on (mold_v0-219: the short names, in the registry's order); absent for other molds. */
+  flags?: string[]
 }
 
 export type ProductRow = { id: string; name: string; stage: string; apps: number; moldId: string; appIds: string[] }

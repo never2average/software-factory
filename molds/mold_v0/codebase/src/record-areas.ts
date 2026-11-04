@@ -36,6 +36,7 @@ import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
 import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
 import type { RevealedFields } from "./pack-api.js";
+import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -474,6 +475,8 @@ export const mayReveal = (area: RecordArea, f: EncField, actor: Actor) =>
 export async function revealFor(orgId: number, name: string, key: string, fields: unknown, actor: Actor = SYSTEM_ACTOR): Promise<RevealedFields> {
   const area = areaOrThrow(name);
   if (area.scope !== "workspace" || !hasEncryptedFields(area)) throw new PackError(`${area.label} has no encrypted fields`, 404);
+  // The features registry (mold_v0-219): with encrypted_fields off nothing is revealed (values stay masked: fail closed).
+  if (!featureSetting("encrypted_fields")) throw new PackError("Encrypted fields are off in this app", 404);
   assertMay(area, "read", actor);
   const enc = encryptedFields(area);
   let wanted: EncField[];
@@ -514,7 +517,9 @@ export async function revealFor(orgId: number, name: string, key: string, fields
  * Clocks (mold_v0-191, src/record-clocks.ts): a workspace area's records carry their deadlines on every read, except
  * inside a batch's transaction (its writes' answers are the store's own) and for an area read live from an API.
  */
-const hasClocks = (a: RecordArea) => (a.clocks?.length ?? 0) > 0 && !isLive(a) && !txScope.getStore();
+const hasClocks = (a: RecordArea) => clocksShown(a) && !isLive(a) && !txScope.getStore();
+/** The area's clocks count (mold_v0-219): it declares some and the features registry's record_clocks flag is not off. */
+const clocksShown = (a: RecordArea) => (a.clocks?.length ?? 0) > 0 && featureSetting("record_clocks");
 const clocks = () => import("./record-clocks.js");
 
 /**
@@ -973,7 +978,7 @@ export const areaSummary = (a: RecordArea) => ({
   // mold_v0-057: the lifecycle and who may do what (each action's roles, never wider than the platform's).
   ...(a.lifecycle ? { lifecycle: a.lifecycle } : {}),
   // mold_v0-191: the clocks its records run against (what each counts from, its durations, its steps).
-  ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label, starts: c.starts, after: c.after, ...(c.not_later_than ? { not_later_than: c.not_later_than } : {}),
+  ...(clocksShown(a) ? { clocks: a.clocks!.map((c) => ({ name: c.name, label: c.label, starts: c.starts, after: c.after, ...(c.not_later_than ? { not_later_than: c.not_later_than } : {}),
     ...(c.stops_when ? { stops_when: c.stops_when } : {}), ...(c.pauses_when ? { pauses_when: c.pauses_when } : {}) })) } : {}),
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),
 });

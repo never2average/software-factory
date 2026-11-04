@@ -15,7 +15,8 @@
       "molds/mold_v0/codebase/packs/pack.schema.json",
       "molds/mold_v0/codebase/scripts/gen-packs.mjs",
       "molds/mold_v0/codebase/src/email.ts",
-      "molds/mold_v0/codebase/src/developer-config.ts"
+      "molds/mold_v0/codebase/src/developer-config.ts",
+      "molds/mold_v0/codebase/src/features.json"
     ]
   },
   "type": "object",
@@ -471,8 +472,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "title": "Profile settings",
-      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
-      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
+      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners, features (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
+      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`, `features`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
       "properties": {
         "email": {
           "type": "object",
@@ -625,6 +626,13 @@
           "description": "true: the app's workspaces may install an on-premises runner inside their own network for the kinds that need it (a pack's job kind with private_network: true); false (the default): no runner routes, pages, tabs or enrolment, and every run is hosted.",
           "markdownDescription": "**On-premises runners**, off unless `true` (mold_v0-205, the shell's `src/onprem-runners.ts`).\n\n- `true`: a workspace's owners add a runner on **Credentials** and install it inside their network; the runs of a kind with `private_network: true` then go to it when the workspace chooses so.\n- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`."
         },
+        "features": {
+          "not": {},
+          "x-not-supported": "say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219)",
+          "description": "Not supported: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219).",
+          "markdownDescription": "**Not supported**: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219).",
+          "errorMessage": "Not supported: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219)."
+        },
         "limits": {
           "not": {},
           "x-not-supported": "say limits in the spec's top-level `budgets` block, which is written to profile.limits",
@@ -682,6 +690,9 @@
     },
     "developer_surface": {
       "$ref": "#/$defs/developer_surface"
+    },
+    "features": {
+      "$ref": "#/$defs/features"
     }
   },
   "allOf": [
@@ -740,6 +751,162 @@
             "errorMessage": "Not supported: it is for an app of kind embedded only (set \"kind\": \"embedded\", or leave it out)."
           }
         }
+      }
+    },
+    {
+      "x-rule": "chain and sign signs the audit trails, so one of them must be on",
+      "if": {
+        "properties": {
+          "features": {
+            "properties": {
+              "audit.sign": {
+                "const": true
+              }
+            },
+            "required": [
+              "audit.sign"
+            ]
+          }
+        },
+        "required": [
+          "features"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "features": {
+                "properties": {
+                  "audit.data": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "audit.data"
+                ]
+              }
+            },
+            "required": [
+              "features"
+            ]
+          },
+          {
+            "properties": {
+              "features": {
+                "properties": {
+                  "audit.platform": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "audit.platform"
+                ]
+              }
+            },
+            "required": [
+              "features"
+            ]
+          },
+          {
+            "properties": {
+              "audit": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "data": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "platform": {
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "platform"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "audit"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "x-rule": "kind is the developer surface's switch: the flag may not turn it on for a tool",
+      "if": {
+        "properties": {
+          "features": {
+            "properties": {
+              "developer_surface": {
+                "const": true
+              }
+            },
+            "required": [
+              "developer_surface"
+            ]
+          }
+        },
+        "required": [
+          "features"
+        ]
+      },
+      "then": {
+        "properties": {
+          "kind": {
+            "const": "embedded"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    },
+    {
+      "x-rule": "kind embedded is a developer surface: the flag may not turn it off",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "features": {
+                "properties": {
+                  "developer_surface": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "developer_surface"
+                ]
+              }
+            },
+            "required": [
+              "features"
+            ]
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "embedded"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "not": {}
       }
     },
     {
@@ -1688,6 +1855,12 @@
                       "enum": [
                         "equality"
                       ]
+                    },
+                    "preview": {
+                      "type": "string",
+                      "enum": [
+                        "document"
+                      ]
                     }
                   },
                   "required": [
@@ -1888,6 +2061,29 @@
               },
               "chain": {
                 "type": "boolean"
+              },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "group": {
+                    "type": "string",
+                    "enum": [
+                      "access",
+                      "connections",
+                      "automation",
+                      "data_trust"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "group"
+                ],
+                "additionalProperties": false
               },
               "rows": {
                 "type": "string",
@@ -2588,6 +2784,12 @@
                           "enum": [
                             "equality"
                           ]
+                        },
+                        "preview": {
+                          "type": "string",
+                          "enum": [
+                            "document"
+                          ]
                         }
                       },
                       "required": [
@@ -2970,6 +3172,12 @@
                           "type": "string",
                           "enum": [
                             "equality"
+                          ]
+                        },
+                        "preview": {
+                          "type": "string",
+                          "enum": [
+                            "document"
                           ]
                         }
                       },
@@ -6469,7 +6677,9 @@
                       "attachments",
                       "attachment_count",
                       "mailbox",
-                      "message_id"
+                      "message_id",
+                      "body_file",
+                      "attachment_files"
                     ]
                   },
                   "additionalProperties": {
@@ -6539,6 +6749,40 @@
               "additionalProperties": false
             }
           },
+          "additionalProperties": false
+        },
+        "documents": {
+          "type": "object",
+          "properties": {
+            "$comment": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "hosts": {
+              "minItems": 1,
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(\\*\\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+              }
+            },
+            "max_bytes": {
+              "default": 20971520,
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 26214400
+            },
+            "refresh_days": {
+              "default": 30,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            }
+          },
+          "required": [
+            "hosts"
+          ],
           "additionalProperties": false
         },
         "landing": {
@@ -14065,6 +14309,107 @@
           }
         }
       ]
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "title": "Capability flags (mold_v0-219)",
+      "description": "One on/off flag per optional capability of mold_v0 (codebase/src/features.json). A capability is on when something asks for it (a pack's declaration; the audit toggles always) and its flag is not false. Written to profile.features; brief lines features.<flag> = true|false.",
+      "markdownDescription": "One **on/off flag per optional capability** (`molds/mold_v0/codebase/src/features.json`). A capability is **on** when something asks for it (a pack's declaration; the audit toggles always) **and** its flag is not `false`. Leave a flag out for its default.\n\nWritten to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. `factory.py spec check` says the effective flags.",
+      "properties": {
+        "customer_key_vault": {
+          "type": "boolean",
+          "default": true,
+          "title": "Workspace credentials (mold_v0-034)",
+          "description": "Each workspace keeps its own credentials for the packs' runs (write-only, sealed with the workspace's key): the console's Credentials page (Settings › Credentials), /api/credentials, its OAuth connections (/api/credential-connections) and GitHub App installation (/api/github-app). Asked for when a pack declares credential fields (pack.json credentials). Default true. Off: No Credentials page or sidebar entry, and /api/credentials, /api/credential-connections and /api/github-app answer not found. Refused while a job kind needs a credential that is not optional (nobody could give it).",
+          "markdownDescription": "**Workspace credentials** (mold_v0-034; board name `vault`). Each workspace keeps its own credentials for the packs' runs (write-only, sealed with the workspace's key): the console's Credentials page (Settings › Credentials), /api/credentials, its OAuth connections (/api/credential-connections) and GitHub App installation (/api/github-app).\n\n- **Asked for** when a pack declares credential fields (pack.json credentials).\n- **Default** `true`.\n- **Off**: No Credentials page or sidebar entry, and /api/credentials, /api/credential-connections and /api/github-app answer not found. Refused while a job kind needs a credential that is not optional (nobody could give it).\n\nBrief line: `features.customer_key_vault = false` in `## Profile`."
+        },
+        "company_email": {
+          "type": "boolean",
+          "default": true,
+          "title": "Company email (mold_v0-192)",
+          "description": "A workspace's own sender (SMTP, Microsoft 365, Google Workspace) and mailboxes read into a record area: Settings › Email, /api/email, the email intake job and its MCP tools, Health's Email Delivery tab. Asked for when a pack declares the company's own email (pack.json email: sender.allow or intake). Default true. Off: No Settings › Email page or sidebar entry, /api/email answers not found, no mailbox is polled, no intake tool is listed, and every email goes out through the app's default sender.",
+          "markdownDescription": "**Company email** (mold_v0-192; board name `email`). A workspace's own sender (SMTP, Microsoft 365, Google Workspace) and mailboxes read into a record area: Settings › Email, /api/email, the email intake job and its MCP tools, Health's Email Delivery tab.\n\n- **Asked for** when a pack declares the company's own email (pack.json email: sender.allow or intake).\n- **Default** `true`.\n- **Off**: No Settings › Email page or sidebar entry, /api/email answers not found, no mailbox is polled, no intake tool is listed, and every email goes out through the app's default sender.\n\nBrief line: `features.company_email = false` in `## Profile`."
+        },
+        "scheduled_alerts": {
+          "type": "boolean",
+          "default": true,
+          "title": "Scheduled alerts (mold_v0-035, mold_v0-191)",
+          "description": "The daily due-date notices and their emails, and the clocks' reminders and escalation steps (an in-app notice, an email, a reassignment or a raised value): the Notices page and /api/notices. Asked for when a record area declares due dates (record_areas[].due), or a workspace area declares clocks (record_areas[].clocks, with record_clocks on): their reminders and escalation steps. Default true. Off: No due-date notice or email is posted and no clock step runs (clocks still show each record's deadline and status when record_clocks is on); no Notices page or sidebar entry, and /api/notices answers not found.",
+          "markdownDescription": "**Scheduled alerts** (mold_v0-035, mold_v0-191; board name `alerts`). The daily due-date notices and their emails, and the clocks' reminders and escalation steps (an in-app notice, an email, a reassignment or a raised value): the Notices page and /api/notices.\n\n- **Asked for** when a record area declares due dates (record_areas[].due), or a workspace area declares clocks (record_areas[].clocks, with record_clocks on): their reminders and escalation steps.\n- **Default** `true`.\n- **Off**: No due-date notice or email is posted and no clock step runs (clocks still show each record's deadline and status when record_clocks is on); no Notices page or sidebar entry, and /api/notices answers not found.\n\nBrief line: `features.scheduled_alerts = false` in `## Profile`."
+        },
+        "record_clocks": {
+          "type": "boolean",
+          "default": true,
+          "title": "Record clocks (mold_v0-191)",
+          "description": "Each record's deadlines: the clock check job, the records' `clocks` and `due` fields, the clock columns and Overdue filter, the record page's history, the Due soon card (/api/records/due-soon) and the clock MCP tools. Asked for when a workspace record area declares clocks (record_areas[].clocks). Default true. Off: No clock is computed or kept, no clock column, filter or history shows, the Due soon card is empty and no clock tool is listed; a metric or tab that counts by a clock is refused at build.",
+          "markdownDescription": "**Record clocks** (mold_v0-191; board name `clocks`). Each record's deadlines: the clock check job, the records' `clocks` and `due` fields, the clock columns and Overdue filter, the record page's history, the Due soon card (/api/records/due-soon) and the clock MCP tools.\n\n- **Asked for** when a workspace record area declares clocks (record_areas[].clocks).\n- **Default** `true`.\n- **Off**: No clock is computed or kept, no clock column, filter or history shows, the Due soon card is empty and no clock tool is listed; a metric or tab that counts by a clock is refused at build.\n\nBrief line: `features.record_clocks = false` in `## Profile`."
+        },
+        "audit.data": {
+          "type": "boolean",
+          "default": false,
+          "title": "Data audit trail (mold_v0-197)",
+          "description": "Every read, change, reveal and export of a workspace's records: Billing's Access log tab, /api/audit/data, the read_audit_trail MCP tool, staff's /admin/access-log. Asked for when the app's profile (no pack declares it). Default false. Off: Nothing is written, no route answers, no tab or page shows and no tool is listed. Legacy key: profile.audit.data (still read; it and this flag must agree).",
+          "markdownDescription": "**Data audit trail** (mold_v0-197; board name `audit.data`). Every read, change, reveal and export of a workspace's records: Billing's Access log tab, /api/audit/data, the read_audit_trail MCP tool, staff's /admin/access-log.\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: Nothing is written, no route answers, no tab or page shows and no tool is listed.\n- Legacy key: profile.audit.data (still read; it and this flag must agree).\n\nBrief line: `features.audit.data = true` in `## Profile`."
+        },
+        "audit.platform": {
+          "type": "boolean",
+          "default": false,
+          "title": "Platform audit trail (mold_v0-197)",
+          "description": "Every API and MCP request and sign-in, and every staff action on an account: /admin/access-log, /api/audit/platform, the admin MCP's read_platform_trail. Asked for when the app's profile (no pack declares it). Default false. Off: Nothing is written, no route answers, no page shows and no tool is listed. Legacy key: profile.audit.platform (still read; it and this flag must agree).",
+          "markdownDescription": "**Platform audit trail** (mold_v0-197; board name `audit.platform`). Every API and MCP request and sign-in, and every staff action on an account: /admin/access-log, /api/audit/platform, the admin MCP's read_platform_trail.\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: Nothing is written, no route answers, no page shows and no tool is listed.\n- Legacy key: profile.audit.platform (still read; it and this flag must agree).\n\nBrief line: `features.audit.platform = true` in `## Profile`."
+        },
+        "audit.sign": {
+          "type": "boolean",
+          "default": false,
+          "title": "Chain and sign (mold_v0-195)",
+          "description": "Signed checkpoints of the hash-chained audit trails (Ed25519 over Merkle roots): the ledger checkpoint job, /api/ledger/verify and /checkpoints, /.well-known/ledger-keys.json, the verify_audit_trail MCP tool and Settings › Signing. On, the app needs APP_LEDGER_SIGNING_KEY, which the factory makes (mold.json profile_secrets, lib/ledger_key.py: provision.py <app> --generate-secret APP_LEDGER_SIGNING_KEY; mold_v0-227). Asked for when the app's profile (no pack declares it). Default false. Off: No checkpoint is signed, no route or well-known key answers and no tool is listed (the chain itself is always kept where entries are written). Needs one of audit.data, audit.platform on. Legacy key: profile.audit.sign (still read; it and this flag must agree).",
+          "markdownDescription": "**Chain and sign** (mold_v0-195; board name `audit.sign`). Signed checkpoints of the hash-chained audit trails (Ed25519 over Merkle roots): the ledger checkpoint job, /api/ledger/verify and /checkpoints, /.well-known/ledger-keys.json, the verify_audit_trail MCP tool and Settings › Signing. On, the app needs APP_LEDGER_SIGNING_KEY, which the factory makes (mold.json profile_secrets, lib/ledger_key.py: provision.py <app> --generate-secret APP_LEDGER_SIGNING_KEY; mold_v0-227).\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: No checkpoint is signed, no route or well-known key answers and no tool is listed (the chain itself is always kept where entries are written).\n- **Needs** Needs one of audit.data, audit.platform on.\n- Legacy key: profile.audit.sign (still read; it and this flag must agree).\n\nBrief line: `features.audit.sign = true` in `## Profile`."
+        },
+        "onprem_runners": {
+          "type": "boolean",
+          "default": false,
+          "title": "On-premises runners (mold_v0-205)",
+          "description": "A workspace installs a runner inside its own network for the kinds that need it: /api/runners, /api/runner, the runners section of Credentials, staff's Runners tab. Asked for when a job kind declares private_network: true. Default false. Off: No runner route, page, tab or enrolment; every run is hosted. Legacy key: profile.onprem_runners (still read; it and this flag must agree).",
+          "markdownDescription": "**On-premises runners** (mold_v0-205; board name `runners`). A workspace installs a runner inside its own network for the kinds that need it: /api/runners, /api/runner, the runners section of Credentials, staff's Runners tab.\n\n- **Asked for** when a job kind declares private_network: true.\n- **Default** `false`.\n- **Off**: No runner route, page, tab or enrolment; every run is hosted.\n- Legacy key: profile.onprem_runners (still read; it and this flag must agree).\n\nBrief line: `features.onprem_runners = true` in `## Profile`."
+        },
+        "developer_surface": {
+          "type": "boolean",
+          "default": true,
+          "title": "Developer surface (mold_v0-193)",
+          "description": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (Settings: API keys, Allowed origins, Webhooks, Integrations) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind. Asked for when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block). Default true. Off: Nothing of it is mounted, no table is read, no event is queued and no page shows. Needs audit.platform on.",
+          "markdownDescription": "**Developer surface** (mold_v0-193; board name `developer`). The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (Settings: API keys, Allowed origins, Webhooks, Integrations) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.\n\n- **Asked for** when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block).\n- **Default** `true`.\n- **Off**: Nothing of it is mounted, no table is read, no event is queued and no page shows.\n- **Needs** Needs audit.platform on.\n\nBrief line: `features.developer_surface = false` in `## Profile`."
+        },
+        "declarative_checks": {
+          "type": "boolean",
+          "default": true,
+          "title": "Declarative checks (mold_v0-196)",
+          "description": "Yes/no questions the records answer: /api/checks, /v1/checks, the check_<name> MCP tools, with their fallback rules (first_of) and percentage bucketing (bucket conditions; mold_v0-224/225/226), a client session's checks scopes and the onboarding's check tools. Asked for when a pack declares checks (pack.json checks). Default true. Off: No check route answers and no check tool is listed.",
+          "markdownDescription": "**Declarative checks** (mold_v0-196; board name `checks`). Yes/no questions the records answer: /api/checks, /v1/checks, the check_<name> MCP tools, with their fallback rules (first_of) and percentage bucketing (bucket conditions; mold_v0-224/225/226), a client session's checks scopes and the onboarding's check tools.\n\n- **Asked for** when a pack declares checks (pack.json checks).\n- **Default** `true`.\n- **Off**: No check route answers and no check tool is listed.\n\nBrief line: `features.declarative_checks = false` in `## Profile`."
+        },
+        "encrypted_fields": {
+          "type": "boolean",
+          "default": true,
+          "title": "Encrypted fields (mold_v0-194)",
+          "description": "Fields envelope-encrypted at rest, masked on every read, revealed on purpose: the reveal routes and MCP tools and the encrypted-field migration job. Asked for when a record area's field declares encrypted: true. Default true. Off: Refused at build while a pack declares an encrypted field (turning it off never stores a value in the clear); with none, nothing of it runs.",
+          "markdownDescription": "**Encrypted fields** (mold_v0-194; board name `encrypted`). Fields envelope-encrypted at rest, masked on every read, revealed on purpose: the reveal routes and MCP tools and the encrypted-field migration job.\n\n- **Asked for** when a record area's field declares encrypted: true.\n- **Default** `true`.\n- **Off**: Refused at build while a pack declares an encrypted field (turning it off never stores a value in the clear); with none, nothing of it runs.\n\nBrief line: `features.encrypted_fields = false` in `## Profile`."
+        },
+        "health_history": {
+          "type": "boolean",
+          "default": true,
+          "title": "Health history (mold_v0-210)",
+          "description": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history. Asked for when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions). Default true. Off: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).",
+          "markdownDescription": "**Health history** (mold_v0-210; board name `health`). Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.\n\n- **Asked for** when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions).\n- **Default** `true`.\n- **Off**: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).\n\nBrief line: `features.health_history = false` in `## Profile`."
+        },
+        "document_preview": {
+          "type": "boolean",
+          "default": true,
+          "title": "Document previews (mold_v0-220)",
+          "description": "A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards. Asked for when a record area's field of type file, or a field that previews its URL's document (preview: document). Default true. Off: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.",
+          "markdownDescription": "**Document previews** (mold_v0-220; board name `documents`). A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards.\n\n- **Asked for** when a record area's field of type file, or a field that previews its URL's document (preview: document).\n- **Default** `true`.\n- **Off**: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.\n\nBrief line: `features.document_preview = false` in `## Profile`."
+        }
+      }
     }
   }
 }

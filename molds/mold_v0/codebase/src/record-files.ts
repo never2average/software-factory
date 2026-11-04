@@ -27,8 +27,8 @@
  *              `export`, each with the record's key and the file's place (never its name or bytes). A shared area's
  *              document is no workspace's data: no entry.
  *
- * TODO(mold_v0-219): gate on the features registry's `document_preview` (default on) once it lands on main: off, no file
- * card route answers and the console shows none.
+ * Gated by the features registry's `document_preview` flag (mold_v0-219, src/features.json; default on, asked for by a
+ * file field or a field previewing its document): off, the card routes answer not found and the console shows no card.
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response, Router } from "express";
@@ -43,6 +43,7 @@ import { DocumentFetchError, checkDocumentUrl, fetchDocument, sniff } from "./do
 import { documentOf, htmlPolicy, sanitiseHtml } from "./html-sanitise.js";
 import { objectStore } from "./storage.js";
 import { asPlatform } from "./tenant-scope.js";
+import { featureOn } from "./features.js";
 
 export const RECORD_FILE_MAX = 25 * 1024 * 1024;
 const TEXT_PREVIEW_MAX = 1024 * 1024;
@@ -349,9 +350,11 @@ export async function serveFile(door: FileDoor, req: Request, res: Response): Pr
 
 /** Mount the file routes on a records router (before its /:area/:key route). */
 export function mountFileRoutes(r: Router, door: FileDoor, guard: (op: "get") => (req: Request, res: Response, next: NextFunction) => void, ...before: ((req: Request, res: Response, next: NextFunction) => void)[]) {
-  // TODO(mold_v0-219): `features.document_preview` off: these answer 404 and the console shows no card.
-  r.get("/:area/:key/files", ...before, guard("get"), answer((req, res) => fileCards(door, res, String(req.params.area), String(req.params.key))));
-  r.get("/:area/:key/files/:field/:n", ...before, guard("get"), answer(async (req, res) => { await serveFile(door, req, res); }));
+  // The features registry's document_preview (mold_v0-219): off, these answer 404 and the console shows no card.
+  const previews = (_req: Request, res: Response, next: NextFunction) =>
+    (featureOn("document_preview") ? next() : void res.status(404).json({ error: "Document previews are off in this app", code: "document_preview_off" }));
+  r.get("/:area/:key/files", previews, ...before, guard("get"), answer((req, res) => fileCards(door, res, String(req.params.area), String(req.params.key))));
+  r.get("/:area/:key/files/:field/:n", previews, ...before, guard("get"), answer(async (req, res) => { await serveFile(door, req, res); }));
 }
 
 /** The area as a door may read it: any declared area for a workspace's people, shared areas only for staff. */

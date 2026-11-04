@@ -85,9 +85,17 @@ def profile_value(app, path, root=None):
     return None
 
 
+def switched_on(app, when, root=None):
+    """Whether the profile turns `when` on: its features flag of that name (mold_v0-219: profile.features, which wins over
+    the legacy key), else the dotted path itself (audit.sign)."""
+    feats = profile_value(app, "features", root)
+    if isinstance(feats, dict) and isinstance(feats.get(when), bool): return feats[when]
+    return profile_value(app, when, root) is True
+
+
 def needed(app, root=None, man=None):
     """[(NAME, spec)] the app needs because its profile turns them on (audit.sign for APP_LEDGER_SIGNING_KEY)."""
-    return [(n, s) for n, s in declared((app or {}).get("mold_id"), root, man).items() if profile_value(app, s.get("when", ""), root) is True]
+    return [(n, s) for n, s in declared((app or {}).get("mold_id"), root, man).items() if switched_on(app, s.get("when", ""), root)]
 
 
 def names_needed(app, root=None, man=None): return [n for n, _ in needed(app, root, man)]
@@ -267,6 +275,10 @@ def self_test():
     ok(declared("mold_v1", ROOT) == {}, "mold_v1 declares no generated secret")
     on = {"app_id": "zz", "mold_id": "mold_v0", "profile": {"audit": {"sign": True}}}
     off = {"app_id": "zz", "mold_id": "mold_v0", "profile": {"audit": {"data": True}}}
+    # mold_v0-219: the features block says it too, and wins over the legacy key
+    ok(names_needed({"app_id": "zz", "mold_id": "mold_v0", "profile": {"features": {"audit.data": True, "audit.sign": True}}}, ROOT) == ["APP_LEDGER_SIGNING_KEY"]
+       and names_needed({"app_id": "zz", "mold_id": "mold_v0", "profile": {"audit": {"sign": True}, "features": {"audit.sign": False}}}, ROOT) == [],
+       "features.audit.sign asks for the signing key (and false there turns it off)")
     ok(names_needed(on, ROOT) == ["APP_LEDGER_SIGNING_KEY"], "audit.sign on: the key is needed")
     ok(names_needed(off, ROOT) == [] and names_needed({"mold_id": "mold_v0"}, ROOT) == [] and names_needed({"mold_id": "mold_v1", "profile": {"audit": {"sign": True}}}, ROOT) == [],
        "audit.sign off or absent, or a mold without the feature: not needed")

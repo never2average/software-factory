@@ -107,7 +107,7 @@
     }
   },
   "profile_secrets": {
-    "$comment": "Secrets the factory MAKES for an app because its profile turns a feature on (mold_v0-227; .claude/scripts/lib/ledger_key.py). Never typed and never another app's: required while `when` (a dotted path in the app's effective profile) is true, so provision.py's check and mint.py's keys station ask for `provision.py <app> --generate-secret NAME`, which makes the key on the factory machine, writes it to the deploy target (Vercel: `project`; a server: its env file) and prints only its public half. A compose_remote deploy makes it when the server lacks it. An existing key is replaced only with --rotate, which first publishes the old public keys under `retired_public_keys`, so earlier checkpoints still verify.",
+    "$comment": "Secrets the factory MAKES for an app because its profile turns a feature on (mold_v0-227; .claude/scripts/lib/ledger_key.py). Never typed and never another app's: required while `when` (a dotted path in the app's effective profile, or the features flag of that name, which wins: mold_v0-219) is true, so provision.py's check and mint.py's keys station ask for `provision.py <app> --generate-secret NAME`, which makes the key on the factory machine, writes it to the deploy target (Vercel: `project`; a server: its env file) and prints only its public half. A compose_remote deploy makes it when the server lacks it. An existing key is replaced only with --rotate, which first publishes the old public keys under `retired_public_keys`, so earlier checkpoints still verify.",
     "APP_LEDGER_SIGNING_KEY": {
       "when": "audit.sign",
       "generate": "ed25519_seed",

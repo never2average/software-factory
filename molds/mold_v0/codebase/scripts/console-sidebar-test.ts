@@ -47,17 +47,32 @@ function buildCopy(name: string, packs: string[], edit: (id: string, j: any) => 
   const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
   return { copy, status: g.status, out: `${g.stdout}\n${g.stderr}` };
 }
+let MANY = "";
 const built = (...a: Parameters<typeof buildCopy>) => { const b = buildCopy(...a); assert.equal(b.status, 0, `gen-packs: ${b.out.slice(-1500)}`); return b.copy; };
 
 const PROBE = `import { portalNav, mergeNav, withSettings } from '@/config/nav-config';
+import { settingsLayout, settingsTabUrl, pageTabs } from '@/config/settings';
+import { settingsTabs } from '@/config/pack-nav.generated';
+const T = (id: string, group: 'access' | 'connections' | 'automation' | 'data_trust') => ({ id, label: id, group, kind: 'area' as const });
+const FIVE = [T('credentials', 'access'), T('api_keys', 'access'), T('email', 'connections'), T('webhooks', 'connections'), T('alerts', 'automation')];
+const SEVEN = [...FIVE.slice(0, 2), T('allowed_origins', 'access'), ...FIVE.slice(2), T('signing', 'data_trust')];
 const home = { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }, { title: 'Usage', url: '/app/usage', items: [] }] };
 const ops = { label: 'Operational', items: [{ title: 'Billing', url: '/app/billing', items: [] }] };
 const own = { label: 'Company', items: [{ title: 'Credentials', url: '/app/settings', items: [], roles: ['member', 'owner'] }] };
 const settings = {
-  email: withSettings([home, ops], { credentials: false, email: true }),
-  moved: withSettings([home, ops, own], { credentials: true, email: false }),
-  none: withSettings([home, own, ops], { credentials: false, email: false }),
-  noHome: withSettings([ops], { credentials: true, email: true }),
+  email: withSettings([home, ops], [T('email', 'connections')]),
+  moved: withSettings([home, ops, own], [T('credentials', 'access')]),
+  none: withSettings([home, own, ops], []),
+  noHome: withSettings([ops], FIVE.slice(0, 2)),
+  five: withSettings([home, ops], FIVE),
+  seven: withSettings([home, ops], SEVEN),
+};
+const layout = {
+  counts: [[], FIVE.slice(0, 1), FIVE.slice(0, 2), FIVE, SEVEN].map((t) => settingsLayout(t)),
+  fiveUrls: FIVE.map((t) => settingsTabUrl(t.id, FIVE)),
+  sevenUrls: SEVEN.map((t) => settingsTabUrl(t.id, SEVEN)),
+  sevenPages: ['access', 'connections', 'automation', 'data-trust', 'nope'].map((g) => pageTabs(g, SEVEN).map((t) => t.id)),
+  built: settingsTabs.map((t) => \`\${t.group}:\${t.id}\`), builtLayout: settingsLayout(),
 };
 const merged = mergeNav([
   { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }] },
@@ -65,9 +80,9 @@ const merged = mergeNav([
   { label: 'Get started', items: [{ title: 'Guide', url: '/app/guide', items: [] }, { title: 'Setup again', url: '/app', items: [] }] },
   { label: 'Extra', items: [{ title: 'Billing again', url: '/app/billing', items: [] }] },
 ]);
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, merged, settings }));
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, merged, settings, layout }));
 `;
-function probe(copy: string): { portalNav: any[]; merged: any[]; settings: Record<string, any[]> } {
+function probe(copy: string): { portalNav: any[]; merged: any[]; settings: Record<string, any[]>; layout: any } {
   const web = path.join(copy, "web");
   const file = path.join(web, "probe-sidebar.tsx");
   writeFileSync(file, PROBE);
@@ -167,13 +182,40 @@ try {
   {
     const shell = probe(built("zero-settings", []));
     const s = shell.settings;
-    assert.deepEqual(lines(s.email), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "Email alone: Settings directly below the home page");
+    assert.deepEqual(shell.layout.counts, ["none", "single", "strip", "strip", "groups"], "0 tabs none, 1 one table, 2 to 5 one strip, past 5 a page per group (mold_v0-219)");
+    assert.deepEqual(lines(s.email), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "1 tab (Email alone): Settings directly below the home page, opening that table");
     assert.deepEqual(lines(s.moved), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "a credentials entry elsewhere moves below Overview, its group left out when empty");
     assert.deepEqual(s.moved[0].items[1].roles, ["member", "owner"], "its roles kept");
     assert.deepEqual(lines(s.none), ["Get started: Setup /app", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "neither Credentials nor Email: no Settings entry");
     assert.deepEqual(lines(s.noHome), ["Operational: Settings /app/settings", "Operational: Billing /app/billing"], "no Overview: first");
+    assert.deepEqual(lines(s.five), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "5 tabs: still one entry");
+    assert.deepEqual(s.five[0].items[1].items, [], "5 tabs: no sub-entries");
+    assert.deepEqual(shell.layout.fiveUrls, ["/app/settings", "/app/settings?tab=api_keys", "/app/settings?tab=email", "/app/settings?tab=webhooks", "/app/settings?tab=alerts"], "up to 5: ?tab= on /app/settings, the first bare");
+    assert.deepEqual(lines(s.seven), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "past 5: Settings below Overview (/app/settings leads to its first group)");
+    assert.deepEqual(s.seven[0].items[1].items.map((i: any) => `${i.title} ${i.url}`), ["Access /app/settings/access", "Connections /app/settings/connections", "Automation /app/settings/automation", "Data & trust /app/settings/data-trust"],
+      "past 5: a collapsible Settings entry, one item per group that has a tab, in the fixed order");
+    assert.deepEqual(shell.layout.sevenUrls, ["/app/settings/access", "/app/settings/access?tab=api_keys", "/app/settings/access?tab=allowed_origins", "/app/settings/connections",
+      "/app/settings/connections?tab=webhooks", "/app/settings/automation", "/app/settings/data-trust"], "past 5: each tab on its group's page, the group's first bare");
+    assert.deepEqual(shell.layout.sevenPages, [["credentials", "api_keys", "allowed_origins"], ["email", "webhooks"], ["alerts"], ["signing"], []], "each group page shows its own tabs; an unknown group none");
+    assert.deepEqual([shell.layout.built, shell.layout.builtLayout], [[], "none"], "zero packs: no Settings tab");
     assert.ok(!lines(shell.portalNav).some((x) => /\/app\/(settings|credentials)/.test(x)), `zero packs: no Settings entry: ${lines(shell.portalNav).join(", ")}`);
-    console.log("✓ Settings (mold_v0-218): one entry directly below Overview (the home page or the first overview tab), a credentials entry moved there with its roles; none without Credentials or Email");
+    console.log("✓ Settings (mold_v0-218, mold_v0-219): 0 tabs no entry, 1 one table, 2 to 5 one entry with a strip, past 5 a collapsible entry per group (Access, Connections, Automation, Data & trust); directly below Overview, a credentials entry moved there with its roles");
+    // A build whose capabilities give more than 5 tabs (the developer surface's four, Credentials, Email, Alerts, Signing)
+    // and a pack area declared as settings: the generated tabs in group order, and the grouped sidebar.
+    const many = probe(built("settings-many", ["fixture_embedded"], (_id, j) => {
+      j.credentials = [{ name: "api_token", label: "API token", bound_to: "workspace", deliver_as: { env: "API_TOKEN" } }];
+      j.email = { sender: { allow: true } };
+      j.record_areas.push({ name: "escalation_contacts", label: "Escalation contacts", role: "source", scope: "workspace", settings: { group: "automation", label: "Escalation contacts" },
+        fields: [{ name: "person", label: "Person", type: "text", required: true }] });
+    }, { features: { "audit.data": true, "audit.sign": true } }));
+    assert.deepEqual(many.layout.built, ["access:credentials", "access:api_keys", "access:allowed_origins", "connections:email", "connections:webhooks", "connections:integrations",
+      "automation:alerts", "automation:escalation_contacts", "data_trust:signing"], "each capability's tabs and the pack's settings area, in group order");
+    assert.equal(many.layout.builtLayout, "groups");
+    const entry = many.portalNav.flatMap((g: any) => g.items).find((i: any) => i.title === "Settings");
+    assert.deepEqual(entry.items.map((i: any) => i.title), ["Access", "Connections", "Automation", "Data & trust"], "the grouped sidebar entry");
+    assert.ok(!lines(many.portalNav).some((x) => /escalation_contacts|\/app\/developers/.test(x)), "the settings area is not in Records, and there is no Developers page");
+    MANY = built("settings-many-active", ["fixture_embedded"], (_id, j) => { j.credentials = [{ name: "api_token", label: "API token", bound_to: "workspace", deliver_as: { env: "API_TOKEN" } }]; j.email = { sender: { allow: true } }; }, { features: { "audit.data": true, "audit.sign": true } });
+    console.log("✓ a build with 9 Settings tabs (fixture_embedded + credentials, email, alerts, signing, a pack's settings area): grouped, one sidebar item per group");
   }
 
   // ---------- 6. exactly one active entry on every page (mold_v0-213) ----------
@@ -187,6 +229,7 @@ try {
     const zero = built("active-zero", []);
     const ACTIVE_PROBE = `import { adminNav, portalNav } from '@/config/nav-config';
 import { packTabs } from '@/config/pack-nav.generated';
+import { settingsGroups, settingsLayout } from '@/config/settings';
 import routes from '@/config/console-routes.generated.json';
 import packRoutes from '@/config/pack-routes.generated.json';
 import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
@@ -203,6 +246,7 @@ for (const r of routes.routes as string[]) {
     for (const a of areas) pages.push(r.replace('[area]', a).replace('[key]', 'k-1'));
     continue;
   }
+  if (r === '/app/settings/[group]') { if (settingsLayout() === 'groups') pages.push(...settingsGroups().flatMap((g) => [g.url, ...g.tabs.slice(1).map((t) => \`\${g.url}?tab=\${t.id}\`)])); continue; }
   if (r === '/admin/packs/[pack]/[page]') { pages.push(...adminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => u.startsWith('/admin/packs/'))); continue; }
   pages.push(r.replace('[slug]', 'acme').replace('/[[...section]]', ''));
 }
@@ -242,7 +286,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     };
     // Pages a build has only with a feature it lacks here (a mailbox, the developer surface, a workspace store, the
     // account context, a data repository, an audit trail): each is not found in such a build; with the feature it has its own entry.
-    const ABSENT = /^\/app\/(settings|developers|files|context)$|^\/admin\/(repositories|access-log)$/;
+    const ABSENT = /^\/app\/(settings|settings\/\[group\]|files|context)$|^\/admin\/(repositories|access-log)$/;
     expect("tabs", walk(copy), {
       "/app": "/app/overview", "/app?journey=first-audit": "/app/overview", "/app/journeys": "/app/overview",
       "/app/workbench?tab=fixes": "/app/workbench", "/app/workbench?tab=applications": "/app/workbench",
@@ -256,6 +300,12 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     // (The staff's /admin/activity is no route at all since mold_v0-211: not walked.)
     expect("zero packs", walk(zero), { "/app": "/app", "/app/billing": "/app/billing", "/app/usage": "/app/usage", "/app/profile": "/app/profile", "/admin/health": "/admin/health" },
       new RegExp(`${ABSENT.source}|^/app/(activity|credentials|notices|schedules|vulnerabilities)(\\?|$)`));
+    // Past 5 Settings tabs (mold_v0-219): each group's page, and each of its tabs, lights that group's item.
+    expect("settings groups", walk(MANY), {
+      "/app/settings/access": "/app/settings/access", "/app/settings/access?tab=api_keys": "/app/settings/access",
+      "/app/settings/connections?tab=webhooks": "/app/settings/connections", "/app/settings/automation": "/app/settings/automation",
+      "/app/settings/data-trust": "/app/settings/data-trust",
+    }, /^\/app\/(files|context|schedules|vulnerabilities)(\?|$)|^\/admin\/(repositories|access-log)$/); // pages this fixture lacks; the staff access log has no sidebar entry (as on main)
     // How it is lit (mold_v0-216): the brand's tint behind it and its words in the brand's colour, light and dark, the
     // phone's sheet the same component; no bar at its edge.
     const side = readFileSync(path.join(ROOT, "web", "src", "components", "layout", "app-sidebar.tsx"), "utf8");

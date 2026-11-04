@@ -408,6 +408,18 @@ export async function verifyWorkspace(orgId: number, only?: string | null): Prom
   for (const stream of streams) out.push(await withTenant(orgId, async () => verifyStream(runOn(await getDb()), orgId, stream, ring)));
   return { ok: out.every((r) => r.ok), streams: out, keys: pubs.map((p) => p.kid) };
 }
+/** A workspace's checkpoints for its Settings › Signing tab (mold_v0-219): never a signature's bytes, only what identifies it. */
+export async function workspaceCheckpoints(orgId: number, limit = 100) {
+  const rows = await withTenant(orgId, async () => (await getDb()).query<Record<string, any>>(
+    `SELECT stream, n::text AS n, from_seq::text AS from_seq, to_seq::text AS to_seq, entries, key_id, checkpoint_hash, merkle_root, signed_at
+       FROM ledger_checkpoints WHERE org_id = $1 ORDER BY signed_at DESC, stream, n DESC LIMIT $2`, [orgId, limit]));
+  const keys = publishedKeys().map((k) => ({ kid: k.kid, alg: k.alg, public_key: k.public_key, current: k.current }));
+  return {
+    checkpoints: rows.map((r) => ({ stream: String(r.stream), n: Number(r.n), from_seq: Number(r.from_seq), to_seq: Number(r.to_seq), entries: Number(r.entries),
+      key_id: String(r.key_id), checkpoint_hash: hex(buf(r.checkpoint_hash)), merkle_root: hex(buf(r.merkle_root)), signed_at: new Date(r.signed_at).toISOString() })),
+    keys, keys_url: "/.well-known/ledger-keys.json", every_minutes: checkpointMinutes(),
+  };
+}
 const summary = (r: { ok: boolean; streams: StreamReport[] }) => r.streams.length
   ? r.streams.map((s) => `${s.stream}: ${s.ok ? `ok, ${s.entries} entr${s.entries === 1 ? "y" : "ies"}, ${s.checkpoints} checkpoint(s), signed through ${s.signed_through ?? "none yet"}` : `BAD at ${s.first_bad_seq}: ${s.reason}`}`).join("\n")
   : "Nothing to verify: no trail or chained area holds entries here.";
@@ -417,13 +429,20 @@ const summary = (r: { ok: boolean; streams: StreamReport[] }) => r.streams.lengt
 const isOwner = (s: { accountRole?: string | null } | undefined) => s?.accountRole === "owner";
 const wrap = (fn: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response, next: NextFunction) => void fn(req, res).catch(next);
 
-/** /api/ledger (a workspace's owners), when audit.sign is on: GET /verify[?stream=data|platform|records|records:<pack>/<area>]. */
+/** /api/ledger (a workspace's owners), when audit.sign is on: GET /verify[?stream=data|platform|records|records:<pack>/<area>],
+ * GET /checkpoints[?limit=] (Settings › Signing, mold_v0-219). */
 export function ledgerAppRouter(customerSession: RequestHandler): Router {
   const r = express.Router();
   if (!signOn()) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
   r.use((_req, res, next) => (isOwner(res.locals.session) ? next() : void res.status(403).json({ error: "Only the workspace's owners verify its access log.", code: "owners_only" })));
+  // Settings › Signing (mold_v0-219): the workspace's signed checkpoints, newest first, and the keys they are signed with.
+  r.get("/checkpoints", wrap(async (req, res) => {
+    const orgId = (res.locals.session as { org: number }).org;
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+    res.json(await workspaceCheckpoints(orgId, limit));
+  }));
   r.get("/verify", wrap(async (req, res) => {
     const only = typeof req.query.stream === "string" ? req.query.stream : null;
     const out = await verifyWorkspace((res.locals.session as { org: number }).org, only);

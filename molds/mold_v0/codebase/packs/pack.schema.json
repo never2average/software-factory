@@ -662,6 +662,29 @@
           "chain": {
             "type": "boolean"
           },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "type": "string",
+                "enum": [
+                  "access",
+                  "connections",
+                  "automation",
+                  "data_trust"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              }
+            },
+            "required": [
+              "group"
+            ],
+            "additionalProperties": false
+          },
           "rows": {
             "type": "string",
             "maxLength": 500

@@ -19,6 +19,7 @@ import { customerSession, type Session } from "./app.js";
 import { consoleUrl } from "./console-url.js";
 import { adminDisconnect, adminView, beginConnect, completeConnect, ConnectRefused, disconnect, listConnections, oauthFields, providerSummaries, redirectUri } from "./oauth-connections.js";
 import { PackError } from "./pack-api.js";
+import { featureOn } from "./features.js";
 
 const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -27,7 +28,7 @@ const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req:
 
 export function oauthRouter(): Router {
   const r = express.Router();
-  if (!oauthFields().length) return r;
+  if (!oauthFields().length || !featureOn("customer_key_vault")) return r; // the key vault off (mold_v0-219): nothing is mounted
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(express.json({ limit: "16kb" }));
   r.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) => {

@@ -53,6 +53,12 @@
  *                      platform_retention_days (default retention_days) the platform trail; sign (mold_v0-195,
  *                      src/ledger.ts; default false): signed checkpoints of the hash-chained entries every
  *                      checkpoint_minutes (5 to 1440, default 60) with new entries, with APP_LEDGER_SIGNING_KEY
+ *   features           optional (mold_v0-219, src/features.ts, src/features.json): one on/off flag per optional capability,
+ *                      {"company_email": false, "audit.data": true}: customer_key_vault, company_email, scheduled_alerts,
+ *                      record_clocks, audit.data, audit.platform, audit.sign, onprem_runners, developer_surface,
+ *                      declarative_checks, encrypted_fields, health_history, document_preview. A capability is on only when something asks
+ *                      for it (a pack's declaration; the audit toggles always) and its flag is not false; absent, the
+ *                      registry's default (the legacy keys audit.* and onprem_runners still read, and must agree)
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
@@ -67,6 +73,7 @@
 import { GENERATED_PROFILE } from "./profile.generated.js";
 import type { ProfileLimits } from "./rate-limits.js";
 import type { SourceOfferSetting } from "./source-offer.js";
+import { featureSetting, setFeatureForTest } from "./feature-flags.js";
 
 export interface Profile {
   name: string;
@@ -88,8 +95,10 @@ export interface Profile {
   email?: ProfileEmail;
   entitlements?: ProfileEntitlements;
   audit?: ProfileAudit;
-  /** On-premises runners (mold_v0-205): off unless true. */
+  /** On-premises runners (mold_v0-205): off unless true. Legacy for features.onprem_runners (mold_v0-219). */
   onprem_runners?: boolean;
+  /** The capability flags (mold_v0-219, src/features.json): {"<id>": true|false}. */
+  features?: Readonly<Record<string, boolean>>;
 }
 
 /** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */
@@ -179,10 +188,10 @@ let testMemberKeys: boolean | undefined;
 /** Tests only: turn member keys on or off as the profile would (null: the profile's own setting). */
 export function setMemberKeysForTest(on: boolean | null) { testMemberKeys = on ?? undefined; }
 
-/** Whether the app offers on-premises runners at all (mold_v0-205, profile `onprem_runners`): off unless the profile says true. */
-export function onPremRunnersOn(): boolean {
-  return testOnPremRunners ?? PROFILE.onprem_runners === true;
-}
-let testOnPremRunners: boolean | undefined;
+/**
+ * Whether the app offers on-premises runners at all (mold_v0-205; since mold_v0-219 the features registry's
+ * `onprem_runners` flag, src/features.ts): off unless the profile says true.
+ */
+export function onPremRunnersOn(): boolean { return featureSetting("onprem_runners"); }
 /** Tests only: turn on-premises runners on or off as the profile would (null: the profile's own setting). */
-export function setOnPremRunnersForTest(on: boolean | null) { testOnPremRunners = on ?? undefined; }
+export function setOnPremRunnersForTest(on: boolean | null) { setFeatureForTest("onprem_runners", on); }

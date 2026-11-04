@@ -1,0 +1,155 @@
+"""mold_v0's capability flags (mold_v0-219), as the factory reads them.
+
+The one registry is the mold's own `molds/mold_v0/codebase/src/features.json` (the shell's src/features.ts and its
+build, scripts/gen-packs.mjs, read the same file). Each flag:
+
+  setting    application.json profile.features {"<id>": true|false} (the app spec's top-level `features`; a brief's
+             `features.<id> = true|false` lines in ## Profile), else its legacy key (profile.audit.data, .platform, .sign;
+             profile.onprem_runners; for developer_surface the spec's `kind`), else the registry's default
+  requested  what asks for it: a pack's declaration (credentials, email, due dates or clocks, private-network kinds,
+             developer_surface, checks, encrypted fields), a build without the session engine, or always
+  on         requested and the setting not false
+
+`effective()` gives every flag's state for an app (`factory.py spec check` and `spec apps` report them; the factory
+board shows the short names of those that are on); `problems()` the sentences that keep a features block from being
+right (unknown flags, a legacy key saying the opposite, a flag another needs, a pack declaration the flag would break).
+Standard library only.
+"""
+import json, os
+
+REGISTRY_FILE = os.path.join("molds", "mold_v0", "codebase", "src", "features.json")
+ENGINE_TABLES = ("products", "scenarios", "simulations", "agent_sessions")   # the shell's src/host-tables.ts sessionEngine
+
+def registry(root):
+    """[flag specs] in registry order, or [] when the mold has none."""
+    p = os.path.join(root, REGISTRY_FILE)
+    if not os.path.isfile(p): return []
+    with open(p) as fh: return list(json.load(fh).get("flags") or [])
+
+def ids(root): return [f["id"] for f in registry(root)]
+
+def pack_doc(pid, root, build_dir=None):
+    """A pack's pack.json (the build copy's when given, else packs/<id>/files/packs/<id>/pack.json), or {}."""
+    for base in ([os.path.join(build_dir, "packs", pid, "pack.json")] if build_dir else []) + [os.path.join(root, "packs", pid, "files", "packs", pid, "pack.json")]:
+        if os.path.isfile(base):
+            try:
+                with open(base) as fh: d = json.load(fh)
+                return d if isinstance(d, dict) else {}
+            except ValueError: return {}
+    return {}
+
+def _legacy(profile, path):
+    v = profile
+    for k in path.split("."): v = v.get(k) if isinstance(v, dict) else None
+    return v if isinstance(v, bool) else None
+
+def setting(flag, profile, kind=None):
+    """(value, where): the flag as the app's state sets it."""
+    feats = (profile or {}).get("features") if isinstance((profile or {}).get("features"), dict) else {}
+    if isinstance(feats.get(flag["id"]), bool): return feats[flag["id"]], "features"
+    if flag.get("legacy"):
+        v = _legacy(profile or {}, flag["legacy"])
+        if v is not None: return v, f"profile.{flag['legacy']}"
+    if flag["id"] == "developer_surface" and kind is not None: return kind == "embedded", "kind"
+    return bool(flag.get("default")), "default"
+
+def _areas(docs): return [a for d in docs for a in (d.get("record_areas") or []) if isinstance(a, dict)]
+def _kinds(docs): return [k for d in docs for k in (d.get("job_kinds") or []) + (d.get("agent_job_kinds") or []) if isinstance(k, dict)]
+
+def requested(flag, docs, settings_on=None, kind=None):
+    """Whether something in the app asks for the capability (its packs' pack.json docs)."""
+    by = flag.get("requested_by")
+    if by == "always": return True
+    if by == "credentials": return any(d.get("credentials") for d in docs)
+    if by == "email": return any(isinstance(d.get("email"), dict) and ((d["email"].get("sender") or {}).get("allow") is True or d["email"].get("intake")) for d in docs)
+    if by == "clocks": return any(a.get("scope") == "workspace" and a.get("clocks") for a in _areas(docs))
+    if by == "alerts": return any(a.get("due") for a in _areas(docs)) or bool((settings_on or {}).get("record_clocks"))
+    if by == "private_network": return any(k.get("private_network") is True for k in _kinds(docs))
+    if by == "developer_surface": return kind == "embedded" or any(d.get("developer_surface") is not None for d in docs)
+    if by == "checks": return any(d.get("checks") for d in docs)
+    if by == "encrypted": return any(isinstance(f, dict) and f.get("encrypted") is True for a in _areas(docs) for f in a.get("fields") or [])
+    if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
+    if by == "no_engine":
+        owned = {t for d in docs for t in (((d.get("host") or {}).get("schema") or {}).get("tables") or [])}
+        return not all(t in owned for t in ENGINE_TABLES)
+    return False
+
+def effective(profile, docs, root, kind=None):
+    """[{id, short, label, setting, from, requested, on}] in registry order."""
+    out, on = [], {}
+    rc = next((f for f in registry(root) if f["id"] == "record_clocks"), None)   # scheduled_alerts reads it (clock steps)
+    if rc: on["record_clocks"] = setting(rc, profile, kind)[0] and requested(rc, docs, on, kind)
+    for f in registry(root):
+        v, where = setting(f, profile, kind)
+        r = requested(f, docs, on, kind)
+        on[f["id"]] = v and r
+        out.append({"id": f["id"], "short": f["short"], "label": f["label"], "setting": v, "from": where, "requested": r, "on": v and r})
+    return out
+
+def words(states):
+    """"email, clocks, alerts, audit.data, runners" (the short names of what is on), or "none"."""
+    return ", ".join(s["short"] for s in states if s["on"]) or "none"
+
+def block_problems(v, root, at="features"):
+    """The features block's own shape: {"<known id>": true|false}."""
+    if not isinstance(v, dict) or not v: return [f"{at} must be an object of flags, {{\"<flag>\": true|false}} (flags: {', '.join(ids(root))})"]
+    known, errs = ids(root), []
+    for k, x in v.items():
+        if k not in known: errs.append(f"{at}.{k} is not a flag (flags: {', '.join(known)})")
+        elif not isinstance(x, bool): errs.append(f"{at}.{k} must be true or false (got {json.dumps(x)[:40]})")
+    return errs
+
+def problems(profile, docs, root, kind=None, at="profile.features"):
+    """Sentences: what keeps the app's flags from being right (its features block, its legacy keys, its packs)."""
+    profile = profile or {}
+    feats = profile.get("features")
+    errs = block_problems(feats, root, at) if feats is not None else []
+    if errs: return errs
+    feats = feats or {}
+    states = {s["id"]: s for s in effective(profile, docs, root, kind)}
+    for f in registry(root):
+        i = f["id"]
+        if i in feats and f.get("legacy"):
+            lv = _legacy(profile, f["legacy"])
+            if lv is not None and lv != feats[i]:
+                errs.append(f"{at}.{i} is {json.dumps(feats[i])} but profile.{f['legacy']} says {json.dumps(lv)}: say it once (features.{i})")
+        if i == "developer_surface" and i in feats and kind is not None and feats[i] != (kind == "embedded"):
+            errs.append(f"{at}.developer_surface is {json.dumps(feats[i])} but kind is {kind}: kind is the switch (embedded with a developer_surface block turns it on); leave the flag out or make it agree")
+        st = states[i]
+        if st["on"]:
+            for need in f.get("requires") or []:
+                if not states[need]["on"]: errs.append(f"{at}: {i} is on, which needs {need} on too ({f['label']} needs the {states[need]['label'].lower()})")
+            any_ = f.get("requires_any") or []
+            if any_ and not any(states[n]["on"] for n in any_):
+                errs.append(f"{at}: {i} is on, which needs one of {', '.join(any_)} on ({f['label']} signs the audit trails; with none on there is nothing to sign)")
+    if not states.get("encrypted_fields", {}).get("setting", True) and states.get("encrypted_fields", {}).get("requested"):
+        errs.append(f"{at}.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear, so it is refused (take encrypted: true off the field first)")
+    if "customer_key_vault" in states and not states["customer_key_vault"]["setting"]:
+        need = sorted({f"{d.get('id', '?')}.{c}" for d in docs for k in (d.get("job_kinds") or []) + (d.get("agent_job_kinds") or []) if isinstance(k, dict)
+                       for c in (k.get("credentials") or []) if isinstance(c, str)
+                       and not any(isinstance(x, dict) and x.get("name") == c and x.get("optional") for x in d.get("credentials") or [])})
+        if need: errs.append(f"{at}.customer_key_vault is false but job kinds need the workspace credentials {', '.join(need[:5])}: nobody could give them (make them optional, or leave the flag on)")
+    return errs
+
+def self_test(root):
+    flags = registry(root); checks = []
+    def ok(c, what): checks.append(what); assert c, what
+    ok(len(flags) == 13 and len(set(ids(root))) == 13, "the registry names 13 flags, each once")
+    ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
+    maxwell_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
+        {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
+        "job_kinds": [{"name": "k", "private_network": True, "credentials": ["t"]}]}]
+    prof = {"audit": {"data": True, "platform": False}, "onprem_runners": True}
+    ok(words(effective(prof, maxwell_like, root)) == "vault, email, alerts, clocks, audit.data, runners, health", "legacy keys and pack signals give the effective flags")
+    ok(words(effective({}, [], root)) == "health", "zero packs and no profile: only health history (no engine)")
+    ok(words(effective({"features": {"record_clocks": False}}, maxwell_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
+    ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
+    ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")
+    ok(any("needs audit.platform" in e for e in problems({}, [{"developer_surface": {}}], root)), "a developer surface needs the platform audit trail")
+    ok(problems({"features": {"audit.platform": True}}, [{"developer_surface": {}}], root) == [], "a developer surface with the platform trail is right")
+    ok(any("in the clear" in e for e in problems({"features": {"encrypted_fields": False}}, [{"record_areas": [{"scope": "workspace", "fields": [{"name": "x", "encrypted": True}]}]}], root)), "encrypted_fields off with an encrypted field is refused")
+    ok(any("nobody could give" in e for e in problems({"features": {"customer_key_vault": False}}, maxwell_like, root)), "the key vault off while a kind needs a credential is refused")
+    ok(any("not a flag" in e for e in problems({"features": {"nope": True}}, [], root)), "an unknown flag is refused")
+    ok(any("kind is the switch" in e for e in problems({"features": {"developer_surface": True, "audit.platform": True}}, [], root, kind="tool")), "developer_surface true on a tool app is refused (kind is the switch)")
+    ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
+    return checks
