@@ -162,8 +162,9 @@ export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { butt
   const done = () => { setOpen(false); void onDone?.(); };
   return {
     button: <ToolbarAction label={label} icon={a.kind === 'start_run' ? <Icons.play /> : <Icons.add />} onClick={() => setOpen(true)} />,
-    card: (
-      <ActionCard open={open} onOpenChange={setOpen} title={label}
+    // While closed, no card: the list draws.
+    card: !open ? null : (
+      <ActionCard open onOpenChange={setOpen} title={label}
         description={data.kind === 'start_run' ? fill('The {run} is queued and runs on its own; it shows in the list at once.')
           : data.kind === 'create_record' && data.area ? `A new record in ${data.area.label}, added to the list at once.` : undefined}>
         {data.kind === 'start_run' ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
