@@ -1,16 +1,20 @@
 'use client';
-// A list tab's primary floating action (mold_v0-208; pack.json tabs[].action, src/tab-actions.ts): one button in the
-// brand's primary colour, fixed at the bottom right clear of the safe area (the list keeps its space free below the
-// pager: RecordView `fab`, FAB_SPACE), an icon and its label from a small screen up, the icon alone on a phone (the
-// label its accessible name). It opens one of the shell's forms in a drawer and is shown only to a role that may use it
-// (the server says so, and refuses the rest anyway):
+// A list tab's primary action (mold_v0-208; pack.json tabs[].action, src/tab-actions.ts): one button in the brand's
+// primary colour at the right end of the list's search row (mold_v0-217: RecordView `toolbarAction`; before, a floating
+// button at the window's bottom right), an icon and its label from a small screen up, the icon alone on a phone (the label
+// its accessible name and title). It opens one of the shell's forms as a full card in the list's place (mold_v0-217:
+// ActionCard, CardForm; the record details card's style: a way back, the title, what will happen, the fields, then the
+// submit and Cancel), kept in the address (?start=1 for a run, ?new=1 for a record or a schedule) so Back works; Cancel
+// or a submit returns to the list, read again. It is shown only to a role that may use it (the server says so, and
+// refuses the rest anyway):
 //   start_run      the kind (a picker when the action offers several), its arguments, the record it runs over and its
 //                  environment when the kind takes them; started as the generated start_<kind> tool starts a run
 //   create_record  a new record's key, title and fields, through the data API (POST /api/data/<area>)
 //   new_schedule   the schedules page's Add a schedule form (features/schedules/schedules-page.tsx draws its button)
 //   link           (mold_v0-213) a page or an address, e.g. Settings › Email for a list a connected mailbox fills
 // Every list tab has one unless its pack says none (mold_v0-213: the build resolves the shell's default, labelled).
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { parseAsBoolean, useQueryState } from 'nuqs';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -18,7 +22,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
 import type { PackTabSpec } from '@/config/pack-nav.generated';
@@ -55,71 +59,118 @@ type TabRef = Pick<PackTabSpec, 'pack' | 'id' | 'action'>;
 export const actionLabel = (a: NonNullable<PackTabSpec['action']>) =>
   a.label ?? (a.kind === 'start_run' ? fill('Start {run}') : a.kind === 'new_schedule' ? 'New schedule' : a.kind === 'link' ? 'Open' : 'New record');
 
-const FAB_CLASS = 'fixed right-[calc(1.5rem+env(safe-area-inset-right))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] z-40 size-14 gap-2 rounded-full p-0 text-sm font-medium shadow-lg sm:w-auto sm:px-5 [&_svg]:size-5';
+// The toolbar's own button size (as Export beside it); a phone: the icon alone, square.
+const ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0';
 
 /**
- * The floating button itself: fixed bottom right, 1.5rem from the window's edges plus the safe-area insets; a 3.5rem
- * circle with the icon on a phone, the icon and the label from sm up.
+ * The button itself, the last control of the list's search row (mold_v0-217): a normal primary button, the icon and its
+ * label from sm up; on a phone the icon alone, its label the accessible name and the title.
  */
-export function Fab({ label, icon, onClick, href }: { label: string; icon: ReactNode; onClick?: () => void; href?: string }) {
+export function ToolbarAction({ label, icon, onClick, href }: { label: string; icon: ReactNode; onClick?: () => void; href?: string }) {
   // A link action (mold_v0-213): the same button, as a link (a page of the console, or an address in a new tab).
   if (href) return (
-    <Button aria-label={label} title={label} data-fab='' className={FAB_CLASS} nativeButton={false}
+    <Button aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS} nativeButton={false}
       render={href.startsWith('/') ? <Link href={href} /> : <a href={href} target='_blank' rel='noopener noreferrer' />}>
       {icon}<span className='hidden sm:inline'>{label}</span>
     </Button>
   );
   return (
-    <Button type='button' onClick={onClick} aria-label={label} title={label} data-fab='' className={FAB_CLASS}>
+    <Button type='button' onClick={onClick} aria-label={label} title={label} data-toolbar-action='' className={ACTION_CLASS}>
       {icon}<span className='hidden sm:inline'>{label}</span>
     </Button>
   );
 }
 
 /** A link action's button (mold_v0-213): no form and nothing to ask the server, everyone's who sees the tab. */
-export function LinkFab({ action }: { action: NonNullable<PackTabSpec['action']> }) {
-  return action.kind === 'link' && action.href ? <Fab label={actionLabel(action)} icon={<Icons.arrowRight />} href={action.href} /> : null;
+export function LinkAction({ action }: { action: NonNullable<PackTabSpec['action']> }) {
+  return action.kind === 'link' && action.href ? <ToolbarAction label={actionLabel(action)} icon={<Icons.arrowRight />} href={action.href} /> : null;
 }
 
-/** A drawer from the right (a phone: the whole width) holding one of the action's forms. */
-export function ActionSheet({ open, onOpenChange, title, description, children }: {
+/**
+ * Whether the page shows an action's card (mold_v0-217), kept in the address: `start` (?start=1) for a run, `new`
+ * (?new=1) for a record or a schedule. Opening adds a history entry, so Back returns to the list; closing replaces it.
+ */
+export function useActionOpen(name: 'start' | 'new'): [boolean, (open: boolean) => void] {
+  const [on, set] = useQueryState(name, parseAsBoolean.withDefault(false));
+  return [on, (open: boolean) => {
+    void set(open ? true : null, { history: open ? 'push' : 'replace' });
+    // Back on the list: focus returns to the button that opened the card.
+    if (!open) setTimeout(() => document.querySelector<HTMLElement>('[data-toolbar-action]')?.focus(), 50);
+  }];
+}
+
+const CardCtx = createContext<{ title: string; description?: string; cancel: () => void } | null>(null);
+
+/**
+ * An action's form as a full card in the list's place (mold_v0-217; the record details card's style): drawn while
+ * `open`; its CardForm reads the title, the description and Cancel from here.
+ */
+export function ActionCard({ open, onOpenChange, title, description, children }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: string; description?: string; children: ReactNode;
 }) {
+  if (!open) return null;
+  return <CardCtx.Provider value={{ title, description, cancel: () => onOpenChange(false) }}>{children}</CardCtx.Provider>;
+}
+
+/**
+ * The card itself: a way back to the list, the title and what will happen, the fields, then the submit and Cancel.
+ * Focus moves to its title when it opens.
+ */
+export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unknown; submit: ReactNode; children: ReactNode }) {
+  const c = useContext(CardCtx);
+  const title = useRef<HTMLDivElement>(null);
+  useEffect(() => { title.current?.focus(); }, []);
+  const cancel = () => c?.cancel();
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side='right' className='gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md'>
-        <SheetHeader className='border-b'>
-          <SheetTitle>{title}</SheetTitle>
-          {description && <SheetDescription>{description}</SheetDescription>}
-        </SheetHeader>
-        <div className='min-h-0 flex-1 overflow-y-auto p-4'>{children}</div>
-      </SheetContent>
-    </Sheet>
+    <Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>
+      <form className='flex flex-col' onSubmit={(e) => { e.preventDefault(); void onSubmit(); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel(); } }}>
+        <CardHeader className='border-b py-4 [.border-b]:pb-4'>
+          <CardDescription>
+            <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={cancel}>
+              <Icons.chevronLeft className='size-3.5' />Back to the list
+            </button>
+          </CardDescription>
+          <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{c?.title}</CardTitle>
+          {c?.description && <p className='text-muted-foreground text-sm'>{c.description}</p>}
+        </CardHeader>
+        <CardContent className='flex flex-col gap-4 py-4'>{children}</CardContent>
+        <CardFooter data-card-footer='' className='gap-2 border-t py-4 [.border-t]:pt-4'>
+          {submit}
+          <Button type='button' variant='outline' onClick={cancel}>Cancel</Button>
+        </CardFooter>
+      </form>
+    </Card>
   );
 }
 
 /**
- * A tab's start_run or create_record action: its button once the server says this person may use it, and its drawer.
- * `onDone` reloads the list after a run started or a record was added.
+ * A tab's action: its button (once the server says this person may use it; a link action's at once) and, while open,
+ * its card (start_run, create_record) for the list's place. `onDone` reloads the list after a run started or a record
+ * was added. Called on every render of the list (a hook), with null when the tab has no action.
  */
-export function TabActionFab({ tab, onDone }: { tab: TabRef; onDone?: () => unknown }) {
-  const a = tab.action;
-  const { data } = useOrgLoad(() => (a && a.kind !== 'new_schedule' && a.kind !== 'link'
+export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+  const a = tab?.action;
+  const { data } = useOrgLoad(() => (tab && a && a.kind !== 'new_schedule' && a.kind !== 'link'
     ? send<ActionSpec>('GET', `/api/tab-actions/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`).catch(() => null)
-    : Promise.resolve(null)), [tab.pack, tab.id]);
-  const [open, setOpen] = useState(false);
-  if (a?.kind === 'link') return <LinkFab action={a} />;
-  if (!a || !data || !data.allowed) return null;
+    : Promise.resolve(null)), [tab?.pack, tab?.id]);
+  const [open, setOpen] = useActionOpen(a?.kind === 'start_run' ? 'start' : 'new');
+  if (!tab || !a) return { button: null, card: null };
+  if (a.kind === 'link') return { button: <LinkAction action={a} />, card: null };
+  if (!data || !data.allowed) return { button: null, card: null };
   const label = actionLabel(a);
   const done = () => { setOpen(false); void onDone?.(); };
-  return (<>
-    <Fab label={label} icon={a.kind === 'start_run' ? <Icons.play /> : <Icons.add />} onClick={() => setOpen(true)} />
-    <ActionSheet open={open} onOpenChange={setOpen} title={label}
-      description={data.kind === 'start_run' ? fill('The {run} is queued and runs on its own; it shows in the list at once.') : undefined}>
-      {data.kind === 'start_run' ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
-        : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} /> : null}
-    </ActionSheet>
-  </>);
+  return {
+    button: <ToolbarAction label={label} icon={a.kind === 'start_run' ? <Icons.play /> : <Icons.add />} onClick={() => setOpen(true)} />,
+    card: (
+      <ActionCard open={open} onOpenChange={setOpen} title={label}
+        description={data.kind === 'start_run' ? fill('The {run} is queued and runs on its own; it shows in the list at once.')
+          : data.kind === 'create_record' && data.area ? `A new record in ${data.area.label}, added to the list at once.` : undefined}>
+        {data.kind === 'start_run' ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
+          : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} /> : null}
+      </ActionCard>
+    )
+  };
 }
 
 // ---------- the forms ----------
@@ -233,11 +284,11 @@ function StartRunForm({ tab, kinds, onDone }: { tab: TabRef; kinds: StartKind[];
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <form className='flex flex-col gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy}><Icons.play /> {busy ? 'Starting…' : 'Start'}</Button>}>
       {kinds.length > 1 && (
         <div className='flex flex-col gap-1.5'>
-          <Label htmlFor='fab-kind'>Type</Label>
-          <NativeSelect id='fab-kind' className='w-full' value={kind.name} onChange={(e) => { setKindName(e.target.value); setValues({}); setEnvironment(''); }}>
+          <Label htmlFor='action-kind'>Type</Label>
+          <NativeSelect id='action-kind' className='w-full' value={kind.name} onChange={(e) => { setKindName(e.target.value); setValues({}); setEnvironment(''); }}>
             {kinds.map((k) => <NativeSelectOption key={k.name} value={k.name}>{k.label}</NativeSelectOption>)}
           </NativeSelect>
         </div>
@@ -245,16 +296,16 @@ function StartRunForm({ tab, kinds, onDone }: { tab: TabRef; kinds: StartKind[];
       {kind.description && <p className='text-muted-foreground text-sm'>{kind.description}</p>}
       {kind.targets && kind.targets.length > 1 && (
         <div className='flex flex-col gap-1.5'>
-          <Label htmlFor='fab-target-area'>Runs over</Label>
-          <NativeSelect id='fab-target-area' className='w-full' value={area ?? ''} onChange={(e) => setTargetArea(e.target.value)}>
+          <Label htmlFor='action-target-area'>Runs over</Label>
+          <NativeSelect id='action-target-area' className='w-full' value={area ?? ''} onChange={(e) => setTargetArea(e.target.value)}>
             {kind.targets.map((t) => <NativeSelectOption key={t.name} value={t.name}>{t.label}</NativeSelectOption>)}
           </NativeSelect>
         </div>
       )}
       {area && (
         <div className='flex flex-col gap-1.5'>
-          <Label htmlFor='fab-target'>{areaLabel}</Label>
-          <NativeSelect id='fab-target' className='w-full' value={target} onChange={(e) => setTarget(e.target.value)} disabled={!records}>
+          <Label htmlFor='action-target'>{areaLabel}</Label>
+          <NativeSelect id='action-target' className='w-full' value={target} onChange={(e) => setTarget(e.target.value)} disabled={!records}>
             {(records ?? []).map((r) => <NativeSelectOption key={r.key} value={r.key}>{r.title && r.title !== r.key ? `${r.title} (${r.key})` : r.key}</NativeSelectOption>)}
             <NativeSelectOption value=''>None</NativeSelectOption>
           </NativeSelect>
@@ -262,18 +313,17 @@ function StartRunForm({ tab, kinds, onDone }: { tab: TabRef; kinds: StartKind[];
       )}
       {kind.environments && (
         <div className='flex flex-col gap-1.5'>
-          <Label htmlFor='fab-env'>Environment</Label>
+          <Label htmlFor='action-env'>Environment</Label>
           {kind.environments.length ? (
-            <NativeSelect id='fab-env' className='w-full' value={environment} onChange={(e) => setEnvironment(e.target.value)}>
+            <NativeSelect id='action-env' className='w-full' value={environment} onChange={(e) => setEnvironment(e.target.value)}>
               <NativeSelectOption value=''>None</NativeSelectOption>
               {kind.environments.map((x) => <NativeSelectOption key={x} value={x}>{x}</NativeSelectOption>)}
             </NativeSelect>
-          ) : <Input id='fab-env' value={environment} onChange={(e) => setEnvironment(e.target.value)} placeholder='e.g. production' />}
+          ) : <Input id='action-env' value={environment} onChange={(e) => setEnvironment(e.target.value)} placeholder='e.g. production' />}
         </div>
       )}
-      <FieldsForm fields={kind.args} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='fab-arg' />
-      <Button type='submit' disabled={busy} className='self-start'><Icons.play /> {busy ? 'Starting…' : 'Start'}</Button>
-    </form>
+      <FieldsForm fields={kind.args} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-arg' />
+    </CardForm>
   );
 }
 
@@ -300,17 +350,16 @@ export function CreateRecordForm({ area, onDone, post }: {
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <form className='flex flex-col gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {busy ? 'Adding…' : 'Add'}</Button>}>
       <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='fab-key'>Key<span className='text-destructive' aria-hidden> *</span></Label>
-        <Input id='fab-key' value={key} onChange={(e) => setKey(e.target.value)} required placeholder='a short id, unique in this list' />
+        <Label htmlFor='action-key'>Key<span className='text-destructive' aria-hidden> *</span></Label>
+        <Input id='action-key' value={key} onChange={(e) => setKey(e.target.value)} required placeholder='a short id, unique in this list' />
       </div>
       <div className='flex flex-col gap-1.5'>
-        <Label htmlFor='fab-title'>Title</Label>
-        <Input id='fab-title' value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Label htmlFor='action-title'>Title</Label>
+        <Input id='action-title' value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
-      <FieldsForm fields={area.fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='fab-field' />
-      <Button type='submit' disabled={busy || !key.trim()} className='self-start'><Icons.add /> {busy ? 'Adding…' : 'Add'}</Button>
-    </form>
+      <FieldsForm fields={area.fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-field' />
+    </CardForm>
   );
 }

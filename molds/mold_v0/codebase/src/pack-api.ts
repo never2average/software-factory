@@ -1311,7 +1311,7 @@ export const TabAreaSchema = z.object({
 }).strict();
 export type TabArea = z.output<typeof TabAreaSchema>;
 /**
- * A list tab's primary action (mold_v0-208): one floating button at the bottom right of the tab's page, in the brand's
+ * A list tab's primary action (mold_v0-208): one button at the right end of the list's search row (mold_v0-217), in the brand's
  * primary colour, that opens an existing form of the shell, never one of the pack's own:
  *   start_run       start a run of one of the pack's job kinds (`job_kind`), or of one picked from `job_kinds` (2 to
  *                   20, in that order), or from every kind of the pack when neither is given: the kind's arguments
@@ -1397,7 +1397,7 @@ export const TabSchema = z.object({
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
   empty: TabEmptySchema.optional(),
-  /** The tab's primary floating action (mold_v0-208): TabActionSchema; false for none (mold_v0-213), with `reason`. */
+  /** The tab's primary action (mold_v0-208): TabActionSchema; false for none (mold_v0-213), with `reason`. */
   action: z.union([TabActionSchema, z.literal(false)]).optional(),
   /** Why a list tab has no primary action (`action: false`, mold_v0-213): required with it, documented and shown nowhere. */
   reason: z.string().trim().min(1).max(300).optional(),

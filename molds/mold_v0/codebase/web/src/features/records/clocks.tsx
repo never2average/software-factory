@@ -1,10 +1,9 @@
 'use client';
 // A record area's clocks in the console (mold_v0-191; src/record-clocks.ts): every record of an area that declares a
 // clock carries `clocks` {name: {due_at, status, overdue, ...}} from /api/records. The list shows each clock as a column
-// (its deadline and a status badge) with its status as a filter, and an Overdue toggle above the table; the record page
-// shows each clock and what it did (its reminders and escalation steps).
+// (its deadline and its status, plain text: mold_v0-217) with its status as a filter, and an Overdue filter (the Filter
+// menu's, ?overdue=1); the record page shows each clock and what it did (its reminders and escalation steps).
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import type { RecordCol } from '@/components/layout/record-view';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
 
@@ -30,6 +29,12 @@ export function ClockBadge({ v }: { v: ClockView }) {
   return <Badge variant={VARIANT[v.status]} data-clock-status={v.status}>{text}</Badge>;
 }
 
+/** A clock's status as plain text in a table cell (mold_v0-217: no badge); red when overdue or missed. */
+export function ClockText({ v }: { v: ClockView }) {
+  const text = v.status === 'overdue' && v.overdue_days ? `Overdue ${v.overdue_days}d` : CLOCK_STATUS_LABELS[v.status];
+  return <span data-clock-status={v.status} className={v.status === 'overdue' || v.status === 'missed' ? 'text-destructive' : undefined}>{text}</span>;
+}
+
 /** Each clock of the area as two columns: its deadline (a date, with the status beside it) and its status (a filter). */
 export function clockColumns<T extends WithClocks>(area: RecordAreaSpec): RecordCol<T>[] {
   return (area.clocks ?? []).flatMap((c): RecordCol<T>[] => [
@@ -39,29 +44,20 @@ export function clockColumns<T extends WithClocks>(area: RecordAreaSpec): Record
       render: (r) => {
         const v = r.clocks?.[c.name];
         if (!v?.due_on) return <span className='text-muted-foreground'>—</span>;
-        return <span className='flex items-center gap-2 whitespace-nowrap'><span className='tabular-nums'>{v.due_on}</span><ClockBadge v={v} /></span>;
+        return <span className='flex items-center gap-2 whitespace-nowrap'><span className='tabular-nums'>{v.due_on}</span><ClockText v={v} /></span>;
       }
     },
     {
       key: `_clock_${c.name}_status`, label: `${c.label}: status`, type: 'select', keep: false, hidden: true,
       options: (Object.keys(CLOCK_STATUS_LABELS) as ClockStatus[]).map((s) => ({ value: s, label: CLOCK_STATUS_LABELS[s] })),
       value: (r) => r.clocks?.[c.name]?.status ?? null,
-      render: (r) => { const v = r.clocks?.[c.name]; return v ? <ClockBadge v={v} /> : <span className='text-muted-foreground'>—</span>; }
+      render: (r) => { const v = r.clocks?.[c.name]; return v ? <ClockText v={v} /> : <span className='text-muted-foreground'>—</span>; }
     }
   ]);
 }
 
 /** Whether any clock of the record is overdue. */
 export const isOverdue = (r: WithClocks) => Object.values(r.clocks ?? {}).some((v) => v.overdue);
-
-/** The Overdue filter above the table: a toggle with the count. */
-export function OverdueToggle({ count, on, onChange }: { count: number; on: boolean; onChange: (on: boolean) => void }) {
-  return (
-    <Button variant={on ? 'secondary' : 'outline'} size='sm' aria-pressed={on} data-overdue-filter onClick={() => onChange(!on)}>
-      Overdue <span className='tabular-nums'>{count}</span>
-    </Button>
-  );
-}
 
 /** The record page's clocks: each deadline and status, then what the clocks did, newest first. */
 export function ClockSection({ record, events }: { record: WithClocks; events?: ClockEvent[] }) {

@@ -24,7 +24,7 @@
 //      /app/access-log is gone (no page, no route, no sidebar entry, no link), the staff /admin/access-log stays. Both
 //      trails' tables have an Action and an Actor column (the platform trail's Kind split in two).
 //   8. The staff record pages (mold_v0-212): /admin/records/<area> is the standard list with no title or description
-//      above it (its cards from the staff route, its search row, its table), New record as the primary floating action
+//      above it (its cards from the staff route, its search row, its table), New record as the search row's primary action
 //      and Edit on an open record only where the server offers them; the record's page is one details card.
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -227,9 +227,10 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(st, /<RecordTableView key=\{round\} area=\{area\} base='admin'/, "the list is the records' table");
   assert.doesNotMatch(st, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
   assert.match(st, /summary=\{<Sparklines url=\{consoleUrl\(area\.name, 'sparklines'\)\}/, "its four cards above the search row, from the staff route");
-  assert.match(st, /fab=\{form\?\.create \? <Fab /, "New record: the primary floating action, only when the server offers create");
+  assert.match(st, /toolbarAction=\{form\?\.create \? <ToolbarAction label='New record'/, "New record: the primary action at the search row's right end, only when the server offers create");
+  assert.doesNotMatch(st, /\bFab\b|fab=/, "no floating action");
   assert.match(st, /rowAction=\{form\?\.edit \?/, "Edit on an open record, only when the server offers edit");
-  assert.match(st, /<CreateRecordForm area=/, "the create form is the tab action's (features/tabs/action-fab.tsx)");
+  assert.match(st, /<CreateRecordForm area=/, "the create form is the tab action's (features/tabs/tab-action.tsx)");
   assert.match(st, /adminDataApi\('POST'/); assert.match(st, /adminDataApi\('PUT'/);
   assert.match(st, /<Card [^>]*data-record-card/, "the record's page: one details card");
   assert.match(src("app/admin/records/[area]/page.tsx"), /<StaffRecordListPage area=\{spec\} \/>/);

@@ -1,6 +1,6 @@
 'use client';
-// A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, the primary
-// action), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and a side peek.
+// A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, export,
+// then the page's primary action at its right end), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and a side peek.
 // Clicking a row narrows the table to 40% and opens the record beside it; Escape or ✕ closes it, j/k walk the list. On
 // small screens the record replaces the table, with a way back. Every database feature is opt-in, so simple pages stay simple.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -12,6 +12,7 @@ import {
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -46,7 +47,7 @@ const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 
 
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, fab
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange
 }: {
   rows: readonly T[];
   rowKey: (row: T) => string;
@@ -91,10 +92,13 @@ export function RecordView<T>({
    */
   summary?: ReactNode;
   /**
-   * The page's primary floating action (mold_v0-208, features/tabs/action-fab.tsx): drawn fixed at the bottom right, so
-   * the table and its pager end above it (the space it takes is kept free below them) and it never covers the last row.
+   * The page's primary action (mold_v0-208, features/tabs/tab-action.tsx): mold_v0-217, the last control of the search
+   * row, at its right end (a primary button; the icon alone on a phone), opening its form in a side sheet.
    */
-  fab?: ReactNode;
+  toolbarAction?: ReactNode;
+  /** Filters on at first (mold_v0-217: an address's, e.g. ?overdue=1), and every change to them. */
+  initialRules?: FilterRule[];
+  onRulesChange?: (rules: FilterRule[]) => void;
 }) {
   const ns = (s: string) => (id ? `rv:${id}:${s}` : null);
   const [q, setQ] = useState('');
@@ -104,7 +108,7 @@ export function RecordView<T>({
   const [sortMap, setSortMap] = useStored<Record<string, SortRule[]>>(ns('sort'), {});
   const [groupMap, setGroupMap] = useStored<Record<string, string | null>>(ns('group'), {});
   const [hiddenStored, setHidden] = useStored<string[] | null>(ns('cols'), null);
-  const [ruleMap, setRuleMap] = useState<Record<string, FilterRule[]>>({}); // per view, memory only
+  const [ruleMap, setRuleMap] = useState<Record<string, FilterRule[]>>(() => (initialRules?.length ? { [views?.[0]?.id ?? '_']: initialRules } : {})); // per view, memory only
   const [editing, setEditing] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [sel, setSel] = useState<Set<string>>(() => new Set());
@@ -121,7 +125,7 @@ export function RecordView<T>({
   const hidden = (Array.isArray(hiddenStored) ? hiddenStored : cols.filter((c) => c.hidden).map((c) => c.key))
     .filter((k) => cols.some((c) => c.key === k && !c.title));
   const groupCol = cols.find((c) => c.key === group && c.type === 'select' && c.value);
-  const setRules = (r: FilterRule[]) => setRuleMap((m) => ({ ...m, [vid]: r }));
+  const setRules = (r: FilterRule[]) => { setRuleMap((m) => ({ ...m, [vid]: r })); onRulesChange?.(r); };
   const setSort = (s: SortRule[]) => setSortMap({ ...sorts, [vid]: s });
   const setGroup = (g: string | null) => setGroupMap({ ...groups, [vid]: g });
   const addRule = (r: FilterRule) => { setRules([...rules, r]); setTimeout(() => setEditing(r.id), 0); };
@@ -187,17 +191,16 @@ export function RecordView<T>({
   }, [hasCurrent]);
 
   const shownCols = cols.filter((c) => !hidden.includes(c.key));
-  // Beside an open record the table is a narrow list: the title and one more column, truncated rather than clipped.
-  const narrow = Boolean(current && detail);
-  const titled = shownCols.filter((c) => c.title), kept = shownCols.filter((c) => c.keep && !c.title);
-  const visible = narrow ? (titled.length ? [...titled, ...kept.slice(0, 1)] : kept.slice(0, 2)) : shownCols;
+  // mold_v0-217: an open record is a full card in the list's place (the record details card's style), not a peek beside it.
+  const showRecord = Boolean(current && detail);
+  const visible = shownCols;
   const span = visible.length + (actions ? 1 : 0) + (bulk ? 1 : 0);
   const anyTyped = cols.some(typed);
   // Simple pages (no id, views or typed columns) keep today's toolbar exactly.
   const database = !!id || !!views || anyTyped || cols.some((c) => c.hidden || c.title);
   const searching = !!q.trim() || rules.some(ruleActive);
   const narrowed = searching;
-  const clearAll = () => { setQ(''); setRuleMap({}); };
+  const clearAll = () => { setQ(''); setRuleMap({}); onRulesChange?.([]); };
 
   // CSV: every shown column; value() when given, else render() when it is plain text, else the column is skipped.
   const exportRows = (list: readonly T[], suffix = '') => {
@@ -246,20 +249,48 @@ export function RecordView<T>({
   const [fitH, setFitH] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (!compact) return;
-    // A floating action (fab) keeps its own height free below the pager (FAB_SPACE), so it never covers a row.
-    const fit = () => { const el = fitRef.current; if (el && el.offsetParent !== null) setFitH(Math.max(256, window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - (fab ? FAB_SPACE : 24))); };
+    const fit = () => { const el = fitRef.current; if (el && el.offsetParent !== null) setFitH(Math.max(256, window.innerHeight - (el.getBoundingClientRect().top + window.scrollY) - 24)); };
     fit();
     window.addEventListener('resize', fit);
     // A table in a tab that starts hidden measures as if at the top: measure again once it is shown.
     const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) fit(); });
     if (fitRef.current) io.observe(fitRef.current);
     return () => { window.removeEventListener('resize', fit); io.disconnect(); };
-  }, [compact, !!fab]);
+  }, [compact, showRecord]);
 
+  if (current && detail) return (
+    <div className='flex min-w-0 flex-col gap-3'>
+      <Card className='w-full max-w-4xl gap-0 py-0' data-record-card='' role='region' aria-label='Record'>
+        <CardHeader className='border-b py-4 [.border-b]:pb-4'>
+          <CardDescription>
+            <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={close}>
+              <Icons.chevronLeft className='size-3.5' />Back to the list
+            </button>
+          </CardDescription>
+          <CardTitle className='text-lg leading-snug break-words'>{detailTitle ? detailTitle(current) : titleCol?.render(current)}</CardTitle>
+          <CardAction className='flex flex-wrap items-center justify-end gap-1'>
+            {detailActions?.(current, close)}
+            {at >= 0 && database && (<>
+              <Button variant='ghost' size='icon-sm' aria-label='Previous record' disabled={at <= 0} onClick={() => go(-1)}><Icons.chevronUp /></Button>
+              <Button variant='ghost' size='icon-sm' aria-label='Next record' disabled={at >= navRows.length - 1} onClick={() => go(1)}><Icons.chevronDown /></Button>
+            </>)}
+            <Button variant='ghost' size='icon-sm' aria-label='Close' onClick={close}><Icons.close /></Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent className='flex flex-col gap-4 py-2'>
+          {properties && (<>
+            <dl>{cols.filter((c) => c.peek !== false).map((c) => <Field key={c.key} label={colName(c)}>{c.render(current)}</Field>)}</dl>
+            <Separator />
+          </>)}
+          <div className='pb-4'>{detail(current, close)}</div>
+        </CardContent>
+      </Card>
+    </div>
+  );
   return (
     // Fills the page below the header (header 3.5–4rem plus the page's padding): the table frame never scrolls or shrinks.
-    <div ref={fitRef} style={compact && fitH ? { height: fitH } : undefined} data-fab={fab ? '' : undefined}
-      className={cn('flex min-w-0 flex-col gap-3', compact ? 'min-h-[16rem]' : fab ? 'h-[calc(100svh-10rem)] min-h-[24rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
+    <div ref={fitRef} style={compact && fitH ? { height: fitH } : undefined}
+      className={cn('flex min-w-0 flex-col gap-3', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
       {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
       <div className='flex flex-wrap items-center gap-2'>
         <div className='relative min-w-48 flex-1'>
@@ -273,6 +304,7 @@ export function RecordView<T>({
             hidden={hidden} setHidden={setHidden} groupable={groupable} properties={database && cols.length > 3} />
         )}
         {primaryNode}
+        {toolbarAction}
       </div>
 
       {selRows.length > 0 ? (
@@ -292,9 +324,9 @@ export function RecordView<T>({
       )}
 
       <div className='flex min-h-0 flex-1 gap-4'>
-        <div className={cn('flex min-h-0 min-w-0 flex-col border', current ? 'hidden lg:flex lg:w-[40%] lg:shrink-0' : 'w-full')}>
+        <div className='flex min-h-0 w-full min-w-0 flex-col border'>
           <div className='min-h-0 flex-1 overflow-auto'>
-            <Table className={cn(narrow && 'table-fixed')}>
+            <Table>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
                 <TableRow>
                   {bulk && (
@@ -356,7 +388,7 @@ export function RecordView<T>({
                               <Checkbox aria-label='Select row' checked={sel.has(k)} onCheckedChange={(on) => toggle([k], !!on)} />
                             </TableCell>
                           )}
-                          {visible.map((c) => <TableCell key={c.key} className={cn('px-3 py-3.5', narrow ? 'overflow-hidden text-ellipsis whitespace-nowrap [&>*]:truncate' : 'whitespace-normal', c.className)}>{c.render(r)}</TableCell>)}
+                          {visible.map((c) => <TableCell key={c.key} className={cn('px-3 py-3.5', 'whitespace-normal', c.className)}>{c.render(r)}</TableCell>)}
                           {actions && <TableCell className='w-10 py-1.5 text-center' onClick={(e) => e.stopPropagation()}><ActionsMenu items={actions(r)} /></TableCell>}
                         </TableRow>
                       )}
@@ -369,38 +401,10 @@ export function RecordView<T>({
           <TablePager p={page} noun={noun} className='border-t px-2' count={data.ordered.length} of={searching ? data.base : undefined} />
         </div>
 
-        {current && detail && (
-          <aside aria-label='Record' className='bg-card flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border lg:w-[60%]'>
-            <div className='flex items-center gap-2 border-b px-5 py-3'>
-              <Button variant='ghost' size='icon-sm' className='lg:hidden' aria-label='Back to the list' onClick={close}><Icons.chevronLeft /></Button>
-              <div className='min-w-0 flex-1 truncate leading-none font-semibold'>{detailTitle ? detailTitle(current) : titleCol?.render(current)}</div>
-              {detailActions?.(current, close)}
-              {at >= 0 && database && (<>
-                <Button variant='ghost' size='icon-sm' aria-label='Previous record' disabled={at <= 0} onClick={() => go(-1)}><Icons.chevronUp /></Button>
-                <Button variant='ghost' size='icon-sm' aria-label='Next record' disabled={at >= navRows.length - 1} onClick={() => go(1)}><Icons.chevronDown /></Button>
-              </>)}
-              <Button variant='ghost' size='icon-sm' aria-label='Close' onClick={close}><Icons.close /></Button>
-            </div>
-            <div className='min-h-0 flex-1 overflow-y-auto p-5'>
-              {properties && (<>
-                <dl>{cols.filter((c) => c.peek !== false).map((c) => <Field key={c.key} label={colName(c)}>{c.render(current)}</Field>)}</dl>
-                <Separator className='my-4' />
-              </>)}
-              {detail(current, close)}
-            </div>
-          </aside>
-        )}
       </div>
-      {fab}
     </div>
   );
 }
-
-/**
- * What a floating action takes below a list (mold_v0-208): its 3.5rem button, 1.5rem from the window's edge and the
- * safe area, and a gap, in pixels; the list's height leaves this free.
- */
-export const FAB_SPACE = 104;
 
 function MenuItem({ a, sep }: { a: RowAction; sep: boolean }) {
   return (<>

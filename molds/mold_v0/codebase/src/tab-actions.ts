@@ -1,6 +1,6 @@
 /**
- * A list tab's primary floating action (mold_v0-208; pack.json `tabs[].action`, src/pack-api.ts TabActionSchema): what
- * the console's button (web/src/features/tabs/action-fab.tsx) asks before it shows itself, and the run it starts. Every
+ * A list tab's primary action (mold_v0-208; pack.json `tabs[].action`, src/pack-api.ts TabActionSchema): what
+ * the console's button (web/src/features/tabs/tab-action.tsx: the list's search row's last control) asks before it shows itself, and the run it starts. Every
  * list tab has one by default (mold_v0-213: src/metric-spec.ts tabAction, the same resolution as the build's registry);
  * mounted only when a tab has one, so a build without a list tab (zero packs, a host pack's) answers nothing here.
  *
