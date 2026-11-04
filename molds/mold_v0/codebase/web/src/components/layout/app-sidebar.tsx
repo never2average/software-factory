@@ -59,8 +59,8 @@ function SearchProbe({ onChange }: { onChange: (search: string) => void }) {
   return null;
 }
 
-/** An active entry stands out (mold_v0-213): the brand's colour behind it, its words in it, a bar at its edge. */
-const ACTIVE = 'data-active:bg-primary/10 data-active:text-primary data-active:font-semibold dark:data-active:bg-primary/20 data-active:shadow-[inset_3px_0_0_var(--primary)] data-active:hover:bg-primary/15 data-active:hover:text-primary';
+/** An active entry stands out (mold_v0-213): the brand's colour behind it, its words in it (mold_v0-216: no bar at its edge). */
+const ACTIVE = 'data-active:bg-primary/10 data-active:text-primary data-active:font-semibold dark:data-active:bg-primary/20 data-active:hover:bg-primary/15 data-active:hover:text-primary';
 
 export default function AppSidebar() {
   const pathname = useConsolePathname();
