@@ -31,6 +31,7 @@ import { SHELL_TEXTS, SHELL_TEXT_IDS } from "./shell-texts.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { CheckSchema } from "./check-spec.js";
 import { EmailPackSchema } from "./company-email-config.js";
+import { DocumentsSchema } from "./record-files-config.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -406,6 +407,8 @@ export const PackJsonSchema = z.object({
   checks: z.array(CheckSchema).max(50).optional(),
   /** The company's own email: a sender the workspace may set, and a mailbox intake into one of its areas (mold_v0-192; src/company-email-config.ts). */
   email: EmailPackSchema.optional(),
+  /** Document previews: the hosts a field's URL documents may be fetched from (mold_v0-220; src/record-files-config.ts). */
+  documents: DocumentsSchema.optional(),
   /**
    * The app's public landing page at / (mold_v0-091, mold_v0-122; src/landing.ts): the sections it picks from the shell's
    * library, in its order (`sections: [{type, ...}]`: hero, problem, concept, how_it_works, proof, where_you_work, faq,
@@ -513,7 +516,7 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "checks">;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks">;
 export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
@@ -577,6 +580,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.mcp) out.mcp = p.mcp;
   if (p.workspace_store) out.workspaceStore = p.workspace_store;
   if (p.email) out.email = p.email;
+  if (p.documents) out.documents = p.documents;
   return out;
 }
 
@@ -609,6 +613,9 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
   // The company's own email (mold_v0-192) too.
   if (declared?.email && code.email) throw new PackJsonError(["email is declared in pack.json and in the code entry"]);
   if (declared?.email) out.email = declared.email;
+  // Document previews (mold_v0-220) too.
+  if (declared?.documents && code.documents) throw new PackJsonError(["documents is declared in pack.json and in the code entry"]);
+  if (declared?.documents) out.documents = declared.documents;
   return out;
 }
 

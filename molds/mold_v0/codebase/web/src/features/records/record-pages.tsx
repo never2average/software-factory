@@ -24,6 +24,7 @@ import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
+import { RecordDocuments, isStoredFile } from './documents';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -68,6 +69,11 @@ export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
   if (v == null || v === '') return '';
   // An encrypted field (mold_v0-194) is never read here: every answer carries the mask; a reveal is its own request.
   if (f?.encrypted) return '•••••• (encrypted)';
+  // A file field (mold_v0-220): its file names only (the first, and how many more), never a reference's insides.
+  if (f?.type === 'file') {
+    const names = (Array.isArray(v) ? v : [v]).map((x) => (x && typeof x === 'object' ? String((x as { name?: unknown; path?: unknown }).name ?? (x as { path?: unknown }).path ?? '') : String(x))).filter(Boolean);
+    return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0] ?? '';
+  }
   if (Array.isArray(v)) return v.map((x) => fieldText(f, x)).filter(Boolean).join(', ');
   if (f?.type === 'enum') return optionLabel(f, v);
   if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
@@ -209,15 +215,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       empty={empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
-      detail={(r) => (
+      detail={(r) => (<>
         <dl>
           {detailNote?.(r)}
           {r.version && <Field label='Version'>{r.version}</Field>}
-          {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name)).map((f) => (
+          {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name) && !isStoredFile(f, r.data[f.name])).map((f) => (
             <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
           ))}
         </dl>
-      )}
+        {/* mold_v0-220: its files and documents as cards (a merged tab's row: the first of its areas). */}
+        {!source && recordArea(r) === area.name && <div className='pt-4'><RecordDocuments area={area} base={base} recordKey={r.key} /></div>}
+      </>)}
     />
   );
 }
@@ -247,10 +255,11 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
             <dl>
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
-              {area.fields.map((f) => (
+              {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
                 <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} /></span></Field>
               ))}
             </dl>
+            <RecordDocuments area={area} base={base} recordKey={data.record.key} />
             <ClockSection record={data.record} events={data.clock_events} />
             {data.links.map((l) => {
               const target = findRecordArea(base, l.area);

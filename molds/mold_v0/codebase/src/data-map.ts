@@ -150,10 +150,25 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
       if (withEmail.some((p) => e(p).sender?.allow)) rows.push({ item: "A workspace's own sender", detail: "set by the workspace's owners (Settings › Email: SMTP, Microsoft 365 through Microsoft Graph, or Google Workspace through the Gmail API); the app's emails to that workspace's people go out through it while it is on, from this server to the host the owners named, login.microsoftonline.com and graph.microsoft.com, or oauth2.googleapis.com and gmail.googleapis.com. Its secret (a password, a client secret or a service-account key) is sealed with the workspace's data key and never shown again, to the workspace or to this service's operators" });
       for (const p of withEmail) {
         const it = e(p).intake;
-        if (it) rows.push({ item: `Mail intake of ${p.manifest.name}`, detail: `mailboxes the workspace's owners connect (IMAP, Microsoft Graph or Gmail), read only and only in the folder or label ${code(it.folder ?? "INBOX")}, by this server: each new message becomes a record of ${code(it.area)} in the database (the workspace's own, under row-level security), once per Message-ID; its attachments are sealed with the workspace's data key in the object store. Their secrets are sealed as the sender's` });
+        const files = !!(it as { fields?: Record<string, string> } | undefined)?.fields?.body_file || !!(it as { fields?: Record<string, string> } | undefined)?.fields?.attachment_files;
+        if (it) rows.push({ item: `Mail intake of ${p.manifest.name}`, detail: `mailboxes the workspace's owners connect (IMAP, Microsoft Graph or Gmail), read only and only in the folder or label ${code(it.folder ?? "INBOX")}, by this server: each new message becomes a record of ${code(it.area)} in the database (the workspace's own, under row-level security), once per Message-ID; its attachments${files ? " and its body (its HTML cleaned of scripts, and its text) are kept as files on the record," : " are"} sealed with the workspace's data key in the object store. Their secrets are sealed as the sender's` });
       }
       sections.push({ id: "email", title: "A company's own email", rows });
     }
+  }
+
+  // ---------- record files and document previews (mold_v0-220), only when an area has them ----------
+  {
+    const rows: DataMapRow[] = [];
+    const areasOf = (p: (typeof list_)[number]) => (p.definition.recordAreas ?? []) as { name: string; scope?: string; fields: { name: string; type?: string; preview?: string }[] }[];
+    const fileAreas = list_.flatMap((p) => areasOf(p).filter((a) => (a.scope ?? "platform") === "workspace" && a.fields.some((f) => f.type === "file")).map((a) => code(a.name)));
+    if (fileAreas.length) rows.push({ item: "Record files", detail: `the files of ${fileAreas.join(", ")} records: each sealed with the workspace's data key in the object store (under the workspace's own prefix, bound to its record), shown and downloaded one at a time from the record's page by people whose role may read the area, at a link that lasts ten minutes; never in a list, an export or a log` });
+    for (const p of list_) {
+      const previews = areasOf(p).flatMap((a) => a.fields.filter((f) => f.preview === "document").map((f) => code(`${a.name}.${f.name}`)));
+      const hosts = ((p.definition as { documents?: { hosts?: string[] } }).documents?.hosts ?? []).map(code);
+      if (previews.length) rows.push({ item: `Document previews of ${p.manifest.name}`, detail: `the documents ${previews.join(", ")} point at, fetched by this server over HTTPS only from ${hosts.join(", ")} (and their subdomains), never from a private address, and kept in the object store (a shared area's copy shared, a workspace area's sealed with its data key); fetched again after a month` });
+    }
+    if (rows.length) sections.push({ id: "files", title: "Record files and documents", rows });
   }
 
   // ---------- model calls ----------
