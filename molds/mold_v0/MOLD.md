@@ -2919,8 +2919,12 @@ The audit trails' entries, and the records of a pack's record area declared `"ap
   (`ledger_checkpoints`, append-only, per workspace under row-level security). **A tampered window is refused, never
   certified**: nothing is written and the scheduler logs why.
 - **The key**: `APP_LEDGER_SIGNING_KEY` in the app's environment (a 32-byte seed, hex or base64, or a PKCS#8 PEM), set by
-  name (`provision.py <app> --set-secret APP_LEDGER_SIGNING_KEY`; `npm run ledger:keygen -- --out <file>` makes one and
-  prints only its public half). Never printed, never sent to the database: a key the database role can read (a database
+  name. The factory makes it (mold_v0-227, `mold.json` `profile_secrets`): its check and the keys station require it while
+  `audit.sign` is on, `provision.py <app> --generate-secret APP_LEDGER_SIGNING_KEY` makes one on the factory machine,
+  writes it to the target and prints only its public half (`--rotate` replaces it, keeping the old public key in
+  `APP_LEDGER_PUBLIC_KEYS`), and a server's first deploy makes it when the server lacks it (the compose file hands both
+  names to the API). By hand: `npm run ledger:keygen -- --out <file>` makes one and prints only its public half, then
+  `--set-secret`. Never printed, never sent to the database: a key the database role can read (a database
   or role setting, a Key vault provider serving that name) is refused and nothing is signed. Its public key, and retired
   ones (`APP_LEDGER_PUBLIC_KEYS`), are published at **`/.well-known/ledger-keys.json`**.
 - **Verify**: a workspace's owners, `GET /api/ledger/verify[?stream=]` and the MCP tool `verify_audit_trail`: ok, or the
