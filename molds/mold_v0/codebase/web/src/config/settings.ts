@@ -61,7 +61,8 @@ export function settingsNavItem(tabs: readonly SettingsTabSpec[] = GENERATED): N
   if (layout === 'none') return null;
   if (layout !== 'groups') return { title: 'Settings', url: SETTINGS_URL, icon: 'settings', items: [] };
   const groups = settingsGroups(tabs);
-  return { title: 'Settings', url: groups[0]!.url, icon: 'settings', items: groups.map((g) => ({ title: g.label, url: g.url, items: [] })) };
+  // The entry itself is /app/settings (which leads to the first group's page); its items are the groups' pages.
+  return { title: 'Settings', url: SETTINGS_URL, icon: 'settings', items: groups.map((g) => ({ title: g.label, url: g.url, items: [] })) };
 }
 
 /** Whether an address is Settings' (the page, a group's page, or a tab of either). */

@@ -11,9 +11,14 @@
 //    a check and a private-network kind added): with the defaults every pack-asked capability is on and the two opt-in
 //    toggles (audit, on-premises runners) are off; then each flag is turned (off for the first, on for the second) and
 //    its routes, tools and jobs go (or come) while every other capability stays as it was.
+// 4. The console (scripts/gen-packs.mjs in build copies of the same fixture, one per flag): the flag alone takes its
+//    pages, sidebar entries and Settings tabs away (or brings them), web/src/config/features.generated.ts says so, and
+//    what a flag may not do is refused at build (encrypted_fields off over an encrypted field; audit.sign alone).
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { cleanup, connect, STAMP } from "./lib/test-world.js";
 import { installEmbedded } from "./lib/embedded-fixture.js";
@@ -32,6 +37,7 @@ try {
   const { ledgerAppRouter } = await import("../src/ledger.js");
   const { checkAppRouter } = await import("../src/checks.js");
   const { onPremAppRouter } = await import("../src/onprem-runner-routes.js");
+  const { credentialAppRouter } = await import("../src/credential-routes.js");
   const { developerApiRouter } = await import("../src/developer-api.js");
   const { onPremAvailable } = await import("../src/onprem-runners.js");
   const { clockAreas, clockTools, clockStepsOn } = await import("../src/record-clocks.js");
@@ -93,6 +99,7 @@ try {
   const probe = async () => {
     const t = await tools();
     return {
+      customer_key_vault: stack(credentialAppRouter()) > 0,
       company_email: companyEmailWired() && stack(emailAppRouter()) > 0,
       scheduled_alerts: stack(noticeAppRouter()) > 0 && dueAreas().length > 0 && clockStepsOn(),
       record_clocks: clockAreas().length > 0 && clockTools().length > 0 && jobs().includes("record_clocks") && t.includes("list_due_records"),
@@ -108,7 +115,7 @@ try {
 
   F.setFeaturesForTest(null);
   const defaults = await probe();
-  assert.deepEqual(defaults, { company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
+  assert.deepEqual(defaults, { customer_key_vault: true, company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
     developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true }, "with the defaults: every pack-asked capability on, the toggles off");
   assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health");
   assert.equal(deliveriesOn(), true);
@@ -116,6 +123,7 @@ try {
 
   // Each flag turned from its default: its own capability flips, every other one stays.
   const turns: [import("../src/features.js").FeatureId, boolean, string][] = [
+    ["customer_key_vault", false, "customer_key_vault"],
     ["company_email", false, "company_email"],
     ["scheduled_alerts", false, "scheduled_alerts"],
     ["record_clocks", false, "record_clocks"],
@@ -166,6 +174,78 @@ try {
   console.log("✓ the legacy toggles (profile.audit.*, profile.onprem_runners) still read through the registry");
 
   await installEmbedded(null);
+
+  // ---------- 4. the console, per flag (gen-packs in build copies) ----------
+  {
+    const TMPC = mkdtempSync(path.join(tmpdir(), "features-console-"));
+    const fixture = (j: any) => {
+      j.credentials = [{ name: "api_token", label: "API token", bound_to: "workspace", deliver_as: { env: "API_TOKEN" } }];
+      j.email = { sender: { allow: true } };
+      j.record_areas.find((a: any) => a.name === "tickets").due = { field: "due", within_days: 7 };
+      j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "secret_note", label: "Secret note", type: "text", encrypted: true });
+      j.checks = [{ name: "has_ticket", label: "Is there such a ticket?", inputs: { summary: "string" }, rule: { area: "tickets", match: { summary: "$summary" }, latest_by: "updated_at", require: [{ field: "state", ne: "closed" }] } }];
+      j.job_kinds[0].private_network = true;
+    };
+    const build = (name: string, features?: Record<string, boolean>) => {
+      const copy = path.join(TMPC, name);
+      const skip = new Set(["node_modules", ".pglite", ".git", ".next"]);
+      cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) && src !== path.join(ROOT, "packs") });
+      for (const nm of ["node_modules", "web/node_modules"]) if (existsSync(path.join(ROOT, nm))) symlinkSync(path.join(ROOT, nm), path.join(copy, nm), "dir");
+      mkdirSync(path.join(copy, "packs", "fixture_embedded"), { recursive: true });
+      cpSync(path.join(ROOT, "packs", "pack.schema.json"), path.join(copy, "packs", "pack.schema.json"));
+      cpSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_embedded"), path.join(copy, "packs", "fixture_embedded"), { recursive: true });
+      const f = path.join(copy, "packs", "fixture_embedded", "pack.json");
+      const j = JSON.parse(readFileSync(f, "utf8")); fixture(j); writeFileSync(f, JSON.stringify(j, null, 2));
+      if (features) writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ features }, null, 2));
+      const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
+      const read = (rel: string) => (existsSync(path.join(copy, rel)) ? readFileSync(path.join(copy, rel), "utf8") : "");
+      const constant = (src: string, name: string) => { const m = new RegExp(`export const ${name}(?::[^=]+)? = ([\\s\\S]*?)(?: as const)?;\\n`).exec(src); return m ? JSON.parse(m[1]!) : undefined; };
+      const nav = read("web/src/config/pack-nav.generated.ts");
+      return {
+        status: g.status, out: `${g.stdout}\n${g.stderr}`,
+        features: constant(read("web/src/config/features.generated.ts"), "features") as Record<string, boolean>,
+        tabs: ((constant(nav, "settingsTabs") ?? []) as { id: string }[]).map((t) => t.id),
+        workspace: JSON.stringify(constant(nav, "workspacePortalNav") ?? []),
+        clocks: ((constant(nav, "recordAreas") ?? []) as { clocks?: unknown[] }[]).some((a) => (a.clocks ?? []).length > 0),
+        developer: (constant(nav, "developerConsole") ?? {}).on === true,
+        onprem: constant(nav, "onPremRunners") === true,
+        alerts: ((constant(nav, "alertRules") ?? []) as unknown[]).length,
+      };
+    };
+    try {
+      const base = build("defaults");
+      assert.equal(base.status, 0, base.out.slice(-1500));
+      assert.deepEqual(Object.entries(base.features).filter(([, v]) => v).map(([k]) => k), ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "developer_surface", "declarative_checks", "encrypted_fields", "health_history"]);
+      assert.deepEqual(base.tabs, ["credentials", "api_keys", "allowed_origins", "email", "webhooks", "integrations", "alerts"], "the defaults' Settings tabs, in group order");
+      assert.ok(base.workspace.includes("/app/notices") && base.clocks && base.developer && !base.onprem && base.alerts > 0, "Notices, clock columns, the developer tabs; no runners");
+      const cases: [string, Record<string, boolean>, (b: ReturnType<typeof build>) => boolean, string][] = [
+        ["customer_key_vault", { customer_key_vault: false }, (b) => !b.tabs.includes("credentials"), "no Credentials tab"],
+        ["company_email", { company_email: false }, (b) => !b.tabs.includes("email"), "no Email tab"],
+        ["scheduled_alerts", { scheduled_alerts: false }, (b) => !b.tabs.includes("alerts") && !b.workspace.includes("/app/notices") && b.alerts === 0 && b.clocks, "no Alerts tab, no Notices entry; the clocks still shown"],
+        ["record_clocks", { record_clocks: false }, (b) => !b.clocks && b.tabs.includes("alerts"), "no clock column (the due dates' alerts stay)"],
+        ["developer_surface", { developer_surface: false }, (b) => !b.developer && !b.tabs.some((t) => ["api_keys", "allowed_origins", "webhooks", "integrations"].includes(t)), "no API keys, Allowed origins, Webhooks or Integrations tab"],
+        ["declarative_checks", { declarative_checks: false }, (b) => b.features.declarative_checks === false, "off in the console's registry"],
+        ["health_history", { health_history: false }, (b) => b.features.health_history === false, "off in the console's registry"],
+        ["onprem_runners", { onprem_runners: true }, (b) => b.onprem && b.tabs.includes("credentials"), "the runners section on Credentials"],
+        ["audit.sign", { "audit.data": true, "audit.sign": true }, (b) => b.tabs.includes("signing") && b.features["audit.data"], "the Signing tab (with the data trail)"],
+      ];
+      for (const [id, features, check, words] of cases) {
+        const b = build(id.replace(".", "-"), features);
+        assert.equal(b.status, 0, `${id}: ${b.out.slice(-1500)}`);
+        assert.ok(check(b), `${id}: ${words} (${JSON.stringify({ tabs: b.tabs, features: b.features })})`);
+        const changed = Object.keys(base.features).filter((k) => b.features[k] !== base.features[k]);
+        assert.deepEqual(changed, Object.keys(features).filter((k) => b.features[k] !== base.features[k]), `${id}: only its own flags change in the console's registry`);
+        console.log(`✓ console, ${Object.entries(features).map(([k, v]) => `${k} = ${v}`).join(", ")}: ${words}`);
+      }
+      const enc = build("encrypted-off", { encrypted_fields: false });
+      assert.notEqual(enc.status, 0); assert.match(enc.out, /in the clear/);
+      const sign = build("sign-alone", { "audit.sign": true });
+      assert.notEqual(sign.status, 0); assert.match(sign.out, /neither audit trail/);
+      const conflict = build("conflict", { "audit.data": false });
+      assert.equal(conflict.status, 0, "a flag false that is off anyway builds");
+      console.log("✓ console: refused at build: encrypted_fields false over an encrypted field (values would be stored in the clear); audit.sign with neither trail");
+    } finally { rmSync(TMPC, { recursive: true, force: true }); }
+  }
   console.log("FEATURES TEST PASS");
 } finally {
   cleanup();
