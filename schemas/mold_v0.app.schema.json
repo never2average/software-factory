@@ -2054,6 +2054,29 @@
               "chain": {
                 "type": "boolean"
               },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "group": {
+                    "type": "string",
+                    "enum": [
+                      "access",
+                      "connections",
+                      "automation",
+                      "data_trust"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "group"
+                ],
+                "additionalProperties": false
+              },
               "rows": {
                 "type": "string",
                 "maxLength": 500
@@ -14056,8 +14079,8 @@
           "type": "boolean",
           "default": true,
           "title": "Developer surface (mold_v0-193)",
-          "description": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (/app/developers) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind. Asked for when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block). Default true. Off: Nothing of it is mounted, no table is read, no event is queued and no page shows. Needs audit.platform on.",
-          "markdownDescription": "**Developer surface** (mold_v0-193; board name `developer`). The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (/app/developers) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.\n\n- **Asked for** when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block).\n- **Default** `true`.\n- **Off**: Nothing of it is mounted, no table is read, no event is queued and no page shows.\n- **Needs** Needs audit.platform on.\n\nBrief line: `features.developer_surface = false` in `## Profile`."
+          "description": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (Settings: API keys, Allowed origins, Webhooks, Integrations) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind. Asked for when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block). Default true. Off: Nothing of it is mounted, no table is read, no event is queued and no page shows. Needs audit.platform on.",
+          "markdownDescription": "**Developer surface** (mold_v0-193; board name `developer`). The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (Settings: API keys, Allowed origins, Webhooks, Integrations) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.\n\n- **Asked for** when a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block).\n- **Default** `true`.\n- **Off**: Nothing of it is mounted, no table is read, no event is queued and no page shows.\n- **Needs** Needs audit.platform on.\n\nBrief line: `features.developer_surface = false` in `## Profile`."
         },
         "declarative_checks": {
           "type": "boolean",
@@ -14077,8 +14100,8 @@
           "type": "boolean",
           "default": true,
           "title": "Health history (mold_v0-210)",
-          "description": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history. Asked for when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions). Default true. Off: No sample is taken or kept, the job is not scheduled, the history route answers an empty history and Status shows its live checks only.",
-          "markdownDescription": "**Health history** (mold_v0-210; board name `health`). Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.\n\n- **Asked for** when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions).\n- **Default** `true`.\n- **Off**: No sample is taken or kept, the job is not scheduled, the history route answers an empty history and Status shows its live checks only.\n\nBrief line: `features.health_history = false` in `## Profile`."
+          "description": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history. Asked for when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions). Default true. Off: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).",
+          "markdownDescription": "**Health history** (mold_v0-210; board name `health`). Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.\n\n- **Asked for** when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions).\n- **Default** `true`.\n- **Off**: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).\n\nBrief line: `features.health_history = false` in `## Profile`."
         }
       }
     }
