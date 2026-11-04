@@ -180,11 +180,14 @@ _KEYS = [   # `Key: value`: the whole sentence (the whole line for the line keys
  ("processes", r"multiplayer\b", {"processes"}),
  ("library", r"(?:workflows?|librar(?:y|ies)|starter\s+library)\s*:", {"library"}),
  ("asr", r"(?:speech|dictation|asr|speech[- ]to[- ]text|microphone)(?:\s+model|\s+language)?\s*:", {"asr_model", "asr_model_unknown", "asr_language", "asr_enabled"}),
+ # the app spec's kind and run keys (mold_v0-228): read by lib/spec_fields.py in parse_brief, never by _extract
+ ("kind", r"kind\s*:", set()),
+ ("run_keys", r"run\s+keys\s*:", set()),
 ]
-_LINE_KEYS = {"brand", "logo", "tagline", "admins", "asr", "product_name"}   # their value runs to the end of the line
+_LINE_KEYS = {"brand", "logo", "tagline", "admins", "asr", "product_name", "kind", "run_keys"}   # their value runs to the end of the line
 # These count only at the very start of a line, as they always have ("Multi-organization: no, one workspace" once named
 # a workspace "no, one workspace"); later in a line, or behind a list mark or bold, they are prose, and asked.
-_LINE_START = {"workspace", "product_name", "mold", "brand", "logo", "tagline", "admins", "asr"}
+_LINE_START = {"workspace", "product_name", "mold", "brand", "logo", "tagline", "admins", "asr", "kind", "run_keys"}
 _SENTENCES = [   # the documented setting sentences: a sentence, or a comma clause, that STARTS with one
  ("target", r"(?:(?:please\s+)?(?:deploy|host|run)(?:ed|s)?(?:\s+it)?|it\s+(?:runs|is\s+(?:deployed|hosted|run))|(?:it(?:'s|\s+is)\s+)?(?:deployed|hosted))\s+(?:on|to|at|in)\b|vm_remote\b",
   {"deploy_target", "deploy_target_conflict", "remote_host"}),
@@ -202,7 +205,7 @@ _SENTENCES = [   # the documented setting sentences: a sentence, or a comma clau
              r"|(?:with\s+)?(?:the\s+)?(?:starter|built-?in|default|original|account[- ]delivery)\b[^.]*\blibrar", {"library"}),
  ("asr", r"(?:no|without)\s+(?:a\s+|the\s+)?(?:dictation|microphone|speech[- ]to[- ]text)\b", {"asr_enabled"}),
 ]
-_DATA_HEAD = re.compile(r"^#{2,3}[ \t]+(?:profile|budgets?|mcp instructions|landing)\b", re.I)
+_DATA_HEAD = re.compile(r"^#{2,3}[ \t]+(?:profile|budgets?|mcp instructions|landing|developer surface)\b", re.I)
 _HEAD = re.compile(r"^#{1,3}\s")
 
 def _norm(s):
@@ -288,6 +291,12 @@ def parse_brief(text):
     if prof: h["profile"] = prof
     if perrs: h["profile_problems"] = perrs
     if pnotes: h["profile_notes"] = pnotes
+    # The app spec's kind, run keys and developer surface (mold_v0-228; lib/spec_fields.py): `Kind:` and `Run keys:` lines
+    # and a `## Developer surface` JSON block. Problems are refused where state is built, never guessed around.
+    import spec_fields
+    sf, sferrs = spec_fields.from_brief(text)
+    h.update(sf)
+    if sferrs: h["spec_fields_problems"] = sferrs
     prose = {}
     for x, y, k, _ in st:
         if k != "prose": continue
@@ -556,7 +565,8 @@ def pick_product(mold_id, hints, existing=None):
 # when the brief or answers change (a vm app has no `vercel` block, a single-pack brief drops a pack, a neon
 # app has no self-hosted network). Lists are values, not merged.
 OWNED_BY_OMISSION = {
-  "application": {"customer_id", "packs", "clone_of", "surface.branding", "surface.primary_context.entity_vocabulary.note"},
+  "application": {"customer_id", "packs", "clone_of", "surface.branding", "surface.primary_context.entity_vocabulary.note",
+                  "kind", "run_keys", "developer_surface"},
   "infrastructure": {"vercel", "vm", "vm_remote"},
   "datastores": {"postgres.network", "postgres.host", "postgres.port", "postgres.database", "postgres.exposure",
                  "postgres.admin_url_ref", "postgres.pooling", "postgres.rls_verified"},
@@ -790,10 +800,24 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         # One function owns the vm_remote shape (lib/vm_remote.py), so intake, the fixture and the validator agree.
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import vm_remote
         vm_remote.shape_state(app_id, infra, ds, di, host=hints.get("remote_host"), domain=hints.get("custom_domain"))
+    _spec_fields(app_id, mold_id, app, hints)
     if existing:
         app, infra, ds = keep_measured(app, infra, ds, existing)
         carry_forward(di, existing.get("datainfra", {}), OWNED_BY_OMISSION["datainfra"])
     return app, infra, ds, di
+
+def _spec_fields(app_id, mold_id, app, hints):
+    """The app spec's kind, run keys and developer surface (mold_v0-228; lib/spec_fields.py), as the brief says them, into
+    application.json, so factory.py spec apps reads them back. The brief is where they are set: one it no longer says is
+    taken out (never carried forward). A problem writes nothing."""
+    import spec_fields
+    errs = spec_fields.apply(app, hints, mold_id)
+    if errs: sys.exit(f"{app_id}: the brief's kind, run keys or developer surface were refused, so nothing was written:\n  " + "\n  ".join(errs))
+    if app.get("kind"):
+        said = [f"kind {app['kind']}"] + (["run keys " + ", ".join(f"{k} {v}" for k, v in app["run_keys"].items())] if app.get("run_keys") else []) \
+               + (["a developer surface"] if app.get("developer_surface") else [])
+        print(f"from the brief: {'; '.join(said)}")
+    elif app.get("run_keys"): print("from the brief: run keys " + ", ".join(f"{k} {v}" for k, v in app["run_keys"].items()))
 
 def self_test_single(n, fails):
     """mold_v0-028: a single-service mold's intake, in a temp copy of the factory (scripts and state copied, molds
@@ -1432,12 +1456,13 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     elif not (app.get("profile") or {}).get("legal") and "legal" in ((app_profile.spec(mold_id, ROOT) or {}).get("app_settable") or []):
         print("note: no legal pages: the app has no Terms or Privacy page until its brief's ## Profile names the company "
               "(legal.company_name = ..., legal.contact_email = ...) or the legal question is answered")
+    _spec_fields(app_id, mold_id, app, hints)
     ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
     other = {"vercel", "vm", "vm_remote", "compose_remote"} - {infra["target"]}
-    carry_forward(app, ex_app, {"customer_id", "packs", "surface", "workspace", "model", "asr", "capabilities", "profile"})
+    carry_forward(app, ex_app, {"customer_id", "packs", "surface", "workspace", "model", "asr", "capabilities", "profile", "kind", "run_keys", "developer_surface"})
     carry_forward(infra, ex_inf, other | {"inference", "runtime_env"})
     t = infra["target"]
     if isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())

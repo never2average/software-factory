@@ -1035,11 +1035,14 @@ def schema_errors(s, v, path="pack.json"):
     return errs
 
 
-def cross_errors(p):
+def cross_errors(p, others=()):
     """The build's own cross-checks (src/pack-api.ts validatePack, the RecordArea/Field/Tab/Metric refinements and
-    src/metric-spec.ts) that a pack made from a brief can trip, so a draft that passes here does not fail at gen-packs."""
+    src/metric-spec.ts) that a pack made from a brief can trip, so a draft that passes here does not fail at gen-packs.
+    others: the app's other packs (pack.json docs), whose record areas a tab may show too (the build checks a tab's
+    areas against every pack's: src/metric-spec.ts checkViews, "which no pack declares")."""
     errs = []; E = errs.append
     areas = {a.get("name"): a for a in p.get("record_areas") or []}
+    anywhere = set(areas) | {a.get("name") for o in others if isinstance(o, dict) for a in o.get("record_areas") or [] if isinstance(a, dict)}
     def fields(a): return {f.get("name"): f for f in a.get("fields") or []}
     for a in p.get("record_areas") or []:
         w = f"record area {a.get('name')}"; fs = fields(a)
@@ -1269,7 +1272,10 @@ def cross_errors(p):
         if k == "area" and t.get("timeline_by") and t.get("area") in areas:
             pt = point(t["area"], t["timeline_by"])
             if isinstance(pt, str): E(f"{w}: timeline by: {pt}")
-        if k == "area" and t.get("area") not in areas: E(f"{w}: shows area {t.get('area')}, which this pack does not declare")
+        if k == "area" and isinstance(t.get("areas"), list):   # a merged tab (mold_v0-135): every area it merges is declared
+            gone = [str((x or {}).get("area")) for x in t["areas"] if not isinstance(x, dict) or x.get("area") not in anywhere]
+            if gone: E(f"{w}: merges area{'s' if len(gone) > 1 else ''} {', '.join(gone)}, which no pack of the app declares")
+        elif k == "area" and t.get("area") not in anywhere: E(f"{w}: shows area {t.get('area')}, which this pack does not declare")
         if k != "area":
             for x in ("area", "views", "board_by", "timeline_by"):
                 if x in t: E(f"{w}: {x} is for an area tab")
