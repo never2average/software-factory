@@ -107,6 +107,20 @@ python3 .claude/scripts/factory.py spec generate [--check]      # regenerate the
 back with intake's own parser to prove the brief says exactly what the spec says, writes an inline mold_v0 pack to
 `packs/<id>/`, then follows the brief path unchanged. The brief path (`--brief`) keeps working as before.
 
+The spec's `kind`, `run_keys` and `developer_surface` go through the brief too (`Kind:` and `Run keys:` lines, a
+`## Developer surface` JSON block; docs/INTAKE.md) into the app's `application.json` (mold_v0-228), so `spec apps` reads
+every spec field back and prints each app's kind, run keys and developer surface. An app minted before them has none
+and reads as a tool; one with job kinds then shows `run_keys is missing` until its brief says them.
+
+**Packs given by path (mold_v0, mold_v0-229).** `spec check` (and `mint.py new --spec`, which runs it) holds a pack
+given as `{"id", "path"}` to the build's own refusals before `packs.py apply` copies it: its id as mold_v0 takes it, no
+`entry`, `migrations` or `runner` (an app pack is config only) and its `engine.pack` a host pack the spec names too
+(`molds/mold_v0/mold.json` `packs`, as `packs.py check`), the mold's `packs/pack.schema.json`, the build's cross-checks
+(`lib/brief_pack.py`, a merged tab's areas and the app's other packs included), and, when the mold's `node_modules` are
+installed, the codebase's own `src/pack-manifest.ts` check that gen-packs runs. The flags' refusals
+(`lib/features.py`, e.g. `record_clocks: false` while a metric counts by a clock) are the whole app's and apply to
+every pack. A pack named by id is in `packs/<id>/` already, where `packs.py check` and gen-packs read it.
+
 ## The schemas are generated, never edited
 
 `.claude/scripts/app_spec.py generate` builds them from what the molds and the factory already hold: mold_v0's

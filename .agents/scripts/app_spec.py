@@ -603,8 +603,13 @@ def problems(spec, root=ROOT, schema=None):
             if p.get("id") and doc.get("id") and p["id"] != doc["id"]:
                 out.append(("wrong value", f"packs[{i}].id", f"packs[{i}].id is {p['id']!r} but its pack.json says id {doc['id']!r}: they must be the same"))
             # the build's cross-checks as intake drafts packs (lib/brief_pack.py): for a pack written inline in the spec. A pack
-            # already on disk was checked by packs.py check and the shell's own gen-packs, which know every form it may use.
-            for e in (brief_pack.cross_errors(doc) if i not in origin else []): out.append(("wrong value", f"packs[{i}]", f"packs[{i}] ({p.get('id')}): {e}"))
+            # given by path (mold_v0-229) gets every check the build makes of a pack.json before packs.py apply copies it
+            # (_path_pack_problems). A pack named by id is in packs/<id>/ already: packs.py check and gen-packs read it there.
+            if i not in origin:
+                for e in brief_pack.cross_errors(doc): out.append(("wrong value", f"packs[{i}]", f"packs[{i}] ({p.get('id')}): {e}"))
+            elif isinstance(spec["packs"][i], dict) and spec["packs"][i].get("path"):
+                out += _path_pack_problems(i, p.get("id"), doc, [q["pack"] for j, q in enumerate(full.get("packs") or []) if j != i and isinstance(q, dict) and isinstance(q.get("pack"), dict)],
+                                           [x for x in ids if isinstance(x, str)], origin[i], root)
             for k in doc.get("job_kinds") or []:
                 if not isinstance(k, dict): continue
                 b, mb = k.get("budget_usd", 5), k.get("month_budget_usd")
@@ -616,7 +621,10 @@ def problems(spec, root=ROOT, schema=None):
         out += [("wrong value", "features", e) for e in _features_problems(spec, full, root)]
         prof = {k: v for k, v in (spec.get("profile") or {}).items() if k != "limits"} if isinstance(spec.get("profile"), dict) else {}
         if prof and not any(x[1].startswith("profile") for x in out):   # the factory's own profile check (lib/app_profile.py), the one validate and the build run; budgets are the schema's
+            # The flags are the whole spec's (its top-level audit and features, every pack): _features_problems says them above,
+            # so here they are not said again from a profile that lacks the spec's audit block (which read as off).
             for e in app_profile.problems(prof, mold, root, packs=[x for x in ids if isinstance(x, str)]):
+                if e.startswith("profile.features"): continue
                 out.append(("wrong value", e.split(" ")[0].rstrip(":"), e))
     elif mold == "mold_v1":
         for i, p in enumerate(spec.get("packs") or []):
@@ -636,6 +644,40 @@ def problems(spec, root=ROOT, schema=None):
         if e[0] == "missing" and m: at[(e[0], e[1])] = len(uniq)
         uniq.append(e)
     return uniq
+
+def _path_pack_problems(i, pid, doc, others, app_ids, where, root):
+    """mold_v0-229: the build's refusals for a pack the spec gives by path (a pack.json anywhere in the repository), said at
+    spec check instead of at packs.py apply: the pack's id as the mold takes it, what a config-only pack may not name and the
+    engine it runs on (molds/mold_v0/mold.json packs, as packs.py check), the pack schema (codebase packs/pack.schema.json)
+    and the build's cross-checks (lib/brief_pack.py), and the codebase's own check (src/pack-manifest.ts checkPackJson and
+    compileDeclarations, the code gen-packs runs) when its node_modules are installed. The flags' refusals
+    (lib/features.py) are the whole app's: problems() says them for every pack. -> [(kind, path, sentence)]."""
+    sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, "lib"))
+    import brief_pack, packs as P
+    at, head = f"packs[{i}]", f"packs[{i}] ({pid}, {where})"
+    out = []; add = lambda e: out.append(("wrong value", at, f"{head}: {e}"))
+    rules = P.rules_for("mold_v0") or {}
+    if pid is not None and rules.get("pack_id") and not re.fullmatch(rules["pack_id"], str(pid)):
+        add(f"the id {pid!r} does not fit mold_v0's pack ids ({rules['pack_id']}: it is also the pack's table prefix)")
+    dec = rules.get("declarative") or {}
+    hosts = rules.get("host_packs") or []
+    if pid not in hosts:
+        for k in dec.get("refused_keys") or []:
+            if k in doc: add(f"it names `{k}`, which points at code: an app pack on mold_v0 is config only (its pack.json alone). Take `{k}` out and declare what it did (molds/mold_v0/MOLD.md \"Declared row maps\")")
+    eng = doc.get("engine") if isinstance(doc.get("engine"), dict) else {}
+    if isinstance(eng.get("pack"), str):
+        e = eng["pack"]
+        if e not in hosts: add(f"it runs on engine pack {e!r} (engine.pack), which is not one of mold_v0's host packs ({', '.join(hosts) or 'none'}): an engine is a host pack")
+        elif not os.path.isfile(os.path.join(root, "packs", e, "pack.json")): add(f"its engine pack {e} (engine.pack) is not on this machine (no packs/{e}/pack.json)")
+        elif e not in app_ids: add(f"it is the config of engine pack {e} (engine.pack): name {e} in the spec's packs too")
+    sp = os.path.join(ROOT, "molds", "mold_v0", "codebase", "packs", "pack.schema.json")
+    probs = brief_pack.schema_errors(load(sp), doc) if os.path.isfile(sp) else []
+    probs += brief_pack.cross_errors(doc, others)
+    for e in probs: add(e)
+    if not probs:
+        ran, more = brief_pack.node_check(doc, os.path.join(ROOT, "molds", "mold_v0", "codebase"))
+        for e in more: add(f"the build refuses it (src/pack-manifest.ts): {e}")
+    return out
 
 def _spec_profile(spec):
     """The profile the spec writes (its top-level audit and features folded in, as the brief path does)."""
@@ -661,6 +703,11 @@ def _features_problems(spec, full, root):
     errs = F.problems(_spec_profile(spec), _pack_docs(full), root, kind=spec.get("kind", "tool"), at="features")
     # what the schema rules already say, said once
     return [e for e in errs if "kind is the switch" not in e and "needs one of" not in e and not (spec.get("kind") == "embedded" and "needs audit.platform" in e)]
+
+def _spec_fields():
+    """lib/spec_fields.py (mold_v0-228): the spec's kind, run_keys and developer_surface as a brief says them and state records them."""
+    sys.path.insert(0, os.path.join(HERE, "lib")); import spec_fields
+    return spec_fields
 
 def _read_spec(path):
     if not os.path.isfile(path): return None, f"There is no file at {path}."
@@ -760,10 +807,12 @@ def to_brief(spec, app_id):
     dic = spec.get("dictation") or {}
     if dic.get("model"): L.append(f"Speech model: {dic['model']}")
     if dic.get("enabled") is False: L.append("Dictation: off")
+    sf_lines, sf_extra = _spec_fields().brief_lines(spec)   # mold_v0-228: kind, run keys, developer surface, read into application.json
+    L += sf_lines
     L += ["", f"Minted from an app spec (briefs/{app_id}.spec.json, kind {spec.get('kind', 'tool')}); the spec is the source, this page is generated from it."]
     plines, extra = _profile_lines(spec)
     if plines: L += ["", "## Profile", *plines]
-    for e in extra: L += ["", e.rstrip("\n")]
+    for e in extra + sf_extra: L += ["", e.rstrip("\n")]
     text = "\n".join(L) + "\n"
     return text, _read_back(spec, text, ids)
 
@@ -782,6 +831,11 @@ def _read_back(spec, text, ids):
     for k in ("web_search", "browser", "multi_tenant"):
         if (spec.get("capabilities") or {}).get(k) is False: want[k] = False
     out = []
+    # mold_v0-228: kind, run keys and the developer surface are what intake writes to application.json, exactly
+    for k in _spec_fields().KEYS:
+        if spec.get(k) is not None and json.loads(json.dumps(h.get(k))) != json.loads(json.dumps(spec[k])):
+            out.append(("not supported", k, f"the brief path would read {k} as {json.dumps(h.get(k))[:120]}, not {json.dumps(spec[k])[:120]}: say it another way in the spec (nothing was written)"))
+    for e in h.get("spec_fields_problems") or []: out.append(("not supported", "kind", f"the generated brief: {e} (nothing was written)"))
     for k, v in want.items():
         if v is not None and h.get(k) != v:
             out.append(("not supported", k, f"the brief path would read {k} as {json.dumps(h.get(k))}, not {json.dumps(v)}: say it another way in the spec (nothing was written)"))
@@ -842,7 +896,8 @@ def _developer_problems(spec, full, root):
                 out.append(("wrong value", "developer_surface.client_sessions.scopes", f"developer_surface.client_sessions.scopes: {s}: {target} is not a record area of the app's inline packs"))
             elif base == "run" and target not in kinds:
                 out.append(("wrong value", "developer_surface.client_sessions.scopes", f"developer_surface.client_sessions.scopes: {s}: {target} is not a job kind of the app's inline packs"))
-        own = [p["id"] for p in inline if "developer_surface" in p["pack"]]
+        # The same block in the pack is the one mint new --spec wrote there (an app read back from its state, mold_v0-228).
+        own = [p["id"] for p in inline if "developer_surface" in p["pack"] and p["pack"]["developer_surface"] != ds]
         if own: out.append(("wrong value", "developer_surface", f"developer_surface: pack {own[0]} declares its own too: say it once (in the spec)"))
     return out
 
@@ -912,6 +967,7 @@ def spec_from_state(app_id, root):
     dom = (i.get("vercel") or {}).get("custom_domain") or (i.get("compose_remote") or {}).get("domain") or (i.get("vm_remote") or {}).get("domain")
     if dom: prod["domain"] = dom
     spec = {"app_id": app_id, "mold_id": mold, "product": prod, "deploy": {"target": i.get("target")}, "packs": list(a.get("packs") or [])}
+    spec.update(_spec_fields().to_spec(a))   # mold_v0-228: kind, run_keys, developer_surface as intake recorded them (absent: a tool)
     if mold == "mold_v0":
         spec["workspace"] = {"platform_admins": a["platform_admins"]} if a.get("platform_admins") else {}
         prof = dict(a.get("profile") or {})
@@ -944,8 +1000,8 @@ def cmd_apps(a, root=ROOT):
         if status == "retired": rows.append({"app": app, "mold": spec.get("mold_id"), "status": status, "complete": None, "gaps": ["retired: not checked"]}); continue
         if spec.get("mold_id") not in MOLDS: rows.append({"app": app, "mold": spec.get("mold_id"), "status": status, "complete": None, "gaps": ["no spec schema for this mold"]}); continue
         gaps = [m for _, _, m in problems(spec, src, load(schema_path(spec["mold_id"], root)))]
-        if spec["mold_id"] == "mold_v0": gaps.append("kind and run_keys are not recorded in an app's state yet (the spec carries them; read as the defaults: tool)")
-        row = {"app": app, "mold": spec["mold_id"], "status": status, "complete": not [g for g in gaps if not g.startswith("kind and run_keys")], "gaps": gaps}
+        row = {"app": app, "mold": spec["mold_id"], "status": status, "complete": not gaps, "gaps": gaps,
+               "kind": spec.get("kind", "tool"), **{k: spec[k] for k in ("run_keys", "developer_surface") if k in spec}}
         flags = effective_features(spec, src)
         if flags:
             sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
@@ -954,6 +1010,10 @@ def cmd_apps(a, root=ROOT):
     if as_json: print(json.dumps({"apps": rows}, indent=2)); return 0
     for r in rows:
         print(f"{r['app']} ({r['mold']}, {r['status']}): {'complete' if r['complete'] else 'not complete' if r['complete'] is False else 'not checked'}")
+        if r.get("kind"):
+            said = [f"kind {r['kind']}"] + (["run keys " + ", ".join(f"{k} {v}" for k, v in r["run_keys"].items())] if isinstance(r.get("run_keys"), dict) else []) \
+                   + ([f"developer surface ({len((r['developer_surface'] or {}).get('events') or [])} events)"] if isinstance(r.get("developer_surface"), dict) else [])
+            print(f"  {'; '.join(said)}")
         if r.get("flags"): print(f"  flags: {r['flags']}")
         for g in r["gaps"]: print(f"  - {g}")
     print("read-only: no application was changed")
@@ -1042,6 +1102,24 @@ def self_test():
     ok(any(x[0] == "not supported" and "workspace.owner" in x[1] for x in problems(t)), "mold_v0: a workspace owner is not supported (companies are made in the app)")
     t = copy.deepcopy(v0); t["packs"] = ["nope_not_here"]
     ok(any("not on this machine" in x[2] for x in problems(t)), "mold_v0: a pack named by id that is not on this machine is said")
+    # mold_v0-228: kind, run_keys and developer_surface go through the brief into application.json and read back from it
+    sys.path.insert(0, HERE); import intake as _in
+    ff = load(os.path.join(ROOT, "examples", "mold_v0", "feature-flags", "spec.json"))
+    text, back = to_brief(ff, ff["app_id"]); h = _in.parse_brief(text); a_ = {"mold_id": "mold_v0"}
+    ok(back == [] and _spec_fields().apply(a_, h, "mold_v0") == [] and _spec_fields().to_spec(a_) == {k: ff[k] for k in ("kind", "run_keys", "developer_surface")}
+       and _spec_fields().problems(a_, "mold_v0", ROOT) == [], "mold_v0-228: kind, run_keys and developer_surface are written to application.json and read back as the spec says them")
+    t = copy.deepcopy(ff); t["run_keys"]["model"] = "vertex"; tb, _ = to_brief(t, t["app_id"])
+    ok("model = vertex" in tb and _in.parse_brief(tb)["run_keys"]["model"] == "vertex", "mold_v0-228: a run key the spec changes is the one the brief says")
+    # mold_v0-229: a pack given by path gets the build's refusals at spec check
+    hp = load(os.path.join(ROOT, "examples", "mold_v0", "hiring-pipeline", "pack", "pack.json"))
+    bad = copy.deepcopy(hp); bad["entry"] = "src/index.ts"; bad["record_areas"][0]["fields"].append({"name": "stage2", "label": "Stage", "type": "enum"})
+    bad.setdefault("tabs", []).append({"id": "merged", "kind": "area", "label": "Merged", "areas": [{"area": "nowhere"}]})
+    msgs = [x[2] for x in _path_pack_problems(0, hp["id"], bad, [], [hp["id"]], "x/pack.json", ROOT)]
+    ok(any("`entry`" in m for m in msgs) and any("lists its options" in m for m in msgs) and any("nowhere" in m for m in msgs),
+       f"mold_v0-229: a pack by path naming code, an enum without options and a merged tab of an undeclared area is refused ({msgs[:3]})")
+    ok(any("does not fit" in x[2] for x in _path_pack_problems(0, "Bad-Id", hp, [], [], "x/pack.json", ROOT)), "mold_v0-229: a pack id the mold does not take is refused")
+    hs = load(os.path.join(ROOT, "examples", "mold_v0", "hiring-pipeline", "spec.json")); hs["features"] = {"record_clocks": False}
+    ok(any("counts by a clock" in x[2] for x in problems(hs)), "mold_v0-229: clocks off while a pack's metric counts by a clock is refused (as gen-packs does)")
     v1 = load(os.path.join(ROOT, SCHEMA_DIR, "examples", "mold_v1.example.app.json"))
     import tempfile as _tf
     with _tf.TemporaryDirectory() as r_:   # mold_v0-223: a mold_v1 pack given by path is placed in packs/<id>/ by mint new --spec

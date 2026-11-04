@@ -112,7 +112,7 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
  * function's 4.5 MB (Vercel: FUNCTION_PAYLOAD_TOO_LARGE). Anything larger goes through the object store with a link
  * the API hands out (src/run-transfers.ts), where the store has links; events go in batches below it.
  */
-export const INLINE_MAX_BYTES = () => Number(process.env.APP_WORKER_INLINE_MAX_BYTES ?? 4 * 1024 * 1024);
+export const INLINE_MAX_BYTES = () => Number(ENV.APP_WORKER_INLINE_MAX_BYTES ?? 4 * 1024 * 1024);
 
 /** A write-back (or a completion) the API or the store refused for its size: the size, the limit when known, and why. */
 export class TooLargeError extends Error {

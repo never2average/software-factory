@@ -918,8 +918,17 @@ def _app_errors(app, adir):
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
-             + _single_service(app, docs) + _app_profile(app, docs) + _branding(app, docs))
+             + _single_service(app, docs) + _app_profile(app, docs) + _branding(app, docs) + _spec_fields(app, docs))
     return errs, docs
+def _spec_fields(app_id, docs):
+    """mold_v0-228: the app spec's kind, run_keys and developer_surface as application.json records them (all optional:
+    an app minted before them has none): a known kind, run keys only on a mold with job runs, a developer surface only
+    and always with kind embedded, in the spec schema's shape (lib/spec_fields.py problems)."""
+    a = docs.get("application") or {}
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if here not in sys.path: sys.path.insert(0, here)
+    import spec_fields
+    return [f"{app_id}/application.json: {e}" for e in spec_fields.problems(a, a.get("mold_id"), ROOT)]
 def _spec_schemas():
     """mold_v0-190: the app-spec schemas are generated from the molds and the factory's schemas; a stale one is a finding."""
     here = os.path.dirname(os.path.abspath(__file__))

@@ -15,7 +15,7 @@ board shows the short names of those that are on); `problems()` the sentences th
 right (unknown flags, a legacy key saying the opposite, a flag another needs, a pack declaration the flag would break).
 Standard library only.
 """
-import json, os
+import json, os, re
 
 REGISTRY_FILE = os.path.join("molds", "mold_v0", "codebase", "src", "features.json")
 ENGINE_TABLES = ("products", "scenarios", "simulations", "agent_sessions")   # the shell's src/host-tables.ts sessionEngine
@@ -124,6 +124,12 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
                 errs.append(f"{at}: {i} is on, which needs one of {', '.join(any_)} on ({f['label']} signs the audit trails; with none on there is nothing to sign)")
     if not states.get("encrypted_fields", {}).get("setting", True) and states.get("encrypted_fields", {}).get("requested"):
         errs.append(f"{at}.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear, so it is refused (take encrypted: true off the field first)")
+    # a metric, chart or tab that counts by a clock with the clocks off (gen-packs refuses the same, mold_v0-229)
+    rc = states.get("record_clocks")
+    if rc and not rc["on"] and rc["requested"]:
+        for d in docs:
+            if re.search(r'"clock"\s*:', json.dumps([d.get("metrics") or [], d.get("charts") or [], d.get("tabs") or []])):
+                errs.append(f"{at}.record_clocks is false but pack {d.get('id', '?')} has a metric, chart or tab that counts by a clock: take it out, or leave the clocks on")
     if "customer_key_vault" in states and not states["customer_key_vault"]["setting"]:
         need = sorted({f"{d.get('id', '?')}.{c}" for d in docs for k in (d.get("job_kinds") or []) + (d.get("agent_job_kinds") or []) if isinstance(k, dict)
                        for c in (k.get("credentials") or []) if isinstance(c, str)

@@ -32,15 +32,22 @@ Only recognised lines change state; a sentence of description never does, whatev
 - **`Key: value` lines**, and sentences that start with one ("Customer: internal. Owner: ops@example.com."):
   `Customer:`, `Owner:` (or `Operator:`), `Members:`, `Domain:`, `Server address:`, `Product:`, `Packs:`,
   `Brand colour:`, `Primary context:`, `Multiplayer:`, `Workflows:`. `Product name:`, `Mold:`, `Workspace:`, `Brand:`,
-  `Logo:`, `Tagline:`, `Admins:`, `Speech model:` and `Speech language:` count only at the very start of a line. A
+  `Logo:`, `Tagline:`, `Admins:`, `Speech model:`, `Speech language:`, `Kind:` and `Run keys:` count only at the very
+  start of a line. A
   line's value is read for its own setting only: "Tagline: one workspace for every shared desk" changes nothing else.
 - **Setting sentences**: a sentence, or a comma clause, that starts with one of the phrases above: "Deploy on vercel.",
   "It runs on its own server.", "No web search.", "Web search on, browser off.", "Single workspace.", "Fresh database.",
   "Shared database.", "Postgres on Neon.", "Self-host the postgres.", "Inference through the AI Gateway.", "Accounts are
   called companies.", "Clone of the live deployment.", "No branding.", "With the starter library.", "No starter
   library.", "No dictation.".
-- **Headed sections**: `## Profile` / `## Budgets` (`key = value`), `## MCP instructions`, `## Landing`, and a mold_v0
-  brief's pack sections. A `Key: value` line written below them still counts.
+- **Headed sections**: `## Profile` / `## Budgets` (`key = value`), `## MCP instructions`, `## Landing`,
+  `## Developer surface`, and a mold_v0 brief's pack sections. A `Key: value` line written below them still counts.
+- **The app spec's kind, run keys and developer surface** (mold_v0-228, `.claude/scripts/lib/spec_fields.py`), written
+  to `application.json` `kind`, `run_keys` and `developer_surface` so `factory.py spec apps` reads them back:
+  `Kind: tool` or `Kind: embedded`; `Run keys: model = anthropic, sandbox = boat, object_storage = vault` (mold_v0 only;
+  places, never a value); a `## Developer surface` section holding the block as one ```json fenced block (kind embedded
+  only, and kind embedded needs it). `mint.py new --spec` writes all three from the spec. A wrong value is refused and
+  nothing is written; a brief that stops saying one takes it out of state. An app without them reads as a tool.
 
 Anything else is prose. Prose that sounds like a setting ("customers later get an on-premises runner", "the starter
 library our old product shipped", "one workspace each", "the shared database of the old tool", "the domain x.com",
