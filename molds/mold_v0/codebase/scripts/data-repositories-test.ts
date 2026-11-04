@@ -8,7 +8,8 @@
 //    loaders, never_read, a reference into a live area).
 // 2. An upstream catalog at a pin (git): read at the pinned commit whatever the branch says; idempotent by fingerprint
 //    (a second index writes nothing); a new pin updates; a prune of more than half refused unless forced; staff rows
-//    never pruned; a commit that is not there refused; a redirect refused (and git without the setting would follow
+//    never pruned or overwritten, forced too (mold_v0-221: an override wins, the repository's version kept behind it and
+//    refreshed; removing it restores that; a repository's row is read only); a commit that is not there refused; a redirect refused (and git without the setting would follow
 //    it); an index that fails part-way writes nothing; the same with a declared map and no code; the staff route.
 // 3. The github transport: the commit checked, every request at the pin with redirects refused.
 // 4. A workspace's files: the ledger (last line wins, other kinds left out), application folders (globs, never_read),
@@ -111,7 +112,36 @@ try {
     const r4 = await repos.syncUpstreamCatalog("fixture_catalog", "catalogs", { force: true });
     assert.equal(r4.areas.find((a) => a.area === "controls")!.deleted, 10);
     assert.ok((await shared("controls")).some((x) => x.key === "hand:extra"), "staff's own row survives every prune");
-    assert.equal((await shared("controls")).find((x) => x.key === "alpha-rules-2024:34(vii)")!.source, "catalogs", "a forced index takes the hand-edited row back");
+    // mold_v0-221: a shared row staff wrote is staff's, forced or not. The hand-edited row is an override: it stays, the
+    // repository's version of its key kept behind it (refreshed by each index); removing it puts that version back.
+    const row = async (key: string) => (await db.query<{ title: string; source: string | null; version: string | null; upstream: any }>("SELECT title, source, version, upstream FROM platform_records WHERE area = 'controls' AND key = $1", [key]))[0];
+    const ov = await row("alpha-rules-2024:34(vii)");
+    assert.deepEqual([ov!.title, ov!.source, ov!.upstream?.source, ov!.upstream?.version], ["edited by hand", null, "catalogs", up.c3], "a forced index keeps staff's override, the repository's version at the new pin behind it");
+    assert.equal((await repos.syncUpstreamCatalog("fixture_catalog", "catalogs")).written, false, "idempotent: the same pin writes nothing, behind an override either");
+    const prov = await rec.platformProvenance(rec.areaOrThrow("controls"), ["alpha-rules-2024:34(vii)", "alpha-rules-2024:7(2)(b)", "hand:extra"]);
+    assert.deepEqual(prov.get("alpha-rules-2024:34(vii)"), { by: "staff", repository: "catalogs", overrides: { title: ov!.upstream.title, version: up.c3 } }, "the staff pages' mark: overridden by staff");
+    assert.deepEqual([prov.get("alpha-rules-2024:7(2)(b)"), prov.get("hand:extra")], [{ by: "repository", repository: "catalogs", overrides: null }, { by: "staff", repository: null, overrides: null }]);
+    await assert.rejects(rec.deletePlatform(null, "controls", "alpha-rules-2024:7(2)(b)"), (e: any) => e.status === 409 && /comes from repository catalogs: read only \(override it instead\)/.test(e.message), "a repository's row is read only to every door");
+    assert.equal(await rec.deletePlatform(null, "controls", "alpha-rules-2024:34(vii)"), true);
+    const back = await row("alpha-rules-2024:34(vii)");
+    assert.deepEqual([back!.title, back!.source, back!.version, back!.upstream], [ov!.upstream.title, "catalogs", up.c3, null], "removing the override puts the repository's row back");
+    assert.equal((await repos.syncUpstreamCatalog("fixture_catalog", "catalogs")).written, false, "exactly the repository's row: the next index finds it unchanged");
+    // A key staff add before the repository has it becomes an override once it does; an override whose key the
+    // repository drops stays, with nothing behind it, and removing it deletes it.
+    await pin(up.c1);
+    await repos.syncUpstreamCatalog("fixture_catalog", "catalogs");
+    await rec.putPlatform(null, "controls", "alpha-rules-2024:7(3)", { title: "Staff's 7(3)", data: { control_id: "7(3)" } });
+    await rec.putPlatform(null, "controls", "beta-code-2023:B.12", { title: "Staff's B.12", data: { control_id: "B.12" } });
+    assert.equal((await row("beta-code-2023:B.12"))!.upstream?.source, "catalogs", "an edit of a repository's row keeps it behind");
+    await pin(up.c3);
+    await repos.syncUpstreamCatalog("fixture_catalog", "catalogs", { force: true });
+    const added = await row("alpha-rules-2024:7(3)"), dropped = await row("beta-code-2023:B.12");
+    assert.deepEqual([added!.title, added!.source, added!.upstream?.source], ["Staff's 7(3)", null, "catalogs"], "staff's row wins over the key the repository added");
+    assert.deepEqual([dropped!.title, dropped!.source, dropped!.upstream], ["Staff's B.12", null, null], "the repository dropped the key: the staff row stays, nothing behind it");
+    assert.equal(await rec.deletePlatform(null, "controls", "alpha-rules-2024:7(3)"), true);
+    assert.equal((await row("alpha-rules-2024:7(3)"))!.source, "catalogs", "and removing it puts the repository's row back");
+    assert.equal(await rec.deletePlatform(null, "controls", "beta-code-2023:B.12"), true);
+    assert.equal(await row("beta-code-2023:B.12"), undefined, "a staff row with nothing behind it is deleted");
     // A commit that is not in the repository: refused, nothing changed.
     const now = JSON.stringify(await shared("controls"));
     await pin("f".repeat(40));
@@ -136,7 +166,7 @@ try {
     const m = (await shared("controls")).find((x) => x.key === "alpha-rules-2024:7(3)")!;
     assert.deepEqual([m.data.instrument, m.data.control_id, m.data.prose], ["alpha-rules-2024", "7(3)", "Requirement 7(3)"], "values by path, by the field's name, from the document's root");
     assert.equal((await shared("regulators")).find((x) => x.key === "beta-code-2023")!.data.kind, "fixture.catalog.instruments");
-    console.log("✓ upstream catalog at a pin (git): read at the pin, idempotent (nothing written twice), new pins update, a big prune refused unless forced, staff rows kept, a missing commit refused, a failed index writes nothing, a declared map needs no code");
+    console.log("✓ upstream catalog at a pin (git): read at the pin, idempotent (nothing written twice), new pins update, a big prune refused unless forced, staff rows kept (forced too: overrides win, the repository's version behind them; removing one restores it; a repository's row read only), a missing commit refused, a failed index writes nothing, a declared map needs no code");
 
     // A redirect is refused (git's own following is turned off): a local server that redirects to another.
     let targetHits = 0;
