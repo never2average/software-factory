@@ -113,7 +113,7 @@ export function EmailTab() {
   );
   return (
     <RecordView<Row>
-      id='settings-email' compact noun='senders and mailboxes' properties
+      id='settings-email' compact noun={rows.length === 1 ? 'entry' : 'entries'} properties
       rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
       summary={<StatStrip quad items={[
         { label: 'Mailboxes', value: inboxes.length, said: `${inboxes.length} mailboxes` },

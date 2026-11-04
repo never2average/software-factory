@@ -20,6 +20,7 @@ import { GITHUB_PURPOSE, GithubAppSection, githubCall, useGithubOutcome } from '
 import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
 import { RUNNER_PURPOSE, RunnersSection, runnersCall } from './runners-section';
 import { ago, who } from '@/features/settings/words';
+import { singular } from '@/features/tabs/run-rows';
 import { onPremRunners, recordAreas } from '@/config/pack-nav.generated';
 
 interface Field {
@@ -47,9 +48,10 @@ async function call<T>(method: string, body?: unknown): Promise<T> {
   return json;
 }
 
-const areaLabel = (area: string | null) => recordAreas.find((a) => a.name === area)?.label ?? area ?? '';
-/** What a value is bound to, in words: the workspace, each record of an area (an application), or each record and environment. */
-const bound = (f: Field) => (f.bound_to === 'workspace' ? 'Workspace' : f.bound_to === 'asset' ? `Each of ${areaLabel(f.area)}` : `Each of ${areaLabel(f.area)}, per environment`);
+/** One record of the field's area, in words ("application" for Applications). */
+const one = (area: string | null) => singular(recordAreas.find((a) => a.name === area)?.label ?? area ?? 'record').toLowerCase();
+/** What a value is bound to, in words: the workspace, each record of an area (each application), or each record and environment. */
+const bound = (f: Field) => (f.bound_to === 'workspace' ? 'Workspace' : f.bound_to === 'asset' ? `Each ${one(f.area)}` : `Each ${one(f.area)}, per environment`);
 
 type Status = 'Set' | 'Missing' | 'Optional';
 /** One row of the table: a credential field, the GitHub connection or the on-premises runner. */
@@ -103,7 +105,7 @@ export function CredentialsTab() {
   const canManage = data.can_manage || !!github?.can_manage || !!runners?.can_manage;
   return (
     <RecordView<Row>
-      id='settings-credentials' compact noun='credentials' properties
+      id='settings-credentials' compact noun={rows.length === 1 ? 'credential' : 'credentials'} properties
       rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
       summary={<StatStrip quad items={[
         { label: 'Set', value: count('Set'), said: `${count('Set')} set` },
@@ -113,7 +115,7 @@ export function CredentialsTab() {
       ]} />}
       searchText={(r) => `${r.name} ${r.purpose} ${r.bound} ${r.status} ${r.changed_by ?? ''}`}
       searchPlaceholder='Search credentials'
-      filters={<span className='text-muted-foreground text-xs'>{canManage ? 'Open a credential to set, replace or clear it.' : 'An owner of this workspace sets these.'}</span>}
+      filters={<span className='text-muted-foreground hidden text-xs sm:inline'>{canManage ? 'Open a credential to set, replace or clear it.' : 'An owner of this workspace sets these.'}</span>}
       empty={<p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>}
       detailTitle={(r) => r.name}
       detail={(r) => r.kind === 'github' ? <GithubAppSection bare onChanged={reloadGithub} />
@@ -153,9 +155,10 @@ function FieldSection({ f, values, canManage, onChanged, oauth }: { f: Field; va
     .then(() => { toast.success('Cleared'); return onChanged(); }).catch(fail);
   return (
     <div className='flex min-w-0 flex-col gap-3'>
-      <p className='text-muted-foreground text-sm'>{f.help ?? bound(f)}
-        {f.optional && <span className='mt-1 block text-xs'>Optional: runs go ahead without it{f.adds ? `; a value adds: ${f.adds}` : ''}.</span>}
-        {f.github_app && <span className='mt-1 block text-xs'>When GitHub is connected, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</p>
+      {/* What it is for is the card's properties above (mold_v0-218); here only what they do not say. */}
+      {(f.optional || f.github_app) && <p className='text-muted-foreground text-sm'>
+        {f.optional && <span className='block'>Optional: runs go ahead without it{f.adds ? `; a value adds: ${f.adds}` : ''}.</span>}
+        {f.github_app && <span className='block'>When GitHub is connected, runs get a short-lived token from it instead; a value pasted here is used only while it is not.</span>}</p>}
       {oauth}
       {oauth && <p className='text-muted-foreground text-xs'>Or paste a value: it is used where nothing is connected.</p>}
       {values.length > 0 ? (
