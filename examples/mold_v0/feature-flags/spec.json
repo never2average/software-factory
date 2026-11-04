@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json",
+  "$comment": "Flagwell: a feature-flag and experiments service developers build into their products (examples/mold_v0/feature-flags). The spec the agent produced from prompt.md. Check: python3 .claude/scripts/factory.py spec check examples/mold_v0/feature-flags/spec.json",
+  "app_id": "flagwell",
+  "mold_id": "mold_v0",
+  "kind": "embedded",
+  "audit": { "data": true, "platform": true, "sign": true },
+  "product": {
+    "name": "Flagwell",
+    "colour": "#0F766E",
+    "logo": "examples/mold_v0/feature-flags/logo.svg",
+    "tagline": "Feature flags and experiments your product asks in one call",
+    "domain": "flagwell.example.com"
+  },
+  "deploy": { "target": "vercel" },
+  "workspace": { "platform_admins": ["platform@example.com"] },
+  "budgets": {
+    "runs": { "budget_usd_max": 5, "kind_month_budget_usd": 120, "concurrency_per_workspace": 2, "live_per_workspace": 10 },
+    "mcp": { "per_key_per_minute": 600, "per_workspace_per_minute": 3000 }
+  },
+  "profile": {
+    "member_keys": true,
+    "onprem_runners": false,
+    "email_from_address": "flags@example.com",
+    "email": { "notifications": ["access_requests", "due_dates", "usage"] },
+    "legal": { "company_name": "Example Flags Ltd", "contact_email": "legal@example.com", "effective_date": "2026-11-04" }
+  },
+  "run_keys": { "model": "anthropic", "sandbox": "boat", "object_storage": "vault" },
+  "developer_surface": {
+    "events": [
+      { "name": "record.created", "description": "A flag, rollout, user override, experiment or release was recorded." },
+      { "name": "record.updated", "description": "A flag's or an experiment's details changed." },
+      { "name": "record.state_changed", "description": "A flag was deprecated or archived, or an experiment started, stopped or concluded." },
+      { "name": "run.finished", "description": "An experiment readout finished." },
+      { "name": "clock.overdue", "description": "A flag passed its clean-up date, or an experiment its decide-by date." }
+    ],
+    "sdk_languages": ["typescript", "python"],
+    "client_sessions": {
+      "ttl_seconds": 900,
+      "allowed_origins": ["https://app.example.com"],
+      "scopes": ["read", "checks"]
+    },
+    "webhooks_in": [
+      {
+        "name": "ci_releases",
+        "description": "Your CI's deployment report: one release per deployed service.",
+        "area": "releases",
+        "items": "/deployments",
+        "key": "/id",
+        "title": "/version",
+        "fields": { "service": "/service", "environment": "/environment", "commit": "/commit", "deployed_on": "/finished_at" },
+        "types": ["deployment.succeeded"]
+      }
+    ],
+    "api_version": "2026-11-01"
+  },
+  "packs": [
+    { "id": "flagwell", "path": "examples/mold_v0/feature-flags/pack/pack.json" }
+  ]
+}
