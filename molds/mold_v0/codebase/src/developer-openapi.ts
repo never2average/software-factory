@@ -13,7 +13,7 @@ import { API_VERSIONS, EVENT_CATALOG, TEST_EVENT, type EventName } from "./devel
 import { currentApiVersion, developerSurface } from "./developer-surface.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { NS } from "./namespace.js";
-import { optionValues } from "./pack-api.js";
+import { optionValues, URL_MAX } from "./pack-api.js";
 import { PROFILE } from "./profile.js";
 import { isReadOnlyArea, recordAreas, type RecordArea } from "./record-areas.js";
 import { jobKinds } from "./runs.js";
@@ -29,6 +29,7 @@ function fieldSchema(f: RecordArea["fields"][number]): Schema {
       case "number": return { type: "number", ...(f.min !== undefined ? { minimum: f.min } : {}), ...(f.max !== undefined ? { maximum: f.max } : {}) };
       case "boolean": return { type: "boolean" };
       case "date": return { type: "string", format: "date" };
+      case "url": return { type: "string", format: "uri", maxLength: URL_MAX, description: "An http or https address, with no user name or password." };
       case "json": return {};
       case "enum": return { type: "string", enum: optionValues(f) };
       case "person": return { type: "string", description: "A person of the workspace, by their sign-in id." };

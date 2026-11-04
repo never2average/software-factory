@@ -310,7 +310,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   };
   // What a list starts with: its cards (a summary, StatStrip, the sparklines), its table (RecordView and the components
   // that draw one), or the in-page tab strip it sits under.
-  const LIST = /summary=|<(?:RecordView|RecordTableView|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}/;
+  const LIST = /summary=|<(?:RecordView|RecordTableView|AreaRecordList|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}/;
   // A title or a description: a heading, the shell's Heading, a titled Section, a muted paragraph.
   const TITLE = /<h1\b|<h2\b|<Heading\b|<Section\b[^>]*\btitle=|<p className='text-muted-foreground(?: text-sm)?'>/;
   const before = (body: string) => {
@@ -329,10 +329,10 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const ROUTES: [route: string, page: string, draws: string, hops: Hop[]][] = [
     ["/app/<tab> (area, runs, reports, schedules, sections tabs)", "app/app/[page]/page.tsx", "TabPage",
       [["features/tabs/tab-page.tsx", "TabPage"], ["features/tabs/tab-page.tsx", "AreaTab"], ["features/tabs/tab-page.tsx", "SectionsTab"], ["features/tabs/runs.tsx", "RunsTable"], ["features/schedules/schedules-page.tsx", "SchedulesBody"]]],
-    ["/app/records/<area>", "app/app/records/[area]/page.tsx", "RecordListPage", [["features/records/record-pages.tsx", "RecordListPage"], ["features/records/record-pages.tsx", "RecordTableView"]]],
+    ["/app/records/<area>", "app/app/records/[area]/page.tsx", "RecordListPage", [["features/records/record-pages.tsx", "RecordListPage"], ["features/records/record-pages.tsx", "AreaRecordList"], ["features/records/record-pages.tsx", "RecordTableView"]]],
     ["/app/schedules", "app/app/schedules/page.tsx", "SchedulesPage", [["features/schedules/schedules-page.tsx", "SchedulesPage"], ["features/schedules/schedules-page.tsx", "SchedulesBody"]]],
     ["/app/settings (Credentials, Email)", "app/app/settings/page.tsx", "SettingsPage",
-      [["features/settings/settings-page.tsx", "SettingsPage"], ["features/credentials/credentials-tab.tsx", "CredentialsTab"], ["features/email/email-tab.tsx", "EmailTab"]]],
+      [["features/settings/settings-page.tsx", "SettingsPage"], ["features/credentials/credentials-tab.tsx", "CredentialsTab"], ["features/email/email-tab.tsx", "EmailTab"], ["features/records/record-pages.tsx", "AreaRecordList"]]],
     ["/app/notices", "app/app/notices/page.tsx", "NoticesPage", [["features/schedules/notices-page.tsx", "NoticesPage"]]],
     ["/app/billing?tab=access-log", "app/app/billing/page.tsx", "BillingPage", [["features/audit/access-log.tsx", "WorkspaceAccessLog"]]],
     ["/admin/records/<area>", "app/admin/records/[area]/page.tsx", "StaffRecordListPage", [["features/records/staff-records.tsx", "StaffRecordListPage"]]],
@@ -379,4 +379,32 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   }
   assert.deepEqual(titled, [], "no list page (the database table, a trail, its cards) in a titled page frame");
   ok(`no title or description above a list (mold_v0-231): ${walked.join(", ")}; and no titled page frame around any other list`);
+}
+
+// 11. An area's own lists (mold_v0-237): the Records page and a Settings area tab are the standard list, as an area
+//     tab's: the area's four cards, the search row with Export CSV and the area's primary action (the registry's action,
+//     the server's /api/tab-actions/_areas/<area>), the table; the action's form a full card in the list's place. And
+//     the create form's file fields (mold_v0-238): Choose files, each file's progress bar, then Uploaded; never a dialog.
+{
+  const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const pages = strip(src("features/records/record-pages.tsx")), settings = strip(src("features/settings/settings-page.tsx")), ta = strip(src("features/tabs/tab-action.tsx"));
+  const list = /export function AreaRecordList\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
+  assert.match(list, /useAreaAction\(area, /, "AreaRecordList: the area's own action");
+  assert.match(list, /if \(card\) return card;/, "its form a full card in the list's place");
+  assert.match(list, /<RecordTableView [\s\S]*summary=\{<Sparklines url=\{`\$\{recordsApi\('app'\)\}\/_console\/\$\{encodeURIComponent\(area\.name\)\}\/sparklines`\}[\s\S]*toolbarAction=\{button \?\? undefined\}/,
+    "its cards above the search row, the action the search row's last control (Export beside it, RecordTableView)");
+  assert.match(pages, /export function RecordListPage[\s\S]*?base === 'app' \? <AreaRecordList area=\{area\} /, "the Records page is that list");
+  assert.match(settings, /case 'area': \{[\s\S]*?<AreaRecordList area=\{area\} id=\{`settings-\$\{area\.name\}`\} \/>/, "a Settings area tab is that list");
+  assert.doesNotMatch(settings, /RecordTableView/, "Settings draws no bare table (Export alone) any more");
+  assert.match(ta, /export function useAreaAction\([\s\S]*?`\/api\/tab-actions\/_areas\/\$\{encodeURIComponent\(area\.name\)\}`/, "the action from the server's area route");
+  // The create form's uploads (mold_v0-238).
+  assert.match(ta, /<FileUploads key=\{f\.name\} field=\{f\} /, "a file field of an area that takes uploads: FileUploads");
+  assert.match(ta, /role='progressbar' aria-label=\{`Uploading \$\{it\.file\.name\}`\} aria-valuemin=\{0\} aria-valuemax=\{100\} aria-valuenow=\{pct\}/, "each file's progress, said");
+  assert.match(ta, /it\.state === 'done' \? 'Uploaded'/, "then Uploaded");
+  assert.match(ta, /x\.upload\.onprogress = /, "the bytes sent so far, as they go");
+  assert.match(ta, /'content-type', 'application\/octet-stream'/, "the bytes as application/octet-stream");
+  assert.match(ta, /type=\{f\.type === 'number' \? 'number' : f\.type === 'date' \? 'date' : f\.type === 'url' \? 'url' : 'text'\}/, "a url field: an address input");
+  for (const [name, t] of [["tab-action.tsx", ta], ["record-pages.tsx", pages], ["settings-page.tsx", settings]] as const)
+    assert.doesNotMatch(t, /<(?:Dialog|Sheet|AlertDialog|Drawer)\b|from '@\/components\/ui\/(?:dialog|sheet|drawer|alert-dialog)'/, `${name}: forms are full cards, never a dialog or a side sheet`);
+  ok("an area's own lists (mold_v0-237): the Records page and a Settings area tab draw the area's cards, the search row with Export and its primary action, the table, the form a full card; the create form uploads its file fields' files with each one's progress, then Uploaded, and takes a url field as an address (mold_v0-238); no dialog or side sheet");
 }

@@ -6,7 +6,7 @@
 //            filled by its type (an enum through its options, a date around today, a number within its bounds, yes/no
 //            in turn); a reference or link field names a record the world has (the shared areas' samples, a workspace
 //            area seeded before it), and a text field named like an area (application -> applications) names one of
-//            its records; json, person and file fields are left empty. Written as a repository's rows are
+//            its records; json, person, file and url fields are left empty. Written as a repository's rows are
 //            (src/record-areas.ts writeFromRepository, source "lane:samples"), so read-only and sealed areas take them.
 //   runs     a few runs of the build's job kinds, finished, failed and running, each over a workspace asset record
 //            when the kind reads one (targets.asset), with results against the shared check samples; written straight
@@ -49,7 +49,7 @@ function valueOf(f: Field, n: number, i: number, keysOf: (area: string) => strin
       const t = keys.length ? keys[n % keys.length]! : `Sample ${(f.label ?? f.name).toLowerCase()} ${n + 1}`;
       return t.slice(0, f.max_length ?? 20_000);
     }
-    default: return undefined; // json, person, file: left empty
+    default: return undefined; // json, person, file, url (mold_v0-238: an address a card would try to fetch): left empty
   }
 }
 

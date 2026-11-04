@@ -105,3 +105,15 @@ export async function areaSparklines(area: string, now = new Date()): Promise<Sp
   const tab = { kind: "area", id: `records_${a.name}`, area: a.name, pack: a.pack } as SpecTab;
   return computeSparklines(null, tab, SYSTEM_ACTOR, now);
 }
+
+/**
+ * The four cards of an area's own lists in a workspace (mold_v0-237; GET /api/records/_console/<area>/sparklines): its
+ * Settings tab and its Records page, exactly as an area tab over it would show them (sparkPlan's defaults), for one
+ * workspace, as `actor` may read them (a shared area: the rows every workspace reads).
+ */
+export async function workspaceAreaSparklines(orgId: number, area: string, actor: Actor, now = new Date()): Promise<SparkAnswers> {
+  const a = buildViews().areas.find((x) => x.name === area);
+  if (!a) throw new PackError("Not found", 404);
+  const tab = { kind: "area", id: `records_${a.name}`, area: a.name, pack: a.pack } as SpecTab;
+  return computeSparklines(orgId, tab, actor, now);
+}

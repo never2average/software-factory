@@ -39,6 +39,8 @@ export interface RecordAreaSpec {
   lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;
   /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */
   clocks?: { name: string; label: string }[];
+  /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */
+  action?: { kind: 'create_record'; label: string | null; area: string };
 }
 
 /** A field of a record area (typed by mold_v0-057). */

@@ -298,7 +298,20 @@ const role = z.enum(DECLARABLE_ROLES);
  */
 const choiceValue = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$/, "a choice value: 1-80 letters, digits, spaces and _ . : / ( ) & -, starting with a letter or digit");
 const choice = z.union([choiceValue, z.object({ value: choiceValue, label: z.string().min(1).max(80).optional() }).strict()]);
-export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file"] as const;
+export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file", "url"] as const;
+/** The longest a url field's address may be (mold_v0-238). */
+export const URL_MAX = 2048;
+/**
+ * Whether `v` is a url field's value (mold_v0-238): an absolute http or https address of at most URL_MAX characters, with
+ * a host and no user name or password in it. Pure: the record store, the MCP tools' input and the console read it.
+ */
+export function isFieldUrl(v: unknown): v is string {
+  // Written as an address with its host right after the scheme (a parser would also read "https:///x" or "https:x").
+  if (typeof v !== "string" || v.length > URL_MAX || !/^https?:\/\/[^/?#\\\s]/i.test(v) || /[\u0000-\u001f\u007f\s]/.test(v)) return false;
+  let u: URL;
+  try { u = new URL(v); } catch { return false; }
+  return (u.protocol === "https:" || u.protocol === "http:") && !!u.hostname && !u.username && !u.password;
+}
 /** The field types an encrypted field may have (mold_v0-194): values the shell never needs to read itself. */
 export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "enum"] as const;
 /**
@@ -314,6 +327,8 @@ export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "
  *               src/record-files.ts: an object kept for the record, sealed with the workspace's data key); `multiple`
  *               takes a list
  *   link        the 047 form of reference (a key or a list of keys, resolved through the area's `links`)
+ *   url         (mold_v0-238) an absolute http or https address of up to 2048 characters, with no user name or password
+ *               (isFieldUrl); `preview: "document"` makes the record's card fetch and preview its document
  * `required` refuses a write that leaves it empty.
  */
 export const RecordFieldSchema = z.object({
@@ -344,8 +359,9 @@ export const RecordFieldSchema = z.object({
    */
   searchable: z.enum(["equality"]).optional(),
   /**
-   * "document" (mold_v0-220; src/record-files.ts, src/document-fetch.ts): a text field whose value is a URL; the record's
-   * card previews the document, fetched through the pack's `documents.hosts` only and kept in the object store.
+   * "document" (mold_v0-220; src/record-files.ts, src/document-fetch.ts): a url field (mold_v0-238), or a text field
+   * holding a URL, whose record's card previews the document, fetched through the pack's `documents.hosts` only and
+   * kept in the object store.
    */
   preview: z.enum(["document"]).optional(),
 }).strict().superRefine((f, ctx) => {
@@ -366,7 +382,7 @@ export const RecordFieldSchema = z.object({
   if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
   if (f.max_length !== undefined && f.type !== "text") bad("max_length is for a text field", "max_length");
-  if (f.preview && (f.type !== "text" || f.encrypted)) bad("preview: \"document\" is for a text field holding a URL (not encrypted)", "preview");
+  if (f.preview && (!["text", "url"].includes(f.type) || f.encrypted)) bad("preview: \"document\" is for a url field, or a text field holding a URL (not encrypted)", "preview");
 });
 const field = RecordFieldSchema;
 /** The stored values of an enum field's options, in order. */
@@ -787,7 +803,8 @@ const contractGrant = z.union([
  * intake) and derives the contract of an area that declares none (docs/RECORDS.md).
  *   provenance       where its rows come from (RECORD_PROVENANCES)
  *   actions          each of CONTRACT_ACTIONS: the roles that may, {staff: permission}, or {none: reason}
- *   primary_action   its list tab's primary action (create_record, start_run, link), or {none: reason}
+ *   primary_action   the primary action of every list that shows the area (mold_v0-237: each tab whose own area it is,
+ *                    its Settings tab, its Records page): create_record, start_run, link, or {none: reason}
  */
 export const RecordContractSchema = z.object({
   provenance: z.array(z.enum(RECORD_PROVENANCES)).min(1).max(RECORD_PROVENANCES.length)
@@ -797,7 +814,7 @@ export const RecordContractSchema = z.object({
     delete: contractGrant, reveal: contractGrant, export: contractGrant, import: contractGrant,
   }).strict().describe("Every action, each the roles that may, {staff: permission} or {none: reason}"),
   primary_action: z.union([z.enum(CONTRACT_PRIMARY), z.object({ none: contractReason }).strict()])
-    .describe("The area's list tab's primary action, or {none: reason} (no tab shows it, or the tab has none)"),
+    .describe("The primary action of every list that shows the area (each tab whose own area it is, its Settings tab, its Records page), or {none: reason}"),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type RecordContract = z.output<typeof RecordContractSchema>;
@@ -806,6 +823,7 @@ export type ContractGrant = z.output<typeof contractGrant>;
 /** What a record area's contract says that the area's own declaration contradicts (mold_v0-222), each with its path. */
 export function contractProblems(a: {
   scope: string; repository?: string; lifecycle?: unknown; append_only?: boolean; fields: { encrypted?: boolean }[]; contract?: RecordContract;
+  action?: false; settings?: unknown;
 }): { message: string; path: (string | number)[] }[] {
   const c = a.contract;
   if (!c) return [];
@@ -831,6 +849,8 @@ export function contractProblems(a: {
   if (!none(g.reveal) && !a.fields.some((f) => f.encrypted)) bad("reveal is for encrypted fields: an area without one says {none: reason}", "actions", "reveal");
   if (a.append_only) for (const k of ["update", "move", "delete"] as const) if (!none(g[k])) bad(`an append-only area's records are never changed: ${k} is {none: reason}`, "actions", k);
   if (!shared && !none(g.import)) bad("the shell has no import for a workspace's own records (docs/RECORDS.md, follow-ups): import is {none: reason}", "actions", "import");
+  // mold_v0-237: an area that turns its own lists' action off (action: false) has none there.
+  if (a.action === false && typeof c.primary_action === "string" && a.settings) bad("its Settings tab has no primary action (action: false): primary_action is {none: reason}", "primary_action");
   return out;
 }
 
@@ -879,6 +899,15 @@ export const RecordAreaSchema = z.object({
    * Workspace areas only (a workspace's own settings), and never also a declared sidebar tab.
    */
   settings: z.object({ group: z.enum(["access", "connections", "automation", "data_trust"]), label: z.string().min(1).max(40).optional() }).strict().optional(),
+  /**
+   * The primary action of the area's own lists (mold_v0-237): its Settings tab (`settings`) and its Records page
+   * (/app/records/<name>). Absent, the shell's default (src/metric-spec.ts areaListAction: Add <its singular>, a new
+   * record, for a workspace area of the shell's tables a workspace may add to; none, with the reason, otherwise).
+   * `false` is none, with `action_reason` (required; shown nowhere, read by people and the factory's spec check). A tab
+   * over the area keeps its own `action` (TabSchema).
+   */
+  action: z.literal(false).optional(),
+  action_reason: z.string().trim().min(1).max(300).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets").optional(),
   /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
   rows: z.string().max(500).optional(),
   /** In words, where a shared row's version comes from (an upstream commit, a date). */
@@ -949,6 +978,8 @@ export const RecordAreaSchema = z.object({
   if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
   for (const p of clockProblems(a, a.clocks ?? [])) bad(p.message, "clocks", ...p.path);
   for (const p of contractProblems(a)) bad(p.message, "contract", ...p.path);
+  if (a.action === false && !a.action_reason) bad("action: false says why its lists have no primary action (action_reason)", "action_reason");
+  if (a.action_reason !== undefined && a.action !== false) bad("action_reason is for action: false", "action_reason");
   const p = a.permissions;
   if (p) for (const k of ["create", "update", "move", "delete"] as const) {
     if (a.scope === "platform" && p[k]) bad(`a shared (platform) area is written by platform staff only: declare read alone`, "permissions", k);

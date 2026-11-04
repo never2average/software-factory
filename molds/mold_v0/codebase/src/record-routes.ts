@@ -7,7 +7,9 @@
  *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts), the records due soon
  *                                 across its clock areas (/api/records/due-soon, mold_v0-207), a record's file cards
  *                                 and each file's bytes at a signed link (/api/records/<area>/<key>/files[/<field>/<n>],
- *                                 mold_v0-220: src/record-files.ts). Read only: no route writes.
+ *                                 mold_v0-220: src/record-files.ts), the four cards of an area's own lists (its
+ *                                 Settings tab, its Records page: /api/records/_console/<area>/sparklines, mold_v0-237,
+ *                                 src/sparklines.ts workspaceAreaSparklines). Read only: no route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
  *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete".
  *                                 mold_v0-212, the staff record page (web/src/features/records/staff-records.tsx):
@@ -86,6 +88,11 @@ export function recordAppRouter(): Router {
   // The home page's Due soon card (mold_v0-207; src/record-clocks.ts dueAcross): records coming due or overdue across
   // the clock areas this person may read and whose list no pack withholds. Not an area name (those take no "-").
   r.get("/due-soon", answer(async (req, res) => dueAcross(org(res), actor(res), { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), withheld: (a) => areaOpWithheld(a, "list") })));
+  // An area's own lists' four cards (mold_v0-237): its Settings tab's and its Records page's (an area name has no "_").
+  r.get("/_console/:area/sparklines", open("list"), answer(async (req, res) => {
+    const a = areaOrThrow(String(req.params.area));
+    return (await import("./sparklines.js")).workspaceAreaSparklines(org(res), a.name, actor(res));
+  }));
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };

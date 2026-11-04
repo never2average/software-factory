@@ -145,17 +145,17 @@ function checkCond(c: Cond, fits: (f: QField, v: unknown) => boolean, fitsOne: (
       if (!Array.isArray(c.value) || !c.value.length || c.value.length > 100 || !c.value.every((x) => fits(f, x))) throw bad(`${where}: a list of 1-100 values field ${f.name} takes`);
       break;
     case "lt": case "lte": case "gt": case "gte":
-      if (!["number", "date", "text"].includes(f.type)) throw bad(`${where}: only number, date and text fields are ordered`);
+      if (!["number", "date", "text", "url"].includes(f.type)) throw bad(`${where}: only number, date and text fields are ordered`);
       if (!fits(f, c.value)) throw bad(`${where}: not a value field ${f.name} takes`);
       break;
     case "contains":
-      if (f.type === "text") { str(c.value); break; }
+      if (f.type === "text" || f.type === "url") { str(c.value); break; }
       if (f.type === "link") { if (typeof c.value !== "string" || !RECORD_KEY.test(c.value)) throw bad(`${where}: a record key`); break; }
       if (!f.multiple) throw bad(`${where}: contains is for text and list fields`);
       if (!fitsOne(f, c.value)) throw bad(`${where}: not one value field ${f.name} lists`);
       break;
     case "prefix":
-      if (!["text", "date", "enum", "reference", "person"].includes(f.type) || f.multiple) throw bad(`${where}: prefix is for text, date, enum, reference and person fields`);
+      if (!["text", "url", "date", "enum", "reference", "person"].includes(f.type) || f.multiple) throw bad(`${where}: prefix is for text, date, enum, reference and person fields`);
       str(c.value);
       break;
   }
@@ -210,7 +210,7 @@ export function sqlParts(p: Parsed, params: unknown[], scope: { table: string; w
         break;
       }
       case "contains":
-        if (f.type === "text") where.push(`strpos(lower(data ->> ${$(c.name)}), lower(${$(c.value)})) > 0`);
+        if (f.type === "text" || f.type === "url") where.push(`strpos(lower(data ->> ${$(c.name)}), lower(${$(c.value)})) > 0`);
         else { const e = fieldExpr(c.name), v = $(JSON.stringify(c.value)); where.push(`(${e} = ${v}::jsonb OR (jsonb_typeof(${e}) = 'array' AND ${e} @> jsonb_build_array(${v}::jsonb)))`); }
         break;
       case "prefix": { const v = $(c.value); where.push(`(jsonb_typeof(data -> ${$(c.name)}) = 'string' AND left(data ->> ${$(c.name)}, char_length(${v})) = ${v})`); break; }
@@ -259,7 +259,7 @@ function matches(c: Cond, r: RecordRow): boolean {
     case "in": return (c.value as unknown[]).some((x) => (c.target === "field" ? same(v ?? null, x) : v === x));
     case "prefix": return typeof v === "string" && v.startsWith(c.value as string);
     case "contains":
-      if (c.target !== "field" || c.field!.type === "text") return typeof v === "string" && v.toLowerCase().includes(String(c.value).toLowerCase());
+      if (c.target !== "field" || c.field!.type === "text" || c.field!.type === "url") return typeof v === "string" && v.toLowerCase().includes(String(c.value).toLowerCase());
       return same(v, c.value) || (Array.isArray(v) && v.some((x) => same(x, c.value)));
     default: {
       if (c.target === "updated_at") { const t = Date.parse(String(v)), w = Date.parse(String(c.value)); return ({ lt: t < w, lte: t <= w, gt: t > w, gte: t >= w } as Record<string, boolean>)[c.op]!; }

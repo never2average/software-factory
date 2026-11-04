@@ -18,6 +18,15 @@
 //  7. URL documents: the allowlist (a listed host and its subdomains only; https, port 443, no credentials, no address;
 //     a redirect off the list; a private address), the size limit, the type check; a fetched document cached (fetched
 //     once), previewed in a shared area for every workspace and for staff, a failure said on the card.
+//  8. Uploads from the console (mold_v0-238): POST /api/data/<area>/<key>/files/<field> keeps one file for the record
+//     (sealed, bound to its key) and answers its reference, which the create writes; only bytes as
+//     application/octet-stream, a file field of a workspace area of the shell's tables, a role that may write it, at
+//     most the upload limit; DELETE removes one kept but never written (never one the record holds, never another
+//     key's); each a create or delete of a file in the data trail; off with document_preview.
+//  9. A url field (mold_v0-238): an http or https address checked on every write (the data API, the MCP tools), its
+//     document a card when it previews one.
+// 10. An area's own lists (mold_v0-237): GET /api/tab-actions/_areas/<area> gives the create action of an area its
+//     people may add to (who may, its fields, the upload limit), none for a shared area; the cards of its own lists.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -85,7 +94,8 @@ try {
     name: "cases", label: "Cases", role: "source", scope: "workspace", list_columns: ["subject", "files"],
     permissions: { read: ["member", "owner"] },
     fields: [{ name: "subject", label: "Subject" }, { name: "files", label: "Files", type: "file", multiple: true }, { name: "cover", label: "Cover", type: "file" },
-      { name: "link", label: "Their page", type: "text", preview: "document" }],
+      { name: "link", label: "Their page", type: "text", preview: "document" }, { name: "site", label: "Site", type: "url", preview: "document" },
+      { name: "home", label: "Home page", type: "url" }],
   };
   const INSTRUMENTS = {
     name: "instruments", label: "Instruments", role: "source", scope: "platform", list_columns: ["url"],
@@ -94,7 +104,7 @@ try {
   {
     assert.ok(RecordAreaSchema.safeParse(CASES).success, JSON.stringify(RecordAreaSchema.safeParse(CASES).error?.issues));
     const bad = (f: object, want: RegExp) => { const r = RecordAreaSchema.safeParse({ ...CASES, fields: [...CASES.fields, f] }); assert.ok(!r.success); assert.match(JSON.stringify(r.error.issues), want); };
-    bad({ name: "n", label: "N", type: "number", preview: "document" }, /for a text field/);
+    bad({ name: "n", label: "N", type: "number", preview: "document" }, /for a url field, or a text field/);
     bad({ name: "e", label: "E", type: "text", preview: "document", encrypted: true }, /not encrypted/);
     bad({ name: "e", label: "E", type: "text", preview: "page" }, /preview/);
     assert.throws(() => definePack({ id: "nohosts", recordAreas: [INSTRUMENTS] as never }), /declare documents\.hosts/);
@@ -295,6 +305,98 @@ try {
       assert.equal(wsDoc.length, 2, "its copy and its note, under A's prefix");
       for (const f of wsDoc) assert.ok(!readFileSync(f).includes("%PDF") && !readFileSync(f).includes("regs.example"), "sealed");
       ok("URL documents: only listed hosts (and subdomains), https on 443, no credentials or addresses, no redirect off the list, no private address; size and type checked; cached once and served to every workspace and staff for a shared area, sealed per workspace for its own; a failure said on the card");
+    }
+
+    // ---------- 8. uploads from the console (mold_v0-238) ----------
+    {
+      const UP = Buffer.concat([PDF, Buffer.from(`% upload ${MARK}\n`)]);
+      // The bytes as they are (the world's req sends JSON).
+      const raw = (method: string, p: string, h: Record<string, string>, body: Buffer) => fetch(`${http.base}${p}`, { method, headers: h, body });
+      const up = (key: string, field: string, tok: string, body: Buffer, h: Record<string, string> = {}) =>
+        raw("POST", `/api/data/cases/${key}/files/${field}`, { authorization: `Bearer ${tok}`, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("Révision ../notice.pdf"), "x-file-type": "application/pdf", ...h }, body);
+      const r1 = await up("case-9", "files", memberA, UP);
+      const ref = await r1.json() as any;
+      assert.equal(r1.status, 201, JSON.stringify(ref));
+      assert.deepEqual([ref.name, ref.size, ref.content_type], ["notice.pdf", UP.length, "application/pdf"], "its name without directories, its size, the type its bytes say");
+      assert.match(ref.object, /^rf_[0-9a-f]{32}$/);
+      const kept = walk(path.join(TMP, "objects")).filter((f) => f.includes(ref.object));
+      assert.equal(kept.length, 1); assert.ok(!readFileSync(kept[0]!).includes(MARK), "sealed at rest");
+      const r2 = await (await up("case-9", "cover", memberA, PNG, { "x-file-name": "cover.png", "x-file-type": "image/png" })).json() as any;
+      // Refusals: not bytes, a field that takes none, a role that may not write, a shared area, another area's field.
+      assert.equal((await up("case-9", "files", memberA, UP, { "content-type": "application/json" })).status, 415, "bytes only as application/octet-stream");
+      assert.equal((await up("case-9", "subject", memberA, UP)).status, 404, "a text field takes no file");
+      assert.equal((await up("case-9", "nothing", memberA, UP)).status, 404, "no such field");
+      assert.equal((await up("case-9", "files", viewerA, UP)).status, 403, "a role the area does not let write");
+      assert.equal((await raw("POST", "/api/data/instruments/i-1/files/url", { authorization: `Bearer ${ownerA}`, "content-type": "application/octet-stream" }, UP)).status, 404, "a shared area takes no upload");
+      assert.equal((await up("bad key!", "files", memberA, UP)).status, 400, "a record key");
+      assert.equal((await up("case-9", "files", memberA, Buffer.alloc(0))).status, 400, "an empty file");
+      const big = await up("case-9", "files", memberA, Buffer.alloc(files.recordUploadMax() + 1));
+      assert.equal(big.status, 413, "over the upload limit");
+      // The create writes the references; the record's cards open them, byte for byte.
+      const made = await http.req("POST", "/api/data/cases", { authorization: `Bearer ${memberA}`, "x-pack-request": "1" }, { key: "case-9", title: "Uploaded", data: { subject: "From the console", files: [ref], cover: r2 } });
+      assert.equal(made.status, 201, await made.text());
+      const cards9 = await req("/api/records/cases/case-9/files", memberA);
+      assert.deepEqual(cards9.json.files.map((c: any) => [c.field, c.name, c.preview]), [["files", "notice.pdf", "pdf"], ["cover", "cover.png", "image"]]);
+      assert.ok((await req(cards9.json.files[0].download_url, memberA)).bytes.equals(UP), "the upload's bytes intact");
+      // Uploaded for another key: written into case-9 it opens nothing (bound to the key it was kept for).
+      const other = await (await up("case-10", "files", memberA, UP)).json() as any;
+      // Removing: never one the record holds, never another key's, once.
+      const del = (key: string, field: string, tok: string, body: unknown) => http.req("DELETE", `/api/data/cases/${key}/files/${field}`, { authorization: `Bearer ${tok}` }, body);
+      assert.equal((await del("case-9", "files", memberA, ref)).status, 409, "the record holds it");
+      assert.equal((await del("case-9", "files", memberA, other)).status, 404, "another key's file is not this key's");
+      assert.equal((await del("case-10", "files", ownerB, other)).status, 404, "another workspace never finds it");
+      assert.equal((await del("case-10", "files", viewerA, other)).status, 403, "a role that may not write");
+      assert.equal((await del("case-10", "files", memberA, { object: "x" })).status, 400, "a reference, as the upload answered it");
+      assert.equal((await del("case-10", "files", memberA, other)).status, 204, "one kept but never written");
+      assert.equal(walk(path.join(TMP, "objects")).filter((f) => f.includes(other.object)).length, 0, "and gone");
+      assert.equal((await del("case-10", "files", memberA, other)).status, 404, "once");
+      await audit.flushAudit();
+      const trail = await db.query<{ action: string; record_key: string }>("SELECT action, record_key FROM audit_data_events WHERE org_id = $1 AND target = 'file' AND action IN ('create', 'delete') ORDER BY seq", [A.orgId]);
+      assert.deepEqual(trail.map((t) => `${t.action} ${t.record_key}`), ["create case-9:files", "create case-9:cover", "create case-10:files", "delete case-10:files"], JSON.stringify(trail));
+      assert.ok(!JSON.stringify(trail).includes("notice"), "the place, never the name");
+      // Off with document previews (mold_v0-219): no upload.
+      const F = await import("../src/features.js");
+      F.setFeaturesForTest({ document_preview: false });
+      assert.equal((await up("case-11", "files", memberA, UP)).status, 404, "document_preview off: no upload");
+      F.setFeaturesForTest(null);
+      ok("uploads: kept sealed for the record's key and answered as the reference the create writes; bytes only, a file field of a workspace area, a role that writes it, the size limit; one kept but never written removed (never one the record holds or another key's); create and delete of a file in the data trail; off with document_preview");
+    }
+
+    // ---------- 9. a url field (mold_v0-238) ----------
+    {
+      const put = (data: Record<string, unknown>) => http.req("PUT", "/api/data/cases/case-9", { authorization: `Bearer ${memberA}`, "x-pack-request": "1" }, { title: "Uploaded", data: { subject: "From the console", ...data } });
+      for (const bad of ["regs.example/c2.pdf", "ftp://regs.example/x", "javascript:alert(1)", "https://u:p@regs.example/x", "https:///x"]) {
+        const r = await put({ home: bad });
+        assert.equal(r.status, 400, bad); assert.match(await r.text(), /field home of area cases must be an http or https address/);
+      }
+      assert.equal((await put({ home: "https://regs.example/about", site: "https://www.regs.example/c2.pdf" })).status, 200);
+      const wc = await req("/api/records/cases/case-9/files", memberA);
+      const site = wc.json.files.find((c: any) => c.field === "site");
+      assert.deepEqual([site.source, site.name, site.preview], ["document", "c2.pdf", "pdf"], "a url field's document is a card");
+      assert.ok(!wc.json.files.some((c: any) => c.field === "home"), "an address that previews nothing is no card");
+      const mcp = await connect({ ...A, role: "member" } as never);
+      const { tools } = await mcp.client.listTools();
+      const update = tools.find((t: any) => t.name === "filefix_update_cases") as any;
+      assert.equal(update?.inputSchema?.properties?.data?.properties?.home?.type, "string", "the tool takes an address as text");
+      const refused = await mcp.call("filefix_update_cases", { key: "case-9", title: "Uploaded", data: { subject: "x", home: "ftp://regs.example/x" } });
+      assert.ok(refused.isError, `the tool refuses an address that is not one: ${JSON.stringify(refused).slice(0, 200)}`);
+      await mcp.close();
+      ok("a url field: an http or https address with a host and no credentials, checked on write; its document a card when it previews one");
+    }
+
+    // ---------- 10. an area's own lists (mold_v0-237) ----------
+    {
+      const spec = await req("/api/tab-actions/_areas/cases", memberA);
+      assert.equal(spec.status, 200, JSON.stringify(spec.json));
+      assert.deepEqual([spec.json.kind, spec.json.label, spec.json.allowed, spec.json.area.name, spec.json.upload_max], ["create_record", "Add case", true, "cases", files.recordUploadMax()]);
+      assert.deepEqual(spec.json.area.fields.filter((f: any) => ["files", "site"].includes(f.name)).map((f: any) => [f.name, f.type, f.multiple, f.preview ?? null]), [["files", "file", true, null], ["site", "url", false, "document"]]);
+      assert.equal((await req("/api/tab-actions/_areas/cases", viewerA)).json.allowed, false, "a role that may not add sees no button");
+      assert.equal((await req("/api/tab-actions/_areas/instruments", memberA)).status, 404, "a shared area's lists have none");
+      const cards = await req("/api/records/_console/cases/sparklines", memberA);
+      assert.equal(cards.status, 200, JSON.stringify(cards.json));
+      assert.equal(cards.json.cards.length, 4, "its four cards");
+      assert.equal((await req("/api/records/_console/cases/sparklines", ownerB)).json.cards[0].value, 1, "a workspace's own numbers (B has one case)");
+      ok("an area's own lists: the create action its people may use (labelled, its fields, the upload limit), none for a shared area; its four cards for the workspace");
     }
 
     assert.ok(!printed.includes(MARK), "no file's bytes in the logs");
