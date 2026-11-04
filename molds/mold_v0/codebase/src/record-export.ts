@@ -6,7 +6,8 @@
  * Read through the data API's workspace door (src/data-api.ts dataApi.list: the caller's workspace from its session or
  * key, never from input; the area's read roles for the caller's role; a shared area's rows as every workspace reads
  * them; a sealed area opened for the workspace that owns it), so an export holds exactly what list_<area> would page
- * through, and nothing of another workspace.
+ * through, and nothing of another workspace. Export is its own permission (mold_v0-235, src/record-areas.ts
+ * exportRoles): the area contract's `export` roles within read's, else read's.
  *
  * The file: a header row (Key, Title, each field's label in the area's order, Updated), then a row per record. A cell
  * is the stored value: a list's items joined with "; ", a file its path (a stored file its name), json as JSON text. A text cell that a
@@ -18,7 +19,7 @@ import { auditAs } from "./audit-trail.js";
 import type { RecordQuery, RecordRow } from "./pack-api.js";
 import { PackError } from "./pack-api.js";
 import { dataApi, type DataCaller } from "./data-api.js";
-import { areaOrThrow } from "./record-areas.js";
+import { areaOrThrow, assertMayExport } from "./record-areas.js";
 
 /** At most this many records, and about this much CSV, per call; the rest by `next`. */
 export const EXPORT_MAX_ROWS = 5000;
@@ -58,6 +59,8 @@ export const exportRow = (fields: readonly Field[], r: Pick<RecordRow, "key" | "
 export async function exportArea(caller: DataCaller, area: string, q: Pick<RecordQuery, "filter" | "sort" | "after"> = {},
   limits: { rows: number; bytes: number } = { rows: EXPORT_MAX_ROWS, bytes: EXPORT_MAX_BYTES }) {
   const a = areaOrThrow(area);
+  // mold_v0-235: export is its own permission (the area's contract; read's roles when it does not say).
+  assertMayExport(a, { role: caller.role, userId: caller.userId });
   // The data trail (mold_v0-197): one export entry with how many records left, not the pages it read to make it.
   if (a.scope === "workspace") return auditAs(caller.orgId, () => exportPages(caller, a, q, limits), (r) => ({ action: "export", pack: a.pack, area: a.name, rows: r.records }));
   return exportPages(caller, a, q, limits);

@@ -228,6 +228,11 @@ try {
     const operator = await adminClient("operator");
     const upd = await operator.call("review_update_review_notes", { workspace: A.org.slug, key: "n1", data: { body: "by staff", item: "item-a" } });
     assert.ok(!upd.isError, `staff update through the admin MCP: ${text(upd)}`);
+    // mold_v0-236: the row came from the workspace's people (the data API) and was last written by staff, by pseudonym.
+    const [mark] = await db.query<{ provenance: string; written_by: string; updated_by: string }>(
+      "SELECT provenance, written_by, updated_by FROM workspace_records WHERE org_id = $1 AND area = 'review_notes' AND key = 'n1'", [A.org.orgId]);
+    assert.equal(mark!.provenance, "people", "where the row came from is kept");
+    assert.match(mark!.updated_by, /^staff:[0-9a-f]{12}$/, `staff's write is recorded as staff's: ${mark!.updated_by}`);
     await operator.client.close();
     // With every write of an area withheld, its deletes are too.
     setPacksForTest([declared("fixture_tracker"), declared("fixture_review", { ...MCP, admin_only: [...MCP.admin_only, "review_move_review_notes"] })]);

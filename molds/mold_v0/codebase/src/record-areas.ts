@@ -97,6 +97,56 @@ function assertMay(area: RecordArea, action: RecordAction, actor: Actor) {
   throw new PackError(`You can't ${VERB[action]} ${area.label} records with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role${who.length ? ` (${who.join(", ")} can)` : ""}.`, 403);
 }
 
+// ---------- the contract's import, export and reveal (mold_v0-234, mold_v0-235) ----------
+
+type Grant = NonNullable<RecordArea["contract"]>["actions"]["read"];
+/** The contract's grant for `action`, when the area declares a contract (else undefined: today's behaviour). */
+const contractGrant = (area: RecordArea, action: "import" | "export" | "reveal"): Grant | undefined => area.contract?.actions[action];
+const isNone = (g: Grant | undefined) => !!g && typeof g === "object" && !Array.isArray(g) && "none" in g;
+/** A grant's workspace roles, in the platform's order ([] for {staff} or {none}). */
+const grantRoles = (g: Grant | undefined): AccountRole[] => (Array.isArray(g) ? ACCOUNT_ROLES.filter((r) => (g as readonly string[]).includes(r)) : []);
+
+/**
+ * Who may export an area's records (mold_v0-235): the contract's `export` roles that may also read it; read's roles when
+ * the contract does not say; nobody (not even an account key) when it says {none}.
+ */
+export function exportRoles(area: RecordArea): AccountRole[] {
+  const g = contractGrant(area, "export");
+  const read = allowedRoles(area, "read");
+  return g === undefined ? read : grantRoles(g).filter((r) => read.includes(r));
+}
+export const mayExport = (area: RecordArea, actor: Actor) =>
+  !isNone(contractGrant(area, "export")) && may(area, "read", actor) && (actor.role === null || exportRoles(area).includes(actor.role));
+/** An export refused for this person (the Export CSV pages, export_<area>), with who may. */
+export function assertMayExport(area: RecordArea, actor: Actor) {
+  if (mayExport(area, actor)) return;
+  if (isNone(contractGrant(area, "export"))) throw new PackError(`${area.label} records are not exported (${(contractGrant(area, "export") as { none: string }).none})`, 403);
+  if (!may(area, "read", actor)) assertMay(area, "read", actor);
+  const who = exportRoles(area).map((r) => ACCOUNT_ROLE_LABELS[r].toLowerCase());
+  throw new PackError(`You can't export ${area.label} records with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role${who.length ? ` (${who.join(", ")} can)` : ""}.`, 403);
+}
+
+/**
+ * Who may import a file into a workspace area's own records (mold_v0-234): the contract's `import` roles that may also
+ * add and change its records; nobody when the contract does not say (today's behaviour) or says {none}. A shared area's
+ * import is staff's (src/record-import.ts importRecords), never a workspace role's.
+ */
+export function importRoles(area: RecordArea): AccountRole[] {
+  if (area.scope !== "workspace" || isReadOnlyArea(area)) return [];
+  const create = allowedRoles(area, "create"), update = allowedRoles(area, "update");
+  return grantRoles(contractGrant(area, "import")).filter((r) => create.includes(r) && update.includes(r));
+}
+/** Whether the area takes a workspace's import at all (its contract grants one), and whether `actor` may make it. */
+export const takesImport = (area: RecordArea) => Array.isArray(contractGrant(area, "import")) && importRoles(area).length > 0;
+export const mayImport = (area: RecordArea, actor: Actor) => takesImport(area) && (actor.role === null || importRoles(area).includes(actor.role));
+export function assertMayImport(area: RecordArea, actor: Actor) {
+  if (mayImport(area, actor)) return;
+  const g = contractGrant(area, "import");
+  if (!takesImport(area)) throw new PackError(`${area.label} takes no import${isNone(g) ? ` (${(g as { none: string }).none})` : ": its contract grants none"}`, 403);
+  const who = importRoles(area).map((r) => ACCOUNT_ROLE_LABELS[r].toLowerCase());
+  throw new PackError(`You can't import ${area.label} records with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role${who.length ? ` (${who.join(", ")} can)` : ""}.`, 403);
+}
+
 /** A sealed area (mold_v0-066): an asset area, or one declared `sealed`. Its title and data are ciphertext at rest. */
 export const isSealedArea = (a: Pick<RecordArea, "role" | "sealed">) => a.role === "asset" || a.sealed === true;
 /** An area whose rows come from the workspace's files or an API: no door writes it, only its repository's writer. */
@@ -460,11 +510,20 @@ export const getFor = async (orgId: number, name: string, key: string, actor: Ac
 };
 // ---------- encrypted fields: reveal (mold_v0-194, src/encrypted-fields.ts) ----------
 
-/** Who may reveal an encrypted field: its reveal_roles, else the roles that may update the area's records. */
-export const revealRoles = (area: RecordArea, f: EncField): AccountRole[] =>
-  f.reveal_roles ? ACCOUNT_ROLES.filter((r) => (f.reveal_roles as readonly string[]).includes(r)) : allowedRoles(area, "update");
+/**
+ * Who may reveal an encrypted field: its reveal_roles, else the area's (mold_v0-235: the contract's `reveal` roles), else
+ * the roles that may update the area's records. A contract whose reveal is {none} reveals nothing to anyone (an account
+ * key included); a field's reveal_roles only narrow the area's (the build refuses wider).
+ */
+export const revealRoles = (area: RecordArea, f: EncField): AccountRole[] => {
+  const g = contractGrant(area, "reveal");
+  if (isNone(g)) return [];
+  const own = f.reveal_roles ? ACCOUNT_ROLES.filter((r) => (f.reveal_roles as readonly string[]).includes(r)) : null;
+  const areaRoles = Array.isArray(g) ? grantRoles(g) : null;
+  return own ? (areaRoles ? own.filter((r) => areaRoles.includes(r)) : own) : areaRoles ?? allowedRoles(area, "update");
+};
 export const mayReveal = (area: RecordArea, f: EncField, actor: Actor) =>
-  may(area, "read", actor) && (actor.role === null || revealRoles(area, f).includes(actor.role));
+  !isNone(contractGrant(area, "reveal")) && may(area, "read", actor) && (actor.role === null || revealRoles(area, f).includes(actor.role));
 
 /**
  * The values of a record's encrypted fields, for `actor` (mold_v0-194): the area's read permission, then each asked
@@ -478,6 +537,9 @@ export async function revealFor(orgId: number, name: string, key: string, fields
   // The features registry (mold_v0-219): with encrypted_fields off nothing is revealed (values stay masked: fail closed).
   if (!featureSetting("encrypted_fields")) throw new PackError("Encrypted fields are off in this app", 404);
   assertMay(area, "read", actor);
+  // mold_v0-235: the area's contract says nothing of it is revealed.
+  const closed = contractGrant(area, "reveal");
+  if (isNone(closed)) throw new PackError(`${area.label}'s encrypted fields are never revealed (${(closed as { none: string }).none})`, 403);
   const enc = encryptedFields(area);
   let wanted: EncField[];
   if (fields === undefined || fields === null) {
@@ -544,7 +606,9 @@ export async function detailFor(orgId: number, name: string, key: string, actor:
   }
   // A clock area's record page shows what its clocks did (mold_v0-191): the latest events, newest first.
   const clockEvents = hasClocks(area) ? { clock_events: await (await clocks()).clockEvents(orgId, area, record.key) } : {};
-  return { area: areaSummary(area), record, links, ...clockEvents };
+  // mold_v0-236: where a workspace row came from and who last wrote it (a row written before 0042 has no mark).
+  const written = area.scope === "workspace" ? (await workspaceProvenance(orgId, area, [record.key])).get(record.key) : undefined;
+  return { area: areaSummary(area), record, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}) };
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -572,12 +636,41 @@ const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifec
  */
 export interface WriteMeta { source: string; fingerprint: string; /** Staff forced the index: it may take over a hand row. */ claim?: boolean }
 
+// ---------- who or what wrote a workspace row (mold_v0-236) ----------
+
+/**
+ * The writer of a workspace record (sql/migrations/0042_workspace_record_provenance.sql): one of the contract's
+ * provenances (src/pack-api.ts RECORD_PROVENANCES) with who exactly, or "shell" for the shell's own changes (a clock's
+ * escalation step) that never add a row. Kept on the row as
+ *   provenance   where the row came from: the kind of its first writer (a repository's index taking a row over makes it
+ *                "repository"); NULL for rows written before 0042 and rows only the shell wrote
+ *   written_by   "<kind>:<who>" of that first writer: a person's sign-in id (people), a staff pseudonym (staff), the
+ *                intake's message (intake), a run's id or the pack's tool or route (run), the repository's name
+ *   updated_by   "<kind>:<who>" of the latest write (a move included)
+ * Never a value of the record. The doors say who they write for with asWriter; a write with none is the data API's
+ * (people, the person or account key the call is made for), or the shell's own code acting for nobody (run).
+ */
+export type RecordProvenance = "staff" | "people" | "repository" | "intake" | "run";
+export interface RecordWriter { by: RecordProvenance | "shell"; id: string | null }
+const writerScope = new AsyncLocalStorage<RecordWriter>();
+/** Run `fn` with every workspace write inside it made as `w` (an inner asWriter wins). */
+export const asWriter = <T>(w: RecordWriter, fn: () => T): T => writerScope.run(w, fn);
+/** Run `fn` as `w` unless a writer is already set (the data API's people, under a staff call's or a pack tool's scope). */
+export const asWriterUnlessSet = <T>(w: RecordWriter, fn: () => T): T => (writerScope.getStore() ? fn() : writerScope.run(w, fn));
+/** The writer set for this call, if any. */
+export const currentWriter = (): RecordWriter | null => writerScope.getStore() ?? null;
+const writerOf = (actor: Actor, meta: WriteMeta | null): RecordWriter =>
+  meta ? { by: "repository", id: meta.source } : writerScope.getStore() ?? (actor.role !== null || actor.userId ? { by: "people", id: actor.userId } : { by: "run", id: null });
+const writerText = (w: RecordWriter) => (w.id ? `${w.by}:${w.id}` : w.by).replace(/[\u0000-\u001f]/g, "").slice(0, 200);
+/** Where a workspace row came from and who last wrote it (mold_v0-236); null for a row with no mark (written before 0042). */
+export interface RowProvenance { by: RecordProvenance | null; written_by: string | null; updated_by: string | null }
+
 /** Sealed values are never stored in the clear: a sealed area's write is refused while the key vault is locked. */
 const assertCanSeal = (area: RecordArea) => {
   if ((isSealedArea(area) || hasEncryptedFields(area)) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
 };
 
-async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, meta: WriteMeta | null = null, action: "move" | null = null): Promise<RecordRow> {
+async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, writer: RecordWriter, meta: WriteMeta | null = null, action: "move" | null = null): Promise<RecordRow> {
   let stored: Record<string, unknown> = data;
   // Encrypted fields (mold_v0-194): each value sealed for this record and field, with its blind index and the tag.
   let outside: Record<string, unknown> = {};
@@ -598,16 +691,21 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
   const sealed = isSealed((stored as { _sealed?: unknown })._sealed);
   return withTenant(orgId, async () => {
     const db = await q();
+    // mold_v0-236: who wrote it. A new row takes its writer's kind; a later write keeps where the row came from (a
+    // repository's index taking a row over makes it the repository's) and records only who wrote it last.
+    const kind = writer.by === "shell" ? null : writer.by, who = writerText(writer);
     const [r] = prev === null
       ? await db.query<Row>(
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true])
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
-        `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now()
+        `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now(),
+            written_by = CASE WHEN $9::text IS NOT NULL AND provenance IS DISTINCT FROM 'repository' THEN $11 ELSE written_by END,
+            provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11
           WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null]);
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who]);
     if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
     auditData(orgId, { action: action ?? (prev === null ? "create" : "update"), pack: area.pack, area: area.name, key }); // mold_v0-197: never the values
     return toRecord(area, r, orgId);
@@ -639,7 +737,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   const t = title(value?.title);
   if (!area.lifecycle) {
-    const r = await writeRow(orgId, area, key, t, { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, prev, meta);
+    const r = await writeRow(orgId, area, key, t, { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, prev, writerOf(actor, meta), meta);
     await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
     return r;
   }
@@ -655,7 +753,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   delete rest[field];
   const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
-  const r = await writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, meta);
+  const r = await writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, writerOf(actor, meta), meta);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
   return r;
 }
@@ -688,7 +786,7 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  const r = await writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, null, "move");
+  const r = await writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, writerOf(actor, null), null, "move");
   await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to });
   return r;
 }
@@ -799,6 +897,49 @@ export async function platformProvenance(area: RecordArea, keys: string[]): Prom
     by: r.source ? "repository" : "staff", repository: r.source ?? r.up_source ?? null,
     overrides: !r.source && r.overridden ? { title: r.up_title ?? null, version: r.up_version ?? null } : null,
   } satisfies Provenance]));
+}
+
+/** Where workspace rows came from and who last wrote them, by key (mold_v0-236; rows not found are left out). */
+export async function workspaceProvenance(orgId: number, area: RecordArea, keys: string[]): Promise<Map<string, RowProvenance>> {
+  if (!keys.length || isLive(area)) return new Map();
+  const rows = await withTenant(orgId, async () => (await q()).query<{ key: string; provenance: RecordProvenance | null; written_by: string | null; updated_by: string | null }>(
+    "SELECT key, provenance, written_by, updated_by FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY($4::text[])", [orgId, area.pack, area.name, keys]));
+  return new Map(rows.map((r) => [r.key, { by: r.provenance, written_by: r.written_by, updated_by: r.updated_by }]));
+}
+
+/**
+ * What wrote each workspace area's rows, across every workspace (mold_v0-236): how many rows each provenance has (and
+ * how many have none: written before 0042), and the ones its declared contract leaves out. So an area's provenance,
+ * `run` included, is worked out from the rows, not only declared. Counts only: never a key, a value or a workspace.
+ */
+export async function observedProvenance(): Promise<{ pack: string; area: string; declared: RecordProvenance[] | null; rows: Partial<Record<RecordProvenance | "unknown", number>>; undeclared: RecordProvenance[] }[]> {
+  const areas = recordAreas().filter((a) => a.scope === "workspace" && !isLive(a));
+  if (!areas.length) return [];
+  const counts = await asPlatform(async () => (await q()).query<{ pack: string; area: string; provenance: RecordProvenance | null; n: number }>(
+    `/* tenant: platform staff, counts per area across every workspace (no key, value or workspace leaves) */
+     SELECT pack, area, provenance, count(*)::int AS n FROM workspace_records WHERE pack = ANY($1::text[]) GROUP BY pack, area, provenance`, [[...new Set(areas.map((a) => a.pack))]]));
+  return areas.map((a) => {
+    const rows: Partial<Record<RecordProvenance | "unknown", number>> = {};
+    for (const c of counts) if (c.pack === a.pack && c.area === a.name) rows[c.provenance ?? "unknown"] = (rows[c.provenance ?? "unknown"] ?? 0) + c.n;
+    const declared = a.contract ? [...a.contract.provenance] as RecordProvenance[] : null;
+    const seen = (Object.keys(rows) as (RecordProvenance | "unknown")[]).filter((k): k is RecordProvenance => k !== "unknown");
+    return { pack: a.pack, area: a.name, declared, rows, undeclared: declared ? seen.filter((k) => !declared.includes(k)) : [] };
+  });
+}
+
+/** A workspace's own rows as stored, by key, opened (mold_v0-234, src/record-import.ts): title and fields, for an import's plan. */
+export async function workspaceStored(orgId: number, area: RecordArea, keys: string[]): Promise<Map<string, { title: string | null; data: Record<string, unknown> }>> {
+  if (!keys.length || isLive(area)) return new Map();
+  return withTenant(orgId, async () => {
+    const rows = await (await q()).query<Row>("SELECT key, title, data, updated_at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY($4::text[])",
+      [orgId, area.pack, area.name, keys]);
+    const out = new Map<string, { title: string | null; data: Record<string, unknown> }>();
+    for (const r of rows) {
+      const data = await openJson(orgId, r.data);
+      out.set(r.key, { title: isSealed(r.title) ? await open(orgId, r.title as string) : r.title, data: conform(area, data).data });
+    }
+    return out;
+  });
 }
 
 // ---------- batches (mold_v0-066) ----------
@@ -981,6 +1122,8 @@ export const areaSummary = (a: RecordArea) => ({
   ...(clocksShown(a) ? { clocks: a.clocks!.map((c) => ({ name: c.name, label: c.label, starts: c.starts, after: c.after, ...(c.not_later_than ? { not_later_than: c.not_later_than } : {}),
     ...(c.stops_when ? { stops_when: c.stops_when } : {}), ...(c.pauses_when ? { pauses_when: c.pauses_when } : {}) })) } : {}),
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),
+  // mold_v0-234/235: who may export and import, when the area's contract says (else export is read's, and no import).
+  ...(a.contract ? { export: exportRoles(a), ...(takesImport(a) ? { import: importRoles(a) } : {}) } : {}),
 });
 
 // ---------- MCP: list_records and get_record ----------

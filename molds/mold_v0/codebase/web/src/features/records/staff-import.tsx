@@ -4,6 +4,8 @@
 // label first), a preview from the server (POST /api/admin/records/_console/<area>/import, src/record-import.ts: what
 // each row would do, and each invalid row's problems), then the import itself: the valid rows as staff rows, in one
 // transaction, idempotent by key (a row that changes nothing is not written). Nothing is written before Import.
+// mold_v0-234: the same form imports into a workspace's own records (features/records/workspace-import.tsx; POST
+// /api/data/<area>/_import), where the area's contract grants import: rows become the workspace's records, as the person.
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -84,15 +86,17 @@ function autoMap(columns: string[], fields: FormField[]): Record<string, string>
 
 const ACTION_LABEL: Record<Action, string> = { create: 'New', update: 'Updates a staff row', override: 'Overrides the repository', unchanged: 'Unchanged', invalid: 'Invalid' };
 
-async function post(url: string, body: unknown): Promise<Report> {
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', ...ADMIN_HEADERS }, body: JSON.stringify(body) });
+async function post(url: string, body: unknown, headers: Record<string, string>): Promise<Report> {
+  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
   const json = (await res.json().catch(() => ({}))) as Report & { error?: string };
   if (!res.ok) throw httpError(res.status, json);
   return json;
 }
 
-/** The import card's form (inside an ActionCard: features/tabs/tab-action.tsx). */
-export function ImportRecordsForm({ area, fields, noun, url, onDone }: { area: { name: string; label: string }; fields: FormField[]; noun: string; url: string; onDone: () => void }) {
+/** The import card's form (inside an ActionCard: features/tabs/tab-action.tsx). `workspace`: a workspace's own records. */
+export function ImportRecordsForm({ area, fields, noun, url, onDone, workspace = false }: { area: { name: string; label: string }; fields: FormField[]; noun: string; url: string; onDone: () => void; workspace?: boolean }) {
+  const headers = workspace ? { 'x-pack-request': '1' } : ADMIN_HEADERS;
+  const label = (a: Action) => (workspace && a === 'update' ? 'Updates a record' : ACTION_LABEL[a]);
   const [file, setFile] = useState<Parsed | null>(null);
   const [map, setMap] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<Report | null>(null);
@@ -114,13 +118,13 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone }: { area: {
     } catch (e) { setFile(null); fail(e); }
   };
   const remap = (target: string, col: string) => { setMap((m) => ({ ...m, [target]: col })); setPreview(null); };
-  const valid = preview ? preview.counts.create + preview.counts.update + preview.counts.override : 0;
+  const valid = preview ? preview.counts.create + preview.counts.update + (preview.counts.override ?? 0) : 0;
   const submit = async () => {
     if (!rows.length) return void toast.error('Choose a file and the column that holds each row’s key');
     setBusy(true);
     try {
-      if (!preview) { setPreview(await post(url, { rows, dry_run: true })); return; }
-      const done = await post(url, { rows, dry_run: false });
+      if (!preview) { setPreview(await post(url, { rows, dry_run: true }, headers)); return; }
+      const done = await post(url, { rows, dry_run: false }, headers);
       toast.success(`Imported ${done.written} ${done.written === 1 ? noun : `${noun}s`}${done.counts.invalid ? `; ${done.counts.invalid} invalid skipped` : ''}`);
       onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -143,7 +147,9 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone }: { area: {
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='import-file'>File<span className='text-destructive' aria-hidden> *</span></Label>
         <Input id='import-file' type='file' accept='.csv,.json,text/csv,application/json' onChange={(e) => void read(e.target.files?.[0])} />
-        <p className='text-muted-foreground text-xs'>A CSV with a header row, or a JSON list of rows; up to {MAX_ROWS} rows. Rows become staff rows of {area.label}: a key already there is updated (fields the file leaves out keep their values), and a repository’s row is overridden.</p>
+        <p className='text-muted-foreground text-xs'>{workspace
+          ? `A CSV with a header row, or a JSON list of rows; up to ${MAX_ROWS} rows. Rows become records of ${area.label}: a key already there is updated (fields the file leaves out keep their values).`
+          : `A CSV with a header row, or a JSON list of rows; up to ${MAX_ROWS} rows. Rows become staff rows of ${area.label}: a key already there is updated (fields the file leaves out keep their values), and a repository’s row is overridden.`}</p>
       </div>
       {file && (
         <fieldset className='flex flex-col gap-3' data-import-map=''>
@@ -159,7 +165,7 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone }: { area: {
         <section className='flex flex-col gap-2' data-import-preview=''>
           <h3 className='text-sm font-medium'>Preview</h3>
           <p className='text-muted-foreground text-sm' data-import-counts=''>
-            {(['create', 'update', 'override', 'unchanged', 'invalid'] as Action[]).filter((a) => preview.counts[a]).map((a) => `${preview.counts[a]} ${ACTION_LABEL[a].toLowerCase()}`).join(' · ')}
+            {(['create', 'update', 'override', 'unchanged', 'invalid'] as Action[]).filter((a) => preview.counts[a]).map((a) => `${preview.counts[a]} ${label(a).toLowerCase()}`).join(' · ')}
             {preview.counts.invalid ? '. Invalid rows are skipped.' : '.'}
           </p>
           <div className='max-h-96 overflow-auto rounded-md border'>
@@ -172,7 +178,7 @@ export function ImportRecordsForm({ area, fields, noun, url, onDone }: { area: {
                   <tr key={r.row} className='border-t align-top' data-import-row={r.action}>
                     <td className='px-3 py-2 tabular-nums'>{r.row}</td>
                     <td className='px-3 py-2 font-mono text-xs break-all'>{r.key || '—'}</td>
-                    <td className='px-3 py-2'><Badge variant={r.action === 'invalid' ? 'destructive' : r.action === 'unchanged' ? 'outline' : 'secondary'}>{ACTION_LABEL[r.action]}</Badge></td>
+                    <td className='px-3 py-2'><Badge variant={r.action === 'invalid' ? 'destructive' : r.action === 'unchanged' ? 'outline' : 'secondary'}>{label(r.action)}</Badge></td>
                     <td className='text-destructive px-3 py-2 text-xs'>{r.errors.join('; ')}</td>
                   </tr>
                 ))}

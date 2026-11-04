@@ -107,7 +107,10 @@ try {
       assert.deepEqual([call.ctx.workspace.id, call.ctx.run.id, call.ctx.snapshot.version, call.ctx.snapshot.changed], [A.orgId, r.id, 1, true]);
       const order = r.types.filter((t) => ["workspace_written", "workspace_hook", "succeeded"].includes(t));
       assert.deepEqual(order, ["workspace_written", "workspace_hook", "succeeded"], "commit, then the hook, then the results");
-      console.log("✓ after the snapshot commits and before the results are checked: the hook gets every committed file and indexes them; results naming what it indexed are accepted");
+      // mold_v0-236: the rows the hook wrote are the run's, named by its id.
+      const marks = await db.query<{ key: string; provenance: string; written_by: string }>("SELECT key, provenance, written_by FROM workspace_records WHERE org_id = $1 AND pack = 'fixture_hook' AND area = 'hook_apps' ORDER BY key", [A.orgId]);
+      assert.deepEqual(marks.map((m) => [m.key, m.provenance, m.written_by]), [["app-1", "run", `run:run:${r.id}`], ["app-2", "run", `run:run:${r.id}`]], "each row records the run that wrote it");
+      console.log("✓ after the snapshot commits and before the results are checked: the hook gets every committed file and indexes them; results naming what it indexed are accepted; each row records the run that wrote it (mold_v0-236)");
     }
     // ---------- 2. unchanged ----------
     {

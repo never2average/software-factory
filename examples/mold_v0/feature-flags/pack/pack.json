@@ -67,7 +67,7 @@
           "move": { "none": "Append-only, and no lifecycle" },
           "delete": { "none": "Append-only and chained: the database refuses a delete" },
           "reveal": { "none": "No encrypted field" },
-          "import": { "none": "The shell has no import for a team's own records yet" }
+          "import": { "none": "Append-only: each rollout is recorded as it happens, never loaded from a file" }
         },
         "primary_action": "create_record"
       },

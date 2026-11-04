@@ -34,7 +34,7 @@ import { openBytes, sealBytes } from "./orgcrypto.js";
 import { inboxError, inboxSecret, intakeOf, intakeSpecs, type InboxRow } from "./company-email.js";
 import type { EmailIntake } from "./company-email-config.js";
 import { PackError, type PackTool, type Workspace } from "./pack-api.js";
-import { findArea, listFor, may, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { asWriter, findArea, listFor, may, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { keepsFiles, type IntakeSource } from "./company-email-config.js";
 import type { StoredFileRef } from "./record-files-config.js";
 import { openRecordFile, removeRecordFiles, storeRecordFile } from "./record-files.js";
@@ -136,7 +136,8 @@ export async function takeMessage(row: Pick<InboxRow, "id" | "org_id" | "pack" |
     const notes = headersOnly || raw.length > MAX_RAW ? ["(This message was larger than the intake reads: its text and attachments were not kept.)"] : [];
     const data = recordData(it, mail, row.label, atts, at, notes, area.fields, files);
     try {
-      await withTenant(orgId, () => workspaceRecords(row.pack, orgId).create(it.area, key, { title: (mail.subject || "(no subject)").slice(0, 300), data }));
+      // mold_v0-236: the row is the intake's (its message's ledger entry names it).
+      await asWriter({ by: "intake", id: `message:${ledId}` }, () => withTenant(orgId, () => workspaceRecords(row.pack, orgId).create(it.area, key, { title: (mail.subject || "(no subject)").slice(0, 300), data })));
     } catch (e) {
       // Already there (written before its ledger row was lost to a rollback): the record stands.
       if (!(e instanceof PackError && e.status === 409)) throw e;
@@ -379,7 +380,7 @@ async function fillRecord(row: InboxRow, it: EmailIntake, area: RecordArea, ledI
       const f = field(src);
       if (f && refs.length) data[f.name] = f.multiple ? refs : refs[0];
     }
-    await withTenant(orgId, () => recs.update(it.area, key, { title: record.title, data }));
+    await asWriter({ by: "intake", id: `message:${ledId}` }, () => withTenant(orgId, () => recs.update(it.area, key, { title: record.title, data })));
     const sealed = (await asPlatform(() => sealBytes(orgId, Buffer.from(JSON.stringify(atts)), listAad(orgId, ledId)))).toString("base64");
     await asPlatform(() => db.query("UPDATE workspace_email_messages SET attachments = $3, files = 'backfilled' WHERE org_id = $1 AND id = $2", [orgId, ledId, sealed]));
     // The attachments' old sealed copies under .mail/ (now kept as the record's files): removed.

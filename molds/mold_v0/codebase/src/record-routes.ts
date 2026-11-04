@@ -27,6 +27,12 @@
  *                                                                 preview (dry_run, the default) or the import itself
  *                                                                 ("library"; src/record-import.ts), each row it wrote
  *                                                                 an IMPORT line of the staff access log.
+ *                                 GET _provenance                 mold_v0-236: per workspace area, how many rows each
+ *                                                                 provenance wrote across the workspaces (counts only:
+ *                                                                 src/record-areas.ts observedProvenance) and the ones
+ *                                                                 its declared contract leaves out.
+ *   mold_v0-235: a page read for the console's Export CSV (?audit=export) needs the area's export permission
+ *   (src/record-areas.ts exportRoles: the contract's export roles within read's, else read's).
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { assertGuarded, can, need, type PlatformRole } from "./admin-roles.js";
@@ -40,7 +46,7 @@ import { mergedPage } from "./record-merge.js";
 import { anyArea, mountFileRoutes } from "./record-files.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
-import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, platformProvenance, putPlatform, recordAreas, type RecordArea } from "./record-areas.js";
+import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, type RecordArea } from "./record-areas.js";
 import { getDb } from "./db.js";
 import { auditStaffRows } from "./audit-trail.js";
 
@@ -70,6 +76,8 @@ export function recordAppRouter(): Router {
   const org = (res: Response) => (res.locals.session as Session).org;
   // The person asking: an area's read permission is theirs to pass (mold_v0-057).
   const actor = (res: Response) => { const s = res.locals.session as Session; return { role: s.accountRole ?? null, userId: s.user ?? null }; };
+  // mold_v0-235: the console's Export CSV reads these pages with ?audit=export: export is its own permission.
+  const exporting = (req: Request, res: Response, areas: RecordArea[]) => { if (req.query.audit === "export") for (const a of areas) assertMayExport(a, actor(res)); };
   r.get("/areas", answer(async () => ({ areas: recordAreas().map(areaSummary) })));
   // A merged tab's page (mold_v0-135): only a declared tab's areas, each read as on /:area (its read permission, its
   // list withheld: 404 as there).
@@ -77,6 +85,7 @@ export function recordAppRouter(): Router {
   r.get("/tabs/:pack/:tab", answer(async (req, res) => {
     const tab = (packRegistry().tabs as (Tab & { pack: string })[]).find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && (!!t.areas || !!t.filter));
     if (!tab || tabAreas(tab).some((a) => areaOpWithheld(a.area, "list"))) throw new PackError("Not found", 404);
+    exporting(req, res, tabAreas(tab).map((a) => areaOrThrow(a.area)));
     if (!tab.areas) {
       const a = areaOrThrow(tab.area!);
       return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), filter: tab.filter }, actor(res))) };
@@ -88,6 +97,7 @@ export function recordAppRouter(): Router {
   r.get("/due-soon", answer(async (req, res) => dueAcross(org(res), actor(res), { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), withheld: (a) => areaOpWithheld(a, "list") })));
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
+    exporting(req, res, [a]);
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
   }));
   // A record's files and documents (mold_v0-220, src/record-files.ts): its card's file cards, and each file's bytes.
@@ -111,6 +121,8 @@ export function recordAdminRouter(): Router {
     return a;
   };
   r.get("/areas", need("read"), answer(async () => ({ areas: recordAreas().map(areaSummary) })));
+  // mold_v0-236: what wrote each workspace area's rows across the workspaces (counts only), and what its contract leaves out.
+  r.get("/_provenance", need("read"), answer(async () => ({ areas: await observedProvenance() })));
   // The staff record page (mold_v0-212): "_console" is no area's name (an area's starts with a letter).
   r.get("/_console/:area/sparklines", need("read"), open("admin_list"), answer(async (req) =>
     (await import("./sparklines.js")).areaSparklines(platformArea(String(req.params.area)).name)));

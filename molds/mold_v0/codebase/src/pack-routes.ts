@@ -19,7 +19,7 @@ import { customerSession, type Session } from "./app.js";
 import { getDb } from "./db.js";
 import { PackError, type AdminRoute, type PackDb, type WorkspaceRoute } from "./pack-api.js";
 import { declaredRuns, packs, workspaceDb } from "./packs.js";
-import { platformRecords, workspaceRecords } from "./record-areas.js";
+import { asWriter, platformRecords, workspaceRecords } from "./record-areas.js";
 
 const params = (req: Request) => Object.fromEntries(Object.entries(req.params ?? {}).map(([k, v]) => [k, String(v)]));
 const query = (req: Request) => ({ ...(req.query as Record<string, unknown>) });
@@ -57,10 +57,11 @@ export function packAppRouter(): Router {
         if (needs && !canAccount(s.accountRole, needs)) throw new PackError(accountRefusal(needs).message, 403);
         const workspace = { id: s.org, slug: s.slug, name: null, userId: s.user, role: s.accountRole };
         const { workspaceRuns } = await import("./runs.js");
-        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org, { role: s.accountRole ?? null, userId: s.user ?? null }),
+        // mold_v0-236: what the route writes is the pack's own code's (provenance run), for the person who called it.
+        return asWriter({ by: "run", id: `route:${p.id}:${route.method}:${route.path}` }, () => route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org, { role: s.accountRole ?? null, userId: s.user ?? null }),
           runs: declaredRuns(p.id, workspaceRuns(p.id, s.org, s.user, { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole }), s.org,
             { role: s.accountRole ?? null, userId: s.user ?? null }),
-          params: params(req), query: query(req), body: req.body });
+          params: params(req), query: query(req), body: req.body }));
       }));
     }
     r.use(`/${p.id}`, pr);

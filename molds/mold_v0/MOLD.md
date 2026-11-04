@@ -410,11 +410,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **The record contract (mold_v0-222).** An area may declare `contract` (`src/pack-api.ts` `RecordContractSchema`):
   its provenance (`staff`, `people`, `repository`, `intake`, `run`), each of eight actions (read, create, update, move,
   delete, reveal, export, import) as the roles that may, `{staff: library|delete}` or `{none: reason}`, and its list's
-  primary action (`create_record`, `start_run`, `link`, or `{none: reason}`). No runtime code reads it: the build refuses
-  what the area alone contradicts (`contractProblems`), and the factory's `spec check` derives every area's contract
-  from the declaration and holds a declared one to it (the factory's `docs/RECORDS.md`, which also lists what the
-  runtime does not do yet: a workspace import, export and reveal as their own permissions, a workspace row's stored
-  provenance). `npm run test:record-contract`.
+  primary action (`create_record`, `start_run`, `link`, or `{none: reason}`). The build refuses what the area alone
+  contradicts (`contractProblems`), and the factory's `spec check` derives every area's contract from the declaration
+  and holds a declared one to it (the factory's `docs/RECORDS.md`). `npm run test:record-contract`.
+  **Import, export and reveal from the contract; each row's writer (mold_v0-234, mold_v0-235, mold_v0-236).** The
+  runtime reads three of the contract's actions, today's behaviour when an area declares none (`src/record-areas.ts`):
+  `import` lets its roles (those that may also create and update) import a CSV or JSON file into the workspace's own
+  records (`POST /api/data/<area>/_import`, a preview then one transaction, as the person; `src/record-import.ts`
+  `importWorkspaceRecords`; the console's Import beside a list's Export, `web/src/features/records/workspace-import.tsx`);
+  `export` is its own permission within read's (the list routes' `?audit=export`, `export_<area>`, Export CSV shown only
+  to those roles); `reveal` is the area's, a field's `reveal_roles` narrowing it, `{none}` revealing nothing. Every
+  workspace row records who or what wrote it (`sql/migrations/0042_workspace_record_provenance.sql`: `provenance` one of
+  staff, people, repository, intake, run; `written_by`, `updated_by`), set by each door with `asWriter`; a record's
+  detail carries it and `GET /api/admin/records/_provenance` counts each area's rows by provenance across workspaces,
+  naming one its contract leaves out. `npm run test:record-contract-runtime`.
 - **jobKinds** (mold_v0-041, built): the generic run engine, beside the product's session queue (which it does not
   change). `sql/migrations/0005_runs.sql` adds `runs`, `run_events` and `run_results` (each `org_id` under
   `tenant_isolation`; the tenant role may only read them) and a `run` gateway token kind (`gateway_tokens.run_id`,

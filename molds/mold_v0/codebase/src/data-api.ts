@@ -13,12 +13,18 @@
  */
 import type { AccountRole } from "./account-roles.js";
 import { PackError, type RecordInput, type RecordOperation, type RecordQuery } from "./pack-api.js";
-import { adminRecords, areaOrThrow, areaSummary, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, workspaceRecords, type Actor } from "./record-areas.js";
+import { adminRecords, areaOrThrow, areaSummary, asWriterUnlessSet, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, workspaceRecords, type Actor } from "./record-areas.js";
 
 /** Who a workspace call is for: the workspace (from the session or key, never from input), the person's role and id. */
 export interface DataCaller { orgId: number; role: AccountRole | null; userId: string | null }
 const actorOf = (c: DataCaller): Actor => ({ role: c.role, userId: c.userId });
 const recordsFor = (c: DataCaller, area: string) => workspaceRecords(areaOrThrow(area).pack, c.orgId, actorOf(c));
+/**
+ * A write through this door is the workspace's people's (mold_v0-236: provenance people, written by the person, or the
+ * account key the call is made with), unless the call is already someone else's: platform staff acting for the
+ * workspace (an admin_only tool), which says so first.
+ */
+const asPeople = <T>(c: DataCaller, fn: () => T): T => asWriterUnlessSet({ by: "people", id: c.userId ?? (c.role === null ? "key" : null) }, fn);
 const input = (v: unknown): RecordInput => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new PackError("give {title?, data}", 400);
   const o = v as Record<string, unknown>;
@@ -42,13 +48,13 @@ export const dataApi = {
   /** One record with the records its links name (as this workspace sees them); null when there is none. */
   get: (c: DataCaller, area: string, key: string) => detailFor(c.orgId, area, key, actorOf(c)),
   /** A new record (409 when the key exists). */
-  create: async (c: DataCaller, area: string, key: string, value: unknown) => ({ record: await recordsFor(c, area).create(area, key, input(value)) }),
+  create: async (c: DataCaller, area: string, key: string, value: unknown) => ({ record: await asPeople(c, () => recordsFor(c, area).create(area, key, input(value))) }),
   /** Replace an existing record's title and fields (404 when there is none); its state is kept. */
-  update: async (c: DataCaller, area: string, key: string, value: unknown) => ({ record: await recordsFor(c, area).update(area, key, input(value)) }),
+  update: async (c: DataCaller, area: string, key: string, value: unknown) => ({ record: await asPeople(c, () => recordsFor(c, area).update(area, key, input(value))) }),
   /** Move a record along its area's lifecycle. */
-  move: async (c: DataCaller, area: string, key: string, to: unknown) => ({ record: await recordsFor(c, area).move(area, key, to as string) }),
+  move: async (c: DataCaller, area: string, key: string, to: unknown) => ({ record: await asPeople(c, () => recordsFor(c, area).move(area, key, to as string)) }),
   /** Delete a record; false when there was none. */
-  delete: (c: DataCaller, area: string, key: string) => recordsFor(c, area).delete(area, key),
+  delete: (c: DataCaller, area: string, key: string) => asPeople(c, () => recordsFor(c, area).delete(area, key)),
   /** The values of a record's encrypted fields (mold_v0-194), for the roles allowed to reveal them; recorded in the data trail. */
   reveal: (c: DataCaller, area: string, key: string, fields?: unknown) => revealFor(c.orgId, area, key, fields, actorOf(c)),
   /** Several writes to one pack's workspace areas as one transaction: every one of them, or none. */
@@ -56,7 +62,22 @@ export const dataApi = {
     if (!Array.isArray(ops) || !ops.length) throw new PackError("operations: a list of 1 or more {op, area, key, ...}", 400);
     const packsOf = new Set(ops.map((o) => areaOrThrow(String((o as { area?: unknown })?.area)).pack));
     if (packsOf.size !== 1) throw new PackError("a batch writes the areas of one pack", 400);
-    return { results: await workspaceRecords([...packsOf][0]!, c.orgId, actorOf(c)).batch(ops as RecordOperation[]) };
+    return { results: await asPeople(c, () => workspaceRecords([...packsOf][0]!, c.orgId, actorOf(c)).batch(ops as RecordOperation[])) };
+  },
+  /**
+   * A CSV or JSON file's rows into one of the workspace's own areas (mold_v0-234; src/record-import.ts): where the area's
+   * contract grants import, for the person's role; a preview unless dry_run is false, then one transaction.
+   */
+  import: async (c: DataCaller, area: string, rows: unknown, dryRun: boolean) => {
+    const { importWorkspaceRecords } = await import("./record-import.js");
+    return asPeople(c, () => importWorkspaceRecords(c.orgId, actorOf(c), areaOrThrow(area), rows, { dryRun }));
+  },
+  /** What the console's Import offers this person on an area (mold_v0-234): whether they may, and the fields to map. */
+  importForm: async (c: DataCaller, area: string) => {
+    const a = areaOrThrow(area);
+    const { mayImport } = await import("./record-areas.js");
+    const { formField } = await import("./tab-actions.js");
+    return { area: a.name, label: a.label, import: a.scope === "workspace" && mayImport(a, actorOf(c)), fields: a.fields.filter((f) => f.name !== a.lifecycle?.field).map(formField) };
   },
 };
 

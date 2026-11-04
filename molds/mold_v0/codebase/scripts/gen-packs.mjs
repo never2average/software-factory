@@ -1422,6 +1422,23 @@ let withheld = [];
 /** The generated tools a workspace's client sees, and the shell's record tools (mold_v0-106: the guide's MCP tools page). */
 let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
+/**
+ * The console's view of an area's contract (mold_v0-234, mold_v0-235; the server decides, src/record-areas.ts
+ * exportRoles and importRoles): who may export it (the contract's export roles that may read it) and who may import a
+ * file into it (the contract's import roles that may add and change its records). Only when the area declares a
+ * contract: an area without one keeps today's (export as read, no import) and adds nothing here.
+ */
+const ROLES_ORDER = ["viewer", "member", "billing", "owner"], WRITERS = ["member", "billing", "owner"];
+function contractRoles(a) {
+  const g = a.contract?.actions;
+  if (!g) return {};
+  const p = a.permissions ?? {};
+  const of = (x) => (Array.isArray(x) ? ROLES_ORDER.filter((r) => x.includes(r)) : []);
+  const read = of(p.read ?? ROLES_ORDER);
+  const create = of(p.create ?? WRITERS).filter((r) => r !== "viewer"), update = of(p.update ?? WRITERS).filter((r) => r !== "viewer");
+  const imp = a.scope === "workspace" ? of(g.import).filter((r) => create.includes(r) && update.includes(r)) : [];
+  return { export_roles: of(g.export).filter((r) => read.includes(r)), ...(imp.length ? { import_roles: imp } : {}) };
+}
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
 // A tab's primary action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
@@ -2388,14 +2405,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
   "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
-  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n}\n\n" +
+  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
+  "  /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */\n  export_roles?: string[];\n" +
+  "  /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */\n  import_roles?: string[];\n}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
-    ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
+    ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}), ...contractRoles(a) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +

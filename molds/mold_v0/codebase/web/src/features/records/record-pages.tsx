@@ -32,7 +32,11 @@ export type RecordRow = { key: string; title: string | null; data: Record<string
   provenance?: Provenance };
 export type Provenance = { by: 'staff' | 'repository'; repository: string | null; overrides: { title: string | null; version: string | null } | null };
 export type Page = { records: RecordRow[]; next: string | null };
-type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
+type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[];
+  /** A workspace record's writer (mold_v0-236, src/record-areas.ts RowProvenance): where it came from. */
+  provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null } };
+/** Where a workspace record came from, in words (mold_v0-236). */
+const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -255,6 +259,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
             <dl>
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
+              {data.provenance?.by && <Field label='Added by'>{ADDED_BY[data.provenance.by] ?? data.provenance.by}</Field>}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
                 <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} /></span></Field>
               ))}
