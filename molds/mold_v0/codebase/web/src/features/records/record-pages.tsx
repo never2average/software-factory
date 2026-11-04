@@ -7,7 +7,8 @@
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
 import { useMemo, type ReactNode } from 'react';
-import { parseAsBoolean, useQueryState } from 'nuqs';
+import { useQueryState } from 'nuqs';
+import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -179,7 +180,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
-  const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsBoolean.withDefault(false));
+  const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsFlag.withDefault(false));
   const clocked = !!area.clocks?.length;
   const overdueRule = (r: FilterRule) => r.key === OVERDUE_COL && r.op === 'true';
   const initialRules = useMemo(() => (clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : undefined), [clocked, overdueParam]);
