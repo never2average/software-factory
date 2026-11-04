@@ -384,6 +384,42 @@ def run():
                   read_public=lambda u: ("200", {"ok": True}, ""), say=said.append, release="20261020T000001Z", wait=lambda s: None)
         ok(not any("sk-standin-123456" in " ".join(c[1]) for c in R2.calls) and "PAY_SECRET_KEY=sk-standin-123456" in next(c[2] for c in R2.calls if c[0] == "env")
            and not any("sk-standin-123456" in s for s in said), "an operator's value goes on the env step's stdin only, never in an argv or a printed line")
+        # mold_v0-227: with audit.sign on, the deploy makes APP_LEDGER_SIGNING_KEY when the server lacks it (never over one it holds)
+        import ledger_key as LK
+        signed = dict(app, profile={"audit": {"sign": True}})
+        ok(SS.settings("zz_shop", signed, infra, t)["generated"] == ["APP_LEDGER_SIGNING_KEY"] and SS.settings("zz_shop", app, infra, t)["generated"] == [],
+           "compose_remote: the key is the deploy's to make only while audit.sign is on")
+        said_l = []; SS.check("zz_shop", signed, infra, os.path.join(t, "no-such-app"), say=said_l.append, root=t); AR.reset()
+        ok(any("APP_LEDGER_SIGNING_KEY" in l and "audit.sign" in l for l in said_l), f"compose_remote check names the key while audit.sign is on: {[l for l in said_l if 'LEDGER' in l]}")
+        said_l = []; SS.check("zz_shop", app, infra, os.path.join(t, "no-such-app"), say=said_l.append, root=t); AR.reset()
+        ok(not any("LEDGER" in l for l in said_l), "  ...and says nothing of it while audit.sign is off")
+        RL = Runner(dict(R.answers)); SL = dict(S, generated=["APP_LEDGER_SIGNING_KEY"]); said_l = []
+        resl = SS.deploy(SL, F, cb, runner=RL, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                         say=said_l.append, release="20261020T000003Z", wait=lambda s: None)
+        envl = next(c[2] for c in RL.calls if c[0] == "env"); seedl = re.search(r"APP_LEDGER_SIGNING_KEY=(\S+)", envl)
+        ok(seedl and LK.raw32(seedl.group(1)) and resl["ledger_keys"] and resl["ledger_keys"][0]["public_key"] == LK.public_of(seedl.group(1))
+           and not any(seedl.group(1) in " ".join(c[1]) for c in RL.calls) and not any(seedl.group(1) in l for l in said_l)
+           and any(resl["ledger_keys"][0]["kid"] in l for l in said_l),
+           f"the server lacks the key: made here, sent on the env step's stdin only, never printed; its public half returned and said: {said_l[-3:]}")
+        il = {"compose_remote": {"domain": "shop.example.org"}}; al = {"status": "planned"}
+        SS.record(os.path.join(t, "rec-l"), al, il, S, resl, None, save_fn=lambda p_, o_: None)
+        ok(il["ledger_keys"][0]["public_key"] == resl["ledger_keys"][0]["public_key"] and seedl.group(1) not in json.dumps(il), "the deploy records the public half in state, never the key")
+        RL2 = Runner(dict(R.answers, names=(0, "POSTGRES_PASSWORD\nAPP_LEDGER_SIGNING_KEY\n")))
+        resl2 = SS.deploy(SL, F, cb, runner=RL2, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                          say=lambda s: None, release="20261020T000004Z", wait=lambda s: None)
+        ok("APP_LEDGER_SIGNING_KEY" not in (next((c[2] for c in RL2.calls if c[0] == "env"), "") or "") and resl2["ledger_keys"] == [], "a server that holds the key keeps it: never made again")
+        # --generate-secret on a server: names read, the key on env-merge's stdin, refused over an existing one, refused before a first deploy
+        RG = Runner(dict(R.answers)); ig = dict(infra, deployed_at="2026-10-20T00:00:00+00:00"); said_g = []
+        rcg = SS.generate_secret("zz_shop", signed, ig, None, ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], None, say=said_g.append, root=t, runner=RG)
+        sg = re.search(r"APP_LEDGER_SIGNING_KEY=(\S+)", RG.calls[-1][2] or "")
+        ok(rcg == 0 and [c[0] for c in RG.calls] == ["names", "set-secret"] and sg and not any(sg.group(1) in " ".join(c[1]) for c in RG.calls)
+           and not any(sg.group(1) in l for l in said_g) and ig["ledger_keys"][-1]["public_key"] == LK.public_of(sg.group(1)),
+           f"--generate-secret on a server: names first, the key on stdin only, never printed, its public half recorded: {said_g[-1:]}")
+        try: SS.generate_secret("zz_shop", signed, ig, None, ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], None, say=lambda s: None, root=t,
+                                runner=Runner(dict(R.answers, names=(0, "APP_LEDGER_SIGNING_KEY\n")))); ok(False, "an existing key on the server is refused")
+        except SS.Stop as e: ok("never overwritten" in str(e), f"an existing key on the server is never overwritten without --rotate: {e}")
+        try: SS.generate_secret("zz_shop", signed, dict(infra), None, ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], None, say=lambda s: None, root=t, runner=Runner({})); ok(False, "before a first deploy")
+        except SS.Stop as e: ok("--deploy-remote" in str(e), "before the first deploy there is no env file: the deploy makes it")
         # failures: a server that is not fit, DNS elsewhere, an up that switched back, a public 502
         def stop(**kw):
             try:
@@ -840,6 +876,40 @@ def run():
             ok(rc == 1 and any(SS.ADMIN_MARK in l for l in said) and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]
                and AR.NOTES["needs"][0]["kind"] == "approval" and "answers.json" in AR.NOTES["needs"][0]["how"] and not any(c[0] == "set_env" for c in fpn.calls),
                f"the check with no administrator anywhere: not ready, the address asked for in plain words (needs_human through provision.py): {said[-2:]} {AR.NOTES['needs']}")
+            # mold_v0-227: audit.sign on: the check asks for APP_LEDGER_SIGNING_KEY (a --generate-secret line), off: not at all
+            import ledger_key as LK
+            held3 = ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"]
+            sig = dict(va, profile={"audit": {"sign": True}})
+            for prof, have_key, want in ((sig, False, 1), (sig, True, 0), (va, False, 0)):
+                AR.reset(); fpl = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": held3 + (["APP_LEDGER_SIGNING_KEY"] if have_key else []), "zz-shop": held3[3:]}); said = []
+                rc = SS.vercel_check("zz_shop", prof, cp(vi), fpl, say=said.append, root=t)
+                asked = [n_ for n_ in AR.NOTES["needs"] if n_["name"] == "APP_LEDGER_SIGNING_KEY"]
+                line = any("--generate-secret APP_LEDGER_SIGNING_KEY" in l for l in said)
+                ok(rc == want and bool(asked) == (want == 1) and line == (want == 1) and (prof is va) == (not any("LEDGER" in l for l in said)),
+                   f"vercel check, audit.sign {'on' if prof is sig else 'off'}, key {'held' if have_key else 'absent'}: exit {rc}, asked {bool(asked)}: {[l for l in said if 'LEDGER' in l or 'Ready' in l]}")
+            AR.reset(); fpl = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": held3, "zz-shop": held3[3:]}); err = ""
+            bstand = lambda cmd, **k: (os.makedirs(os.path.join(t, "build", "zz_shop", "web"), exist_ok=True), subprocess.CompletedProcess(cmd, 0, "", ""))[1]
+            try: SS.vercel_deploy("zz_shop", dict(sig), cp(vi), vdir, fpl, say=lambda s: None, root=t, read_page=pages({}), build_run=bstand)
+            except SS.NeedsHuman as e: err = str(e)
+            ok("--generate-secret APP_LEDGER_SIGNING_KEY" in err and not any(c[0] in ("vrun", "set_env", "deploy", "neon") for c in fpl.calls),
+               f"the deploy with audit.sign on and no key stops before anything is created: {err[:160]}")
+            vg = os.path.join(t, "vgen"); os.makedirs(vg); json.dump(cp(vi), open(os.path.join(vg, "infrastructure.json"), "w")); said = []
+            rc = SS.main_for("zz_shop", ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], dict(sig), cp(vi), {}, vg, fpl, say=said.append, root=t)
+            seedv = fpl.projects["zz-shop-api"]["env"].get("APP_LEDGER_SIGNING_KEY", ""); recv = json.load(open(os.path.join(vg, "infrastructure.json"))).get("ledger_keys") or []
+            ok(rc == 0 and ("set_env", "zz-shop-api", "APP_LEDGER_SIGNING_KEY") in fpl.calls and "APP_LEDGER_SIGNING_KEY" not in fpl.projects["zz-shop"]["env"]
+               and LK.raw32(seedv) and recv and recv[-1]["public_key"] == LK.public_of(seedv) and not any(seedv in l for l in said)
+               and seedv not in open(os.path.join(vg, "infrastructure.json")).read() and any(recv[-1]["kid"] in l for l in said),
+               f"--generate-secret on Vercel: the API project only, the public half recorded and printed, the key nowhere in output or state: {said[-1:]}")
+            said = []
+            rc = SS.main_for("zz_shop", ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], dict(sig), cp(vi), {}, vg, fpl, say=said.append, root=t)
+            ok(rc == 1 and fpl.projects["zz-shop-api"]["env"]["APP_LEDGER_SIGNING_KEY"] == seedv and any("--rotate" in l for l in said), "a second run never overwrites the key; it names --rotate")
+            iv = json.load(open(os.path.join(vg, "infrastructure.json"))); said = []
+            rc = SS.main_for("zz_shop", ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY", "--rotate"], dict(sig), iv, {}, vg, fpl, say=said.append, root=t)
+            seedr = fpl.projects["zz-shop-api"]["env"]["APP_LEDGER_SIGNING_KEY"]
+            ok(rc == 0 and seedr != seedv and fpl.projects["zz-shop-api"]["env"].get("APP_LEDGER_PUBLIC_KEYS") == LK.public_of(seedv) and not any(seedr in l or seedv in l for l in said),
+               "--rotate: a new key, the old public key kept published under APP_LEDGER_PUBLIC_KEYS, neither key printed")
+            rc = SS.main_for("zz_shop", ["zz_shop", "--generate-secret", "APP_LEDGER_SIGNING_KEY"], dict(va), cp(vi), {}, vg, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
+            ok(rc == 1, "audit.sign off: --generate-secret refuses, nothing written")
             AR.reset(); fpn = FakeP(projects=["zz-shop-api", "zz-shop"]); err = ""
             try: SS.vercel_deploy("zz_shop", dict(noadm), cp(vi), vdir, fpn, say=lambda s: None, root=t, read_page=pages({}))
             except SS.NeedsHuman as e: err = str(e)

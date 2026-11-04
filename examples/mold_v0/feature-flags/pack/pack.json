@@ -63,7 +63,7 @@
           { "value": "development", "label": "Development" }, { "value": "staging", "label": "Staging" },
           { "value": "production", "label": "Production" } ] },
         { "name": "enabled", "label": "On", "type": "boolean", "required": true },
-        { "name": "percentage", "label": "Share of users", "type": "number", "min": 0, "max": 100, "help": "The product's SDK buckets users by a hash of their id; 100 means everyone." },
+        { "name": "percentage", "label": "Share of users", "type": "number", "min": 0, "max": 100, "help": "Users are bucketed by a hash of the flag and their id (the same in Flagwell and its SDKs); 100 or empty means everyone." },
         { "name": "segment", "label": "Segment", "type": "text", "max_length": 200 },
         { "name": "changed_on", "label": "Changed", "type": "date", "required": true },
         { "name": "reason", "label": "Why", "type": "text", "max_length": 1000 }
@@ -152,33 +152,34 @@
   "checks": [
     {
       "name": "is_flag_on",
-      "label": "Is this flag on in this environment?",
-      "description": "The latest rollout of the flag in the environment decides; an archived flag is always off.",
-      "inputs": { "flag": "string", "environment": "string" },
-      "rule": {
-        "area": "rollouts",
-        "match": { "flag": "$flag", "environment": "$environment" },
-        "latest_by": "updated_at",
-        "lookup": { "area": "flags", "as": "flag_rec", "key": "$flag" },
-        "require": [
-          { "field": "enabled", "eq": true, "label": "The latest rollout turned it on" },
-          { "field": "flag_rec.status", "ne": "archived", "label": "The flag is not archived" }
-        ]
-      },
-      "explain": true
-    },
-    {
-      "name": "is_on_for_user",
-      "label": "Is this flag forced on for this user?",
-      "description": "The latest unexpired override for the user decides; with no override, ask is_flag_on.",
+      "label": "Is this flag on for this user?",
+      "description": "The user's current override decides when there is one; else the latest rollout in the environment, unless the flag is archived, for its share of users.",
       "inputs": { "flag": "string", "environment": "string", "user": "string" },
       "rule": {
-        "area": "overrides",
-        "match": { "flag": "$flag", "environment": "$environment", "user_ref": "$user" },
-        "latest_by": "updated_at",
-        "require": [
-          { "field": "enabled", "eq": true, "label": "The override turns it on" },
-          { "any": [ { "field": "expires_on", "exists": false }, { "field": "expires_on", "gt": "now" } ], "label": "The override has not expired" }
+        "first_of": [
+          {
+            "area": "overrides",
+            "match": { "flag": "$flag", "environment": "$environment", "user_ref": "$user" },
+            "latest_by": "updated_at",
+            "when": [
+              { "any": [ { "field": "expires_on", "exists": false }, { "field": "expires_on", "gt": "now" } ], "label": "The override has not expired" }
+            ],
+            "require": [ { "field": "enabled", "eq": true, "label": "The override turns it on" } ]
+          },
+          {
+            "area": "rollouts",
+            "match": { "flag": "$flag", "environment": "$environment" },
+            "latest_by": "updated_at",
+            "lookup": { "area": "flags", "as": "flag_rec", "key": "$flag" },
+            "require": [
+              { "field": "enabled", "eq": true, "label": "The latest rollout turned it on" },
+              { "field": "flag_rec.status", "ne": "archived", "label": "The flag is not archived" },
+              { "any": [
+                  { "field": "percentage", "exists": false },
+                  { "bucket": { "input": "$user", "salt": "$flag", "percent": "@percentage" } }
+                ], "label": "The user is in the rollout's share" }
+            ]
+          }
         ]
       },
       "explain": true
@@ -223,7 +224,7 @@
   "onboarding": [
     { "id": "first_flag", "label": "Create your first flag", "done_when": "record:flags" },
     { "id": "first_rollout", "label": "Turn it on in development", "done_when": "record:rollouts" },
-    { "id": "ask_check", "label": "Ask is_flag_on from your code or your AI app", "done_when": "first_call" },
+    { "id": "ask_check", "label": "Ask is_flag_on from your code or your AI app", "done_when": "tool:check_is_flag_on" },
     { "id": "connect_ai", "label": "Connect your AI app", "done_when": "connected" }
   ],
   "metrics": [
@@ -269,6 +270,6 @@
       "action": false, "reason": "Releases arrive only from the team's CI through the inbound webhook (Settings > Developers); nobody types one in." }
   ],
   "mcp": {
-    "instructions": "Flagwell keeps a project's feature flags, their rollouts and per-user overrides (append-only, hash-chained), experiments and releases. To know whether a flag is on, call check_is_on_for_user first, then check_is_flag_on; never infer it from the lists. A flag change is a new rollout record, never an edit."
+    "instructions": "Flagwell keeps a project's feature flags, their rollouts and per-user overrides (append-only, hash-chained), experiments and releases. To know whether a flag is on for a user, call check_is_flag_on (the user's override, else the rollout and its share); never infer it from the lists. A flag change is a new rollout record, never an edit."
   }
 }

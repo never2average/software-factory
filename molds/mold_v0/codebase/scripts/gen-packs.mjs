@@ -1275,6 +1275,8 @@ for (const [id, json, file] of entries) {
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
       resultChecks: def.runResults?.check ?? [],
+      // Its declarative checks' names (mold_v0-224: a client session's checks:<name> names one).
+      checks: (def.checks ?? []).map((c) => String(c?.name)),
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [],
         private_network: k.private_network === true })),
       // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
@@ -1381,7 +1383,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     packViews = views;
     withheld = mcp.withheld;
     guideTools = { tools: mcp.tools, records: mcp.records };
-    const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [], guide: null, facts: null };
+    const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [], checks: [], guide: null, facts: null };
     for (const [id, v] of Object.entries(got)) {
       if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
       else if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = empty; }
@@ -1837,7 +1839,8 @@ let developerOwner = null, developerFacts = null;
     if (j.developer_surface !== undefined) {
       const { $comment: _c, ...rest } = j.developer_surface;
       const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
-      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })));
+      const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })),
+        packs.flatMap((x) => defsByPack[x.id]?.checks ?? []), packs.flatMap((x) => (defsByPack[x.id]?.kinds ?? []).map((k) => k.name)));
       for (const b of bad) fail(at, `developer_surface.${b}`);
       if (developerOwner) fail(at, `developer_surface: pack ${developerOwner} declares the developer surface too: one pack's`);
       else if (!bad.length) { developerOwner = p.id; developerFacts = cfg; c.developer_surface = cfg; }

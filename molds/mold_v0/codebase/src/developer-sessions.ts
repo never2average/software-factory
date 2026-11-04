@@ -4,8 +4,9 @@
  * A browser or a phone app never holds a key. The workspace's backend mints a client session with a key that holds
  * `sessions`, for one of its own signed-in users (`subject`), and hands the token (`cs_...`) to the client:
  *   - it lives at most the build's client_sessions.ttl_seconds (and as long as asked, from 60 seconds);
- *   - it holds at most the build's client_sessions.scopes (default read and write), and never a scope the minting key
- *     lacks (an area-narrowed key mints only sessions narrowed the same way or more);
+ *   - it holds at most the build's client_sessions.scopes (default read and write; `checks` or `checks:<name>` lets it
+ *     ask the build's declarative checks, mold_v0-224), and never a scope the minting key lacks (an area- or
+ *     check-narrowed key mints only sessions narrowed the same way or more);
  *   - its subject is the actor of every call made with it;
  *   - it is revocable, and goes with the key that minted it (revoking the key does not: expiry does; a revoked key's
  *     sessions are refused because the key is checked on each call).
@@ -14,6 +15,7 @@
  * checked against the session's own workspace (src/developer-api.ts).
  */
 import { createHash, randomBytes } from "node:crypto";
+import { findCheck } from "./checks.js";
 import { DEFAULT_SESSION_SCOPES, SESSION_SCOPES } from "./developer-config.js";
 import { ApiProblem, developerSurface } from "./developer-surface.js";
 import { getDb } from "./db.js";
@@ -46,6 +48,8 @@ export async function mintClientSession(orgId: number, keyId: number, keyScopes:
   const scopes = [...new Set(asked as string[])];
   for (const s of scopes) {
     if (!(SESSION_SCOPES as readonly string[]).includes(s.split(":")[0]!)) throw new ApiProblem(400, "invalid_scope", `${s.slice(0, 80)}: a client session holds only ${SESSION_SCOPES.join(", ")}`);
+    const [base, target] = s.split(":");
+    if (base === "checks" && target !== undefined && !findCheck(target)) throw new ApiProblem(400, "invalid_scope", `${s.slice(0, 80)}: ${target.slice(0, 64)} is not one of the checks`);
     if (!covers(allowed, s)) throw new ApiProblem(403, "scope_not_allowed", `${s.slice(0, 80)}: client sessions of this app hold at most ${allowed.join(", ")}`);
     if (!covers(keyScopes, s)) throw new ApiProblem(403, "scope_not_held", `${s.slice(0, 80)}: the key that mints the session does not hold it`);
   }

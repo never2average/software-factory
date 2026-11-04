@@ -79,6 +79,7 @@ sys.path.insert(0, os.path.join(S, "lib"))
 import lane_url   # target_url(infra): where the application lives, per deploy target (vercel, or a server of its own)
 import membership # who the deployed app will email a sign-in code to, read from its own database (mold_v1-245)
 import single_service   # a mold that ships as one service with its own compose stack: its own station readings (mold_v0-028)
+import ledger_key       # keys the app's profile needs, made by provision.py --generate-secret (mold_v0-227)
 import agent_result as AR, runs, services   # --json results, background runs, the rehearsal switch and call log
 PRIVATE = services.private_dir()   # FACTORY_PRIVATE_DIR, else ~/.cache/software-factory
 
@@ -157,6 +158,7 @@ def st_brand(app, a, i):
     return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
 
 MISSING_KEYS = {}   # app -> the key names st_keys found missing (for --json's needs)
+GENERATED_KEYS = {} # app -> those of them the factory makes (provision.py --generate-secret; mold_v0-227), never typed
 MISSING_ADMIN = {}  # app -> True when provision.py's check found no platform administrator, recorded or on the target
 def st_keys(app, a, i):
     if i.get("target") in ("vm_remote", "compose_remote"):
@@ -172,14 +174,19 @@ def st_keys(app, a, i):
     # A single-service app with nobody to run its admin console (no platform administrator in state, none on the API
     # project): the check stops for the operator, who names the address(es); never a key, so it is said in the chat.
     admin = MISSING_ADMIN[app] = single_service.ADMIN_MARK in out
+    GENERATED_KEYS[app] = []
     if r.returncode == 0: return DONE, (re.search(r"secrets present: \S+", out) or [""])[0] or "all present"
-    missing = list(dict.fromkeys(n for n in re.findall(r"--set-secret ([A-Z][A-Z0-9_]*)(?![\w)])", out) if n != "NAME"))   # not the usage line's "--set-secret NAME):"
+    found = re.findall(r"--(set|generate)-secret ([A-Z][A-Z0-9_]*)(?![\w)])", out)   # not the usage line's "--set-secret NAME):"
+    missing = list(dict.fromkeys(n for _, n in found if n != "NAME"))
+    gen = GENERATED_KEYS[app] = [n for n in missing if ("generate", n) in found]   # a key the app's profile needs (audit.sign): made, not typed
     MISSING_KEYS[app] = missing
+    made = (f"; {', '.join(gen)} is made on this machine, never typed (it writes a secret, so with your yes): "
+            + "; ".join(f"python3 .claude/scripts/provision.py {app} --generate-secret {n}" for n in gen)) if gen else ""
     if not missing and admin: return OPERATOR, single_service.admin_todo(app)
     if not missing: return FAILED, out.strip().splitlines()[-1][:220]
     if single_service.applies(a, ROOT):
-        return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)" + (f"; and {single_service.admin_todo(app)}" if admin else "")
-    return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)}. If another of your apps already runs: mint.py {app} reuse-keys <that_app>"
+        return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)" + made + (f"; and {single_service.admin_todo(app)}" if admin else "")
+    return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)}{made}. If another of your apps already runs: mint.py {app} reuse-keys <that_app>"
 
 def st_deploy(app, a, i):
     v = i.get("vercel") or {}; url = v.get("production_url")
@@ -867,6 +874,19 @@ def single_self_test():
         st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
         ok(st_[0] == OPERATOR and "CLERK_SECRET_KEY" in st_[1] and single_service.ADMIN_MARK in st_[1] and [x["name"] for x in nd] == ["CLERK_SECRET_KEY", "platform administrator address"],
            f"a key and the administrator both missing: both asked for: {st_} {nd}")
+        # mold_v0-227: audit.sign on -> the check prints a --generate-secret line, and the station asks for exactly that
+        # (a yes to make it here, never a value to type); off -> the check is ready and the station never mentions it
+        sig_out = (f"  required by this app's profile (audit.sign is on): APP_LEDGER_SIGNING_KEY on zz-api: not set (made on this machine, never typed)\n"
+                   f"  {ledger_key.command('zz', 'APP_LEDGER_SIGNING_KEY')}\n1 key(s) this app's profile needs are not made yet (APP_LEDGER_SIGNING_KEY)\n")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, sig_out, "")
+        st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
+        ok(st_[0] == OPERATOR and "APP_LEDGER_SIGNING_KEY" in st_[1] and "--generate-secret APP_LEDGER_SIGNING_KEY" in st_[1]
+           and [(x["name"], x["kind"]) for x in nd] == [("APP_LEDGER_SIGNING_KEY", "approval")] and "--generate-secret APP_LEDGER_SIGNING_KEY" in nd[0]["how"]
+           and "--set-secret" not in nd[0]["how"], f"audit.sign on: the keys station asks for the ledger key's --generate-secret line, never a typed value: {st_} {nd}")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, "  console sign-in name CLERK_SECRET_KEY (optional): set on zz\nReady. See the plan: x\n", "")
+        st_ = st_keys("zz", a, i)
+        ok(st_[0] == DONE and "LEDGER" not in st_[1] and not GENERATED_KEYS.get("zz"), f"audit.sign off: the station is done and never asks for the ledger key: {st_}")
+        MISSING_KEYS.pop("zz", None)
         i["target"] = "compose_remote"
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, f"Still to do:\n  - supply the server and the domain: x\n  - {single_service.admin_todo('zz')}\n", "")
         st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
@@ -1025,7 +1045,9 @@ def workspace_self_test():
 def needs_for(app, name, why):
     """What a person must give at an OPERATOR station, as `needs` entries with plain instructions."""
     if name == "keys":
-        keys = [{"kind": "secret", "name": k, "how": AR.secret_how(app, k)} for k in MISSING_KEYS.get(app) or []]
+        gen = set(GENERATED_KEYS.get(app) or [])   # made here with a yes, never typed (mold_v0-227)
+        keys = [{"kind": "approval", "name": k, "how": ledger_key.how(app, k)} if k in gen else {"kind": "secret", "name": k, "how": AR.secret_how(app, k)}
+                for k in MISSING_KEYS.get(app) or []]
         adm = [{"kind": "approval", "name": "platform administrator address", "how": single_service.admin_ask(app, (docs(app)[0] or {}))}] if MISSING_ADMIN.get(app) else []
         rest = "; ".join(x for x in (why or "").split("; ") if single_service.ADMIN_MARK not in x)   # anything else the server check still lists
         return keys + adm + ([] if keys or (adm and not rest) else [{"kind": "approval", "name": "server, domain and key name", "how": rest or why}])

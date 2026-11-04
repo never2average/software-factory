@@ -108,6 +108,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import vm_remote as VR   # the host probe, SSH/rsync argv, DNS check, key pair, hidden prompt, env file, firewall rules
 import clerk_mcp         # Clerk as the sign-in AI clients use on /mcp (mold_v0-116)
+import ledger_key as LK  # keys the factory makes because of the profile: APP_LEDGER_SIGNING_KEY with audit.sign (mold_v0-227)
 
 SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
@@ -557,7 +558,8 @@ def settings(app_id, app, infra, root=None):
          "project": (cr.get("compose") or {}).get("project") or f"sf-{slug(app_id)}",
          "compose_file": (cr.get("compose") or {}).get("file") or (man.get("compose") or {}).get("file", ""),
          "health_path": man.get("health_path", "/"), "secrets_user": list(infra.get("secrets_user") or []),
-         "secrets_optional": list(infra.get("secrets_optional") or []), "email": "", "admins": admins_of(app)}
+         "secrets_optional": list(infra.get("secrets_optional") or []), "email": "", "admins": admins_of(app),
+         "generated": LK.names_needed(app, root, man)}   # made by the deploy when the server lacks them (mold_v0-227)
     S["host_shown"] = S["ssh_host"] or S["host"] or VR.NO_HOST; S["domain_shown"] = S["domain"] or VR.NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"; S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/single_service.py"
@@ -985,6 +987,9 @@ def check(app_id, app, infra, adir, say=print, root=None):
     for i, st in enumerate(plan(S, F, source_for(app_id, app, root)), 1): say(f"  {i:2d}. {st['title']}")
     say(f"values only you hold, asked for at a hidden prompt during the deploy if the server lacks them: {', '.join(S['secrets_user']) or 'none'}")
     say(f"minted on the server by the mold's own {F['mint']} (not yours to set): {', '.join(n for n in F['required'] if n not in F['config'])}")
+    for n in S.get("generated") or []:
+        say(f"required by this app's profile (audit.sign is on): {n}, made on this machine by the deploy when the server lacks it (never typed, "
+            f"never shown; only its public half is printed). After the first deploy, by hand: {LK.command(app_id, n)}")
     if S["secrets_optional"]:
         say(f"optional, off while empty; set one any time with --set-secret NAME (it applies at the next deploy): {', '.join(S['secrets_optional'])}")
     todo = []
@@ -1062,6 +1067,9 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         have = set((run("names").stdout or "").split())
         missing = [n for n in S["secrets_user"] if not has_value(n, have, F.get("aliases"))]
         vals = (secrets_for or (lambda m: VR.collect_secrets(S["app_id"], m)))(missing) if missing else {}
+        made = {}   # the profile's keys (mold_v0-227): made here when the server lacks them, never overwritten
+        for n in [n for n in S.get("generated") or [] if not has_value(n, have, F.get("aliases"))]:
+            vals[n] = LK.for_deploy(made, n, say=say)
         for k, v in vals.items():
             if "$" in v: raise Stop(f"{k} contains a $ sign, which the compose env file would read as a variable; nothing was sent. Check the value.")
         run("release-dir"); run("source")
@@ -1102,7 +1110,7 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         health = {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
                   "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}
         if F.get("console"): health.update(console=kv.get("CONSOLE_STATE", ""), console_uid=kv.get("CONSOLE_UID", ""), pages={p: c[0] for p, c in pages.items()})
-        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs}
+        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs, "ledger_keys": made.get("ledger_keys") or []}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1113,6 +1121,7 @@ def _read_public(url):
 def record(adir, app, infra, S, res, mold_commit, save_fn=save):
     cr = infra.setdefault("compose_remote", {})
     cr["production_url"] = f"https://{S['domain']}"; cr["health"] = res["health"]; cr["release"] = res["release"]
+    for k in res.get("ledger_keys") or []: LK.record(infra, k["name"], k["public_key"], k["kid"], k.get("how", "generated at the deploy"))   # public halves only
     infra["deployed_at"] = now()
     app["status"] = "stamped" if app.get("status") in (None, "planned", "stamping", "reverted") else app["status"]
     app.pop("revert", None)
@@ -1707,6 +1716,12 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, held[r], F.get("aliases")) for r in project_for(F, K, n))]
     gap = admin_gap(man, app, held["api"])     # names only: an administrator variable already on the api project is kept
     if missing: P.ask_nicely_for(app_id, missing)
+    gen = generated_missing(app, F, man, held["api"], root)   # the profile's keys (mold_v0-227): never deployed without them
+    if gen:
+        import agent_result as AR
+        for n in gen: AR.need("approval", n, LK.how(app_id, n))
+        raise NeedsHuman(f"{app_id}: this app's profile (audit.sign) needs {', '.join(gen)}, not made yet; make it with "
+                         + " and ".join(LK.command(app_id, n) for n in gen) + "; nothing was created or deployed.")
     if gap: need_admins(app_id, app)
     if missing or gap:
         raise NeedsHuman(f"{app_id}: " + "; ".join(([f"{', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}"] if missing else [])
@@ -1884,10 +1899,19 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     pre = console_preflight(K)
     for p in pre: say("  not ready: " + p)
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
+    gen = generated_missing(app, F, man, present["api"], root)
+    for n in LK.names_needed(app, root, man):
+        say(f"  required by this app's profile (audit.sign is on): {n} on {names['api']}: {'not set' if n in gen else 'set'} (made on this machine, never typed)")
     if missing:
         for n in missing:
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
-        say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+    for n in gen:
+        say(f"  {LK.command(app_id, n)}"); AR.need("approval", n, LK.how(app_id, n))
+    if missing or gen:
+        if missing: say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine.")
+        if gen: say(f"{len(gen)} key(s) this app's profile needs are not made yet ({', '.join(gen)}): each {LK.GENERATE_FLAG} line above makes one here and "
+                    f"writes it to {names['api']}, printing only its public half (it writes a secret, so it needs the operator's yes).")
+        return 1
     if gap: say(f"Not ready: {admin_ask(app_id, app)}"); return 1
     if ck and ck["block"]:
         say(f"Not ready: {clerk_block(app_id, P, ck)}. Member API keys are off for {app_id} (profile member_keys: false), so nothing else lets an AI client connect."); return 1
@@ -1899,6 +1923,54 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
         say(f"  - install the mold's dependencies first (the database emptiness check uses its own `pg` client): npm --prefix {os.path.relpath(cb, root or ROOT)} ci"); return 1
     say(f"Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
     return 0
+
+def generated_missing(app, F, man, held, root=None):
+    """The keys the app's profile needs (mold.json profile_secrets; APP_LEDGER_SIGNING_KEY with audit.sign) not on `held`."""
+    return [n for n in LK.names_needed(app, root, man) if not has_value(n, held, F.get("aliases"))]
+
+def generate_secret(app_id, app, infra, adir, a, P, say=print, root=None, runner=None, read_json=None):
+    """`--generate-secret NAME [--rotate]` (mold_v0-227): a key the app's profile needs, made on this machine and written
+    to the app's own target (its API project on Vercel; its server's env file), only its public half printed."""
+    i = a.index(LK.GENERATE_FLAG)
+    name = a[i + 1] if i + 1 < len(a) and not a[i + 1].startswith("-") else ""
+    if not name: raise Stop(f"{LK.GENERATE_FLAG} needs the key's name, e.g. {LK.command(app_id, 'APP_LEDGER_SIGNING_KEY')}")
+    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man)
+    rotate = "--rotate" in a
+    if "--dry-run" in a:
+        spec = LK.declared(app["mold_id"], root, man).get(name)
+        say(f"{app_id}: {LK.GENERATE_FLAG} {name} --dry-run: " + (f"would make a new Ed25519 key on this machine and write it to the app's "
+            f"{'API project' if infra.get('target') == 'vercel' else 'server env file'}" + (" (publishing the old public keys first)" if rotate else ", only if it holds none")
+            + "; nothing was made or written." if spec else f"{name} is not a key the factory makes; nothing was done.")); return 0
+    sv = (lambda inf: save(os.path.join(adir, "infrastructure.json"), inf)) if adir else None
+    if infra.get("target") == "vercel":
+        refuse_project(app_id, infra, P, root)
+        spec = LK.declared(app["mold_id"], root, man).get(name) or {}
+        role = spec.get("project", "api"); team = (infra.get("vercel") or {}).get("team", "")
+        names = choose_names(app_id, infra, cb, P, adir=None, say=say, root=root); proj = names[role]
+        exists = bool(P._project_meta(proj, cb).get("id"))
+        def write(pairs):
+            if ensure_project(proj, team, cb, P): say(f"  (created {proj} empty to hold {name}: free, no deployment)")
+            for k, v in pairs: P._set_env(k, v, cb, project=proj)
+        tgt = LK.Target(lambda: P.vercel_env_names(cb, proj) if exists else set(), write, f"the Vercel project {proj}",
+                        url=(infra.get("vercel") or {}).get("api_url"), held=lambda n, have: has_value(n, have, F.get("aliases")))
+    else:
+        S = settings(app_id, app, infra, root)
+        if not infra.get("deployed_at"):
+            raise Stop(f"{app_id} has not been deployed to its server yet, so it has no env file to hold {name}. Its first deploy makes the key "
+                       f"itself when the profile needs it: python3 .claude/scripts/provision.py {app_id} --deploy-remote. Nothing was made or written.")
+        _ready_to_contact(S, app_id); run = runner or VR.real_runner
+        def names_():
+            r = run({"id": "names", "argv": VR.ssh_argv(S, f"{S['sudo']}python3 {S['vr_tool']} env-names --file {S['env_file']}"), "timeout": 60}, None)
+            if r.returncode: raise Stop("could not read the names on the server: " + VR.redact((r.stderr or r.stdout or "").strip())[-200:] + ". Nothing was written.")
+            return set((r.stdout or "").split())
+        def write(pairs):
+            st = {"id": "set-secret", "argv": VR.ssh_argv(S, VR.guarded(S, f"python3 {S['vr_tool']} env-merge --file {S['env_file']}")), "timeout": 60}
+            r = run(st, "".join(f"{k}={v}\n" for k, v in pairs))   # on stdin, never in the command
+            if r.returncode: raise Stop(f"{', '.join(k for k, _ in pairs)} not stored: " + VR.redact((r.stderr or r.stdout or "").strip())[-200:])
+        tgt = LK.Target(names_, write, f"the server's env file ({S['env_file']})", url=(infra.get("compose_remote") or {}).get("production_url"),
+                        held=lambda n, have: has_value(n, have, F.get("aliases")))
+    try: return LK.generate_secret(app_id, app, infra, name, tgt, rotate=rotate, say=say, root=root, man=man, read_json=read_json, save=sv)
+    except LK.Refused as e: raise Stop(str(e))
 
 def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=None, say=print):
     """One value, at a hidden prompt, onto the project(s) that read NAME: the API when it reads it, the console when it
@@ -1975,6 +2047,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             for f in ("--deploy-remote", "--set-remote", "--remote-key", "--qualify-remote", "--rollback-remote"):
                 if f in a: raise Stop(f"{app_id}: {f} is for an app on a server of its own; this one is on Vercel. Use --deploy.")
             refuse_project(app_id, infra, P, root)   # a LIVE project or another app's (either of the two): refused before any read or write
+            if LK.GENERATE_FLAG in a: return generate_secret(app_id, app, infra, adir, a, P, say=say, root=root)
             if "--set-secret" in a: return set_secret_vercel(app_id, app, infra, a[a.index("--set-secret") + 1], P, root=root, adir=adir, say=say)
             if "--deploy" in a:
                 if errs: raise Stop("the state does not validate; nothing was done:\n  " + "\n  ".join(errs))
@@ -2003,6 +2076,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                               ("--workspace-remote", "the app's own admin console or --lane-key")):
             if flag in a and not (flag == "--deploy" and "--deploy-remote" in a) and not (flag == "--rollback" and "--rollback-remote" in a):
                 say(f"{app_id}: {flag} is not for this app (its own compose stack). Use: python3 .claude/scripts/provision.py {app_id} {instead}"); return 1
+        if LK.GENERATE_FLAG in a: return generate_secret(app_id, app, infra, adir, a, P, say=say, root=root)
         if "--set-secret" in a: return set_secret_remote(app_id, S, a[a.index("--set-secret") + 1], P, say=say)
         if "--rollback-remote" in a: return rollback_remote(app_id, S, F, dry=dry, say=say)
         if "--qualify-remote" in a:

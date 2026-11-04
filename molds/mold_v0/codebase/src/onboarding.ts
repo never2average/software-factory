@@ -11,7 +11,9 @@
  *   workspace          the workspace exists (done from the start)
  *   connected          an MCP client connected (initialize)
  *   first_call         any tool call succeeded
- *   tool:<name>        a call of that tool succeeded (a shell tool, list_records/get_record, or any pack's)
+ *   tool:<name>        a call of that tool succeeded (a shell tool, list_records/get_record, or any pack's); for a
+ *                      declarative check's tool (check_<name>, mold_v0-225) an answer at any door: the tool, /api/checks
+ *                      or /v1/checks (src/checks.ts recordCheckAnswered)
  *   credential:<name>  a value of that credential field of the pack is set (any asset or environment)
  *   record:<area>      a record exists in that workspace-scope area of the pack
  *   run:<kind>         a run of that job kind of the pack succeeded
@@ -35,6 +37,9 @@ export function onboardingSteps(): OnboardingStep[] {
   return cache.list;
 }
 
+/** The events that make a tool:<name> step done: a tool call, or a declarative check answered at an HTTP door (mold_v0-225). */
+const TOOL_METHODS = "'tools/call', 'check/answer'";
+
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
 
 /** When the condition first held for workspace `orgId` (an ISO time), or null while it does not. */
@@ -48,7 +53,7 @@ async function doneAt(orgId: number, s: OnboardingStep): Promise<string | null> 
       case "workspace": return one("SELECT created_at AS at FROM organizations WHERE id = $1", [orgId]);
       case "connected": return one("SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method = 'initialize'", [orgId]);
       case "first_call": return one("SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok", [orgId]);
-      case "tool": return one("SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok AND name = $2", [orgId, arg]);
+      case "tool": return one(`SELECT min(at) AS at FROM mcp_events WHERE org_id = $1 AND method IN (${TOOL_METHODS}) AND ok AND name = $2`, [orgId, arg]);
       case "record": return one("SELECT min(created_at) AS at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3", [orgId, s.pack, arg]);
       case "run": return one("SELECT min(ended_at) AS at FROM runs WHERE org_id = $1 AND pack = $2 AND kind = $3 AND status = 'succeeded'", [orgId, s.pack, arg]);
       default: return null; // refused when the pack loads (src/pack-api.ts): never reached
@@ -85,7 +90,7 @@ export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, 
       SELECT org_id, pack AS a, area AS b, min(created_at) AS at FROM workspace_records WHERE org_id IS NOT NULL AND pack = ANY($1::text[])
         AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, pack, area`, [packsOf("record")]),
     q("tool", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
-      SELECT org_id, '' AS a, name AS b, min(at) AS at FROM mcp_events WHERE method = 'tools/call' AND ok AND name = ANY($1::text[])
+      SELECT org_id, '' AS a, name AS b, min(at) AS at FROM mcp_events WHERE method IN (${TOOL_METHODS}) AND ok AND name = ANY($1::text[])
         AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, name`, [by("tool").map((s) => s.done_when.slice(5))]),
     q("credential", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
       SELECT org_id, pack AS a, name AS b, min(created_at) AS at FROM workspace_credentials WHERE pack = ANY($1::text[])

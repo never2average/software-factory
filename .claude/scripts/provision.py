@@ -2,6 +2,10 @@
 """Provision: validated application state -> running deployment.
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]   [--json]
+  provision.py <app_id> --generate-secret NAME [--rotate] [--dry-run]   a key the app's profile needs (mold.json
+                                                           profile_secrets; APP_LEDGER_SIGNING_KEY with audit.sign): made
+                                                           here, written to the app's target, only its public half printed
+                                                           (lib/ledger_key.py, mold_v0-227). Writes a secret: ask first
   provision.py <app_id> --deploy --background [--json]     start the deploy detached; returns at once (also --deploy-remote)
   provision.py <app_id> --deploy [--allow-unverified-mold "<reason>"]   deploy a mold commit whose CI is not green (recorded)
   provision.py <app_id> --rollback [--json]                every project back to its previous production deployment (Vercel)
@@ -63,6 +67,12 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
   trusted caller, which sets FACTORY_SECRET_FROM_STDIN=1 (mint.py reuse-keys, copying values it read in memory).
   On a vercel app whose projects do not exist yet, it CREATES them first (three empty, free projects
   with no deployment — the value needs somewhere to live) and says so before it does.
+--generate-secret NAME: for a key nobody holds in an account (today APP_LEDGER_SIGNING_KEY, required while the app's
+  profile has audit.sign on). The key is made on this machine and goes straight to the deploy target (Vercel's API
+  project, or the server's env file on stdin); it is never printed, logged, stored in state or put on a command line.
+  An existing key is never overwritten without --rotate; a rotation first publishes every earlier public key under
+  APP_LEDGER_PUBLIC_KEYS, so older checkpoints still verify. A compose_remote deploy makes it itself when the server
+  lacks it.
 --deploy: prints the plan — EVERYTHING the run creates, writes or rotates, in the order it happens: the
   projects, the database resource, the Blob store, the minted env, the build-time env writes, the
   TASK_WORKFLOW_SERVICE_TOKEN mint, the schema bring-up with its app_rw password rotation, the three
@@ -3467,6 +3477,7 @@ def self_test():
     org_one.self_test(check)                             # org #1 for a mold that reads it (DEFAULT_ORG_ID / DEFAULT_ORG_DOMAIN)
     self_test_single(check)                              # a single-service mold (mold_v0-028): the hand-off and its own module
     self_test_build_caches(check)                        # a typecheck's build cache never refuses an in-tree deploy (mold_v0-153)
+    self_test_ledger_key(check)                          # --generate-secret and the profile's keys (mold_v0-227)
     import migration_rehearsal                           # --rehearse-migrations (mold_v0-142): a stand-in Neon API and runner
     check("lib/migration_rehearsal.py --self-test passes (copy, rehearse, delete; plan, yes, key, lock, failures)", migration_rehearsal.self_test() == 0)
     if fails:
@@ -3475,6 +3486,19 @@ def self_test():
           f"--json, exit codes, the deploy lock, --background and status, a piped secret refused; "
           f"release: the mold CI gate, rollback on a failed health check or smoke test, promote after a rollback, --rollback; "
           f"a single-service mold's hand-off and lib/single_service.py)")
+
+def self_test_ledger_key(check):
+    """mold_v0-227: APP_LEDGER_SIGNING_KEY is required while audit.sign is on, made by --generate-secret (never printed),
+    and refused for a mold that declares none. The Vercel and server paths are in lib/single_service_selftest.py."""
+    import ledger_key
+    check("lib/ledger_key.py --self-test passes (the profile switch, the key, never printed, no overwrite, rotation)", ledger_key.self_test() == 0)
+    check("--generate-secret is its own action in the run log", _action(["x", "--generate-secret", "APP_LEDGER_SIGNING_KEY"]) == "generate-secret")
+    src = open(os.path.abspath(__file__)).read()
+    check("--generate-secret on a mold that declares no generated key is refused before --set-secret's writer",
+          src.index('if "--generate-secret" in a:\n        # mold_v0-227') < src.index('    if "--set-secret" in a:\n        return set_secret('))
+    st = json.load(open(os.path.join(ROOT, ".claude", "settings.json")))
+    check("--generate-secret asks first in .claude/settings.json, like --set-secret (it writes a secret)",
+          all(f"Bash(python3 {d}/scripts/provision.py * --generate-secret*)" in st["permissions"]["ask"] for d in (".claude", ".agents")))
 
 def self_test_build_caches(check):
     """mold_v0-153: `npm run typecheck` writes web/tsconfig.tsbuildinfo inside an in-tree mold's codebase. That cache (and
@@ -3971,6 +3995,11 @@ def _main(a):
             sys.exit(smoke_now(app_id, app, infra, adir, "vercel"))   # exit 0 pass, 1 fail (its docstring); a bare return exited 0
     elif "--rollback" in a or "--smoke" in a:
         sys.exit(f"{app_id}: --rollback and --smoke are for an app that serves traffic (Vercel, or its own server); this one's target is {target!r}.")
+    if "--generate-secret" in a:
+        # mold_v0-227: only a mold that declares profile-generated keys (mold.json profile_secrets) has any; today mold_v0,
+        # whose apps were handed to lib/single_service.py above.
+        sys.exit(f"{app_id}: the {app['mold_id']} mold declares no key the factory makes (mold.json profile_secrets), so nothing was made or "
+                 f"written. A value only you hold is set with: python3 .claude/scripts/provision.py {app_id} --set-secret NAME")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if "--verify-rls" in a:
@@ -4255,7 +4284,7 @@ def _main(a):
 DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback", "--rollback-remote")   # each under the app's deploy lock
 def _action(a):
     a = a[:a.index("--")] if "--" in a else a
-    for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
+    for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--generate-secret", "generate-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
                    ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke"),
                    ("--google-hub", "google-hub"), ("--google-signin", "google-signin"), ("--rehearse-migrations", "rehearse-migrations")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")

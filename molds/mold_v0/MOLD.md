@@ -2629,7 +2629,8 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
 - **SDKs** (`npm run gen:sdks`, `scripts/gen-sdks.ts`, `scripts/lib/sdk-gen.ts`): from the build or a running server's
   `/openapi.json`, into `dist/sdk/` (git-ignored): one JavaScript/TypeScript package (ESM with its `.d.ts`, no build step
   or dependency) and one Python package (standard library, TypedDicts), each sending an Idempotency-Key per write and
-  retrying safely, errors as `ApiError` with the problem's `code`. `--publish-dry-run` shows what `npm pack` and the
+  retrying safely, errors as `ApiError` with the problem's `code`; when a check buckets (mold_v0-226), both carry the
+  server's bucket function (`bucket`, `inRollout`/`in_rollout`; "Declarative checks"). `--publish-dry-run` shows what `npm pack` and the
   Python package would hold; publishing is the operator's own step with their yes, never from here.
 - **Keys** (`src/developer-keys.ts`, `developer_keys`): a workspace's keys for its own servers, made by its owners on
   `/api/developer/keys` (`src/developer-routes.ts`): `sk_`, shown once (the sha256 kept, and the first 9 characters to
@@ -2639,7 +2640,8 @@ surface unchanged (`npm run test:developer-surface` step 1; the zero-pack MCP ha
   `X-Scope` narrows to fewer scopes; `X-Actor` (keys only) names the backend's signed-in user the call is for, recorded
   as the actor on the platform audit hook and on the events the call causes.
 - **Client sessions** (`src/developer-sessions.ts`): `cs_` tokens a backend mints with a key holding `sessions`
-  (`POST /v1/client_sessions` {subject, scopes, ttl_seconds}): at most the app's ttl and session scopes and never beyond
+  (`POST /v1/client_sessions` {subject, scopes, ttl_seconds}): at most the app's ttl and session scopes (`read`, `write`,
+  `run` and, since mold_v0-224, `checks`, each narrowable: `checks:<name>` asks one check from a page) and never beyond
   the minting key's; the subject is the actor; revocable, and dead with their key. A browser calls only from an origin
   allowed for the session's workspace (the app's `allowed_origins` and the workspace's own, `/v1/allowed_origins`);
   a key sent with an `Origin` is refused (`secret_key_in_browser`).
@@ -2863,21 +2865,64 @@ code: `src/check-spec.ts` (the declaration and its build checks), `src/check-eva
   op one of `eq`, `ne`, `in`, `not_in`, `gt`, `gte`, `lt`, `lte` (numbers and dates), `within` (`{last|next: "30d",
   of?}`), `exists`, `has` (a list field). Values: literals, `$input`, `$input|now`, `now`, `now-30d`, `@field`,
   `@<as>.field`; `$$` starts a literal `$`. An absent optional input makes its condition fail (closed).
+- **Percentage bucketing** (mold_v0-226): a condition `{"bucket": {"input": "$subject", "salt": "$name", "percent":
+  "@share"}}`. The bucket is SHA-256 of the UTF-8 text `<salt>:<input>`, its first 4 bytes read as a big-endian
+  unsigned 32-bit integer, mod 10000 (`src/check-spec.ts` `bucketOf`); it holds when that is below
+  `floor(percent x 100 + 0.5)`. `input` is a string input or a text field; `salt` a literal, a string input or a text
+  field (default the check's name); `percent` a number 0 to 100, a number input or a number field. Stable across runs,
+  machines and languages: 0 holds for no one, 100 for everyone, a larger percent keeps everyone a smaller one held, two
+  salts bucket independently. An absent input, salt or percent fails closed; the explanation shows the bucket and the
+  threshold. The SDKs ask the server for answers (they never evaluate a check), and when a check buckets they carry
+  the same function for the client's own use: `bucket(input, salt)` and `inRollout` / `in_rollout(input, salt,
+  percent)` (`scripts/lib/sdk-gen.ts`, the document's `x-sdk.bucketing`).
+- **A fallback across areas** (mold_v0-226): `"rule": {"first_of": [step, step]}` (2 to 4 steps, each a rule as above).
+  The first step whose latest matching record exists, and meets the step's `when` when it has one, decides with its
+  `require`; a step with no such record passes to the next; the last step decides when none before it did. For "this
+  subject's own record in area A if a current one exists, else the latest record of area B":
+
+  ```json
+  "rule": { "first_of": [
+    { "area": "<area_a>", "match": { "subject": "$subject", "item": "$item" }, "latest_by": "recorded_at",
+      "when": [{ "any": [{ "field": "until", "exists": false }, { "field": "until", "gt": "now" }] }],
+      "require": [{ "field": "enabled", "eq": true }] },
+    { "area": "<area_b>", "match": { "item": "$item" }, "latest_by": "recorded_at",
+      "require": [{ "field": "enabled", "eq": true },
+                  { "bucket": { "input": "$subject", "salt": "$item", "percent": "@share" } }] } ] }
+  ```
+
+  The answer's reason says why each earlier step passed ("no ... record matches", "... does not apply: ...") and what
+  decided; the explanation adds `decided_by_area` and `steps` (each area with `decided`, `no_record`,
+  `not_applicable` and its `when` conditions, or `not_reached`), the deciding step's conditions as before;
+  `record_refs` are the deciding step's records. `GET /api/checks` lists a fallback's areas (`first_of`), the MCP
+  tool's description names each, and `checkHints()` gives one index hint per step.
 - **Refused at build** (gen-packs and `installPacks`, `checksProblems`): unknown areas, fields and inputs; type
   mismatches (an input or literal against its field, an enum value not an option, an operator a type does not take);
   unbounded scans (an empty match, or one resting on an optional input); `latest_by` not a date or number; a lookup
   named like a field or of a workspace area from a shared one; an any-record rule the database cannot find by itself
-  (groups, lookups, `not_in`, field-to-field comparisons need `latest_by`); a name twice; a `check_<name>` tool name taken.
+  (groups, lookups, `not_in`, field-to-field comparisons, buckets need `latest_by`); a name twice; a `check_<name>`
+  tool name taken; a bucket whose input is a literal or not text, whose salt is not text, whose percent is not a
+  number from 0 to 100 (or a number input or field); a `first_of` of fewer than 2 or more than 4 steps, a step before
+  the last without `latest_by`, a `when` on the last step or outside a `first_of`, and each step's own areas, fields and
+  inputs as above.
 - **Answers.** `POST /api/checks/<name>` (the console's session with `X-Pack-Request` on a cookie, or an MCP key `oct_`),
   `GET /api/checks`; `POST /v1/checks/<name>` and `GET /v1/checks` on the developer surface (mold_v0-193) with a key
   or client session holding `checks` or `checks:<name>` (a client session never beyond its key; `/openapi.json` and
-  the SDKs list each check); the MCP tool `check_<name>` (read-only). Each returns `{check, allowed, reason,
+  the SDKs list each check). A client session holds a check scope only when `developer_surface.client_sessions.scopes`
+  allows it (mold_v0-224): `read`, `write`, `run` or `checks`, each maybe narrowed, one pattern for the pack schema,
+  the app spec's schema and the runtime (`src/developer-config.ts` `SESSION_SCOPE_PATTERN`); the build refuses a
+  `checks:<name>` naming no check of the build (and `read:<area>`/`write:<area>` naming no area, `run:<kind>` no kind),
+  and minting refuses one too; the MCP tool `check_<name>` (read-only). Each returns `{check, allowed, reason,
   record_refs, explanation?}`; the explanation (unless `explain: false`) lists every condition evaluated (field, op,
   expected, actual, passed, in words) and `decided_by`, the ones that decided it, plus the index hint.
 - **Safety.** Records are read only through the record store for the caller's workspace (`listFor`/`getFor`: row-level
   security, the area's read permission for the caller's role, sealed areas opened with the workspace's key, the data
   trail's one entry per read), so another workspace's records never answer. Nothing mounted and no tool listed with no
   check (the zero-pack MCP surface stays `4e3e14917286b00c`).
+- **Onboarding** (mold_v0-225): a step `done_when: "tool:check_<name>"` (or `how`) names the check's tool and is
+  accepted with the check (refused without it). It is done once that check was answered for the workspace by any
+  door: the MCP tool's call is recorded as every tool call is; an answer at `/api/checks` or `/v1/checks` is recorded
+  once per workspace and check as an `mcp_events` row `check/answer` under the tool's name (`recordCheckAnswered`:
+  never an input, a value or the outcome; a refused question is no answer). The admin funnel reads it the same way.
 - **Audit.** With `audit.platform` on, each answer is one platform-trail entry (`method` CHECK, `path`
   `/checks/<name> allowed|denied`, the asker, the latency): never an input or a value (`src/audit-trail.ts`
   `auditCheckAnswer`).
@@ -2889,8 +2934,13 @@ code: `src/check-spec.ts` (the declaration and its build checks), `src/check-eva
 
 Proof: `npm run test:checks` (the fixture `scripts/fixtures/packs/fixture_checks`: granted, withdrawn, expired,
 latest-wins both ways, a lookup, an any-record rule, a cross-workspace attempt denied at every door; property tests on
-the evaluator; 25 refused declarations; scopes on keys and client sessions; the audit entry; a median answer of about
-12 ms over 3,000 records on the embedded database).
+the evaluator; 44 refused declarations; scopes on keys and client sessions; the audit entry; a median answer of about
+12 ms over 3,000 records on the embedded database; mold_v0-226: a fallback whose first area decides when a current
+record exists, allowing or denying, and passes when it is expired or absent, with each step explained; bucketing equal
+to an independent SHA-256 in Python and to both SDKs' copies, uniform within 3% over 100,000 ids, each percent within
+half a point, 0% and 100% exact; the answers recorded once for onboarding), `npm run test:developer-surface` (a client
+session holding `checks:<name>` asks that check from a browser and nothing else; the schema, the build and minting
+agree), `npm run test:onboarding` (a step `tool:check_<name>`, done by an answer at an HTTP door or the MCP tool).
 
 ## Chain and sign (mold_v0-195)
 
@@ -2922,8 +2972,12 @@ The audit trails' entries, and the records of a pack's record area declared `"ap
   (`ledger_checkpoints`, append-only, per workspace under row-level security). **A tampered window is refused, never
   certified**: nothing is written and the scheduler logs why.
 - **The key**: `APP_LEDGER_SIGNING_KEY` in the app's environment (a 32-byte seed, hex or base64, or a PKCS#8 PEM), set by
-  name (`provision.py <app> --set-secret APP_LEDGER_SIGNING_KEY`; `npm run ledger:keygen -- --out <file>` makes one and
-  prints only its public half). Never printed, never sent to the database: a key the database role can read (a database
+  name. The factory makes it (mold_v0-227, `mold.json` `profile_secrets`): its check and the keys station require it while
+  `audit.sign` is on, `provision.py <app> --generate-secret APP_LEDGER_SIGNING_KEY` makes one on the factory machine,
+  writes it to the target and prints only its public half (`--rotate` replaces it, keeping the old public key in
+  `APP_LEDGER_PUBLIC_KEYS`), and a server's first deploy makes it when the server lacks it (the compose file hands both
+  names to the API). By hand: `npm run ledger:keygen -- --out <file>` makes one and prints only its public half, then
+  `--set-secret`. Never printed, never sent to the database: a key the database role can read (a database
   or role setting, a Key vault provider serving that name) is refused and nothing is signed. Its public key, and retired
   ones (`APP_LEDGER_PUBLIC_KEYS`), are published at **`/.well-known/ledger-keys.json`**.
 - **Verify**: a workspace's owners, `GET /api/ledger/verify[?stream=]` and the MCP tool `verify_audit_trail`: ok, or the

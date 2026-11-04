@@ -41,8 +41,9 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
       "- `run`: start and cancel runs",
       "- `sessions`: mint client sessions for your signed-in users and manage the browser origins they may call from",
       "- `webhooks`: manage webhook endpoints and inbound sources",
+      "- `checks`: ask the app's yes/no questions (`POST /v1/checks/<name>`)",
     ].join("\n"),
-    "`read`, `write` and `run` may be narrowed to one area or kind, like `read:<area>` or `run:<kind>`. An **integration key** holds exactly one scope: give one to each importer or tool so it can do that one thing. A key may expire; **rotate** it to get a new one while the old one keeps working for a grace period (a day unless you choose otherwise).",
+    "`read`, `write`, `run` and `checks` may be narrowed to one area, kind or question, like `read:<area>`, `run:<kind>` or `checks:<name>`. An **integration key** holds exactly one scope: give one to each importer or tool so it can do that one thing. A key may expire; **rotate** it to get a new one while the old one keeps working for a grace period (a day unless you choose otherwise).",
     "Send the key in a header from your server, never from a browser or a phone app:",
     fence("http", "Authorization: Bearer sk_..."),
     "## Acting for your signed-in user",
@@ -74,9 +75,12 @@ export function developerGuidePages(cfg: Cfg, areas: Area[], kinds: Kind[], vers
     "A browser or a phone app never holds a key. Your backend mints a **client session** for one of its signed-in users with a key that holds `sessions`, and hands the token to the client:",
     fence("bash", `curl -s -X POST "$API/v1/client_sessions" \\\n  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \\\n  -d '{"subject": "user-123", "scopes": ["read"], "ttl_seconds": 900}'`),
     `It answers \`{id, token, expires_at, scopes}\`. The token (\`cs_...\`) lives at most ${ttl} seconds and holds at most ${(cfg.client_sessions.scopes ?? ["read", "write"]).map(code).join(", ")} (never more than the key that minted it). Revoke one early with \`DELETE /v1/client_sessions/<id>\`.`,
+    (cfg.client_sessions.scopes ?? []).some((x) => x === "checks" || x.startsWith("checks:"))
+      ? "A session holding `checks` (or `checks:<name>`, one question) asks the app's yes/no questions from the page itself (`POST /v1/checks/<name>`), never more than the key that minted it holds."
+      : "",
     "A page calls the API from the origins allowed for your workspace: these for every workspace, and those your owners add (`/v1/allowed_origins`). A request from any other origin, or a key sent from a browser, is refused.",
     cfg.client_sessions.allowed_origins.map((o) => `- ${o}`).join("\n"),
-  ].join("\n\n")));
+  ].filter(Boolean).join("\n\n")));
 
   const ev = cfg.events.map((e) => `- ${code(e.name)}: ${e.description}${e.areas?.length ? ` (areas ${e.areas.map(code).join(", ")})` : ""}`).join("\n");
   out.push(page("Webhooks", [

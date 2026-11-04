@@ -32,7 +32,7 @@ import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { CheckSchema } from "./check-spec.js";
 import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
-import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES } from "./developer-config.js";
+import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
@@ -180,7 +180,7 @@ const DeveloperSurfaceSchema = z.object({
   client_sessions: z.object({
     ttl_seconds: z.number().int().min(60).max(86400).default(3600),
     allowed_origins: z.array(z.string().regex(/^https:\/\/[a-z0-9.-]+(:[0-9]{2,5})?$/, "an https origin like https://app.example.com")).min(1).max(50),
-    scopes: z.array(z.string().regex(/^(read|write|run)(:[a-z][a-z0-9_]{0,63})?$/, "read, write or run, or one narrowed like read:<area>")).max(50).optional(),
+    scopes: z.array(z.string().regex(SESSION_SCOPE_PATTERN, "read, write, run or checks, or one narrowed like read:<area> or checks:<check>")).max(50).optional(),
   }).strict(),
   webhooks_in: z.array(z.object({
     name: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "lowercase letters, digits and _"),

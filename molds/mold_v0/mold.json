@@ -106,6 +106,15 @@
       }
     }
   },
+  "profile_secrets": {
+    "$comment": "Secrets the factory MAKES for an app because its profile turns a feature on (mold_v0-227; .claude/scripts/lib/ledger_key.py). Never typed and never another app's: required while `when` (a dotted path in the app's effective profile) is true, so provision.py's check and mint.py's keys station ask for `provision.py <app> --generate-secret NAME`, which makes the key on the factory machine, writes it to the deploy target (Vercel: `project`; a server: its env file) and prints only its public half. A compose_remote deploy makes it when the server lacks it. An existing key is replaced only with --rotate, which first publishes the old public keys under `retired_public_keys`, so earlier checkpoints still verify.",
+    "APP_LEDGER_SIGNING_KEY": {
+      "when": "audit.sign",
+      "generate": "ed25519_seed",
+      "project": "api",
+      "retired_public_keys": "APP_LEDGER_PUBLIC_KEYS"
+    }
+  },
   "mcp_sign_in": {
     "$comment": "How AI clients sign in on /mcp (mold_v0-116; .claude/scripts/lib/clerk_mcp.py). builtin: the file that makes the shell its own OAuth server under its built-in sign-in. clerk: the API is on Clerk when `secret` is set (and `provider_env` does not say builtin; src/auth-provider.ts); it finds Clerk's Frontend API, where clients sign in, from `frontend_api_env` (a Clerk proxy's address: the operator's own, never written by the factory) or a publishable key (src/clerk.ts frontendApi). On Vercel the deploy copies the console's publishable key (`publishable.web`, public by design) onto the api project as `publishable.api` at every deploy while the API is on Clerk (a server deploy already passes it to the API through the compose file). provision.py's check reads Clerk's /.well-known/oauth-authorization-server: no registration_endpoint and no client_id_metadata_document_supported means no AI client can register itself, an operator step in Clerk's dashboard; it stops the check (exit 3) only when member keys are off (profile member_keys: false), since then nothing else lets a client connect. member_keys: false is refused at validation when neither file in branding/rules.json profile.member_keys_off.mcp_sign_in_any is in the codebase.",
     "builtin": "src/mcp-oauth.ts",
