@@ -5,5 +5,5 @@ import { features } from './features.generated';
 
 export type FeatureId =
   | 'customer_key_vault' | 'company_email' | 'scheduled_alerts' | 'record_clocks' | 'audit.data' | 'audit.platform'
-  | 'audit.sign' | 'onprem_runners' | 'developer_surface' | 'declarative_checks' | 'encrypted_fields' | 'health_history';
+  | 'audit.sign' | 'onprem_runners' | 'developer_surface' | 'declarative_checks' | 'encrypted_fields' | 'health_history' | 'document_preview';
 export const featureOn = (id: FeatureId): boolean => features[id] === true;

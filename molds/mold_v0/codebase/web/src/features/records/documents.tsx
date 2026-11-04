@@ -5,6 +5,7 @@
 // sandboxed frame, remote images blocked until "Load images"). Any other type is download only, said so. The cards and
 // every link come from /api/records/<area>/<key>/files (src/record-files.ts): signed, short-lived, same-origin links,
 // served only to people who may read the area; this page never holds a file's bytes.
+import { featureOn } from '@/config/features';
 import { useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
@@ -19,7 +20,8 @@ export type FileCard = {
 };
 
 /** Whether an area's records may have documents: a file field, or a field that previews its URL's document. */
-export const hasDocuments = (area: RecordAreaSpec) => area.fields.some((f) => f.type === 'file' || f.preview === 'document');
+// The features registry's document_preview (mold_v0-219): off, no card.
+export const hasDocuments = (area: RecordAreaSpec) => featureOn('document_preview') && area.fields.some((f) => f.type === 'file' || f.preview === 'document');
 /** A stored file's reference (never a workspace store path): the cards show it, the details list need not. */
 export const isStoredFile = (f: RecordFieldSpec | undefined, v: unknown) =>
   f?.type === 'file' && (Array.isArray(v) ? v : [v]).some((x) => !!x && typeof x === 'object' && 'object' in (x as object));

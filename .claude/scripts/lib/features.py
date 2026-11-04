@@ -68,6 +68,7 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "developer_surface": return kind == "embedded" or any(d.get("developer_surface") is not None for d in docs)
     if by == "checks": return any(d.get("checks") for d in docs)
     if by == "encrypted": return any(isinstance(f, dict) and f.get("encrypted") is True for a in _areas(docs) for f in a.get("fields") or [])
+    if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
     if by == "no_engine":
         owned = {t for d in docs for t in (((d.get("host") or {}).get("schema") or {}).get("tables") or [])}
         return not all(t in owned for t in ENGINE_TABLES)
@@ -133,7 +134,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 12 and len(set(ids(root))) == 12, "the registry names 12 flags, each once")
+    ok(len(flags) == 13 and len(set(ids(root))) == 13, "the registry names 13 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     maxwell_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],

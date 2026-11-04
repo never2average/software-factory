@@ -138,6 +138,17 @@
       "since": "mold_v0-210",
       "about": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.",
       "off": "No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket)."
+    },
+    {
+      "id": "document_preview",
+      "short": "documents",
+      "label": "Document previews",
+      "default": true,
+      "requested_by": "documents",
+      "requested_words": "a record area's field of type file, or a field that previews its URL's document (preview: document)",
+      "since": "mold_v0-220",
+      "about": "A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards.",
+      "off": "The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields."
     }
   ]
 }

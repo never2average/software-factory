@@ -38,6 +38,14 @@ try {
   const { checkAppRouter } = await import("../src/checks.js");
   const { onPremAppRouter } = await import("../src/onprem-runner-routes.js");
   const { credentialAppRouter } = await import("../src/credential-routes.js");
+  const { mountFileRoutes } = await import("../src/record-files.js");
+  // The record file card routes (mold_v0-220) on a router of their own: off, the gate answers document_preview_off.
+  const express = (await import("express")).default;
+  const filesApp = express(); const filesRouter = express.Router();
+  mountFileRoutes(filesRouter, { base: "/r", org: () => null, actor: () => rec.SYSTEM_ACTOR, who: () => ({}) as never, area: (n: string) => rec.findArea(n)! } as never, () => (_q, _s, n) => n());
+  filesApp.use("/r", filesRouter);
+  const filesServer = filesApp.listen(0, "127.0.0.1"); await new Promise((r) => filesServer.once("listening", r));
+  const filesGateOff = async () => { const r = await fetch(`http://127.0.0.1:${(filesServer.address() as { port: number }).port}/r/findings/none/files`); return (await r.json().catch(() => ({}))).code === "document_preview_off"; };
   const { developerApiRouter } = await import("../src/developer-api.js");
   const { onPremAvailable } = await import("../src/onprem-runners.js");
   const { clockAreas, clockTools, clockStepsOn } = await import("../src/record-clocks.js");
@@ -53,8 +61,8 @@ try {
   {
     const reg = JSON.parse(readFileSync(path.join(ROOT, "src", "features.json"), "utf8"));
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
-      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history"]);
-    assert.equal(reg.flags.length, 12);
+      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview"]);
+    assert.equal(reg.flags.length, 13);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
@@ -69,7 +77,7 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 12 flags, each documented with a default; profile.features over the legacy key over the default");
+    console.log("✓ the registry: 13 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------
@@ -90,6 +98,7 @@ try {
     findings.fields.push({ name: "secret_note", label: "Secret note", type: "text", encrypted: true });
     j.checks = [{ name: "has_ticket", label: "Is there such a ticket?", inputs: { summary: "string" }, rule: { area: "tickets", match: { summary: "$summary" }, latest_by: "updated_at", require: [{ field: "state", ne: "closed" }] } }];
     j.job_kinds[0].private_network = true;
+    j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "evidence", label: "Evidence", type: "file" });
   });
   const org = (await createOrg(`Features ${STAMP}`)).org;
   const tools = async () => { const c = await connect(org); try { return (await c.client.listTools()).tools.map((t) => t.name); } finally { await c.close(); } };
@@ -110,14 +119,15 @@ try {
       declarative_checks: declaredChecks().length > 0 && stack(checkAppRouter(pass as never)) > 0 && t.includes("check_has_ticket"),
       encrypted_fields: encryptedAreas().length > 0 && jobs().includes("encrypted_fields"),
       health_history: healthSamplingOn() && jobs().includes("health_samples"),
+      document_preview: F.featureOn("document_preview") && !(await filesGateOff()),
     } as Record<string, boolean>;
   };
 
   F.setFeaturesForTest(null);
   const defaults = await probe();
   assert.deepEqual(defaults, { customer_key_vault: true, company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
-    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true }, "with the defaults: every pack-asked capability on, the toggles off");
-  assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health");
+    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true }, "with the defaults: every pack-asked capability on, the toggles off");
+  assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health, documents");
   assert.equal(deliveriesOn(), true);
   console.log(`✓ defaults: on ${F.featuresOnWords()}; audit and runners off (their routes, tools and jobs absent)`);
 
@@ -133,6 +143,7 @@ try {
     ["declarative_checks", false, "declarative_checks"],
     ["encrypted_fields", false, "encrypted_fields"],
     ["health_history", false, "health_history"],
+    ["document_preview", false, "document_preview"],
   ];
   for (const [id, value, key] of turns) {
     F.setFeaturesForTest({ [id]: value });
@@ -173,6 +184,7 @@ try {
   assert.equal(F.featureOn("onprem_runners"), false);
   console.log("✓ the legacy toggles (profile.audit.*, profile.onprem_runners) still read through the registry");
 
+  filesServer.close();
   await installEmbedded(null);
 
   // ---------- 4. the console, per flag (gen-packs in build copies) ----------
@@ -185,6 +197,7 @@ try {
       j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "secret_note", label: "Secret note", type: "text", encrypted: true });
       j.checks = [{ name: "has_ticket", label: "Is there such a ticket?", inputs: { summary: "string" }, rule: { area: "tickets", match: { summary: "$summary" }, latest_by: "updated_at", require: [{ field: "state", ne: "closed" }] } }];
       j.job_kinds[0].private_network = true;
+    j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "evidence", label: "Evidence", type: "file" });
     };
     const build = (name: string, features?: Record<string, boolean>) => {
       const copy = path.join(TMPC, name);
@@ -215,7 +228,7 @@ try {
     try {
       const base = build("defaults");
       assert.equal(base.status, 0, base.out.slice(-1500));
-      assert.deepEqual(Object.entries(base.features).filter(([, v]) => v).map(([k]) => k), ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "developer_surface", "declarative_checks", "encrypted_fields", "health_history"]);
+      assert.deepEqual(Object.entries(base.features).filter(([, v]) => v).map(([k]) => k), ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview"]);
       assert.deepEqual(base.tabs, ["credentials", "api_keys", "allowed_origins", "email", "webhooks", "integrations", "alerts"], "the defaults' Settings tabs, in group order");
       assert.ok(base.workspace.includes("/app/notices") && base.clocks && base.developer && !base.onprem && base.alerts > 0, "Notices, clock columns, the developer tabs; no runners");
       const cases: [string, Record<string, boolean>, (b: ReturnType<typeof build>) => boolean, string][] = [
@@ -226,6 +239,7 @@ try {
         ["developer_surface", { developer_surface: false }, (b) => !b.developer && !b.tabs.some((t) => ["api_keys", "allowed_origins", "webhooks", "integrations"].includes(t)), "no API keys, Allowed origins, Webhooks or Integrations tab"],
         ["declarative_checks", { declarative_checks: false }, (b) => b.features.declarative_checks === false, "off in the console's registry"],
         ["health_history", { health_history: false }, (b) => b.features.health_history === false, "off in the console's registry"],
+        ["document_preview", { document_preview: false }, (b) => b.features.document_preview === false, "no document card (the console's registry off)"],
         ["onprem_runners", { onprem_runners: true }, (b) => b.onprem && b.tabs.includes("credentials"), "the runners section on Credentials"],
         ["audit.sign", { "audit.data": true, "audit.sign": true }, (b) => b.tabs.includes("signing") && b.features["audit.data"], "the Signing tab (with the data trail)"],
       ];

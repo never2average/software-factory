@@ -14401,6 +14401,13 @@
           "title": "Health history (mold_v0-210)",
           "description": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history. Asked for when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions). Default true. Off: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).",
           "markdownDescription": "**Health history** (mold_v0-210; board name `health`). Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.\n\n- **Asked for** when a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions).\n- **Default** `true`.\n- **Off**: No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket).\n\nBrief line: `features.health_history = false` in `## Profile`."
+        },
+        "document_preview": {
+          "type": "boolean",
+          "default": true,
+          "title": "Document previews (mold_v0-220)",
+          "description": "A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards. Asked for when a record area's field of type file, or a field that previews its URL's document (preview: document). Default true. Off: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.",
+          "markdownDescription": "**Document previews** (mold_v0-220; board name `documents`). A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards.\n\n- **Asked for** when a record area's field of type file, or a field that previews its URL's document (preview: document).\n- **Default** `true`.\n- **Off**: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.\n\nBrief line: `features.document_preview = false` in `## Profile`."
         }
       }
     }

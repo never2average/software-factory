@@ -12,5 +12,6 @@ export const features: Readonly<Record<string, boolean>> = {
   "developer_surface": false,
   "declarative_checks": false,
   "encrypted_fields": false,
-  "health_history": true
+  "health_history": true,
+  "document_preview": false
 };

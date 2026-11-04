@@ -808,6 +808,7 @@ function flagRequested(by: string, docs: readonly Json[], clocksOn: boolean): bo
     case 'developer_surface': return docs.some(d => d.developer_surface !== undefined && d.developer_surface !== null)
     case 'checks': return docs.some(d => Array.isArray(d.checks) && d.checks.length > 0)
     case 'encrypted': return areas.some((a: Json) => (Array.isArray(a?.fields) ? a.fields : []).some((f: Json) => f?.encrypted === true))
+    case 'documents': return areas.some((a: Json) => (Array.isArray(a?.fields) ? a.fields : []).some((f: Json) => f?.type === 'file' || f?.preview === 'document'))
     case 'no_engine': {
       const owned = new Set(docs.flatMap(d => (Array.isArray(d.host?.schema?.tables) ? d.host.schema.tables : []).map(String)))
       return !ENGINE_TABLES.every(t => owned.has(t))

@@ -76,6 +76,7 @@ through the same check `factory.py validate` and the build use.
   | `declarative_checks` | true | a pack's `checks` | checks |
   | `encrypted_fields` | true | an `encrypted: true` field (false while one is declared is refused) | encrypted |
   | `health_history` | true | a build without the session engine | health |
+  | `document_preview` | true | a `file` field, or `preview: "document"` | documents |
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the

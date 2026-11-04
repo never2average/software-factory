@@ -2768,6 +2768,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `declarative_checks` | on | a pack's `checks` | `/api/checks`, `/v1/checks`, `check_<name>` |
 | `encrypted_fields` | on | an `encrypted: true` field | reveal routes and tools, the migration job. Refused off while a field is encrypted (never stored in the clear) |
 | `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
+| `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3168,8 +3169,9 @@ at, each with its name, type and size, **Download**, and an inline preview. No p
   attachments kept as files on its record (nothing else of the record changes; the old `.mail/` copies are removed);
   what the window no longer holds is marked `not_found` and never looked for again. The ledger keeps only a hash of the
   Message-ID, so a message is found by reading the window, not by asking the mailbox for one id.
-- **Flags.** TODO(mold_v0-219): when the features registry lands, `document_preview` (default on) gates the card routes
-  and the console's cards.
+- **Flags.** The features registry's `document_preview` (mold_v0-219; default on, asked for by a file field or a field
+  previewing its document) gates the card routes (`previews` in `mountFileRoutes`: off, `404 document_preview_off`) and
+  the console's cards (`hasDocuments`); the files stay stored either way.
 
 Proof: `npm run test:record-files` (the declaration; a round trip sealed at rest under the workspace's prefix; never in
 lists, the record, exports, MCP, the data trail, the database or the logs; permission by area role, workspace, person,

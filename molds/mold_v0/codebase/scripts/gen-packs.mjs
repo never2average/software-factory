@@ -1468,6 +1468,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     checks: () => jsons.some((j) => (j.checks ?? []).length > 0),
     encrypted: () => areas.some((a) => (a.fields ?? []).some((x) => x.encrypted === true)),
     no_engine: () => !["products", "scenarios", "simulations", "agent_sessions"].every((t) => owned.has(t)),
+    documents: () => areas.some((a) => (a.fields ?? []).some((x) => x.type === "file" || x.preview === "document")),
   };
   for (const f of FEATURE_REGISTRY) {
     FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
