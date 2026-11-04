@@ -9,10 +9,11 @@
  * through, and nothing of another workspace.
  *
  * The file: a header row (Key, Title, each field's label in the area's order, Updated), then a row per record. A cell
- * is the stored value: a list's items joined with "; ", a file its path, json as JSON text. A text cell that a
+ * is the stored value: a list's items joined with "; ", a file its path (a stored file its name), json as JSON text. A text cell that a
  * spreadsheet would read as a formula (it starts with =, +, -, @, a tab or a carriage return) is written with a leading
  * apostrophe. RFC 4180 quoting, CRLF line ends, no byte-order mark (the MCP answer is text).
  */
+import { isStoredFileRef } from "./record-files-config.js";
 import { auditAs } from "./audit-trail.js";
 import type { RecordQuery, RecordRow } from "./pack-api.js";
 import { PackError } from "./pack-api.js";
@@ -32,7 +33,8 @@ export function cellText(v: unknown): string {
   if (Array.isArray(v)) return v.map(cellText).filter((x) => x !== "").join("; ");
   if (typeof v === "object") {
     const o = v as Record<string, unknown>;
-    return typeof o.path === "string" ? o.path : JSON.stringify(v);
+    // A stored file (mold_v0-220): its name only, never its object or bytes.
+    return typeof o.path === "string" ? o.path : isStoredFileRef(o) ? o.name : JSON.stringify(v);
   }
   return String(v);
 }

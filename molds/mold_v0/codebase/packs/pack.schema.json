@@ -455,6 +455,12 @@
                   "enum": [
                     "equality"
                   ]
+                },
+                "preview": {
+                  "type": "string",
+                  "enum": [
+                    "document"
+                  ]
                 }
               },
               "required": [
@@ -1378,6 +1384,12 @@
                       "enum": [
                         "equality"
                       ]
+                    },
+                    "preview": {
+                      "type": "string",
+                      "enum": [
+                        "document"
+                      ]
                     }
                   },
                   "required": [
@@ -1760,6 +1772,12 @@
                       "type": "string",
                       "enum": [
                         "equality"
+                      ]
+                    },
+                    "preview": {
+                      "type": "string",
+                      "enum": [
+                        "document"
                       ]
                     }
                   },
@@ -5259,7 +5277,9 @@
                   "attachments",
                   "attachment_count",
                   "mailbox",
-                  "message_id"
+                  "message_id",
+                  "body_file",
+                  "attachment_files"
                 ]
               },
               "additionalProperties": {
@@ -5329,6 +5349,40 @@
           "additionalProperties": false
         }
       },
+      "additionalProperties": false
+    },
+    "documents": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "hosts": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(\\*\\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+          }
+        },
+        "max_bytes": {
+          "default": 20971520,
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 26214400
+        },
+        "refresh_days": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        }
+      },
+      "required": [
+        "hosts"
+      ],
       "additionalProperties": false
     },
     "landing": {

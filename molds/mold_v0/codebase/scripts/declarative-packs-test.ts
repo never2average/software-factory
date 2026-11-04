@@ -298,12 +298,14 @@ try {
     const onlyRoutes = JSON.parse(readFileSync(path.join(only.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
     assert.deepEqual(onlyRoutes.redirects.filter((r: { source: string }) => !old(r)), [{ source: "/app/home", destination: "/app", permanent: false }], "setup only: its own address leads to /app; /app/notices is untouched");
     // A hidden page (mold_v0-130) leads to the home tab in one hop; a hidden Notices page that the tab includes leads there too.
+    // This tab has no rail notices card, so it does not show them (mold_v0-216): /app/notices is a hidden page like any
+    // other, its redirects in the shell's page order (src/console-pages.ts CONSOLE_PAGES: activity, then notices).
     const hid = tryPack(variant((j) => { chart(j); due(j); j.console = { hide: ["activity", "notices"] }; j.tabs = [{ id: "home", kind: "overview", charts: ["summary"], include: ["setup", "notices"] }]; }));
     assert.equal(hid.r.status, 0, `a home tab with hidden pages builds: ${hid.r.stderr}`);
     const hidRoutes = JSON.parse(readFileSync(path.join(hid.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
     assert.deepEqual(hidRoutes.redirects.filter((r: { source: string }) => !old(r)).map((r: { source: string; destination: string }) => `${r.source} -> ${r.destination}`), [
-      "/app/home -> /app", "/app/notices -> /app", "/app/notices/:path* -> /app",
-      "/app/activity -> /app", "/app/activity/:path* -> /app",
+      "/app/home -> /app", "/app/activity -> /app", "/app/activity/:path* -> /app",
+      "/app/notices -> /app", "/app/notices/:path* -> /app",
     ], "every redirect takes one hop to the home tab, at /app");
     console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, drawn at /app with its own address and /app/notices redirected there in one hop`);
     console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);

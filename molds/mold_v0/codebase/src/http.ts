@@ -17,7 +17,7 @@ import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
 import { emailAppRouter } from "./email-routes.js";
-import { intakeWired, pollIntake, startEmailIntake } from "./email-intake.js";
+import { backfillMessageFiles, intakeWired, pollIntake, startEmailIntake } from "./email-intake.js";
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
@@ -208,7 +208,8 @@ export function createApp() {
     // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
     const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
     // The mail intake (mold_v0-192, src/email-intake.ts): a server polls from its own loop; on Vercel this entry polls.
-    const intake = intakeWired() ? { email_intake: await tracked("email_intake", () => pollIntake()).catch((e) => ({ error: (e as Error).message })) } : {};
+    // mold_v0-220: the one-off backfill of message files runs after the poll, as part of the same job.
+    const intake = intakeWired() ? { email_intake: await tracked("email_intake", async () => ({ ...(await pollIntake()), files_backfill: await backfillMessageFiles() })).catch((e) => ({ error: (e as Error).message })) } : {};
     // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
     const rc = await import("./run-charges.js");
     const charges = rc.runBillingOn() ? { run_charges: await tracked("run_charges", () => rc.deliverCharges()).catch((e) => ({ error: (e as Error).message })) } : {};

@@ -58,6 +58,8 @@ export interface RecordFieldSpec {
   encrypted?: boolean;
   reveal_roles?: string[];
   searchable?: 'equality';
+  /** A URL whose document the record's card previews (mold_v0-220). */
+  preview?: 'document';
 }
 
 export const recordAreas: RecordAreaSpec[] = [];

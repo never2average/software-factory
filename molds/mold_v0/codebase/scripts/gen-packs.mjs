@@ -174,6 +174,8 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "settings", "admin_mcp", "setup",
   // the company's own email: a workspace's sender and mailbox intake (mold_v0-192, src/company-email-config.ts)
   "email",
+  // document previews: the hosts a field's URL documents may be fetched from (mold_v0-220, src/record-files-config.ts)
+  "documents",
   // the session engine's account stages in the words of the host pack that owns its tables (mold_v0-121)
   "account_stages",
   // the account context and memory component, turned on (mold_v0-142, src/account-context.ts; PACK_CONFIG and CONTEXT_MEMORY)
@@ -2389,7 +2391,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
-  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n}\n\n" +
+  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +

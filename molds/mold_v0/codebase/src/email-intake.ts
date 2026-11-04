@@ -34,7 +34,11 @@ import { openBytes, sealBytes } from "./orgcrypto.js";
 import { inboxError, inboxSecret, intakeOf, intakeSpecs, type InboxRow } from "./company-email.js";
 import type { EmailIntake } from "./company-email-config.js";
 import { PackError, type PackTool, type Workspace } from "./pack-api.js";
-import { findArea, listFor, may, workspaceRecords, type Actor } from "./record-areas.js";
+import { findArea, listFor, may, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { keepsFiles, type IntakeSource } from "./company-email-config.js";
+import type { StoredFileRef } from "./record-files-config.js";
+import { openRecordFile, removeRecordFiles, storeRecordFile } from "./record-files.js";
+import { sanitiseHtml } from "./html-sanitise.js";
 import { keys, objectStore } from "./storage.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
@@ -42,6 +46,7 @@ import * as wire from "./mail-protocols.js";
 import { tracked } from "./scheduler-jobs.js";
 
 const MAX_RAW = 25 * 1024 * 1024;
+type FileSource = Extract<IntakeSource, "body_file" | "attachment_files">;
 const maxPerPoll = () => Math.min(Math.max(Number(ENV.APP_EMAIL_INTAKE_MAX_MESSAGES) || 25, 1), 200);
 const MS_DAY = 86_400_000;
 
@@ -51,13 +56,18 @@ export const intakeWired = () => intakeSpecs().length > 0;
 
 // ---------- one message ----------
 
-export interface StoredAttachment { n: number; name: string; content_type: string; size: number; sha256: string; object_key: string | null; skipped?: string }
+/**
+ * An attachment as the ledger lists it. `object_key`: its sealed object under .mail/ (bound to the ledger row); or, when the
+ * intake keeps attachments as files on the record (mold_v0-220: email.intake.fields.attachment_files), `file`: its stored
+ * file's reference (src/record-files.ts), the one copy, which the record's card and this list both read.
+ */
+export interface StoredAttachment { n: number; name: string; content_type: string; size: number; sha256: string; object_key: string | null; skipped?: string; file?: StoredFileRef }
 const attAad = (orgId: number, row: number, n: number, sha: string) => `mail-attachment:v1:org-${orgId}:${row}:${n}:${sha}`;
 const listAad = (orgId: number, row: number) => `mail-attachments:v1:org-${orgId}:${row}`;
 const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 /** The record's fields from one message, as the pack maps them (absent values left out). */
-export function recordData(it: EmailIntake, mail: wire.ParsedMail, mailbox: string, atts: StoredAttachment[], at: Date, notes: string[], areaFields: readonly { name: string; type?: string; max_length?: number }[]): Record<string, unknown> {
+export function recordData(it: EmailIntake, mail: wire.ParsedMail, mailbox: string, atts: StoredAttachment[], at: Date, notes: string[], areaFields: readonly { name: string; type?: string; max_length?: number; multiple?: boolean }[], files: MessageFiles = {}): Record<string, unknown> {
   const kept = atts.filter((a) => !a.skipped);
   const values: Record<string, unknown> = {
     subject: mail.subject || null, from: mail.from, from_name: mail.from_name, from_domain: mail.from?.split("@")[1] ?? null,
@@ -66,8 +76,14 @@ export function recordData(it: EmailIntake, mail: wire.ParsedMail, mailbox: stri
     attachment_count: kept.length, mailbox, message_id: mail.message_id,
   };
   const out: Record<string, unknown> = {};
-  for (const [src, field] of Object.entries(it.fields) as [keyof typeof values | "attachments", string][]) {
+  for (const [src, field] of Object.entries(it.fields) as [keyof typeof values | "attachments" | FileSource, string][]) {
     const f = areaFields.find((x) => x.name === field);
+    // Files on the record (mold_v0-220): references to what takeMessage kept, never their bytes.
+    if (src === "body_file" || src === "attachment_files") {
+      const refs = (src === "body_file" ? files.body : files.attachments) ?? [];
+      if (refs.length) out[field] = f?.multiple ? refs : refs[0];
+      continue;
+    }
     let v: unknown = src === "attachments"
       ? ((f?.type ?? "text") === "json" ? atts.map((a) => ({ name: a.name, size: a.size, content_type: a.content_type, ...(a.skipped ? { skipped: a.skipped } : { sha256: a.sha256 }) }))
         : atts.map((a) => `${a.name} (${kb(a.size)}${a.skipped ? `, not kept: ${a.skipped}` : ""})`).join("; ") || null)
@@ -77,6 +93,23 @@ export function recordData(it: EmailIntake, mail: wire.ParsedMail, mailbox: stri
     out[field] = v;
   }
   return { ...out, ...(it.set ?? {}) };
+}
+
+/** The files takeMessage kept for a message's record (mold_v0-220). */
+export interface MessageFiles { body?: StoredFileRef[]; attachments?: StoredFileRef[] }
+
+/**
+ * The message's body as files for its record (mold_v0-220): its HTML, sanitised (scripts, handlers and the rest gone;
+ * remote images kept as addresses, blocked at preview until the reader asks), else its text; a `multiple` field both.
+ */
+async function keepBody(orgId: number, area: RecordArea, key: string, it: EmailIntake, mail: wire.ParsedMail): Promise<StoredFileRef[]> {
+  const field = it.fields.body_file ? area.fields.find((f) => f.name === it.fields.body_file) : undefined;
+  if (!field) return [];
+  const out: StoredFileRef[] = [];
+  const html = mail.html ? sanitiseHtml(mail.html, { remoteImages: "keep" }).html.trim() : "";
+  if (html) out.push(await storeRecordFile(orgId, area, key, { name: "message.html", content_type: "text/html", data: Buffer.from(html, "utf8") }));
+  if ((!html || field.multiple) && mail.text) out.push(await storeRecordFile(orgId, area, key, { name: "message.txt", content_type: "text/plain", data: Buffer.from(mail.text, "utf8") }));
+  return out;
 }
 
 /**
@@ -97,21 +130,11 @@ export async function takeMessage(row: Pick<InboxRow, "id" | "org_id" | "pack" |
   if (!led) return "duplicate";
   const ledId = Number(led.id);
   const put: string[] = [];
+  const kept: StoredFileRef[] = [];
   try {
-    const atts: StoredAttachment[] = [];
-    const store = mail.attachments.length ? await objectStore() : null;
-    for (const [i, a] of mail.attachments.entries()) {
-      const n = i + 1, sha = createHash("sha256").update(a.data).digest("hex");
-      const meta = { n, name: a.name, content_type: a.content_type, size: a.data.length, sha256: sha, object_key: null as string | null };
-      if (i >= it.attachments.max_count) { atts.push({ ...meta, skipped: `more than ${it.attachments.max_count} attachments` }); continue; }
-      if (a.data.length > it.attachments.max_bytes) { atts.push({ ...meta, skipped: `larger than ${kb(it.attachments.max_bytes)}` }); continue; }
-      const objectKey = keys.mail(orgId, ledId, n);
-      await store!.put(objectKey, await asPlatform(() => sealBytes(orgId, a.data, attAad(orgId, ledId, n, sha))), "application/octet-stream");
-      put.push(objectKey);
-      atts.push({ ...meta, object_key: objectKey });
-    }
+    const { atts, files } = await keepFiles(orgId, ledId, area, key, it, mail, put, kept);
     const notes = headersOnly || raw.length > MAX_RAW ? ["(This message was larger than the intake reads: its text and attachments were not kept.)"] : [];
-    const data = recordData(it, mail, row.label, atts, at, notes, area.fields);
+    const data = recordData(it, mail, row.label, atts, at, notes, area.fields, files);
     try {
       await withTenant(orgId, () => workspaceRecords(row.pack, orgId).create(it.area, key, { title: (mail.subject || "(no subject)").slice(0, 300), data }));
     } catch (e) {
@@ -119,13 +142,44 @@ export async function takeMessage(row: Pick<InboxRow, "id" | "org_id" | "pack" |
       if (!(e instanceof PackError && e.status === 409)) throw e;
     }
     const sealed = (await asPlatform(() => sealBytes(orgId, Buffer.from(JSON.stringify(atts)), listAad(orgId, ledId)))).toString("base64");
-    await asPlatform(() => db.query("UPDATE workspace_email_messages SET attachments = $3 WHERE org_id = $1 AND id = $2", [orgId, ledId, sealed]));
+    await asPlatform(() => db.query("UPDATE workspace_email_messages SET attachments = $3, files = $4 WHERE org_id = $1 AND id = $2", [orgId, ledId, sealed, keepsFiles(it) ? "kept" : null]));
     return "taken";
   } catch (e) {
     await asPlatform(() => db.query("DELETE FROM workspace_email_messages WHERE org_id = $1 AND id = $2", [orgId, ledId])).catch(() => null);
     if (put.length) await objectStore().then((s) => s.remove(put)).catch(() => null);
+    await removeRecordFiles(orgId, area.name, kept);
     throw e;
   }
+}
+
+/**
+ * A message's attachments and body, kept: each attachment (at most max_count, each at most max_bytes) as a file on the
+ * record when the intake maps attachment_files (one copy, src/record-files.ts), else sealed under .mail/ as before; the
+ * body as files when it maps body_file. `put` and `kept` collect what was written, for the caller to undo.
+ */
+async function keepFiles(orgId: number, ledId: number, area: RecordArea, key: string, it: EmailIntake, mail: wire.ParsedMail, put: string[], kept: StoredFileRef[]): Promise<{ atts: StoredAttachment[]; files: MessageFiles }> {
+  const atts: StoredAttachment[] = [];
+  const asFiles = !!it.fields.attachment_files;
+  const store = mail.attachments.length && !asFiles ? await objectStore() : null;
+  for (const [i, a] of mail.attachments.entries()) {
+    const n = i + 1, sha = createHash("sha256").update(a.data).digest("hex");
+    const meta = { n, name: a.name, content_type: a.content_type, size: a.data.length, sha256: sha, object_key: null as string | null };
+    if (i >= it.attachments.max_count) { atts.push({ ...meta, skipped: `more than ${it.attachments.max_count} attachments` }); continue; }
+    if (a.data.length > it.attachments.max_bytes) { atts.push({ ...meta, skipped: `larger than ${kb(it.attachments.max_bytes)}` }); continue; }
+    if (asFiles) {
+      const file = await storeRecordFile(orgId, area, key, { name: a.name, content_type: a.content_type, data: a.data });
+      kept.push(file);
+      atts.push({ ...meta, file });
+      continue;
+    }
+    const objectKey = keys.mail(orgId, ledId, n);
+    await store!.put(objectKey, await asPlatform(() => sealBytes(orgId, a.data, attAad(orgId, ledId, n, sha))), "application/octet-stream");
+    put.push(objectKey);
+    atts.push({ ...meta, object_key: objectKey });
+  }
+  const body = await keepBody(orgId, area, key, it, mail);
+  kept.push(...body);
+  return { atts, files: { body, attachments: atts.flatMap((a) => (a.file ? [a.file] : [])) } };
 }
 
 // ---------- one inbox ----------
@@ -214,6 +268,131 @@ export async function pollIntake(now = new Date(), opts: { limit?: number } = {}
   return report;
 }
 
+// ---------- the one-off backfill of message files (mold_v0-220) ----------
+
+export interface BackfillReport { ran: boolean; why?: string; inboxes: number; scanned: number; filled: number; not_found: number; failed: number }
+const BACKFILL_MAX_DAYS = 90;
+const backfillMax = () => Math.min(Math.max(Number(ENV.APP_EMAIL_BACKFILL_MAX_MESSAGES) || 500, 1), 5000);
+
+/**
+ * Messages taken in before the intake kept bodies and attachments as files (their ledger rows' `files` is NULL) get them
+ * once: each mailbox that brought such messages is read again, read only as always, over the window they came in
+ * (from the oldest one's arrival less backfill_days, at most 90 days back, at most APP_EMAIL_BACKFILL_MAX_MESSAGES
+ * messages), and a message whose Message-ID hash (the ledger's key) matches gets its body and attachments kept as files
+ * on its record; nothing else of the record changes. What the window does not hold any more (deleted, moved, too old) is
+ * marked `not_found` and never looked for again; every match `backfilled`. One mailbox at a time, claimed for 30
+ * minutes (two pollers never read one at once); a mailbox that fails is tried again after that. Runs with the intake's
+ * loop and the Vercel cron entry, and does nothing once no row is waiting.
+ */
+export async function backfillMessageFiles(now = new Date(), opts: { limit?: number } = {}): Promise<BackfillReport> {
+  const report: BackfillReport = { ran: false, inboxes: 0, scanned: 0, filled: 0, not_found: 0, failed: 0 };
+  const specs = intakeSpecs().filter((x) => keepsFiles(x.intake));
+  if (!specs.length) return { ...report, why: "no intake keeps files" };
+  if (!vaultUnlocked()) return { ...report, why: "the key vault is locked" };
+  report.ran = true;
+  const db = await getDb();
+  for (let i = 0; i < (opts.limit ?? 1); i++) {
+    const [row] = await asPlatform(() => db.query<InboxRow>(
+      `/* tenant: the backfill's claim across workspaces; the work is then for the claimed row's own workspace (org_id) */
+       UPDATE workspace_email_inboxes SET files_backfill_at = $1::timestamptz + interval '30 minutes'
+        WHERE id = (SELECT i.id FROM workspace_email_inboxes i
+                     WHERE i.enabled AND i.pack = ANY($2::text[]) AND (i.files_backfill_at IS NULL OR i.files_backfill_at <= $1::timestamptz)
+                       AND EXISTS (SELECT 1 FROM workspace_email_messages m WHERE m.org_id = i.org_id AND m.inbox_id = i.id AND m.files IS NULL)
+                     ORDER BY i.id LIMIT 1 FOR UPDATE OF i SKIP LOCKED)
+        RETURNING *`, [now.toISOString(), specs.map((x) => x.pack)]));
+    if (!row) break;
+    report.inboxes++;
+    try {
+      const r = await backfillInbox(row, now);
+      report.scanned += r.scanned; report.filled += r.filled; report.not_found += r.not_found;
+    } catch (e) {
+      report.failed++;
+      console.error(`mail intake: a mailbox's file backfill failed (${inboxError(e).kind})`);
+    }
+  }
+  return report;
+}
+
+async function backfillInbox(row: InboxRow, now: Date): Promise<{ scanned: number; filled: number; not_found: number }> {
+  const it = intakeOf(row.pack)!.intake;
+  const area = findArea(it.area);
+  if (!area || area.pack !== row.pack) return { scanned: 0, filled: 0, not_found: 0 };
+  const db = await getDb();
+  const pending = await asPlatform(() => db.query<{ id: string; message_hash: string; record_key: string; received_at: Date }>(
+    `SELECT id, message_hash, record_key, received_at FROM workspace_email_messages
+      WHERE org_id = $1 AND inbox_id = $2 AND pack = $3 AND area = $4 AND files IS NULL ORDER BY id`, [row.org_id, row.id, row.pack, it.area]));
+  const waiting = new Map(pending.map((p) => [p.message_hash, p]));
+  const oldest = Math.min(...pending.map((p) => new Date(p.received_at).getTime()));
+  const since = new Date(Math.max(now.getTime() - BACKFILL_MAX_DAYS * MS_DAY, oldest - (it.backfill_days + 2) * MS_DAY));
+  const secret = await inboxSecret(row);
+  if (!secret) throw new wire.MailError("auth_failed", "no secret is stored for this mailbox");
+  const max = backfillMax();
+  let scanned = 0, filled = 0;
+  const one = async (raw: Buffer, providerId: string) => {
+    scanned++;
+    const mail = wire.parseMail(raw);
+    const hit = waiting.get(wire.messageKey(mail.message_id, `${row.id}:${providerId}`));
+    if (!hit) return;
+    waiting.delete(hit.message_hash);
+    if (await fillRecord(row, it, area, Number(hit.id), hit.record_key, mail)) filled++;
+  };
+  const s = row.settings;
+  if (row.provider === "smtp") {
+    await wire.imapSession({ host: String(s.host), port: Number(s.port), security: s.security as wire.Security, username: String(s.username) }, secret, it.folder, async (box) => {
+      for (const uid of (await box.search(1, since)).slice(-max)) {
+        if (!waiting.size) break;
+        const [m] = await box.fetch([uid], MAX_RAW);
+        if (m && !m.headers_only) await one(m.raw, `imap:${box.info.uidvalidity}:${uid}`);
+      }
+    });
+  } else if (row.provider === "graph") {
+    const g = { tenant_id: String(s.tenant_id), client_id: String(s.client_id), mailbox: String(s.mailbox) };
+    const ch = await wire.graphChanges(g, secret, it.folder, null, since, max);
+    for (const id of ch.ids.slice(0, max)) { if (!waiting.size) break; await one(await wire.graphMime(g, ch.token, id), `graph:${id}`); }
+  } else {
+    const g = { mailbox: String(s.mailbox) };
+    const ch = await wire.gmailChanges(g, secret, it.folder, null, since, max);
+    for (const id of ch.ids.slice(-max)) { if (!waiting.size) break; await one(await wire.gmailRaw(ch.token, id), `gmail:${id}`); }
+  }
+  // What the window no longer holds is not looked for again.
+  const left = [...waiting.values()].map((p) => p.id);
+  if (left.length) await asPlatform(() => db.query("UPDATE workspace_email_messages SET files = 'not_found' WHERE org_id = $1 AND id = ANY($2::bigint[]) AND files IS NULL", [row.org_id, left]));
+  return { scanned, filled, not_found: left.length };
+}
+
+/** One record's body and attachments kept as files from its message read again; its other fields as they are. */
+async function fillRecord(row: InboxRow, it: EmailIntake, area: RecordArea, ledId: number, key: string, mail: wire.ParsedMail): Promise<boolean> {
+  const orgId = row.org_id, db = await getDb();
+  const recs = workspaceRecords(row.pack, orgId);
+  const record = await withTenant(orgId, () => recs.get(it.area, key));
+  if (!record) {
+    await asPlatform(() => db.query("UPDATE workspace_email_messages SET files = 'not_found' WHERE org_id = $1 AND id = $2", [orgId, ledId]));
+    return false;
+  }
+  const put: string[] = [], kept: StoredFileRef[] = [];
+  try {
+    const before = await attachmentsOf(orgId, it.area, key);
+    const { atts, files } = await keepFiles(orgId, ledId, area, key, it, mail, put, kept);
+    const data: Record<string, unknown> = { ...record.data };
+    const field = (src: "body_file" | "attachment_files") => area.fields.find((f) => f.name === it.fields[src]);
+    for (const [src, refs] of [["body_file", files.body ?? []], ["attachment_files", files.attachments ?? []]] as const) {
+      const f = field(src);
+      if (f && refs.length) data[f.name] = f.multiple ? refs : refs[0];
+    }
+    await withTenant(orgId, () => recs.update(it.area, key, { title: record.title, data }));
+    const sealed = (await asPlatform(() => sealBytes(orgId, Buffer.from(JSON.stringify(atts)), listAad(orgId, ledId)))).toString("base64");
+    await asPlatform(() => db.query("UPDATE workspace_email_messages SET attachments = $3, files = 'backfilled' WHERE org_id = $1 AND id = $2", [orgId, ledId, sealed]));
+    // The attachments' old sealed copies under .mail/ (now kept as the record's files): removed.
+    const old = it.fields.attachment_files ? before.flatMap((a) => (a.object_key ? [a.object_key] : [])) : [];
+    if (old.length) await objectStore().then((st) => st.remove(old)).catch(() => null);
+    return true;
+  } catch (e) {
+    if (put.length) await objectStore().then((st) => st.remove(put)).catch(() => null);
+    await removeRecordFiles(orgId, area.name, kept);
+    throw e;
+  }
+}
+
 let timer: NodeJS.Timeout | null = null;
 let busy = false;
 /** The server's loop: a poll every minute (Vercel has no loop: its cron entry polls). */
@@ -222,7 +401,12 @@ export function startEmailIntake(everyMs = 60_000): boolean {
   const run = () => {
     if (busy) return;
     busy = true;
-    tracked("email_intake", () => pollIntake()).then((r) => { if (r.taken || r.failed) console.error(`mail intake: ${r.inboxes} mailbox(es), ${r.taken} message(s) taken in, ${r.failed} failed`); })
+    // mold_v0-220: the one-off backfill of message files runs after the poll, as part of the same job (nothing to do once no row waits).
+    tracked("email_intake", async () => ({ ...(await pollIntake()), files_backfill: await backfillMessageFiles() })).then((r) => {
+      if (r.taken || r.failed) console.error(`mail intake: ${r.inboxes} mailbox(es), ${r.taken} message(s) taken in, ${r.failed} failed`);
+      const b = r.files_backfill;
+      if (b.filled || b.failed) console.error(`mail intake: ${b.filled} earlier message(s) got their files, ${b.not_found} not found, ${b.failed} mailbox(es) failed`);
+    })
       .catch((e) => console.error("mail intake:", (e as Error).message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, everyMs);
@@ -249,8 +433,9 @@ export async function readAttachment(orgId: number, actor: Actor, area: string, 
   if (!a || !intakeSpecs().some((s) => s.intake.area === area) || !may(a, "read", actor)) throw new PackError("no such attachment", 404);
   const [row] = await asPlatform(async () => (await getDb()).query<{ id: string }>(
     "SELECT id FROM workspace_email_messages WHERE org_id = $1 AND area = $2 AND record_key = $3 ORDER BY id LIMIT 1", [orgId, area, recordKey]));
-  const att = row ? (await attachmentsOf(orgId, area, recordKey)).find((x) => x.n === n && x.object_key) : null;
+  const att = row ? (await attachmentsOf(orgId, area, recordKey)).find((x) => x.n === n && (x.object_key || x.file)) : null;
   if (!row || !att) throw new PackError("no such attachment", 404);
+  if (att.file) return { name: att.name, content_type: att.content_type, data: await openRecordFile(orgId, a, recordKey, att.file) };
   const sealed = await (await objectStore()).get(att.object_key!);
   if (!sealed) throw new PackError("the attachment's object is missing", 410);
   const data = await asPlatform(() => openBytes(orgId, sealed, attAad(orgId, Number(row.id), att.n, att.sha256)));

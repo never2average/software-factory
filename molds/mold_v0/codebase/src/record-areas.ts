@@ -37,6 +37,7 @@ import { auditAs, auditAtomic, auditData, auditQuiet } from "./audit-trail.js";
 import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedFields, hasEncryptedFields, isEncryptedField, isEnvelope, maskFields, needsMasking, needsSealing, sealFields, splitEncryptedInput, type EncField } from "./encrypted-fields.js";
 import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
+import { isStoredFileRef } from "./record-files-config.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
 export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
@@ -173,6 +174,8 @@ export const checkKey = (key: unknown): string => {
 type Field = RecordArea["fields"][number];
 const isFile = (v: unknown) => {
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  // A stored file (mold_v0-220, src/record-files.ts): whether it opens for this record is checked on read.
+  if ("object" in v) return isStoredFileRef(v);
   const o = v as Record<string, unknown>;
   if (Object.keys(o).some((k) => !["path", "name", "sha256", "size"].includes(k))) return false;
   return typeof o.path === "string" && FILE_PATH.test(o.path) && !o.path.split("/").some((s) => s === "." || s === "..")
@@ -188,7 +191,7 @@ const expects = (f: Field) => {
     case "enum": return `${many}one of ${optionValues(f).map((o) => JSON.stringify(o)).join(", ")}`;
     case "person": return `${many}a person's id`;
     case "reference": return `${many}the key of a ${f.to} record`;
-    case "file": return `${many}a file reference {path, name?, sha256?, size?} with a path inside the workspace's files`;
+    case "file": return `${many}a file reference {path, name?, sha256?, size?} with a path inside the workspace's files, or a stored file {object, name, size, content_type, sha256}`;
     case "number": return `a number${f.min !== undefined ? ` from ${f.min}` : ""}${f.max !== undefined ? ` up to ${f.max}` : ""}`;
     case "text": return `text of up to ${f.max_length ?? 20_000} characters`;
     default: return `a ${f.type}`;
