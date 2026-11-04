@@ -72,7 +72,9 @@ export function dataAppRouter(): Router {
   const r = express.Router();
   if (!recordAreas().length) return r; // no areas: nothing is mounted, nothing answers
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
-  r.use(express.json({ limit: "1mb" }));
+  // An upload's bytes (mold_v0-238, POST /:area/:key/files/:field) are its own route's to read, whatever they claim to be.
+  const json = express.json({ limit: "1mb" });
+  r.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/[^/]+\/files\/[^/]+\/?$/.test(req.path) ? next() : json(req, res, next)));
   r.use(bodyErrors);
   r.use(customerSession);
   // A cross-site form cannot send a custom header: a change riding the session cookie must carry this one.

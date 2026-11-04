@@ -311,7 +311,7 @@ try {
     {
       const UP = Buffer.concat([PDF, Buffer.from(`% upload ${MARK}\n`)]);
       // The bytes as they are (the world's req sends JSON).
-      const raw = (method: string, p: string, h: Record<string, string>, body: Buffer) => fetch(`${http.base}${p}`, { method, headers: h, body });
+      const raw = (method: string, p: string, h: Record<string, string>, body: Buffer) => fetch(`${http.base}${p}`, { method, headers: h, body: new Uint8Array(body) });
       const up = (key: string, field: string, tok: string, body: Buffer, h: Record<string, string> = {}) =>
         raw("POST", `/api/data/cases/${key}/files/${field}`, { authorization: `Bearer ${tok}`, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("Révision ../notice.pdf"), "x-file-type": "application/pdf", ...h }, body);
       const r1 = await up("case-9", "files", memberA, UP);
