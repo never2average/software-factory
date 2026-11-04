@@ -4,7 +4,9 @@
 // shared ones, as the person's role may read them; /api/admin/records for staff), so the file holds what the person
 // could page through and nothing else. The file is the generated MCP tool's (src/record-export.ts export_<area>): a
 // header (Key, Title, each field's label, Updated), a row per record, lists joined with "; ", a file by its path, json as
-// JSON text, and text a spreadsheet would run as a formula defused with a leading apostrophe.
+// JSON text, and text a spreadsheet would run as a formula defused with a leading apostrophe. mold_v0-217: a list's
+// Export (its search row, just left of the primary action) writes the view: when search or a filter narrows the list,
+// the file holds those rows alone (the same pages are read, so the data trail records the export as before).
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
@@ -31,7 +33,7 @@ export const csvCell = (v: unknown): string => {
 const line = (cells: unknown[]) => `${cells.map(csvCell).join(',')}\r\n`;
 
 /** Every record behind `url` (a records route that pages with limit and after), as CSV text; `more`: cut at EXPORT_MAX. */
-export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'>, rows: (p: Page) => Page = (p) => p) {
+export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'>, rows: (p: Page) => Page = (p) => p, keep?: ReadonlySet<string> | null) {
   let csv = line(['Key', 'Title', ...area.fields.map((f) => f.label), 'Updated']), count = 0, after: string | null = null;
   for (;;) {
     // audit=export: the data trail (mold_v0-197) records these pages as one export each, not as list reads.
@@ -40,6 +42,7 @@ export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'
     if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
     const page = rows(body);
     for (const r of page.records) {
+      if (keep && !keep.has(r.key)) continue;
       if (count >= EXPORT_MAX) return { csv, count, more: true };
       csv += line([r.key, r.title ?? '', ...area.fields.map((f) => r.data?.[f.name]), r.updated_at]);
       count++;
@@ -50,14 +53,20 @@ export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'
 }
 
 /** The Export CSV button: nothing when the area's pack withholds its export (mold_v0-067 mcp settings). */
-export function ExportCsvButton({ url, area, name, rows, areas }: { url: string; area: Pick<RecordAreaSpec, 'fields'>; name: string; rows?: (p: Page) => Page; areas: string[] }) {
+export function ExportCsvButton({ url, area, name, rows, areas, keys, compact = false }: {
+  url: string; area: Pick<RecordAreaSpec, 'fields'>; name: string; rows?: (p: Page) => Page; areas: string[];
+  /** The view's rows when search or a filter narrows the list (mold_v0-217): the file holds these alone. */
+  keys?: readonly string[] | null;
+  /** In a list's search row: "Export", the icon alone on a phone. */
+  compact?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ error: boolean; text: string } | null>(null);
   if (areas.some((a) => exportWithheldAreas.includes(a))) return null;
   const run = async () => {
     setBusy(true); setNote(null);
     try {
-      const { csv, count, more } = await exportCsv(url, area, rows);
+      const { csv, count, more } = await exportCsv(url, area, rows, keys ? new Set(keys) : null);
       downloadText(`${name}-${today()}.csv`, '\ufeff' + csv, 'text/csv;charset=utf-8');
       setNote({ error: false, text: `${count} record${count === 1 ? '' : 's'} exported${more ? ` (the first ${EXPORT_MAX}; ask your AI client to export the rest with the export tool)` : ''}.` });
     } catch (e) {
@@ -66,8 +75,11 @@ export function ExportCsvButton({ url, area, name, rows, areas }: { url: string;
   };
   return (
     <div className='flex min-w-0 flex-wrap items-center gap-2'>
-      <Button variant='outline' size='sm' onClick={() => void run()} disabled={busy} data-testid='export-csv'>
-        {busy ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.download aria-hidden='true' />} {busy ? 'Exporting…' : 'Export CSV'}
+      <Button variant='outline' size={compact ? 'default' : 'sm'} onClick={() => void run()} disabled={busy} data-testid='export-csv'
+        aria-label={compact ? (keys ? 'Export the rows shown as CSV' : 'Export CSV') : undefined} title={compact ? (keys ? 'Export the rows shown as CSV' : 'Export CSV') : undefined}
+        className={compact ? 'max-sm:w-8 max-sm:px-0' : undefined}>
+        {busy ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.download aria-hidden='true' />}
+        {compact ? <span className='hidden sm:inline'>{busy ? 'Exporting…' : 'Export'}</span> : busy ? ' Exporting…' : ' Export CSV'}
       </Button>
       <span role='status' className={note?.error ? 'text-destructive text-sm' : 'text-muted-foreground text-sm'}>{note?.text ?? ''}</span>
     </div>

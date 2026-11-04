@@ -647,7 +647,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");
     assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
     assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
-    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text");
+    // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
+    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed");
+    assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
+    const ex = read("features/tabs/export.tsx");
+    assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
+    assert.match(ex, /audit=export/, "the data trail records it");
+: the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text; Export on every area list just left of it, the view's rows when narrowed");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
