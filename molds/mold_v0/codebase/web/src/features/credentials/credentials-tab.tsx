@@ -19,7 +19,7 @@ import { httpError } from '@/features/status/from-error';
 import { GITHUB_PURPOSE, GithubAppSection, githubCall, useGithubOutcome } from './github-app-section';
 import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
 import { RUNNER_PURPOSE, RunnersSection, runnersCall } from './runners-section';
-import { ago, who } from '@/features/settings/settings-card';
+import { ago, who } from '@/features/settings/words';
 import { onPremRunners, recordAreas } from '@/config/pack-nav.generated';
 
 interface Field {

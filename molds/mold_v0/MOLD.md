@@ -2789,8 +2789,8 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   see a value's last 4 characters in its card, nothing more). **Email** (`web/src/features/email/email-tab.tsx`, owners;
   anyone else reads that an owner sets it up): cards Mailboxes, Messages taken in, With an error, Sender (On, Off, Not
   set); a row for the sender and each mailbox: provider, the address the workspace gave, the folder or label, status,
-  last checked, messages taken in, last error; the search row's **Add mailbox** and **Set sender** (until one is set)
-  open the full card in the list's place; a row's card holds On, Test, the form, Remove or Disconnect. The old
+  last checked, messages taken in, last error; the search row's **Add mailbox** and **Set sender** (until one is set;
+  mold_v0-217's `ToolbarAction`) open the shell's full card in the list's place (`ActionCard`, `CardForm`); a row's card holds On, Test, the form, Remove or Disconnect. The old
   `/app/credentials` and `/app/settings/email` are gone with no redirect (the normal not-found page), as are their
   sidebar entries; the OAuth and GitHub returns, the MCP get-started step, the guides and the console lead to
   `/app/settings?tab=credentials`; a pack's link to the mailbox setting is `/app/settings?tab=email`. Proof: `npm run

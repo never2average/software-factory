@@ -260,9 +260,11 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     assert.doesNotMatch(code, /PageContainer|<Badge/, `${file}: no page title of its own, no badges in the table`);
   }
   const email = src("features/email/email-tab.tsx");
-  assert.match(email, /setAdding\('mailbox'\)[^\n]*Add mailbox/, "Add mailbox: the search row's primary action");
-  assert.match(email, /setAdding\('sender'\)[^\n]*Set sender/, "Set sender, until one is set");
-  assert.match(email, /<SettingsCard title='Add mailbox'/, "it opens the full card in the list's place");
+  assert.match(email, /<ToolbarAction label='Add mailbox'[^\n]*setAdding\('mailbox'\)/, "Add mailbox: the search row's primary action (mold_v0-217 ToolbarAction)");
+  assert.match(email, /data\.offer\.sender && !s && <ToolbarAction label='Set sender'[^\n]*setAdding\('sender'\)/, "Set sender, until one is set");
+  assert.match(email, /toolbarAction=\{actions\}/, "in the search row");
+  assert.match(email, /<ActionCard open onOpenChange=\{close\} title='Add mailbox'/, "it opens the shell's full card in the list's place (mold_v0-217 ActionCard)");
+  assert.match(email, /<CardForm onSubmit=\{save\} submit=\{<Button type='submit' disabled=\{busy\}>Connect<\/Button>\}>/, "the card's form: the fields, then Connect and Cancel");
   assert.match(email, /\/inboxes\/\$\{b\.id\}\/test/, "Test in a mailbox's card");
   for (const gone of ["credentials", path.join("settings", "email")]) assert.ok(!exists(path.join(WEB, "app", "app", gone)), `no /app/${gone} page`);
   assert.ok(exists(path.join(WEB, "app", "app", "settings", "page.tsx")), "the /app/settings page");

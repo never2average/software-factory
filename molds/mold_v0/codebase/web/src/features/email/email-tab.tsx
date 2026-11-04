@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { ErrorState, FormRow, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { SettingsCard } from '@/features/settings/settings-card';
+import { ActionCard, CardForm, ToolbarAction } from '@/features/tabs/tab-action';
 import { Icons } from '@/components/icons';
 
 type Provider = 'smtp' | 'graph' | 'gmail';
@@ -87,25 +87,28 @@ export function EmailTab() {
   if (!data) return <LoadingCards count={2} />;
   if (!data.can_manage) return <p className='text-muted-foreground text-sm'>An owner of this workspace sets up its email.</p>;
   const done = async () => { setAdding(null); await reload(); };
+  const close = (open: boolean) => { if (!open) setAdding(null); };
+  // Add mailbox and Set sender open the shell's full card in the list's place (mold_v0-217 ActionCard).
   if (adding === 'mailbox') return (
-    <SettingsCard title='Add mailbox' onBack={() => setAdding(null)} description={<IntakeWords view={data} />}>
-      <InboxForm view={data} inbox={null} onDone={done} onCancel={() => setAdding(null)} />
-    </SettingsCard>
+    <ActionCard open onOpenChange={close} title='Add mailbox' description={intakeWords(data)}>
+      <InboxForm view={data} inbox={null} onDone={done} asCard />
+    </ActionCard>
   );
   if (adding === 'sender') return (
-    <SettingsCard title='Set sender' onBack={() => setAdding(null)} description="Send this app's emails to your workspace's people from your own address.">
-      <SenderForm view={data} onChanged={done} />
-    </SettingsCard>
+    <ActionCard open onOpenChange={close} title='Set sender' description="Send this app's emails to your workspace's people from your own address. The secret is typed once and never shown again.">
+      <SenderForm view={data} onChanged={done} asCard />
+    </ActionCard>
   );
   const rows = rowsOf(data);
   const inboxes = data.inboxes ?? [];
   const taken = inboxes.reduce((n, b) => n + b.received, 0);
   const failing = rows.filter((r) => r.status === 'error').length;
   const s = data.sender;
+  // The search row's primary action (mold_v0-217 ToolbarAction): Add mailbox; Set sender until one is set.
   const actions = (
     <div className='ml-auto flex shrink-0 gap-2'>
-      {data.offer.sender && !s && <Button type='button' variant={data.offer.intakes.length ? 'outline' : 'default'} onClick={() => setAdding('sender')} aria-label='Set sender' title='Set sender' className='max-sm:w-8 max-sm:px-0'><Icons.mail /><span className='hidden sm:inline'>Set sender</span></Button>}
-      {data.offer.intakes.length > 0 && <Button type='button' onClick={() => setAdding('mailbox')} aria-label='Add mailbox' title='Add mailbox' className='max-sm:w-8 max-sm:px-0'><Icons.add /><span className='hidden sm:inline'>Add mailbox</span></Button>}
+      {data.offer.sender && !s && <ToolbarAction label='Set sender' icon={<Icons.mail />} onClick={() => setAdding('sender')} />}
+      {data.offer.intakes.length > 0 && <ToolbarAction label='Add mailbox' icon={<Icons.add />} onClick={() => setAdding('mailbox')} />}
     </div>
   );
   return (
@@ -120,7 +123,7 @@ export function EmailTab() {
       ]} />}
       searchText={(r) => `${r.name} ${r.kind === 'sender' ? 'sender' : 'mailbox'} ${r.provider} ${r.address} ${r.folder} ${STATUS[r.status]} ${r.last_error ?? ''}`}
       searchPlaceholder='Search senders and mailboxes'
-      primary={actions}
+      toolbarAction={actions}
       empty={<p className='text-muted-foreground text-sm'>{data.offer.intakes.length ? 'No mailbox connected yet: Add mailbox brings its new messages in as records.' : 'No sender set yet: until one is, this app sends from its own address.'}</p>}
       detailTitle={(r) => r.name}
       detail={(r) => r.kind === 'sender' ? <SenderForm view={data} onChanged={reload} /> : <InboxCard view={data} inbox={r.inbox!} onChanged={reload} />}
@@ -128,9 +131,10 @@ export function EmailTab() {
   );
 }
 
-function IntakeWords({ view }: { view: View }) {
+/** What a mailbox brings in, in words. */
+function intakeWords(view: View): string {
   const intakes = view.offer.intakes;
-  return <>New messages become records{intakes.length === 1 ? ` (${intakes[0]!.label ?? intakes[0]!.area})` : ''}, once each, with their attachments. Only {intakes.length === 1 ? <>the <span className='font-mono'>{intakes[0]!.folder}</span> folder</> : 'the folder this app names'} is read, and nothing in the mailbox is changed, moved or deleted.</>;
+  return `New messages become records${intakes.length === 1 ? ` (${intakes[0]!.label ?? intakes[0]!.area})` : ''}, once each, with their attachments. Only ${intakes.length === 1 ? `the ${intakes[0]!.folder} folder` : 'the folder this app names'} is read, and nothing in the mailbox is changed, moved or deleted.`;
 }
 
 function SecretState({ s }: { s: Status }) {
@@ -185,7 +189,7 @@ function SecretInput({ provider, use, value, set }: { provider: Provider; use: '
   );
 }
 
-function SenderForm({ view, onChanged }: { view: View; onChanged: () => unknown }) {
+function SenderForm({ view, onChanged, asCard }: { view: View; onChanged: () => unknown; asCard?: boolean }) {
   const s = view.sender ?? null;
   const [provider, setProvider] = useState<Provider>(s?.provider ?? 'smtp');
   const [settings, setSettings] = useState<Settings>(s ? { ...s.settings, reply_to: ((s.settings.reply_to as string[] | null) ?? []).join(', ') } : {});
@@ -201,6 +205,21 @@ function SenderForm({ view, onChanged }: { view: View; onChanged: () => unknown 
       setSecret(''); toast.success('Saved'); await onChanged();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  const fields = (<>
+    <FormRow label='Provider' htmlFor='email-sender-provider'>
+      <NativeSelect id='email-sender-provider' value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
+        {view.offer.providers.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.id === 'smtp' ? 'SMTP' : p.label}</NativeSelectOption>)}
+      </NativeSelect>
+    </FormRow>
+    <FormRow label='From address' htmlFor='email-sender-from_address'><Input id='email-sender-from_address' value={String(settings.from_address ?? '')} onChange={(e) => set('from_address', e.target.value)} placeholder='notices@yourcompany.com' /></FormRow>
+    <FormRow label='From name' htmlFor='email-sender-from_name'><Input id='email-sender-from_name' value={String(settings.from_name ?? '')} onChange={(e) => set('from_name', e.target.value)} /></FormRow>
+    <FormRow label='Reply-to' htmlFor='email-sender-reply_to' hint='Optional; up to 5 addresses, separated by commas'><Input id='email-sender-reply_to' value={String(settings.reply_to ?? '')} onChange={(e) => set('reply_to', e.target.value)} /></FormRow>
+    <ProviderFields provider={provider} use='sender' settings={settings} set={set} />
+    <SecretInput provider={provider} use='sender' value={secret} set={setSecret} />
+    {s && <SecretState s={s} />}
+  </>);
+  // Set sender (mold_v0-218): the shell's full card (mold_v0-217 CardForm): the fields, then Set sender and Cancel.
+  if (asCard) return <CardForm onSubmit={save} submit={<Button type='submit' disabled={busy}>Set sender</Button>}><div className='grid max-w-2xl gap-3'>{fields}</div></CardForm>;
   return (
     <div className='flex flex-col gap-4'>
       <div className='flex flex-wrap items-center gap-3'>
@@ -212,17 +231,7 @@ function SenderForm({ view, onChanged }: { view: View; onChanged: () => unknown 
       <p className='text-muted-foreground text-sm'>{view.effective === 'workspace' ? "This app's emails to your workspace's people go out from your own sender." : "This app's emails go out from the app's own address until you set and switch on a sender here."}</p>
       {s?.status === 'error' && s.last_error && <div className='text-sm'><p className='text-destructive'>{s.last_error}</p>{s.hint && <p className='text-muted-foreground mt-1 text-xs'>{s.hint}</p>}</div>}
       <form className='grid max-w-2xl gap-3' onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <FormRow label='Provider' htmlFor='email-sender-provider'>
-          <NativeSelect id='email-sender-provider' value={provider} onChange={(e) => setProvider(e.target.value as Provider)}>
-            {view.offer.providers.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.id === 'smtp' ? 'SMTP' : p.label}</NativeSelectOption>)}
-          </NativeSelect>
-        </FormRow>
-        <FormRow label='From address' htmlFor='email-sender-from_address'><Input id='email-sender-from_address' value={String(settings.from_address ?? '')} onChange={(e) => set('from_address', e.target.value)} placeholder='notices@yourcompany.com' /></FormRow>
-        <FormRow label='From name' htmlFor='email-sender-from_name'><Input id='email-sender-from_name' value={String(settings.from_name ?? '')} onChange={(e) => set('from_name', e.target.value)} /></FormRow>
-        <FormRow label='Reply-to' htmlFor='email-sender-reply_to' hint='Optional; up to 5 addresses, separated by commas'><Input id='email-sender-reply_to' value={String(settings.reply_to ?? '')} onChange={(e) => set('reply_to', e.target.value)} /></FormRow>
-        <ProviderFields provider={provider} use='sender' settings={settings} set={set} />
-        <SecretInput provider={provider} use='sender' value={secret} set={setSecret} />
-        {s && <SecretState s={s} />}
+        {fields}
         <div className='flex flex-wrap gap-2'>
           <Button type='submit' size='sm' disabled={busy}>{s ? 'Save' : 'Set sender'}</Button>
           {s && <Button type='button' size='sm' variant='ghost' onClick={() => void call('DELETE', '/sender').then(() => { toast.success("Removed: the app's own sender sends again"); return onChanged(); }).catch(fail)}>Remove</Button>}
@@ -253,7 +262,7 @@ function InboxCard({ view, inbox: b, onChanged }: { view: View; inbox: Inbox; on
           <Switch checked={b.enabled} onCheckedChange={(v) => void call('PATCH', `/inboxes/${b.id}`, { enabled: v }).then(onChanged).catch(fail)} /></label>
       </div>
       {b.status === 'error' && b.last_error && <div className='text-sm'><p className='text-destructive'>{b.last_error}</p>{b.hint && <p className='text-muted-foreground mt-1 text-xs'>{b.hint}</p>}</div>}
-      <p className='text-muted-foreground text-sm'><IntakeWords view={view} /></p>
+      <p className='text-muted-foreground text-sm'>{intakeWords(view)}</p>
       <div className='flex flex-wrap items-center gap-2'>
         <Button size='sm' variant='outline' onClick={() => void call<TestResult>('POST', `/inboxes/${b.id}/test`).then(async (r) => { setTest(r); await onChanged(); }).catch(fail)}>Test</Button>
         <Button size='sm' variant='ghost' onClick={() => { if (window.confirm(`Disconnect ${b.label}? Its records stay; no new messages come in from it.`)) void call('DELETE', `/inboxes/${b.id}`).then(() => { toast.success('Disconnected'); return onChanged(); }).catch(fail); }}>Disconnect</Button>
@@ -264,7 +273,7 @@ function InboxCard({ view, inbox: b, onChanged }: { view: View; inbox: Inbox; on
   );
 }
 
-function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox | null; onDone: () => unknown; onCancel?: () => void }) {
+function InboxForm({ view, inbox, onDone, asCard }: { view: View; inbox: Inbox | null; onDone: () => unknown; asCard?: boolean }) {
   const intakes = view.offer.intakes;
   const [pack, setPack] = useState(inbox?.pack ?? intakes[0]?.pack ?? '');
   const [provider, setProvider] = useState<Provider>(inbox?.provider ?? 'smtp');
@@ -281,8 +290,7 @@ function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox
       toast.success('Saved'); await onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
-  return (
-    <form className='grid max-w-2xl gap-3' onSubmit={(e) => { e.preventDefault(); void save(); }}>
+  const fields = (<>
       {intakes.length > 1 && (
         <FormRow label='Brings messages into' htmlFor='email-inbox-pack'>
           <NativeSelect id='email-inbox-pack' value={pack} onChange={(e) => setPack(e.target.value)}>
@@ -300,9 +308,14 @@ function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox
       <SecretInput provider={provider} use='inbox' value={secret} set={setSecret} />
       {inbox && <SecretState s={inbox} />}
       <FormRow label='Check every (minutes)' htmlFor='email-inbox-minutes'><Input id='email-inbox-minutes' className='w-28' type='number' min={1} max={1440} value={minutes} onChange={(e) => setMinutes(e.target.value)} /></FormRow>
+  </>);
+  // Add mailbox (mold_v0-218): the shell's full card (mold_v0-217 CardForm): the fields, then Connect and Cancel.
+  if (asCard) return <CardForm onSubmit={save} submit={<Button type='submit' disabled={busy}>Connect</Button>}><div className='grid max-w-2xl gap-3'>{fields}</div></CardForm>;
+  return (
+    <form className='grid max-w-2xl gap-3' onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      {fields}
       <div className='flex gap-2'>
-        <Button type='submit' size='sm' disabled={busy}>{inbox ? 'Save' : 'Connect'}</Button>
-        {onCancel && <Button type='button' size='sm' variant='outline' onClick={onCancel}>Cancel</Button>}
+        <Button type='submit' size='sm' disabled={busy}>Save</Button>
       </div>
     </form>
   );
