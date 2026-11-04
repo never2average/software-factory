@@ -90,7 +90,8 @@ export async function removeRecordFiles(orgId: number, area: string, refs: Store
 export async function openRecordFile(orgId: number, area: RecordArea, recordKey: string, ref: StoredFileRef): Promise<Buffer> {
   if (!vaultUnlocked()) throw new PackError("the key vault is locked: files cannot be opened now, try again later", 503);
   const sealed = await (await objectStore()).get(objectKey(orgId, area.name, ref.object));
-  if (!sealed) throw new PackError("this file's object is missing", 410);
+  // Missing, or named by a reference from another record or workspace: the same answer.
+  if (!sealed) throw new PackError("no such file", 404);
   let data: Buffer;
   try { data = await asPlatform(() => openBytes(orgId, sealed, aad(orgId, area.pack, area.name, recordKey, ref))); }
   catch { throw new PackError("no such file", 404); }
@@ -263,6 +264,8 @@ async function recordOf(door: FileDoor, res: Response, areaName: string, key: st
 /** The record's file cards, for its page. */
 export async function fileCards(door: FileDoor, res: Response, areaName: string, key: string): Promise<{ files: FileCard[] }> {
   const { area, orgId, record } = await recordOf(door, res, areaName, key);
+  // Every link is signed with a key derived from the vault's: none while it is locked.
+  if (!vaultUnlocked()) throw new PackError("the key vault is locked: files cannot be opened now, try again later", 503);
   const who = door.who(res);
   const files: FileCard[] = [];
   for (const s of slotsOf(area, record.data)) {
