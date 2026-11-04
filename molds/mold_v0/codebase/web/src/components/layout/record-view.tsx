@@ -12,7 +12,7 @@ import {
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -126,6 +126,17 @@ export function RecordView<T>({
     .filter((k) => cols.some((c) => c.key === k && !c.title));
   const groupCol = cols.find((c) => c.key === group && c.type === 'select' && c.value);
   const setRules = (r: FilterRule[]) => { setRuleMap((m) => ({ ...m, [vid]: r })); onRulesChange?.(r); };
+  // Rules the address turns on (initialRules) may arrive after the first render (the address read on the client):
+  // each is added once, when it first appears.
+  const initialKey = JSON.stringify(initialRules ?? []);
+  useEffect(() => {
+    if (!initialRules?.length) return;
+    setRuleMap((m) => {
+      const have = m[vid] ?? [];
+      const add = initialRules.filter((r) => !have.some((x) => x.id === r.id));
+      return add.length ? { ...m, [vid]: [...have, ...add] } : m;
+    });
+  }, [initialKey, vid]); // eslint-disable-line react-hooks/exhaustive-deps
   const setSort = (s: SortRule[]) => setSortMap({ ...sorts, [vid]: s });
   const setGroup = (g: string | null) => setGroupMap({ ...groups, [vid]: g });
   const addRule = (r: FilterRule) => { setRules([...rules, r]); setTimeout(() => setEditing(r.id), 0); };
@@ -262,20 +273,23 @@ export function RecordView<T>({
     <div className='flex min-w-0 flex-col gap-3'>
       <Card className='w-full max-w-4xl gap-0 py-0' data-record-card='' role='region' aria-label='Record'>
         <CardHeader className='border-b py-4 [.border-b]:pb-4'>
-          <CardDescription>
-            <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={close}>
-              <Icons.chevronLeft className='size-3.5' />Back to the list
-            </button>
-          </CardDescription>
+          {/* The way back and the record's actions on one line; the title below them, the card's whole width. */}
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <CardDescription>
+              <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={close}>
+                <Icons.chevronLeft className='size-3.5' />Back to the list
+              </button>
+            </CardDescription>
+            <div className='flex flex-wrap items-center justify-end gap-1'>
+              {detailActions?.(current, close)}
+              {at >= 0 && database && (<>
+                <Button variant='ghost' size='icon-sm' aria-label='Previous record' disabled={at <= 0} onClick={() => go(-1)}><Icons.chevronUp /></Button>
+                <Button variant='ghost' size='icon-sm' aria-label='Next record' disabled={at >= navRows.length - 1} onClick={() => go(1)}><Icons.chevronDown /></Button>
+              </>)}
+              <Button variant='ghost' size='icon-sm' aria-label='Close' onClick={close}><Icons.close /></Button>
+            </div>
+          </div>
           <CardTitle className='text-lg leading-snug break-words'>{detailTitle ? detailTitle(current) : titleCol?.render(current)}</CardTitle>
-          <CardAction className='flex flex-wrap items-center justify-end gap-1'>
-            {detailActions?.(current, close)}
-            {at >= 0 && database && (<>
-              <Button variant='ghost' size='icon-sm' aria-label='Previous record' disabled={at <= 0} onClick={() => go(-1)}><Icons.chevronUp /></Button>
-              <Button variant='ghost' size='icon-sm' aria-label='Next record' disabled={at >= navRows.length - 1} onClick={() => go(1)}><Icons.chevronDown /></Button>
-            </>)}
-            <Button variant='ghost' size='icon-sm' aria-label='Close' onClick={close}><Icons.close /></Button>
-          </CardAction>
         </CardHeader>
         <CardContent className='flex flex-col gap-4 py-2'>
           {properties && (<>
