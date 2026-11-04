@@ -189,7 +189,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   summary?: ReactNode;
   /** The tab's primary action (mold_v0-208, features/tabs/tab-action.tsx): the search row's last control (mold_v0-217). */
   toolbarAction?: ReactNode;
-  /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, next to Export in the search row. */
+  /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, just left of Export in the search row. */
   importAction?: ReactNode;
   /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
   rowAction?: (r: RecordRow) => ReactNode;
@@ -222,11 +222,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
       // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
-      primary={source ? source.primary : ({ rows: view, narrowed }) => (<>
+      primary={source ? source.primary : ({ rows: view, narrowed }) => (importAction ? (
+        // mold_v0-234: Import and Export side by side (two buttons, one group: they wrap together on a phone).
+        <div className='flex shrink-0 items-center gap-2'>
+          {importAction}
+          <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
+            keys={narrowed ? view.map((r) => r.key) : null} />
+        </div>
+      ) : (
         <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
           keys={narrowed ? view.map((r) => r.key) : null} />
-        {importAction}
-      </>)}
+      ))}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}

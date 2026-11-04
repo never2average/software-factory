@@ -209,16 +209,18 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
   // A record added or a run started from the tab's primary action (mold_v0-208): the list is read again.
   const [round, setRound] = useState(0);
   // mold_v0-217: its button in the search row, its form a full card in the list's place while open (?start=1, ?new=1).
-  const { button: action, card } = useTabAction(tab.action ? tab : null, () => setRound((n) => n + 1));
-  // mold_v0-234: Import on a tab of one area whose contract grants it to this person (beside Export; its card ?import=1).
+  const { button: action, card: actionCard } = useTabAction(tab.action ? tab : null, () => setRound((n) => n + 1));
+  // mold_v0-234: Import on a tab of one area whose contract grants it to this person (its own button just left of
+  // Export; its form a full card in the list's place, ?import=1).
   const imp = useImportAction(area && !tab.areas ? area : null, () => setRound((n) => n + 1));
+  const card = actionCard ?? imp.card;
   if (!area || !src) return <p className='text-muted-foreground text-sm'>This area is not in this build.</p>;
   const exportAreas = tab.areas ? tab.areas.map((a) => a.area) : [area.name];
   const table = !(view === 'board' && tab.board_by) && view !== 'timeline';
   return (
     // mold_v0-208: a list tab is its cards, its search row and its table (no charts). mold_v0-217: the tab's primary
     // action is the table's search row's last control; a board or a timeline has it in the views' row, after Export CSV.
-    card ? card : imp.card ? imp.card : <div className='flex flex-col gap-6'>
+    card ? card : <div className='flex flex-col gap-6'>
       {/* The views' switch, and Export CSV and the action for the board and the timeline (the table has its own toolbar). */}
       {(views.length > 1 || !table) && (
       <div className='flex min-w-0 flex-wrap items-center justify-between gap-3'>
@@ -241,8 +243,8 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
       ) : <span />}
         {!table && (
           <div className='flex flex-wrap items-center gap-2'>
-            <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />
             {imp.button}
+            <ExportCsvButton url={src.url} area={area} rows={src.rows} name={`${tab.pack}-${tab.id}`} areas={exportAreas} />
             {action}
           </div>
         )}
