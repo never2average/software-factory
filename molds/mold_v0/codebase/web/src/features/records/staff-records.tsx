@@ -27,6 +27,7 @@ import { ErrorState, fail, LoadingCards, useOrgLoad } from '@/features/portal/sh
 import { httpError } from '@/features/status/from-error';
 import { adminDataApi } from '@/lib/api-client';
 import { ClockSection, type ClockEvent } from './clocks';
+import { RecordDocuments } from './documents';
 import { FieldValue, RecordEmpty, RecordTableView, type RecordRow } from './record-pages';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 
@@ -110,6 +111,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
               ))}
               <Field label='Updated'>{data.record.updated_at.slice(0, 10)}</Field>
             </dl>
+            <RecordDocuments area={area} base='admin' recordKey={data.record.key} />
             <ClockSection record={data.record} events={data.clock_events} />
             {data.links.map((l) => {
               const target = findRecordArea('admin', l.area);

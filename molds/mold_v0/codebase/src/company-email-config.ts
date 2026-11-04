@@ -25,16 +25,25 @@
  *   received_at (when the intake read it), body (the text, cut at body_chars), attachments (their names and sizes; a
  *   json field gets a list of {name, size, content_type, sha256}), attachment_count, mailbox (the connection's label),
  *   message_id
+ * and, as files on the record (mold_v0-220; src/record-files.ts: sealed with the workspace's data key, previewed and
+ * downloaded from the record's card):
+ *   body_file (a file field: the message's HTML, sanitised, as message.html, else its text as message.txt; a `multiple`
+ *   field gets both), attachment_files (a `multiple` file field: every attachment kept, in order; one larger than
+ *   max_bytes or past max_count is not kept, as before)
  */
 import { z } from "zod";
 
-export const INTAKE_SOURCES = ["subject", "from", "from_name", "from_domain", "to", "cc", "date", "received_at", "body", "attachments", "attachment_count", "mailbox", "message_id"] as const;
+export const INTAKE_SOURCES = ["subject", "from", "from_name", "from_domain", "to", "cc", "date", "received_at", "body", "attachments", "attachment_count", "mailbox", "message_id", "body_file", "attachment_files"] as const;
 export type IntakeSource = (typeof INTAKE_SOURCES)[number];
 /** The field types each message value may land in. */
 export const SOURCE_TYPES: Record<IntakeSource, readonly string[]> = {
   subject: ["text"], from: ["text"], from_name: ["text"], from_domain: ["text"], to: ["text"], cc: ["text"], date: ["date", "text"],
   received_at: ["date", "text"], body: ["text"], attachments: ["text", "json"], attachment_count: ["number"], mailbox: ["text"], message_id: ["text"],
+  body_file: ["file"], attachment_files: ["file"],
 };
+/** The sources kept as files on the record (mold_v0-220). */
+export const FILE_SOURCES = ["body_file", "attachment_files"] as const;
+export const keepsFiles = (it: { fields: Partial<Record<IntakeSource, string>> }) => FILE_SOURCES.some((s) => !!it.fields[s]);
 const fieldName = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/, "a field of the area");
 /** A folder or label name: printable ASCII, no quote or backslash (it goes into an IMAP command quoted). */
 const folder = z.string().regex(/^[\x20-\x21\x23-\x5b\x5d-\x7e]{1,100}$/, "printable ASCII, no quote or backslash, up to 100 characters").refine((f) => f.trim() === f, "no leading or trailing space");
@@ -61,7 +70,7 @@ export const EmailPackSchema = z.object({
 export type EmailPack = z.output<typeof EmailPackSchema>;
 export type EmailIntake = z.output<typeof EmailIntakeSchema>;
 
-interface AreaLike { name: string; scope?: string; repository?: string; fields: readonly { name: string; type?: string }[] }
+interface AreaLike { name: string; scope?: string; repository?: string; fields: readonly { name: string; type?: string; multiple?: boolean }[] }
 /** The problems of a pack's email block against its own record areas; [] when it is good. */
 export function emailPackProblems(pack: string, raw: unknown, areas: readonly AreaLike[]): string[] {
   const r = EmailPackSchema.safeParse(raw);
@@ -79,6 +88,7 @@ export function emailPackProblems(pack: string, raw: unknown, areas: readonly Ar
     const t = typeOf(f);
     if (t === null) { out.push(`pack ${pack}: email.intake.fields.${src}: area ${it.area} has no field ${f}`); continue; }
     if (!SOURCE_TYPES[src].includes(t)) out.push(`pack ${pack}: email.intake.fields.${src}: field ${f} is ${t}; ${src} goes into a ${SOURCE_TYPES[src].join(" or ")} field`);
+    else if (src === "attachment_files" && !area.fields.find((x) => x.name === f)?.multiple) out.push(`pack ${pack}: email.intake.fields.attachment_files: field ${f} holds one file; a message's attachments go into a file field with multiple: true`);
     if (used.has(f)) out.push(`pack ${pack}: email.intake.fields: ${src} and ${used.get(f)} both write field ${f}`);
     used.set(f, src);
   }

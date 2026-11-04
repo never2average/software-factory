@@ -5,8 +5,9 @@
  *   /api/records                  a signed-in person of a workspace (the portal's session check, src/app.ts): the
  *                                 areas, a page of an area, one record with its links, a page of a merged tab
  *                                 (/api/records/tabs/<pack>/<tab>, mold_v0-135: src/record-merge.ts), the records due soon
- *                                 across its clock areas (/api/records/due-soon, mold_v0-207). Read only: no
- *                                 route writes.
+ *                                 across its clock areas (/api/records/due-soon, mold_v0-207), a record's file cards
+ *                                 and each file's bytes at a signed link (/api/records/<area>/<key>/files[/<field>/<n>],
+ *                                 mold_v0-220: src/record-files.ts). Read only: no route writes.
  *   /api/admin/records            platform staff, inside the admin router (requirePlatformAdmin, the access log):
  *                                 platform-scope areas only; PUT needs "library", DELETE needs "delete".
  *                                 mold_v0-212, the staff record page (web/src/features/records/staff-records.tsx):
@@ -26,6 +27,7 @@ import { tabAreas } from "./metric-spec.js";
 import { PackError, type Tab } from "./pack-api.js";
 import { packRegistry } from "./packs.js";
 import { mergedPage } from "./record-merge.js";
+import { anyArea, mountFileRoutes } from "./record-files.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
@@ -76,6 +78,8 @@ export function recordAppRouter(): Router {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
   }));
+  // A record's files and documents (mold_v0-220, src/record-files.ts): its card's file cards, and each file's bytes.
+  mountFileRoutes(r, { base: "/api/records", org, actor, who: (res) => ({ scope: `org-${org(res)}`, person: String(actor(res).userId) }), area: anyArea }, (op) => open(op));
   r.get("/:area/:key", open("get"), answer(async (req, res) => {
     const d = await detailFor(org(res), String(req.params.area), String(req.params.key), actor(res));
     if (!d) throw new PackError("Not found", 404);
@@ -115,6 +119,9 @@ export function recordAdminRouter(): Router {
     const a = platformArea(String(req.params.area));
     return { area: areaSummary(a), ...(await listPlatform(a, { limit: req.query.limit, after: req.query.after })) };
   }));
+  // A shared record's documents (mold_v0-220): staff see a regulator's document as its customers do.
+  mountFileRoutes(r, { base: "/api/admin/records", org: () => null, actor: () => ({ role: null, userId: null }),
+    who: (res) => ({ scope: "staff", person: String(res.locals.adminActor ?? "staff") }), area: platformArea }, () => open("admin_get"), need("read"));
   r.get("/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     const record = await getPlatform(a, String(req.params.key));

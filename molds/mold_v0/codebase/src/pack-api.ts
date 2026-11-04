@@ -68,6 +68,7 @@ import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { emailPackProblems, type EmailPackSchema } from "./company-email-config.js";
+import { documentProblems, type DocumentsSchema } from "./record-files-config.js";
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 import { templateProblems } from "./text-template.js";
 
@@ -309,7 +310,9 @@ export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "
  *               writer sees it (the same workspace for a workspace area), so a reference never reaches another
  *               workspace's records; a shared (platform) area may refer only to shared areas
  *   file        a file reference {path, name?, sha256?, size?}: a path inside the workspace's store (no "..", no
- *               leading "/"); `multiple` takes a list
+ *               leading "/"); or a stored file {object, name, size, content_type, sha256} (mold_v0-220,
+ *               src/record-files.ts: an object kept for the record, sealed with the workspace's data key); `multiple`
+ *               takes a list
  *   link        the 047 form of reference (a key or a list of keys, resolved through the area's `links`)
  * `required` refuses a write that leaves it empty.
  */
@@ -340,6 +343,11 @@ export const RecordFieldSchema = z.object({
    * value, so a filter `{field: value}` (eq) finds it; no other operator, no sort.
    */
   searchable: z.enum(["equality"]).optional(),
+  /**
+   * "document" (mold_v0-220; src/record-files.ts, src/document-fetch.ts): a text field whose value is a URL; the record's
+   * card previews the document, fetched through the pack's `documents.hosts` only and kept in the object store.
+   */
+  preview: z.enum(["document"]).optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -358,6 +366,7 @@ export const RecordFieldSchema = z.object({
   if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
   if (f.max_length !== undefined && f.type !== "text") bad("max_length is for a text field", "max_length");
+  if (f.preview && (f.type !== "text" || f.encrypted)) bad("preview: \"document\" is for a text field holding a URL (not encrypted)", "preview");
 });
 const field = RecordFieldSchema;
 /** The stored values of an enum field's options, in order. */
@@ -1755,6 +1764,11 @@ export interface PackDefinition {
    */
   email?: z.input<typeof EmailPackSchema>;
   /**
+   * Document previews (mold_v0-220; src/record-files-config.ts, src/document-fetch.ts): the hosts a field with `preview:
+   * "document"` may fetch its URL's document from, the largest kept, and how long a copy is kept.
+   */
+  documents?: z.input<typeof DocumentsSchema>;
+  /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
@@ -1907,6 +1921,8 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   }
   // The company's own email (mold_v0-192): its intake writes one of this pack's own workspace areas.
   if (p.email !== undefined) problems.push(...emailPackProblems(String(p.id), p.email, (p.recordAreas ?? []) as never));
+  // Document previews (mold_v0-220): a field that previews its URL's document needs the hosts it may come from.
+  problems.push(...documentProblems(String(p.id), p.documents, (p.recordAreas ?? []).filter(Boolean) as never));
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const k of p.agentJobKinds ?? []) if (k?.name && kinds.has(k.name)) problems.push(at(`job kind ${k.name} is declared twice`)); else if (k?.name) kinds.add(k.name);
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));

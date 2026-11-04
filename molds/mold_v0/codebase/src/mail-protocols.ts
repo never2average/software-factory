@@ -538,6 +538,8 @@ export interface MailAttachment { name: string; content_type: string; data: Buff
 export interface ParsedMail {
   message_id: string | null; subject: string; from: string | null; from_name: string | null; to: string[]; cc: string[];
   date: string | null; text: string; attachments: MailAttachment[];
+  /** The message's HTML part as it came (mold_v0-220: kept only sanitised, src/html-sanitise.ts); null without one. */
+  html: string | null;
 }
 const decoder = (charset: string) => { try { return new TextDecoder(charset.toLowerCase().replace(/^(us-)?ascii$/, "utf-8"), { fatal: false }); } catch { return new TextDecoder("utf-8"); } };
 /** RFC 2047 words (=?charset?B|Q?...?=) in a header, joined when only space separates them. */
@@ -642,7 +644,7 @@ export function parseMail(raw: Buffer, opts: { headersOnly?: boolean } = {}): Pa
     subject: decodeWords(first("subject") ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 998),
     from: from?.address ?? null, from_name: from?.name ?? null,
     to: addresses(h.to?.join(", ")).map((a) => a.address), cc: addresses(h.cc?.join(", ")).map((a) => a.address),
-    date: date && !Number.isNaN(date.getTime()) ? date.toISOString() : null, text: "", attachments: [],
+    date: date && !Number.isNaN(date.getTime()) ? date.toISOString() : null, text: "", attachments: [], html: null,
   };
   if (opts.headersOnly) return out;
   let plain: string | null = null, html: string | null = null, parts = 0;
@@ -669,6 +671,7 @@ export function parseMail(raw: Buffer, opts: { headersOnly?: boolean } = {}): Pa
   };
   walk(h, top.body, 0);
   out.text = (plain ?? (html !== null ? stripHtml(html) : "")).replace(/\r\n/g, "\n").replace(/\u0000/g, "").trim();
+  out.html = html;
   return out;
 }
 

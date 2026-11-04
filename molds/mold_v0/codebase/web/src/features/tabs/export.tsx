@@ -20,7 +20,8 @@ export const EXPORT_MAX = 10000;
 const cellText = (v: unknown): string => {
   if (v === null || v === undefined) return '';
   if (Array.isArray(v)) return v.map(cellText).filter((x) => x !== '').join('; ');
-  if (typeof v === 'object') { const o = v as Record<string, unknown>; return typeof o.path === 'string' ? o.path : JSON.stringify(v); }
+  // A stored file (mold_v0-220): its name only.
+  if (typeof v === 'object') { const o = v as Record<string, unknown>; return typeof o.path === 'string' ? o.path : typeof o.object === 'string' && typeof o.name === 'string' ? o.name : JSON.stringify(v); }
   return String(v);
 };
 export const csvCell = (v: unknown): string => {
