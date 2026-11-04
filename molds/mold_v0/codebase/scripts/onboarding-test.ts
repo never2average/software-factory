@@ -9,6 +9,9 @@
 // 3. Two workspaces: everything B does (connect, call tools, set a credential, add a record, finish a run) ticks B's
 //    steps and none of A's; then A's tick one by one from A's own events, each with when it happened. Over HTTP each
 //    signed-in person reads their own workspace's checklist.
+// 4. A declarative check's tool (mold_v0-225): a step done_when tool:check_<name> is accepted (refused without the
+//    check), and done once the check was answered for that workspace, at an HTTP door (recorded once) or by the MCP
+//    tool; the admin funnel reads it the same way.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -52,6 +55,12 @@ try {
     const manifest = { id: "pk", name: "pk", version: "1", entry: "index.ts", migrations: null, words: {} };
     assert.throws(() => installPacks([{ manifest, definition: { id: "pk", onboarding: [{ id: "st", label: "S", done_when: "tool:no_such_tool" }] } }], TOOL_NAMES), /no tool no_such_tool/);
     assert.doesNotThrow(() => installPacks([{ manifest, definition: { id: "pk", onboarding: [{ id: "st", label: "S", done_when: `tool:${TOOL_NAMES[0]}` }] } }], TOOL_NAMES));
+    // A check's tool (mold_v0-225) is a tool of the build: accepted with the check, refused without it.
+    const ckArea = { name: "pk_items", label: "Items", role: "source" as const, scope: "workspace" as const, fields: [{ name: "body", label: "Body" }] };
+    const ckCheck = { name: "item_known", inputs: { body: "string" }, rule: { area: "pk_items", match: { body: "$body" }, latest_by: "updated_at", require: [{ field: "body", exists: true }] } };
+    assert.doesNotThrow(() => installPacks([{ manifest, definition: definePack({ id: "pk", recordAreas: [ckArea], checks: [ckCheck], onboarding: [{ id: "st", label: "S", done_when: "tool:check_item_known" }] }) }], TOOL_NAMES), "tool:check_<name> of a declared check");
+    assert.throws(() => installPacks([{ manifest, definition: definePack({ id: "pk", recordAreas: [ckArea], onboarding: [{ id: "st", label: "S", done_when: "tool:check_item_known" }] }) }], TOOL_NAMES), /no tool check_item_known/, "no such check");
+    assert.doesNotThrow(() => installPacks([{ manifest, definition: definePack({ id: "pk", recordAreas: [ckArea], checks: [ckCheck], onboarding: [{ id: "st", label: "S", done_when: "record:pk_items", how: "tool:check_item_known" }] }) }], TOOL_NAMES), "and as a step's how");
     console.log("✓ steps with a malformed condition, or naming a kind, credential, area or tool that is not there, are refused");
   }
 
@@ -128,6 +137,41 @@ try {
   } finally {
     await ca.close(); await cb.close();
     await http.close();
+  }
+
+  // ---------- 4. a declarative check's tool (mold_v0-225) ----------
+  {
+    const ck = await import("../src/checks.js");
+    const checked = definePack({
+      id: "fixture_onboard_ck",
+      recordAreas: [{ name: "ck_apps", label: "Applications", role: "source", scope: "workspace", fields: [{ name: "url", label: "Address" }] }],
+      checks: [{ name: "app_known", label: "Is this application known?", inputs: { url: "string" }, rule: { area: "ck_apps", match: { url: "$url" }, latest_by: "updated_at", require: [{ field: "url", exists: true }] } }],
+      onboarding: [{ id: "asked", label: "Ask whether an application is known", done_when: "tool:check_app_known" }],
+    });
+    setPacksForTest([{ manifest: { id: "fixture_onboard_ck", name: "Fixture onboarding checks", version: "1", entry: "index.ts", migrations: null, words: {}, dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: checked }]);
+    const asked = async (o: { orgId: number }) => (await ob.onboardingFor(o.orgId)).steps.find((s) => s.id === "asked")!;
+    assert.deepEqual([(await asked(A)).done, (await asked(B)).done], [false, false], "not asked yet");
+    // A asks at an HTTP door (the API's answer path): A's step is done, B's not.
+    const answer = await ck.answerCheck({ orgId: A.orgId, role: "member", userId: "user_a", scopes: null }, "app_known", { url: "https://a.example" });
+    assert.equal(answer.allowed, false, "no such application: no");
+    const a1 = await asked(A);
+    assert.ok(a1.done && a1.at && !Number.isNaN(Date.parse(a1.at)), "answered for A: A's step is done, with when");
+    assert.equal((await asked(B)).done, false, "and B's is not");
+    await ck.answerCheck({ orgId: A.orgId, role: "member", userId: "user_a", scopes: null }, "app_known", { url: "https://b.example" });
+    assert.equal((await db.query("SELECT 1 FROM mcp_events WHERE org_id = $1 AND method = 'check/answer' AND name = 'check_app_known'", [A.orgId])).length, 1, "recorded once");
+    // B asks through the MCP tool: recorded as the tool call it is.
+    const { recordMcpEvent } = await import("../src/analytics.js");
+    recordMcpEvent(B, { method: "tools/call", name: "check_app_known", ok: true });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await asked(B)).done, true, "B asked by the MCP tool: B's step is done");
+    // A refused question (bad input) is not an answer.
+    const C = (await createOrg(`Onboard C ${STAMP}`)).org;
+    await assert.rejects(ck.answerCheck({ orgId: C.orgId, role: "member", userId: null, scopes: null }, "app_known", {}), /url is required/);
+    assert.equal((await asked(C)).done, false, "a refused question does not tick the step");
+    // The admin console's funnel reads the same.
+    const reached = await ob.stageStepsReached([A.orgId, B.orgId, C.orgId]);
+    assert.deepEqual([!!reached.get(A.orgId)?.["fixture_onboard_ck:asked"], !!reached.get(B.orgId)?.["fixture_onboard_ck:asked"], reached.has(C.orgId)], [true, true, false]);
+    console.log("✓ a check's tool: tool:check_<name> accepted with the check (refused without), done once the check was answered for that workspace (an HTTP door, recorded once; or the MCP tool), in the admin funnel too");
   }
   await db.close();
   console.log("ONBOARDING TEST PASS");

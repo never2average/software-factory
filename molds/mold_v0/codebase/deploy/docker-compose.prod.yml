@@ -159,6 +159,11 @@ services:
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       APP_ARCHIVE: ${APP_ARCHIVE:-on}
+      # Chain and sign (src/ledger.ts, mold_v0-195): with profile audit.sign, the Ed25519 key checkpoints are signed
+      # with (never in the database; the factory's deploy makes it when this server lacks it, mold_v0-227) and the
+      # retired public keys still published at /.well-known/ledger-keys.json (comma-separated).
+      APP_LEDGER_SIGNING_KEY: ${APP_LEDGER_SIGNING_KEY:-}
+      APP_LEDGER_PUBLIC_KEYS: ${APP_LEDGER_PUBLIC_KEYS:-}
       APP_MAX_ORCHESTRATORS: ${APP_MAX_ORCHESTRATORS:-4}
       APP_POD_CAPACITY: ${APP_POD_CAPACITY:-20}
       APP_ORCH_IDLE_MINUTES: ${APP_ORCH_IDLE_MINUTES:-10}

@@ -9,7 +9,7 @@
  * with no fallback) meets nothing: a check fails closed.
  */
 import { parseTime } from "./clock-math.js";
-import { durationMs, isGroup, opOf, parseOperand, type CheckCondition, type CheckOp, type FieldCondition, type Kind } from "./check-spec.js";
+import { BUCKETS, bucketOf, bucketThreshold, durationMs, isBucket, isGroup, opOf, parseOperand, type BucketCondition, type CheckCondition, type CheckOp, type FieldCondition, type Kind } from "./check-spec.js";
 
 export interface EvalRecord { key: string; title?: string | null; data: Record<string, unknown>; updated_at?: string | null }
 export interface EvalContext {
@@ -23,8 +23,11 @@ export interface EvalContext {
   /** A field's kind by its path ("f", "key", "updated_at", "<as>.f"). */
   kindOf: (path: string) => Kind;
 }
-/** One condition, evaluated: what it compared, and whether it held. */
-export interface Leaf { path: string; field: string; op: CheckOp; expected: unknown; actual: unknown; passed: boolean; label?: string; note?: string }
+/**
+ * One condition, evaluated: what it compared, and whether it held. A bucket (mold_v0-226): `field` is what is bucketed
+ * (its input or field), `actual` its bucket (0 to 9999), `expected` {percent, below} (the buckets that hold).
+ */
+export interface Leaf { path: string; field: string; op: CheckOp | "bucket"; expected: unknown; actual: unknown; passed: boolean; label?: string; note?: string }
 export interface Outcome { passed: boolean; decided_by: Leaf[]; evaluated: Leaf[] }
 
 const MISSING = Symbol("missing");
@@ -119,15 +122,37 @@ function leaf(c: FieldCondition, path: string, ctx: EvalContext): Leaf {
   }
 }
 
+/** A bucket (mold_v0-226, src/check-spec.ts bucketOf): the input's bucket under the salt, below percent x 100. */
+function bucketLeaf(c: BucketCondition, path: string, ctx: EvalContext, checkName: string): Leaf {
+  const b = c.bucket;
+  const text = (v: string | undefined, fallback: string | null) => {
+    if (v === undefined) return fallback;
+    const r = resolveOperand(v, "string", ctx);
+    return r === MISSING || typeof r.value !== "string" || r.value === "" ? null : r.value;
+  };
+  const input = text(b.input, null), salt = text(b.salt, checkName);
+  const pr = typeof b.percent === "number" ? { value: b.percent } : resolveOperand(b.percent, "number", ctx);
+  const percent = pr === MISSING ? null : pr.value;
+  const below = bucketThreshold(percent);
+  const base = { path, field: b.input.replace(/^[$@]/, ""), op: "bucket" as const, ...(c.label ? { label: c.label } : {}) };
+  const expected = { percent: typeof percent === "number" ? percent : null, below, of: BUCKETS };
+  if (input === null) return { ...base, expected, actual: null, passed: false, note: `no value to bucket: ${b.input}` };
+  if (salt === null) return { ...base, expected, actual: null, passed: false, note: `no salt: ${b.salt}` };
+  const bucket = bucketOf(salt, input);
+  if (below === null) return { ...base, expected, actual: bucket, passed: false, note: `no percent from 0 to 100 (${String(b.percent)} is ${percent === undefined || percent === null || percent === "" ? "empty" : JSON.stringify(percent)})` };
+  return { ...base, expected, actual: bucket, passed: bucket < below };
+}
+
 /**
  * Evaluate a condition. all: every one holds (decided by the first that does not, or by all of them); any: one holds
  * (decided by the first that does, or by all of them); not: the opposite (decided by what it negates).
  */
-export function evaluate(c: CheckCondition, ctx: EvalContext, path = "require"): Outcome {
+export function evaluate(c: CheckCondition, ctx: EvalContext, path = "require", checkName = ""): Outcome {
+  if (isBucket(c)) { const l = bucketLeaf(c, path, ctx, checkName); return { passed: l.passed, decided_by: [l], evaluated: [l] }; }
   if (!isGroup(c)) { const l = leaf(c, path, ctx); return { passed: l.passed, decided_by: [l], evaluated: [l] }; }
-  if ("not" in c) { const o = evaluate(c.not, ctx, `${path}.not`); return { passed: !o.passed, decided_by: o.decided_by, evaluated: o.evaluated }; }
+  if ("not" in c) { const o = evaluate(c.not, ctx, `${path}.not`, checkName); return { passed: !o.passed, decided_by: o.decided_by, evaluated: o.evaluated }; }
   const isAll = "all" in c;
-  const kids = (isAll ? c.all : c.any).map((x, i) => evaluate(x, ctx, `${path}.${isAll ? "all" : "any"}[${i}]`));
+  const kids = (isAll ? c.all : c.any).map((x, i) => evaluate(x, ctx, `${path}.${isAll ? "all" : "any"}[${i}]`, checkName));
   const evaluated = kids.flatMap((k) => k.evaluated);
   if (isAll) {
     const failed = kids.find((k) => !k.passed);
@@ -162,6 +187,12 @@ const OP_WORDS: Record<CheckOp, string> = { eq: "is", ne: "is not", in: "is one 
 export function leafWords(l: Leaf, kind: Kind | null = null): string {
   const what = l.label ?? l.field;
   if (l.note?.startsWith("no value given")) return `${what}: ${l.note}`;
+  if (l.op === "bucket") {
+    const e = l.expected as { percent: number | null; below: number | null };
+    const lead = l.label ? `${l.label}: ` : "";
+    if (l.note) return `${lead}${l.note}`;
+    return `${lead}${l.field} is in bucket ${String(l.actual)} of ${BUCKETS}, ${l.passed ? "" : "not "}below ${e.below} (${e.percent}%)`;
+  }
   if (l.op === "exists") return l.expected ? `${what} ${l.passed ? "has a value" : "has no value"}` : `${what} ${l.passed ? "has no value" : `has a value (${show(l.actual)})`}`;
   const cmp = kind === "date" ? { gt: "after", gte: "at or after", lt: "before", lte: "at or before" } : { gt: "above", gte: "at or above", lt: "below", lte: "at or below" };
   const want = l.op === "within" ? `between ${(l.expected as { from: string }).from} and ${(l.expected as { to: string }).to}`

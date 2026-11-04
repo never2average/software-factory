@@ -12,7 +12,9 @@
 //     pages, rate limits per key, the lifecycle, runs, two workspaces kept apart.
 //  5. Idempotency-Key: the same request answers the same (Idempotent-Replayed), another request with the key is 422.
 //  6. Client sessions: minted with a key holding sessions, never beyond the app's or the key's scopes, ttl capped; CORS
-//     for allowed origins only (the app's and the workspace's), a key from a browser refused, preflights.
+//     for allowed origins only (the app's and the workspace's), a key from a browser refused, preflights. A session
+//     holding checks:<name> (mold_v0-224: the pack schema, the build and the runtime agree) asks that check from a
+//     browser and nothing else; never a check scope beyond its key's or the app's.
 //  7. Webhooks out: signed deliveries (Standard Webhooks), events filtered per endpoint and area, the sealed rule, a
 //     batch rolled back sends nothing, test ping, retries with backoff and the delivery log, disable after repeated
 //     failure and enable, the secret's audited reveal and rotation (two signatures), run.finished from the runs table.
@@ -20,13 +22,22 @@
 //     an old timestamp and another type refused or skipped.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 import { installEmbedded } from "./lib/embedded-fixture.js";
 
 process.env.APP_PREVIEW = "1"; // local webhook receivers and origins (a preview server's rule)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** The fixture with a declarative check whose scope its client sessions may hold (mold_v0-224). */
+const withCheck = (j: any) => {
+  j.checks = [{ name: "open_ticket", label: "Is this ticket open?", inputs: { key: "string" },
+    rule: { area: "tickets", match: { key: "$key" }, latest_by: "updated_at", require: [{ field: "state", in: ["open", "in_progress"] }] } }];
+  j.developer_surface.client_sessions.scopes = [...j.developer_surface.client_sessions.scopes, "checks:open_ticket"];
+  return j;
+};
 
 /** A local webhook receiver: records each request (headers, raw body); answers `status()`. */
 async function receiver(status: () => number = () => 200) {
@@ -93,8 +104,20 @@ try {
     const { checkPackJson } = await import("../src/pack-manifest.js");
     const { embeddedJson } = await import("./lib/embedded-fixture.js");
     assert.doesNotThrow(() => checkPackJson(embeddedJson()), "the fixture's pack.json passes the pack schema");
+    // mold_v0-224: client sessions may hold checks (every check) or checks:<name>, as the runtime lets them: the pack
+    // schema takes them, and the build checks the name against the build's checks (and read:<area> against its areas).
+    const sessions = (scopes: string[]) => ({ ...base, client_sessions: { ...base.client_sessions, scopes } });
+    assert.deepEqual(cfgMod.developerSurfaceProblems(sessions(["read", "checks", "checks:open_ticket", "read:tickets"]), areas, ["open_ticket"]), []);
+    const named = cfgMod.developerSurfaceProblems(sessions(["checks:nope", "read:nope"]), areas, ["open_ticket"]);
+    for (const want of [/checks:nope: nope is not one of the build's checks \(open_ticket\)/, /read:nope: nope is not one of the build's record areas/]) assert.ok(named.some((b) => want.test(b)), `refused: ${want} (${named.join(" | ")})`);
+    assert.ok(cfgMod.developerSurfaceProblems(sessions(["checks"]), areas, []).some((b) => /declares no check/.test(b)), "checks in a build with no check");
+    for (const bad of ["sessions", "webhooks", "checks:", "admin"]) assert.ok(cfgMod.developerSurfaceProblems(sessions([bad]), areas, ["open_ticket"]).length, `a session never holds ${bad}`);
+    assert.doesNotThrow(() => checkPackJson(withCheck(embeddedJson())), "the pack schema takes checks:<name> in client_sessions.scopes");
+    assert.throws(() => checkPackJson({ ...embeddedJson(), developer_surface: { ...embeddedJson().developer_surface, client_sessions: { ...embeddedJson().developer_surface.client_sessions, scopes: ["sessions"] } } }), /client_sessions.scopes/);
+    const schema = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "packs", "pack.schema.json"), "utf8"));
+    assert.ok(JSON.stringify(schema).includes(JSON.stringify(cfgMod.SESSION_SCOPE_PATTERN.source)), "packs/pack.schema.json carries the same pattern");
     assert.throws(() => checkPackJson({ ...embeddedJson(), developer_surface: { ...embeddedJson().developer_surface, events: [{ name: "nope.x", description: "x" }] } }), /developer_surface.events/);
-    await installEmbedded();
+    await installEmbedded(withCheck);
     const { developerGuidePages } = await import("../src/developer-docs.js");
     const { pageProblems } = await import("../src/pack-guide.js");
     const { recordAreas } = await import("../src/record-areas.js");
@@ -276,6 +299,23 @@ try {
       const sKey = (await consoleCall("POST", "/keys", ownerA, { name: "Sessions only", scopes: ["sessions", "read:tickets"] })).json.key;
       assert.equal((await call("POST", "/v1/client_sessions", sKey, { subject: "u", scopes: ["read"] })).json.code, "scope_not_held", "never beyond the minting key's scopes");
       assert.equal((await call("POST", "/v1/client_sessions", sKey, { subject: "u", scopes: ["read:tickets"] })).status, 201, "narrowed like its key");
+      // mold_v0-224: a session holding checks:open_ticket asks that check from the browser, and nothing else.
+      const ckMint = await call("POST", "/v1/client_sessions", KEY, { subject: "user-8", scopes: ["checks:open_ticket"] });
+      assert.equal(ckMint.status, 201, JSON.stringify(ckMint.json));
+      assert.deepEqual(ckMint.json.data.scopes, ["checks:open_ticket"]);
+      const CK = ckMint.json.data.token as string;
+      const asked = await call("POST", "/v1/checks/open_ticket", CK, { key: "T-1" }, { origin: ORIGIN });
+      assert.equal(asked.status, 200, JSON.stringify(asked.json));
+      assert.equal(typeof asked.json.data.allowed, "boolean");
+      assert.equal(asked.headers.get("access-control-allow-origin"), ORIGIN);
+      assert.deepEqual((await call("GET", "/v1/checks", CK, undefined, { origin: ORIGIN })).json.data.map((c: { name: string }) => c.name), ["open_ticket"]);
+      assert.equal((await call("GET", "/v1/records/tickets", CK, undefined, { origin: ORIGIN })).status, 403, "a checks session reads no records");
+      assert.equal((await call("POST", "/v1/checks/open_ticket", CS, { key: "T-1" }, { origin: ORIGIN })).status, 403, "a read session asks no check");
+      assert.equal((await call("POST", "/v1/client_sessions", KEY, { subject: "u", scopes: ["checks"] })).json.code, "scope_not_allowed", "never every check when the app allows one");
+      assert.equal((await call("POST", "/v1/client_sessions", sKey, { subject: "u", scopes: ["checks:open_ticket"] })).json.code, "scope_not_held", "never a check its key does not hold");
+      assert.equal((await call("POST", "/v1/client_sessions", KEY, { subject: "u", scopes: ["checks:nope"] })).json.code, "invalid_scope", "never a check that does not exist");
+      const ckKey = (await consoleCall("POST", "/keys", ownerA, { name: "Sessions and one check", scopes: ["sessions", "checks:open_ticket"] })).json.key;
+      assert.equal((await call("POST", "/v1/client_sessions", ckKey, { subject: "u", scopes: ["checks:open_ticket"] })).status, 201, "a key holding that check mints it");
       // From a browser at an allowed origin.
       const fromApp = await call("GET", "/v1/records/tickets", CS, undefined, { origin: ORIGIN });
       assert.equal(fromApp.status, 200);
@@ -304,7 +344,7 @@ try {
       await sleep(50);
       assert.ok(audit.some((e) => e.actor === `session:${mint.json.data.id} as user-7`), "a session's calls are its subject's");
     }
-    console.log("✓ client sessions: minted with a key holding sessions, within the app's and the key's scopes and ttl; CORS for allowed origins only; a key from a browser refused; revocable");
+    console.log("✓ client sessions: minted with a key holding sessions, within the app's and the key's scopes and ttl (checks:<name> too: that check from a browser, nothing else); CORS for allowed origins only; a key from a browser refused; revocable");
 
     // ---------- 7. webhooks out ----------
     {

@@ -12,12 +12,16 @@
  * session token) or a workspace's MCP key (`Authorization: Bearer oct_...`, a member key with its person's role) on
  * /api/checks; on /v1/checks a developer key (`sk_`) or a client session (`cs_`) holding the scope `checks` (every
  * check) or `checks:<name>` (that one), with the developer surface's own origin, version and rate rules. The
- * workspace is always the caller's own,
- * never an input: every record is read through the record store for that workspace (src/record-areas.ts listFor and
- * getFor: its row-level security, the area's read permission for the caller's role, sealed areas opened with the
- * workspace's key, the data trail), so another workspace's records never answer. Each answer is one entry in the
- * platform trail when audit.platform is on (src/audit-trail.ts auditCheckAnswer: the check's name and outcome, never an
- * input or a value).
+ * workspace is always the caller's own, never an input: every record is read through the record store for that
+ * workspace (src/record-areas.ts listFor and getFor: its row-level security, the area's read permission for the
+ * caller's role, sealed areas opened with the workspace's key, the data trail), so another workspace's records never
+ * answer. Each answer is one entry in the platform trail when audit.platform is on (src/audit-trail.ts
+ * auditCheckAnswer: the check's name and outcome, never an input or a value).
+ *
+ * Onboarding (mold_v0-225): a step `done_when: "tool:check_<name>"` is done once that check was answered for the
+ * workspace, by any door. The MCP tool's calls are recorded as every tool call is (mcp_events tools/call); an answer
+ * at /api/checks or /v1/checks is recorded once per workspace and check as `check/answer` under the tool's name
+ * (recordCheckAnswered: never an input, a value or the outcome), which src/onboarding.ts reads with the tool calls.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { z } from "zod";
@@ -25,12 +29,14 @@ import type { AccountRole } from "./account-roles.js";
 import { auditCaller, auditCheckAnswer } from "./audit-trail.js";
 import { resolveKey } from "./auth.js";
 import { parseTime } from "./clock-math.js";
-import { ANY_CANDIDATES, CHECK_SCOPE_PATTERN, CheckSchema, checkIndexHint, checkToolName, durationMs, fieldTypeOf, inputKind, isDateText, isGroup, opOf, parseOperand, requireOf,
-  type Check, type CheckArea, type FieldCondition, type Kind } from "./check-spec.js";
+import { ANY_CANDIDATES, CHECK_SCOPE_PATTERN, CheckSchema, checkIndexHint, checkToolName, durationMs, fieldTypeOf, inputKind, isBucket, isDateText, isGroup, opOf, parseOperand, requireOf, ruleSteps,
+  type Check, type CheckArea, type CheckRule, type FieldCondition, type Kind } from "./check-spec.js";
 import { evaluate, leafWords, pickLatest, valueAt, type EvalContext, type EvalRecord, type Leaf } from "./check-eval.js";
 import { PackError, type PackTool, type RecordQuery, type RecordRow, type Workspace } from "./pack-api.js";
+import { getDb } from "./db.js";
 import { packs } from "./packs.js";
 import { featureSetting } from "./feature-flags.js";
+import { withTenant } from "./tenant-scope.js";
 import { findArea, getFor, listFor, type Actor, type RecordArea } from "./record-areas.js";
 
 /** Who asks: the workspace (from the session or key, never from input), the person's role and id, the scopes held. */
@@ -54,6 +60,9 @@ export interface CheckAnswer {
     decided_by: (Leaf & { words: string })[];
     conditions: (Leaf & { words: string })[];
     index: ReturnType<typeof checkIndexHint>;
+    /** A first_of rule (mold_v0-226): the area whose step decided, and every step in order with what it found. */
+    decided_by_area?: string;
+    steps?: (Omit<CheckStepNote, "outcome"> & { outcome: CheckStepNote["outcome"] | "not_reached" })[];
   };
 }
 
@@ -189,7 +198,7 @@ const ref = (a: { name: string }, r: EvalRecord) => ({ area: a.name, key: r.key 
  * Answer check `name` for `caller` with `rawInputs` (checked against the declaration), at `now`. Reads only the
  * caller's workspace's records (and shared ones), through the record store.
  */
-export async function answerCheck(caller: CheckCaller, name: string, rawInputs: unknown, now = Date.now()): Promise<CheckAnswer> {
+export async function answerCheck(caller: CheckCaller, name: string, rawInputs: unknown, now = Date.now(), door: "api" | "mcp" = "api"): Promise<CheckAnswer> {
   const c = findCheck(String(name));
   if (!c) throw new PackError(`no check ${String(name).slice(0, 64)}`, 404);
   if (!scopeAllows(caller.scopes, c.name)) throw new PackError(`this credential may not ask check ${c.name} (it needs the scope checks:${c.name} or checks)`, 403);
@@ -197,19 +206,67 @@ export async function answerCheck(caller: CheckCaller, name: string, rawInputs: 
   const t0 = performance.now();
   const answer = await decide(c, caller, inputs, now);
   auditCheckAnswer(caller.orgId, c.name, answer.allowed, Math.round(performance.now() - t0));
+  // The MCP tool's call is recorded as every tool call is; the HTTP doors record the first answer (onboarding, mold_v0-225).
+  if (door === "api") await recordCheckAnswered(caller.orgId, c.name, caller.userId);
   return answer;
 }
 
+/** The (workspace, check) pairs this process has recorded as answered: the event is written once per pair. */
+const answered = new Set<string>();
+/**
+ * Record that check `name` was answered for workspace `orgId` (mold_v0-225): one mcp_events row `check/answer` under the
+ * tool's name (check_<name>), the first time only, so an onboarding step `tool:check_<name>` is done by an answer at
+ * any door. Never an input, a value or the outcome. A failure to record never fails the answer.
+ */
+export async function recordCheckAnswered(orgId: number, name: string, userId: string | null): Promise<void> {
+  const k = `${orgId} ${name}`;
+  if (answered.has(k)) return;
+  try {
+    const tool = checkToolName(name);
+    await withTenant(orgId, async () => {
+      const db = await getDb();
+      const [seen] = await db.query("SELECT 1 FROM mcp_events WHERE org_id = $1 AND method IN ('tools/call', 'check/answer') AND ok AND name = $2 LIMIT 1", [orgId, tool]);
+      if (!seen) await db.query("INSERT INTO mcp_events (org_id, method, name, client, ok, user_id) VALUES ($1, 'check/answer', $2, 'api', true, $3)", [orgId, tool, userId]);
+    });
+    if (answered.size >= 50_000) answered.clear();
+    answered.add(k);
+  } catch (e) { console.error("check answer record failed:", (e as Error).message); }
+}
+
+/** What one step of a rule came to (mold_v0-226 first_of): it decided, or it passed to the next step and why. */
+type StepOutcome =
+  | { decided: true; answer: CheckAnswer }
+  | { decided: false; step: CheckStepNote };
+/** A first_of step that did not decide: its area, the record it found (if any) and why it passed. */
+export interface CheckStepNote { area: string; outcome: "no_record" | "not_applicable" | "decided"; record: { area: string; key: string } | null; why: string; conditions?: (Leaf & { words: string })[] }
+
 async function decide(c: DeclaredCheck, caller: CheckCaller, inputs: Record<string, unknown>, now: number): Promise<CheckAnswer> {
+  const steps = ruleSteps(c);
+  const passed: CheckStepNote[] = [];
+  for (const [i, r] of steps.entries()) {
+    const o = await decideStep(c, r, caller, inputs, now, i === steps.length - 1);
+    if (!o.decided) { passed.push(o.step); continue; }
+    if (steps.length === 1) return o.answer;
+    // A fallback (first_of): the reason says which steps passed and which area decided; the explanation lists each.
+    const a = o.answer;
+    const area = findArea(r.area)!;
+    const reason = `${passed.map((p) => `${p.why}; `).join("")}${a.reason}`;
+    const decidedStep: CheckStepNote = { area: r.area, outcome: "decided", record: a.explanation?.record ?? a.record_refs.find((x) => x.area === r.area) ?? null, why: `${area.label} decided` };
+    return { ...a, reason, ...(a.explanation ? { explanation: { ...a.explanation, decided_by_area: r.area, steps: [...passed, decidedStep, ...steps.slice(i + 1).map((x) => ({ area: x.area, outcome: "not_reached" as const, record: null, why: "not read: an earlier step decided" }))] } } : {}) };
+  }
+  throw new PackError(`check ${c.name}: no step decided`, 500); // the last step always decides: never reached
+}
+
+/** One rule (or one first_of step): the last step decides; a step before it decides only when its latest record applies. */
+async function decideStep(c: DeclaredCheck, r: CheckRule, caller: CheckCaller, inputs: Record<string, unknown>, now: number, last: boolean): Promise<StepOutcome> {
   const actor: Actor = { role: caller.role, userId: caller.userId };
-  const r = c.rule;
   const area = findArea(r.area);
   if (!area) throw new PackError(`check ${c.name}: its area ${r.area} is not installed`, 500);
   const lookupArea = r.lookup ? findArea(r.lookup.area) : null;
   const req = requireOf(r);
   const filter = filterOf(area, r.match, inputs, now, null);
   if (!filter) throw bad(`check ${c.name}: a value it matches on is missing`);
-  const hint = checkIndexHint(c, checkAreaOf(area));
+  const hint = checkIndexHint(r, checkAreaOf(area));
   const mode = r.latest_by ? "latest" as const : "any" as const;
 
   // The candidates, as the workspace sees them: the latest one, or those the database finds meeting require.
@@ -217,7 +274,7 @@ async function decide(c: DeclaredCheck, caller: CheckCaller, inputs: Record<stri
   let candidates: EvalRecord[];
   if (mode === "latest") candidates = await list({ filter, sort: `-${r.latest_by}`, limit: 1 });
   else {
-    const extra = requireFilter(area, ("all" in req ? req.all : [req]).filter((x): x is FieldCondition => !isGroup(x)), inputs, now);
+    const extra = requireFilter(area, ("all" in req ? req.all : [req]).filter((x): x is FieldCondition => !isGroup(x) && !isBucket(x)), inputs, now);
     candidates = extra ? await list({ filter: mergeFilter(filter, extra), sort: "key", limit: ANY_CANDIDATES }) : [];
   }
 
@@ -241,35 +298,45 @@ async function decide(c: DeclaredCheck, caller: CheckCaller, inputs: Record<stri
   };
   const ctxOf = (record: EvalRecord, lookup: EvalRecord | null): EvalContext => ({ record, lookup, lookupAs: r.lookup?.as ?? null, inputs, now, kindOf });
   const words = (l: Leaf) => ({ ...l, words: leafWords(l, kindOf(l.field)) });
+  const said = (l: Leaf) => leafWords(l, kindOf(l.field));
   const matchWords = Object.keys(r.match).join(", ");
   const at = new Date(now).toISOString();
-  const explained = (allowed: boolean, reason: string, record: EvalRecord | null, lookup: EvalRecord | null, outcome: ReturnType<typeof evaluate> | null): CheckAnswer => ({
+  const explained = (allowed: boolean, reason: string, record: EvalRecord | null, lookup: EvalRecord | null, outcome: ReturnType<typeof evaluate> | null): StepOutcome => ({ decided: true, answer: {
     check: c.name, allowed, reason,
     record_refs: [...(record ? [ref(area, record)] : []), ...(lookup && lookupArea ? [ref(lookupArea, lookup)] : [])],
     ...(c.explain ? { explanation: { mode, at, record: record ? ref(area, record) : null, lookup: lookup && lookupArea ? ref(lookupArea, lookup) : null,
       decided_by: (outcome?.decided_by ?? []).map(words), conditions: (outcome?.evaluated ?? []).map(words), index: hint } } : {}),
-  });
+  } });
 
   if (mode === "latest") {
     const rec = pickLatest(candidates, r.latest_by!, kindIn(area, r.latest_by!));
-    if (!rec) return explained(false, `no ${area.label} record matches (${matchWords})`, null, null, null);
+    if (!rec) {
+      if (!last) return { decided: false, step: { area: area.name, outcome: "no_record", record: null, why: `no ${area.label} record matches (${matchWords})` } };
+      return explained(false, `no ${area.label} record matches (${matchWords})`, null, null, null);
+    }
     const lk = await lookupFor(rec);
-    const o = evaluate(req, ctxOf(rec, lk));
-    const decisive = o.decided_by.map((l) => leafWords(l, kindOf(l.field)));
+    if (!last && r.when !== undefined) {
+      const w = evaluate(requireOf({ require: r.when }), ctxOf(rec, lk), "when", c.name);
+      if (!w.passed) return { decided: false, step: { area: area.name, outcome: "not_applicable", record: ref(area, rec),
+        why: `the latest ${area.label} record (${rec.key}) does not apply: ${w.decided_by.filter((l) => !l.passed).map(said).join("; ") || "its when does not hold"}`,
+        ...(c.explain ? { conditions: w.evaluated.map(words) } : {}) } };
+    }
+    const o = evaluate(req, ctxOf(rec, lk), "require", c.name);
+    const decisive = o.decided_by.map(said);
     return explained(o.passed, o.passed
       ? `the latest ${area.label} record (${rec.key}) meets every condition`
       : `the latest ${area.label} record (${rec.key}) does not: ${decisive.join("; ")}`, rec, lk, o);
   }
   // Any record: the first (by key) the database found that the evaluator agrees meets require.
   for (const rec of [...candidates].sort((a, b) => (a.key < b.key ? -1 : 1))) {
-    const o = evaluate(req, ctxOf(rec, null));
+    const o = evaluate(req, ctxOf(rec, null), "require", c.name);
     if (o.passed) return explained(true, `${area.label} record ${rec.key} meets every condition`, rec, null, o);
   }
   // None: explain with the first matching record (by key), when there is one.
   const [first] = await list({ filter, sort: "key", limit: 1 });
   if (!first) return explained(false, `no ${area.label} record matches (${matchWords})`, null, null, null);
-  const o = evaluate(req, ctxOf(first, null));
-  return explained(false, `no matching ${area.label} record meets every condition; ${first.key}: ${o.decided_by.filter((l) => !l.passed).map((l) => leafWords(l, kindOf(l.field))).join("; ") || "it does not"}`, first, null, o);
+  const o = evaluate(req, ctxOf(first, null), "require", c.name);
+  return explained(false, `no matching ${area.label} record meets every condition; ${first.key}: ${o.decided_by.filter((l) => !l.passed).map(said).join("; ") || "it does not"}`, first, null, o);
 }
 function mergeFilter(a: Record<string, unknown>, b: Record<string, Record<string, unknown>>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...a };
@@ -296,10 +363,10 @@ export function checkTools(): (PackTool & { pack: string })[] {
     pack: c.pack,
     name: checkToolName(c.name),
     title: c.label ?? `Check ${c.name}`,
-    description: `Answer yes or no: ${c.description ?? c.label ?? c.name}. Reads this workspace's ${c.rule.area} records${c.rule.latest_by ? ` (the latest by ${c.rule.latest_by} decides)` : ""}. Returns {allowed, reason, record_refs${c.explain ? ", explanation (every condition evaluated and the one that decided it)" : ""}}.`,
+    description: `Answer yes or no: ${c.description ?? c.label ?? c.name}. Reads this workspace's ${ruleSteps(c).map((r, i, all) => `${r.area} records${r.latest_by ? ` (the latest by ${r.latest_by}${i < all.length - 1 ? ", when there is one," : ""} decides)` : ""}`).join(", else its ")}. Returns {allowed, reason, record_refs${c.explain ? ", explanation (every condition evaluated and the one that decided it)" : ""}}.`,
     inputSchema: inputSchemaOf(c),
     annotations: { title: c.label ?? `Check ${c.name}`, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    handler: (ws: Workspace, args: Record<string, unknown>) => answerCheck({ orgId: ws.id, role: ws.role, userId: ws.userId, scopes: null }, c.name, args),
+    handler: (ws: Workspace, args: Record<string, unknown>) => answerCheck({ orgId: ws.id, role: ws.role, userId: ws.userId, scopes: null }, c.name, args, Date.now(), "mcp"),
   }) as unknown as PackTool & { pack: string });
 }
 
@@ -347,11 +414,15 @@ export function checkAppRouter(session: (req: Request, res: Response, next: Next
   });
   const caller = (res: Response) => res.locals.checkCaller as CheckCaller;
   r.get("/", answer(async (_req, res) => ({ checks: declaredChecks().filter((c) => scopeAllows(caller(res).scopes, c.name)).map((c) => ({
-    name: c.name, label: c.label ?? null, description: c.description ?? null, inputs: c.inputs, area: c.rule.area, latest_by: c.rule.latest_by ?? null, tool: checkToolName(c.name) })) })));
+    name: c.name, label: c.label ?? null, description: c.description ?? null, inputs: c.inputs, area: ruleSteps(c)[0]!.area, latest_by: ruleSteps(c)[0]!.latest_by ?? null,
+    ...("first_of" in c.rule ? { first_of: ruleSteps(c).map((r) => ({ area: r.area, latest_by: r.latest_by ?? null })) } : {}), tool: checkToolName(c.name) })) })));
   r.post("/:name", answer(async (req, res) => answerCheck(caller(res), String(req.params.name), req.body)));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;
 }
 
 /** For tests and the build log: each check's index hint. */
-export const checkHints = () => declaredChecks().map((c) => { const a = findArea(c.rule.area); return { check: c.name, ...checkIndexHint(c, a ? checkAreaOf(a) : undefined) }; });
+export const checkHints = () => declaredChecks().flatMap((c) => ruleSteps(c).map((r, i, all) => {
+  const a = findArea(r.area);
+  return { check: c.name, ...(all.length > 1 ? { step: i } : {}), ...checkIndexHint(r, a ? checkAreaOf(a) : undefined) };
+}));

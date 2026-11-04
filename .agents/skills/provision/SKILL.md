@@ -7,6 +7,7 @@ description: Check and deploy a stamped application to its target. Use after int
 ```
 python3 .claude/scripts/provision.py <app_id>                     # check, READ-ONLY: what exists, what a deploy will create, which secrets to set
 python3 .claude/scripts/provision.py <app_id> --set-secret NAME   # type one credential at a hidden prompt (human terminal only); creates the three empty projects if absent
+python3 .claude/scripts/provision.py <app_id> --generate-secret NAME [--rotate]   # a key the app's profile needs (APP_LEDGER_SIGNING_KEY with audit.sign): made here, written to the target, only its public half printed; ASK FIRST
 python3 .claude/scripts/provision.py <app_id> --deploy            # prints the plan, refuses before creating if a secret is missing, else creates + deploys
 python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half of --deploy (vercel: creates projects + datastores, bootstraps Neon; vm: a private local Postgres)
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
@@ -186,6 +187,24 @@ reads the mold's health path (`/healthz`) through the console on the domain and 
 `switch` (once Vercel files the domain under the console project) writes `OCTILLION_CONSOLE_URL` on the API project
 instead of `WEB_ORIGIN` (sign-in codes, invitations, emailed links and Clerk's accepted sign-in origins are built on
 it), moves `production_url`, and says a redeploy is needed for the API to read it.
+
+**Keys the app's profile needs (mold_v0-227; `lib/ledger_key.py`, `mold.json` `profile_secrets`).** With
+`audit.sign` on in the app's profile (chain and sign, mold_v0-195), the app needs `APP_LEDGER_SIGNING_KEY`, an Ed25519
+key the database never sees. Nobody holds it in an account, so it is never typed: the check lists it as required
+(`required by this app's profile (audit.sign is on)`), prints `provision.py <app_id> --generate-secret
+APP_LEDGER_SIGNING_KEY` while it is missing and exits 1, the keys station asks for that line, and a Vercel deploy
+stops (exit 3) before creating anything. Off, nothing mentions it.
+
+- `--generate-secret NAME` makes the key on this machine (Python's `cryptography`, else Node's crypto, as the mold's
+  `scripts/ledger-keygen.ts`), writes it to the `-api` project (or, on a server of its own, to its env file on stdin),
+  records only the public key in `infrastructure.json` `ledger_keys` and prints the public key and its key id. The key
+  is never printed, logged, stored here or put on a command line. It writes a secret, so **ask the operator first**
+  (`.claude/settings.json` asks too); `--dry-run` says what it would do. A redeploy applies it.
+- An existing key is never overwritten: a second run refuses and names `--rotate`. `--rotate` first writes every earlier
+  public key (state's record and the app's `/.well-known/ledger-keys.json`) to `APP_LEDGER_PUBLIC_KEYS`, so checkpoints
+  signed before still verify, then the new key; it refuses when the current key's public half cannot be found.
+- On `compose_remote` the first deploy makes the key itself when the server lacks it (the env file exists only from
+  then), says its public half and records it; it never replaces one the server holds.
 
 **Platform administrators (mold_v0).** The shell lets in only a company account's members and its platform
 administrators. `application.json` `platform_admins` (addresses or `*@domain`, asked by intake) is written as a plain

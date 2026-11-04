@@ -79,7 +79,7 @@
       "requested_words": "the app's profile (no pack declares it)",
       "requires_any": ["audit.data", "audit.platform"],
       "since": "mold_v0-195",
-      "about": "Signed checkpoints of the hash-chained audit trails (Ed25519 over Merkle roots, with APP_LEDGER_SIGNING_KEY): the ledger checkpoint job, /api/ledger/verify, /.well-known/ledger-keys.json and the verify_audit_trail MCP tool.",
+      "about": "Signed checkpoints of the hash-chained audit trails (Ed25519 over Merkle roots): the ledger checkpoint job, /api/ledger/verify and /checkpoints, /.well-known/ledger-keys.json, the verify_audit_trail MCP tool and Settings › Signing. On, the app needs APP_LEDGER_SIGNING_KEY, which the factory makes (mold.json profile_secrets, lib/ledger_key.py: provision.py <app> --generate-secret APP_LEDGER_SIGNING_KEY; mold_v0-227).",
       "off": "No checkpoint is signed, no route or well-known key answers and no tool is listed (the chain itself is always kept where entries are written)."
     },
     {
@@ -114,7 +114,7 @@
       "requested_by": "checks",
       "requested_words": "a pack declares checks (pack.json checks)",
       "since": "mold_v0-196",
-      "about": "Yes/no questions the records answer: /api/checks, /v1/checks, the check_<name> MCP tools.",
+      "about": "Yes/no questions the records answer: /api/checks, /v1/checks, the check_<name> MCP tools, with their fallback rules (first_of) and percentage bucketing (bucket conditions; mold_v0-224/225/226), a client session's checks scopes and the onboarding's check tools.",
       "off": "No check route answers and no check tool is listed."
     },
     {

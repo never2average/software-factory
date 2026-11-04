@@ -71,8 +71,14 @@ def choice(check, L):
         check("choice: a brief that says nothing about workflows leaves the default (none) in force", hint("A research workspace for Acme on vercel.") is None)
         check("choice: 'workflows: all' and 'workflows: none' still work", hint("x\nworkflows: all\n") == "all" and hint("x\nworkflows: none\n") == "none" and hint("workflows: library") == "all" and hint("workflows none") == "none" and hint("workflow all") == "all")
         check("choice: a brief that only mentions a workflow library in passing does not ask for one", hint("The team keeps a workflow library of its own in Notion.") is None)
-        check("choice: plain words ask for the original product's library", all(hint(t) == "all" for t in ("Give it the starter library.", "with the account-delivery library", "It needs the original product's workflow library.", "use the built-in library")))
-        check("choice: plain words decline it", all(hint(t) == "none" for t in ("no starter library", "without the workflow library", "No built-in library, please.", "starter library: none", "We do not want the starter library.", "We don't need the built-in library.", "It has no workflow library.")))
+        # mold_v0-230: only a sentence that starts with the setting decides; the same words inside a sentence of description
+        # are a prose hint, asked (questions.json prose.library), never taken.
+        prose = lambda text: ((I.parse_brief(text).get("prose_hints") or {}).get("library") or {}).get("value")
+        check("choice: setting sentences ask for the original product's library", all(hint(t) == "all" for t in ("With the starter library.", "with the account-delivery library", "The original product's workflow library.", "Starter library: all")))
+        check("choice: setting sentences decline it", all(hint(t) == "none" for t in ("no starter library", "without the workflow library", "No built-in library, please.", "starter library: none", "Without any starter library.")))
+        check("choice: the same words in a sentence of description are asked, never taken (mold_v0-230)",
+              all(hint(t) is None and prose(t) == "all" for t in ("Give it the starter library.", "It needs the original product's workflow library.", "use the built-in library"))
+              and all(hint(t) is None and prose(t) == "none" for t in ("We do not want the starter library.", "We don't need the built-in library.", "It has no workflow library.")))
     q = [x for x in I.QUESTIONS if x[0] == "library"][0]
     check("choice: intake's own default is none", q[4]({}, {}, {}) == "none" and q[4]({}, {"library": "all"}, {}) == "all")
 

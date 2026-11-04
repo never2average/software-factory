@@ -57,6 +57,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
   ```
 
   It asks at a hidden prompt and prints only the name. Give them that line with the real app id and NAME, then wait for them to say it is done.
+- A key nobody holds in an account (today `APP_LEDGER_SIGNING_KEY`, which an app needs while its profile has `audit.sign` on) is never typed: `provision.py <app_id> --generate-secret NAME` makes it on this machine, writes it straight to the deploy target and prints only its public half. It writes a secret, so ask first. It never overwrites an existing key; `--rotate` replaces one and keeps the old public key published.
 - Do not use your tool's in-chat shell (`!` in Claude Code, Codex, Gemini, Qwen, OpenCode, and others) for this: its output goes into the conversation. Pi's `!!` runs a command without sending its output to the model; a separate terminal works with every tool.
 - If someone pastes a secret into the chat, do not repeat it or write it anywhere. Tell them it should be replaced (it has been exposed), and give them the `--set-secret` line for the new one.
 
@@ -66,6 +67,7 @@ Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `val
 
 **Always ask first, naming the app and what will happen, and wait for a plain yes:**
 
+- **Secrets the factory makes:** `provision.py <app> --generate-secret NAME` (and `--rotate`): it writes a key to the app's hosting.
 - **Deploys:** `provision.py --deploy`, `--deploy-remote`, `--verify-db`, and `mint.py <app> run` when its next station is a deploy. A request that asks for the deploy ("deploy it", "carry on" after you said the deploy is next) is a yes; your own inference is not. **An app that is live with users gets its own separate yes every time, even when the request names it:** if the request bundles the deploy with another risky step (a force-push, a delete, "quickly"), stop, say what each step would do, and ask about the live deploy on its own.
 - **Repositories:** `repo.py publish` or `push` (only ever when the person asked for a repository), `gh repo create`.
 - **Force-push or history rewrite** on any shared branch: `git push --force`, `-f`, `--force-with-lease`, `+refspec`.

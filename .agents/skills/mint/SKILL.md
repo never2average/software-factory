@@ -55,8 +55,9 @@ spec and says what each still lacks (read-only).
 
 1. Ask the person to describe the product in their own words. Write it to `briefs/<app_id>.md` yourself. Lines the
    line understands, each on its own line: `Product name:`, `Colour: #RRGGBB`, `Logo: brands/<x>/logo.png`,
-   `Workspace:`, `Owner: <email>`, `Members: <emails>`, `Packs: <pack_id>`, `Domain:`, plus plain phrases such as
-   "web search on, browser off". A brief that names its product creates the product; nobody has to know product ids.
+   `Workspace:`, `Owner: <email>`, `Members: <emails>`, `Packs: <pack_id>`, `Domain:`, plus setting sentences such as
+   "Web search on, browser off." Only those lines set anything (docs/INTAKE.md "What sets state"): the person's own
+   description is kept as written, and a sentence of it that sounds like a setting becomes a `prose.<setting>` question. A brief that names its product creates the product; nobody has to know product ids.
 2. `mint.py new …`. If it leaves `questions.json`, the `intake` subagent asks only those.
 3. If the product needs its own specialists, fields or wording, that is a pack (`subagent` skill), named in the
    brief. Build it before `run`. Anything the base cannot do is a pull request upstream, never a fork.
@@ -70,6 +71,9 @@ web address, one paste per code block, what is hidden). What each station needs:
 - **keys** — first try `mint.py <app_id> reuse-keys <an app of theirs that already runs>`: it copies the operator's
   own service keys in memory and derives the sender address, so a second app asks for nothing. Only for a key no
   app holds yet: `provision.py <app_id> --set-secret NAME` (hidden prompt; or the Vercel form it points to).
+  A key the app's profile needs (a mold_v0 app with `audit.sign` on: `APP_LEDGER_SIGNING_KEY`) is never typed and never
+  another app's: the station names `provision.py <app_id> --generate-secret NAME` (a yes, since it writes a secret; it
+  prints only the public half). On a server of its own the first deploy makes it.
   'Continue with Google' works only at an address Google has been told about by hand, and a new app's is not, so
   `reuse-keys` also makes the app the keys came from the new app's **sign-in hub** when that app's own Google
   sign-in works (state only: the new app takes it up at its first deploy, the other app at ITS next deploy, which

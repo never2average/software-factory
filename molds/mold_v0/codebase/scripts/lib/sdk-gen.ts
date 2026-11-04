@@ -15,6 +15,86 @@ export interface SdkOp {
 export interface SdkFile { path: string; content: string }
 
 const WRITE = new Set(["post", "put", "patch", "delete"]);
+
+/**
+ * Percentage bucketing (mold_v0-226; src/check-spec.ts bucketOf): emitted into both SDKs when a check of the build
+ * declares a bucket (the document's x-sdk.bucketing), so a client puts a subject in the same bucket the server does.
+ * The SDKs ask the server for a check's answer (POST /v1/checks/<name>); they never evaluate a check themselves. The
+ * JavaScript one is synchronous and dependency-free (SHA-256 written out; TextEncoder for UTF-8), for browsers and Node.
+ */
+export const TS_BUCKETING = `
+// ---------- percentage bucketing (the same function as the server's checks) ----------
+const SHA_K = new Uint32Array([
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+]);
+/** The first 32 bits of SHA-256 of a byte array, as an unsigned integer. */
+function sha256First32(bytes) {
+  const l = bytes.length, n = ((l + 9 + 63) >> 6) << 6;
+  const m = new Uint8Array(n); m.set(bytes); m[l] = 0x80;
+  const dv = new DataView(m.buffer);
+  dv.setUint32(n - 8, Math.floor((l * 8) / 2 ** 32)); dv.setUint32(n - 4, (l * 8) >>> 0);
+  const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]), W = new Uint32Array(64);
+  for (let o = 0; o < n; o += 64) {
+    for (let i = 0; i < 16; i++) W[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const x = W[i - 15], y = W[i - 2];
+      W[i] = W[i - 16] + ((x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ (x >>> 3)) + W[i - 7] + ((y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ (y >>> 10));
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + ((e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7)) + ((e & f) ^ (~e & g)) + SHA_K[i] + W[i]) >>> 0;
+      const t2 = (((a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+  }
+  return H[0];
+}
+export const BUCKETS = 10000;
+/** The bucket of input under salt, 0 to 9999: SHA-256 of the UTF-8 text salt + ":" + input, its first 4 bytes big-endian, mod 10000. */
+export function bucket(input, salt) {
+  if (typeof input !== "string" || typeof salt !== "string") throw new TypeError("bucket(input, salt): two strings");
+  return sha256First32(new TextEncoder().encode(\`\${salt}:\${input}\`)) % BUCKETS;
+}
+/** Is input within the first percent (0 to 100, two decimals) of buckets under salt? 0: no one; 100: everyone. */
+export function inRollout(input, salt, percent) {
+  if (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) return false;
+  return bucket(input, salt) < Math.floor(percent * 100 + 0.5);
+}
+`;
+export const TS_BUCKETING_DTS = `/** Buckets a percent is counted in (10000: two decimals). */
+export declare const BUCKETS: 10000;
+/** The bucket of input under salt, 0 to 9999 (the same function as the server's checks: SHA-256 of salt + ":" + input, first 4 bytes, mod 10000). */
+export declare function bucket(input: string, salt: string): number;
+/** Is input within the first percent (0 to 100) of buckets under salt? */
+export declare function inRollout(input: string, salt: string, percent: number): boolean;
+`;
+export const PY_BUCKETING = `
+
+# ---------- percentage bucketing (the same function as the server's checks) ----------
+BUCKETS = 10000
+
+
+def bucket(input: str, salt: str) -> int:
+    """The bucket of input under salt, 0 to 9999: SHA-256 of the UTF-8 text salt + ":" + input, its first 4 bytes big-endian, mod 10000."""
+    if not isinstance(input, str) or not isinstance(salt, str):
+        raise TypeError("bucket(input, salt): two strings")
+    return int.from_bytes(hashlib.sha256(f"{salt}:{input}".encode("utf-8")).digest()[:4], "big") % BUCKETS
+
+
+def in_rollout(input: str, salt: str, percent: float) -> bool:
+    """Is input within the first percent (0 to 100, two decimals) of buckets under salt? 0: no one; 100: everyone."""
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)) or percent != percent or percent < 0 or percent > 100:
+        return False
+    return bucket(input, salt) < math.floor(percent * 100 + 0.5)
+`;
 const refName = (r: string) => r.replace(/^#\/components\/schemas\//, "");
 
 /** Every operation with x-sdk, in document order. */
@@ -79,6 +159,7 @@ const tree = (ops: SdkOp[]) => {
 
 export function typescriptSdk(doc: Schema): SdkFile[] {
   const ops = sdkOps(doc);
+  const bucketing = doc["x-sdk"]?.bucketing === true;
   const pkg = doc["x-sdk"]?.npm ?? "app-api";
   const version = String(doc.info.version);
   const semver = `0.${version.replace(/-/g, "")}.0`;
@@ -152,7 +233,7 @@ export class Client {
     }
   }
 }
-`;
+${bucketing ? TS_BUCKETING : ""}`;
   // The declarations: every schema, the options, and the client's tree typed.
   const schemas = Object.entries<Schema>(doc.components?.schemas ?? {}).map(([n, s]) => `/** ${String(s.title ?? n).replace(/\*\//g, "")} */\nexport type ${n} = ${tsType(s)};`).join("\n");
   const sig = (o: SdkOp) => {
@@ -197,7 +278,7 @@ export declare class Client {
 ${groups.map((g) => `  readonly ${tsKey(g)}: Group_${g.replace(/[^A-Za-z0-9_]/g, "_")};`).join("\n")}
   request(method: string, path: string, options?: RequestOptions & { query?: Record<string, unknown>; body?: unknown; write?: boolean }): Promise<unknown>;
 }
-`;
+${bucketing ? TS_BUCKETING_DTS : ""}`;
   const pkgJson = { name: pkg, version: semver, description: `Typed client for the ${doc.info.title} (API version ${version}).`, type: "module", main: "./index.js", types: "./index.d.ts",
     exports: { ".": { types: "./index.d.ts", default: "./index.js" } }, files: ["index.js", "index.d.ts", "README.md"], sideEffects: false, license: "UNLICENSED", engines: { node: ">=18" } };
   const readme = `# ${pkg}\n\nTyped client for the ${doc.info.title}, API version ${version}, generated from its OpenAPI document.\n\n\`\`\`ts\nimport { Client } from "${pkg}";\nconst api = new Client({ baseUrl: process.env.API_URL!, token: process.env.API_KEY! });\n\`\`\`\n\nOperations: ${ops.map((o) => `\`${o.group}.${o.method}\``).join(", ")}.\n`;
@@ -223,6 +304,7 @@ export function pyType(s: Schema | undefined, depth = 0): string {
 
 export function pythonSdk(doc: Schema): SdkFile[] {
   const ops = sdkOps(doc);
+  const bucketing = doc["x-sdk"]?.bucketing === true;
   const mod = pyName(doc["x-sdk"]?.python ?? "app_api");
   const version = String(doc.info.version);
   // TypedDicts: an object schema with properties (required keys as Required, the rest NotRequired); others as aliases.
@@ -259,8 +341,8 @@ export function pythonSdk(doc: Schema): SdkFile[] {
   const init = `"""Typed client for the ${doc.info.title} (API version ${version}). Generated by scripts/gen-sdks.ts from its OpenAPI document. Do not edit."""
 from __future__ import annotations
 
-import json
-import time
+${bucketing ? "import hashlib\n" : ""}import json
+${bucketing ? "import math\n" : ""}import time
 import uuid
 import urllib.error
 import urllib.parse
@@ -348,7 +430,7 @@ ${groups.map((g) => `        self.${pyName(g)} = _${pyName(g)}(self)`).join("\n"
                     attempt += 1
                     continue
                 raise
-`;
+${bucketing ? PY_BUCKETING : ""}`;
   const pyproject = `[build-system]\nrequires = ["setuptools>=61"]\nbuild-backend = "setuptools.build_meta"\n\n[project]\nname = "${mod.replace(/_/g, "-")}"\nversion = "0.${version.replace(/-/g, "")}.0"\ndescription = "Typed client for the ${doc.info.title} (API version ${version})."\nrequires-python = ">=3.9"\ndependencies = ['typing_extensions>=4.0; python_version<"3.11"']\n\n[tool.setuptools]\npackages = ["${mod}"]\n\n[tool.setuptools.package-data]\n${mod} = ["py.typed"]\n`;
   const readme = `# ${mod}\n\nTyped client for the ${doc.info.title}, API version ${version}, generated from its OpenAPI document.\n\n\`\`\`python\nfrom ${mod} import Client\napi = Client(base_url=API_URL, token=API_KEY)\n\`\`\`\n`;
   return [{ path: `${mod}/__init__.py`, content: init }, { path: `${mod}/py.typed`, content: "" }, { path: "pyproject.toml", content: pyproject }, { path: "README.md", content: readme }];

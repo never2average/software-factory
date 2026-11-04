@@ -38,7 +38,7 @@
     "client_sessions": {
       "ttl_seconds": 900,
       "allowed_origins": ["https://app.example.com"],
-      "scopes": ["read"]
+      "scopes": ["read", "checks:is_flag_on"]
     },
     "webhooks_in": [
       {

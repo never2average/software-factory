@@ -28,7 +28,22 @@
         { "name": "recorded_at", "label": "Recorded", "type": "date", "required": true },
         { "name": "expires_at", "label": "Expires", "type": "date" },
         { "name": "channels", "label": "Channels", "type": "enum", "multiple": true, "options": ["email", "sms", "post"] },
-        { "name": "age", "label": "Subject age", "type": "number" }
+        { "name": "age", "label": "Subject age", "type": "number" },
+        { "name": "share", "label": "Share of subjects", "type": "number", "min": 0, "max": 100 }
+      ]
+    },
+    {
+      "name": "exceptions",
+      "label": "Exceptions",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["subject", "purpose", "allowed", "recorded_at"],
+      "fields": [
+        { "name": "subject", "label": "Data subject", "type": "text", "required": true, "max_length": 200 },
+        { "name": "purpose", "label": "Purpose", "type": "reference", "to": "purposes", "required": true },
+        { "name": "allowed", "label": "Allowed", "type": "boolean", "required": true },
+        { "name": "recorded_at", "label": "Recorded", "type": "date", "required": true },
+        { "name": "until", "label": "Until", "type": "date" }
       ]
     }
   ],
@@ -64,6 +79,35 @@
         ]
       },
       "explain": false
+    },
+    {
+      "name": "may_contact",
+      "label": "May we contact this subject (its exception, else its consent and share)?",
+      "description": "The subject's current exception decides when one exists; else the latest consent, the purpose and the subject's bucket in the share.",
+      "inputs": { "subject": "string", "purpose": "string", "at": "datetime?" },
+      "rule": {
+        "first_of": [
+          {
+            "area": "exceptions",
+            "match": { "subject": "$subject", "purpose": "$purpose" },
+            "latest_by": "recorded_at",
+            "when": [{ "any": [{ "field": "until", "exists": false }, { "field": "until", "gt": "$at|now" }], "label": "The exception is current" }],
+            "require": [{ "field": "allowed", "eq": true, "label": "The exception allows it" }]
+          },
+          {
+            "area": "consents",
+            "match": { "subject": "$subject", "purpose": "$purpose" },
+            "latest_by": "recorded_at",
+            "lookup": { "area": "purposes", "as": "purpose_rec", "key": "$purpose" },
+            "require": [
+              { "field": "status", "eq": "granted", "label": "Consent is granted" },
+              { "field": "purpose_rec.active", "eq": true, "label": "The purpose is active" },
+              { "any": [{ "field": "share", "exists": false }, { "bucket": { "input": "$subject", "salt": "$purpose", "percent": "@share" } }], "label": "The subject is within the share" }
+            ]
+          }
+        ]
+      },
+      "explain": true
     }
   ]
 }

@@ -14,7 +14,7 @@ commands. Paste the prompt to your agent, or mint the spec directly:
 |---|---|---|---|---|
 | Wrenchline, a field-service maintenance tracker | mold_v0 | tool | Typed record areas with lifecycles; priority-driven respond and fix-by clocks that remind, pause and escalate; emailed requests becoming work orders; a visit-report agent and a scheduled preventive plan; the data trail | [field-service](../examples/mold_v0/field-service/) |
 | Panelwise, a hiring pipeline | mold_v0 | tool | Candidates with documents and encrypted contact details; working-day clocks; three agents (CV screen, panel summary, weekly digest); both audit trails; sign-in only for AI apps | [hiring-pipeline](../examples/mold_v0/hiring-pipeline/) |
-| Flagwell, feature flags and experiments | mold_v0 | embedded | Append-only, hash-chained rollouts and overrides with signed checkpoints; two yes/no checks; the developer surface (API, keys, client sessions, webhooks out and in, SDKs); an experiment-readout agent | [feature-flags](../examples/mold_v0/feature-flags/) |
+| Flagwell, feature flags and experiments | mold_v0 | embedded | Append-only, hash-chained rollouts and overrides with signed checkpoints; one yes/no check that falls back from the user's override to the rollout and buckets users by a stable hash; the developer surface (API, keys, client sessions, webhooks out and in, SDKs); an experiment-readout agent | [feature-flags](../examples/mold_v0/feature-flags/) |
 | Inkboard, a newsroom calendar | mold_v1 | tool | Desks, assignments and daily editions mapped onto the record areas by structure; a briefing specialist built as a full workspace; scheduled briefings as starter apps | [newsroom-calendar](../examples/mold_v1/newsroom-calendar/) |
 | Keyward, a property maintenance desk | mold_v1 | tool | Buildings, tickets, quarterly inspection rounds and vendors' contracts on all four record areas; an inspection-reading specialist; scheduled lists | [property-desk](../examples/mold_v1/property-desk/) |
 
@@ -56,6 +56,10 @@ The agent asks a question only for what your words leave open. Say these, in pla
 - **The legal company** (mold_v0): its name, contact address and effective date, for the terms and privacy pages.
 - **For mold_v1:** web search and browser on or off, which inference provider, the dictation model, and whether new
   workspaces get starter workflows.
+
+Describe things in your own words without worrying about trigger words: a sentence of description never changes a
+setting by itself. If one sounds like a setting ("an on-premises runner later", "one workspace each"), the agent asks
+you about it instead (docs/INTAKE.md "What sets state").
 
 Two habits help: write words people read ("a run is a draft") and give every choice its label, and keep one thought
 per bullet so nothing is ambiguous. Compare your prompt with an example's and its spec.
