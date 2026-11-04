@@ -232,6 +232,12 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     // (The staff's /admin/activity is no route at all since mold_v0-211: not walked.)
     expect("zero packs", walk(zero), { "/app": "/app", "/app/billing": "/app/billing", "/app/usage": "/app/usage", "/app/profile": "/app/profile", "/admin/health": "/admin/health" },
       new RegExp(`${ABSENT.source}|^/app/(activity|credentials|notices|schedules|vulnerabilities)(\\?|$)`));
+    // How it is lit (mold_v0-216): the brand's tint behind it and its words in the brand's colour, light and dark, the
+    // phone's sheet the same component; no bar at its edge.
+    const side = readFileSync(path.join(ROOT, "web", "src", "components", "layout", "app-sidebar.tsx"), "utf8");
+    const lit = /const ACTIVE = '([^']+)'/.exec(side)?.[1] ?? "";
+    for (const c of ["data-active:bg-primary/10", "dark:data-active:bg-primary/20", "data-active:text-primary"]) assert.ok(lit.split(" ").includes(c), `the active entry keeps ${c}: ${lit}`);
+    assert.doesNotMatch(lit, /shadow|inset|border-l|before:/, "no bar at the active entry's edge (mold_v0-216)");
     console.log(`✓ the active entry (mold_v0-213): ${n} pages of both consoles each light exactly one entry, the right one (in-page tabs, a record's page, a filter, ?journey=, Accounts › Admins); Docs none`);
   }
   console.log("CONSOLE SIDEBAR TEST PASS");

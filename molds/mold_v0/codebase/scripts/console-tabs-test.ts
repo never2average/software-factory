@@ -488,7 +488,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(setup, /aria-expanded="/, "no step is folded");
       assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
-      assert.match(setup, /These steps tick themselves as you go\./, "the footer");
+      assert.doesNotMatch(open, /tick themselves|How much of the workflow your team uses/, "no caption under the steps (mold_v0-216)");
       const rail = open.slice(order[0]!, order[1]!);
       assert.match(rail, /Pick your client.*Copy URL.*Test my connection/s, "the connection card: pick, copy, test");
       const numbers = open.slice(order[2]!, order[3]!);
@@ -610,14 +610,19 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(card, /href="\/app\/records\/audit_findings\/f9"/, "each row links to its record's page");
       assert.match(card, /Open port on the API[\s\S]*Vulnerabilities · Fix by[\s\S]*Overdue 10d[\s\S]*10 days ago/, "title, area and clock, badge, relative date");
       assert.match(card, /href="\/app\/vulnerabilities\?overdue=1"[^>]*>View all</, "View all: the area's list with the Overdue filter on");
-      assert.match(html, /data-home-section="notices"[\s\S]*>Notices</, "the notices section, beside the Due soon card, is named Notices");
+      // mold_v0-216: no Notices section under the steps and no caption; with no notices card in its rail, /app/notices is
+      // its own page again (the notices emails link there), not a redirect to the home page.
+      assert.doesNotMatch(html, /data-home-section="notices"|>Notices<\/h2>|Records due soon in this workspace|Nothing is due soon\./, "no Notices section on the Overview");
+      assert.doesNotMatch(html, /tick themselves|How much of the workflow your team uses/, "no caption under the steps");
+      const jroutes = JSON.parse(readFileSync(path.join(jr, "web", "src", "config", "pack-routes.generated.json"), "utf8")).redirects.map((r: any) => r.source);
+      assert.ok(!jroutes.some((x: string) => x.startsWith("/app/notices")), `/app/notices stays its own page when the home tab shows no notices card: ${jroutes.join(", ")}`);
       assert.doesNotMatch(html, /class="grid border-t border-l lg:grid-cols-2/, "no charts grid");
       // Nothing due: a calm empty state; no clock area this role may read: no card.
       const calm = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [] } }, "home-journeys-empty");
       assert.match(calm, /data-due-soon-empty[\s\S]*Nothing is due or overdue/, "nothing due: a calm line");
       const none = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [], areas: [] } }, "home-journeys-none");
       assert.match(none, /Connect your AI client/); assert.doesNotMatch(none, />Due soon<|data-due-soon-empty/, "a role that may read no clock area: no card");
-      console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card");
+      console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card; no Notices section or caption under the steps, /app/notices its own page (mold_v0-216)");
     }
   }
 

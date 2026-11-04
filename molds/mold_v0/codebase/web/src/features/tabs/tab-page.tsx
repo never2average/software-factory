@@ -2,7 +2,7 @@
 // A tab a pack declares (mold_v0-058), at /app/<tab> (mold_v0-132): the shell draws it from pack.json alone.
 //   overview   the tab's charts (mold_v0-063; ./charts.tsx). One that includes setup is the build's home (mold_v0-134,
 //              mold_v0-172): the Setup page's own layout (the checklist, the connection card and the cards of its
-//              pack.json rail on the right; the notices it includes below the checklist unless a card shows them). Its
+//              pack.json rail on the right; mold_v0-216: no notices section under the checklist, the Due soon card and /app/notices show them). Its
 //              charts are not drawn there (mold_v0-207: the headline row above, the Due soon card, the rail's number
 //              cards say what the page needs; a chart is for an overview tab without setup or an area tab)
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date); the tab's charts
@@ -30,7 +30,6 @@ import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type Record
 import { useAccountRole } from '@/features/portal/role';
 import { SetupPage } from '@/features/portal/setup';
 import { GridCell } from '@/features/portal/grid-cell';
-import { buildHasClocks } from '@/features/records/due-soon-card';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
 import { SchedulesBody } from '@/features/schedules/schedules-page';
 import { Icons } from '@/components/icons';
@@ -121,7 +120,7 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
 /**
  * The build's home (mold_v0-134, mold_v0-172): an overview tab that includes setup draws the Setup page's layout, the
  * same for every build. Its rail's cards follow the connection card (journeys: the Due soon card, mold_v0-207; notices,
- * chart:<name>); the notices it includes and no card shows follow the checklist. Its `charts` (and charts_title) are not
+ * chart:<name>); nothing follows the checklist (mold_v0-216: the notices are on the Due soon card and /app/notices). Its `charts` (and charts_title) are not
  * drawn (mold_v0-207: the home page has no charts grid; a pack that lists them stays valid, its metrics still drive the
  * headline row, the list tabs' cards and the rail's number cards). It has no title of its own (the Setup page has
  * none): its sections name themselves. It is drawn at /app itself (mold_v0-175, web/src/app/app/page.tsx).
@@ -136,7 +135,6 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
     return !metrics.length ? null : metrics.length === c.metrics.length ? c : { ...c, metrics };
   };
   const rail = tab.rail;
-  const notices = (tab.include ?? []).includes('notices');
   const cards: Record<string, React.ReactNode> = {};
   for (const x of rail ?? []) {
     if (x === 'notices') cards[x] = <DueSoonCard />;
@@ -146,11 +144,8 @@ function HomeTab({ tab }: { tab: PackTabSpec }) {
       if (c) cards[x] = <ChartCard chart={c} home={tab} />;
     }
   }
-  return (
-    <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined}
-      // Beside the Due soon card (the records' deadlines, mold_v0-207), the notices are named as what they are.
-      main={notices && !(rail ?? []).includes('notices') ? <DueSoonSection title={buildHasClocks ? 'Notices' : undefined} /> : undefined} />
-  );
+  // No notices section under the checklist (mold_v0-216): the Due soon card and the Notices page show them.
+  return <SetupPage rail={rail} cards={cards} top={top.length ? <TabSparklines tab={tab} count={top.length} label='Headline numbers' /> : undefined} />;
 }
 
 // ---------- the area views ----------

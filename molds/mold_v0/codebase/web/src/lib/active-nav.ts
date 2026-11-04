@@ -79,6 +79,8 @@ const firstTab = (kind: string) => packTabs.find((t) => t.kind === kind)?.url;
 export const PORTAL_HOMES: Readonly<Record<string, string>> = {
   '/app/journeys': '/app',
   '/app/connected-apps': '/app/profile',
+  // A home tab that includes the notices without their card (mold_v0-216): /app/notices is its own page, reached from Home.
+  '/app/notices': '/app',
   // A sidebar of declared tabs without a schedules tab: the schedules belong to the runs they start.
   ...(firstTab('runs') ? { '/app/schedules': firstTab('runs')! } : {}),
   '/app/usage': '/app/activity',

@@ -61,10 +61,10 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
  * journeys); left out, the journeys slot alone. The journeys slot (mold_v0-207) is the Due soon card, and the journey
  * selector is the main column's heading. Every build has journeys (mold_v0-175): the selector always offers "Get set up"
  * (these setup steps), then the journeys component's when pack.json journeys turns it on; a rail without journeys has
- * neither (the heading reads Get set up). `main`: what follows the checklist in the main column (a home tab's notices).
+ * neither (the heading reads Get set up). Nothing follows the checklist but the tips (mold_v0-216).
  * Nothing is drawn below both columns (mold_v0-207: a home tab's charts are not drawn on the home page).
  */
-export function SetupPage({ rail, cards, main, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; main?: React.ReactNode; top?: React.ReactNode } = {}) {
+export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; top?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
   // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys and the
@@ -103,7 +103,6 @@ export function SetupPage({ rail, cards, main, top }: { rail?: readonly string[]
               <Checklist steps={steps} title={heading} anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} title={heading} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
-            {main}
             {tipsOn() && <TipsSection />}
           </div>
           {/* The rail: Due soon and a home tab's cards, one cell each, a line between them (a card with nothing to show
@@ -475,14 +474,8 @@ function Checklist({ steps, title, anchored }: {
   const items: TimelineItem[] = steps.map((x) => ({ id: x.key, anchor: x.pack ? onboardingAnchor(x.pack, x.id) : undefined, label: x.label, done: x.done,
     body: x.pack && !x.help && !x.prompt ? null : <StepHelp help={x.help ?? ''} done={x.done} prompt={x.prompt} /> }));
   const { done, total } = stepProgress(steps);
-  const ticks = steps.some((x) => x.pack);
-  return (
-    <TimelineSection title={title} done={done} total={total} noun='steps' items={items}
-      footer={ticks || journeysOn() ? <>
-        {ticks && 'These steps tick themselves as you go. '}
-        {journeysOn() && <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>{capWord(text('journeys.many'))}</a>.</>}
-      </> : null} />
-  );
+  // No caption under the steps (mold_v0-216): they tick themselves, and Journeys is in the selector above.
+  return <TimelineSection title={title} done={done} total={total} noun='steps' items={items} footer={null} />;
 }
 
 function TipsSection() {
