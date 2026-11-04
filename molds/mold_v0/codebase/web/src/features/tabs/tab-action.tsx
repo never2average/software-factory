@@ -14,7 +14,8 @@
 //   link           (mold_v0-213) a page or an address, e.g. Settings › Email for a list a connected mailbox fills
 // Every list tab has one unless its pack says none (mold_v0-213: the build resolves the shell's default, labelled).
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { parseAsBoolean, useQueryState } from 'nuqs';
+import { useQueryState } from 'nuqs';
+import { parseAsFlag } from '@/lib/query-flag';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -91,7 +92,7 @@ export function LinkAction({ action }: { action: NonNullable<PackTabSpec['action
  * (?new=1) for a record or a schedule, `import` (?import=1, mold_v0-221) for a staff record page's import. Opening adds a history entry, so Back returns to the list; closing replaces it.
  */
 export function useActionOpen(name: 'start' | 'new' | 'import'): [boolean, (open: boolean) => void] {
-  const [on, set] = useQueryState(name, parseAsBoolean.withDefault(false));
+  const [on, set] = useQueryState(name, parseAsFlag.withDefault(false));
   return [on, (open: boolean) => {
     void set(open ? true : null, { history: open ? 'push' : 'replace' });
     // Back on the list: focus returns to the button that opened the card.

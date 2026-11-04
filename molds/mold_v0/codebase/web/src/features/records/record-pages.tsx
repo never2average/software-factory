@@ -7,7 +7,8 @@
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
 import { useMemo, type ReactNode } from 'react';
-import { parseAsBoolean, useQueryState } from 'nuqs';
+import { useQueryState } from 'nuqs';
+import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -184,7 +185,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
-  const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsBoolean.withDefault(false));
+  const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsFlag.withDefault(false));
   const clocked = !!area.clocks?.length;
   const overdueRule = (r: FilterRule) => r.key === OVERDUE_COL && r.op === 'true';
   const initialRules = useMemo(() => (clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : undefined), [clocked, overdueParam]);
@@ -200,7 +201,11 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
-      primary={source ? source.primary : data?.records.length ? <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} /> : undefined}
+      // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
+      primary={source ? source.primary : ({ rows: view, narrowed }) => (
+        <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
+          keys={narrowed ? view.map((r) => r.key) : null} />
+      )}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}

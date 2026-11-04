@@ -56,7 +56,8 @@ export function RecordView<T>({
   searchText: (row: T) => string;
   searchPlaceholder?: string;
   filters?: ReactNode;
-  primary?: ReactNode;
+  /** The toolbar's own action (Export); a function is given the view: its rows as shown and whether search or a filter narrows them. */
+  primary?: ReactNode | ((view: { rows: readonly T[]; narrowed: boolean }) => ReactNode);
   /** The record, shown beside the table when a row is clicked; without it rows are not clickable. */
   detail?: (row: T, close: () => void) => ReactNode;
   detailTitle?: (row: T) => ReactNode;
@@ -93,7 +94,7 @@ export function RecordView<T>({
   summary?: ReactNode;
   /**
    * The page's primary action (mold_v0-208, features/tabs/tab-action.tsx): mold_v0-217, the last control of the search
-   * row, at its right end (a primary button; the icon alone on a phone), opening its form in a side sheet.
+   * row, at its right end (a primary button; the icon alone on a phone), opening its form as a full card in the list's place.
    */
   toolbarAction?: ReactNode;
   /** Filters on at first (mold_v0-217: an address's, e.g. ?overdue=1), and every change to them. */
@@ -228,16 +229,17 @@ export function RecordView<T>({
       <DropdownMenuItem onClick={() => exportRows(rows, '-all')}><Icons.download /> Export all ({rows.length} rows)</DropdownMenuItem>
     </>)}
   </>) : null;
-  const primaryNode = menuItems && !primary ? (
+  const primaryEl: ReactNode = typeof primary === 'function' ? primary({ rows: data.ordered, narrowed: searching }) : primary;
+  const primaryNode = menuItems && !primaryEl ? (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button size='icon' variant='ghost' aria-label='Export' title='Export' />}><Icons.download /></DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-56'>{menuItems}</DropdownMenuContent>
     </DropdownMenu>
   ) : menuItems ? (
     <ButtonGroup>
-      {primary || (exportName && <Button variant='outline' onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV</Button>)}
+      {primaryEl || (exportName && <Button variant='outline' onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV</Button>)}
       <DropdownMenu>
-        <DropdownMenuTrigger render={primary
+        <DropdownMenuTrigger render={primaryEl
           ? <Button size='icon' aria-label='More actions' className='border-primary-foreground/20 border-l' />
           : <Button size='icon' variant='outline' aria-label='More export options' />}>
           <Icons.chevronDown />
@@ -245,7 +247,7 @@ export function RecordView<T>({
         <DropdownMenuContent align='end' className='w-56'>{menuItems}</DropdownMenuContent>
       </DropdownMenu>
     </ButtonGroup>
-  ) : primary;
+  ) : primaryEl;
 
   const sortDir = (k: string) => sort.find((s) => s.key === k)?.dir;
   const cycle = (k: string) => {
