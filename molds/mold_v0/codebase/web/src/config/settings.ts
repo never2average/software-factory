@@ -5,7 +5,7 @@
 // not part of Settings.
 //
 // How the sidebar and the page lay them out, by how many tabs there are:
-//   0      no Settings entry and no page (Octillion)
+//   0      no Settings entry and no page
 //   1      one Settings entry; /app/settings is that table alone, with no strip
 //   2..5   one Settings entry directly below Overview; /app/settings has one in-page strip
 //   >5     Settings is a collapsible sidebar group, one entry per group that has a tab, each at /app/settings/<group>

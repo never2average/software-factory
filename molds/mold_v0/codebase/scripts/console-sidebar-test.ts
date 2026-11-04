@@ -197,7 +197,7 @@ try {
     assert.deepEqual(shell.layout.sevenUrls, ["/app/settings/access", "/app/settings/access?tab=api_keys", "/app/settings/access?tab=allowed_origins", "/app/settings/connections",
       "/app/settings/connections?tab=webhooks", "/app/settings/automation", "/app/settings/data-trust"], "past 5: each tab on its group's page, the group's first bare");
     assert.deepEqual(shell.layout.sevenPages, [["credentials", "api_keys", "allowed_origins"], ["email", "webhooks"], ["alerts"], ["signing"], []], "each group page shows its own tabs; an unknown group none");
-    assert.deepEqual([shell.layout.built, shell.layout.builtLayout], [[], "none"], "zero packs: no Settings tab (Octillion's case)");
+    assert.deepEqual([shell.layout.built, shell.layout.builtLayout], [[], "none"], "zero packs: no Settings tab");
     assert.ok(!lines(shell.portalNav).some((x) => /\/app\/(settings|credentials)/.test(x)), `zero packs: no Settings entry: ${lines(shell.portalNav).join(", ")}`);
     console.log("✓ Settings (mold_v0-218, mold_v0-219): 0 tabs no entry, 1 one table, 2 to 5 one entry with a strip, past 5 a collapsible entry per group (Access, Connections, Automation, Data & trust); directly below Overview, a credentials entry moved there with its roles");
     // A build whose capabilities give more than 5 tabs (the developer surface's four, Credentials, Email, Alerts, Signing)
