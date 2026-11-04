@@ -161,7 +161,7 @@ for (const file of ["features/records/record-pages.tsx", "features/tabs/runs.tsx
 {
   const rv = src("components/layout/record-view.tsx").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
   const at = (re: RegExp) => { const m = re.exec(rv); assert.ok(m, `record-view.tsx has ${re}`); return m.index; };
-  const order = [at(/\{summary && <div className='flex shrink-0 flex-col'>\{summary\}<\/div>\}/), at(/<Input type='search'/), at(/<Table className=/)];
+  const order = [at(/\{summary && <div className='flex shrink-0 flex-col'>\{summary\}<\/div>\}/), at(/<Input type='search'/), at(/<Table[ >]/)];
   assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, `the cards, then the search row, then the table: ${order}`);
   assert.equal(rv.match(/\{summary &&/g)?.length, 1, "the summary is drawn once");
   const area = /function AreaTab[\s\S]*?\n}\n/.exec(tab)![0];
