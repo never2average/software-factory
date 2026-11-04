@@ -871,6 +871,11 @@ def _app_profile(app_id, docs, brief_root=None, answers=None):
         said = str((answers or {}).get("email_from_address") or "").strip()
         if not perrs and said and not (want or {}).get("email_from_address") and (a.get("profile") or {}).get("email_from_address") == said:
             want = dict(want or {}, email_from_address=said)
+        # On-premises runners (mold_v0-230): a description that mentions on-prem is asked (intake's prose.onprem), and a yes
+        # turns them on as the brief's `onprem_runners = true` would.
+        if not perrs and str((answers or {}).get("prose.onprem") or "").strip().lower() in ("yes", "y", "true") \
+                and "onprem_runners" not in (want or {}) and (a.get("profile") or {}).get("onprem_runners") is True:
+            want = dict(want or {}, onprem_runners=True)
         # The legal pages (mold_v0-109): the company may be an intake answer (answers.json, as the sender), and intake dates
         # a brief's legal lines that name no effective_date (the date first recorded for that company and address).
         have = (a.get("profile") or {}).get("legal")

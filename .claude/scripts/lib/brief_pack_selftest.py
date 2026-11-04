@@ -193,6 +193,8 @@ def run(n=0, fails=None):
         json.dump(_f, open(_fj, "w"), indent=2)
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
+        # factory.py validate also checks the generated app schemas against the molds (app_spec.py stale): linked read-only
+        if os.path.isdir(os.path.join(ROOT, "schemas")): os.symlink(os.path.join(ROOT, "schemas"), os.path.join(T, "schemas"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application"); P = os.path.join(T, "packs")
         schema = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "codebase", "packs", "pack.schema.json")))
         def go(app, brief, answers=None):

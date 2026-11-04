@@ -25,6 +25,30 @@ What the factory needs to know before it can stamp an application, and where eac
 
 Brief hints recognised: "vercel" / "vm, droplet, self-host" / "vm_remote, the customer's own server, a remote server, a dedicated server" (a server that serves the app; add "server: <address>" and "domain: <name>" if known, else the operator supplies them later); "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:"); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none" (the starter library; see below); "speech model: nova-3" (also "dictation model:", a full id, "turbo", "whisper", "deepgram"), "speech language: hi" (or "auto"), "no dictation" (see below); "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
 
+## What sets state (mold_v0-230)
+
+Only recognised lines change state; a sentence of description never does, whatever words it uses.
+
+- **`Key: value` lines**, and sentences that start with one ("Customer: internal. Owner: ops@example.com."):
+  `Customer:`, `Owner:` (or `Operator:`), `Members:`, `Domain:`, `Server address:`, `Product:`, `Packs:`,
+  `Brand colour:`, `Primary context:`, `Multiplayer:`, `Workflows:`. `Product name:`, `Mold:`, `Workspace:`, `Brand:`,
+  `Logo:`, `Tagline:`, `Admins:`, `Speech model:` and `Speech language:` count only at the very start of a line. A
+  line's value is read for its own setting only: "Tagline: one workspace for every shared desk" changes nothing else.
+- **Setting sentences**: a sentence, or a comma clause, that starts with one of the phrases above: "Deploy on vercel.",
+  "It runs on its own server.", "No web search.", "Web search on, browser off.", "Single workspace.", "Fresh database.",
+  "Shared database.", "Postgres on Neon.", "Self-host the postgres.", "Inference through the AI Gateway.", "Accounts are
+  called companies.", "Clone of the live deployment.", "No branding.", "With the starter library.", "No starter
+  library.", "No dictation.".
+- **Headed sections**: `## Profile` / `## Budgets` (`key = value`), `## MCP instructions`, `## Landing`, and a mold_v0
+  brief's pack sections. A `Key: value` line written below them still counts.
+
+Anything else is prose. Prose that sounds like a setting ("customers later get an on-premises runner", "the starter
+library our old product shipped", "one workspace each", "the shared database of the old tool", "the domain x.com",
+"its owner: a@x.com") is kept in `questions.json` as a yes/no question, id `prose.<setting>`, quoting the sentence and
+naming the line that would say it. It is not asked when a recognised line or an earlier answer already settles that
+setting, or when the prose would give the value the app gets anyway. `yes` applies it as if the line said it, `no`
+drops it; both are kept in `answers.json`. On mold_v0, "on-prem" asks about on-premises runners (`onprem_runners`).
+
 Steady state after the first confirmed intake: zero questions for a five-line brief; everything comes from the brief or defaults. Secrets are always by name; `provision.py` checks presence in the store and lists what the user still has to set.
 
 ## The starter library
@@ -35,8 +59,8 @@ and an application gets it only by asking.
 
 | the brief says | `library.install` | a new workspace starts with |
 | --- | --- | --- |
-| nothing, `workflows: none`, "no starter library", "without the workflow library" | `none` **(default)** | no library: only the app's own `scripts[]` and what its packs bring |
-| `workflows: all`, `workflows: library`, "with the starter library", "the account-delivery library", "the original (product's) workflow library" | `all` | the account-delivery library |
+| nothing, `workflows: none`, "No starter library.", "Without the workflow library." (a sentence of its own) | `none` **(default)** | no library: only the app's own `scripts[]` and what its packs bring |
+| `workflows: all`, `workflows: library`, "With the starter library.", "The account-delivery library." (a sentence of its own; the same words inside a sentence of description are asked as `prose.library`) | `all` | the account-delivery library |
 
 With `all`, the stamp step names the library in the build's deployment profile (`build/<app_id>/profiles/40-library-account-delivery.json`,
 copied from the mold; `library.py`) before the profile is generated; with `none` the file is left out and a stale copy is
