@@ -21,6 +21,8 @@
 // 9. Credentials never returned: every HTTP and MCP answer, every table as text, the object store's files and this
 //    process's logs hold no secret (canaries); the email log of a workspace send holds no provider error text.
 // 10. Row-level security: the catalog check passes with the three tables; deleting a workspace removes its rows.
+// 8b (mold_v0-220). Files on the record: the body (sanitised HTML, text) and every attachment kept as sealed files,
+//    previewed and downloaded at signed links for the area's readers only; the one-off backfill of earlier messages.
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -366,6 +368,91 @@ try {
       const { adminTools } = await import("../src/admin-mcp.js");
       assert.ok(!Object.keys(adminTools()).some((n) => /mail|inbox|intake/.test(n)));
       console.log("✓ isolation: B's records, mailboxes, attachments and MCP items are B's; attachments sealed at rest; downloads for A's readers only; list_intake_items per workspace; no admin route or tool");
+    }
+
+    // ---------- 8b. files on the record (mold_v0-220): the body and every attachment, and the one-off backfill ----------
+    {
+      const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+      const filesPack = definePack({
+        id: "mailfix",
+        recordAreas: [{ name: "mf_mail", label: "Inbound mail", role: "source", scope: "workspace", fields: [
+          { name: "sender", label: "From" }, { name: "sender_domain", label: "Domain" }, { name: "sent_on", label: "Sent", type: "date" },
+          { name: "summary", label: "Summary" }, { name: "files", label: "Files", type: "json" }, { name: "file_count", label: "Files kept", type: "number" },
+          { name: "mailbox", label: "Mailbox" }, { name: "kind", label: "Kind", type: "enum", options: ["regulator", "customer", "other"] },
+          { name: "body", label: "Message", type: "file", multiple: true }, { name: "attachments", label: "Attachments", type: "file", multiple: true },
+        ] }] as never,
+        email: { sender: { allow: true }, intake: { area: "mf_mail", label: "Regulatory mail", folder: "INBOX", body_chars: 200, backfill_days: 7,
+          fields: { from: "sender", from_domain: "sender_domain", date: "sent_on", body: "summary", attachments: "files", attachment_count: "file_count", mailbox: "mailbox", body_file: "body", attachment_files: "attachments" },
+          set: { kind: "other" }, attachments: { max_bytes: 200 * 1024, max_count: 4 } } },
+      });
+      // definePack refuses attachment_files into a field of one file.
+      assert.throws(() => definePack({ id: "pk2", recordAreas: [{ name: "m2", label: "M", role: "source", scope: "workspace", fields: [{ name: "a", label: "A", type: "file" }] }] as never,
+        email: { intake: { area: "m2", fields: { attachment_files: "a" } } } as never }), /holds one file/);
+      setPacksForTest([{ manifest: { id: "mailfix", name: "Mail fixture", version: "1", entry: null, migrations: null, words: {}, dir: "packs/mailfix" }, definition: filesPack }]);
+      const before = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM workspace_email_messages WHERE org_id = $1 AND files IS NULL", [A.orgId]);
+      assert.ok(before[0]!.n >= 5, "the messages taken in so far wait for the backfill");
+      const HTML = '<p>Hello <b>A</b></p><script>alert("x")</script><img src="https://tracker.example/p.png" onerror="alert(1)"><a href="javascript:alert(1)">bad</a> <a href="https://regulator.example/c">circular</a>';
+      aInbox.push(msg(300, { from: "files@regulator.example", subject: "With files", text: "Plain body with files", html: HTML, messageId: `wf-${STAMP}@regulator.example`,
+        attachments: [att("notice.pdf", "noticebody"), { name: "chart.png", type: "image/png", data: PNG }, { name: "terms.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data: Buffer.from("PK\u0003\u0004docx") }] }));
+      await db.query("UPDATE workspace_email_inboxes SET next_poll_at = now() - interval '1 minute' WHERE org_id = $1", [A.orgId]);
+      const r = await intake.pollIntake(new Date());
+      assert.equal(r.failed, 0, JSON.stringify(r)); assert.equal(r.taken, 1);
+      const wf = (await withTenant(A.orgId, () => rec.listFor(A.orgId, "mf_mail", { limit: 50 }))).records.find((x) => x.title === "With files")!;
+      const body = wf.data.body as { name: string; content_type: string; object: string }[], files = wf.data.attachments as { name: string; content_type: string }[];
+      assert.deepEqual(body.map((f) => [f.name, f.content_type]), [["message.html", "text/html"], ["message.txt", "text/plain"]]);
+      assert.deepEqual(files.map((f) => [f.name, f.content_type]), [["notice.pdf", "application/pdf"], ["chart.png", "image/png"], ["terms.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]]);
+      assert.ok(body.every((f) => /^rf_[0-9a-f]{32}$/.test(f.object)), "references, not bytes");
+      assert.ok(!JSON.stringify(wf).includes("noticebody") && !JSON.stringify(wf).includes("Hello <b>"), "the record never holds a file's bytes");
+      const [led] = await db.query<{ files: string }>("SELECT files FROM workspace_email_messages WHERE org_id = $1 AND record_key = $2", [A.orgId, wf.key]);
+      assert.equal(led!.files, "kept");
+      // The record's card: four files, each with its preview, for A's readers only.
+      const cards = await req("GET", `/api/records/mf_mail/${wf.key}/files`, bearer(viewerA));
+      assert.equal(cards.status, 200, JSON.stringify(cards.body));
+      assert.deepEqual(cards.body.files.map((c: { name: string; preview: string | null }) => [c.name, c.preview]),
+        [["message.html", "html"], ["message.txt", "text"], ["notice.pdf", "pdf"], ["chart.png", "image"], ["terms.docx", null]]);
+      const card = (name: string) => cards.body.files.find((c: { name: string }) => c.name === name);
+      const html = await req("GET", card("message.html").preview_url, bearer(viewerA));
+      assert.equal(html.status, 200); assert.match(String(html.headers.get("content-type")), /^text\/html/);
+      assert.ok(!/<script|onerror|javascript:/i.test(html.bytes.toString()), "scripts, handlers and javascript: links are gone");
+      assert.ok(!html.bytes.toString().includes("tracker.example") && html.bytes.toString().includes("data-blocked-src"), "the remote image is blocked");
+      assert.match(String(html.headers.get("content-security-policy")), /sandbox/); assert.doesNotMatch(String(html.headers.get("content-security-policy")), /img-src[^;]*https:/);
+      assert.match(html.bytes.toString(), /href="https:\/\/regulator\.example\/c" target="_blank" rel="noopener noreferrer nofollow"/);
+      const withImages = await req("GET", `${card("message.html").preview_url}&images=1`, bearer(viewerA));
+      assert.ok(withImages.bytes.toString().includes('src="https://tracker.example/p.png"')); assert.match(String(withImages.headers.get("content-security-policy")), /img-src data: https:/);
+      const pdf = await req("GET", card("notice.pdf").preview_url, bearer(viewerA));
+      assert.equal(pdf.headers.get("content-type"), "application/pdf"); assert.equal(pdf.bytes.toString(), "%PDF-1.4 noticebody");
+      const dl = await req("GET", card("notice.pdf").download_url, bearer(viewerA));
+      assert.equal(dl.headers.get("content-type"), "application/octet-stream"); assert.match(String(dl.headers.get("content-disposition")), /^attachment; filename="notice.pdf"/);
+      assert.equal(card("terms.docx").preview_url, null, "no preview for a docx: download only");
+      assert.equal((await req("GET", `/api/records/mf_mail/${wf.key}/files`, bearer(ownerB))).status, 404, "B never sees A's record's files");
+      assert.equal((await req("GET", card("notice.pdf").preview_url, bearer(ownerB))).status, 403, "A's link opens nothing for B");
+      assert.equal((await req("GET", card("notice.pdf").preview_url.replace(/t=[^&]+/, "t=forged"), bearer(viewerA))).status, 403, "a forged link opens nothing");
+      // The mail API's download reads the same one copy.
+      const old = await req("GET", `/api/email/attachments/mf_mail/${wf.key}/2`, bearer(viewerA));
+      assert.equal(old.status, 200); assert.ok(old.bytes.equals(PNG));
+      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+      const recFiles = walk(path.join(TMP, "objects")).filter((f) => f.includes(`${path.sep}.records${path.sep}`));
+      assert.equal(recFiles.length, 5, "five files kept for the record");
+      for (const f of recFiles) { const b = readFileSync(f); assert.ok(!b.includes("noticebody") && !b.includes("Hello") && !b.includes("Plain body"), `${f} is sealed`); }
+
+      // The one-off backfill: earlier messages read again from their mailboxes; their records get the body and attachments.
+      const c1Before = (await withTenant(A.orgId, () => rec.listFor(A.orgId, "mf_mail", { limit: 50 }))).records.find((x) => x.title === "Circular 1")!;
+      assert.equal(c1Before.data.body, undefined);
+      const mailObjectsBefore = walk(path.join(TMP, "objects")).filter((f) => f.includes(`${path.sep}.mail${path.sep}`)).length;
+      const bf = await intake.backfillMessageFiles(new Date(), { limit: 10 });
+      assert.equal(bf.failed, 0, JSON.stringify(bf)); assert.ok(bf.inboxes >= 3 && bf.filled >= 5, JSON.stringify(bf));
+      const c1 = (await withTenant(A.orgId, () => rec.listFor(A.orgId, "mf_mail", { limit: 50 }))).records.find((x) => x.title === "Circular 1")!;
+      assert.deepEqual((c1.data.body as { name: string }[]).map((f) => f.name), ["message.txt"]);
+      assert.deepEqual((c1.data.attachments as { name: string }[]).map((f) => f.name), ["circular-1.pdf"]);
+      assert.equal(c1.data.sender, "notices@regulator.example", "its other fields as they were");
+      const c1dl = await req("GET", `/api/email/attachments/mf_mail/${c1.key}/1`, bearer(viewerA));
+      assert.equal(c1dl.bytes.toString(), "%PDF-1.4 first", "the mail API reads the backfilled copy");
+      assert.ok(walk(path.join(TMP, "objects")).filter((f) => f.includes(`${path.sep}.mail${path.sep}`)).length < mailObjectsBefore, "the old .mail copies are removed");
+      const left = await db.query<{ files: string | null; n: number }>("SELECT files, count(*)::int AS n FROM workspace_email_messages WHERE org_id = $1 GROUP BY files ORDER BY files", [A.orgId]);
+      assert.ok(!left.some((x) => x.files === null), `nothing waits any more: ${JSON.stringify(left)}`);
+      assert.equal((await intake.backfillMessageFiles(new Date(), { limit: 10 })).inboxes, 0, "it does not run again");
+      assert.deepEqual(imap.mutating, [], "the backfill read the mailbox read only");
+      console.log(`✓ files on the record: the body (sanitised HTML and text) and every attachment kept as sealed files, previewed and downloaded at signed links for A's readers only (HTML without scripts, remote images blocked until asked; a docx download only); the backfill gave ${bf.filled} earlier records their files from their mailboxes, once`);
     }
 
     // ---------- 9. credentials never returned ----------
