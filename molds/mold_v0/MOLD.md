@@ -407,6 +407,14 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   build's job kinds (finished, failed, running; over an asset record when the kind reads one; with results against the
   shared check samples), so the lists are graded with rows. Only the lane world writes them; `npm run
   test:record-pages` checks a run's row in words and that every customer list page is the table.
+  **The record contract (mold_v0-222).** An area may declare `contract` (`src/pack-api.ts` `RecordContractSchema`):
+  its provenance (`staff`, `people`, `repository`, `intake`, `run`), each of eight actions (read, create, update, move,
+  delete, reveal, export, import) as the roles that may, `{staff: library|delete}` or `{none: reason}`, and its list's
+  primary action (`create_record`, `start_run`, `link`, or `{none: reason}`). No runtime code reads it: the build refuses
+  what the area alone contradicts (`contractProblems`), and the factory's `spec check` derives every area's contract
+  from the declaration and holds a declared one to it (the factory's `docs/RECORDS.md`, which also lists what the
+  runtime does not do yet: a workspace import, export and reveal as their own permissions, a workspace row's stored
+  provenance). `npm run test:record-contract`.
 - **jobKinds** (mold_v0-041, built): the generic run engine, beside the product's session queue (which it does not
   change). `sql/migrations/0005_runs.sql` adds `runs`, `run_events` and `run_results` (each `org_id` under
   `tenant_isolation`; the tenant role may only read them) and a `run` gateway token kind (`gateway_tokens.run_id`,
