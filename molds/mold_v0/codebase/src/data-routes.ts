@@ -17,6 +17,10 @@
  *                                                       rows into the workspace's own records, where the area's
  *                                                       contract grants import (src/record-import.ts): a preview
  *                                                       unless dry_run is false, then one transaction
+ *                         POST   /:area/:key/files/:field  one file's bytes (application/octet-stream, X-File-Name,
+ *                                                       X-File-Type), kept for that record (mold_v0-238,
+ *                                                       src/record-files.ts uploadRecordFile): its reference
+ *                         DELETE /:area/:key/files/:field  {the reference}: one kept but never written, removed
  *                       Every rule is the record store's (the area's permissions for the person's role, fields,
  *                       references, lifecycle, read-only repositories). A change made with the session cookie carries
  *                       X-Pack-Request: 1 (CSRF, as the packs' routes).
@@ -36,6 +40,7 @@ import type { GeneratedOp } from "./mcp-catalog.js";
 import { areaOpWithheld, batchWithheld, syncWithheld } from "./mcp-withheld.js";
 import { PackError, type RecordQuery } from "./pack-api.js";
 import { recordAreas } from "./record-areas.js";
+import { discardRecordFile, recordUploadMax, uploadRecordFile } from "./record-files.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -72,7 +77,9 @@ export function dataAppRouter(): Router {
   const r = express.Router();
   if (!recordAreas().length) return r; // no areas: nothing is mounted, nothing answers
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
-  r.use(express.json({ limit: "1mb" }));
+  // An upload's bytes (mold_v0-238, POST /:area/:key/files/:field) are its own route's to read, whatever they claim to be.
+  const json = express.json({ limit: "1mb" });
+  r.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/[^/]+\/files\/[^/]+\/?$/.test(req.path) ? next() : json(req, res, next)));
   r.use(bodyErrors);
   r.use(customerSession);
   // A cross-site form cannot send a custom header: a change riding the session cookie must carry this one.
@@ -99,6 +106,20 @@ export function dataAppRouter(): Router {
   r.put("/:area/:key", open("update"), answer(async (req, res) => dataApi.update(caller(res), String(req.params.area), keyOf(req), body(req))));
   r.post("/:area/:key/move", open("move"), answer(async (req, res) => dataApi.move(caller(res), String(req.params.area), keyOf(req), body(req).to)));
   r.post("/:area/:key/reveal", open("reveal"), answer(async (req, res) => dataApi.reveal(caller(res), String(req.params.area), keyOf(req), body(req).fields)));
+  // A file uploaded from the console's create form (mold_v0-238): kept for the record, answered as its reference. Open
+  // while the area's create or update is (a pack withholding both withholds this).
+  const writable = (req: Request, res: Response, next: NextFunction) =>
+    (areaOpWithheld(String(req.params.area), "create") && areaOpWithheld(String(req.params.area), "update") ? void res.status(404).json({ error: "Not found" }) : next());
+  const actorOf = (res: Response) => { const c = caller(res); return { role: c.role, userId: c.userId }; };
+  r.post("/:area/:key/files/:field", writable, (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the file's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: recordUploadMax() }), bodyErrors, answer(async (req, res) => {
+      const name = (() => { try { return decodeURIComponent(String(req.get("x-file-name") ?? "")); } catch { return ""; } })();
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      return uploadRecordFile(caller(res).orgId, String(req.params.area), keyOf(req), String(req.params.field), actorOf(res), { name: name || "file", content_type: String(req.get("x-file-type") ?? ""), data });
+    }, 201));
+  r.delete("/:area/:key/files/:field", writable, answer(async (req, res) => {
+    await discardRecordFile(caller(res).orgId, String(req.params.area), keyOf(req), String(req.params.field), actorOf(res), req.body);
+  }));
   r.delete("/:area/:key", open("delete"), answer(async (req, res) => {
     if (!(await dataApi.delete(caller(res), String(req.params.area), keyOf(req)))) throw new PackError("Not found", 404);
   }));

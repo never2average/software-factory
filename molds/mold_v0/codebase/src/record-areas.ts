@@ -28,7 +28,7 @@ import { getDb, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcrypto.js";
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { areaLinks, DECLARABLE_ROLES, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
+import { areaLinks, DECLARABLE_ROLES, isFieldUrl, URL_MAX, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
@@ -244,6 +244,7 @@ const expects = (f: Field) => {
     case "file": return `${many}a file reference {path, name?, sha256?, size?} with a path inside the workspace's files, or a stored file {object, name, size, content_type, sha256}`;
     case "number": return `a number${f.min !== undefined ? ` from ${f.min}` : ""}${f.max !== undefined ? ` up to ${f.max}` : ""}`;
     case "text": return `text of up to ${f.max_length ?? 20_000} characters`;
+    case "url": return `an http or https address of up to ${URL_MAX} characters, with no user name or password`;
     default: return `a ${f.type}`;
   }
 };
@@ -262,6 +263,7 @@ function fits(f: Field, v: unknown): boolean {
   const one = (x: unknown) => fitsOne(f, x);
   switch (f.type) {
     case "text": return typeof v === "string" && v.length <= (f.max_length ?? 20_000);
+    case "url": return isFieldUrl(v);
     case "number": return typeof v === "number" && Number.isFinite(v) && (f.min === undefined || v >= f.min) && (f.max === undefined || v <= f.max);
     case "boolean": return typeof v === "boolean";
     case "date": return typeof v === "string" && /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v));

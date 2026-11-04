@@ -412,12 +412,27 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   delete, reveal, export, import) as the roles that may, `{staff: library|delete}` or `{none: reason}`, and its list's
   primary action (`create_record`, `start_run`, `link`, or `{none: reason}`). The build refuses what the area alone
   contradicts (`contractProblems`), and the factory's `spec check` derives every area's contract from the declaration
-  and holds a declared one to it (the factory's `docs/RECORDS.md`). `npm run test:record-contract`.
+  and holds a declared one to it (the factory's `docs/RECORDS.md`). `npm run test:record-contract`. Since mold_v0-237 the primary action speaks for **every** list of the
+  area (each tab whose own area it is, its Settings tab, its Records page), and an area may turn its own lists' action
+  off with `"action": false` and `"action_reason"` (refused without the reason; a Settings area's contract then says
+  `{none}`).
+  **An area's own lists (mold_v0-237).** A Settings area tab and an area's Records page (`/app/records/<name>`) are the
+  standard list (`web/src/features/records/record-pages.tsx` `AreaRecordList`): the area's four cards
+  (`GET /api/records/_console/<area>/sparklines`, `src/sparklines.ts` `workspaceAreaSparklines`: the defaults an area
+  tab over it would have, for the workspace), the search row with Export CSV and the area's primary action, then the
+  table. The action is `src/metric-spec.ts` `areaListAction`: the area's `action: false` (none, said by
+  `action_reason`), else the shell's default an area tab gets (Add <its singular>, a new record, for a workspace area of
+  the shell's tables whose create tool a workspace is offered), else none for what the area is (shared, read from a
+  repository, its create withheld). The build's registry carries it (`recordAreas[].action`, never a reason); the server
+  says who may use it (`GET /api/tab-actions/_areas/<area>`, the create checks of a tab's); its form is the tab's full
+  card (`?new=1`). gen-packs lists a Settings tab with none its area does not say as a warning. `npm run
+  test:console-tabs`, `test:record-pages`, `test:record-files`.
   **Import, export and reveal from the contract; each row's writer (mold_v0-234, mold_v0-235, mold_v0-236).** The
   runtime reads three of the contract's actions, today's behaviour when an area declares none (`src/record-areas.ts`):
   `import` lets its roles (those that may also create and update) import a CSV or JSON file into the workspace's own
   records (`POST /api/data/<area>/_import`, a preview then one transaction, as the person; `src/record-import.ts`
-  `importWorkspaceRecords`; the console's Import beside a list's Export, `web/src/features/records/workspace-import.tsx`);
+  `importWorkspaceRecords`; the console's Import, its own button next to Export in a list's search row, its form a full
+  card in the list's place, `?import=1`, with the preview and what it wrote: `web/src/features/records/workspace-import.tsx`);
   `export` is its own permission within read's (the list routes' `?audit=export`, `export_<area>`, Export CSV shown only
   to those roles); `reveal` is the area's, a field's `reveal_roles` narrowing it, `{none}` revealing nothing. Every
   workspace row records who or what wrote it (`sql/migrations/0042_workspace_record_provenance.sql`: `provenance` one of
@@ -3144,8 +3159,26 @@ at, each with its name, type and size, **Download**, and an inline preview. No p
   additional data binding it to its workspace, pack, area, record key, object and sha256: a reference copied into another
   record, area or workspace opens nothing (404). The type kept is what the bytes say for a PDF or an image. The objects go
   with the workspace's prefix when it is deleted; a record deleted on its own leaves its sealed objects (unreachable,
-  removed with the workspace). Not covered: an upload from the console (files come from the mail intake and a pack's own
-  code, `storeRecordFile`).
+  removed with the workspace).
+- **Uploads from the console** (mold_v0-238). A create form's file field (of a workspace area of the shell's tables,
+  while `document_preview` is on) takes files from the person's device: **Choose files** (one for a single field), then
+  each file's name, size and state (waiting, a progress bar as its bytes go, **Uploaded**, or why it failed) with Remove.
+  When the form is sent each file goes, one at a time, to `POST /api/data/<area>/<key>/files/<field>` (the bytes as
+  `application/octet-stream`, the name in `X-File-Name`, URI-encoded, the type in `X-File-Type`; `uploadRecordFile`),
+  which keeps it as the intake does (`storeRecordFile`: sealed, bound to that record key) for a person who may read and
+  create or update the area's records and answers its reference; then the create writes the references through the
+  data API, checked as any write. At most 25 MiB a file, 4 MiB where the API runs on Vercel's functions (their request
+  bodies stop at 4.5 MB; `recordUploadMax`); the form refuses a bigger file before sending it. A refused create keeps the
+  uploaded files for the next try (one kept for an earlier key is uploaded again); Cancel, Back or Remove discards the
+  ones kept but never written (`DELETE` on the same address with the reference, `discardRecordFile`: only a file kept for
+  that key, which opens with its binding, and never one the record holds: 409). An upload is a `create` of target `file`
+  in the data trail, a removal a `delete`. The console's create form for a record: `web/src/features/tabs/tab-action.tsx`
+  (`CreateRecordForm`, `FileUploads`). Changing an existing record's files stays the data API's.
+- **A `url` field** (mold_v0-238, `src/pack-api.ts` `isFieldUrl`): an absolute `http` or `https` address of up to 2048
+  characters, written with its host and no user name or password, checked on every write (the record store, the MCP
+  tools' input, the developer API's schema `format: uri`); filtered and sorted as text. The console takes it in an
+  address input and shows it as a link (a new tab, `noopener noreferrer nofollow`). It may carry `preview: "document"`
+  (as a text field still may).
 - **Never inlined.** Lists, record answers, Export CSV (the name only), the MCP tools, the developer API and webhooks carry
   the reference; the console's lists show the file name and how many more (`a.pdf +2`); the record's details list leaves
   stored files to the cards. The bytes are read one file at a time, from the card.
@@ -3164,7 +3197,7 @@ at, each with its name, type and size, **Download**, and an inline preview. No p
   open row's full card (mold_v0-217) and the staff record page.
 - **The data trail** (when `audit.data` is on): a preview is a `read` of target `file`, a download an `export`, keyed
   `<record>:<field>/<n>` (never the file's name or bytes). A shared area's document is no workspace's data: no entry.
-- **Document previews** (`src/document-fetch.ts`). A text field with `preview: "document"` holds a URL; the pack lists
+- **Document previews** (`src/document-fetch.ts`). A url field (or a text field) with `preview: "document"` holds a URL; the pack lists
   the hosts (`documents.hosts`: the egress allowlist's rule, a host and its subdomains, `*.x` the same; refused at build
   when a field previews and the pack lists none). The server fetches only `https://` on port 443, no user or password, a
   listed name (never an address), resolving it here, refusing any private, loopback, link-local, reserved or multicast

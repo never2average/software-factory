@@ -125,6 +125,7 @@ export function columnOf(over: SpecArea | RunSource, name: string): Column | str
   }
   if (t === "date") return { type: "time", multiple: false, at: { data: f.name } };
   if (t === "number" || t === "boolean" || t === "person" || t === "text") return { type: t, multiple, at: { data: f.name } };
+  if (t === "url") return { type: "text", multiple, at: { data: f.name } };
   if (t === "reference" || t === "link") return { type: "reference", multiple, to: f.to ?? over.links?.find((l) => l.field === f.name)?.area, at: { data: f.name } };
   return `field ${name} of area ${over.name} is ${t}: a metric reads text, enum, number, date, boolean, person and reference fields`;
 }
@@ -536,10 +537,8 @@ export function tabAction(t: SpecTab, b: Pick<BuildViews, "areas" | "kinds" | "s
     const a = b.areas.find((x) => x.name === own);
     if (!a) return none(`its area ${own} is not in this build`);
     if (a.pack !== t.pack) return none(`its area ${own} is pack ${a.pack}'s: a tab adds to its own pack's areas`);
-    if (a.scope !== "workspace") return none(`${own} is shared by every workspace (read-only to them): declare action, or action: false with a reason`);
-    if (a.repository !== undefined) return none(`${own} is read from repository ${a.repository}, not added by hand: declare action (a run that brings its rows), or action: false with a reason`);
-    if (!o.creatable(own)) return none(`${own}'s create tool is not offered to a workspace (withheld, or the area takes no writes): declare action, or action: false with a reason`);
-    return { action: { kind: "create_record", area: own, label: `Add ${singularOf(a.label)}` }, reason: null, declared: false };
+    const r = createDefault(a, o.creatable);
+    return r.action ? r : none(`${r.reason}: declare action${a.scope === "workspace" && a.repository !== undefined ? " (a run that brings its rows)" : ""}, or action: false with a reason`);
   }
   if (t.kind === "runs") {
     if (!kinds.length) return none(o.fill("no job kind of the pack a {workspace} may start"));
@@ -552,6 +551,27 @@ export function tabAction(t: SpecTab, b: Pick<BuildViews, "areas" | "kinds" | "s
   }
   if (!(b.scheduled ?? []).some((x) => x.pack === t.pack)) return none(o.fill("the pack schedules no job kind, so a {workspace} adds no schedule"));
   return { action: { kind: "new_schedule", label: "New schedule" }, reason: null, declared: false };
+}
+
+/** The shell's own create action for a list of `a` (mold_v0-213), or why there is none (undeclared). */
+function createDefault(a: SpecArea, creatable: (area: string) => boolean): ResolvedAction {
+  const none = (reason: string): ResolvedAction => ({ action: null, reason, declared: false });
+  if (a.scope !== "workspace") return none(`${a.name} is shared by every workspace (read-only to them)`);
+  if (a.repository !== undefined) return none(`${a.name} is read from repository ${a.repository}, not added by hand`);
+  if (!creatable(a.name)) return none(`${a.name}'s create tool is not offered to a workspace (withheld, or the area takes no writes)`);
+  return { action: { kind: "create_record", area: a.name, label: `Add ${singularOf(a.label)}` }, reason: null, declared: false };
+}
+
+/**
+ * The primary action of an area's own lists (mold_v0-237): its Settings tab (`settings`) and its Records page
+ * (/app/records/<name>), which no tab declares an action for. The area's `action: false` (with `action_reason`) is
+ * none; else the shell's default, as an area tab's (Add <its singular>: a new record, for a workspace area of the
+ * shell's tables whose create tool a workspace is offered), else none with the reason. A tab over the area keeps its own
+ * (tabAction). `creatable` as tabAction's.
+ */
+export function areaListAction(a: SpecArea, creatable: (area: string) => boolean): ResolvedAction {
+  if (a.action === false) return { action: null, reason: a.action_reason ?? "declared none", declared: true };
+  return createDefault(a, creatable);
 }
 
 /** A build's views from its installed packs' definitions (validated), for checkViews and the engine. */

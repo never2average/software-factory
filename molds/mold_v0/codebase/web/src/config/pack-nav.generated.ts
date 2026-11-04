@@ -43,6 +43,8 @@ export interface RecordAreaSpec {
   export_roles?: string[];
   /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */
   import_roles?: string[];
+  /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */
+  action?: { kind: 'create_record'; label: string | null; area: string };
 }
 
 /** A field of a record area (typed by mold_v0-057). */

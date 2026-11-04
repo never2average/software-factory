@@ -16,7 +16,7 @@ import { settingsTabs as ALL } from '@/config/pack-nav.generated';
 import { CredentialsTab } from '@/features/credentials/credentials-tab';
 import { EmailTab } from '@/features/email/email-tab';
 import { DeveloperTab } from '@/features/developer/developer-page';
-import { RecordTableView, RecordEmpty } from '@/features/records/record-pages';
+import { AreaRecordList } from '@/features/records/record-pages';
 import { findRecordArea } from '@/features/records/registry';
 import { AlertsTab } from './alerts-tab';
 import { SigningTab } from './signing-tab';
@@ -33,7 +33,8 @@ function TabBody({ tab }: { tab: SettingsTabSpec }) {
     case 'signing': return <SigningTab />;
     case 'area': {
       const area = findRecordArea('app', tab.area!);
-      return area ? <RecordTableView area={area} base='app' url={`/api/records/${area.name}`} id={`settings-${area.name}`} empty={<RecordEmpty area={area} base='app' />} /> : null;
+      // mold_v0-237: the area's own list (cards, the search row with its primary action and Export, the table).
+      return area ? <AreaRecordList area={area} id={`settings-${area.name}`} /> : null;
     }
   }
 }

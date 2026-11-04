@@ -38,10 +38,13 @@ What is derived (the shell's own rules, each named where it lives in molds/mold_
             with an entry); the app works it out from its rows (mold_v0-236: each workspace row records its writer;
             GET /api/admin/records/_provenance names a provenance the rows show and the contract leaves out)
   primary action
-            the first area tab of the pack whose own area it is (tab.area, or the first of tab.areas): its action, or
-            action: false with its reason, else the shell's default (src/metric-spec.ts tabAction: create_record for
-            a workspace area of the shell's tables its people may add to; none otherwise). A Settings area
-            (settings: {group}) and an area no tab shows have none: their list draws Export alone.
+            every list that shows the area (mold_v0-237): each area tab of the pack whose own area it is (tab.area, or
+            the first of tab.areas): its action, or action: false with its reason, else the shell's default
+            (src/metric-spec.ts tabAction: create_record for a workspace area of the shell's tables its people may add
+            to; none otherwise); and its Settings tab (settings: {group}) or, when no tab shows it, its Records page
+            (/app/records/<name>): the area's own action: false with its action_reason, else the same default
+            (src/metric-spec.ts areaListAction), else none for what the area is (shared, a repository's, its create
+            withheld). A declared primary_action speaks for every one of them.
 Standard library only.
 """
 import json
@@ -177,31 +180,57 @@ def _provenance(p, a, g):
     possible = list(out) + (["run"] if not shared and kind not in READ_ONLY_KINDS and p.code else [])
     return [x for x in PROVENANCES if x in out], [x for x in PROVENANCES if x in possible]
 
-def _own_tab(p, name):
+def _own_tabs(p, name):
+    """Every area tab of the pack whose own area it is (tab.area, or the first of tab.areas), in order."""
+    out = []
     for t in p.tabs:
         if t.get("kind") != "area": continue
         own = t.get("area") or ((t.get("areas") or [{}])[0] or {}).get("area")
-        if own == name: return t
-    return None
+        if own == name: out.append(t)
+    return out
 
-def _primary(p, a, g):
-    """(value, where, declared): the primary action ("create_record" ...) or {"none": reason}; where its list is drawn;
-    declared: True when the pack chose it (an action, or action: false with a reason), False when it is the shell's."""
+def _own_tab(p, name):
+    ts = _own_tabs(p, name)
+    return ts[0] if ts else None
+
+def _default(a, g):
+    """The shell's own create action for a list of the area, or {"none": why} (src/metric-spec.ts createDefault)."""
+    name = a.get("name")
+    if a.get("scope") != "workspace": return none(f"{name} is shared by every workspace (read-only to them)")
+    if a.get("repository"): return none(f"{name} is read from repository {a['repository']}, not added by hand")
+    if not isinstance(g["create"], list) or not g["create"]: return none(f"{name}'s create tool is not offered to a workspace")
+    return "create_record"
+
+def _primaries(p, a, g):
+    """[(value, where, declared)] for every list that shows the area (mold_v0-237): the primary action ("create_record"
+    ...) or {"none": reason}; where the list is drawn; declared: True when the pack chose it (an action, or action: false
+    with a reason) or the area's own list has none for what the area is, False when a tab takes the shell's default."""
     name, label = a.get("name"), a.get("label") or a.get("name")
+    out = []
+    for t in _own_tabs(p, name):
+        where, act = f"tab {t.get('id')}", t.get("action")
+        if act is False: out.append((none(t.get("reason") or "declared none"), where, True))
+        elif isinstance(act, dict): out.append((act.get("kind"), where, True))
+        else:
+            d = _default(a, g)
+            out.append((d, where, False))
     if isinstance(a.get("settings"), dict):
         grp = SETTINGS_GROUPS.get(a["settings"].get("group"), a["settings"].get("group"))
-        return none(f"its list is a Settings tab (Settings › {grp}), which draws Export alone"), f"Settings › {grp} › {a['settings'].get('label') or label}", True
-    t = _own_tab(p, name)
-    if t is None:
-        return none("no tab of the pack shows it: its page (/app/records/" + str(name) + ") draws Export alone"), f"/app/records/{name}", True
-    where = f"tab {t.get('id')}"
-    act = t.get("action")
-    if act is False: return none(t.get("reason") or "declared none"), where, True
-    if isinstance(act, dict): return act.get("kind"), where, True
-    if a.get("scope") != "workspace": return none(f"{name} is shared by every workspace (read-only to them)"), where, False
-    if a.get("repository"): return none(f"{name} is read from repository {a['repository']}, not added by hand"), where, False
-    if not isinstance(g["create"], list) or not g["create"]: return none(f"{name}'s create tool is not offered to a workspace"), where, False
-    return "create_record", where, False
+        where = f"Settings › {grp} › {a['settings'].get('label') or label}"
+    elif not out: where = f"/app/records/{name}"
+    else: return out
+    # Its own list (src/metric-spec.ts areaListAction): action: false and its reason, else the shell's default; a list
+    # nobody in a workspace may add to says why by what the area is.
+    if a.get("action") is False: out.append((none(a.get("action_reason") or "declared none"), where, True))
+    else: out.append((_default(a, g), where, True))
+    return out
+
+def _primary(p, a, g):
+    """(value, where, declared) of the area's first list (see _primaries)."""
+    return _primaries(p, a, g)[0]
+
+def _pwords(v): return v if isinstance(v, str) else words(v)
+def _same_primary(a, b): return (is_none(a) and is_none(b)) or (isinstance(a, str) and a == b)
 
 
 def _area_facts(a):
@@ -232,12 +261,14 @@ def resolve(docs):
             if not isinstance(a, dict) or not a.get("name"): continue
             g = _derive(p, a)
             certain, possible = _provenance(p, a, g)
-            prim, where, chosen = _primary(p, a, g)
+            lists = _primaries(p, a, g)
+            prim, where, chosen = lists[0]
             derived = {"provenance": certain, "actions": g, "primary_action": prim}
             declared = a.get("contract") if isinstance(a.get("contract"), dict) else None
             out.append({"pack": p.id, "area": a["name"], "label": a.get("label"), "scope": a.get("scope"), "role": a.get("role"),
                         "declared": declared is not None, "contract": declared or derived, "derived": derived,
                         "possible_provenance": possible, "primary_chosen": chosen, "primary_where": where,
+                        "primary_lists": [{"where": w, "action": v, "chosen": c} for v, w, c in lists],
                         "list": _tab_facts(p, a["name"]), "facts": _area_facts(a)})
     return out
 
@@ -249,9 +280,10 @@ def area_problems(r):
         if not d["provenance"]:
             errs.append(f"{at}: nothing in its declaration writes its rows (no repository, no write a workspace or staff may make, no email intake): "
                         "declare contract.provenance (run, when the pack's own code writes them) or open a way in")
-        if is_none(d["primary_action"]) and not r["primary_chosen"]:
-            errs.append(f"{at}: {r['primary_where']} shows it with no primary action and no reason ({d['primary_action']['none']}): "
-                        "declare the tab's action, or action: false with its reason (or contract.primary_action {\"none\": \"<why>\"})")
+        for x in r["primary_lists"]:
+            if is_none(x["action"]) and not x["chosen"]:
+                errs.append(f"{at}: {x['where']} shows it with no primary action and no reason ({x['action']['none']}): "
+                            "declare the tab's action, or action: false with its reason (or contract.primary_action {\"none\": \"<why>\"})")
         return errs
     prov = c.get("provenance") if isinstance(c.get("provenance"), list) else []
     for x in d["provenance"]:
@@ -267,12 +299,15 @@ def area_problems(r):
         if k not in acts: errs.append(f"{at}: contract.actions.{k} is missing (the build gives: {words(d['actions'][k])})"); continue
         if not _same(acts[k], d["actions"][k]):
             errs.append(f"{at}: contract.actions.{k} says {words(acts[k])} but the build gives {words(d['actions'][k])}")
+    # The primary action speaks for every list that shows the area (mold_v0-237): each tab, its Settings tab, its Records page.
     pa = c.get("primary_action")
-    want = d["primary_action"]
-    if pa is None: errs.append(f"{at}: contract.primary_action is missing (the build gives: {want if isinstance(want, str) else words(want)})")
-    elif is_none(pa) != is_none(want) or (isinstance(pa, str) and pa != want):
-        errs.append(f"{at}: contract.primary_action says {pa if isinstance(pa, str) else words(pa)} but {r['primary_where']} gives "
-                    f"{want if isinstance(want, str) else words(want)}")
+    if pa is None:
+        errs.append(f"{at}: contract.primary_action is missing (the build gives: "
+                    + "; ".join(f"{_pwords(x['action'])} at {x['where']}" for x in r["primary_lists"]) + ")")
+    else:
+        for x in r["primary_lists"]:
+            if not _same_primary(pa, x["action"]):
+                errs.append(f"{at}: contract.primary_action says {_pwords(pa)} but {x['where']} gives {_pwords(x['action'])}")
     return errs
 
 def check(docs):
@@ -286,12 +321,17 @@ def line(r):
     """One area's contract on one line (factory.py spec check --records)."""
     c = r["contract"]; a = c.get("actions") or {}
     pa = c.get("primary_action"); pa = pa if isinstance(pa, str) else ("none" if is_none(pa) else "?")
+    lists = r.get("primary_lists") or [{"where": r["primary_where"], "action": c.get("primary_action")}]
+    if r["declared"] or all(_same_primary(x["action"], lists[0]["action"]) for x in lists):
+        prim = f"primary {pa} at {', '.join(x['where'] for x in lists)}"
+    else:
+        prim = "primary " + "; ".join(f"{x['action'] if isinstance(x['action'], str) else 'none'} at {x['where']}" for x in lists)
     acts = "; ".join(f"{k} {words(a.get(k)).split(' (')[0]}" for k in ACTIONS if k in a)
     f = r["facts"]
     extra = [x for x in (f"clocks {', '.join(f['clocks'])}" if f["clocks"] else "", "append-only" + (" chained" if f["chain"] else "") if f["append_only"] else "",
                          f"documents {', '.join(f['documents'])}" if f["documents"] else "", f"settings {f['settings'].get('group')}" if f["settings"] else "") if x]
     return (f"{r['pack']}.{r['area']} ({r['scope']}, {'declared' if r['declared'] else 'derived'}): from {', '.join(c.get('provenance') or []) or 'nothing'}; "
-            f"primary {pa} at {r['primary_where']}; {acts}" + (f"; {'; '.join(extra)}" if extra else ""))
+            f"{prim}; {acts}" + (f"; {'; '.join(extra)}" if extra else ""))
 
 
 def self_test():
@@ -312,7 +352,8 @@ def self_test():
     ok(j["provenance"] == ["people"] and j["primary_action"] == "create_record", "a workspace area of the shell's tables: people, create_record by default")
     k = rs["kinds"]["derived"]
     ok(k["actions"]["create"] == {"staff": "library"} and k["actions"]["import"] == {"staff": "library"} and k["actions"]["delete"] == {"staff": "delete"}, "a shared area: staff write and import it")
-    ok(k["provenance"] == ["staff"] and is_none(k["primary_action"]), "a shared area: staff provenance; no tab, so no primary action")
+    ok(k["provenance"] == ["staff"] and is_none(k["primary_action"]), "a shared area: staff provenance; its Records page has no primary action")
+    ok(rs["kinds"]["primary_where"] == "/app/records/kinds" and rs["kinds"]["primary_lists"][0]["chosen"], "a shared area's Records page: none, for what the area is")
     f = rs["feed"]["derived"]
     ok(is_none(f["actions"]["create"]) and f["provenance"] == ["repository"], "a workspace-files area is read only, from its repository")
     errs = [e for _, e in check([pack])]
@@ -351,7 +392,28 @@ def self_test():
     pack["record_areas"].pop()
     del ws["contract"]; pack["mcp"] = {}; pack.pop("email"); pack.pop("entry")
     ws["settings"] = {"group": "automation"}
-    ok("Settings › Automation" in {r["area"]: r for r in resolve([pack])}["jobs"]["primary_where"], "a Settings area's list is its Settings tab")
+    pack["tabs"] = pack["tabs"][1:]
+    st = {r["area"]: r for r in resolve([pack])}["jobs"]
+    ok("Settings › Automation" in st["primary_where"], "a Settings area's list is its Settings tab")
+    ok(st["derived"]["primary_action"] == "create_record", "a Settings tab adds a record by default (mold_v0-237)")
+    ws["action"], ws["action_reason"] = False, "rows come from the pack's runs"
+    st = {r["area"]: r for r in resolve([pack])}["jobs"]
+    ok(is_none(st["derived"]["primary_action"]) and st["derived"]["primary_action"]["none"] == "rows come from the pack's runs" and not check([pack]),
+       "action: false with its action_reason: none, said")
+    del ws["settings"], ws["action"], ws["action_reason"]
+    # every tab that lists the area (mold_v0-237)
+    pack["tabs"] = [{"id": "jobs", "kind": "area", "area": "jobs"}, {"id": "jobs-board", "kind": "area", "area": "jobs", "action": {"kind": "start_run", "job_kind": "x"}}]
+    rj = {r["area"]: r for r in resolve([pack])}["jobs"]
+    ok([x["where"] for x in rj["primary_lists"]] == ["tab jobs", "tab jobs-board"], "each tab whose own area it is is one of its lists")
+    ws["contract"] = {"provenance": ["people"], "primary_action": "create_record", "actions": dict(j["actions"])}
+    errs = [e for _, e in check([pack])]
+    ok(any("primary_action says create_record but tab jobs-board gives start_run" in e for e in errs), "a declared primary action is held to every tab, not just the first")
+    pack["tabs"][1]["action"] = {"kind": "create_record", "area": "jobs"}
+    ok(not check([pack]), "every tab agreeing passes")
+    pack["tabs"] = []
+    ok({r["area"]: r for r in resolve([pack])}["jobs"]["primary_where"] == "/app/records/jobs" and not check([pack]),
+       "no tab: its Records page adds a record, as the contract says")
+    del ws["contract"]
     return checks
 
 

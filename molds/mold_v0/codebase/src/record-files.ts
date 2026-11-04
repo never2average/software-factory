@@ -12,6 +12,16 @@
  *   documents  a URL field with `preview: "document"` (src/document-fetch.ts): fetched through the pack's
  *              documents.hosts and cached (a shared area's under documents/shared/, a workspace area's sealed under the
  *              workspace's prefix), served as a card like a stored file.
+ *   uploaded   (mold_v0-238) from the console's create form: POST /api/data/<area>/<key>/files/<field> takes one file's
+ *              bytes (application/octet-stream; its name in X-File-Name, URI-encoded, its type in X-File-Type) for a file
+ *              field of a workspace area of the shell's tables, from a person who may create or update the area's
+ *              records, and keeps it as storeRecordFile does: sealed, bound to that record key (which need not exist
+ *              yet). It answers the reference the form then writes into the field through the data API's create, which
+ *              checks the record as any write. DELETE on the same address with the reference removes one the form
+ *              kept but did not write (a cancelled form, a create refused): only a file kept for that key that the
+ *              record (if it exists) does not hold. Each is a `create` or `delete` of target `file` in the data trail.
+ *              At most RECORD_UPLOAD_MAX bytes a file: 25 MiB, or 4 MiB where the API runs on Vercel's functions,
+ *              whose request bodies stop at 4.5 MB.
  *   never      in a list, an export, an MCP answer or a log line: those carry the reference (the console's lists the
  *              name and count). Bytes are read one file at a time, here.
  *   who        the area's read permission (src/record-areas.ts getFor, as the record itself), the record must exist for
@@ -37,7 +47,7 @@ import { derivedKey, vaultUnlocked } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
 import { PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { areaOrThrow, checkKey, getFor, getPlatform, type Actor, type RecordArea } from "./record-areas.js";
+import { areaOrThrow, checkKey, getFor, getPlatform, isReadOnlyArea, may, type Actor, type RecordArea } from "./record-areas.js";
 import { CONTENT_TYPE, DocumentsSchema, isStoredFileRef, type DocumentsConfig, type StoredFileRef } from "./record-files-config.js";
 import { DocumentFetchError, checkDocumentUrl, fetchDocument, sniff } from "./document-fetch.js";
 import { documentOf, htmlPolicy, sanitiseHtml } from "./html-sanitise.js";
@@ -46,6 +56,8 @@ import { asPlatform } from "./tenant-scope.js";
 import { featureOn } from "./features.js";
 
 export const RECORD_FILE_MAX = 25 * 1024 * 1024;
+/** The largest file the console uploads (mold_v0-238): a Vercel function's request body stops at 4.5 MB. */
+export const recordUploadMax = () => (process.env.VERCEL ? 4 * 1024 * 1024 : RECORD_FILE_MAX);
 const TEXT_PREVIEW_MAX = 1024 * 1024;
 const LINK_SECONDS = 600;
 const FAILED_RETRY_MS = 3_600_000;
@@ -98,6 +110,64 @@ export async function openRecordFile(orgId: number, area: RecordArea, recordKey:
   catch { throw new PackError("no such file", 404); }
   if (createHash("sha256").update(data).digest("hex") !== ref.sha256) throw new PackError("no such file", 404);
   return data;
+}
+
+// ---------- uploads from the console (mold_v0-238) ----------
+
+/**
+ * The most bytes one file uploaded into `area` may have, or null when the area takes no upload: a workspace area of the
+ * shell's own tables (not a read-only repository's) with a file field, while document previews are on (the cards are
+ * where an uploaded file is opened again).
+ */
+export function uploadMax(area: Pick<RecordArea, "scope" | "repo" | "fields">): number | null {
+  if (area.scope !== "workspace" || isReadOnlyArea(area) || !area.fields.some((f) => f.type === "file") || !featureOn("document_preview")) return null;
+  return recordUploadMax();
+}
+
+/** The area and file field an upload names, for a person who may write the area's records; refused otherwise. */
+function uploadTarget(areaName: string, fieldName: string, actor: Actor) {
+  const area = areaOrThrow(areaName);
+  if (uploadMax(area) === null) throw new PackError(`${area.label} takes no file uploads`, 404);
+  const field = area.fields.find((f) => f.name === fieldName && f.type === "file");
+  if (!field) throw new PackError(`${area.label} has no file field ${fieldName.slice(0, 64)}`, 404);
+  if (!may(area, "read", actor) || !(may(area, "create", actor) || may(area, "update", actor))) throw new PackError("Your role can't add files to these records.", 403);
+  if (!vaultUnlocked()) throw new PackError("the key vault is locked: files cannot be kept now, try again later", 503);
+  return { area, field };
+}
+
+/**
+ * One file uploaded from the console for record `key` of `areaName` (which need not exist yet): kept sealed and bound to
+ * that record (storeRecordFile). Returns the reference the form writes into the field.
+ */
+export async function uploadRecordFile(orgId: number, areaName: string, key: string, fieldName: string, actor: Actor, file: { name: string; content_type: string; data: Buffer }): Promise<StoredFileRef> {
+  const { area, field } = uploadTarget(areaName, fieldName, actor);
+  checkKey(key);
+  if (!file.data.length) throw new PackError("the file is empty", 400);
+  if (file.data.length > recordUploadMax()) throw new PackError(`a file uploaded here is at most ${Math.floor(recordUploadMax() / 1048576)} MB`, 413);
+  const declared = CONTENT_TYPE.test(file.content_type.split(";")[0]!.trim().toLowerCase()) ? file.content_type : "application/octet-stream";
+  const ref = await storeRecordFile(orgId, area, key, { name: file.name, content_type: declared, data: file.data });
+  auditData(orgId, { action: "create", target: "file", pack: area.pack, area: area.name, key: `${key}:${field.name}` });
+  return ref;
+}
+
+/**
+ * Remove a file the console uploaded for record `key` but did not write (a cancelled form, a create that was refused):
+ * only one kept for that key (it opens with the record's binding), and never one the record holds.
+ */
+export async function discardRecordFile(orgId: number, areaName: string, key: string, fieldName: string, actor: Actor, raw: unknown): Promise<void> {
+  const { area, field } = uploadTarget(areaName, fieldName, actor);
+  checkKey(key);
+  if (!isStoredFileRef(raw)) throw new PackError("give the file's reference, as the upload answered it", 400);
+  // Opens only with this record's binding: a reference to another record's (or workspace's) file is not found.
+  await openRecordFile(orgId, area, key, raw);
+  const record = await auditQuiet(() => getFor(orgId, area.name, key));
+  const held = (record ? area.fields.filter((f) => f.type === "file") : []).some((f) => {
+    const v = record!.data[f.name];
+    return (Array.isArray(v) ? v : [v]).some((x) => isStoredFileRef(x) && x.object === raw.object);
+  });
+  if (held) throw new PackError("the record holds this file: change the record to remove it", 409);
+  await removeRecordFiles(orgId, area.name, [raw]);
+  auditData(orgId, { action: "delete", target: "file", pack: area.pack, area: area.name, key: `${key}:${field.name}` });
 }
 
 // ---------- documents (a URL field with preview: "document") ----------

@@ -13,6 +13,9 @@
 //   new_schedule   the schedules page's Add a schedule form (features/schedules/schedules-page.tsx draws its button)
 //   link           (mold_v0-213) a page or an address, e.g. Settings › Email for a list a connected mailbox fills
 // Every list tab has one unless its pack says none (mold_v0-213: the build resolves the shell's default, labelled).
+// mold_v0-237: an area's own lists (its Settings tab, its Records page) have theirs too (useAreaAction: the registry's
+// `action`, the server's /api/tab-actions/_areas/<area>). mold_v0-238: a create form uploads its file fields' files
+// (FileUploads: each file's progress, then Uploaded) before it writes the record, and takes a url field as an address.
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
@@ -26,7 +29,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
-import type { PackTabSpec } from '@/config/pack-nav.generated';
+import type { PackTabSpec, RecordAreaSpec } from '@/config/pack-nav.generated';
 import { fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { fill } from '@/lib/vocabulary';
@@ -35,12 +38,16 @@ import { fill } from '@/lib/vocabulary';
 export interface FormField {
   name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
   multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null;
+  /** A URL whose document the record's card previews (mold_v0-220). */
+  preview?: 'document';
 }
 interface StartKind { name: string; label: string; description: string | null; args: FormField[]; targets: { name: string; label: string }[] | null; environments: string[] | null }
 type ActionSpec =
   | { kind: 'start_run'; label: string | null; allowed: boolean; kinds: StartKind[] }
   | { kind: 'new_schedule'; label: string | null; allowed: boolean; job_kind: string | null }
-  | { kind: 'create_record'; label: string | null; allowed: boolean; area: { name: string; label: string; fields: FormField[] } | null };
+  | { kind: 'create_record'; label: string | null; allowed: boolean; area: { name: string; label: string; fields: FormField[] } | null;
+      /** The most bytes a file of its file fields may have when the form uploads them (mold_v0-238); null: no upload. */
+      upload_max?: number | null };
 
 async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -151,12 +158,24 @@ export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unkno
  * was added. Called on every render of the list (a hook), with null when the tab has no action.
  */
 export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
-  const a = tab?.action;
-  const { data } = useOrgLoad(() => (tab && a && a.kind !== 'new_schedule' && a.kind !== 'link'
-    ? send<ActionSpec>('GET', `/api/tab-actions/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}`).catch(() => null)
-    : Promise.resolve(null)), [tab?.pack, tab?.id]);
+  return useListAction(tab?.action ?? null, tab ? `/api/tab-actions/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : null, tab, onDone);
+}
+
+/**
+ * The primary action of an area's own lists (mold_v0-237): its Settings tab and its Records page, whose action the
+ * build resolved into the registry (RecordAreaSpec `action`: Add <its singular>, a new record) and the server says who
+ * may use (/api/tab-actions/_areas/<area>). Null, or an area with none (its `no_action` says why): no button.
+ */
+export function useAreaAction(area: Pick<RecordAreaSpec, 'name' | 'action'> | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+  return useListAction(area?.action ?? null, area?.action ? `/api/tab-actions/_areas/${encodeURIComponent(area.name)}` : null, null, onDone);
+}
+
+function useListAction(a: NonNullable<PackTabSpec['action']> | null, specUrl: string | null, tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+  const { data } = useOrgLoad(() => (specUrl && a && a.kind !== 'new_schedule' && a.kind !== 'link'
+    ? send<ActionSpec>('GET', specUrl).catch(() => null)
+    : Promise.resolve(null)), [specUrl]);
   const [open, setOpen] = useActionOpen(a?.kind === 'start_run' ? 'start' : 'new');
-  if (!tab || !a) return { button: null, card: null };
+  if (!specUrl || !a) return { button: null, card: null };
   if (a.kind === 'link') return { button: <LinkAction action={a} />, card: null };
   if (!data || !data.allowed) return { button: null, card: null };
   const label = actionLabel(a);
@@ -168,8 +187,8 @@ export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { butt
       <ActionCard open onOpenChange={setOpen} title={label}
         description={data.kind === 'start_run' ? fill('The {run} is queued and runs on its own; it shows in the list at once.')
           : data.kind === 'create_record' && data.area ? `A new record in ${data.area.label}, added to the list at once.` : undefined}>
-        {data.kind === 'start_run' ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
-          : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} /> : null}
+        {data.kind === 'start_run' && tab ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
+          : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} uploadMax={data.upload_max ?? null} /> : null}
       </ActionCard>
     )
   };
@@ -194,10 +213,22 @@ export function fieldValues(fields: FormField[], raw: Record<string, unknown>): 
     else if (f.type === 'json') {
       try { values[f.name] = JSON.parse(String(v)); } catch { return { values, problem: `${f.label} is not valid JSON` }; }
     } else if (f.type === 'file') values[f.name] = f.multiple ? keysOf(String(v)).map((path) => ({ path })) : { path: String(v).trim() };
+    else if (f.type === 'url') {
+      // mold_v0-238: an http or https address (the record store checks it again).
+      const u = String(v).trim();
+      if (!isWebAddress(u)) return { values, problem: `${f.label} is a web address starting with https:// or http://` };
+      values[f.name] = u;
+    }
     else if (f.multiple && !Array.isArray(v)) values[f.name] = keysOf(String(v));
     else values[f.name] = v;
   }
   return { values, problem: null };
+}
+
+/** Whether `v` reads as a url field's value (mold_v0-238; the server's src/pack-api.ts isFieldUrl decides). */
+export function isWebAddress(v: string): boolean {
+  if (!/^https?:\/\/[^/?#\\\s][^\s]*$/i.test(v) || v.length > 2048) return false;
+  try { const u = new URL(v); return !!u.hostname && !u.username && !u.password; } catch { return false; }
 }
 
 /** One input per field, by its type (the record store checks every value again). */
@@ -241,10 +272,10 @@ export function FieldsForm({ fields, values, set, idPrefix }: {
               maxLength={f.max_length ?? undefined} onChange={(e) => set(f.name, e.target.value)} required={f.required} placeholder={f.type === 'json' ? '{ }' : undefined} />
           ) : (
             <Input id={id} value={String(v ?? '')} onChange={(e) => set(f.name, e.target.value)} required={f.required}
-              type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'} min={f.min ?? undefined} max={f.max ?? undefined}
-              maxLength={f.max_length ?? undefined}
+              type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : f.type === 'url' ? 'url' : 'text'} min={f.min ?? undefined} max={f.max ?? undefined}
+              maxLength={f.type === 'url' ? 2048 : f.max_length ?? undefined} inputMode={f.type === 'url' ? 'url' : undefined}
               placeholder={f.type === 'reference' || f.type === 'link' ? (f.multiple ? 'record keys, comma-separated' : 'a record key')
-                : f.type === 'person' ? 'a person’s sign-in id' : f.type === 'file' ? 'a path in the workspace’s files' : undefined} />
+                : f.type === 'person' ? 'a person’s sign-in id' : f.type === 'file' ? 'a path in the workspace’s files' : f.type === 'url' ? 'https://' : undefined} />
           )}
           {help}
         </div>
@@ -329,30 +360,182 @@ function StartRunForm({ tab, kinds, onDone }: { tab: TabRef; kinds: StartKind[];
   );
 }
 
+// ---------- file uploads (mold_v0-238) ----------
+
+/** A stored file's reference, as the upload answers it and a file field holds it (src/record-files-config.ts). */
+export interface StoredFileRef { object: string; name: string; size: number; content_type: string; sha256: string }
+/** One file chosen for a file field: waiting, uploading (its bytes sent so far), uploaded (its reference), or failed. */
+export interface UploadItem {
+  id: string; file: File; state: 'waiting' | 'uploading' | 'done' | 'failed'; sent: number;
+  /** The reference, and the record key it was kept for (a file is bound to its record). */
+  ref?: StoredFileRef; key?: string; error?: string;
+}
+
+const fileUrl = (area: string, key: string, field: string) => `/api/data/${encodeURIComponent(area)}/${encodeURIComponent(key)}/files/${encodeURIComponent(field)}`;
+
+/** A file's size in words: 512 B, 12 KB, 3.4 MB. */
+export const sizeWords = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
+
+/** One file's bytes to the upload route, its progress told as it goes (a fetch says none while sending). */
+function uploadOne(url: string, file: File, progress: (sent: number) => void): Promise<StoredFileRef> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', url);
+    x.withCredentials = true;
+    x.setRequestHeader('accept', 'application/json');
+    x.setRequestHeader('content-type', 'application/octet-stream');
+    x.setRequestHeader('x-pack-request', '1');
+    x.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+    x.setRequestHeader('x-file-type', file.type || 'application/octet-stream');
+    x.upload.onprogress = (e) => progress(e.loaded);
+    x.onerror = () => reject(new Error('The upload stopped: check the connection and try again'));
+    x.onload = () => {
+      let body: (StoredFileRef & { error?: string }) | null = null;
+      try { body = JSON.parse(x.responseText); } catch { /* not JSON */ }
+      if (x.status >= 200 && x.status < 300 && body?.object) return resolve(body);
+      reject(httpError(x.status, body ?? {}));
+    };
+    x.send(file);
+  });
+}
+/** Remove a file kept for a record but never written (a cancelled form, a removed file): best effort. */
+function discardOne(area: string, field: string, item: UploadItem) {
+  if (!item.ref || !item.key) return;
+  void fetch(fileUrl(area, item.key, field), { method: 'DELETE', credentials: 'same-origin', keepalive: true,
+    headers: { accept: 'application/json', 'content-type': 'application/json', 'x-pack-request': '1' }, body: JSON.stringify(item.ref) }).catch(() => null);
+}
+
+/**
+ * A file field's files in a create form (mold_v0-238): Choose files (one, or several for a multiple field), then each
+ * chosen file's name, size and state: Waiting, a progress bar while it uploads, Uploaded, or why it failed, with Remove.
+ * The form uploads them when it is sent (each kept for the record's key), then writes the record.
+ */
+export function FileUploads({ field, items, setItems, max, disabled, id }: {
+  field: FormField; items: UploadItem[]; setItems: (f: (items: UploadItem[]) => UploadItem[]) => void; max: number; disabled: boolean; id: string;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const add = (list: FileList | null) => {
+    const chosen = [...(list ?? [])];
+    const big = chosen.filter((f) => f.size > max);
+    if (big.length) toast.error(`${big.map((f) => f.name).join(', ')}: a file here is at most ${sizeWords(max)}`);
+    const ok = chosen.filter((f) => f.size <= max && f.size > 0).map((file): UploadItem => ({ id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`, file, state: 'waiting', sent: 0 }));
+    if (ok.length) setItems((xs) => (field.multiple ? [...xs, ...ok] : ok.slice(0, 1)));
+    if (input.current) input.current.value = '';
+  };
+  return (
+    <fieldset className='flex flex-col gap-2' data-file-field={field.name}>
+      <legend className='mb-1.5 text-sm font-medium'>{field.label}{field.required && <span className='text-destructive' aria-hidden> *</span>}</legend>
+      {(field.multiple || !items.length) && (
+        <div className='flex flex-wrap items-center gap-3'>
+          <Button type='button' variant='outline' size='sm' disabled={disabled} onClick={() => input.current?.click()} aria-describedby={`${id}-limit`}>
+            <Icons.upload /> {field.multiple ? 'Choose files' : 'Choose a file'}
+          </Button>
+          <span id={`${id}-limit`} className='text-muted-foreground text-xs'>Up to {sizeWords(max)} {field.multiple ? 'each' : ''}</span>
+          <input ref={input} id={id} type='file' className='sr-only' tabIndex={-1} multiple={field.multiple} onChange={(e) => add(e.target.files)} aria-label={field.label} />
+        </div>
+      )}
+      {items.length > 0 && (
+        <ul className='flex flex-col gap-2' aria-label={`${field.label}: chosen files`}>
+          {items.map((it) => {
+            const pct = it.file.size ? Math.min(100, Math.round((it.sent / it.file.size) * 100)) : 100;
+            const state = it.state === 'uploading' ? `Uploading ${pct}%` : it.state === 'done' ? 'Uploaded' : it.state === 'failed' ? it.error ?? 'Failed' : 'Waiting to upload';
+            return (
+              <li key={it.id} className='bg-muted/40 flex flex-col gap-2 rounded-md border px-3 py-2' data-upload={it.state}>
+                <div className='flex min-w-0 items-center gap-3'>
+                  <Icons.paperclip className='text-muted-foreground size-4 shrink-0' aria-hidden />
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate text-sm font-medium'>{it.file.name}</span>
+                    <span className={it.state === 'failed' ? 'text-destructive block text-xs' : 'text-muted-foreground block text-xs'} aria-live='polite'>
+                      {sizeWords(it.file.size)} · {it.state === 'done' && <Icons.check className='mr-0.5 inline size-3.5 align-[-2px] text-emerald-600 dark:text-emerald-400' aria-hidden />}{state}
+                    </span>
+                  </span>
+                  <Button type='button' variant='ghost' size='sm' disabled={disabled} onClick={() => setItems((xs) => xs.filter((x) => x.id !== it.id))} aria-label={`Remove ${it.file.name}`}>Remove</Button>
+                </div>
+                {it.state === 'uploading' && (
+                  <div role='progressbar' aria-label={`Uploading ${it.file.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className='bg-muted h-1.5 overflow-hidden rounded-sm'>
+                    <div className='bg-primary h-full rounded-sm transition-[width]' style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {field.help && <p className='text-muted-foreground text-xs'>{field.help}</p>}
+    </fieldset>
+  );
+}
+
 /**
  * A new record's key, title and fields; `post` sends it (default: the workspace's data API; mold_v0-212, a staff record
- * page: the shared area's /api/admin/data).
+ * page: the shared area's /api/admin/data). `uploadMax` (mold_v0-238, a workspace area that takes uploads): its file
+ * fields take files from this device, uploaded when the form is sent (each kept for the record's key; one kept for an
+ * earlier key is uploaded again), then the record is written with their references. A refused write keeps them for the
+ * next try; Cancel, or a file removed, discards the ones kept but never written.
  */
-export function CreateRecordForm({ area, onDone, post }: {
+export function CreateRecordForm({ area, onDone, post, uploadMax = null }: {
   area: { name: string; label: string; fields: FormField[] }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
+  uploadMax?: number | null;
 }) {
   const [key, setKey] = useState('');
   const [title, setTitle] = useState('');
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const [uploads, setUploads] = useState<Record<string, UploadItem[]>>({});
+  const fileFields = uploadMax ? area.fields.filter((f) => f.type === 'file') : [];
+  const plain = uploadMax ? area.fields.filter((f) => f.type !== 'file') : area.fields;
+  // What was kept but not written, discarded when the form goes away without writing it (Cancel, Back).
+  const latest = useRef(uploads);
+  latest.current = uploads;
+  const written = useRef(false);
+  useEffect(() => () => {
+    if (written.current) return;
+    for (const [field, items] of Object.entries(latest.current)) for (const it of items) discardOne(area.name, field, it);
+  }, [area.name]);
+  const patch = (field: string, id: string, p: Partial<UploadItem>) =>
+    setUploads((u) => ({ ...u, [field]: (u[field] ?? []).map((x) => (x.id === id ? { ...x, ...p } : x)) }));
+  const setItems = (field: string) => (f: (items: UploadItem[]) => UploadItem[]) => {
+    const before = latest.current[field] ?? [], after = f(before);
+    // A file removed after it was kept: discarded at once.
+    for (const it of before) if (!after.includes(it)) discardOne(area.name, field, it);
+    latest.current = { ...latest.current, [field]: after };
+    setUploads(latest.current);
+  };
   const submit = async () => {
-    const { values: data, problem } = fieldValues(area.fields, values);
+    const { values: data, problem } = fieldValues(plain, values);
     if (problem) return void toast.error(problem);
+    const k = key.trim();
+    for (const f of fileFields) if (f.required && !(uploads[f.name] ?? []).length) return void toast.error(`${f.label} is required`);
     setBusy(true);
     try {
-      const body = { key: key.trim(), ...(title.trim() ? { title: title.trim() } : {}), data };
+      // Each file not yet kept for this key, one at a time, its progress shown; the first failure stops the form.
+      for (const f of fileFields) {
+        const refs: StoredFileRef[] = [];
+        for (const it of uploads[f.name] ?? []) {
+          if (it.state === 'done' && it.ref && it.key === k) { refs.push(it.ref); continue; }
+          if (it.ref) discardOne(area.name, f.name, it);
+          patch(f.name, it.id, { state: 'uploading', sent: 0, ref: undefined, key: undefined, error: undefined });
+          try {
+            const ref = await uploadOne(fileUrl(area.name, k, f.name), it.file, (sent) => patch(f.name, it.id, { sent }));
+            patch(f.name, it.id, { state: 'done', sent: it.file.size, ref, key: k });
+            refs.push(ref);
+          } catch (e) {
+            patch(f.name, it.id, { state: 'failed', error: e instanceof Error ? e.message : 'The upload failed' });
+            throw e;
+          }
+        }
+        if (refs.length) data[f.name] = f.multiple ? refs : refs[0];
+      }
+      const body = { key: k, ...(title.trim() ? { title: title.trim() } : {}), data };
       await (post ? post(body) : send('POST', `/api/data/${encodeURIComponent(area.name)}`, body));
+      written.current = true;
       toast.success('Added');
       onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  const uploading = Object.values(uploads).some((xs) => xs.some((x) => x.state === 'uploading'));
   return (
-    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {busy ? 'Adding…' : 'Add'}</Button>}>
+    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='action-key'>Key<span className='text-destructive' aria-hidden> *</span></Label>
         <Input id='action-key' value={key} onChange={(e) => setKey(e.target.value)} required placeholder='a short id, unique in this list' />
@@ -361,7 +544,10 @@ export function CreateRecordForm({ area, onDone, post }: {
         <Label htmlFor='action-title'>Title</Label>
         <Input id='action-title' value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
-      <FieldsForm fields={area.fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-field' />
+      <FieldsForm fields={plain} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-field' />
+      {fileFields.map((f) => (
+        <FileUploads key={f.name} field={f} items={uploads[f.name] ?? []} setItems={setItems(f.name)} max={uploadMax!} disabled={busy} id={`action-file-${f.name}`} />
+      ))}
     </CardForm>
   );
 }

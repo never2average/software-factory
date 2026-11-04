@@ -3,7 +3,7 @@
 A mold_v0 app keeps its data in **record areas**: lists of records a pack declares in its `pack.json` (`record_areas`),
 with no code. This page is the whole contract of one area: what its fields can be, whose rows it holds, where they come
 from, who may do what to them, how its list looks, and what else the shell does with them (clocks, chains, documents,
-Settings). It describes what the mold does **today** (`molds/mold_v0/codebase`, as of mold_v0-236), names the file that
+Settings). It describes what the mold does **today** (`molds/mold_v0/codebase`, as of mold_v0-238), names the file that
 does each part, and lists at the end what it does not do yet.
 
 The schema is the mold's own: `molds/mold_v0/codebase/packs/pack.schema.json` (generated from `src/pack-api.ts`), embedded
@@ -32,6 +32,7 @@ pack's areas as you type. `factory.py spec check` adds the completeness rules be
 | `append_only`, `chain` | Section 6. |
 | `due`, `clocks` | Section 6. |
 | `settings` | Section 7. |
+| `action`, `action_reason` | The primary action of the area's own lists, its Settings tab and its Records page: absent, the shell's default; `false` with `action_reason`, none (section 5). |
 | `samples` | Up to 20 example rows of a shared area, written only by the test lanes' throwaway database. |
 | `contract` | The area's contract in one place (section 8). |
 
@@ -51,14 +52,16 @@ Every field has a `name` (lowercase, 2 to 63 characters), a `label`, a `type` (d
 | `person` | a person of the workspace, by sign-in id | `multiple` |
 | `reference` | the key of a record of area `to`, checked on write as the writer sees it | `multiple`; a shared area refers only to shared areas |
 | `link` | the older form of a reference (a key or list of keys, through the area's `links`) | |
-| `file` | a file: a path in the workspace store, or a **stored file** `{object, name, size, content_type, sha256}` kept sealed for the record (mold_v0-220, `src/record-files.ts`) | `multiple`: **files** |
+| `file` | a file: a path in the workspace store, or a **stored file** `{object, name, size, content_type, sha256}` kept sealed for the record (mold_v0-220, `src/record-files.ts`); the console's create form uploads them (section 6) | `multiple`: **files** |
+| `url` | an absolute `http` or `https` address of up to 2048 characters, with a host and no user name or password (mold_v0-238, `src/pack-api.ts` `isFieldUrl`); the console takes it in an address input and shows it as a link | `preview: "document"` |
 
 Three markers on top of the type:
 
-- **URL with a document preview**: a `text` field with `"preview": "document"` holds a URL; the record's card fetches
-  the document (only from the pack's `documents.hosts`, over HTTPS, private addresses refused), keeps a copy in the
-  object store and previews it (PDF, images, plain text, sanitised HTML), with Download (`src/document-fetch.ts`).
-  There is no separate `url` type.
+- **URL with a document preview**: a `url` field (or a `text` field holding a URL, the form before mold_v0-238) with
+  `"preview": "document"`; the record's card fetches the document (only from the pack's `documents.hosts`, over HTTPS,
+  private addresses refused), keeps a copy in the object store and previews it (PDF, images, plain text, sanitised
+  HTML), with Download (`src/document-fetch.ts`). A `url` field is checked as an address on every write; a `text` one
+  is not.
 - **Encrypted**: `"encrypted": true` seals the value with the workspace's data key; every read shows `[encrypted]`, and
   only an explicit reveal returns it, to the field's `reveal_roles` (default: the roles that may update the area), each
   reveal in the data trail (mold_v0-194, `src/encrypted-fields.ts`). Workspace areas of the shell's tables; text,
@@ -74,7 +77,7 @@ only to workspaces). **Provenance** says how rows get there. Five sources:
 | Provenance | Who writes | Where it applies | How the shell does it |
 |---|---|---|---|
 | `staff` | platform staff, by hand | a shared area (a workspace area only through a write tool the pack made `admin_only`) | the staff record pages' New, Edit, Override and Import, `/api/admin/data`, the admin MCP (mold_v0-212, mold_v0-221) |
-| `people` | the workspace's own people and their AI clients, by hand | a workspace area whose writes the pack does not withhold | the list tab's create form, the data API (`/api/data`), the generated create, update and move tools |
+| `people` | the workspace's own people and their AI clients, by hand | a workspace area whose writes the pack does not withhold | the create form of its list tab, Settings tab or Records page (with its files uploaded), the data API (`/api/data`), the generated create, update and move tools |
 | `repository` | the area's `repository` | any area naming one | `workspace_files` (rows indexed from the workspace's files, read only), `http_api` (read live, read only), `upstream_catalog` (a pinned upstream catalog that staff index), `shell_tables` (`src/data-repositories.ts`) |
 | `intake` | the company email's intake | the area the pack's `email.intake.area` names | one record per message, with its body and attachments as files (mold_v0-192, mold_v0-220) |
 | `run` | the pack's own code | a workspace area of the shell's tables, in a pack with code (`entry`) | `ctx.records`: a run's `onWorkspaceCommit` hook (mold_v0-064), the pack's own tools and routes |
@@ -146,12 +149,19 @@ Where an area's list is drawn, and what it has:
   (`create_record` of its area, `start_run` of a job kind or a picker of several, `link`), else the shell's default
   (`src/metric-spec.ts` `tabAction`: `create_record` for a workspace area of the shell's tables a workspace may add to),
   else none. **No action is said with its reason**: `"action": false, "reason": "..."` (shown nowhere; the build lists
-  an undeclared none as a warning).
+  an undeclared none as a warning). Its form opens as a full card in the list's place (`?new=1`, `?start=1`), never a
+  dialog or a side sheet.
 - **Export CSV** sits just left of it on every list (mold_v0-217), the narrowed rows when filtered; on a workspace's
-  list only for the roles that may export (mold_v0-235). **Import** sits beside it where the area's contract grants the
-  person's role import (mold_v0-234): a panel to choose the file, map its columns, preview and import.
-- **A Settings tab** (section 7) and **the Records page** of an area no tab shows (`/app/records/<name>`) draw the same
-  table with Export alone.
+  list only for the roles that may export (mold_v0-235). **Import** sits beside it, its own button, where the area's
+  contract grants the person's role import (mold_v0-234): a full card in the list's place (`?import=1`, Back to the
+  list) to choose the file, map its columns, preview each row and import; then what was written.
+- **A Settings tab** (section 7) and **the Records page** (`/app/records/<name>`) are the same list (mold_v0-237): the
+  area's four cards (`GET /api/records/_console/<area>/sparklines`, the defaults an area tab over it would have), the
+  search row with Export CSV and the area's own primary action, then the table. Its action is the area's: `"action":
+  false` with `"action_reason": "..."` is none; else the shell's default (`src/metric-spec.ts` `areaListAction`: Add
+  <its singular>, a new record, for a workspace area of the shell's tables a workspace may add to; the server's
+  `GET /api/tab-actions/_areas/<area>` says who may use it), else none, said by what the area is (shared, read from a
+  repository, its create withheld; the registry's `no_action`). A tab over the area keeps its own `action`.
 - **Staff** see a shared area at `/admin/records/<name>`: the four cards, **New <noun>** and **Import** for a role with
   `library`, Edit or Override on a row, Remove for `delete`, each row's provenance (mold_v0-212, mold_v0-221).
 
@@ -168,7 +178,15 @@ Where an area's list is drawn, and what it has:
   checkpoints when `audit.sign` is on. Workspace areas of the shell's tables only; no lifecycle, no repository.
 - **Documents** (mold_v0-220): each `file` field's stored files and each `preview: "document"` URL become cards on the
   record (preview, Download, signed links bound to the person; previews and downloads in the data trail). Files come
-  from the email intake and the pack's own code; the console has no upload yet. Gated by the `document_preview` flag.
+  from the email intake, the pack's own code and the console (mold_v0-238): a create form's file field takes files from
+  the person's device (Choose files; each file's name, size and progress, then Uploaded), uploaded when the form is
+  sent to `POST /api/data/<area>/<key>/files/<field>` (the bytes as `application/octet-stream`), kept as the intake
+  keeps them (sealed with the workspace's data key, bound to the record's key) and written into the field by the
+  record's create. A person who may create or update the area's records uploads; a workspace area of the shell's tables
+  only; 25 MB a file (4 MB where the API runs on Vercel's functions). A file kept but never written (a cancelled form, a
+  refused create) is removed (`DELETE` on the same address, only for that key and never one the record holds). An
+  upload is a `create` of target `file` in the data trail, a removal a `delete`. Gated by the `document_preview` flag
+  (off: no upload, no card).
 
 ## 7. Settings placement
 
@@ -196,7 +214,9 @@ Every area has a contract. A pack may write it down, in one block, so the area's
 - `provenance`: one or more of `staff`, `people`, `repository`, `intake`, `run`.
 - `actions`: every one of the eight, each a list of roles, `{"staff": "library" | "delete"}` (a shared area), or
   `{"none": "<why>"}`.
-- `primary_action`: `create_record`, `start_run` or `link` (the area's list tab's), or `{"none": "<why>"}`.
+- `primary_action`: `create_record`, `start_run` or `link`, or `{"none": "<why>"}`: the primary action of **every**
+  list that shows the area (mold_v0-237): each tab whose own area it is, its Settings tab, and its Records page when no
+  tab shows it.
 
 **The runtime reads three of its actions** (each with today's behaviour when the area declares no contract):
 `import` (who may import a file into a workspace's own records: mold_v0-234), `export` (its own permission, within
@@ -214,7 +234,8 @@ declaration, held to what the shell does with the rest of the area:
   each action must be what the build gives (roles compared as sets; `none` matches `none` whatever the reason; for
   import, export and reveal, what the runtime makes of the contract's own grant: the roles narrowed by read, create and
   update, `none` where the area cannot take it); the provenance must include everything the build gives and nothing it
-  cannot (`run` only in a pack with code); the primary action must be the one the area's first list tab resolves to.
+  cannot (`run` only in a pack with code); the primary action must be the one every list of the area resolves to (each
+  tab over it, its Settings tab, its Records page), each that differs named.
 
 **Completeness rules** (`spec check`, on every mold_v0 pack, inline, by path or by id):
 
@@ -223,9 +244,10 @@ declaration, held to what the shell does with the rest of the area:
 2. An area that declares none takes the derived contract, which is complete unless the derivation cannot decide:
    - **nothing writes its rows** (no repository, no write a workspace or staff may make, no email intake): declare
      `contract.provenance` (`run`, when the pack's code writes them), or open a way in;
-   - **its list tab has no primary action and no reason** (a shared area, a repository's area, an area a workspace may
-     not add to, with no `action` on the tab): declare the tab's `action`, or `action: false` with its `reason`, or the
-     contract's `primary_action: {"none": "<why>"}`.
+   - **a list tab of it has no primary action and no reason** (a shared area, a repository's area, an area a workspace
+     may not add to, with no `action` on the tab): declare the tab's `action`, or `action: false` with its `reason`, or
+     the contract's `primary_action: {"none": "<why>"}`. Its Settings tab and its Records page always have one or say
+     why (the area's `action: false` and `action_reason`, or what the area is).
 
 So every area of a complete spec has its actions or their reasons, its permissions and its provenance: said by the
 pack, or derived and printed. `spec check <file> --records` prints each area's contract on one line (declared or
@@ -277,13 +299,12 @@ What the contract can name only as `none`, or cannot name, because the runtime d
   needs both create and update, so neither takes one.
 - **`run` in `spec check`.** The factory's check reads the declaration, not the app's rows: it knows only that a pack
   has code. The app works it out (`GET /api/admin/records/_provenance`), for rows written since mold_v0-236.
-- **A primary action on a Settings tab and on the Records page.** Both draw Export alone; a Settings area tab with
-  New <noun> (its create form) would need the tab's action there.
-- **Uploading a file from the console** into a `file` field (files come from the email intake and the pack's code).
-- **A `url` field type** with its own validation; today a URL is a `text` field (with `preview: "document"` for a
-  document).
 - **The build checking the whole contract.** `gen-packs` runs the area-local rules (`contractProblems`); the derived
   comparison (permissions' defaults, `mcp`, tabs, intake) runs in `factory.py spec check` only, so a pack applied
   without a spec check is held to the first alone.
-- **Several list tabs over one area.** The contract's `primary_action` speaks for the first; the others keep their own
-  `action` or reason.
+- **A different primary action per list.** The contract's `primary_action` is one value for every list of the area; an
+  area whose tabs offer different actions cannot declare a contract until they agree (its derived contract prints
+  each). An area's own lists (Settings, Records page) offer `create_record` or none, never a run or a link.
+- **Updating a record's files from the console.** The console creates records with their files; changing a record's
+  files afterwards is the data API's (`PUT /api/data/<area>/<key>` with a reference an upload answered), not a form's,
+  and the MCP tools take a workspace store path, not an upload.

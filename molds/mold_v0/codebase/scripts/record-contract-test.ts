@@ -76,10 +76,31 @@ assert.ok(issues(ws({ provenance: ["people"], primary_action: "create_record", a
 assert.ok(issues(ws({ provenance: ["people"], primary_action: "create_record", actions: actions({ reveal: none("never") }) }, enc({ reveal_roles: ["owner"] })))
   .some((m) => m.startsWith("contract.actions.reveal: field secret declares reveal_roles, but the contract's reveal is none")));
 
+// 2b. An area's own lists (mold_v0-237): its Settings tab and its Records page take its `action: false` with a reason.
+assert.deepEqual(issues(ws(undefined, { action: false, action_reason: "rows come from the pack's runs" })), []);
+assert.ok(issues(ws(undefined, { action: false })).some((m) => m.startsWith("action_reason: action: false says why")));
+assert.ok(issues(ws(undefined, { action_reason: "x" })).some((m) => m.startsWith("action_reason: action_reason is for action: false")));
+assert.ok(issues(ws(undefined, { action: { kind: "create_record", area: "jobs" } })).some((m) => m.startsWith("action")), "an area's own action is false or absent");
+assert.ok(issues(ws({ provenance: ["people"], actions: actions(), primary_action: "create_record" }, { settings: { group: "automation" }, action: false, action_reason: "run-made" }))
+  .some((m) => m.startsWith("contract.primary_action: its Settings tab has no primary action")), "a Settings tab with none: the contract says none");
+assert.deepEqual(issues(ws({ provenance: ["people"], actions: actions(), primary_action: none("run-made") }, { settings: { group: "automation" }, action: false, action_reason: "run-made" })), []);
+
+// 2c. A url field (mold_v0-238): an address, which may preview its document.
+{
+  const { isFieldUrl, RecordFieldSchema } = await import("../src/pack-api.js");
+  for (const good of ["https://example.com/a.pdf", "http://example.com", "https://sub.example.com:8443/x?y=1#z"]) assert.ok(isFieldUrl(good), good);
+  for (const bad of ["example.com", "ftp://example.com/x", "javascript:alert(1)", "https://user:pw@example.com/", "https:///x", " https://example.com", "https://example.com/a b", `https://example.com/${"a".repeat(2048)}`, 42])
+    assert.ok(!isFieldUrl(bad), String(bad).slice(0, 40));
+  assert.ok(RecordFieldSchema.safeParse({ name: "site", label: "Site", type: "url", preview: "document" }).success);
+  assert.ok(RecordFieldSchema.safeParse({ name: "notes", label: "Notes", type: "text", preview: "document" }).success, "a text field holding a URL still previews");
+  assert.ok(!RecordFieldSchema.safeParse({ name: "site", label: "Site", type: "url", max_length: 10 }).success, "max_length is a text field's");
+  assert.ok(!RecordFieldSchema.safeParse({ name: "site", label: "Site", type: "url", multiple: true }).success, "one address");
+}
+
 // 3. In a pack.json, as the build reads it.
 const pack = { id: "acme", name: "Acme", version: "1.0.0", record_areas: [ws({ provenance: ["people"], actions: actions(), primary_action: "create_record" })] };
 assert.doesNotThrow(() => checkPackJson(pack));
 assert.throws(() => checkPackJson({ ...pack, record_areas: [ws({ provenance: ["people"], actions: actions({ import: ALL }), primary_action: "create_record" })] }), /import/);
 assert.doesNotThrow(() => checkPackJson({ ...pack, record_areas: [ws({ provenance: ["people"], actions: actions({ import: W, export: ["owner"] }), primary_action: "create_record" })] }));
 
-console.log("record contract: ok (accepted when the area agrees; each contradiction refused with its path, the import, export and reveal rules of mold_v0-234/235 included; in a pack.json)");
+console.log("record contract: ok (accepted when the area agrees; each contradiction refused with its path, the import, export and reveal rules of mold_v0-234/235 included; an area's own lists' action: false with its reason; a url field; in a pack.json)");
