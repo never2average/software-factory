@@ -1403,7 +1403,7 @@ let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
-// A tab's floating action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
+// A tab's primary action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
 // kind whose start tool is withheld, a record area whose create tool is. The console would only hide the button.
 for (const t of packViews.tabs ?? []) {
   const a = t.action;
@@ -2478,7 +2478,7 @@ function viewsModule() {
     ...(t.filter ? { filtered: true } : {}),
     ...(t.kind === "sections" ? { sections: (t.sections ?? []).filter((id) => shown.some((x) => x.pack === t.pack && x.id === id)) } : {}),
     ...(t.empty ? { empty: t.empty } : {}),
-    // The tab's primary floating action (mold_v0-208): what its button says and opens (the server says who may use it).
+    // The tab's primary action (mold_v0-208): what its button says and opens (the server says who may use it).
     // mold_v0-213: every list tab's, resolved (the pack's own or the shell's default from what the tab shows), labelled.
     ...(t.action ? { action: { kind: t.action.kind, label: t.action.label ?? null, ...(t.action.job_kind ? { job_kind: t.action.job_kind } : {}), ...(t.action.area ? { area: t.action.area } : {}), ...(t.action.href ? { href: t.action.href } : {}) } } : {}),
   }));
@@ -2526,7 +2526,7 @@ function viewsModule() {
     "  sections?: string[];\n" +
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n" +
-    "  /** The tab's primary floating action (mold_v0-208; web/src/features/tabs/action-fab.tsx): a run, a schedule, a record or a link;\n   *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */\n" +
+    "  /** The tab's primary action (mold_v0-208; web/src/features/tabs/tab-action.tsx, the search row's last control): a run, a schedule, a record or a link;\n   *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */\n" +
     "  action?: { kind: 'start_run' | 'new_schedule' | 'create_record' | 'link'; label: string | null; job_kind?: string; area?: string; href?: string };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +

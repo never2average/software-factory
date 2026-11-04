@@ -309,7 +309,7 @@ try {
     console.log(`✓ a home tab's cards (rail, mold_v0-172): ${r} malformed or contradicted ones refused (not a home tab, twice, unknown, three, notices not included, an undeclared or non-number chart, charts_title off a home tab with charts); built in its order; journeys without the component (Get set up) and a charts heading built`);
   }
 
-  // ---------- 2d'. a list tab's primary floating action (mold_v0-208: tabs[].action) ----------
+  // ---------- 2d'. a list tab's primary action (mold_v0-208: tabs[].action) ----------
   {
     let m = 0;
     const no = (what: string, json: unknown, re: RegExp) => { refused(`action: ${what}`, tryPack(json), re); m++; };
@@ -349,7 +349,7 @@ try {
     assert.equal(charted.r.status, 0, `an area tab's charts still build: ${charted.r.stderr}`);
     const ct = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(charted.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as { id: string }[]).map((t) => [t.id, t])) as Record<string, any>;
     assert.deepEqual([ct.apps.charts, ct.home.charts], [[], ["summary"]], "an area tab's charts are not drawn; an overview's are");
-    console.log(`✓ a list tab's floating action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
+    console.log(`✓ a list tab's primary action (mold_v0-208): ${m} malformed or contradicted ones refused (an unknown kind or key, an undeclared, doubled or withheld job kind, a picker of one, the wrong tab kind, no scheduled kind, an area missing, shared or undeclared, braces); each kind carried with its words; an area tab's charts not drawn`);
   }
 
   // ---------- 2d''. every list tab's primary action by default; a link; none with a reason (mold_v0-213) ----------

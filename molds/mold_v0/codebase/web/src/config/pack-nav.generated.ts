@@ -161,7 +161,7 @@ export interface PackTabSpec {
   sections?: string[];
   /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
   empty?: { title: string; text: string; cta: { label: string; href: string } | null };
-  /** The tab's primary floating action (mold_v0-208; web/src/features/tabs/action-fab.tsx): a run, a schedule, a record or a link;
+  /** The tab's primary action (mold_v0-208; web/src/features/tabs/tab-action.tsx, the search row's last control): a run, a schedule, a record or a link;
    *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */
   action?: { kind: 'start_run' | 'new_schedule' | 'create_record' | 'link'; label: string | null; job_kind?: string; area?: string; href?: string };
 }
