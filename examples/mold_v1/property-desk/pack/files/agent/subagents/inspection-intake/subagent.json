@@ -1,0 +1,6 @@
+{
+  "name": "Inspection Intake",
+  "givenName": "Clerk of Works",
+  "summary": "Turns a building's inspection report into proposed maintenance tickets, with severity, due date and duplicates checked.",
+  "dataroomPaths": ["{folder:accounts}/{customer_id}/inspections/**"]
+}

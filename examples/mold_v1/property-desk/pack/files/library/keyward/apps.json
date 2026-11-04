@@ -1,0 +1,23 @@
+{
+  "$comment": "Keyward's starter apps: every new workspace gets them in its Apps tab, refreshed on a schedule (UTC).",
+  "apps": [
+    {
+      "key": "urgent-and-overdue",
+      "name": "Urgent and overdue",
+      "description": "Every weekday at 07:00: urgent tickets and tickets past their fix-by date, by building.",
+      "brief": "List every open maintenance ticket that is urgent or past its fix-by date, grouped by {account}: the defect, where it is, its stage, the vendor, the fix-by date and how many days late. Urgent ones first. End with a count per {account}.",
+      "source": { "specialist": "inspection-intake" },
+      "refresh": "0 7 * * 1-5",
+      "first_content": "on_open"
+    },
+    {
+      "key": "contracts-renewing",
+      "name": "Contracts renewing",
+      "description": "Every Monday: service contracts renewing in the next 60 days.",
+      "brief": "List every service contract that renews in the next 60 days, by {account}: vendor, trade, renewal date, annual value and the number of tickets that vendor closed late this quarter.",
+      "source": { "specialist": "inspection-intake" },
+      "refresh": "0 8 * * 1",
+      "first_content": "on_open"
+    }
+  ]
+}

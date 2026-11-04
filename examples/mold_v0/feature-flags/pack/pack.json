@@ -223,7 +223,7 @@
   "onboarding": [
     { "id": "first_flag", "label": "Create your first flag", "done_when": "record:flags" },
     { "id": "first_rollout", "label": "Turn it on in development", "done_when": "record:rollouts" },
-    { "id": "ask_check", "label": "Ask is_flag_on from your code or your AI app", "done_when": "tool:check_is_flag_on" },
+    { "id": "ask_check", "label": "Ask is_flag_on from your code or your AI app", "done_when": "first_call" },
     { "id": "connect_ai", "label": "Connect your AI app", "done_when": "connected" }
   ],
   "metrics": [

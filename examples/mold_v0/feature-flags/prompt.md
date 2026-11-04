@@ -4,8 +4,8 @@ build into their own products.
 ## Who it is for, and how it is used
 
 Product engineering teams. Their developers put Flagwell behind their own apps: their servers ask Flagwell whether a
-flag is on, their front ends ask with short-lived sessions their servers hand out, and their CI tells Flagwell about
-every release. Product managers and engineers also sign in to Flagwell's own screens to create flags, roll them out and
+flag is on with a scoped API key, their front ends read flags with short-lived sessions their servers hand out, and
+their CI tells Flagwell about every release. Product managers and engineers also sign in to Flagwell's own screens to create flags, roll them out and
 run experiments. Because developers build it into other products, it is **embedded**, not a stand-alone tool: it needs
 the full developer surface (the REST API with its OpenAPI description, scoped API keys, client sessions, signed webhooks
 both ways, and generated SDKs) and every request must be recorded. Each team's project is its own; no project sees
@@ -52,7 +52,8 @@ Percentage bucketing happens in the product's SDK, from the rollout's share of u
   started, stopped or concluded), a readout finished, and a deadline passed (a flag past its clean-up date, an
   experiment past its decide-by).
 - SDKs in TypeScript and Python, on the API version of 2026-11-01.
-- Client sessions last 15 minutes, may only read and ask the yes/no questions, and only from https://app.example.com.
+- Client sessions last 15 minutes, may only read, and work only from https://app.example.com. The yes/no questions are
+  asked by the product's servers, with an API key that holds the checks scope.
 - One incoming webhook, "CI releases": your CI's deployment report, where `/deployments` is the list, each item's
   `/id` is the record key, `/version` its title, and `/service`, `/environment`, `/commit` and `/finished_at` fill the
   release's service, environment, commit and finished time. Only reports of the type `deployment.succeeded` are kept.

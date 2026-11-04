@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v1.app.schema.json",
+  "$comment": "Keyward: a residential property maintenance desk (examples/mold_v1/property-desk). The spec the agent produced from prompt.md. Check: python3 .claude/scripts/factory.py spec check examples/mold_v1/property-desk/spec.json",
+  "app_id": "keyward",
+  "mold_id": "mold_v1",
+  "kind": "tool",
+  "product": {
+    "name": "Keyward",
+    "colour": "#15803D",
+    "logo": "examples/mold_v1/property-desk/logo.svg",
+    "tagline": "Maintenance tickets, inspections and vendors for residential buildings",
+    "domain": "keyward.example.com"
+  },
+  "deploy": {
+    "target": "vercel"
+  },
+  "workspace": {
+    "name": "Example Property Desk",
+    "owner": "desk-manager@example.com",
+    "members": [
+      "coordinator@example.com",
+      "inspector@example.com"
+    ],
+    "platform_admins": [
+      "desk-manager@example.com"
+    ]
+  },
+  "capabilities": {
+    "web_search": false,
+    "browser": false,
+    "multi_tenant": true
+  },
+  "inference": {
+    "provider": "cloudflare_workers_ai"
+  },
+  "library": "none",
+  "dictation": {
+    "model": "@cf/openai/whisper-large-v3-turbo"
+  },
+  "packs": [
+    {
+      "id": "keyward",
+      "path": "examples/mold_v1/property-desk/pack"
+    }
+  ]
+}
