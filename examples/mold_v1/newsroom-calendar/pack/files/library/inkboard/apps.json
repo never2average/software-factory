@@ -1,0 +1,23 @@
+{
+  "$comment": "Inkboard's starter apps: every new workspace gets them in its Apps tab. The briefing is written by the story-briefing specialist on a schedule (UTC).",
+  "apps": [
+    {
+      "key": "morning-briefing",
+      "name": "Morning briefing",
+      "description": "Every desk's briefing before conference: due today, embargoed, unassigned, at risk, published.",
+      "brief": "Write today's briefing for every {account} that has assignments due today or tomorrow, one section per {account}, by the rulebook: Due today, Embargoed, Unassigned, At risk, Published since the last briefing. Cite every line.",
+      "source": { "specialist": "story-briefing" },
+      "refresh": "0 6 * * 1-5",
+      "first_content": "on_open"
+    },
+    {
+      "key": "weekend-planner",
+      "name": "Weekend planner",
+      "description": "Friday afternoon: what is due Saturday and Sunday, and who has it.",
+      "brief": "Write the weekend briefing: every assignment due Saturday or Sunday, by {account}, with its reporter or nobody, its deadline with its zone, and anything at risk.",
+      "source": { "specialist": "story-briefing" },
+      "refresh": "0 14 * * 5",
+      "first_content": "on_open"
+    }
+  ]
+}

@@ -221,7 +221,7 @@ try {
     assert.match(health, /ENGINE_HEALTH \? \{ runs: '\/admin\/finops\?section=runs' \} : \{\}/, "the engine's old runs link still goes to FinOps");
     const tabs = readFileSync(path.join(ROOT, "web/src/features/admin/health-tabs.tsx"), "utf8");
     assert.match(tabs, /\['errors', 'Errors'\], \['runs', W\.Runs\], \['scheduled', 'Scheduled work'\], \.\.\.\(deliveriesTab\(\) \? \[\['deliveries', 'Email Delivery'\] as const\] : \[\]\),\s*\.\.\.\(webhooksTab\(\) \? \[\['webhooks', 'Webhook Delivery'\] as const\] : \[\]\), \['status', 'Status'\]/, "the shell's Health tabs, in order: Errors, Runs, Scheduled work, Email Delivery, Webhook Delivery, Status");
-    assert.match(tabs, /deliveriesTab = \(\): boolean => emailPortalNav\.length > 0 \|\| developerConsole\.on/, "Email Delivery only with company email or a developer surface");
+    assert.match(tabs, /deliveriesTab = \(\): boolean => settingsPage\.email \|\| developerConsole\.on/, "Email Delivery only with company email or a developer surface");
     assert.match(tabs, /webhooksTab = \(\): boolean => developerConsole\.on;/, "Webhook Delivery only with a developer surface (mold_v0-215)");
     // Email Delivery is emails only: its tab has no webhook card or view; the webhook ones are Webhook Delivery's.
     const emailTab = tabs.slice(tabs.indexOf('function DeliveriesTab'), tabs.indexOf('// ---------------------------------------------------------------- Webhook Delivery'));

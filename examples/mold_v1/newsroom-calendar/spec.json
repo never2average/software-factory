@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v1.app.schema.json",
+  "$comment": "Inkboard: a newsroom's story calendar and morning briefing (examples/mold_v1/newsroom-calendar). The spec the agent produced from prompt.md. Check: python3 .claude/scripts/factory.py spec check examples/mold_v1/newsroom-calendar/spec.json",
+  "app_id": "inkboard",
+  "mold_id": "mold_v1",
+  "kind": "tool",
+  "product": {
+    "name": "Inkboard",
+    "colour": "#9F1239",
+    "logo": "examples/mold_v1/newsroom-calendar/logo.svg",
+    "tagline": "The story calendar and morning briefing for newsroom desks",
+    "domain": "inkboard.example.com"
+  },
+  "deploy": {
+    "target": "vercel"
+  },
+  "workspace": {
+    "name": "Example Newsroom",
+    "owner": "managing-editor@example.com",
+    "members": [
+      "metro-editor@example.com",
+      "culture-editor@example.com",
+      "reporter@example.com"
+    ],
+    "platform_admins": [
+      "managing-editor@example.com"
+    ]
+  },
+  "capabilities": {
+    "web_search": false,
+    "browser": false,
+    "multi_tenant": true
+  },
+  "inference": {
+    "provider": "cloudflare_workers_ai"
+  },
+  "library": "none",
+  "dictation": {
+    "model": "@cf/openai/whisper-large-v3-turbo"
+  },
+  "packs": [
+    {
+      "id": "inkboard",
+      "path": "examples/mold_v1/newsroom-calendar/pack"
+    }
+  ]
+}

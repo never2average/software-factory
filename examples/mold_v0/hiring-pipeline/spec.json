@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/never2average/software-factory/main/schemas/mold_v0.app.schema.json",
+  "$comment": "Panelwise: a hiring pipeline (examples/mold_v0/hiring-pipeline). The spec the agent produced from prompt.md. Check: python3 .claude/scripts/factory.py spec check examples/mold_v0/hiring-pipeline/spec.json",
+  "app_id": "panelwise",
+  "mold_id": "mold_v0",
+  "kind": "tool",
+  "audit": { "data": true, "platform": true, "sign": false },
+  "product": {
+    "name": "Panelwise",
+    "colour": "#4338CA",
+    "logo": "examples/mold_v0/hiring-pipeline/logo.svg",
+    "tagline": "Roles, candidates and interview panels in one place",
+    "domain": "panelwise.example.com"
+  },
+  "deploy": { "target": "vercel" },
+  "workspace": { "platform_admins": ["people-ops@example.com", "*@admins.example.com"] },
+  "budgets": {
+    "runs": { "budget_usd_max": 3, "kind_month_budget_usd": 100, "concurrency_per_workspace": 4, "live_per_workspace": 20 }
+  },
+  "profile": {
+    "member_keys": false,
+    "onprem_runners": false,
+    "email_from_address": "hiring@example.com",
+    "email": { "notifications": ["access_requests", "due_dates"] },
+    "legal": { "company_name": "Example Talent Ltd", "contact_email": "legal@example.com", "effective_date": "2026-11-04" }
+  },
+  "run_keys": { "model": "anthropic", "sandbox": "boat", "object_storage": "vault" },
+  "packs": [
+    { "id": "panelwise", "path": "examples/mold_v0/hiring-pipeline/pack/pack.json" }
+  ]
+}

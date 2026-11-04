@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One calendar entry as parse_calendar.py writes it (read-only input to the briefing)",
+  "type": "object",
+  "required": ["slug", "source"],
+  "properties": {
+    "slug": { "type": ["string", "null"] },
+    "title": { "type": ["string", "null"] },
+    "desk": { "type": ["string", "null"] },
+    "reporter": { "type": ["string", "null"] },
+    "deadline": { "type": ["string", "null"] },
+    "embargo": { "type": ["string", "null"] },
+    "kind": { "type": ["string", "null"] },
+    "status": { "type": ["string", "null"] },
+    "words": { "type": ["integer", "null"] },
+    "zone": { "type": "string", "enum": ["unstated"] },
+    "moving_utc": { "type": "string" },
+    "unparsed": { "type": "array", "items": { "type": "string" } },
+    "source": { "type": "string" }
+  }
+}

@@ -1,0 +1,284 @@
+{
+  "$schema": "../../../../molds/mold_v0/codebase/packs/pack.schema.json",
+  "$comment": "Wrenchline's config-only pack (examples/mold_v0/field-service). JSON only: every record area, clock, job kind, schedule, metric, chart and tab is a declaration the shell builds. See brief.md for the same product in words.",
+  "id": "wrenchline",
+  "name": "Wrenchline field service",
+  "version": "1.0.0",
+  "description": "Work orders, the sites and equipment they are for, technician visits with response and resolution clocks, emailed service requests, and an agent that drafts each visit's report.",
+  "words": { "run": "draft", "runs": "drafts", "workspace": "service team" },
+  "record_areas": [
+    {
+      "name": "sites",
+      "label": "Sites",
+      "description": "A place the team services: a building, a plant room, a shop floor.",
+      "role": "asset",
+      "scope": "workspace",
+      "list_columns": ["address", "region", "contact_name", "access"],
+      "fields": [
+        { "name": "address", "label": "Address", "type": "text", "required": true, "max_length": 300 },
+        { "name": "region", "label": "Region", "type": "enum", "options": [
+          { "value": "north", "label": "North" }, { "value": "south", "label": "South" },
+          { "value": "east", "label": "East" }, { "value": "west", "label": "West" } ] },
+        { "name": "contact_name", "label": "Site contact", "type": "text", "max_length": 120 },
+        { "name": "contact_phone", "label": "Contact phone", "type": "text", "max_length": 40 },
+        { "name": "access", "label": "Access", "type": "enum", "options": [
+          { "value": "open", "label": "Open hours" }, { "value": "escorted", "label": "Escorted only" },
+          { "value": "out_of_hours", "label": "Out of hours only" } ] },
+        { "name": "access_notes", "label": "Access notes", "type": "text", "max_length": 2000, "help": "Keys, codes held by the site contact, parking, ladders." }
+      ]
+    },
+    {
+      "name": "equipment",
+      "label": "Equipment",
+      "description": "One serviced unit at a site, with its service interval.",
+      "role": "asset",
+      "scope": "workspace",
+      "list_columns": ["site", "category", "make", "last_serviced", "service_interval_days"],
+      "fields": [
+        { "name": "site", "label": "Site", "type": "reference", "to": "sites", "required": true },
+        { "name": "category", "label": "Category", "type": "enum", "required": true, "options": [
+          { "value": "hvac", "label": "Heating and cooling" }, { "value": "lift", "label": "Lift" },
+          { "value": "generator", "label": "Generator" }, { "value": "pump", "label": "Pump" },
+          { "value": "fire_panel", "label": "Fire panel" }, { "value": "other", "label": "Other" } ] },
+        { "name": "make", "label": "Make", "type": "text", "max_length": 80 },
+        { "name": "model", "label": "Model", "type": "text", "max_length": 80 },
+        { "name": "serial", "label": "Serial number", "type": "text", "max_length": 80 },
+        { "name": "installed_on", "label": "Installed", "type": "date" },
+        { "name": "last_serviced", "label": "Last serviced", "type": "date" },
+        { "name": "service_interval_days", "label": "Service every (days)", "type": "number", "min": 7, "max": 730 },
+        { "name": "manual", "label": "Manual", "type": "file", "help": "The maker's service manual (PDF)." }
+      ]
+    },
+    {
+      "name": "work_orders",
+      "label": "Work orders",
+      "description": "A job to do at a site: reported, assigned, attended, closed.",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": ["priority", "state", "site", "technician", "reported_on"],
+      "fields": [
+        { "name": "site", "label": "Site", "type": "reference", "to": "sites" },
+        { "name": "equipment", "label": "Equipment", "type": "reference", "to": "equipment" },
+        { "name": "priority", "label": "Priority", "type": "enum", "required": true, "options": [
+          { "value": "p1", "label": "P1 urgent" }, { "value": "p2", "label": "P2 high" },
+          { "value": "p3", "label": "P3 normal" }, { "value": "p4", "label": "P4 planned" } ] },
+        { "name": "source", "label": "Source", "type": "enum", "options": [
+          { "value": "email", "label": "Email" }, { "value": "phone", "label": "Phone" },
+          { "value": "preventive", "label": "Preventive plan" }, { "value": "technician", "label": "Raised on site" } ] },
+        { "name": "state", "label": "State", "type": "enum", "options": [
+          { "value": "new", "label": "New" }, { "value": "assigned", "label": "Assigned" },
+          { "value": "on_site", "label": "On site" }, { "value": "awaiting_parts", "label": "Awaiting parts" },
+          { "value": "completed", "label": "Completed" }, { "value": "closed", "label": "Closed" },
+          { "value": "cancelled", "label": "Cancelled" } ] },
+        { "name": "technician", "label": "Technician", "type": "person" },
+        { "name": "supervisor", "label": "Supervisor", "type": "person" },
+        { "name": "requester_email", "label": "Requested by", "type": "text", "max_length": 200 },
+        { "name": "reported_on", "label": "Reported", "type": "date" },
+        { "name": "description", "label": "Description", "type": "text", "max_length": 8000 },
+        { "name": "attachments", "label": "Attachments", "type": "json", "help": "What came with an emailed request: names and sizes." }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "new",
+        "transitions": [
+          { "from": ["new"], "to": "assigned", "label": "Assign" },
+          { "from": ["assigned", "awaiting_parts"], "to": "on_site", "label": "Arrive on site" },
+          { "from": ["on_site"], "to": "awaiting_parts", "label": "Wait for parts" },
+          { "from": ["on_site", "awaiting_parts"], "to": "completed", "label": "Complete" },
+          { "from": ["completed"], "to": "closed", "label": "Close", "roles": ["owner"] },
+          { "from": ["new", "assigned", "awaiting_parts"], "to": "cancelled", "label": "Cancel", "roles": ["owner"] },
+          { "from": ["completed", "closed"], "to": "assigned", "label": "Reopen" }
+        ]
+      },
+      "permissions": {
+        "read": ["viewer", "member", "billing", "owner"],
+        "create": ["member", "owner"],
+        "update": ["member", "owner"],
+        "move": ["member", "owner"],
+        "delete": ["owner"]
+      },
+      "clocks": [
+        {
+          "name": "respond",
+          "label": "Respond by",
+          "starts": { "event": "created" },
+          "after": { "by": "priority", "values": { "p1": "4h", "p2": "8h", "p3": "24h", "p4": "72h" }, "default": "24h" },
+          "stops_when": { "field": "state", "in": ["on_site", "awaiting_parts", "completed", "closed", "cancelled"] },
+          "assignee": "technician",
+          "notify": ["assignee", "owner"],
+          "remind": [ { "before": "1h", "notify": ["assignee"] } ],
+          "escalate": [ { "after": "1h", "label": "Tell the owners", "notify": ["owner"] } ]
+        },
+        {
+          "name": "resolve",
+          "label": "Fix by",
+          "starts": { "event": "created" },
+          "after": { "by": "priority", "values": { "p1": "24h", "p2": "72h", "p3": "7d", "p4": "30d" }, "default": "7d" },
+          "stops_when": { "field": "state", "in": ["completed", "closed", "cancelled"] },
+          "pauses_when": { "field": "state", "in": ["awaiting_parts"] },
+          "assignee": "technician",
+          "notify": ["assignee", "owner"],
+          "soon": "24h",
+          "remind": [ { "before": "24h" } ],
+          "escalate": [
+            { "after": "4h", "label": "Hand to the supervisor", "notify": ["owner"], "reassign": { "field": "technician", "from_field": "supervisor" } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "visits",
+      "label": "Visits",
+      "description": "One technician visit to a work order's site, and what was done.",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["work_order", "technician", "visited_on", "outcome", "hours_on_site"],
+      "fields": [
+        { "name": "work_order", "label": "Work order", "type": "reference", "to": "work_orders", "required": true },
+        { "name": "technician", "label": "Technician", "type": "person", "required": true },
+        { "name": "visited_on", "label": "Visited", "type": "date", "required": true },
+        { "name": "hours_on_site", "label": "Hours on site", "type": "number", "min": 0, "max": 24 },
+        { "name": "outcome", "label": "Outcome", "type": "enum", "required": true, "options": [
+          { "value": "fixed", "label": "Fixed" }, { "value": "temporary_fix", "label": "Temporary fix" },
+          { "value": "needs_parts", "label": "Needs parts" }, { "value": "no_access", "label": "No access" },
+          { "value": "no_fault_found", "label": "No fault found" } ] },
+        { "name": "parts_used", "label": "Parts used", "type": "text", "max_length": 2000 },
+        { "name": "notes", "label": "Technician notes", "type": "text", "max_length": 8000 },
+        { "name": "photos", "label": "Photos", "type": "file", "multiple": true },
+        { "name": "signed_off_by", "label": "Signed off by", "type": "text", "max_length": 120, "help": "The site contact who accepted the work." }
+      ]
+    }
+  ],
+  "email": {
+    "$comment": "A service team connects its requests mailbox in Settings > Email; each new message becomes a work order (its subject the title), with the respond and fix-by clocks running from that moment.",
+    "sender": { "allow": true },
+    "intake": {
+      "area": "work_orders",
+      "label": "Service requests",
+      "folder": "INBOX",
+      "fields": { "from": "requester_email", "received_at": "reported_on", "body": "description", "attachments": "attachments" },
+      "set": { "source": "email", "priority": "p3" },
+      "body_chars": 6000,
+      "backfill_days": 3,
+      "attachments": { "max_bytes": 10485760, "max_count": 10 }
+    }
+  },
+  "credentials": [
+    {
+      "name": "telemetry_token",
+      "label": "Building telemetry token",
+      "help": "A read-only token for your building telemetry service, so the preventive plan can read run hours and alarms. Optional: without it the plan works from service dates alone.",
+      "bound_to": "workspace",
+      "optional": true,
+      "deliver_as": { "env": "TELEMETRY_TOKEN" }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "draft_visit_report",
+      "label": "Draft a visit report",
+      "description": "Reads one visit, its work order, the equipment's history and the photos' captions, and writes the customer-facing visit report: what was found, what was done, parts used, what is still open, and the next recommended service date.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 2,
+      "budget_usd": 2,
+      "month_budget_usd": 120,
+      "concurrency_per_workspace": 4,
+      "args": [
+        { "name": "visit", "label": "Visit", "type": "reference", "to": "visits", "required": true }
+      ],
+      "report": { "path": "out/visit-report.md", "label": "Visit report", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/visit-report",
+        "commit": "1111111111111111111111111111111111111111",
+        "command": ["node", "draft-visit-report.mjs", "--visit", "{visit}"],
+        "args": { "visit": { "from": "scope.visit" } },
+        "validate": { "command": ["node", "validate-report.mjs", "out/visit-report.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 900
+      }
+    },
+    {
+      "name": "plan_preventive",
+      "label": "Plan preventive maintenance",
+      "description": "Reads every piece of equipment, its last service date and interval (and, with the telemetry token, its run hours and alarms), and writes the coming fortnight's preventive plan: what is due, grouped by site and region, with a suggested visit order.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 1,
+      "budget_usd": 4,
+      "month_budget_usd": 60,
+      "concurrency_per_workspace": 1,
+      "egress": ["telemetry.example.com"],
+      "credentials": ["telemetry_token"],
+      "report": { "path": "out/preventive-plan.md", "label": "Preventive plan", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/preventive-plan",
+        "commit": "2222222222222222222222222222222222222222",
+        "command": ["node", "plan.mjs"],
+        "validate": { "command": ["node", "validate-plan.mjs", "out/preventive-plan.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 1200
+      }
+    }
+  ],
+  "schedules": [
+    { "name": "weekly_preventive_plan", "label": "Monday's preventive plan", "job_kind": "plan_preventive", "cron": "0 5 * * 1", "enabled": true }
+  ],
+  "onboarding": [
+    { "id": "add_site", "label": "Add your first site", "done_when": "record:sites", "prompt": "Help me add our first site and its access notes." },
+    { "id": "add_equipment", "label": "Add the equipment you service there", "done_when": "record:equipment" },
+    { "id": "first_work_order", "label": "Log a work order (or connect your requests mailbox)", "done_when": "record:work_orders" },
+    { "id": "first_report", "label": "Draft your first visit report", "done_when": "run:draft_visit_report" },
+    { "id": "connect_ai", "label": "Connect your AI app", "done_when": "connected" }
+  ],
+  "metrics": [
+    { "name": "open_orders", "label": "Open work orders", "over": "work_orders",
+      "where": [ { "field": "state", "op": "in", "value": ["new", "assigned", "on_site", "awaiting_parts"] } ] },
+    { "name": "overdue_orders", "label": "Past their fix-by", "over": "work_orders", "clock": { "name": "resolve", "is": ["overdue", "missed"] },
+      "where": [ { "field": "state", "op": "in", "value": ["new", "assigned", "on_site", "awaiting_parts"] } ] },
+    { "name": "open_by_priority", "label": "Open by priority", "over": "work_orders", "group_by": "priority",
+      "where": [ { "field": "state", "op": "in", "value": ["new", "assigned", "on_site", "awaiting_parts"] } ] },
+    { "name": "opened_per_week", "label": "Opened", "over": "work_orders", "by_time": { "at": "created", "every": "week", "last": 8 } },
+    { "name": "completed_per_week", "label": "Completed", "over": "work_orders", "by_time": { "at": "state:completed", "every": "week", "last": 8 } },
+    { "name": "time_to_complete", "label": "Median time to complete", "over": "work_orders", "measure": "duration",
+      "duration": { "from": "created", "to": "state:completed", "stat": "median" },
+      "where": [ { "field": "state", "op": "in", "value": ["completed", "closed"] } ] },
+    { "name": "first_time_fix", "label": "First-time fix rate", "over": "visits", "measure": "rate",
+      "rate": { "where": [ { "field": "outcome", "op": "eq", "value": "fixed" } ] } },
+    { "name": "visits_per_week", "label": "Visits", "over": "visits", "by_time": { "at": "visited_on", "every": "week", "last": 8 } },
+    { "name": "visits_by_outcome", "label": "Visits by outcome", "over": "visits", "group_by": "outcome" },
+    { "name": "equipment_by_category", "label": "Equipment by category", "over": "equipment", "group_by": "category" },
+    { "name": "sites_count", "label": "Sites", "over": "sites" }
+  ],
+  "charts": [
+    { "name": "headline", "title": "Where the work stands", "type": "number", "metrics": ["open_orders", "overdue_orders", "time_to_complete", "first_time_fix"] },
+    { "name": "by_priority", "title": "Open work orders by priority", "type": "bar", "metrics": ["open_by_priority"], "palette": "ordinal" },
+    { "name": "flow", "title": "Opened and completed per week", "type": "line", "metrics": ["opened_per_week", "completed_per_week"] },
+    { "name": "outcomes", "title": "Visit outcomes", "type": "bar", "metrics": ["visits_by_outcome"] },
+    { "name": "fleet", "title": "Equipment by category", "type": "bar", "metrics": ["equipment_by_category"] }
+  ],
+  "tabs": [
+    { "id": "overview", "kind": "overview", "label": "Overview", "icon": "dashboard", "include": ["setup"],
+      "sparklines": ["open_orders", "overdue_orders", "time_to_complete", "first_time_fix"],
+      "charts": ["by_priority", "flow", "outcomes", "fleet"] },
+    { "id": "work-orders", "kind": "area", "area": "work_orders", "label": "Work orders", "icon": "inbox", "group": "Service",
+      "views": ["table", "detail"],
+      "action": { "kind": "create_record", "label": "New work order", "area": "work_orders" },
+      "empty": { "text": "No work orders yet. Log one, or connect your service-requests mailbox in Settings and every email becomes one." } },
+    { "id": "visits", "kind": "area", "area": "visits", "label": "Visits", "icon": "route", "group": "Service",
+      "views": ["table", "detail"],
+      "sparklines": ["visits_per_week", "first_time_fix", "open_orders", "overdue_orders"],
+      "action": { "kind": "create_record", "label": "Log a visit", "area": "visits" } },
+    { "id": "visit-reports", "kind": "reports", "label": "Visit reports", "icon": "post", "group": "Service",
+      "action": { "kind": "start_run", "label": "Draft a visit report", "job_kind": "draft_visit_report" } },
+    { "id": "sites", "kind": "area", "area": "sites", "label": "Sites", "icon": "building", "group": "Assets",
+      "action": { "kind": "create_record", "label": "Add a site", "area": "sites" } },
+    { "id": "equipment", "kind": "area", "area": "equipment", "label": "Equipment", "icon": "settings", "group": "Assets",
+      "action": { "kind": "create_record", "label": "Add equipment", "area": "equipment" } },
+    { "id": "plans", "kind": "schedules", "label": "Preventive plans", "icon": "calendar", "group": "Assets",
+      "action": { "kind": "new_schedule", "label": "New plan schedule", "job_kind": "plan_preventive" } }
+  ],
+  "mcp": {
+    "instructions": "Wrenchline keeps a field-service team's sites, equipment, work orders and technician visits. Work orders carry two clocks (respond by, fix by) set by their priority. Use list_due_records to see what is overdue, and start draft_visit_report on a visit to write its customer report."
+  }
+}

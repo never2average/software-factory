@@ -20,7 +20,7 @@
  *                workspace; a runner claims it (src/runs.ts, /api/worker/runs) and the workspace harness runs it
  *                (src/run-harness.ts); results become run_results rows checked against the record areas
  *   credentials  wired (mold_v0-034): the workspace credential vault (src/credentials.ts). A workspace's people give
- *                each value in the console (/app/credentials; only its last 4 characters are ever shown again); it is
+ *                each value in the console (Settings › Credentials; only its last 4 characters are ever shown again); it is
  *                sealed with the workspace's data key; a run of a job kind that names the field in `credentials`
  *                receives it (an environment variable, or a file in a private directory) for the asset and environment
  *                the run targets. Pack code on the server never sees a value: no handler context carries one

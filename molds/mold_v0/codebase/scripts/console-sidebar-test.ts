@@ -16,6 +16,8 @@
 // 6. The active entry (mold_v0-213, web/src/lib/active-nav.ts): every console route of a build, both consoles, with
 //    its in-page tabs (?tab=), a record's own page, a filtered view (?overdue=1), the home page with ?journey= and the
 //    staff console's Accounts › Admins: exactly one entry lit, the right one; a page outside the sidebar (Docs) none.
+// 7. Settings (mold_v0-218, web/src/config/nav-config.ts withSettings): one entry directly below Overview, a pack's
+//    credentials tab or a declared sidebar's credentials moved there (its roles kept); none without Credentials or Email.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -47,16 +49,25 @@ function buildCopy(name: string, packs: string[], edit: (id: string, j: any) => 
 }
 const built = (...a: Parameters<typeof buildCopy>) => { const b = buildCopy(...a); assert.equal(b.status, 0, `gen-packs: ${b.out.slice(-1500)}`); return b.copy; };
 
-const PROBE = `import { portalNav, mergeNav } from '@/config/nav-config';
+const PROBE = `import { portalNav, mergeNav, withSettings } from '@/config/nav-config';
+const home = { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }, { title: 'Usage', url: '/app/usage', items: [] }] };
+const ops = { label: 'Operational', items: [{ title: 'Billing', url: '/app/billing', items: [] }] };
+const own = { label: 'Company', items: [{ title: 'Credentials', url: '/app/settings', items: [], roles: ['member', 'owner'] }] };
+const settings = {
+  email: withSettings([home, ops], { credentials: false, email: true }),
+  moved: withSettings([home, ops, own], { credentials: true, email: false }),
+  none: withSettings([home, own, ops], { credentials: false, email: false }),
+  noHome: withSettings([ops], { credentials: true, email: true }),
+};
 const merged = mergeNav([
   { label: 'Get started', items: [{ title: 'Setup', url: '/app', items: [] }] },
   { label: 'Operational', items: [{ title: 'Billing', url: '/app/billing', items: [] }] },
   { label: 'Get started', items: [{ title: 'Guide', url: '/app/guide', items: [] }, { title: 'Setup again', url: '/app', items: [] }] },
   { label: 'Extra', items: [{ title: 'Billing again', url: '/app/billing', items: [] }] },
 ]);
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, merged }));
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, merged, settings }));
 `;
-function probe(copy: string): { portalNav: any[]; merged: any[] } {
+function probe(copy: string): { portalNav: any[]; merged: any[]; settings: Record<string, any[]> } {
   const web = path.join(copy, "web");
   const file = path.join(web, "probe-sidebar.tsx");
   writeFileSync(file, PROBE);
@@ -80,12 +91,12 @@ try {
   {
     const p = probe(built("profile", ["fixture_vulns"], () => {}, { console: { sidebar: SIDEBAR } }));
     assert.deepEqual(lines(p.portalNav), [
-      "Home: Overview /app/overview",
+      "Home: Overview /app/overview", "Home: Settings /app/settings",
       "Audit: Audits /app/audits", "Audit: Vulnerabilities /app/vulnerabilities", "Audit: Applications /app/applications", "Audit: Controls /app/controls",
       "Audit: Reports /app/reports", "Audit: Due soon /app/notices",
-      "Account: Application tokens /app/credentials", "Account: Activity /app/activity", "Account: Billing /app/billing", "Account: Team /app/team",
+      "Account: Activity /app/activity", "Account: Billing /app/billing", "Account: Team /app/team",
       "Account: Profile /app/profile", "Account: API keys /app/keys",
-    ], "exactly the declared groups and entries, in order: the pack's tabs by id, the shell's pages by kind");
+    ], "exactly the declared groups and entries, in order: the pack's tabs by id, the shell's pages by kind; credentials is the one Settings entry, directly below Overview (mold_v0-218)");
     console.log("✓ the profile's sidebar: its groups and entries in its order, the pack's tabs and the shell's Team, Profile and API keys pages");
   }
 
@@ -152,6 +163,19 @@ try {
     assert.equal(new Set(urls).size, urls.length, `one entry per page: ${urls.join(", ")}`);
     console.log("✓ the shell's own sidebar: one group per heading, one entry per page");
   }
+  // ---------- 7. one Settings entry, directly below Overview (mold_v0-218) ----------
+  {
+    const shell = probe(built("zero-settings", []));
+    const s = shell.settings;
+    assert.deepEqual(lines(s.email), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "Email alone: Settings directly below the home page");
+    assert.deepEqual(lines(s.moved), ["Get started: Setup /app", "Get started: Settings /app/settings", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "a credentials entry elsewhere moves below Overview, its group left out when empty");
+    assert.deepEqual(s.moved[0].items[1].roles, ["member", "owner"], "its roles kept");
+    assert.deepEqual(lines(s.none), ["Get started: Setup /app", "Get started: Usage /app/usage", "Operational: Billing /app/billing"], "neither Credentials nor Email: no Settings entry");
+    assert.deepEqual(lines(s.noHome), ["Operational: Settings /app/settings", "Operational: Billing /app/billing"], "no Overview: first");
+    assert.ok(!lines(shell.portalNav).some((x) => /\/app\/(settings|credentials)/.test(x)), `zero packs: no Settings entry: ${lines(shell.portalNav).join(", ")}`);
+    console.log("✓ Settings (mold_v0-218): one entry directly below Overview (the home page or the first overview tab), a credentials entry moved there with its roles; none without Credentials or Email");
+  }
+
   // ---------- 6. exactly one active entry on every page (mold_v0-213) ----------
   {
     // A Maxwell-like build: in-page tabs (a sections tab), a filtered tab of an area listed elsewhere, a page that moved
@@ -218,7 +242,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     };
     // Pages a build has only with a feature it lacks here (a mailbox, the developer surface, a workspace store, the
     // account context, a data repository, an audit trail): each is not found in such a build; with the feature it has its own entry.
-    const ABSENT = /^\/app\/(settings\/email|developers|files|context)$|^\/admin\/(repositories|access-log)$/;
+    const ABSENT = /^\/app\/(settings|developers|files|context)$|^\/admin\/(repositories|access-log)$/;
     expect("tabs", walk(copy), {
       "/app": "/app/overview", "/app?journey=first-audit": "/app/overview", "/app/journeys": "/app/overview",
       "/app/workbench?tab=fixes": "/app/workbench", "/app/workbench?tab=applications": "/app/workbench",

@@ -1,7 +1,7 @@
 'use client';
 // Compute › On-premises runners (mold_v0-036; GET /runners, src/onprem-runner-routes.ts onPremAdminRoutes): every
 // workspace's runners with their health (status, last seen, version, runs, allowed private hosts), never a token or a
-// credential. Revoke (accounts) stops one at once, as its workspace's owners can on their Credentials page. Shown only
+// credential. Revoke (accounts) stops one at once, as its workspace's owners can on their Settings › Credentials tab. Shown only
 // in a build where a kind may need a workspace's private network.
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
