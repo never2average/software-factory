@@ -199,7 +199,7 @@ try {
       if (features) writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ features }, null, 2));
       const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
       const read = (rel: string) => (existsSync(path.join(copy, rel)) ? readFileSync(path.join(copy, rel), "utf8") : "");
-      const constant = (src: string, name: string) => { const m = new RegExp(`export const ${name}(?::[^=]+)? = ([\\s\\S]*?)(?: as const)?;\\n`).exec(src); return m ? JSON.parse(m[1]!) : undefined; };
+      const constant = (src: string, name: string) => { const m = new RegExp(`export const ${name}(?::[^=]+?)? = ([\\s\\S]*?)(?: as const)?;\\n`).exec(src); return m ? JSON.parse(m[1]!) : undefined; };
       const nav = read("web/src/config/pack-nav.generated.ts");
       return {
         status: g.status, out: `${g.stdout}\n${g.stderr}`,

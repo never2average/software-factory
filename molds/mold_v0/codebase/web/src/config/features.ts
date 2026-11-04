@@ -3,5 +3,7 @@
 // profile.json `features`). The console's pages, sidebar entries and Settings tabs read this, never a pack's declaration.
 import { features } from './features.generated';
 
-export type FeatureId = keyof typeof features;
+export type FeatureId =
+  | 'customer_key_vault' | 'company_email' | 'scheduled_alerts' | 'record_clocks' | 'audit.data' | 'audit.platform'
+  | 'audit.sign' | 'onprem_runners' | 'developer_surface' | 'declarative_checks' | 'encrypted_fields' | 'health_history';
 export const featureOn = (id: FeatureId): boolean => features[id] === true;

@@ -2475,7 +2475,7 @@ files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
 // pages, sidebar and Settings tabs (web/src/config/features.ts).
 files.set(path.join(OUT, "web", "src", "config", "features.generated.ts"), HEADER +
   "/** Each capability flag of src/features.json: on (asked for by the packs, or always, and not turned off by profile.json `features`). */\n" +
-  `export const features = ${json(FEATURE_ON)} as const;\n`);
+  `export const features: Readonly<Record<string, boolean>> = ${json(FEATURE_ON)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
