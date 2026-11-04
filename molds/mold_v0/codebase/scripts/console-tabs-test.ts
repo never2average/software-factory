@@ -488,7 +488,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.doesNotMatch(setup, /aria-expanded="/, "no step is folded");
       assert.doesNotMatch(setup, /Pick your client/, "the connection is not inside a step");
       assert.match(setup, /id="onboarding-fixture_vulns-first_app"/, "the pack's step keeps its anchor");
-      assert.match(setup, /These steps tick themselves as you go\./, "the footer");
+      assert.doesNotMatch(open, /tick themselves|How much of the workflow your team uses/, "no caption under the steps (mold_v0-216)");
       const rail = open.slice(order[0]!, order[1]!);
       assert.match(rail, /Pick your client.*Copy URL.*Test my connection/s, "the connection card: pick, copy, test");
       const numbers = open.slice(order[2]!, order[3]!);
@@ -610,14 +610,19 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(card, /href="\/app\/records\/audit_findings\/f9"/, "each row links to its record's page");
       assert.match(card, /Open port on the API[\s\S]*Vulnerabilities · Fix by[\s\S]*Overdue 10d[\s\S]*10 days ago/, "title, area and clock, badge, relative date");
       assert.match(card, /href="\/app\/vulnerabilities\?overdue=1"[^>]*>View all</, "View all: the area's list with the Overdue filter on");
-      assert.match(html, /data-home-section="notices"[\s\S]*>Notices</, "the notices section, beside the Due soon card, is named Notices");
+      // mold_v0-216: no Notices section under the steps and no caption; with no notices card in its rail, /app/notices is
+      // its own page again (the notices emails link there), not a redirect to the home page.
+      assert.doesNotMatch(html, /data-home-section="notices"|>Notices<\/h2>|Records due soon in this workspace|Nothing is due soon\./, "no Notices section on the Overview");
+      assert.doesNotMatch(html, /tick themselves|How much of the workflow your team uses/, "no caption under the steps");
+      const jroutes = JSON.parse(readFileSync(path.join(jr, "web", "src", "config", "pack-routes.generated.json"), "utf8")).redirects.map((r: any) => r.source);
+      assert.ok(!jroutes.some((x: string) => x.startsWith("/app/notices")), `/app/notices stays its own page when the home tab shows no notices card: ${jroutes.join(", ")}`);
       assert.doesNotMatch(html, /class="grid border-t border-l lg:grid-cols-2/, "no charts grid");
       // Nothing due: a calm empty state; no clock area this role may read: no card.
       const calm = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [] } }, "home-journeys-empty");
       assert.match(calm, /data-due-soon-empty[\s\S]*Nothing is due or overdue/, "nothing due: a calm line");
       const none = await renderHome(chrome3, path.join(jr, "web"), false, { "/api/records/due-soon": { ...due, total: 0, overdue: 0, records: [], areas: [] } }, "home-journeys-none");
       assert.match(none, /Connect your AI client/); assert.doesNotMatch(none, />Due soon<|data-due-soon-empty/, "a role that may read no clock area: no card");
-      console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card");
+      console.log("✓ rendered journey selector and Due soon (mold_v0-207): the heading is a listbox button (Get set up), no Journeys card; Due soon in the journeys slot, overdue first, rows with title, area, clock, badge and relative date linking to the record, View all with ?overdue=1; nothing due a calm line; no readable clock area, no card; no Notices section or caption under the steps, /app/notices its own page (mold_v0-216)");
     }
   }
 
@@ -631,7 +636,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0'/, "a normal primary button at the row's right end, square on a phone");
     assert.doesNotMatch(ta, /fixed|rounded-full|size-14|shadow-lg|<Sheet|Dialog|Popover/, "nothing fixed, round or lifted; no sheet, dialog or popover");
     assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='hidden sm:inline'>\{label\}<\/span>/, "the icon alone on a phone, the label its accessible name and title");
-    assert.match(ta, /useQueryState\(name, parseAsBoolean[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
+    assert.match(ta, /useQueryState\(name, parseAsFlag[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
     assert.match(ta, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>[\s\S]*Back to the list[\s\S]*<CardTitle[\s\S]*<CardContent[\s\S]*<CardFooter[\s\S]*\{submit\}\s*<Button type='button' variant='outline' onClick=\{cancel\}>Cancel<\/Button>/,
       "the form's card: a way back, the title and what will happen, the fields, then the submit and Cancel");
     assert.equal((ta.match(/<CardForm onSubmit=/g) ?? []).length, 2, "the start-run and create-record forms are the card's");
@@ -647,7 +652,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");
     assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
     assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
-    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text");
+    // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
+    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed");
+    assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
+    const ex = read("features/tabs/export.tsx");
+    assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
+    assert.match(ex, /audit=export/, "the data trail records it");
+    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text; Export on every area list just left of it, the view's rows when narrowed");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------

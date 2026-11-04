@@ -2173,8 +2173,11 @@ const profileSidebar = (() => {
   // A home tab (mold_v0-134): an overview that includes the Setup page's checklist or the notices is where /app or
   // /app/notices (and every address under it) now leads; a hidden page (mold_v0-130) leads to the console's home. The
   // one that includes the checklist is /app itself (mold_v0-175), its own /app/<id> of before leading there.
+  // The notices lead to a home tab only when it shows them (mold_v0-216): a home tab draws them as its rail's notices
+  // card, never as a section below the checklist; else /app/notices stays its own page (the notices emails link there).
   const home = Object.fromEntries(["setup", "notices"].map((x) => {
-    const t = shownTabs().find((y) => y.kind === "overview" && (y.include ?? []).includes(x));
+    const t = shownTabs().find((y) => y.kind === "overview" && (y.include ?? []).includes(x)
+      && (x !== "notices" || !(y.include ?? []).includes("setup") || (y.rail ?? []).includes("notices")));
     return [x, t ? tabUrl(t) : null];
   }));
   // The nested addresses pack pages and tabs had before mold_v0-132 lead to their flat ones (bookmarks, old links).
