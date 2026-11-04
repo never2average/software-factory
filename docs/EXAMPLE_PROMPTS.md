@@ -57,6 +57,10 @@ The agent asks a question only for what your words leave open. Say these, in pla
 - **For mold_v1:** web search and browser on or off, which inference provider, the dictation model, and whether new
   workspaces get starter workflows.
 
+Describe things in your own words without worrying about trigger words: a sentence of description never changes a
+setting by itself. If one sounds like a setting ("an on-premises runner later", "one workspace each"), the agent asks
+you about it instead (docs/INTAKE.md "What sets state").
+
 Two habits help: write words people read ("a run is a draft") and give every choice its label, and keep one thought
 per bullet so nothing is ambiguous. Compare your prompt with an example's and its spec.
 

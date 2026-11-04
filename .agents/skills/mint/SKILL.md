@@ -55,8 +55,9 @@ spec and says what each still lacks (read-only).
 
 1. Ask the person to describe the product in their own words. Write it to `briefs/<app_id>.md` yourself. Lines the
    line understands, each on its own line: `Product name:`, `Colour: #RRGGBB`, `Logo: brands/<x>/logo.png`,
-   `Workspace:`, `Owner: <email>`, `Members: <emails>`, `Packs: <pack_id>`, `Domain:`, plus plain phrases such as
-   "web search on, browser off". A brief that names its product creates the product; nobody has to know product ids.
+   `Workspace:`, `Owner: <email>`, `Members: <emails>`, `Packs: <pack_id>`, `Domain:`, plus setting sentences such as
+   "Web search on, browser off." Only those lines set anything (docs/INTAKE.md "What sets state"): the person's own
+   description is kept as written, and a sentence of it that sounds like a setting becomes a `prose.<setting>` question. A brief that names its product creates the product; nobody has to know product ids.
 2. `mint.py new …`. If it leaves `questions.json`, the `intake` subagent asks only those.
 3. If the product needs its own specialists, fields or wording, that is a pack (`subagent` skill), named in the
    brief. Build it before `run`. Anything the base cannot do is a pull request upstream, never a fork.

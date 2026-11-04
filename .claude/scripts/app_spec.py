@@ -707,6 +707,10 @@ def _read_back(spec, text, ids):
     for k, v in want.items():
         if v is not None and h.get(k) != v:
             out.append(("not supported", k, f"the brief path would read {k} as {json.dumps(h.get(k))}, not {json.dumps(v)}: say it another way in the spec (nothing was written)"))
+    # mold_v0-230: the generated brief is all setting lines; a sentence of it that reads as prose with a setting's words in it
+    # would be a question at mint time, so it is refused here instead.
+    for k, ph in sorted((h.get("prose_hints") or {}).items()):
+        out.append(("not supported", k, f"the generated brief has a sentence intake would ask about ({ph['said'][:80]!r} reads as {k}): say it another way in the spec (nothing was written)"))
     prof = dict(spec.get("profile") or {});
     if spec.get("budgets"): prof["limits"] = spec["budgets"]
     on = {k: True for k, v in (spec.get("audit") or {}).items() if v is True}

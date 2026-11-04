@@ -31,8 +31,9 @@ def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 EMAIL = r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
 
-def parse_brief(text):
-    """Deterministic hints from the brief. Interpretation beyond this is the intake subagent's job."""
+def _extract(text):
+    """The hint patterns, read over whatever text they are given. parse_brief hands them only the recognised lines of one
+    kind at a time (and, separately, each sentence of free prose, whose findings become questions, never state)."""
     t = text.lower(); h = {}
     m = re.search(r"^\s*product name:\s*\"?([^\n\".]+?)\"?\s*(?:\.|$)", text, re.I | re.M)
     if m: h["product_name"] = m.group(1).strip()
@@ -141,6 +142,145 @@ def parse_brief(text):
     if m: h["asr_language"] = None if m.group(1) in ("auto", "detect") else m.group(1)
     if re.search(r"\bno (?:dictation|microphone|speech[- ]to[- ]text)\b|\bwithout (?:dictation|a microphone|the microphone)\b|^\s*(?:dictation|microphone):\s*(?:off|none|no)\b", t, re.M):
         h["asr_enabled"] = False
+    return h
+
+# ---- what sets state: recognised lines only (mold_v0-230) -------------------------------------------------------
+# A brief is a person's description AND a few settings. Only the settings change state: a `Key: value` line (or a
+# sentence that starts with one), one of the documented setting sentences ("Deploy on vercel.", "No browser.", "Fresh
+# database.", "Accounts are called companies.", ...; docs/INTAKE.md "What sets state") as a sentence or a comma clause of
+# its own, and the explicitly headed sections (## Profile, ## Budgets, ## MCP instructions, ## Landing, a mold_v0
+# brief's pack sections). Words in free prose never do: "an on-premises runner later", "a shared drive", "one workspace
+# per company", "the owner: whoever logged it" once moved where an app runs, its database, its tenancy or its owner
+# without anyone noticing. Prose that sounds like a setting is kept as `prose_hints` and asked (questions.json
+# `prose.<key>`, yes/no), unless a recognised line or an earlier answer already settles it.
+_L = lambda *names: "|".join(names)
+_OWNER_KEYS = None
+def _owner_keys():
+    global _OWNER_KEYS
+    if _OWNER_KEYS is None: _OWNER_KEYS = "|".join(map(re.escape, ("owner",) + legacy.spellings("operator")))
+    return _OWNER_KEYS
+# (kind, the start of a recognised statement (lower case, list marks and ** removed), the hint keys it may set)
+_KEYS = [   # `Key: value`: the whole sentence (the whole line for the line keys) is the setting
+ ("product_name", r"product\s+name\s*:", {"product_name"}),
+ ("mold", r"mold\s*:", {"mold_id"}),
+ ("brand_color", r"brand\s+colou?r\s*:", {"brand_color"}),
+ ("brand", r"brand(?:\s+name)?\s*:", {"brand_name"}),
+ ("logo", r"logo\s*:", {"brand_logo"}),
+ ("tagline", r"tagline\s*:", {"brand_tagline"}),
+ ("workspace", r"(?:workspace|org(?:anisation|anization)?)(?:\s+name)?\s*:", {"workspace_name"}),
+ ("owner", None, {"operator_email"}),
+ ("admins", r"(?:platform\s+)?admin(?:istrator)?s?\s*:", {"platform_admins"}),
+ ("members", r"(?:members?|team)\s*:", {"members"}),
+ ("customer", r"customer\s*:", {"customer_id"}),
+ ("domain", r"(?:custom\s+)?domain\s*:", {"custom_domain"}),
+ ("target", r"(?:server(?:\s+address)?|target|deploy(?:\s+target)?|hosting|runs\s+on)\s*:", {"deploy_target", "deploy_target_conflict", "remote_host"}),
+ ("product", r"product\s*:", {"product_id"}),
+ ("packs", r"packs?\s*:", {"packs"}),
+ ("corpus", r"primary\s+context\b", {"corpus"}),
+ ("processes", r"multiplayer\b", {"processes"}),
+ ("library", r"(?:workflows?|librar(?:y|ies)|starter\s+library)\s*:", {"library"}),
+ ("asr", r"(?:speech|dictation|asr|speech[- ]to[- ]text|microphone)(?:\s+model|\s+language)?\s*:", {"asr_model", "asr_model_unknown", "asr_language", "asr_enabled"}),
+]
+_LINE_KEYS = {"brand", "logo", "tagline", "admins", "asr", "product_name"}   # their value runs to the end of the line
+# These count only at the very start of a line, as they always have ("Multi-organization: no, one workspace" once named
+# a workspace "no, one workspace"); later in a line, or behind a list mark or bold, they are prose, and asked.
+_LINE_START = {"workspace", "product_name", "mold", "brand", "logo", "tagline", "admins", "asr"}
+_SENTENCES = [   # the documented setting sentences: a sentence, or a comma clause, that STARTS with one
+ ("target", r"(?:(?:please\s+)?(?:deploy|host|run)(?:ed|s)?(?:\s+it)?|it\s+(?:runs|is\s+(?:deployed|hosted|run))|(?:it(?:'s|\s+is)\s+)?(?:deployed|hosted))\s+(?:on|to|at|in)\b|vm_remote\b",
+  {"deploy_target", "deploy_target_conflict", "remote_host"}),
+ ("web_search", r"(?:(?:no|without|disable|keep)\s+(?:the\s+)?)?web\s+search\b|(?:no|without)\s+search\b|search\s*:", {"web_search"}),
+ ("browser", r"(?:(?:no|without|disable|keep)\s+(?:the\s+|a\s+)?)?browser\b|no\s+outbound\b", {"browser"}),
+ ("tenancy", r"(?:single|one)[\s-]?(?:tenant|workspace)\b|multi[\s-]?(?:tenant|workspace)", {"multi_tenant"}),
+ ("database", r"(?:an?\s+|its\s+)?(?:fresh|own|new|shared?|separate)\s+(?:postgres\s+)?(?:database|db)\b|share[a-z]*\s+the\s+live\s+(?:database|db|data)\b"
+              r"|(?:no|not|never|without)\s+(?:a\s+)?shared?\s+(?:database|db)\b|(?:postgres|database|db)\s*(?::|on\b|via\b|in\b)|(?:use\s+|on\s+)?(?:neon|supabase|managed\s+postgres)\b"
+              r"|self.?host[a-z]*\s+(?:the\s+)?(?:postgres|database|db)\b|local\s+(?:postgres|database)\b", {"postgres_provider", "postgres_scope"}),
+ ("inference", r"inference\b|models?\s*:|(?:(?:on|via|through|use|uses|using)\s+)?(?:the\s+)?(?:vercel(?:'s)?\s+)?(?:ai\s+gateway|cloudflare\s+workers\s+ai|workers\s+ai)\b", {"inference_provider"}),
+ ("accounts", r"(?:accounts?|customers?)\s+are\s+called\b|call\s+(?:accounts|customers)\b", {"account_noun"}),
+ ("clone", r"(?:an?\s+)?(?:clone|replica|copy)\s+of\s+(?:the\s+)?live\b", {"clone_of"}),
+ ("branding", r"no\s+branding\b|unbranded\b|mold\s+branding\b", {"no_branding"}),
+ ("library", r"workflows?\s+(?:all|none)\b|(?:no|without)\s+(?:the\s+|a\s+|any\s+)?(?:starter|built-?in|default|original|workflow|account[- ]delivery)\b[^.]*\blibrar"
+             r"|(?:with\s+)?(?:the\s+)?(?:starter|built-?in|default|original|account[- ]delivery)\b[^.]*\blibrar", {"library"}),
+ ("asr", r"(?:no|without)\s+(?:a\s+|the\s+)?(?:dictation|microphone|speech[- ]to[- ]text)\b", {"asr_enabled"}),
+]
+_DATA_HEAD = re.compile(r"^#{2,3}[ \t]+(?:profile|budgets?|mcp instructions|landing)\b", re.I)
+_HEAD = re.compile(r"^#{1,3}\s")
+
+def _norm(s):
+    s = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", s)
+    return re.sub(r"\s+", " ", s.replace("**", "").replace("__", "").replace("`", "")).strip().lower()
+
+def _kind(s, table):
+    for kind, rx, keys in table:
+        if kind == "owner": rx = r"(?:" + _owner_keys() + r")\s*:"
+        if re.match(rx, s): return kind, keys
+    return None, None
+
+def _spans(line, a, b, pat):
+    """[(start, end)] of the pieces of line[a:b] between the pattern's matches, stripped, non-empty."""
+    out, at = [], a
+    for m in pat.finditer(line, a, b):
+        out.append((at, m.start() + (1 if m.group(0)[:1] in ".!?" else 0))); at = m.end()
+    out.append((at, b))
+    return [(x + len(line[x:y]) - len(line[x:y].lstrip()), y) for x, y in out if line[x:y].strip()]
+
+def _key(s, at):
+    """The `Key: value` kind a sentence starts with; "prose" for a line-start key that is not at the start of its line."""
+    kind, keys = _kind(_norm(s), _KEYS)
+    if kind in _LINE_START and (at or not re.match(r"\s*[a-z]", s, re.I)): return "prose", set()
+    return kind, keys
+
+_SENT = re.compile(r"[.!?](?=\s)\s+|[.!?]$")
+_CLAUSE = re.compile(r"\s*[,;]\s+")
+def statements(text):
+    """The brief, statement by statement: [(start, end, kind, keys)]. kind is a recognised kind, "prose", or "data" (a
+    headed section whose own parser reads it, a fenced block). A `Key: value` sentence is one statement (a line key's,
+    the whole line); any other sentence is split at commas and semicolons, so "Web search on, browser off." is two."""
+    out, pos, data, fence = [], 0, False, False
+    for line in text.splitlines(keepends=True):
+        a, body = pos, line.rstrip("\n"); pos += len(line)
+        if body.strip().startswith("```"): fence = not fence; out.append((a, a + len(body), "data", set())); continue
+        if fence: out.append((a, a + len(body), "data", set())); continue
+        if _HEAD.match(body):
+            data = bool(_DATA_HEAD.match(body)); out.append((a, a + len(body), "data" if data else "prose", set())); continue
+        if not body.strip(): out.append((a, a + len(body), "data", set())); continue
+        kind, keys = _key(body, 0)
+        if data:   # a `Key: value` line below a ## Profile section is still that setting (briefs append them); the rest is the section's
+            out.append((a, a + len(body), kind or "data", keys or set())); continue
+        if kind in _LINE_KEYS: out.append((a, a + len(body), kind, keys)); continue
+        for x, y in _spans(body, 0, len(body), _SENT):
+            kind, keys = _key(body[x:y], x)
+            if kind == "prose": out.append((a + x, a + y, "prose", set())); continue
+            if kind: out.append((a + x, a + y, kind, keys)); continue
+            for u, v in _spans(body, x, y, _CLAUSE):
+                kind, keys = _kind(_norm(body[u:v]), _SENTENCES)
+                out.append((a + u, a + v, kind or "prose", keys or set()))
+    return out
+
+def _only(text, spans):
+    """The text with everything outside the given spans blanked (newlines and columns kept, so the line-anchored
+    patterns read a recognised line exactly as before)."""
+    keep = bytearray(len(text))
+    for x, y in spans:
+        for i in range(x, y): keep[i] = 1
+    return "".join(c if (keep[i] or c == "\n") else " " for i, c in enumerate(text))
+
+PROSE_KEYS = {"deploy_target", "remote_host", "inference_provider", "web_search", "browser", "multi_tenant", "postgres_provider",
+              "postgres_scope", "customer_id", "custom_domain", "workspace_name", "operator_email", "platform_admins", "members",
+              "account_noun", "clone_of", "corpus", "processes", "product_id", "packs", "no_branding", "brand_color", "library",
+              "asr_model", "asr_language", "asr_enabled"}
+def parse_brief(text):
+    """Deterministic hints from the brief's recognised lines (above); interpretation beyond this is the intake subagent's
+    job. Free prose that sounds like a setting is returned under "prose_hints" ({key: {"value", "said"}}), never as a hint."""
+    st = statements(text); h = {}
+    for kind in {k for _, _, k, _ in st if k not in ("prose", "data")}:
+        keys = set().union(*(ks for _, _, k, ks in st if k == kind))
+        got = _extract(_only(text, [(x, y) for x, y, k, _ in st if k == kind]))
+        h.update({k: v for k, v in got.items() if k in keys and k not in h})
+    # one setting of where it runs per kind of sentence: a `Server:` line beside "It runs on vm_remote." is one target
+    tg = [(x, y) for x, y, k, _ in st if k == "target"]
+    if tg:
+        for k in ("deploy_target", "deploy_target_conflict", "remote_host"): h.pop(k, None)
+        h.update({k: v for k, v in _extract(_only(text, tg)).items() if k in ("deploy_target", "deploy_target_conflict", "remote_host")})
     # The app's own profile settings (mold_v0-090; lib/app_profile.py): `limits.<section>.<name> = <number>` lines in a
     # `## Profile` or `## Budgets` section. Problems are refused in build_single, never guessed around.
     import app_profile
@@ -148,7 +288,94 @@ def parse_brief(text):
     if prof: h["profile"] = prof
     if perrs: h["profile_problems"] = perrs
     if pnotes: h["profile_notes"] = pnotes
+    prose = {}
+    for x, y, k, _ in st:
+        if k != "prose": continue
+        said = re.sub(r"\s+", " ", text[x:y]).strip()
+        onprem = re.search(r"\bon.prem\w*", said, re.I)
+        got = _extract(re.sub(r"\bon.prem\w*", " ", said, flags=re.I))
+        if got.get("deploy_target_conflict"): got.pop("deploy_target", None)
+        if onprem: got.setdefault("onprem", True)
+        for key, v in got.items():
+            if (key in PROSE_KEYS or key == "onprem") and key not in prose: prose[key] = {"value": v, "said": said[:200]}
+    if prose: h["prose_hints"] = prose
     return h
+
+# What a prose hint would mean, asked in plain words (yes = use it), and the recognised line that says it for good.
+_WHERE = {"vercel": "on Vercel", "vm": "on this factory's own server (the vm)", "vm_remote": "on a server of its own",
+          "compose_remote": "on a server of its own (its own Docker Compose stack)"}
+_DB = {"neon": "a Neon database", "supabase": "a Supabase database", "self_hosted": "a database on the server itself", "rds": "an RDS database"}
+_INF = {"vercel_ai_gateway": ("the Vercel AI Gateway", "Inference through the AI Gateway."), "cloudflare_workers_ai": ("Cloudflare Workers AI", "Inference on Workers AI.")}
+def _prose_ask(k, v):
+    """(question, the line to add) for prose hint k with value v."""
+    j = lambda x: ", ".join(x) if isinstance(x, list) else str(x)
+    return {
+     "deploy_target": lambda: (f"should the app run {_WHERE.get(v, v)}?", {"vercel": "Deploy on Vercel.", "vm": "Deploy on the vm.", "vm_remote": "Deploy on our own server.",
+                                                                   "compose_remote": "It runs on its own server."}.get(v, f"Target: {v}")),
+     "remote_host": lambda: (f"is {v} the address of the server it runs on?", f"Server address: {v}"),
+     "inference_provider": lambda: (f"should the agent's models run on {_INF.get(v, (v,))[0]}?", _INF.get(v, (None, f"Inference: {v}"))[1]),
+     "web_search": lambda: ("should web search be off?" if v is False else "should web search be on?", "No web search." if v is False else "Web search on."),
+     "browser": lambda: ("should the browser subagent be off?" if v is False else "should the browser subagent be on?", "No browser." if v is False else "Browser on."),
+     "multi_tenant": lambda: ("should the app have a single workspace (no further workspaces)?" if v is False else "should the app allow several workspaces?",
+                      "Single workspace." if v is False else "Multi-workspace."),
+     "postgres_provider": lambda: (f"should its database be {_DB.get(v, v)}?", {"self_hosted": "Self-host the postgres."}.get(v, f"Database on {v}.")),
+     "postgres_scope": lambda: ("should it share the live deployment's database instead of a fresh one of its own?" if v == "shared_with_live"
+                        else "should it get a fresh database of its own?", "Shared database." if v == "shared_with_live" else "Fresh database."),
+     "customer_id": lambda: (f"is the app for the customer {v!r}?", f"Customer: {v}"),
+     "custom_domain": lambda: (f"should the app's web address be {v}?", f"Domain: {v}"),
+     "workspace_name": lambda: (f"should the first workspace be called {v!r}?", f"Workspace: {v}"),
+     "operator_email": lambda: (f"should {v} own the first workspace?", f"Owner: {v}"),
+     "platform_admins": lambda: (f"should {j(v)} run the admin console?", f"Admins: {j(v)}"),
+     "members": lambda: (f"should {j(v)} be members of the first workspace?", f"Members: {j(v)}"),
+     "account_noun": lambda: (f"should the app call its accounts {v!r}?", f"Accounts are called {v}s."),
+     "clone_of": lambda: (f"is this app a clone of the live deployment ({v.get('ref') if isinstance(v, dict) else v})?", "Clone of the live deployment."),
+     "corpus": lambda: (f"should the data room hold: {j(v)}?", f"Primary context: {j(v)}"),
+     "processes": lambda: (f"should the shared processes be: {j(v)}?", f"Multiplayer: {j(v)}"),
+     "product_id": lambda: (f"does the app belong to the product {v!r}?", f"Product: {v}"),
+     "packs": lambda: (f"should the app use the pack(s) {j(v)}?", f"Packs: {j(v)}"),
+     "no_branding": lambda: ("should the app keep the mold's own look, with no brand of its own?", "No branding."),
+     "brand_color": lambda: (f"should the brand colour be {v}?", f"Brand colour: {v}"),
+     "library": lambda: ("should new workspaces get the starter library (13 workflows and 5 onboarding recipes for account delivery)?" if v == "all"
+                 else "should new workspaces start without the starter library?", f"Workflows: {v}"),
+     "asr_model": lambda: (f"should the microphone button use the speech model {v}?", f"Speech model: {v}"),
+     "asr_language": lambda: (f"should dictation expect the language {v or 'detected'}?", f"Speech language: {v or 'auto'}"),
+     "asr_enabled": lambda: ("should the microphone button (dictation) be off?" if v is False else "should the microphone button be on?", "Dictation: off" if v is False else "Dictation: on"),
+     "mold_id": lambda: (f"should the app be made from {v}?", f"Mold: {v}"),
+     "onprem": lambda: ("should runs use on-premises runners (a workspace may install a runner inside its own network)?", "onprem_runners = true  (a line in ## Profile)"),
+    }.get(k, lambda: (f"should {k} be {v!r}?", f"{k}: {v}"))()
+
+_SKIP = object()
+def prose_questions(hints, answers, relevant, current):
+    """The prose hints that would change something, as yes/no questions (id prose.<key>). An answer applies: yes puts the
+    value in `hints` as if a recognised line said it, no drops it. A key a recognised line sets is never asked; nor one
+    `current(key)` says is settled (an answer to its own question: _SKIP) or already has that value. -> pending questions."""
+    out = []
+    for k, ph in sorted((hints.get("prose_hints") or {}).items()):
+        if k not in relevant: continue
+        if k in hints or (k in ("deploy_target", "remote_host") and hints.get("deploy_target_conflict")): continue
+        if k == "onprem" and "onprem_runners" in (hints.get("profile") or {}): continue
+        qid, v = "prose." + k, ph["value"]
+        if qid in answers:
+            if str(answers[qid]).strip().lower() in ("yes", "y", "true"):
+                if k == "onprem": hints.setdefault("profile", {})["onprem_runners"] = True
+                else: hints[k] = v
+            continue
+        cur = current(k)
+        if cur is _SKIP or cur == v: continue
+        ask, line = _prose_ask(k, v)
+        out.append({"id": qid, "path": f"brief prose -> {k}", "options": ["yes", "no"], "suggested": "no",
+                    "question": f"The description mentions “{ph['said']}”; {ask}",
+                    "why": "those words are part of the description, not a setting line, so nothing was changed. Answer yes to use them, "
+                           f"or put this line in the brief: {line}"})
+    return out
+
+def ask_prose(qs, answers):
+    """--ask: the prose questions on the terminal, before anything is resolved (their answers decide the hints)."""
+    for q in qs:
+        try: v = input(f"{q['question']} [yes/no] (default: no): ").strip().lower() or "no"
+        except EOFError: sys.exit("no answer (the input closed); nothing was written.")
+        if v not in ("yes", "no", "y", "n"): sys.exit(f"{v!r} is not yes or no; nothing was written.")
+        answers[q["id"]] = "yes" if v.startswith("y") else "no"
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
 
@@ -590,6 +817,8 @@ def self_test_single(n, fails):
         json.dump(_f, open(_fj, "w"), indent=2)
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
+        # factory.py validate also checks the generated app schemas against the molds (app_spec.py stale): linked read-only
+        if os.path.isdir(os.path.join(ROOT, "schemas")): os.symlink(os.path.join(ROOT, "schemas"), os.path.join(T, "schemas"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
         # This machine's own values, the same on every machine: a verified sending domain (mold_v0-101: without one the
         # emails' sender is asked).
@@ -663,6 +892,36 @@ def self_test_single(n, fails):
             r = go("zz_held", held_brief); d3 = docs("zz_held"); n += 1
             if r.returncode or "APP_VAULT_KEY" not in d3["infrastructure"]["secrets"] or "OCTILLION_VAULT_KEY" in d3["infrastructure"]["secrets"]:
                 fails.append(f"mold_v0-152: an app never deployed gets the codebase's names, as before: {d3['infrastructure']['secrets']}")
+        # mold_v0-230: prose with a setting's words changes no state; it is asked (prose.<key>), and "no" to each gives
+        # exactly the state of the brief without that prose. A recognised line beats prose and asks nothing.
+        for app, mold, plain, prose_p, want_q, yes in (
+                ("zz_prose0", "mold_v0", "Mold: mold_v0\nIt runs on Vercel.\n",
+                 "Private-network customers later get an on-premises runner. Each shop runs on its own server, with the domain shop.example.org.\n",
+                 ["prose.custom_domain", "prose.onprem"], ("prose.onprem", lambda d: (d["application"].get("profile") or {}).get("onprem_runners") is True)),
+                ("zz_prose1", "mold_v1", "Mold: mold_v1\nDeploy on vercel.\nWorkspace: Acme Desk\nOwner: ops@example.com\n",
+                 "Clinics work in one workspace each, and the starter library from the old product lives in the shared database of the old tool. "
+                 "Some desks run on-prem. The owner: lead@example.com signs off; the domain clinic.example.org is theirs.\n",
+                 ["prose.custom_domain", "prose.library", "prose.multi_tenant", "prose.postgres_scope"],
+                 ("prose.multi_tenant", lambda d: d["application"]["capabilities"]["multi_tenant"] is False))):
+            r = go(app, plain); n += 1
+            if r.returncode: fails.append(f"mold_v0-230: the plain {mold} brief did not stamp: {(r.stdout + r.stderr).strip()[-300:]}"); continue
+            d_plain = docs(app); shutil.rmtree(os.path.join(A, app))
+            r = go(app, plain + prose_p); n += 1
+            qf = os.path.join(A, app, "questions.json")
+            got = sorted(q["id"] for q in load(qf)["pending"]) if os.path.exists(qf) else None
+            if r.returncode != 2 or got != want_q or os.path.exists(os.path.join(A, app, "application.json")):
+                fails.append(f"mold_v0-230: {mold} prose must ask {want_q} and write no state: rc={r.returncode} asked {got} {(r.stdout + r.stderr).strip()[-300:]}")
+                continue
+            n += 1
+            if not all(q["options"] == ["yes", "no"] and q["question"].startswith("The description mentions “") for q in load(qf)["pending"]):
+                fails.append(f"mold_v0-230: a prose question is not a yes/no that quotes the description: {load(qf)['pending']}")
+            r = go(app, plain + prose_p, {q: "no" for q in want_q}); n += 1
+            if r.returncode or docs(app) != d_plain:
+                fails.append(f"mold_v0-230: {mold} prose answered no must leave the plain brief's state: rc={r.returncode} {(r.stdout + r.stderr).strip()[-300:]}")
+            n += 1
+            if any(load(os.path.join(A, app, "answers.json")).get(q) != "no" for q in want_q): fails.append("mold_v0-230: the prose answers are not kept in answers.json")
+            r = go(app, plain + prose_p, {**{q: "no" for q in want_q}, yes[0]: "yes"}); n += 1
+            if r.returncode or not yes[1](docs(app)): fails.append(f"mold_v0-230: {mold} {yes[0]} answered yes was not applied: rc={r.returncode} {(r.stdout + r.stderr).strip()[-300:]}")
         # review fixes (PR #17): the mold only from its own line and only a registered one; a Vercel project that is taken
         n += 1
         if parse_brief("Unlike mold_v1, this product is small.\n").get("mold_id") or parse_brief("Mold: mold_v0\n").get("mold_id") != "mold_v0":
@@ -828,6 +1087,86 @@ def self_test_single(n, fails):
         shutil.rmtree(T, ignore_errors=True)
     return n, fails
 
+def self_test_prose(n, fails):
+    """mold_v0-230: only recognised lines set state. Each word that once moved state from prose ("on-prem", "starter
+    library", "one workspace", "shared", "domain x", "owner: x", and the rest) is, in a sentence of description, no hint
+    at all: it is a prose hint, asked as prose.<key>, and a yes or no answer settles it. The same words as a recognised
+    line still set state, exactly as before."""
+    P = lambda t: {k: v for k, v in parse_brief(t).items() if k not in ("prose_hints",)}
+    ANY = object()
+    PH = lambda t: {k: v["value"] for k, v in (parse_brief(t).get("prose_hints") or {}).items()}
+    cases = [   # (a sentence of description, the prose hint it carries, the recognised line that says it)
+        ("Private-network customers later get an on-premises runner.", ("onprem", True), None),
+        ("The team keeps its notes on a droplet somewhere.", ("deploy_target", "vm"), "Deploy on the vm.\n"),
+        ("Reviewers like the starter library our old product shipped.", ("library", "all"), "Workflows: all\n"),
+        ("Desks do not want the starter library.", ("library", "none"), "No starter library.\n"),
+        ("Clinics work in one workspace each, with their own staff.", ("multi_tenant", False), "Single workspace.\n"),
+        ("Reports go to the shared database of the old tool.", ("postgres_scope", "shared_with_live"), "Shared database.\n"),
+        ("Every site is listed under the domain branch.example.org in the old tool.", ("custom_domain", "branch.example.org"), "Domain: branch.example.org\n"),
+        ("A ticket names its owner: lead@example.com signs off on each.", ("operator_email", "lead@example.com"), "Owner: lead@example.com\n"),
+        ("Field reports mention no browser support on site.", ("browser", False), "No browser.\n"),
+        ("Inspectors said there is no web search on the tablets.", ("web_search", False), "No web search.\n"),
+        ("The vendor's form has a customer: acme field.", ("customer_id", "acme"), "Customer: acme\n"),
+        ("The old tool kept everything on Neon.", ("postgres_provider", "neon"), "Postgres on Neon.\n"),
+        ("Their phones have no dictation app.", ("asr_enabled", False), "No dictation.\n"),
+        ("The legacy portal ran behind the AI gateway of a partner.", ("inference_provider", "vercel_ai_gateway"), "Inference through the AI Gateway.\n"),
+        ("The pilot was a copy of the live product.", ("clone_of", ANY), "Clone of the live deployment.\n"),
+        ("Some stores run it on their own server.", ("deploy_target", "vm_remote"), "Deploy on our own server.\n"),
+        ("Their team: ann@example.com reviewed it.", ("members", ["ann@example.com"]), "Members: ann@example.com\n"),
+        ("The vendor says accounts are called patients in its tool.", ("account_noun", "patient"), "Accounts are called patients.\n"),
+    ]
+    for said, (k, v), line in cases:
+        n += 1
+        got, ph = P(said), PH(said)
+        if got or (ph.get(k) is None if v is ANY else ph.get(k) != v): fails.append(f"prose {said!r}: hints {got} (want none), prose hint {k}={ph.get(k)!r} (want {v!r})")
+        if line:
+            n += 1
+            if (P(line).get(k) is None if v is ANY else P(line).get(k) != v) or PH(line): fails.append(f"the recognised line {line.strip()!r} sets {k}: got {P(line).get(k)!r}, prose {PH(line)}")
+    # a brief's own lines keep working beside prose, one sentence or clause each, as the live briefs write them
+    n += 1
+    h = P("Deploy on vercel. Fresh database. Owner: ops@example.com. Customer: internal.\nWorkspace: Acme Ops\n"
+          "Web search on, browser off. Single workspace. Accounts are called companies.\nWorkflows: none\nDomain: none yet.\n")
+    want = {"deploy_target": "vercel", "postgres_scope": "fresh", "workspace_name": "Acme Ops", "operator_email": "ops@example.com", "customer_id": "internal",
+            "browser": False, "multi_tenant": False, "account_noun": "company", "library": "none"}
+    if {k: h.get(k) for k in want} != want or "custom_domain" in h: fails.append(f"recognised sentences: {h}")
+    # a line-start key (Workspace:, Mold:, Brand:, ...) later in a line is prose, as it always was not a setting: now asked
+    n += 1
+    if P("Deploy on vercel. Workspace: Acme Ops.\n").get("workspace_name") or PH("Deploy on vercel. Workspace: Acme Ops.\n").get("workspace_name") != "Acme Ops":
+        fails.append("a Workspace: sentence later in a line must be a prose hint, not a setting")
+    # a value on a recognised line is never read for another setting
+    n += 1
+    h = P("Tagline: One workspace for every shared desk, on-prem or on Vercel\nBrand: Shared Desk\n")
+    if set(h) != {"brand_tagline", "brand_name"}: fails.append(f"a tagline's words set other settings: {h}")
+    # the questions: asked unless settled; a yes applies, a no drops; a recognised line beats prose
+    n += 1
+    hint = parse_brief("Clinics work in one workspace each.\nThe domain clinic.example.org is theirs.\n")
+    qs = prose_questions(hint, {}, PROSE_KEYS, lambda k: hint.get(k))
+    ids = sorted(q["id"] for q in qs)
+    lines = {"prose.custom_domain": "Domain: clinic.example.org", "prose.multi_tenant": "Single workspace."}
+    if ids != sorted(lines) or any(q["options"] != ["yes", "no"] or q["suggested"] != "no" or lines[q["id"]] not in q["why"] for q in qs):
+        fails.append(f"prose questions: {qs}")
+    elif not all("“" in q["question"] and "description mentions" in q["question"] for q in qs): fails.append(f"a prose question does not quote what was said: {qs}")
+    n += 1
+    hint = parse_brief("Clinics work in one workspace each.\nThe domain clinic.example.org is theirs.\n")
+    qs = prose_questions(hint, {"prose.multi_tenant": "yes", "prose.custom_domain": "no"}, PROSE_KEYS, lambda k: hint.get(k))
+    if qs or hint.get("multi_tenant") is not False or "custom_domain" in hint: fails.append(f"prose answers: yes applies, no drops: {qs} {hint}")
+    n += 1
+    hint = parse_brief("Single workspace.\nClinics work in one workspace each.\n")
+    if prose_questions(hint, {}, PROSE_KEYS, lambda k: hint.get(k)): fails.append("a recognised line already answers it, yet prose asked")
+    n += 1
+    hint = parse_brief("The models run on Cloudflare Workers AI like the live app.\n")
+    if prose_questions(hint, {}, PROSE_KEYS, lambda k: "cloudflare_workers_ai" if k == "inference_provider" else None):
+        fails.append("prose that changes nothing (the value state gets anyway) was asked")
+    n += 1
+    hint = parse_brief("Private-network customers later get an on-premises runner.\n")
+    q = prose_questions(hint, {}, {"onprem"}, lambda k: None)
+    if [x["id"] for x in q] != ["prose.onprem"] or "on-premises runners" not in q[0]["question"] or "onprem_runners = true" not in q[0]["why"]:
+        fails.append(f"mold_v0's on-prem question: {q}")
+    hint = parse_brief("Private-network customers later get an on-premises runner.\n## Profile\nonprem_runners = true\n")
+    n += 1
+    if prose_questions(hint, {}, {"onprem"}, lambda k: None): fails.append("## Profile onprem_runners answers the on-prem question, yet it was asked")
+    return n, None
+
 def _selftest_app():
     """The app the re-run test copies when none is named: INTAKE_SELFTEST_APP, else the first mold_v1 app on Vercel with
     answers.json on this machine (mold_v0-198: the repository names no real application)."""
@@ -871,6 +1210,7 @@ def self_test(app_id=None):
     n += 1
     if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
         fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
+    n, _ = self_test_prose(n, fails)
     n, _ = self_test_single(n, fails)
     import brief_pack_selftest   # mold_v0-062: a brief's pack sections -> packs/<id>/ (lib/brief_pack_selftest.py)
     n, _ = brief_pack_selftest.run(n, fails)
@@ -883,7 +1223,8 @@ def self_test(app_id=None):
     try:
         shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"))
         shutil.copytree(ST, os.path.join(T, "state"))
-        for d in ("packs", "molds", "briefs"): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
+        for d in ("packs", "molds", "briefs", "schemas"):
+            if os.path.exists(os.path.join(ROOT, d)): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
         tapp = os.path.join(T, "state", "application", app_id)
         before = {nm: load(os.path.join(src, f"{nm}.json")) for nm in ("application", "infrastructure", "datastores", "datainfra")}
         brief = before["application"]["brief"]
@@ -1305,6 +1646,7 @@ def write_pack(app_id, mold_id, plan, brief_path, text, answers):
 
 
 def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask, text=None):
+    import app_profile
     d = factory.get("defaults", {})
     ex_inf = existing.get("infrastructure", {})
     ctx = {"app_id": app_id, "existing_target": ex_inf.get("target") if ex_inf.get("target") in single_service.TARGETS else None,
@@ -1323,6 +1665,30 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
         if bad: sys.exit(f"{app_id}: platform_admins: {', '.join(bad)} is not an email address or *@domain. Nothing was written.")
         if got: answers["platform_admins"] = got
         else: answers.pop("platform_admins")
+    # Prose that sounds like a setting (mold_v0-230): asked as prose.<key>, applied only once someone says yes. On this
+    # mold "on-prem" means its on-premises runners (## Profile onprem_runners), and the vm and a server of its own are the
+    # same target (compose_remote).
+    ph = hints.get("prose_hints") or {}
+    if (ph.get("deploy_target") or {}).get("value") == "vm": ph["deploy_target"]["value"] = "vm_remote"
+    prof_spec = app_profile.spec(mold_id, ROOT) or {}
+    relevant = {"deploy_target", "remote_host", "custom_domain", "customer_id", "packs", "product_id", "no_branding", "brand_color"} \
+               | ({"platform_admins"} if asks_admins else set()) | ({"onprem"} if "onprem_runners" in (prof_spec.get("app_settable") or []) else set())
+    ex_app0 = existing.get("application") or {}
+    def current(k):
+        if k == "deploy_target":
+            if "deploy_target" in answers: return _SKIP
+            t = _single_target(hints, ctx); return "vm_remote" if t == "compose_remote" else t
+        if k == "custom_domain": return _SKIP if "domain" in answers else (ctx["existing_domain"] or None)
+        if k == "platform_admins": return _SKIP if "platform_admins" in answers else (ctx["existing_admins"] or None)
+        if k == "customer_id": return ex_app0.get("customer_id") or None
+        if k == "remote_host": return ((ex_inf.get("compose_remote") or {}).get("host")) or None
+        return hints.get(k)
+    prose_pending = prose_questions(hints, answers, relevant, current)
+    if prose_pending and ask:
+        ask_prose(prose_pending, answers); prose_pending = prose_questions(hints, answers, relevant, current)
+    pending += prose_pending
+    for k, v in answers.items():   # the prose answers are kept with the others, so a re-run does not ask again
+        if k.startswith("prose."): resolved[k] = v
     for qid, path, prompt, options, resolve in SINGLE_QUESTIONS:
         if qid == "platform_admins" and not asks_admins: continue
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
@@ -1477,14 +1843,28 @@ def main(a):
     # a pre-rename answer id (lib/legacy.py); answers.json is rewritten under the new id below
     old = legacy.has_old(answers, "operator_email")
     if old: answers.setdefault("operator_email", answers.pop(old))
+    # Prose that sounds like a setting (mold_v0-230): asked as prose.<key>, applied only once someone says yes. On mold_v1
+    # "on-prem" is where the app runs (the vm). A question of its own that is asked anyway (an unconfirmed default) says it.
+    ph = hints.get("prose_hints") or {}
+    if "onprem" in ph: ph.setdefault("deploy_target", {"value": "vm", "said": ph.pop("onprem")["said"]})
+    QS = {q[0]: q for q in QUESTIONS}
+    CONFIRM = ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store")
+    def current(k):
+        if k not in QS: return hints.get(k)
+        if k in answers or (not d.get("confirmed") and k in CONFIRM): return _SKIP
+        return QS[k][4](d, hints, ctx)
+    prose_pending = prose_questions(hints, answers, PROSE_KEYS, current)
+    if prose_pending and "--ask" in opts:
+        ask_prose(prose_pending, answers); prose_pending = prose_questions(hints, answers, PROSE_KEYS, current)
     for qid, path, prompt, options, resolve in QUESTIONS:
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
         v = resolve(d, hints, ctx)
         # factory defaults are only trusted once confirmed; until then they become suggested answers
-        if v is not None and (d.get("confirmed") or qid not in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store")):
+        if v is not None and (d.get("confirmed") or qid not in CONFIRM):
             resolved[qid] = coerce(v); continue
         q = {"id":qid,"path":path,"question":prompt,"options":options,"suggested":v}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both the vm and Vercel"
+        elif qid in ph and qid not in hints: q["why"] = f"the description mentions \u201c{ph[qid]['said']}\u201d, which is not a setting line"
         if qid == "asr_model" and hints.get("asr_model_unknown"):
             q["why"] = f"the brief names speech model {hints['asr_model_unknown']!r}, which is not on the list"; q["suggested"] = asr.DEFAULT_MODEL
         pending.append(q)
@@ -1513,6 +1893,9 @@ def main(a):
                 if qid_value_ok(q, v): resolved[q["id"]] = v
                 else: sys.exit(f"{v!r} is not one of {', '.join(q['options'])}; nothing was written. Run it again and pick one, or press Enter for the default.")
         offered = []
+    for k, v in answers.items():   # the prose answers are kept with the others, so a re-run does not ask again
+        if k.startswith("prose."): resolved[k] = v
+    pending = prose_pending + pending
     if "--ask" in opts and pending:
         for q in pending:
             hint = f" [{'/'.join(q['options'])}]" if q["options"] else ""
