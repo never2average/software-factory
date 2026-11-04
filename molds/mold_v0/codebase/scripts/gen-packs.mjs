@@ -19,6 +19,7 @@
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
+//   web/src/config/features.generated.ts which capabilities are on (mold_v0-219, src/features.json)
 //   web/src/lib/shell-texts.generated.ts a copy of src/shell-texts.ts, the shell's texts a pack may write (mold_v0-141)
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts,
 //                                        their pack.json engine.config (mold_v0-137) when one declares it, and every pack's
@@ -95,6 +96,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** The features registry (mold_v0-219): every optional capability's flag, its default and what asks for it. */
+const FEATURE_REGISTRY = JSON.parse(readFileSync(path.join(HERE, "..", "src", "features.json"), "utf8")).flags;
 // The words engine (mold_v0-100): plain TypeScript node runs as it is (types stripped), shared with the server and the console.
 const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
 const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, unknownPlaceholders, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
@@ -1177,6 +1180,17 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "audit") { const bad = auditProblem(v); if (bad) fail(rel(PROFILE_FILE), `audit: ${bad}`); else profile[k] = v; continue; }
       // On-premises runners (mold_v0-205, src/onprem-runners.ts): true turns them on; absent or false, none (no route, page or tab).
       if (k === "onprem_runners") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "onprem_runners: true or false (true: workspaces may install on-premises runners for the kinds that need their private network; default false)"); else profile[k] = v; continue; }
+      // The capability flags (mold_v0-219, src/features.json): {"<flag>": true|false}, checked with the packs below.
+      if (k === "features") {
+        const known = FEATURE_REGISTRY.map((f) => f.id);
+        if (!v || typeof v !== "object" || Array.isArray(v) || !Object.keys(v).length) fail(rel(PROFILE_FILE), `features: an object of flags, {"<flag>": true|false} (flags: ${known.join(", ")})`);
+        else {
+          const bad = Object.entries(v).filter(([f, x]) => !known.includes(f) || typeof x !== "boolean");
+          for (const [f, x] of bad) fail(rel(PROFILE_FILE), known.includes(f) ? `features.${f}: true or false (got ${JSON.stringify(x)})` : `features.${f}: not a flag (flags: ${known.join(", ")})`);
+          if (!bad.length) profile[k] = v;
+        }
+        continue;
+      }
       // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
@@ -1198,7 +1212,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1417,22 +1431,74 @@ for (const t of packViews.tabs ?? []) {
   if (a.kind === "create_record" && listWithheld(a.area, "create"))
     fail("packs", `pack ${t.pack}: tab ${t.id}: action create_record: ${a.area}'s create tool is withheld (mcp): a workspace cannot add to it`);
 }
+/**
+ * The features registry (mold_v0-219, src/features.json; the server's src/features.ts reads the same): each flag's
+ * setting (profile.json `features`, else its legacy key, else the default), whether the packs ask for it (the same
+ * signals as the server's featureRequested and the factory's lib/features.py) and whether it is on. The console's pages,
+ * sidebar entries and Settings tabs below read FEATURE_ON; web/src/config/features.generated.ts carries it.
+ */
+const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
+{
+  const legacy = (path_) => path_.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), profile);
+  const jsons = packs.map((p) => p.json ?? {});
+  const areas = jsons.flatMap((j) => j.record_areas ?? []);
+  const kinds = jsons.flatMap((j) => [...(j.job_kinds ?? []), ...(j.agent_job_kinds ?? [])]);
+  const owned = new Set(jsons.flatMap((j) => j.host?.schema?.tables ?? []));
+  for (const f of FEATURE_REGISTRY) {
+    const fromFeatures = profile.features?.[f.id];
+    const fromLegacy = f.legacy ? legacy(f.legacy) : undefined;
+    if (typeof fromFeatures === "boolean" && typeof fromLegacy === "boolean" && fromFeatures !== fromLegacy)
+      fail(rel(PROFILE_FILE), `features.${f.id} is ${fromFeatures} but ${f.legacy} says ${fromLegacy}: say it once (features.${f.id})`);
+    FEATURE_SETTING[f.id] = typeof fromFeatures === "boolean" ? fromFeatures : typeof fromLegacy === "boolean" ? fromLegacy : f.default;
+  }
+  const asks = {
+    always: () => true,
+    credentials: () => jsons.some((j) => (j.credentials ?? []).length > 0),
+    email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
+    clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),
+    alerts: () => areas.some((a) => !!a.due) || (FEATURE_SETTING.record_clocks && asks.clocks()),
+    private_network: () => kinds.some((k) => k.private_network === true),
+    developer_surface: () => jsons.some((j) => j.developer_surface !== undefined),
+    checks: () => jsons.some((j) => (j.checks ?? []).length > 0),
+    encrypted: () => areas.some((a) => (a.fields ?? []).some((x) => x.encrypted === true)),
+    no_engine: () => !["products", "scenarios", "simulations", "agent_sessions"].every((t) => owned.has(t)),
+  };
+  for (const f of FEATURE_REGISTRY) {
+    FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
+    FEATURE_ON[f.id] = FEATURE_SETTING[f.id] && FEATURE_REQUESTED[f.id];
+  }
+  // What a flag may not do (the factory's lib/features.py says the same before a build).
+  if (!FEATURE_SETTING.encrypted_fields && FEATURE_REQUESTED.encrypted_fields)
+    fail(rel(PROFILE_FILE), "features.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear (take encrypted: true off the field first)");
+  if (!FEATURE_SETTING.customer_key_vault) {
+    const need = jsons.flatMap((j) => (j.job_kinds ?? []).concat(j.agent_job_kinds ?? []).flatMap((k) => (k.credentials ?? [])
+      .filter((c) => !(j.credentials ?? []).some((x) => x.name === c && x.optional)).map((c) => `${j.id}.${c}`)));
+    if (need.length) fail(rel(PROFILE_FILE), `features.customer_key_vault is false but job kinds need the workspace credentials ${[...new Set(need)].slice(0, 5).join(", ")}: nobody could give them`);
+  }
+  if (!FEATURE_ON.record_clocks) for (const j of jsons) {
+    const uses = JSON.stringify([j.metrics ?? [], j.charts ?? [], j.tabs ?? []]).match(/"clock"\s*:/);
+    if (uses && FEATURE_REQUESTED.record_clocks) fail(`packs/${j.id}`, "a metric, chart or tab counts by a clock, but features.record_clocks is false: take it out, or leave the clocks on");
+  }
+  if (FEATURE_ON["audit.sign"] && !FEATURE_ON["audit.data"] && !FEATURE_ON["audit.platform"])
+    fail(rel(PROFILE_FILE), "features audit.sign is on with neither audit trail: chain and sign signs audit.data or audit.platform, so turn one on");
+}
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
-/** The credential fields the packs declare (mold_v0-034): the console's Settings › Credentials tab appears when there is one. */
-const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
+/** The credential fields the packs declare (mold_v0-034): the console's Settings › Credentials tab appears when there is one (and customer_key_vault is on, mold_v0-219). */
+const credentialFields = !FEATURE_ON.customer_key_vault ? [] : packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
 /** The onboarding steps the packs declare (mold_v0-011): the console's Setup page asks for them only when there is one. */
 const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []).map((st) => ({ pack: p.id, ...st })));
 /** Every reference an area makes: its links and its reference fields (mold_v0-057). */
 const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type === "reference" && !(a.links ?? []).some((l) => l.field === f.name)).map((f) => ({ field: f.name, area: f.to }))];
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
-const dueAreaCount = recordAreas.filter((a) => a.due || a.clocks?.length).length; // due dates and clocks (mold_v0-191) post notices
+// due dates and clocks (mold_v0-191) post notices: the scheduled_alerts flag's (mold_v0-219)
+const dueAreaCount = !FEATURE_ON.scheduled_alerts ? 0 : recordAreas.filter((a) => a.due || (FEATURE_ON.record_clocks && a.clocks?.length)).length;
 /**
  * Kinds that may need a workspace's private network (mold_v0-036): Settings › Credentials then shows the on-premises runner.
  * Counted only where the app's profile turns on-premises runners on (mold_v0-205, profile.json `onprem_runners: true`;
  * off by default): off, no runner section, admin tab, guide page or Credentials entry for them.
  */
-const privateNetworkKindCount = profile.onprem_runners !== true ? 0
+const privateNetworkKindCount = !FEATURE_ON.onprem_runners ? 0
   : packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.private_network).length, 0);
 /**
  * The shell pages this build's customer console hides (mold_v0-130, src/console-pages.ts): the packs' pack.json `console`
@@ -1832,7 +1898,7 @@ let developerOwner = null, developerFacts = null;
     }
     // The developer surface of an embedded app (mold_v0-193, src/developer-config.ts): one pack's per build, checked
     // against the build's record areas.
-    if (j.developer_surface !== undefined) {
+    if (j.developer_surface !== undefined && FEATURE_ON.developer_surface) { // off (mold_v0-219): as if not declared
       const { $comment: _c, ...rest } = j.developer_surface;
       const cfg = { ...rest, client_sessions: { ttl_seconds: 3600, ...rest.client_sessions } };
       const bad = developerSurfaceProblems(cfg, recordAreas.map((a) => ({ name: a.name, scope: a.scope, fields: (a.fields ?? []).map((f) => f.name), sealed: a.sealed === true })));
@@ -1844,6 +1910,44 @@ let developerOwner = null, developerFacts = null;
   }
   refuse();
 }
+// ---------- Settings, from the features registry (mold_v0-219) ----------
+const SETTINGS_GROUPS = ["access", "connections", "automation", "data_trust"];
+const SETTINGS_TABS = (() => {
+  const shell = [
+    { id: "credentials", label: "Credentials", group: "access", kind: "credentials", on: (credentialFields.length > 0 || privateNetworkKindCount > 0) && !HIDDEN.includes("credentials") },
+    { id: "api_keys", label: "API keys", group: "access", kind: "api_keys", on: !!developerFacts },
+    { id: "allowed_origins", label: "Allowed origins", group: "access", kind: "allowed_origins", on: !!developerFacts },
+    { id: "email", label: "Email", group: "connections", kind: "email", on: FEATURE_ON.company_email },
+    { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: !!developerFacts },
+    { id: "integrations", label: "Integrations", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
+    { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
+    { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },
+  ].filter((t) => t.on).map(({ on: _o, ...t }) => t);
+  const taken = new Set(shell.map((t) => t.id));
+  const areas = [];
+  for (const a of recordAreas.filter((x) => x.settings)) {
+    if (a.scope !== "workspace") { fail(`packs/${a.pack}`, `record area ${a.name}: settings is for a workspace's own area (scope workspace), not a shared one`); continue; }
+    if (taken.has(a.name)) { fail(`packs/${a.pack}`, `record area ${a.name}: its Settings tab would have the address of the shell's ${a.name} tab; rename the area`); continue; }
+    taken.add(a.name);
+    areas.push({ id: a.name, label: a.settings.label ?? a.label, group: a.settings.group, kind: "area", area: a.name, pack: a.pack });
+  }
+  return SETTINGS_GROUPS.flatMap((g) => [...shell.filter((t) => t.group === g), ...areas.filter((t) => t.group === g)]);
+})();
+for (const t of packs.flatMap((p) => (p.json?.tabs ?? []).map((x) => ({ ...x, pack: p.id }))))
+  if (t.kind === "area" && SETTINGS_TABS.some((x) => x.kind === "area" && x.area === t.area)) fail(`packs/${t.pack}`, `tab ${t.id}: record area ${t.area} is a Settings tab (its settings); it cannot also be a sidebar tab`);
+/** Settings › Alerts' rows (mold_v0-219): every due date and clock step, who it tells and when. */
+const ALERT_RULES = !FEATURE_ON.scheduled_alerts ? [] : recordAreas.flatMap((a) => {
+  const rows = [];
+  if (a.due) rows.push({ area: a.name, area_label: a.label, source: "due", step: "Due date", when: `Daily, from ${a.due.within_days ?? 7} day(s) before ${a.fields.find((f) => f.name === a.due.field)?.label ?? a.due.field}`, who: a.due.notify ?? ["owner"] });
+  if (FEATURE_ON.record_clocks && a.scope === "workspace") for (const c of a.clocks ?? []) {
+    const base = c.notify ?? ["owner"];
+    (c.remind ?? []).forEach((r, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: `Reminder ${i + 1}`, when: `${r.before} before the deadline`, who: r.notify ?? base }));
+    (c.escalate ?? []).forEach((e, i) => rows.push({ area: a.name, area_label: a.label, source: "clock", clock: c.label ?? c.name, step: e.label ?? `Escalation ${i + 1}`, when: `${e.after} overdue`, who: e.notify ?? base,
+      ...(e.reassign || e.raise ? { does: [e.reassign ? `reassigns ${e.reassign.field}` : "", e.raise ? `raises ${e.raise.field}${e.raise.to ? ` to ${e.raise.to}` : ""}` : ""].filter(Boolean).join(", ") } : {}) }));
+  }
+  return rows;
+});
+
 // The account context and memory component's pages, old addresses and words for the console (mold_v0-142), only when it is on.
 if (memoryFacts) {
   const bf = path.join(OUT, "web", "src", "config", "build-facts.generated.ts");
@@ -2101,7 +2205,7 @@ const profileSidebar = (() => {
   const at = `${rel(PROFILE_FILE)} console.sidebar`;
   const tabs = shownTabs(), listed = new Set(), out = [];
   const homeSetup = tabs.some((t) => t.kind === "overview" && (t.include ?? []).includes("setup"));
-  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !packs.some((p) => p.json?.email) && "the build declares no credential field and no company email", schedules: !jobKindCount && "the build has no job kind to schedule",
+  const lacks = { credentials: !credentialFields.length && !privateNetworkKindCount && !FEATURE_ON.company_email && "the build declares no credential field and no company email", schedules: !jobKindCount && "the build has no job kind to schedule",
     notices: !dueAreaCount && "the build has no due dates", setup: homeSetup && "a home tab includes the Setup page's checklist (/app leads there): list that tab",
     keys: profile.member_keys === false && "member API keys are off (profile.json member_keys)" };
   declared.forEach((g, i) => {
@@ -2283,9 +2387,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
-    ...(a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
+    ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
-  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name)) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
   `export const exportWithheldAreas: string[] = ${json(recordAreas.filter((a) => listWithheld(a.name, "export")).map((a) => a.name))};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
@@ -2303,15 +2407,19 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const onPremRunners = ${privateNetworkKindCount > 0};\n\n` +
   "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
   `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
-  // Settings (mold_v0-218): one /app page with in-page tabs, Credentials (mold_v0-034: a credential field, or a kind that
-  // may need the workspace's private network, unless the build hides it) and Email (mold_v0-192: the company's own
-  // email, when a pack turns it on); its one sidebar entry goes directly below Overview (web/src/config/nav-config.ts).
-  "\n/** Settings (mold_v0-218): which in-page tabs /app/settings has; neither, and there is no Settings page or entry. */\n" +
-  `export const settingsPage = ${json({ credentials: (credentialFields.length > 0 || privateNetworkKindCount > 0) && !HIDDEN.includes("credentials"), email: packs.some((p) => !!p.json?.email) })};\n` +
-  // The developer surface's console (mold_v0-201, web/src/features/developer): Settings › Developers (keys, webhooks,
-  // allowed origins, inbound sources), only in an embedded app (a pack declares developer_surface); a tool app has none.
-  "\n/** Settings › Developers (mold_v0-201): the developer surface's console, only where a pack declares pack.json developer_surface. */\n" +
-  `export const developerPortalNav: NavGroup[] = ${json(developerFacts ? [{ label: "Settings", items: [{ title: "Developers", url: "/app/developers", icon: "code", items: [] }] }] : [])};\n` +
+  // Settings (mold_v0-218, assembled from the features registry since mold_v0-219): the tabs each capability that is on
+  // contributes, in four fixed groups, and the record areas a pack declares as settings (web/src/config/settings.ts lays
+  // them out: none, one table, one strip, or a sidebar group per group past 5 tabs).
+  "\n/** Settings (mold_v0-218): whether its Credentials and Email tabs show (kept for the pages that ask only that). */\n" +
+  `export const settingsPage = ${json({ credentials: SETTINGS_TABS.some((t) => t.id === "credentials"), email: SETTINGS_TABS.some((t) => t.id === "email") })};\n` +
+  "\n/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */\n" +
+  "export interface SettingsTabSpec {\n  id: string;\n  label: string;\n  group: 'access' | 'connections' | 'automation' | 'data_trust';\n" +
+  "  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | 'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n" +
+  "/** Settings' tabs, in group order (Access, Connections, Automation, Data & trust), each group's shell tabs first. */\n" +
+  `export const settingsTabs: SettingsTabSpec[] = ${json(SETTINGS_TABS)};\n` +
+  "\n/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */\n" +
+  "export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }\n" +
+  `export const alertRules: AlertRule[] = ${json(ALERT_RULES)};\n` +
   "/** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */\n" +
   `export const developerConsole = ${json({ on: !!developerFacts, inbound: !!developerFacts?.webhooks_in?.length })};\n` +
   // The workspace's neutral Activity page (mold_v0-008): tool calls and run spend per member and run, once a pack adds
@@ -2361,6 +2469,11 @@ files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
   "import type { Legal } from '@/features/site/legal-types';\n\n" +
   "/** profile.json `legal` (mold_v0-109, src/legal.ts): /terms, /privacy, their links and the sitemap; null: no legal pages. */\n" +
   `export const legal: Legal | null = ${json(profileLegal)};\n`);
+// The features registry (mold_v0-219, src/features.json): which capabilities are on in this build, for the console's
+// pages, sidebar and Settings tabs (web/src/config/features.ts).
+files.set(path.join(OUT, "web", "src", "config", "features.generated.ts"), HEADER +
+  "/** Each capability flag of src/features.json: on (asked for by the packs, or always, and not turned off by profile.json `features`). */\n" +
+  `export const features = ${json(FEATURE_ON)} as const;\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);

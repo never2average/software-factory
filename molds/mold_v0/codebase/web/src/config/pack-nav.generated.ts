@@ -89,14 +89,28 @@ export const onPremRunners = false;
 /** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */
 export const hiddenConsoleUrls: string[] = [];
 
-/** Settings (mold_v0-218): which in-page tabs /app/settings has; neither, and there is no Settings page or entry. */
+/** Settings (mold_v0-218): whether its Credentials and Email tabs show (kept for the pages that ask only that). */
 export const settingsPage = {
   "credentials": false,
   "email": false
 };
 
-/** Settings › Developers (mold_v0-201): the developer surface's console, only where a pack declares pack.json developer_surface. */
-export const developerPortalNav: NavGroup[] = [];
+/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */
+export interface SettingsTabSpec {
+  id: string;
+  label: string;
+  group: 'access' | 'connections' | 'automation' | 'data_trust';
+  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | 'area';
+  /** The record area (kind area). */
+  area?: string;
+  pack?: string;
+}
+/** Settings' tabs, in group order (Access, Connections, Automation, Data & trust), each group's shell tabs first. */
+export const settingsTabs: SettingsTabSpec[] = [];
+
+/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */
+export interface AlertRule { area: string; area_label: string; source: 'due' | 'clock'; clock?: string; step: string; when: string; who: string[]; does?: string }
+export const alertRules: AlertRule[] = [];
 /** What the developer console shows (mold_v0-201): on, and whether the app takes webhooks in (an Inbound tab). */
 export const developerConsole = {
   "on": false,

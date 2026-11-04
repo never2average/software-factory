@@ -16,6 +16,7 @@ import { accountRefusal, canAccount } from "./account-roles.js";
 import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
 import { credentialSpecs, deleteCredential, listCredentials, setCredential } from "./credentials.js";
+import { featureOn } from "./features.js";
 import { PackError } from "./pack-api.js";
 import { addCompanyHost, companyEgressPacks, listCompanyHosts, removeCompanyHost } from "./egress-hosts.js";
 
@@ -63,7 +64,8 @@ export function egressHostAppRouter(): Router {
 
 export function credentialAppRouter(): Router {
   const r = express.Router();
-  if (!credentialSpecs().length) return r; // no fields: nothing is mounted, nothing answers
+  // no fields, or the features registry's customer_key_vault off (mold_v0-219): nothing is mounted, nothing answers
+  if (!featureOn("customer_key_vault")) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(express.json({ limit: "32kb" }));
   // The body parser's own error text quotes the body: answer without it.

@@ -1,5 +1,7 @@
+import { isSettingsUrl, settingsNavItem, SETTINGS_URL, type SettingsTabSpec } from './settings';
+import { settingsTabs } from './pack-nav.generated';
 import { NavGroup } from '@/types';
-import { developerPortalNav, hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, settingsPage, tabPortalNav, usagePortalNav } from './pack-nav.generated';
+import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
@@ -99,23 +101,22 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
  * the roles that may read what it shows), or the whole sidebar the app's profile declares (mold_v0-133: profile.json
  * console.sidebar, its groups, the packs' tabs and the shell's pages in its order); otherwise the shell's own.
  */
-// Settings › Developers (mold_v0-201, an embedded app's) comes after either, when a pack turns the developer surface on.
-const settingsPortalNav: NavGroup[] = [...developerPortalNav];
-const basePortalNav: NavGroup[] = settingsPortalNav.length ? mergeNav([...(tabPortalNav.length ? tabPortalNav : shellPortalNav), ...settingsPortalNav]) : tabPortalNav.length ? tabPortalNav : shellPortalNav;
+// The developer surface's console is Settings' API keys, Allowed origins, Webhooks and Integrations tabs since mold_v0-219.
+const basePortalNav: NavGroup[] = tabPortalNav.length ? tabPortalNav : shellPortalNav;
 
-/** The Settings page (mold_v0-218): its in-page tabs Credentials and Email, when the build has one of them. */
-export const SETTINGS_URL = '/app/settings';
+export { SETTINGS_URL };
 /**
- * One Settings entry, directly below Overview (mold_v0-218): the console's home (/app) or a pack's overview tab, else the
- * sidebar's first entry. A pack's credentials tab or a declared sidebar's `credentials` (both open /app/settings) leave
- * their own place for it, its roles kept; with neither Credentials nor Email the sidebar has no Settings entry.
+ * The Settings entry, directly below Overview (mold_v0-218; laid out by its tab count since mold_v0-219,
+ * web/src/config/settings.ts): the console's home (/app) or a pack's overview tab, else the sidebar's first entry. None
+ * with no tab; one entry up to 5 tabs; past 5 a collapsible entry with one item per group. A pack's credentials tab or a
+ * declared sidebar's `credentials` (both open /app/settings) leave their own place for it, its roles kept.
  */
-export function withSettings(groups: NavGroup[], page: { credentials: boolean; email: boolean } = settingsPage): NavGroup[] {
-  const isSettings = (url: string) => url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}?`);
-  const own = groups.flatMap((g) => g.items).find((i) => isSettings(i.url));
-  const rest = groups.map((g) => ({ ...g, items: g.items.filter((i) => !isSettings(i.url)) })).filter((g) => g.items.length > 0);
-  if (!page.credentials && !page.email) return rest;
-  const entry = { title: 'Settings', url: SETTINGS_URL, icon: 'settings' as const, items: [], ...(own?.roles ? { roles: own.roles } : {}) };
+export function withSettings(groups: NavGroup[], tabs: readonly SettingsTabSpec[] = settingsTabs): NavGroup[] {
+  const own = groups.flatMap((g) => g.items).find((i) => isSettingsUrl(i.url));
+  const rest = groups.map((g) => ({ ...g, items: g.items.filter((i) => !isSettingsUrl(i.url)) })).filter((g) => g.items.length > 0);
+  const item = settingsNavItem(tabs);
+  if (!item) return rest;
+  const entry = { ...item, ...(own?.roles ? { roles: own.roles } : {}) };
   const overviews = new Set(['/app', ...packTabs.filter((t) => t.kind === 'overview').map((t) => t.url)]);
   const gi = rest.findIndex((g) => g.items.some((i) => overviews.has(i.url)));
   if (gi < 0) return rest.length ? [{ ...rest[0]!, items: [entry, ...rest[0]!.items] }, ...rest.slice(1)] : [{ label: '', items: [entry] }];

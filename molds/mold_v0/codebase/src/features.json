@@ -103,7 +103,7 @@
       "requested_words": "a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block)",
       "requires": ["audit.platform"],
       "since": "mold_v0-193",
-      "about": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (/app/developers) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.",
+      "about": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (Settings: API keys, Allowed origins, Webhooks, Integrations) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.",
       "off": "Nothing of it is mounted, no table is read, no event is queued and no page shows."
     },
     {
@@ -137,7 +137,7 @@
       "requested_words": "a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions)",
       "since": "mold_v0-210",
       "about": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.",
-      "off": "No sample is taken or kept, the job is not scheduled, the history route answers an empty history and Status shows its live checks only."
+      "off": "No sample is taken or kept and the job is not scheduled: Status keeps its live checks and headlines, and its graphs have no history (no sample in any bucket)."
     }
   ]
 }

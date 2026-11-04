@@ -26,6 +26,7 @@ import { consoleUrl, publicUrl } from "./console-url.js";
 import { adminInstallations, appConfig, beginInstall, completeInstall, configSummary, disconnect, githubAppFields, handleWebhook,
   InstallRefused, setAppConfig, setAssetRepositories, TOKEN_PERMISSIONS, webhookSignatureValid, workspaceView } from "./github-app.js";
 import { PackError } from "./pack-api.js";
+import { featureOn } from "./features.js";
 
 const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -38,7 +39,7 @@ const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req:
 
 export function githubAppRouter(): Router {
   const r = express.Router();
-  if (!githubAppFields().length) return r; // no field asks for it: nothing is mounted, nothing answers
+  if (!githubAppFields().length || !featureOn("customer_key_vault")) return r; // no field asks for it (or the key vault is off, mold_v0-219): nothing is mounted
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
   // The webhook, before any session: GitHub signs the exact bytes it sends.
