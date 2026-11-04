@@ -598,6 +598,8 @@ export function createApp() {
     });
     next();
   });
+  // A shared area's import (mold_v0-221, src/record-import.ts): up to 1000 rows, so its own limit, parsed first.
+  admin.use("/records/_console/:area/import", express.json({ limit: "4mb" }));
   admin.use(express.json({ limit: "64kb" }));
   // The audit trails for platform staff (mold_v0-197): the platform trail fleet-wide, a workspace's data trail.
   admin.use("/audit", auditAdminRouter());

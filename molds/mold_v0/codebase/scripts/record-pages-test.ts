@@ -25,7 +25,9 @@
 //      trails' tables have an Action and an Actor column (the platform trail's Kind split in two).
 //   8. The staff record pages (mold_v0-212): /admin/records/<area> is the standard list with no title or description
 //      above it (its cards from the staff route, its search row, its table), New record as the search row's primary action
-//      and Edit on an open record only where the server offers them; the record's page is one details card.
+//      and Edit on an open record only where the server offers them; the record's page is one details card. mold_v0-221:
+//      New <noun> and Import in the search row on every shared area, Override on a repository's row, provenance and
+//      overrides marked.
 //   9. Settings (mold_v0-218): one /app/settings page with in-page tabs Credentials | Email (?tab=, no title above the
 //      strip; one alone without a strip), each the standard list (four cards, the search row, the table; a row opens its
 //      full details card; Add mailbox and Set sender in Email's search row); /app/credentials and /app/settings/email are
@@ -232,15 +234,22 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(st, /<RecordTableView key=\{round\} area=\{area\} base='admin'/, "the list is the records' table");
   assert.doesNotMatch(st, /<RecordView[<\s]|<Table[\s>]/, "no table of its own");
   assert.match(st, /summary=\{<Sparklines url=\{consoleUrl\(area\.name, 'sparklines'\)\}/, "its four cards above the search row, from the staff route");
-  assert.match(st, /toolbarAction=\{form\?\.create \? <ToolbarAction label='New record'/, "New record: the primary action at the search row's right end, only when the server offers create");
+  // mold_v0-221: New <noun> the primary action, Import beside it, on every shared area (a repository's too).
+  assert.match(st, /\{form\.create && <ToolbarAction label=\{`New \$\{noun\}`\}/, "New <noun>: the primary action at the search row's right end, only when the server offers create");
+  assert.match(st, /\{form\.import && \([\s\S]{0,80}<Button type='button' variant='outline' onClick=\{\(\) => setImporting\(true\)\}/, "Import: the search row's secondary action, before New, only when the server offers import");
+  assert.match(st, /<ImportRecordsForm area=\{area\}/, "the import card");
   assert.doesNotMatch(st, /\bFab\b|fab=/, "no floating action");
-  assert.match(st, /rowAction=\{form\?\.edit \?/, "Edit on an open record, only when the server offers edit");
+  assert.match(st, /rowAction=\{form\?\.edit \|\| form\?\.remove \?/, "Edit (Override) and Remove on an open record, only when the server offers them");
+  assert.match(st, /fromRepository \? 'Override' : 'Edit'/, "a repository's row: Override");
+  assert.match(st, /Overridden by staff/, "an override marked in the details card");
+  assert.match(st, /detailNote=\{\(r\) => <ProvenanceFields/, "the open record says where it comes from");
+  assert.doesNotMatch(st, /!a\.repo|form\.repository \?/, "no area hidden from staff writes for having a repository");
   assert.match(st, /<CreateRecordForm area=/, "the create form is the tab action's (features/tabs/tab-action.tsx)");
   assert.match(st, /adminDataApi\('POST'/); assert.match(st, /adminDataApi\('PUT'/);
   assert.match(st, /<Card [^>]*data-record-card/, "the record's page: one details card");
   assert.match(src("app/admin/records/[area]/page.tsx"), /<StaffRecordListPage area=\{spec\} \/>/);
   assert.match(src("app/admin/records/[area]/[key]/page.tsx"), /<StaffRecordDetailPage area=\{spec\}/);
-  ok("the staff record pages: no title above the list, its cards, search row and table, New record and Edit where staff may write, the record's page one details card");
+  ok("the staff record pages: no title above the list, its cards, search row and table, New <noun> and Import in the search row and Edit (Override on a repository's row) where staff may write, provenance and overrides marked, the record's page one details card");
 }
 
 // 9. Settings: Credentials and Email as one page's in-page tabs (mold_v0-218).

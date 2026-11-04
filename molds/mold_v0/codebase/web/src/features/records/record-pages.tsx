@@ -26,7 +26,10 @@ import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
-export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView> };
+export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
+  /** A shared row on the staff pages (mold_v0-221, src/record-areas.ts Provenance): staff's or its repository's, and what a staff override stands over. */
+  provenance?: Provenance };
+export type Provenance = { by: 'staff' | 'repository'; repository: string | null; overrides: { title: string | null; version: string | null } | null };
 export type Page = { records: RecordRow[]; next: string | null };
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
 
@@ -160,7 +163,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, rowAction }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, rowAction, detailNote }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -170,6 +173,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   toolbarAction?: ReactNode;
   /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
   rowAction?: (r: RecordRow) => ReactNode;
+  /** An open record's first lines (mold_v0-221: a staff row's provenance and an override's mark, features/records/staff-records.tsx). */
+  detailNote?: (r: RecordRow) => ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
   compact?: boolean;
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
@@ -206,6 +211,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
       detail={(r) => (
         <dl>
+          {detailNote?.(r)}
           {r.version && <Field label='Version'>{r.version}</Field>}
           {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name)).map((f) => (
             <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>

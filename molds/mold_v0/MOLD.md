@@ -360,12 +360,36 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   card), the search row, the table, a row opening the record as a full card in its place. Where staff may write, **New record** is
   the primary action at the search row's right end (the tab action's create form, `CreateRecordForm`, as a full card) and an open record has **Edit** (its
   title and fields, data the form does not show kept); both write through `/api/admin/data`, whose checks are unchanged.
-  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create and edit only for an area no
-  repository fills (an upstream catalog's registry, such as a regulators list, stays read only on the console: its
-  rows are its index's), with no encrypted field, for a role with `library`, the staff tool not withheld. The record's
-  own page (`/admin/records/<area>/<key>`) is one details card: key, every field by its label (references linked),
+  `GET /api/admin/records/_console/<area>/form` says what the role is offered: create, edit and import for an area
+  whose rows the shell stores (not read live) with no encrypted field, for a role with `library` (Operator and Owner),
+  the staff tool not withheld; remove with `delete` (Owner); the repository that fills it. The record's
+  own page (`/admin/records/<area>/<key>`) is one details card: key, where it comes from, every field by its label (references linked),
   version, updated, its clocks' timeline and its links, with Edit on the same terms. No pack declares anything for it.
   `npm run test:record-areas` checks the cards and the offer per role; `npm run test:record-pages` the layout.
+  **Staff rows on every shared area (mold_v0-221).** An area a repository fills (an upstream catalog's regulators or
+  control library) takes staff rows too: until then it was read only on the console, so staff had no way to add to it.
+  The primary action reads **New <noun>** (the area's label in the singular: New report format, New regulator,
+  New control) and opens the create card; **Import** beside it reads a CSV or JSON file in the browser, maps its
+  columns to the key, title and fields (matched by name or label first), previews each row from the server (create,
+  update, override, unchanged, or invalid with its problems; `POST /api/admin/records/_console/<area>/import`, dry run
+  by default, `src/record-import.ts`) and imports the valid rows that change something as staff rows in one
+  transaction, at most 1000 per file: idempotent by key (fields the file leaves out keep their values; the same file
+  again writes nothing). Every row an import writes is an `IMPORT` line of the staff access log (`admin_access_log`,
+  as every staff request and admin MCP call; `/admin/access-log`), and a staff entry of the platform trail when it is
+  on; shared rows belong to no workspace, so no workspace's data trail holds them. A row's **provenance** is `staff`
+  (written through a door: no `source`) or `repository`; the staff list and detail routes return it per row
+  (`src/record-areas.ts` `platformProvenance`). A repository's rows stay read only: **Edit** on one reads
+  **Override** and saves a staff row of the same key that wins over it, the repository's version kept behind it
+  (`platform_records.upstream`, `sql/migrations/0040_platform_record_overrides.sql`) and refreshed by every index; the
+  details card marks it **Overridden by staff** with what it stands over. **Remove** (Owner) deletes a staff row, or
+  removes an override and puts the repository's version back; a door's delete of a repository's row is refused (409).
+  A repository's index never overwrites, prunes or claims a staff row, forced or not (a forced index only passes the
+  prune guard); a key staff added first becomes an override once the repository has it, and an override whose key the
+  repository drops stays as a plain staff row. The platform roles (`src/admin-roles.ts`): Viewer reads; Support adds
+  access requests, invitations and tips; Operator adds the library (these writes and imports among it); Owner adds
+  deleting. `npm run test:data-repositories` (staff rows survive a sync, forced too; overrides win; removing restores),
+  `npm run test:record-import` (the offer per role, cells typed, the preview's outcomes and problems, the import,
+  idempotent, the access log), `npm run test:migrations` (0040 and its rollback).
   **Every customer list is that table (mold_v0-176).** An area tab's table view (`RecordTableView`, the same component
   as the list page: a merged tab's rows too, a row opening the record of the first of its areas), the `runs` and
   `reports` tabs (`web/src/features/tabs/runs.tsx`: kind in the pack's words, status, the asset record it ran over,
@@ -1424,7 +1448,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `identity`; a step that does not fit (an index past the end, an index on an object, a property on a list) is no value.
   An index is idempotent (each row's `fingerprint`, keyed with the workspace's key for a sealed area, and its `source`
   are stored with it), one transaction, and prunes only rows it wrote; a row written or changed by hand is kept (and
-  counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index. For an upstream catalog an
+  counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index (a shared row never: staff rows
+  and overrides, mold_v0-221, above). For an upstream catalog an
   empty result over existing rows, or a prune of more than `prune.max_fraction` (0.5) of its rows, is refused unless
   staff force it; a workspace's committed files are the truth (no such guard). A sorted page's cursor is the sort and
   the last key only: the row's sort value is read again in the caller's scope (a row gone by then: 409). `npm run test:data-api`,
