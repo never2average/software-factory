@@ -118,7 +118,7 @@ import { EmptyState } from '@/features/tabs/empty';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 const { answers, records } = (window as unknown as { __INPUT__: { answers: { name: string }[]; records: any } }).__INPUT__;
 const results = new Map(answers.map((a) => [a.name, a]));
-const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === ${JSON.stringify(tabId)})!;
+const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'overview')!;
 const chart = (n: string) => packCharts.find((c) => c.pack === 'fixture_vulns' && c.name === n)!;
 const area = recordAreas.find((a) => a.name === 'audit_findings')!;
 createRoot(document.getElementById('root')!).render(
