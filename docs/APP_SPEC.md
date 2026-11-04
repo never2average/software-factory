@@ -58,6 +58,32 @@ through the same check `factory.py validate` and the build use.
 - `profile.onprem_runners` (mold_v0-205; default `false`): `true` lets the app's workspaces install an on-premises runner
   for its kinds with `private_network: true` (molds/mold_v0/MOLD.md "On-premises runners"); off, no runner route, page,
   tab or enrolment exists and every run is hosted. Brief line `onprem_runners = true` in `## Profile`.
+- `features` (mold_v0-219): one on/off flag per optional mold_v0 capability, `{"<flag>": true|false}`, each with its
+  default and documentation in `molds/mold_v0/codebase/src/features.json` (the editor shows them on hover). A capability
+  is **on** when something asks for it (a pack's declaration; the audit toggles always) **and** its flag is not `false`:
+
+  | Flag | Default | Asked for by | Board name |
+  |---|---|---|---|
+  | `customer_key_vault` | true | a pack's credential fields | vault |
+  | `company_email` | true | a pack's `email` block | email |
+  | `scheduled_alerts` | true | a due-date area, or clocks | alerts |
+  | `record_clocks` | true | a workspace area's `clocks` | clocks |
+  | `audit.data` | false | always (legacy `audit.data`) | audit.data |
+  | `audit.platform` | false | always (legacy `audit.platform`) | audit.platform |
+  | `audit.sign` | false | always (legacy `audit.sign`); needs `audit.data` or `audit.platform` | audit.sign |
+  | `onprem_runners` | false | a kind with `private_network: true` (legacy `profile.onprem_runners`) | runners |
+  | `developer_surface` | true | `kind: embedded` with its `developer_surface` block; needs `audit.platform` | developer |
+  | `declarative_checks` | true | a pack's `checks` | checks |
+  | `encrypted_fields` | true | an `encrypted: true` field (false while one is declared is refused) | encrypted |
+  | `health_history` | true | a build without the session engine | health |
+
+  Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
+  (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the
+  developer surface's switch**: `kind: embedded` with a `developer_surface` block asks for it, and the flag may only
+  repeat what `kind` says (true with `tool`, or false with `embedded`, is refused). `customer_key_vault: false` is refused
+  while a job kind needs a credential that is not optional. `factory.py spec check` prints the effective flags
+  (`flags: vault, email, alerts, clocks, audit.data, runners, health`), `factory.py spec apps` each app's, and the factory
+  board shows them on each mold_v0 app's line.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

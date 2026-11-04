@@ -39,6 +39,14 @@ each one the factory can check. Today (mold_v0):
                              workspaces install on-premises runners for its kinds that need their private network
                              (today's behaviour); absent or false (the default): no runner route, console page, admin tab
                              or enrolment, and every run is hosted. From the brief: `onprem_runners = true` in ## Profile
+  features                   {"<flag>": true|false} (mold_v0-219, the shell's src/features.json and src/features.ts; the
+                             factory's lib/features.py): one on/off flag per optional capability (customer_key_vault,
+                             company_email, scheduled_alerts, record_clocks, audit.data, audit.platform, audit.sign,
+                             onprem_runners, developer_surface, declarative_checks, encrypted_fields, health_history). A
+                             capability is on when something asks for it (a pack's declaration, or always for the audit
+                             toggles) and its flag is not false; absent, the registry's default. The legacy keys (audit.*,
+                             onprem_runners) still read and must agree. From the brief: `features.<flag> = true|false`
+                             lines in ## Profile (the app spec's top-level `features`)
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -75,6 +83,7 @@ then the mold's generator checks it again and compiles it. A deploy rebuilds the
 next deploy. The server's environment (OCTILLION_LIMIT_*) still wins over the profile: the operator's own knob.
 """
 import json, os, re
+import features as _features   # lib/features.py (mold_v0-219): the mold's capability flags
 
 # What the factory refuses outright, and why (a sentence a person can act on).
 RESERVED = {
@@ -423,7 +432,13 @@ def problems(profile, mold_id, root, packs=None):
         elif k == "audit": errs += audit_problems(v, "profile.audit")
         elif k == "onprem_runners":
             if not isinstance(v, bool): errs.append(f"profile.onprem_runners must be true or false (got {json.dumps(v)[:40]})")
+        elif k == "features": errs += _features.block_problems(v, root, "profile.features")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
+    # The capability flags as a whole (mold_v0-219): legacy keys that disagree, flags another needs, pack declarations a
+    # flag would break. Only for a mold with a features registry, and once the block itself is right.
+    if not errs and "features" in settable and _features.registry(root) and any(k in profile for k in ("features", "audit", "onprem_runners")):
+        docs = [_features.pack_doc(p, root) for p in packs or []]
+        errs += _features.problems(profile, docs, root)
     return errs
 
 AUDIT_FLAGS, AUDIT_DAYS = ("data", "platform", "sign"), ("retention_days", "platform_retention_days")
@@ -477,6 +492,8 @@ OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
 WORDSET = re.compile(r"(?<![\w.])(member_keys|onprem_runners|audit\.(?:data|platform|sign)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+# The capability flags (mold_v0-219): `features.<flag> = true|false`, the flag a registry id (lib/features.py).
+FEATURE_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?features\.([a-z_]+(?:\.[a-z_]+)?)`?[ \t]*(?:=|:)[ \t]*`?([A-Za-z_]*)`?[ \t]*(?:[,;.][ \t]*)?(?:\([^)\n]*\))?[ \t]*$", re.M)
 WORD = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*([A-Za-z_]+)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 
 def _clean(text):
@@ -501,7 +518,7 @@ def from_brief(text):
     a `## MCP instructions` section (mold_v0-119); `email_from_address = <address>`,
     `email.notifications = <group>, <group>` (or `none`) and `email.provider = resend|none` (mold_v0-101); `member_keys =
     false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `onprem_runners = true` (or
-    false; mold_v0-205); `legal.<field> = <text>`
+    false; mold_v0-205); `features.<flag> = true|false` (mold_v0-219: lib/features.py); `legal.<field> = <text>`
     (mold_v0-109: company_name, contact_email, jurisdiction, effective_date, terms_url, privacy_url). A setting written twice with two
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
@@ -566,6 +583,13 @@ def from_brief(text):
                 d = d[part]
             if bad or isinstance(d.get(path[-1]), dict): errs.append(f"{head}: {name} is both a field and a group of fields; keep one"); continue
             d[path[-1]] = {"true": True, "false": False}.get(raw, raw)
+        for m in FEATURE_LINE.finditer(body):
+            flag, raw = m.group(1), m.group(2).lower()
+            name, val = f"features.{flag}", {"true": True, "false": False, "on": True, "off": False}.get(raw)
+            if val is None: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = true` (or false)"); continue
+            if name in seen and seen[name] != val: errs.append(f"{head}: {name} is set twice ({json.dumps(seen[name])} and {json.dumps(val)}); keep one"); continue
+            seen[name] = val
+            prof.setdefault("features", {})[flag] = val
         for m in LEGAL_LINE.finditer(body):
             key, raw = m.group(1).lower(), m.group(2).strip().strip("`").strip()
             name = f"legal.{key}"

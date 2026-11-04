@@ -53,7 +53,8 @@ def sources(mold, root):
     s = ["state/application/app_id/application.schema.json", "state/application/app_id/infrastructure.schema.json", ".claude/scripts/app_spec.py"]
     if mold == "mold_v0":
         s += ["molds/mold_v0/mold.json", "molds/mold_v0/branding/rules.json", "molds/mold_v0/codebase/packs/pack.schema.json",
-              "molds/mold_v0/codebase/scripts/gen-packs.mjs", "molds/mold_v0/codebase/src/email.ts", "molds/mold_v0/codebase/src/developer-config.ts"]
+              "molds/mold_v0/codebase/scripts/gen-packs.mjs", "molds/mold_v0/codebase/src/email.ts", "molds/mold_v0/codebase/src/developer-config.ts",
+              "molds/mold_v0/codebase/src/features.json"]
     else:
         s += ["molds/mold_v1/branding/rules.json", ".claude/scripts/packs.py", ".claude/scripts/intake.py"]
     return s
@@ -230,6 +231,42 @@ def _head_props(mold):
       "audit": {"$ref": "#/$defs/audit"},
     }
 
+# ---- the capability flags (mold_v0-219) -------------------------------------------------------------------------------
+def _features_schema(root):
+    """The spec's top-level `features`: one boolean per flag of the mold's registry (codebase/src/features.json), with its docs."""
+    sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
+    props = {}
+    for f in F.registry(root):
+        legacy = f" Legacy key: profile.{f['legacy']} (still read; it and this flag must agree)." if f.get("legacy") else ""
+        needs = (f" Needs {' and '.join(f['requires'])} on." if f.get("requires") else "") + (f" Needs one of {', '.join(f['requires_any'])} on." if f.get("requires_any") else "")
+        props[f["id"]] = {"type": "boolean", "default": f["default"], "title": f"{f['label']} ({f['since']})",
+                          **D(f"{f['about']} Asked for when {f['requested_words']}. Default {str(f['default']).lower()}. Off: {f['off']}{needs}{legacy}",
+                              f"**{f['label']}** ({f['since']}; board name `{f['short']}`). {f['about']}\n\n"
+                              f"- **Asked for** when {f['requested_words']}.\n- **Default** `{str(f['default']).lower()}`.\n- **Off**: {f['off']}\n"
+                              + (f"- **Needs** {needs.strip()}\n" if needs else "") + (f"- {legacy.strip()}\n" if legacy else "")
+                              + f"\nBrief line: `features.{f['id']} = {str(not f['default']).lower()}` in `## Profile`.")}
+    return {"type": "object", "additionalProperties": False, "minProperties": 1, "title": "Capability flags (mold_v0-219)",
+            **D("One on/off flag per optional capability of mold_v0 (codebase/src/features.json). A capability is on when something asks for it "
+                "(a pack's declaration; the audit toggles always) and its flag is not false. Written to profile.features; brief lines features.<flag> = true|false.",
+                "One **on/off flag per optional capability** (`molds/mold_v0/codebase/src/features.json`). A capability is **on** when something asks for it "
+                "(a pack's declaration; the audit toggles always) **and** its flag is not `false`. Leave a flag out for its default.\n\n"
+                "Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. "
+                "`factory.py spec check` says the effective flags."),
+            "properties": props}
+
+def _features_rules():
+    on = lambda i: {"properties": {"features": {"properties": {i: {"const": True}}, "required": [i]}}, "required": ["features"]}
+    off = lambda i: {"properties": {"features": {"properties": {i: {"const": False}}, "required": [i]}}, "required": ["features"]}
+    return [
+      _rule("chain and sign signs the audit trails, so one of them must be on", on("audit.sign"),
+            {"anyOf": [on("audit.data"), on("audit.platform"), {"properties": {"audit": {"anyOf": [{"properties": {"data": {"const": True}}, "required": ["data"]},
+                                                                                          {"properties": {"platform": {"const": True}}, "required": ["platform"]}]}}, "required": ["audit"]}]}),
+      _rule("kind is the developer surface's switch: the flag may not turn it on for a tool", on("developer_surface"),
+            {"properties": {"kind": {"const": "embedded"}}, "required": ["kind"]}),
+      _rule("kind embedded is a developer surface: the flag may not turn it off", {"allOf": [off("developer_surface"), {"properties": {"kind": {"const": "embedded"}}, "required": ["kind"]}]},
+            {"not": {}}),
+    ]
+
 # ---- mold_v0 ---------------------------------------------------------------------------------------------------------
 def _embed_pack(schema):
     s = copy.deepcopy(schema); defs = s.pop("$defs", {})
@@ -340,6 +377,8 @@ def schema_v0(root):
             profile_props[top] = {**D(f"{k}: a profile field this mold lets an app set (molds/mold_v0/branding/rules.json); the factory checks it.")}
     profile_props["limits"] = NS("say limits in the spec's top-level `budgets` block, which is written to profile.limits")
     profile_props["audit"] = NS("say the audit trails in the spec's top-level `audit` block, which is written to profile.audit (mold_v0-197)")
+    profile_props["features"] = NS("say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219)")
+    defs["features"] = _features_schema(root)
     run_keys = {
       "type": "object", "additionalProperties": False, "title": "Keys the runs need (names, never values)",
       **D("Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
@@ -398,8 +437,9 @@ def schema_v0(root):
                       "The app's packs (config only, never a fork): ids, paths, or a pack.json inline. `[]`: the mold as it comes.")},
         "run_keys": run_keys,
         "developer_surface": {"$ref": "#/$defs/developer_surface"},
+        "features": {"$ref": "#/$defs/features"},
       },
-      "allOf": _embedded_rules() + [
+      "allOf": _embedded_rules() + _features_rules() + [
         _rule("a pack has job kinds, so the app needs its run budgets and the keys its runs use", pk(has_kinds),
               {"required": ["budgets", "run_keys"], "properties": {"budgets": {"required": ["runs"], "properties": {"runs": {"required": ["budget_usd_max", "kind_month_budget_usd"]}}}}}),
         _rule("a pack has agent job kinds, which call a model and keep a workspace between runs", pk(agent_kind),
@@ -569,6 +609,7 @@ def problems(spec, root=ROOT, schema=None):
                 if isinstance(mb, (int, float)) and isinstance(per_month, (int, float)) and mb > per_month:
                     out.append(("missing", "budgets.runs.kind_month_budget_usd", f"budgets.runs.kind_month_budget_usd is {per_month:g} but job kind {p.get('id')}.{k.get('name')} may spend US${mb:g} a month: raise it to at least {mb:g}"))
         out += _developer_problems(spec, full, root)
+        out += [("wrong value", "features", e) for e in _features_problems(spec, full, root)]
         prof = {k: v for k, v in (spec.get("profile") or {}).items() if k != "limits"} if isinstance(spec.get("profile"), dict) else {}
         if prof and not any(x[1].startswith("profile") for x in out):   # the factory's own profile check (lib/app_profile.py), the one validate and the build run; budgets are the schema's
             for e in app_profile.problems(prof, mold, root, packs=[x for x in ids if isinstance(x, str)]):
@@ -591,6 +632,31 @@ def problems(spec, root=ROOT, schema=None):
         if e[0] == "missing" and m: at[(e[0], e[1])] = len(uniq)
         uniq.append(e)
     return uniq
+
+def _spec_profile(spec):
+    """The profile the spec writes (its top-level audit and features folded in, as the brief path does)."""
+    prof = dict(spec.get("profile") or {}) if isinstance(spec.get("profile"), dict) else {}
+    if isinstance(spec.get("audit"), dict): prof["audit"] = {k: v for k, v in spec["audit"].items() if isinstance(v, bool)}
+    if isinstance(spec.get("features"), dict): prof["features"] = dict(spec["features"])
+    return prof
+
+def _pack_docs(full):
+    return [p["pack"] for p in full.get("packs") or [] if isinstance(p, dict) and isinstance(p.get("pack"), dict)]
+
+def effective_features(spec, root=ROOT):
+    """mold_v0: every capability flag's state for the spec (lib/features.py effective), else []."""
+    if spec.get("mold_id") != "mold_v0": return []
+    sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
+    full, _, _ = resolve_packs(spec, root)
+    # the flags are the factory's mold's (ROOT); the packs are where the spec's app lives (root: --from)
+    return F.effective(_spec_profile(spec), _pack_docs(full), ROOT if F.registry(ROOT) else root, kind=spec.get("kind", "tool"))
+
+def _features_problems(spec, full, root):
+    sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
+    if isinstance(spec.get("features"), dict) and F.block_problems(spec["features"], root): return []   # the schema said it
+    errs = F.problems(_spec_profile(spec), _pack_docs(full), root, kind=spec.get("kind", "tool"), at="features")
+    # what the schema rules already say, said once
+    return [e for e in errs if "kind is the switch" not in e and "needs one of" not in e and not (spec.get("kind") == "embedded" and "needs audit.platform" in e)]
 
 def _read_spec(path):
     if not os.path.isfile(path): return None, f"There is no file at {path}."
@@ -620,9 +686,14 @@ def cmd_check(a, root=ROOT):
     summary = (f"{a[0]}: complete for {spec['mold_id']}" if not probs else f"{a[0]}: {len(probs)} thing(s) keep it from being complete for {spec['mold_id']}")
     if as_json:
         res = AR.result(not probs, "done" if not probs else "failed", summary, "" if probs else f"python3 .claude/scripts/mint.py new {spec.get('app_id', '<app_id>')} --spec {a[0]}",
-                        [], "", {"problems": [{"kind": k, "path": p, "message": m} for k, p, m in probs], "notes": notes})
+                        [], "", {"problems": [{"kind": k, "path": p, "message": m} for k, p, m in probs], "notes": notes,
+                                 "features": effective_features(spec, root)})
         AR.emit(res); return 0 if not probs else 1
     print(summary)
+    flags = effective_features(spec, root)
+    if flags:
+        sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
+        print(f"  flags: {F.words(flags)}")
     for k, p, m in probs: print(f"  {k}: {m}")
     for n in notes: print("  " + n)
     if not probs: print(f"next: python3 .claude/scripts/mint.py new {spec.get('app_id', '<app_id>')} --spec {a[0]}")
@@ -642,6 +713,9 @@ def _profile_lines(spec):
     # The audit trails (mold_v0-197): the spec's top-level audit, written to profile.audit (only a trail that is on).
     for k, v in (spec.get("audit") or {}).items():
         if v is True: lines.append(f"audit.{k} = true")
+    # The capability flags (mold_v0-219): the spec's top-level features, each said as it is (true or false).
+    for k, v in (spec.get("features") or {}).items():
+        if isinstance(v, bool): lines.append(f"features.{k} = {'true' if v else 'false'}")
     prof = spec.get("profile") or {}
     for k, v in prof.items():
         if k == "member_keys": lines.append(f"member_keys = {'true' if v else 'false'}")
@@ -711,6 +785,7 @@ def _read_back(spec, text, ids):
     if spec.get("budgets"): prof["limits"] = spec["budgets"]
     on = {k: True for k, v in (spec.get("audit") or {}).items() if v is True}
     if on: prof["audit"] = on
+    if spec.get("features"): prof["features"] = dict(spec["features"])
     got = h.get("profile") or {}
     if json.loads(json.dumps(prof)) != json.loads(json.dumps(got)) and (prof or got):
         out.append(("not supported", "profile", f"the brief's profile lines read back as {json.dumps(got)[:200]}, not the spec's {json.dumps(prof)[:200]} (nothing was written)"))
@@ -797,6 +872,8 @@ def spec_from_state(app_id, root):
         # profile.audit (mold_v0-197) is the spec's top-level audit; its retention days stay the state's own.
         if isinstance(prof.get("audit"), dict):
             au = prof.pop("audit"); spec["audit"] = {k: au[k] for k in ("data", "platform", "sign") if isinstance(au.get(k), bool)}
+        # profile.features (mold_v0-219) is the spec's top-level features.
+        if isinstance(prof.get("features"), dict): spec["features"] = prof.pop("features")
         if prof: spec["profile"] = prof
     else:
         ws = a.get("workspace") or {}; org = ws.get("org") or {}; me = ws.get("operator_self") or {}
@@ -821,10 +898,16 @@ def cmd_apps(a, root=ROOT):
         if spec.get("mold_id") not in MOLDS: rows.append({"app": app, "mold": spec.get("mold_id"), "status": status, "complete": None, "gaps": ["no spec schema for this mold"]}); continue
         gaps = [m for _, _, m in problems(spec, src, load(schema_path(spec["mold_id"], root)))]
         if spec["mold_id"] == "mold_v0": gaps.append("kind and run_keys are not recorded in an app's state yet (the spec carries them; read as the defaults: tool)")
-        rows.append({"app": app, "mold": spec["mold_id"], "status": status, "complete": not [g for g in gaps if not g.startswith("kind and run_keys")], "gaps": gaps})
+        row = {"app": app, "mold": spec["mold_id"], "status": status, "complete": not [g for g in gaps if not g.startswith("kind and run_keys")], "gaps": gaps}
+        flags = effective_features(spec, src)
+        if flags:
+            sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
+            row["features"] = {f["id"]: f["on"] for f in flags}; row["flags"] = F.words(flags)
+        rows.append(row)
     if as_json: print(json.dumps({"apps": rows}, indent=2)); return 0
     for r in rows:
         print(f"{r['app']} ({r['mold']}, {r['status']}): {'complete' if r['complete'] else 'not complete' if r['complete'] is False else 'not checked'}")
+        if r.get("flags"): print(f"  flags: {r['flags']}")
         for g in r["gaps"]: print(f"  - {g}")
     print("read-only: no application was changed")
     return 0
@@ -867,6 +950,20 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "sign": True}})   # mold_v0-195: chain and sign
             ok("audit.sign = true" in lines and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True, "sign": True},
                f"{m}: audit.sign true is written to profile.audit through the brief")
+        if m == "mold_v0":   # mold_v0-219: the capability flags
+            import features as _F
+            x = copy.deepcopy(spec); x["features"] = {"company_email": False, "audit.data": True}
+            ok(problems(x) == [] and to_brief(x, x["app_id"])[1] == [], f"{m}: a features block is complete and reads back through the brief")
+            lines, _ = _profile_lines(x)
+            ok("features.company_email = false" in lines and "features.audit.data = true" in lines, f"{m}: features become features.<flag> lines")
+            x["features"] = {"audit.sign": True}; x["audit"] = {"data": False, "platform": False}
+            ok(any("one of them must be on" in y[2] or "audit" in y[1] for y in problems(x)), f"{m}: audit.sign without a trail is refused")
+            x["features"] = {"developer_surface": True}
+            ok(problems(x) != [], f"{m}: developer_surface true on a tool is refused (kind is the switch)")
+            x["features"] = {"nope": True}
+            ok(any(y[0] == "not supported" for y in problems(x)), f"{m}: an unknown flag is not supported")
+            ok(_F.words(effective_features({**spec, "features": {"health_history": False}})) != _F.words(effective_features(spec)), f"{m}: the effective flags follow the features block")
+            ok(_F.self_test(ROOT) != [], f"{m}: lib/features.py self-test")
         t = copy.deepcopy(spec); t["developer_surface"] = e["developer_surface"]
         ok(any("not supported" == x[0] and "developer_surface" in x[1] for x in problems(t)), f"{m}: a developer surface on a tool is not supported")
         t = copy.deepcopy(spec); t["colour_typo"] = 1; del t["product"]["colour"]
