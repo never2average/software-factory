@@ -34,16 +34,16 @@ another's flags.
 
 ## The yes/no answers
 
-The heart of the product is two questions the product's code asks in one call, each answering yes or no with the reason
-and the records that decided it:
+The heart of the product is one question the product's code asks in one call, answering yes or no with the reason, the
+records that decided it and which of them decided:
 
-- **Is this flag on in this environment?** Given a flag key and an environment, the latest rollout decides: yes when
-  it turned the flag on and the flag is not archived.
-- **Is this flag forced on for this user?** Given a flag key, an environment and a user id, the latest override for
-  that user decides: yes when it turns the flag on and has not expired. With no override, the code asks the first
-  question.
+- **Is this flag on for this user?** Given a flag key, an environment and a user id: the user's latest override for
+  that flag and environment decides when there is one that has not expired (yes when it turns the flag on). Otherwise
+  the latest rollout of the flag in that environment decides: yes when it turned the flag on, the flag is not archived,
+  and the user falls within the rollout's share of users (no share means everyone).
 
-Percentage bucketing happens in the product's SDK, from the rollout's share of users.
+The share is a stable percentage: each user is put in a bucket by a hash of the flag key and their user id, the same
+on every call and in the product's own SDKs, so a user who is in at 10% stays in at 20%.
 
 ## Developer surface
 
@@ -52,8 +52,9 @@ Percentage bucketing happens in the product's SDK, from the rollout's share of u
   started, stopped or concluded), a readout finished, and a deadline passed (a flag past its clean-up date, an
   experiment past its decide-by).
 - SDKs in TypeScript and Python, on the API version of 2026-11-01.
-- Client sessions last 15 minutes, may only read, and work only from https://app.example.com. The yes/no questions are
-  asked by the product's servers, with an API key that holds the checks scope.
+- Client sessions last 15 minutes, may read and ask "is this flag on for this user" (nothing else), and work only
+  from https://app.example.com. The product's servers ask the same question with an API key that holds the checks
+  scope.
 - One incoming webhook, "CI releases": your CI's deployment report, where `/deployments` is the list, each item's
   `/id` is the record key, `/version` its title, and `/service`, `/environment`, `/commit` and `/finished_at` fill the
   release's service, environment, commit and finished time. Only reports of the type `deployment.succeeded` are kept.
@@ -87,7 +88,7 @@ In the app, an agent run is a "readout" and a team's space is a "project".
 
 - **Overview**: four headline numbers (active flags, flags past their clean-up date, rollout changes this week,
   running experiments), the getting-started steps (create a flag, turn it on in development, ask "is this flag on"
-  from your code or AI app, connect your AI app), and charts of flags by type, rollout changes and releases per week
+  from your code or AI app, done once it has been asked, connect your AI app), and charts of flags by type, rollout changes and releases per week
   over 8 weeks, changes by environment, and how experiments ended.
 - Under **Flags**: **Flags** (main button "New flag"), **Rollouts** ("Change a rollout"), **User overrides**
   ("Override for a user") and **Releases** (no button: releases only come from CI).
@@ -95,8 +96,9 @@ In the app, an agent run is a "readout" and a team's space is a "project".
 - Settings has the Developers page for API keys, webhooks, allowed origins and incoming webhooks.
 
 What the AI assistant is told: Flagwell keeps a project's flags, rollouts and per-user overrides (append-only and
-hash-chained), experiments and releases; to know whether a flag is on, ask "is it forced on for this user" first, then
-"is it on in this environment", never guess from the lists; a change is a new rollout, never an edit.
+hash-chained), experiments and releases; to know whether a flag is on for a user, ask "is this flag on for this user"
+(it weighs the user's override, then the rollout and its share), never guess from the lists; a change is a new
+rollout, never an edit.
 
 ## Security and records of access
 

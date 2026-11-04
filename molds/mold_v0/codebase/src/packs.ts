@@ -100,10 +100,11 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   }
   const generated = new Set(catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => t.name));
   // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, a pack's (mold_v0-011),
-  // or one generated for the customer MCP (mold_v0-060).
+  // one generated for the customer MCP (mold_v0-060), or a declarative check's (check_<name>, mold_v0-225).
+  const checkToolNames = new Set(out.flatMap((p) => (p.definition.checks ?? []).map((c) => checkToolName(String((c as { name?: unknown }).name)))));
   for (const p of out) for (const st of p.definition.onboarding ?? []) for (const cond of [st.done_when, st.how ?? ""]) {
     const [what, arg] = cond.split(":", 2);
-    if (what === "tool" && arg && !toolOwner.has(arg) && !generated.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
+    if (what === "tool" && arg && !toolOwner.has(arg) && !generated.has(arg) && !checkToolNames.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's, any pack's nor a check's)`);
   }
   // A link or reference names an area some pack in this build declares; a shared (platform) area's rows are every
   // workspace's, so they may refer only to shared areas, never to one workspace's records (mold_v0-057).

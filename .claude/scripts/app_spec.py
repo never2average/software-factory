@@ -153,8 +153,12 @@ def _common(mold, root):
                                   "allowed_origins": {"type": "array", "minItems": 1, "uniqueItems": True,
                                                       **D("The host pages allowed to embed the app: https origins like https://app.example.com."),
                                                       "items": {"type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]{2,5})?$", "x-hint": "an https origin like https://app.example.com"}},
-                                  "scopes": {"type": "array", "uniqueItems": True, **D("What a client session may do, e.g. read, write, run. Absent: read and write."),
-                                             "items": {"type": "string", "pattern": "^[a-z][a-z0-9_:.-]{1,40}$"}}}},
+                                  "scopes": {"type": "array", "uniqueItems": True, "maxItems": 50,
+                                             **D("What a client session may do: read, write, run or checks (ask the app's yes/no checks), each maybe narrowed "
+                                                 "to one area, job kind or check (read:<area>, checks:<check>). Absent: read and write. A session never holds "
+                                                 "more than the key that mints it."),
+                                             "items": {"type": "string", "pattern": "^(read|write|run|checks)(:[a-z][a-z0-9_]{0,63})?$",
+                                                       "x-hint": "read, write, run or checks, or one narrowed like read:<area> or checks:<check>"}}}},
           "webhooks_in": {"type": "array", "maxItems": 20, "title": "Inbound webhook receivers",
                           **D("Optional: receivers that write a verified (Standard Webhooks) payload into one of the app's workspace record areas.",
                               "Optional: each receiver writes a signed payload (or each item of a list in it) into a workspace record area: `name`, `area`, "
@@ -751,6 +755,18 @@ def _developer_problems(spec, full, root):
             a = areas.get((r or {}).get("area"))
             if not a or a.get("scope") != "workspace":
                 out.append(("wrong value", f"developer_surface.webhooks_in[{i}].area", f"developer_surface.webhooks_in[{i}].area: {(r or {}).get('area')!r} is not a workspace record area of the app's inline packs"))
+        # A client session's narrowed scopes (mold_v0-224) name what the inline packs declare: an area, a job kind, a check.
+        checks = {c.get("name") for p in inline for c in (p["pack"].get("checks") or []) if isinstance(c, dict)}
+        kinds = {k.get("name") for p in inline for k in (p["pack"].get("job_kinds") or []) + (p["pack"].get("agent_job_kinds") or []) if isinstance(k, dict)}
+        for s in ((ds.get("client_sessions") or {}).get("scopes") or []):
+            base, _, target = str(s).partition(":")
+            if not target: continue
+            if base == "checks" and target not in checks:
+                out.append(("wrong value", "developer_surface.client_sessions.scopes", f"developer_surface.client_sessions.scopes: {s}: {target} is not a check of the app's inline packs ({', '.join(sorted(checks)) or 'none'})"))
+            elif base in ("read", "write") and target not in areas:
+                out.append(("wrong value", "developer_surface.client_sessions.scopes", f"developer_surface.client_sessions.scopes: {s}: {target} is not a record area of the app's inline packs"))
+            elif base == "run" and target not in kinds:
+                out.append(("wrong value", "developer_surface.client_sessions.scopes", f"developer_surface.client_sessions.scopes: {s}: {target} is not a job kind of the app's inline packs"))
         own = [p["id"] for p in inline if "developer_surface" in p["pack"]]
         if own: out.append(("wrong value", "developer_surface", f"developer_surface: pack {own[0]} declares its own too: say it once (in the spec)"))
     return out
@@ -885,6 +901,13 @@ def self_test():
             ok(any("record.exploded" in y for y in msgs) and any("not go" in y for y in msgs), "mold_v0: an event it does not emit and an SDK it does not generate are refused")
             x = copy.deepcopy(e); x["packs"] = []
             ok(any("give at least one pack inline" in y[2] for y in problems(x)), "mold_v0: an embedded app's developer surface needs an inline pack to go into")
+            # mold_v0-224: client sessions may hold checks (all, or one named check); never a scope a session cannot hold.
+            x = copy.deepcopy(e); x["developer_surface"]["client_sessions"]["scopes"] = ["read", "checks"]
+            ok(problems(x) == [], f"mold_v0: client sessions holding read and checks are complete ({problems(x)[:2]})")
+            x["developer_surface"]["client_sessions"]["scopes"] = ["checks:no_such_check"]
+            ok(any("no_such_check is not a check" in y[2] for y in problems(x)), "mold_v0: a session scope checks:<name> names a check of the app's inline packs")
+            x["developer_surface"]["client_sessions"]["scopes"] = ["sessions"]
+            ok(problems(x) != [], "mold_v0: a client session never holds sessions (nor webhooks)")
         e["audit"]["platform"] = False
         ok(any("audit.platform" in x[2] for x in problems(e)), f"{m}: kind embedded with audit.platform false is refused")
         if m == "mold_v0":   # mold_v0-197: the top-level audit becomes the brief's audit lines, read back into profile.audit

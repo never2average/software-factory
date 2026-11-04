@@ -43,10 +43,15 @@ export const TEST_EVENT = "webhook.test";
  */
 export const BASE_SCOPES = ["read", "write", "run", "sessions", "webhooks", "checks"] as const;
 export type BaseScope = (typeof BASE_SCOPES)[number];
-/** What a client session may ever hold (a browser or phone never manages keys, sessions or webhooks). */
+/**
+ * What a client session may ever hold (a browser or phone never manages keys, sessions or webhooks): read, write, run
+ * and checks, each maybe narrowed (`checks:<name>`, mold_v0-224). The declaration's client_sessions.scopes, the pack
+ * schema (src/pack-manifest.ts) and the app spec's schema take exactly these (SESSION_SCOPE_PATTERN).
+ */
 export const SESSION_SCOPES = ["read", "write", "run", "checks"] as const;
 export const DEFAULT_SESSION_SCOPES = ["read", "write"];
 export const SCOPE_PATTERN = /^(read|write|run|sessions|webhooks|checks)(:[a-z][a-z0-9_]{0,63})?$/;
+export const SESSION_SCOPE_PATTERN = /^(read|write|run|checks)(:[a-z][a-z0-9_]{0,63})?$/;
 
 export const SDK_LANGUAGES = ["typescript", "python"] as const;
 
@@ -80,10 +85,11 @@ const NAME = /^[a-z][a-z0-9_]{0,63}$/;
 export interface AreaFacts { name: string; scope: string; fields: string[]; sealed?: boolean }
 
 /**
- * Every problem of a declaration against the build's areas and job kinds, as sentences; none: it is sound. The shape
- * itself (types, lengths) is src/pack-manifest.ts's; this is what only the whole build can say.
+ * Every problem of a declaration against the build's areas, job kinds and declarative checks (`checks`: their names;
+ * absent: not checked), as sentences; none: it is sound. The shape itself (types, lengths) is src/pack-manifest.ts's;
+ * this is what only the whole build can say.
  */
-export function developerSurfaceProblems(cfg: DeveloperSurfaceConfig, areas: AreaFacts[]): string[] {
+export function developerSurfaceProblems(cfg: DeveloperSurfaceConfig, areas: AreaFacts[], checks?: readonly string[], kinds?: readonly string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const [i, e] of (cfg.events ?? []).entries()) {
@@ -100,9 +106,14 @@ export function developerSurfaceProblems(cfg: DeveloperSurfaceConfig, areas: Are
   if (cs) {
     for (const o of cs.allowed_origins ?? []) if (!ORIGIN.test(o)) out.push(`client_sessions.allowed_origins: ${o} is not an https origin like https://app.example.com`);
     for (const s of cs.scopes ?? []) {
-      const base = s.split(":")[0]!;
-      if (!SCOPE_PATTERN.test(s) || !(SESSION_SCOPES as readonly string[]).includes(base)) out.push(`client_sessions.scopes: ${s} is not a scope a client session may hold (${SESSION_SCOPES.join(", ")}, or one narrowed like read:<area>)`);
+      const [base, target] = s.split(":") as [string, string?];
+      if (!SESSION_SCOPE_PATTERN.test(s)) { out.push(`client_sessions.scopes: ${s} is not a scope a client session may hold (${SESSION_SCOPES.join(", ")}, or one narrowed like read:<area> or checks:<check>)`); continue; }
+      if (target === undefined) continue;
+      if ((base === "read" || base === "write") && !areas.some((a) => a.name === target)) out.push(`client_sessions.scopes: ${s}: ${target} is not one of the build's record areas`);
+      if (base === "checks" && checks && !checks.includes(target)) out.push(`client_sessions.scopes: ${s}: ${target} is not one of the build's checks${checks.length ? ` (${checks.join(", ")})` : " (it declares none)"}`);
+      if (base === "run" && kinds && !kinds.includes(target)) out.push(`client_sessions.scopes: ${s}: ${target} is not one of the build's job kinds`);
     }
+    if ((cs.scopes ?? []).some((s) => s.split(":")[0] === "checks") && checks && !checks.length) out.push("client_sessions.scopes: checks: the build declares no check (pack.json checks) for a session to ask");
   }
   const names = new Set<string>();
   for (const [i, r] of (cfg.webhooks_in ?? []).entries()) {
