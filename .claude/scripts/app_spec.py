@@ -4,10 +4,12 @@
   app_spec.py generate [--check]        write schemas/<mold_id>.app.schema.json for every mold that has spec rules
                                         (mold_v0, mold_v1) from the molds and the factory's own schemas; --check writes
                                         nothing and exits 1 when a file on disk is not what generation gives (stale)
-  app_spec.py check <spec.json> [--json]
+  app_spec.py check <spec.json> [--json] [--records]
                                         is the spec complete for its mold? Every problem in plain words: "missing: ...",
                                         "not supported: ...", "wrong value: ...". Exit 0 complete, 1 not yet, 2 could
-                                        not check (no such file, not JSON, no mold_id, a mold with no schema)
+                                        not check (no such file, not JSON, no mold_id, a mold with no schema). mold_v0:
+                                        every record area's contract too (lib/records.py, docs/RECORDS.md); --records
+                                        prints each area's (declared or derived), --json carries them as "records"
   app_spec.py brief <spec.json> --app <app_id>
                                         print the brief the spec turns into (what `mint.py new --spec` writes)
   app_spec.py apps [--json] [--from <checkout>]
@@ -613,6 +615,7 @@ def problems(spec, root=ROOT, schema=None):
                 if isinstance(mb, (int, float)) and isinstance(per_month, (int, float)) and mb > per_month:
                     out.append(("missing", "budgets.runs.kind_month_budget_usd", f"budgets.runs.kind_month_budget_usd is {per_month:g} but job kind {p.get('id')}.{k.get('name')} may spend US${mb:g} a month: raise it to at least {mb:g}"))
         out += _developer_problems(spec, full, root)
+        out += _records_problems(full)
         out += [("wrong value", "features", e) for e in _features_problems(spec, full, root)]
         prof = {k: v for k, v in (spec.get("profile") or {}).items() if k != "limits"} if isinstance(spec.get("profile"), dict) else {}
         if prof and not any(x[1].startswith("profile") for x in out):   # the factory's own profile check (lib/app_profile.py), the one validate and the build run; budgets are the schema's
@@ -636,6 +639,27 @@ def problems(spec, root=ROOT, schema=None):
         if e[0] == "missing" and m: at[(e[0], e[1])] = len(uniq)
         uniq.append(e)
     return uniq
+
+def _records_problems(full):
+    """mold_v0-222: every record area's contract (lib/records.py, docs/RECORDS.md): a declared one held to what the build
+    does; an area without one where the derivation cannot decide (nothing writes its rows; a list tab with no primary
+    action and no reason)."""
+    sys.path.insert(0, os.path.join(HERE, "lib")); import records
+    out = []
+    for i, p in enumerate(full.get("packs") or []):
+        if not (isinstance(p, dict) and isinstance(p.get("pack"), dict)): continue
+        for r in records.resolve([p["pack"]]):
+            j = next((n for n, a in enumerate(p["pack"].get("record_areas") or []) if isinstance(a, dict) and a.get("name") == r["area"]), 0)
+            for e in records.area_problems(r):
+                out.append(("missing" if (" is missing" in e or not r["declared"]) else "wrong value", f"packs[{i}].pack.record_areas[{j}].contract", e))
+    return out
+
+def spec_records(spec, root=ROOT):
+    """mold_v0: every record area's resolved contract (lib/records.py resolve), else []."""
+    if spec.get("mold_id") != "mold_v0": return []
+    sys.path.insert(0, os.path.join(HERE, "lib")); import records
+    full, _, _ = resolve_packs(spec, root)
+    return records.resolve(_pack_docs(full))
 
 def _spec_profile(spec):
     """The profile the spec writes (its top-level audit and features folded in, as the brief path does)."""
@@ -672,7 +696,7 @@ def _read_spec(path):
     return spec, None
 
 def cmd_check(a, root=ROOT):
-    as_json = "--json" in a; a = [x for x in a if x != "--json"]
+    as_json, show = "--json" in a, "--records" in a; a = [x for x in a if x not in ("--json", "--records")]
     if not a: print(__doc__, file=sys.stderr); return 2
     import agent_result as AR
     spec, err = _read_spec(os.path.abspath(a[0]))
@@ -691,13 +715,21 @@ def cmd_check(a, root=ROOT):
     if as_json:
         res = AR.result(not probs, "done" if not probs else "failed", summary, "" if probs else f"python3 .claude/scripts/mint.py new {spec.get('app_id', '<app_id>')} --spec {a[0]}",
                         [], "", {"problems": [{"kind": k, "path": p, "message": m} for k, p, m in probs], "notes": notes,
-                                 "features": effective_features(spec, root)})
+                                 "features": effective_features(spec, root),
+                                 "records": [{k: r[k] for k in ("pack", "area", "scope", "role", "declared", "contract", "primary_where", "list", "facts")} for r in spec_records(spec, root)]})
         AR.emit(res); return 0 if not probs else 1
     print(summary)
     flags = effective_features(spec, root)
     if flags:
         sys.path.insert(0, os.path.join(HERE, "lib")); import features as F
         print(f"  flags: {F.words(flags)}")
+    recs = spec_records(spec, root)
+    if recs:
+        sys.path.insert(0, os.path.join(HERE, "lib")); import records as RC
+        n = sum(1 for r in recs if r["declared"])
+        print(f"  records: {len(recs)} area(s), {n} with a declared contract" + ("" if show else " (--records: each area's contract)"))
+        if show:
+            for r in recs: print(f"    {RC.line(r)}")
     for k, p, m in probs: print(f"  {k}: {m}")
     for n in notes: print("  " + n)
     if not probs: print(f"next: python3 .claude/scripts/mint.py new {spec.get('app_id', '<app_id>')} --spec {a[0]}")
@@ -1042,6 +1074,26 @@ def self_test():
     ok(any(x[0] == "not supported" and "workspace.owner" in x[1] for x in problems(t)), "mold_v0: a workspace owner is not supported (companies are made in the app)")
     t = copy.deepcopy(v0); t["packs"] = ["nope_not_here"]
     ok(any("not on this machine" in x[2] for x in problems(t)), "mold_v0: a pack named by id that is not on this machine is said")
+    # mold_v0-222: the record contract (lib/records.py, docs/RECORDS.md)
+    sys.path.insert(0, os.path.join(HERE, "lib")); import records as _R
+    ok(_R.self_test() != [], "mold_v0: lib/records.py self-test")
+    ex = os.path.join(ROOT, "examples", "mold_v0", "field-service", "spec.json")
+    if os.path.isfile(ex):
+        fs = load(ex); recs = spec_records(fs)
+        ok(problems(fs) == [] and recs and all(r["declared"] for r in recs), "mold_v0: the worked example (examples/mold_v0/field-service) declares every area's contract and is complete")
+        full, _, _ = resolve_packs(fs, ROOT); t = copy.deepcopy(fs); t["packs"] = full["packs"]
+        wo = next(a for a in t["packs"][0]["pack"]["record_areas"] if a["name"] == "work_orders")
+        wo["contract"]["actions"]["delete"] = ["member", "owner"]; wo["contract"]["provenance"] = ["people"]
+        msgs = [x[2] for x in problems(t)]
+        ok(any("actions.delete says member, owner but the build gives owner" in x for x in msgs) and any("leaves out intake" in x for x in msgs),
+           "mold_v0: a contract that says more or less than the build does is refused, with what the build gives")
+        del wo["contract"]; t["packs"][0]["pack"]["mcp"]["exclude"] = ["wrenchline_create_work_orders", "wrenchline_update_work_orders", "wrenchline_move_work_orders"]
+        t["packs"][0]["pack"].pop("email"); t["features"] = {"company_email": False}
+        for tb in t["packs"][0]["pack"]["tabs"]:
+            if tb.get("area") == "work_orders": tb.pop("action", None)
+        msgs = [x[2] for x in problems(t)]
+        ok(any("work_orders: nothing in its declaration writes its rows" in x for x in msgs) and any("work_orders: tab work-orders shows it with no primary action and no reason" in x for x in msgs),
+           "mold_v0: an area without a contract whose rows nothing writes, or whose list has no primary action or reason, is incomplete")
     v1 = load(os.path.join(ROOT, SCHEMA_DIR, "examples", "mold_v1.example.app.json"))
     import tempfile as _tf
     with _tf.TemporaryDirectory() as r_:   # mold_v0-223: a mold_v1 pack given by path is placed in packs/<id>/ by mint new --spec

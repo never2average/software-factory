@@ -89,6 +89,11 @@ through the same check `factory.py validate` and the build use.
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |
   encrypted | searchable | reveal owner`. The pack schema refuses it elsewhere; molds/mold_v0/MOLD.md "Encrypted fields".
+- **Records** (mold_v0-222; [RECORDS.md](RECORDS.md)): every record area of every mold_v0 pack has a contract (its
+  provenance, who may read, create, update, move, delete, reveal, export and import, its list's primary action or why it
+  has none). A pack may declare it (`record_areas[].contract`); `spec check` holds a declared one to what the build does
+  and derives it for an area that declares none, which is then incomplete only when nothing writes its rows or its list
+  tab has no primary action and no reason. `spec check <file> --records` prints each area's contract.
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on
   Vercel, `run_keys.sandbox` (`boat`). `compose_remote` needs `product.domain`. At least one platform administrator.
@@ -97,7 +102,7 @@ through the same check `factory.py validate` and the build use.
 ## Commands
 
 ```
-python3 .claude/scripts/factory.py spec check <file> [--json]   # complete? exit 0 yes, 1 no (each problem in plain words), 2 could not check
+python3 .claude/scripts/factory.py spec check <file> [--json] [--records]   # complete? exit 0 yes, 1 no (each problem in plain words), 2 could not check
 python3 .claude/scripts/mint.py new <app_id> --spec <file>      # mint from it (the same state the brief path writes)
 python3 .claude/scripts/factory.py spec apps [--json]           # every app's state read as a spec: what each still lacks (read-only)
 python3 .claude/scripts/factory.py spec generate [--check]      # regenerate the schemas

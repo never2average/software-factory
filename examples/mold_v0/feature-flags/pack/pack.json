@@ -57,6 +57,20 @@
       "append_only": true,
       "chain": true,
       "list_columns": ["flag", "environment", "enabled", "percentage", "changed_on"],
+      "contract": {
+        "provenance": ["people"],
+        "actions": {
+          "read": ["viewer", "member", "billing", "owner"],
+          "export": ["viewer", "member", "billing", "owner"],
+          "create": ["member", "billing", "owner"],
+          "update": { "none": "Append-only: a rollout is never changed, the next one supersedes it" },
+          "move": { "none": "Append-only, and no lifecycle" },
+          "delete": { "none": "Append-only and chained: the database refuses a delete" },
+          "reveal": { "none": "No encrypted field" },
+          "import": { "none": "The shell has no import for a team's own records yet" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "flag", "label": "Flag", "type": "reference", "to": "flags", "required": true },
         { "name": "environment", "label": "Environment", "type": "enum", "required": true, "options": [

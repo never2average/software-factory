@@ -755,6 +755,85 @@ export function clockProblems(a: { scope: string; fields: z.output<typeof field>
   return out;
 }
 
+// ---------- the record contract (mold_v0-222; docs/RECORDS.md in the factory) ----------
+
+/**
+ * Where an area's rows come from (mold_v0-222):
+ *   staff        platform staff by hand: the staff record pages' New, Edit, Override and Import, /api/admin/data, the
+ *                admin MCP (a shared area; a workspace area only through a write tool the pack made admin_only)
+ *   people       the workspace's own people and their AI clients by hand: the tab's create form, the data API, the
+ *                generated create, update and move tools (a workspace area whose writes are not withheld)
+ *   repository   the area's `repository`: its index, or its live API
+ *   intake       the company email's intake (the pack's `email.intake.area`): one record per message
+ *   run          the pack's own code during a run (onWorkspaceCommit, ctx.records): never derived, only declared
+ * The runtime keeps a shared row's provenance (staff or repository, mold_v0-221); a workspace row's is not stored.
+ */
+export const RECORD_PROVENANCES = ["staff", "people", "repository", "intake", "run"] as const;
+/** The actions a record contract speaks for (mold_v0-222): the record store's five, plus reveal, export and import. */
+export const CONTRACT_ACTIONS = ["read", "create", "update", "move", "delete", "reveal", "export", "import"] as const;
+/** The primary actions an area's list tab may have (mold_v0-208, TabActionSchema below; new_schedule is a schedules tab's). */
+export const CONTRACT_PRIMARY = ["create_record", "start_run", "link"] as const;
+const contractReason = z.string().trim().min(1).max(300).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets");
+/** Who may do an action: workspace roles, platform staff with a permission (a shared area), or nobody and why. */
+const contractGrant = z.union([
+  z.array(role).min(1).max(4).describe("The workspace roles that may (as the record store, src/record-areas.ts allowedRoles, resolves them)"),
+  z.object({ staff: z.enum(["library", "delete"]).describe("Platform staff with this permission (src/admin-roles.ts)") }).strict(),
+  z.object({ none: contractReason.describe("Why nobody may (shown nowhere; for people and the factory's spec check)") }).strict(),
+]);
+/**
+ * A record area's contract (mold_v0-222): what the area promises, said in one place and checked against what the shell
+ * does with the rest of the declaration. Read by no runtime code: the build checks what one area can tell alone (below);
+ * the factory's `spec check` checks the rest (its permissions' defaults, the pack's mcp settings, its tabs, its email
+ * intake) and derives the contract of an area that declares none (docs/RECORDS.md).
+ *   provenance       where its rows come from (RECORD_PROVENANCES)
+ *   actions          each of CONTRACT_ACTIONS: the roles that may, {staff: permission}, or {none: reason}
+ *   primary_action   its list tab's primary action (create_record, start_run, link), or {none: reason}
+ */
+export const RecordContractSchema = z.object({
+  provenance: z.array(z.enum(RECORD_PROVENANCES)).min(1).max(RECORD_PROVENANCES.length)
+    .describe("Where the area's rows come from: staff, people, repository, intake, run (docs/RECORDS.md)"),
+  actions: z.object({
+    read: contractGrant, create: contractGrant, update: contractGrant, move: contractGrant,
+    delete: contractGrant, reveal: contractGrant, export: contractGrant, import: contractGrant,
+  }).strict().describe("Every action, each the roles that may, {staff: permission} or {none: reason}"),
+  primary_action: z.union([z.enum(CONTRACT_PRIMARY), z.object({ none: contractReason }).strict()])
+    .describe("The area's list tab's primary action, or {none: reason} (no tab shows it, or the tab has none)"),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type RecordContract = z.output<typeof RecordContractSchema>;
+export type ContractGrant = z.output<typeof contractGrant>;
+
+/** What a record area's contract says that the area's own declaration contradicts (mold_v0-222), each with its path. */
+export function contractProblems(a: {
+  scope: string; repository?: string; lifecycle?: unknown; append_only?: boolean; fields: { encrypted?: boolean }[]; contract?: RecordContract;
+}): { message: string; path: (string | number)[] }[] {
+  const c = a.contract;
+  if (!c) return [];
+  const out: { message: string; path: (string | number)[] }[] = [];
+  const bad = (message: string, ...path: (string | number)[]) => out.push({ message, path });
+  const shared = a.scope === "platform";
+  if (new Set(c.provenance).size !== c.provenance.length) bad("a provenance is listed twice", "provenance");
+  if (a.repository !== undefined && !c.provenance.includes("repository")) bad(`its rows come from repository ${a.repository}: provenance names repository`, "provenance");
+  if (a.repository === undefined && c.provenance.includes("repository")) bad("provenance repository needs the area's repository", "provenance");
+  for (const p of ["people", "intake", "run"] as const)
+    if (shared && c.provenance.includes(p)) bad(`a shared (platform) area's rows come from staff or its repository, not ${p}`, "provenance");
+  const g = c.actions;
+  const none = (x: ContractGrant) => typeof x === "object" && !Array.isArray(x) && "none" in x;
+  const staff = (x: ContractGrant) => typeof x === "object" && !Array.isArray(x) && "staff" in x;
+  for (const k of CONTRACT_ACTIONS) {
+    const x = g[k];
+    if (Array.isArray(x) && new Set(x).size !== x.length) bad("a role is listed twice", "actions", k);
+    if (staff(x) && (!shared || ["read", "move", "reveal", "export"].includes(k))) bad(`{staff} is for a shared area's create, update, delete or import (platform staff write it)`, "actions", k);
+    if (Array.isArray(x) && shared && !["read", "export"].includes(k)) bad(`a shared (platform) area is written by platform staff only: ${k} is {staff: ...} or {none: reason}`, "actions", k);
+    if (Array.isArray(x) && x.includes("viewer") && ["create", "update", "move", "delete", "import"].includes(k)) bad(`viewer is read-only in the platform: a contract cannot let a viewer ${k}`, "actions", k);
+  }
+  if (!none(g.move) && !a.lifecycle) bad("move is a lifecycle's: an area without one says {none: reason}", "actions", "move");
+  if (!none(g.reveal) && !a.fields.some((f) => f.encrypted)) bad("reveal is for encrypted fields: an area without one says {none: reason}", "actions", "reveal");
+  if (a.append_only) for (const k of ["update", "move", "delete"] as const) if (!none(g[k])) bad(`an append-only area's records are never changed: ${k} is {none: reason}`, "actions", k);
+  if (!shared && !none(g.import)) bad("the shell has no import for a workspace's own records (docs/RECORDS.md, follow-ups): import is {none: reason}", "actions", "import");
+  return out;
+}
+
 /**
  * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
  * across every pack in a build (they are the `area` of the MCP tools and the path of the console pages). A `link`
@@ -819,6 +898,11 @@ export const RecordAreaSchema = z.object({
   /** Deadlines its records run against, with reminders and escalation (mold_v0-191; ClockSchema above). */
   clocks: z.array(ClockSchema).max(5).optional(),
   /**
+   * The area's contract (mold_v0-222; RecordContractSchema above): its provenance, who may do each action, its primary
+   * action. Declarative: no runtime code reads it; contractProblems refuses one its own declaration contradicts.
+   */
+  contract: RecordContractSchema.optional(),
+  /**
    * Example records of a shared (platform) area (mold_v0-170), for the test lanes only: the lane world
    * (molds/mold_v0/testing/console/world.mts) writes them into its throwaway database, so the area's console pages are
    * graded with rows as well as empty. A deployed build never writes them; the lane checks each against the area's
@@ -864,6 +948,7 @@ export const RecordAreaSchema = z.object({
   if (a.due && !(a.role === "check" && a.scope === "workspace")) bad("due is for a check area of workspace scope (each workspace's own dates)", "due");
   if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
   for (const p of clockProblems(a, a.clocks ?? [])) bad(p.message, "clocks", ...p.path);
+  for (const p of contractProblems(a)) bad(p.message, "contract", ...p.path);
   const p = a.permissions;
   if (p) for (const k of ["create", "update", "move", "delete"] as const) {
     if (a.scope === "platform" && p[k]) bad(`a shared (platform) area is written by platform staff only: declare read alone`, "permissions", k);

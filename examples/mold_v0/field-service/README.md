@@ -10,6 +10,7 @@ mint the spec it produced directly.
 - Company email: a connected mailbox turns each email into a P3 work order with both clocks running; the team may send from its own mail server.
 - Two agent job kinds that write markdown reports: a visit report started on one visit, and a preventive plan on a Monday schedule that may read a building-telemetry service with an optional, write-only workspace credential.
 - Metrics, charts, the Overview's four headline numbers, list tabs with their four cards and a primary button each (create a record, start a report, add a schedule), onboarding steps and the app's own words (a run is a "draft").
+- Every record area's contract declared (provenance, who may do each action, the list's primary action): the worked example of [docs/RECORDS.md](../../../docs/RECORDS.md).
 - The data access trail on, member keys on, runners inside a customer's network off; per-run and per-month budgets; legal pages; email sender and notification groups.
 
 ## The files

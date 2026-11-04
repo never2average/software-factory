@@ -70,6 +70,7 @@
     "test:proxy-hops": "tsx scripts/proxy-hops-test.ts",
     "test:data-repositories": "tsx scripts/data-repositories-test.ts",
     "test:record-import": "tsx scripts/record-import-test.ts",
+    "test:record-contract": "tsx scripts/record-contract-test.ts",
     "test:runs": "tsx scripts/runs-test.ts",
     "test:agent-runner": "tsx scripts/agent-runner-test.ts",
     "test:required-outputs": "tsx scripts/required-outputs-test.ts",

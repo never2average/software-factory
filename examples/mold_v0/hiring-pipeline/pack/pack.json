@@ -51,6 +51,21 @@
       "role": "check",
       "scope": "workspace",
       "list_columns": ["role", "stage", "source", "recruiter", "applied_on"],
+      "contract": {
+        "$comment": "mold_v0-222: viewers never see a candidate, so they cannot export one either; the contact details stay masked on every read until a member or owner reveals them (each reveal in the data trail).",
+        "provenance": ["people"],
+        "actions": {
+          "read": ["member", "billing", "owner"],
+          "export": ["member", "billing", "owner"],
+          "create": ["member", "owner"],
+          "update": ["member", "owner"],
+          "move": ["member", "owner"],
+          "delete": ["owner"],
+          "reveal": ["member", "owner"],
+          "import": { "none": "The shell has no import for a team's own records yet" }
+        },
+        "primary_action": "create_record"
+      },
       "fields": [
         { "name": "role", "label": "Role", "type": "reference", "to": "roles", "required": true },
         { "name": "stage", "label": "Stage", "type": "enum", "options": [

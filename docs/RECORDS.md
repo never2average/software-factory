@@ -1,0 +1,258 @@
+# Records: the record contract of a mold_v0 app
+
+A mold_v0 app keeps its data in **record areas**: lists of records a pack declares in its `pack.json` (`record_areas`),
+with no code. This page is the whole contract of one area: what its fields can be, whose rows it holds, where they come
+from, who may do what to them, how its list looks, and what else the shell does with them (clocks, chains, documents,
+Settings). It describes what the mold does **today** (`molds/mold_v0/codebase`, as of mold_v0-222), names the file that
+does each part, and lists at the end what it does not do yet.
+
+The schema is the mold's own: `molds/mold_v0/codebase/packs/pack.schema.json` (generated from `src/pack-api.ts`), embedded
+whole in the app spec's schema (`schemas/mold_v0.app.schema.json`, `app_spec.py generate`), so an editor checks an inline
+pack's areas as you type. `factory.py spec check` adds the completeness rules below.
+
+## 1. An area
+
+```json
+{ "name": "work_orders", "label": "Work orders", "role": "check", "scope": "workspace", "fields": [ ... ] }
+```
+
+| Key | What it says |
+|---|---|
+| `name` | Unique in the build: the area's address (`/app/records/<name>`, `/api/data/<name>`) and the MCP tools' last word. `areas` is reserved. |
+| `label`, `description`, `rows`, `version` | People's words. `rows` (what one row is and how it is keyed) and `version` (where a shared row's version comes from) are read by no code. |
+| `role` | `source`, `check` or `asset`: what a run's results may name (src/runs.ts). An `asset` area is always sealed and always workspace scope. |
+| `scope` | `workspace` (each workspace's own rows, `workspace_records` under row-level security) or `platform`: **shared** by every workspace (`platform_records`; the tenant role may only read it). |
+| `fields` | 1 to 60 (section 2). |
+| `list_columns` | Up to 8 fields the list shows (default: the first four). |
+| `links` | `{field, area}`: a field whose value is another area's key (a `reference` field makes its own). |
+| `lifecycle` | States (one single-choice enum field), the initial state and the moves between them, each with the roles that may (workspace areas). |
+| `permissions` | `read`, `create`, `update`, `move`, `delete`: lists of roles (section 4). |
+| `repository` | Where rows come from when not the shell's own tables (section 3). |
+| `sealed` | Title and data encrypted at rest with the workspace's key (workspace areas). |
+| `append_only`, `chain` | Section 6. |
+| `due`, `clocks` | Section 6. |
+| `settings` | Section 7. |
+| `samples` | Up to 20 example rows of a shared area, written only by the test lanes' throwaway database. |
+| `contract` | The area's contract in one place (section 8). |
+
+## 2. Field types
+
+Every field has a `name` (lowercase, 2 to 63 characters), a `label`, a `type` (default `text`), and optionally `help` and
+`required` (a write that leaves it empty is refused). Checked on every write by the record store (`src/record-areas.ts`).
+
+| Type | Holds | Options |
+|---|---|---|
+| `text` | a string | `max_length` (1 to 20000) |
+| `number` | a finite number | `min`, `max` |
+| `date` | a date | |
+| `boolean` | true or false | |
+| `json` | any JSON value | |
+| `enum` | one of `options` (values, or `{value, label}`) | `multiple`: a list of them |
+| `person` | a person of the workspace, by sign-in id | `multiple` |
+| `reference` | the key of a record of area `to`, checked on write as the writer sees it | `multiple`; a shared area refers only to shared areas |
+| `link` | the older form of a reference (a key or list of keys, through the area's `links`) | |
+| `file` | a file: a path in the workspace store, or a **stored file** `{object, name, size, content_type, sha256}` kept sealed for the record (mold_v0-220, `src/record-files.ts`) | `multiple`: **files** |
+
+Three markers on top of the type:
+
+- **URL with a document preview**: a `text` field with `"preview": "document"` holds a URL; the record's card fetches
+  the document (only from the pack's `documents.hosts`, over HTTPS, private addresses refused), keeps a copy in the
+  object store and previews it (PDF, images, plain text, sanitised HTML), with Download (`src/document-fetch.ts`).
+  There is no separate `url` type.
+- **Encrypted**: `"encrypted": true` seals the value with the workspace's data key; every read shows `[encrypted]`, and
+  only an explicit reveal returns it, to the field's `reveal_roles` (default: the roles that may update the area), each
+  reveal in the data trail (mold_v0-194, `src/encrypted-fields.ts`). Workspace areas of the shell's tables; text,
+  number, date, boolean, json or a single enum; never a field the lifecycle, a due date, a link or a clock uses.
+- **Searchable**: `"searchable": "equality"` on an encrypted field keeps a keyed blind index beside it, so a filter
+  `{field: value}` finds it. No other operator and no sort.
+
+## 3. Scope and provenance
+
+**Scope** says whose rows they are: a workspace's own, or shared by every workspace (written by platform staff, read
+only to workspaces). **Provenance** says how rows get there. Five sources:
+
+| Provenance | Who writes | Where it applies | How the shell does it |
+|---|---|---|---|
+| `staff` | platform staff, by hand | a shared area (a workspace area only through a write tool the pack made `admin_only`) | the staff record pages' New, Edit, Override and Import, `/api/admin/data`, the admin MCP (mold_v0-212, mold_v0-221) |
+| `people` | the workspace's own people and their AI clients, by hand | a workspace area whose writes the pack does not withhold | the list tab's create form, the data API (`/api/data`), the generated create, update and move tools |
+| `repository` | the area's `repository` | any area naming one | `workspace_files` (rows indexed from the workspace's files, read only), `http_api` (read live, read only), `upstream_catalog` (a pinned upstream catalog that staff index), `shell_tables` (`src/data-repositories.ts`) |
+| `intake` | the company email's intake | the area the pack's `email.intake.area` names | one record per message, with its body and attachments as files (mold_v0-192, mold_v0-220) |
+| `run` | the pack's own code during a run | a workspace area of the shell's tables, in a pack with code (`entry`) | `onWorkspaceCommit` and `ctx.records` (mold_v0-064) |
+
+The runtime keeps a **shared** row's provenance: `staff` (written by hand, no `source`) or `repository`, with a staff
+override standing over a repository's row until removed (`platform_records.source`, `upstream`; `src/record-areas.ts`
+`platformProvenance`; the staff pages mark each row). A workspace row's provenance is not stored.
+
+## 4. Actions and who may do them
+
+Eight actions. The roles are the account roles `viewer`, `member`, `billing`, `owner`; a write never includes `viewer`
+(read only in the platform). Staff permissions are the platform roles' (`src/admin-roles.ts`: Operator and Owner hold
+`library`, Owner `delete`).
+
+| Action | Workspace area | Shared area | Enforced in |
+|---|---|---|---|
+| `read` | `permissions.read`, default every role | the same (every workspace reads it) | `src/record-areas.ts` `allowedRoles`, every door |
+| `create` | `permissions.create`, default member, billing, owner | staff with `library` | the record store; a shared area's tenant grants |
+| `update` | `permissions.update`, same default | staff with `library` (on a repository's row: an override) | the record store |
+| `move` | `permissions.move`, same default, and each transition's `roles`; only with a lifecycle | none | the record store |
+| `delete` | `permissions.delete`, default as update, or the owner alone on an area with a lifecycle | staff with `delete` (a staff row, or an override, which puts the repository's row back) | the record store |
+| `reveal` | each encrypted field's `reveal_roles`, default the update roles | none (no workspace key) | `src/encrypted-fields.ts`, the `reveal` routes and tool |
+| `export` | as `read`: the list's **Export CSV** and the `export_<area>` tool | as `read` | the list routes with `?audit=export` (`src/record-export.ts`) |
+| `import` | none: the shell has no import for a workspace's own records | staff with `library`: **Import** reads a CSV or JSON file, previews each row and writes the valid ones as staff rows (mold_v0-221, `src/record-import.ts`) | `POST /api/admin/records/_console/<area>/import` |
+
+What turns an action off:
+
+- An area read from the workspace's files or an API (`workspace_files`, `http_api`) takes no write through any door.
+- `append_only`: update, move and delete are refused (section 6).
+- The pack's `mcp` settings: a generated tool it `exclude`s (or leaves out of `include`) or marks `admin_only` is withheld,
+  and with it the same operation's routes (`src/mcp-withheld.ts`): `create_<area>` withholds `POST /api/data/<area>`;
+  a workspace area's delete is withheld when every write of it is; `list_` and `export_` withhold the console's Export
+  CSV; `admin_create_`/`admin_update_`/`admin_delete_` withhold the staff routes.
+
+## 5. Lists
+
+Where an area's list is drawn, and what it has:
+
+- **A tab** (`tabs`, kind `area`: `area`, or `areas` to merge several by key): `views` (`table`, `board` by the
+  lifecycle's field or `board_by`, `timeline` by a date or `timeline_by`, `detail`), `columns` (default the area's
+  `list_columns`), `filter` (a server-side narrowing), `charts` above it, `empty` (the empty state's text and call to
+  action), and **four sparkline cards** below the toolbar: `sparklines` names exactly four of the pack's metrics, or the
+  shell gives its four for the kind (mold_v0-181, `src/sparklines.ts`).
+- **The primary action** (mold_v0-208, mold_v0-213): one button at the right end of the search row. A tab's `action`
+  (`create_record` of its area, `start_run` of a job kind or a picker of several, `link`), else the shell's default
+  (`src/metric-spec.ts` `tabAction`: `create_record` for a workspace area of the shell's tables a workspace may add to),
+  else none. **No action is said with its reason**: `"action": false, "reason": "..."` (shown nowhere; the build lists
+  an undeclared none as a warning).
+- **Export CSV** sits just left of it on every list (mold_v0-217), the narrowed rows when filtered.
+- **A Settings tab** (section 7) and **the Records page** of an area no tab shows (`/app/records/<name>`) draw the same
+  table with Export alone.
+- **Staff** see a shared area at `/admin/records/<name>`: the four cards, **New <noun>** and **Import** for a role with
+  `library`, Edit or Override on a row, Remove for `delete`, each row's provenance (mold_v0-212, mold_v0-221).
+
+## 6. Time, history and documents
+
+- **Due dates** (`due`, mold_v0-035): a check area's date field; once a day a notice and an email for records due within
+  `within_days`.
+- **Clocks** (`clocks`, mold_v0-191, `src/record-clocks.ts`): up to five deadlines per workspace area, started by a date
+  field, the record's creation or entering a state; lengths by an enum field; calendar or business time; stop and
+  pause conditions; reminders before and escalation steps after (notify, reassign, raise). Gated by the
+  `record_clocks` and `scheduled_alerts` flags.
+- **Append-only and chain** (mold_v0-195): `append_only: true` makes the record store refuse every change and delete
+  (409); `chain: true` makes the database refuse them too and hash-chains the area's records per workspace, signed in
+  checkpoints when `audit.sign` is on. Workspace areas of the shell's tables only; no lifecycle, no repository.
+- **Documents** (mold_v0-220): each `file` field's stored files and each `preview: "document"` URL become cards on the
+  record (preview, Download, signed links bound to the person; previews and downloads in the data trail). Files come
+  from the email intake and the pack's own code; the console has no upload yet. Gated by the `document_preview` flag.
+
+## 7. Settings placement
+
+`"settings": {"group": "access" | "connections" | "automation" | "data_trust", "label": "..."}` (mold_v0-219) shows a
+workspace area as a tab of the customer console's Settings, in that group, instead of in Records; never also a sidebar
+tab. Settings groups its tabs as described in `molds/mold_v0/MOLD.md` "Features registry".
+
+## 8. The contract block and the completeness rules
+
+Every area has a contract. A pack may write it down, in one block, so the area's promise is read in one place:
+
+```json
+"contract": {
+  "provenance": ["people", "intake"],
+  "actions": {
+    "read": ["viewer", "member", "billing", "owner"], "export": ["viewer", "member", "billing", "owner"],
+    "create": ["member", "owner"], "update": ["member", "owner"], "move": ["member", "owner"], "delete": ["owner"],
+    "reveal": { "none": "No encrypted field" },
+    "import": { "none": "The shell has no import for a team's own records yet: requests arrive by email (the intake)" }
+  },
+  "primary_action": "create_record"
+}
+```
+
+- `provenance`: one or more of `staff`, `people`, `repository`, `intake`, `run`.
+- `actions`: every one of the eight, each a list of roles, `{"staff": "library" | "delete"}` (a shared area), or
+  `{"none": "<why>"}`.
+- `primary_action`: `create_record`, `start_run` or `link` (the area's list tab's), or `{"none": "<why>"}`.
+
+**No runtime code reads it.** It is a declaration, held to what the shell does with the rest of the area:
+
+- **The build** (`src/pack-api.ts` `contractProblems`) refuses what the area alone shows to be untrue: provenance
+  `repository` without a repository (or a repository it leaves out), people, intake or run on a shared area, a viewer
+  that writes, a workspace role writing a shared area, `{staff}` on a workspace area, move without a lifecycle, reveal
+  without an encrypted field, update, move or delete on an append-only area, import on a workspace area.
+- **`factory.py spec check`** (`.claude/scripts/lib/records.py`) derives every area's contract from its declaration, its
+  pack's `mcp` settings, tabs and email intake (section 4's rules, the shell's defaults) and holds a declared one to it:
+  each action must be what the build gives (roles compared as sets; `none` matches `none` whatever the reason); the
+  provenance must include everything the build gives and nothing it cannot (`run` only in a pack with code); the
+  primary action must be the one the area's first list tab resolves to.
+
+**Completeness rules** (`spec check`, on every mold_v0 pack, inline, by path or by id):
+
+1. A declared contract says every action (with its roles or its reason), its provenance and its primary action, and
+   each is what the build does.
+2. An area that declares none takes the derived contract, which is complete unless the derivation cannot decide:
+   - **nothing writes its rows** (no repository, no write a workspace or staff may make, no email intake): declare
+     `contract.provenance` (`run`, when the pack's code writes them), or open a way in;
+   - **its list tab has no primary action and no reason** (a shared area, a repository's area, an area a workspace may
+     not add to, with no `action` on the tab): declare the tab's `action`, or `action: false` with its `reason`, or the
+     contract's `primary_action: {"none": "<why>"}`.
+
+So every area of a complete spec has its actions or their reasons, its permissions and its provenance: said by the
+pack, or derived and printed. `spec check <file> --records` prints each area's contract on one line (declared or
+derived) with its list, clocks, chain, documents and Settings placement; `--json` carries them as `records`.
+
+## 9. Worked example
+
+[`examples/mold_v0/field-service`](../examples/mold_v0/field-service/) (Wrenchline) declares every area's contract.
+Its work orders:
+
+- **Fields**: a site and equipment (`reference`), priority, source and state (`enum`), technician and supervisor
+  (`person`), the requester's email (`text`), reported on (`date`), description (`text`), attachments (`json`).
+- **Scope** workspace, **role** check: each service team's own work orders.
+- **Provenance** `people` (New work order on its tab, the data API, the create tool) and `intake` (the pack's
+  `email.intake.area` is `work_orders`: each email to the connected mailbox becomes one).
+- **Permissions**: everyone reads and exports; members and owners create, change and move them along the seven-state
+  lifecycle (`permissions` names member and owner); only an owner deletes one (the default on an area with a
+  lifecycle); nothing to reveal (no encrypted field); no import (the shell has none for a workspace's own records).
+- **List**: tab `work-orders` (table and detail views, its four default cards), primary action `create_record`
+  labelled New work order, Export CSV beside it.
+- **Clocks**: respond by and fix by, their lengths chosen by priority, the fix-by clock pausing while awaiting parts.
+
+```
+$ python3 .claude/scripts/factory.py spec check examples/mold_v0/field-service/spec.json --records
+examples/mold_v0/field-service/spec.json: complete for mold_v0
+  flags: vault, email, alerts, clocks, audit.data, health, documents
+  records: 4 area(s), 4 with a declared contract
+    wrenchline.sites (workspace, declared): from people; primary create_record at tab sites; read viewer, member, billing, owner; ...
+    wrenchline.work_orders (workspace, declared): from people, intake; primary create_record at tab work-orders; read viewer, member, billing, owner; create member, owner; update member, owner; move member, owner; delete owner; reveal none; export viewer, member, billing, owner; import none; clocks respond, resolve
+    ...
+```
+
+Change the contract's `delete` to `["member", "owner"]` and the check says
+`contract.actions.delete says member, owner but the build gives owner`; drop `intake` from its provenance and it says
+`contract.provenance leaves out intake, which the build gives it (people, intake)`. The other examples declare the
+contract of the area that shows something new: Panelwise's candidates (`examples/mold_v0/hiring-pipeline`: read and
+export without viewers, reveal for members and owners) and Flagwell's rollouts (`examples/mold_v0/feature-flags`:
+append-only and chained, so update, move and delete are none). Their other areas take the derived contract.
+
+## 10. Not built yet (follow-ups)
+
+What the contract can name only as `none`, or cannot name, because the runtime does not do it:
+
+- **Import into a workspace's own records.** Only staff import, and only into shared areas. `import` on a workspace
+  area is `none` until the data API and the console take a CSV or JSON file for a workspace.
+- **Export as its own permission.** Export follows read; a pack can only withhold it altogether (`mcp`). An
+  `export` role list narrower than `read` needs the list routes' `?audit=export` path and the export tool to check it.
+- **Reveal at the area's level.** Reveal is per field (`reveal_roles`); the contract's `reveal` is their union.
+- **Provenance on a workspace row.** Shared rows keep `staff` or `repository`; a workspace row does not record whether
+  people, the intake or a run wrote it, so the contract states where rows may come from, not where each one did.
+- **`run` cannot be derived.** A pack's code may write its areas in a run; the contract may say so, and the check only
+  knows that the pack has code.
+- **A primary action on a Settings tab and on the Records page.** Both draw Export alone; a Settings area tab with
+  New <noun> (its create form) would need the tab's action there.
+- **Uploading a file from the console** into a `file` field (files come from the email intake and the pack's code).
+- **A `url` field type** with its own validation; today a URL is a `text` field (with `preview: "document"` for a
+  document).
+- **The build checking the whole contract.** `gen-packs` runs the area-local rules (`contractProblems`); the derived
+  comparison (permissions' defaults, `mcp`, tabs, intake) runs in `factory.py spec check` only, so a pack applied
+  without a spec check is held to the first alone.
+- **Several list tabs over one area.** The contract's `primary_action` speaks for the first; the others keep their own
+  `action` or reason.
