@@ -1,6 +1,6 @@
 /**
  * The workspace credential vault over HTTP (mold_v0-034; src/credentials.ts): /api/credentials, the data behind the
- * console's /app/credentials page. With no pack declaring a credential nothing is mounted.
+ * console's Settings › Credentials tab (/app/settings?tab=credentials, mold_v0-218). With no pack declaring a credential nothing is mounted.
  *
  *   GET    /api/credentials   a signed-in person of the workspace: the fields the packs declare and, for each stored
  *                             value, its slot (and, for an owner, its last 4 characters). Never a value.

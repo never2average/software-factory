@@ -8,7 +8,7 @@
  *                                         workspace's installation (account, repositories, per-asset narrowing)
  *   POST   /api/github-app/install       an owner: the install address (a signed, one-time state for this workspace)
  *   GET    /api/github-app/callback      GitHub sends the owner's browser back here: bound to the workspace, or refused;
- *                                         either way the browser goes on to the console's Credentials page
+ *                                         either way the browser goes on to the console's Settings › Credentials tab
  *   PUT    /api/github-app/repositories  an owner: {area, asset, repositories} narrows that asset's runs' tokens
  *   DELETE /api/github-app               an owner: disconnect (tokens revoked, the installation uninstalled)
  *
@@ -80,7 +80,7 @@ export function githubAppRouter(): Router {
   }));
   // GitHub's redirect: a browser navigation, so every outcome is a redirect to the console with a code (nothing echoed).
   r.get("/callback", async (req, res) => {
-    const back = (code: string) => res.redirect(303, `${consoleUrl()}/app/credentials?github=${encodeURIComponent(code)}`);
+    const back = (code: string) => res.redirect(303, `${consoleUrl()}/app/settings?tab=credentials&github=${encodeURIComponent(code)}`);
     if (!can(res)) return void back("not_owner");
     if (!S(res).user) return void back("not_owner");
     try {

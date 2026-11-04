@@ -70,14 +70,14 @@ function inConsole<T>(web: string, code: string, args: string[] = []): T {
     return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
   } finally { rmSync(file, { force: true }); }
 }
-const NAV = `import { portalNav, adminNav } from '@/config/nav-config';
+const NAV = `import { portalNav, adminNav, withSettings } from '@/config/nav-config';
 import { appPageParams } from '@/features/packs/registry';
 import { tabPageParams, findTab } from '@/features/tabs/registry';
 import { tabPortalNav, packTabs } from '@/config/pack-nav.generated';
-process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, packTabs, params: [...appPageParams(), ...tabPageParams()],
+process.stdout.write('\\u0001' + JSON.stringify({ portalNav, adminNav, tabPortalNav, withSettings: withSettings(tabPortalNav), packTabs, params: [...appPageParams(), ...tabPageParams()],
   vulnerabilities: findTab('vulnerabilities'), billing: findTab('billing') }));
 `;
-type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
+type Nav = { portalNav: any[]; adminNav: any[]; tabPortalNav: any[]; withSettings: any[]; packTabs: any[]; params: { page: string }[]; vulnerabilities: any; billing: any };
 const navOnly = (n: Nav) => JSON.stringify({ portalNav: n.portalNav, adminNav: n.adminNav }, null, 1);
 
 /** A headless Chrome on this machine: CHROME_BIN, else one a Playwright install left in its cache. */
@@ -270,15 +270,15 @@ try {
   const web = path.join(copy, "web");
   {
     const nav = inConsole<Nav>(web, NAV);
-    assert.deepEqual(nav.portalNav, nav.tabPortalNav, "the /app sidebar is the declared tabs");
+    assert.deepEqual(nav.portalNav, nav.withSettings, "the /app sidebar is the declared tabs (their credentials tab the one Settings entry below Overview, mold_v0-218)");
     const shape = nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url}`)]);
     assert.deepEqual(shape, [
-      ["Adoption", ["Pick rate /app/pick-rate", "Tasks /app/tasks", "Products /app/products", "Simulations /app/simulations"]],
+      ["Adoption", ["Pick rate /app/pick-rate", "Settings /app/settings", "Tasks /app/tasks", "Products /app/products", "Simulations /app/simulations"]],
       ["Account", ["Usage /app/activity", "Profile /app/profile"]],
       ["Audit", ["Overview /app/overview", "Vulnerabilities /app/vulnerabilities", "Applications /app/applications",
         "Controls /app/controls", "Audits /app/audits", "Reports /app/reports"]],
-      ["Workspace", ["Application tokens /app/credentials", "Due soon /app/notices", "Billing /app/billing"]],
-    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses; a page two packs' tabs open is listed once, by the first (mold_v0-133)");
+      ["Workspace", ["Due soon /app/notices", "Billing /app/billing"]],
+    ], "exactly the declared tabs, in order, grouped, labels in the pack's words (an area tab is named by its area), the shell's pages at their own addresses; a page two packs' tabs open is listed once, by the first (mold_v0-133); the credentials tab is the one Settings entry, directly below the first overview (mold_v0-218)");
     const item = (t: string) => nav.portalNav.flatMap((g) => g.items).find((i: any) => i.title === t);
     assert.deepEqual(item("Applications").roles, ["member", "billing", "owner"], "an area a viewer may not read: its tab is not a viewer's");
     assert.deepEqual(item("Billing").roles, ["billing", "owner"], "a tab's own roles");

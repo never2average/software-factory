@@ -711,7 +711,7 @@ async function apiHeaders(s: ApiSettings, pack: string, orgId: number | null): P
   if (orgId === null) throw new PackError("this API is read with a workspace's credential", 400);
   const { workspaceCredentialValue } = await import("./credentials.js");
   const v = await workspaceCredentialValue(orgId, pack, s.credential);
-  if (v === null) throw new PackError(`set the ${s.credential} credential first (Credentials page): this area is read from an API with it`, 409);
+  if (v === null) throw new PackError(`set the ${s.credential} credential first (Settings › Credentials): this area is read from an API with it`, 409);
   if (/[\r\n]/.test(v)) throw new PackError(`the ${s.credential} credential cannot be sent in a header (it holds a line break)`, 409);
   return { [s.auth?.header ?? "Authorization"]: s.auth?.scheme ? `${s.auth.scheme} ${v}` : s.auth?.header ? v : `Bearer ${v}` };
 }

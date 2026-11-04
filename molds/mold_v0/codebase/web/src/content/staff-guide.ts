@@ -5,7 +5,7 @@
 // areas and where their rows come from. The engineering documents (../../docs/*.md) stay in the navigation below it.
 // Pure TS with relative imports: features/docs/admin-docs.tsx renders it, scripts/record-pages-test.ts reads it.
 import { HOST_GUIDE, PACK_GUIDE } from '../config/pack-guides.generated';
-import { developerConsole, emailPortalNav, recordAreas, repositoryCount } from '../config/pack-nav.generated';
+import { developerConsole, recordAreas, settingsPage, repositoryCount } from '../config/pack-nav.generated';
 import { HOST_TABLES } from '../config/build-facts.generated';
 import { profile } from '../config/profile.generated';
 import { ADMIN_DOCS, type AdminDoc } from './admin-docs';
@@ -14,7 +14,7 @@ import { fill, W } from '../lib/vocabulary';
 export const STAFF_GUIDE_SLUG = 'staff-guide';
 /** The session engine's build keeps its Health words; without it Health has more tabs (mold_v0-204, features/admin/health-tabs.tsx). */
 const ENGINE = ['products', 'scenarios', 'simulations', 'agent_sessions'].every((t) => HOST_TABLES.includes(t));
-const DELIVERIES = emailPortalNav.length > 0 || developerConsole.on;
+const DELIVERIES = settingsPage.email || developerConsole.on;
 const WEBHOOKS = developerConsole.on;
 
 const titleCase = (s: string) => s.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());

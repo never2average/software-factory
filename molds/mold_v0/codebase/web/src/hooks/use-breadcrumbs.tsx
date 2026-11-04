@@ -13,7 +13,7 @@ type BreadcrumbItem = {
 const TITLES: Record<string, string> = {
   admin: 'Admin', app: 'Account', requests: 'Access requests', keys: 'Key vault', agents: 'Harness mix', configuration: 'Agent configuration', accounts: 'Accounts',
   analytics: 'Analytics', health: 'Health', usage: 'Usage', context: 'Context', limits: 'Limits', team: 'Team', billing: 'Billing', profile: 'Profile', company: 'Company', users: 'Users', adoption: 'Adoption', products: 'Products', docs: 'Docs',
-  'connected-apps': 'Connected apps'
+  'connected-apps': 'Connected apps', settings: 'Settings'
 };
 const routeMapping: Record<string, BreadcrumbItem[]> = {};
 
@@ -23,7 +23,8 @@ const routeMapping: Record<string, BreadcrumbItem[]> = {};
  */
 const PACK_TITLES = new Map<string, string>([
   ...packPages.map((p) => [p.url, p.title] as [string, string]),
-  ...packTabs.filter((t) => t.url !== '/app' && !t.url.includes('?')).map((t) => [t.url, t.label] as [string, string]),
+  // A credentials tab opens Settings (mold_v0-218): that page is Settings, whatever the tab's label.
+  ...packTabs.filter((t) => t.url !== '/app' && !t.url.includes('?') && t.kind !== 'credentials').map((t) => [t.url, t.label] as [string, string]),
   // A record area's pages (mold_v0-170): named by the area's label, as the sidebar names them ("Control library", not
   // "Controls"); /admin/records and /app/records have no page of their own, so they are no crumb.
   ...recordAreas.flatMap((a) => [[`/admin/records/${a.name}`, a.label], [`/app/records/${a.name}`, a.label]] as [string, string][])

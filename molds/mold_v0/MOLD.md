@@ -710,7 +710,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `"onprem_runners": true` (profile.json; the factory's `application.json` `profile.onprem_runners`, app-settable in
   [branding/rules.json](branding/rules.json), the app spec's `profile.onprem_runners`, the brief line `onprem_runners =
   true`). **Off** (absent or false, whatever its kinds declare): `/api/runners`, `/api/runner/*` and the staff
-  `/api/admin/onboarding/runners` are not mounted (404, so enrolment is refused), the Credentials page has no runner
+  `/api/admin/onboarding/runners` are not mounted (404, so enrolment is refused), Settings › Credentials has no runner
   section (nor the Credentials entry for it alone), the admin Compute page no On-premises runners tab, the customer guide
   no On-premises runner page and /admin/docs no runner guide, the data map no on-premises rows, and every run is hosted
   (a run queued on premises before goes back to the hosted scaler). There are no runner MCP tools, so the MCP surfaces
@@ -850,7 +850,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   attachment_count, mailbox, message_id → the area's fields }, set: { field: constant }, body_chars, backfill_days,
   attachments: { max_bytes, max_count } }`; the area is one of the pack's own workspace areas not fed by a repository
   (checked by definePack and the build). A workspace's owners ("manage") configure it on the console's **Settings ›
-  Email** page (`/app/settings/email`, `/api/email`; the sidebar gets a Settings group, also in a build with tabs):
+  Email** tab (`/app/settings?tab=email`, `/api/email`; mold_v0-218: the Settings entry directly below Overview):
   **Sending**: one sender per workspace, SMTP (STARTTLS or SSL/TLS, AUTH PLAIN), Microsoft 365 (Graph `sendMail`, app-only
   client credentials) or Google Workspace (Gmail `messages.send`, a service-account key with domain-wide delegation,
   the JWT signed here). The email adapter's messages about one workspace (due dates, usage alerts, invitations to it, a
@@ -976,7 +976,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
 - **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
   (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
   or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
-  owners set the values in the console (`/app/credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
+  owners set the values in the console (Settings › Credentials, `/app/settings?tab=credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
   only when a field exists; an asset binding must name an asset record of their own workspace); no answer carries a
   value, owners see the last 4 characters and everyone else only which values are set; a file field takes a multi-line
   value (a key). Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
@@ -1015,7 +1015,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     the key's SHA256 fingerprint; never a secret). Only the server reads them: the app's JSON Web Token (RS256, nine
     minutes) goes to GitHub's `/app/` endpoints only, and no run, session, answer, log or error carries the key or a
     secret.
-  - **Install** (`/app/credentials`, section GitHub, owners): `POST /api/github-app/install` gives GitHub's install
+  - **Install** (Settings › Credentials, the GitHub row's card, owners): `POST /api/github-app/install` gives GitHub's install
     address with a state signed by the client secret around a one-time nonce (its sha256 stored in `github_app_states`
     for that workspace and person, ten minutes). GitHub returns the browser to `GET /api/github-app/callback` with the
     installation id and a user-authorization code (the app must "Request user authorization (OAuth) during
@@ -1061,7 +1061,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   - **The client** is the platform's: its id and secret are key-vault entries of provider `oauth_clients` under the labels
     the provider names, set by an owner of the platform with Add a key on `/admin/keys`; the page's OAuth providers
     section shows which are set and the redirect address to register (`<console>/api/credential-connections/callback`), never a value.
-  - **Connect** (`/app/credentials`, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
+  - **Connect** (Settings › Credentials, the field's card, owners, per slot of the field: the workspace, an asset record of theirs, an asset's
     environment): `POST /api/credential-connections/connect` gives the provider's sign-in address with the shared signed one-time state
     (bound to the person and the workspace, ten minutes, used once; the slot and the sealed PKCE verifier kept
     server-side). `GET /api/credential-connections/callback` refuses another workspace's session, another person, a changed, used or
@@ -1128,7 +1128,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `optional: true` (default false) and, in one line, what a value `adds` (only beside `optional`; the help's first
   sentence after a leading "Optional." is used when absent: `src/vault-providers.ts` `optionalAdds`). A run never waits
   for a credential (`src/runs.ts` records which were delivered and which were missing); `optional` says the runs are
-  meant to go ahead without it and do less. The company Credentials page and the admin Key vault (which lists every
+  meant to go ahead without it and do less. The company's Settings › Credentials and the admin Key vault (which lists every
   declared run credential, set or not, and offers them in Add a key) tag them Optional; `operator:vault-status` lists
   them apart from what the runs need (below).
 - **Run credentials and egress per company** (mold_v0-075, built): a file credential's path in a declared variable
@@ -2798,6 +2798,30 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   access / Requests switch above the table). The separate page and its sidebar entry are gone: the old address is
   the normal not-found page, no redirect, and nothing links to it. The staff `/admin/access-log` is unchanged (its own
   sidebar entry under Security; the staff guide says what it is for). Proof: `npm run test:record-pages` (section 7).
+- **Settings: Credentials and Email in one page** (mold_v0-218): the customer console's one **Settings** entry sits
+  directly below Overview (the console's home `/app`, or a pack's overview tab; else first), whatever the sidebar is
+  made of (the shell's, the packs' tabs or the profile's: a pack's `credentials` tab and a declared sidebar's
+  `credentials` both open it and leave their own place for it, their roles kept; `web/src/config/nav-config.ts`
+  `withSettings`). `/app/settings` has the in-page tabs **Credentials | Email** (`?tab=`, Credentials the default; no
+  title above the strip): Credentials when a pack declares a credential field or a kind that needs the workspace's
+  private network (and the build does not hide `credentials`: `console.hide` names the tab,
+  `/app/settings?tab=credentials`), Email when a pack declares `email`; one alone is its table with no strip; neither,
+  and there is no entry and the page is not found (gen-packs `settingsPage`, `web/src/lib/console-routes.ts` SHOWN).
+  Each tab is the standard list, full page: four cards, the search row, the table. **Credentials**
+  (`web/src/features/credentials/credentials-tab.tsx`): cards Set, Missing, Required missing, Changed in the last 7
+  days; a row per credential field (pasted or connected through OAuth), the GitHub connection and the on-premises runner
+  (each when the build has it): name, what it is for, bound to (workspace, each record of an area, or per environment),
+  status in words (Set, Missing, Optional), last changed and by whom; a row opens its full details card with Set,
+  Replace, Clear, Connect, Disconnect, Install and the runners' Add and Revoke, as before. Values stay write-only (owners
+  see a value's last 4 characters in its card, nothing more). **Email** (`web/src/features/email/email-tab.tsx`, owners;
+  anyone else reads that an owner sets it up): cards Mailboxes, Messages taken in, With an error, Sender (On, Off, Not
+  set); a row for the sender and each mailbox: provider, the address the workspace gave, the folder or label, status,
+  last checked, messages taken in, last error; the search row's **Add mailbox** and **Set sender** (until one is set;
+  mold_v0-217's `ToolbarAction`) open the shell's full card in the list's place (`ActionCard`, `CardForm`); a row's card holds On, Test, the form, Remove or Disconnect. The old
+  `/app/credentials` and `/app/settings/email` are gone with no redirect (the normal not-found page), as are their
+  sidebar entries; the OAuth and GitHub returns, the MCP get-started step, the guides and the console lead to
+  `/app/settings?tab=credentials`; a pack's link to the mailbox setting is `/app/settings?tab=email`. Proof: `npm run
+  test:record-pages` (section 9), `test:console-sidebar`, `test:console-tabs`.
 - **Action and Actor columns** (mold_v0-209): both trails' tables (Billing's tab and `/admin/access-log`) show **Action**
   (what was done: a data entry's list, read, reveal, export, create, update, move or delete; a platform entry's read,
   change, delete, tool call, MCP request, sign-in or check, from its kind, method and path) and **Actor** (who did it:

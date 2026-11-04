@@ -53,7 +53,7 @@ export default definePack({
   ],
   // recordAreas (mold_v0-047), jobKinds (mold_v0-041), credentials (mold_v0-034) and onboarding (mold_v0-011) are
   // wired: this area gets list_records/get_record and the console's Records pages; this kind runs in the workspace
-  // harness; the field gets the console's Credentials page; the step shows on the Setup page. Schedules are declared
+  // harness; the field gets the console's Settings › Credentials tab; the step shows on the Setup page. Schedules are declared
   // and validated today; the scheduler wires them.
   jobKinds: [{ name: "fixture_summary", runner: "workspace-harness", entry: "runner/summary.mjs", token_lifetime_seconds: 3600, budget_usd: 1, egress: ["api.example.com"] }],
   recordAreas: [{ name: "fixture_notes", label: "Notes", role: "asset", scope: "workspace", fields: [{ name: "body", label: "Note", type: "text" }] }],

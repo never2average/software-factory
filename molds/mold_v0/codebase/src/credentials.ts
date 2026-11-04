@@ -1,7 +1,7 @@
 /**
  * The workspace credential vault (mold_v0-034; molds/mold_v0/MOLD.md "Pack and record-area contract"). A pack declares
  * credential fields (definePack credentials: src/pack-api.ts CredentialSchema); a workspace's people give the values in
- * the console (src/credential-routes.ts, /app/credentials); a run of one of the pack's job kinds receives the ones its
+ * the console (src/credential-routes.ts, Settings › Credentials: /app/settings?tab=credentials); a run of one of the pack's job kinds receives the ones its
  * kind names, for the asset and environment it targets (src/run-harness.ts).
  *
  *   store     sql/migrations/0007_workspace_credentials.sql: one row per value, sealed with the workspace's data key
@@ -279,7 +279,7 @@ export async function workspaceCredentialValue(orgId: number, pack: string, name
   if (spec.oauth) {
     const { serverOAuthToken } = await import("./oauth-connections.js");
     const t = await serverOAuthToken(orgId, { spec, asset: null, environment: null });
-    if (t && "missing" in t) throw new PackError(`the ${spec.label} connection needs to be made again (Credentials page): ${t.missing}`, 409);
+    if (t && "missing" in t) throw new PackError(`the ${spec.label} connection needs to be made again (Settings › Credentials): ${t.missing}`, 409);
     if (t) return t.value;
   }
   const s: Slot = { spec, asset: null, environment: null };
