@@ -1441,8 +1441,10 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
 {
   const legacy = (path_) => path_.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), profile);
   const jsons = packs.map((p) => p.json ?? {});
-  const areas = jsons.flatMap((j) => j.record_areas ?? []);
-  const kinds = jsons.flatMap((j) => [...(j.job_kinds ?? []), ...(j.agent_job_kinds ?? [])]);
+  // A pack's declarations as the build reads them (its pack.json, or a code pack's definePack: defsByPack).
+  const areas = packs.flatMap((p) => defsByPack[p.id]?.areas ?? p.json?.record_areas ?? []);
+  const kinds = [...jsons.flatMap((j) => [...(j.job_kinds ?? []), ...(j.agent_job_kinds ?? [])]), ...packs.flatMap((p) => defsByPack[p.id]?.kinds ?? [])];
+  const creds = packs.flatMap((p) => defsByPack[p.id]?.credentials ?? p.json?.credentials ?? []);
   const owned = new Set(jsons.flatMap((j) => j.host?.schema?.tables ?? []));
   for (const f of FEATURE_REGISTRY) {
     const fromFeatures = profile.features?.[f.id];
@@ -1453,7 +1455,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
   }
   const asks = {
     always: () => true,
-    credentials: () => jsons.some((j) => (j.credentials ?? []).length > 0),
+    credentials: () => creds.length > 0,
     email: () => jsons.some((j) => !!j.email && (j.email.sender?.allow === true || !!j.email.intake)),
     clocks: () => areas.some((a) => a.scope === "workspace" && (a.clocks ?? []).length > 0),
     alerts: () => areas.some((a) => !!a.due) || (FEATURE_SETTING.record_clocks && asks.clocks()),
