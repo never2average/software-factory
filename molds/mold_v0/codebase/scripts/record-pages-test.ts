@@ -32,6 +32,11 @@
 //      strip; one alone without a strip), each the standard list (four cards, the search row, the table; a row opens its
 //      full details card; Add mailbox and Set sender in Email's search row); /app/credentials and /app/settings/email are
 //      gone (no page, no route, no redirect, nothing in the console linking there).
+//  10. No title or description above a list (mold_v0-231): every list route of both consoles (the pack tabs, the record
+//      pages, Settings, Notices, Billing's Access log, the staff records, Compute, FinOps, Access log, Health, Requests,
+//      Accounts, Configuration, Key vault, Journeys) walked from its page to the components that draw the list: no page
+//      title, description or header row, and no heading, titled section or muted paragraph before its cards; and no other
+//      list in a titled page frame.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -286,4 +291,90 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.deepEqual(linking, [], "nothing in the console links to /app/credentials or /app/settings/email");
   for (const f of ["oauth-routes.ts", "github-app-routes.ts", "mcp-tools.ts"]) assert.doesNotMatch(readFileSync(path.join(WEB, "..", "..", "src", f), "utf8"), /\/app\/credentials\b|\/credentials"\)/, `src/${f}: leads to Settings › Credentials`);
   ok("Settings: Credentials | Email as in-page tabs (?tab=, no title, one alone without a strip), each its four cards, search row and table, a row's details card, Add mailbox and Set sender; /app/credentials and /app/settings/email gone");
+}
+
+// 10. No title or description above a list (mold_v0-231; mold_v0-217's rule on every list page of both consoles).
+{
+  const { existsSync: exists, readdirSync, statSync } = await import("node:fs");
+  // Comments out (JSX ones, doc comments and whole-line ones), and a guard's one-line early return (a status line).
+  const code = (rel: string) => src(rel).replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*if \(.*\) return .*;$/gm, "");
+  // One top-level function of a module: from its line to the first closing brace at column 0.
+  const fn = (rel: string, name: string) => {
+    const s = code(rel);
+    const m = new RegExp(`\\n(?:export )?(?:async )?function ${name}\\b[\\s\\S]*?\\n\\}\\n`).exec(`\n${s}\n`);
+    assert.ok(m, `${rel} has a function ${name}`);
+    return m[0];
+  };
+  // What a list starts with: its cards (a summary, StatStrip, the sparklines), its table (RecordView and the components
+  // that draw one), or the in-page tab strip it sits under.
+  const LIST = /summary=|<(?:RecordView|RecordTableView|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}/;
+  // A title or a description: a heading, the shell's Heading, a titled Section, a muted paragraph.
+  const TITLE = /<h1\b|<h2\b|<Heading\b|<Section\b[^>]*\btitle=|<p className='text-muted-foreground(?: text-sm)?'>/;
+  const before = (body: string) => {
+    // From where the list is put together (a body of JSX, else the function's last return) to its first part.
+    const start = Math.max(body.indexOf("const body = ("), body.lastIndexOf("\n  return"));
+    const rest = body.slice(Math.max(0, start));
+    const at = rest.search(LIST);
+    return at < 0 ? null : rest.slice(0, at);
+  };
+  // The one titled frame a tab page has: an overview tab's (a dashboard, not a list).
+  const overviewOnly = (body: string) =>
+    body.replace(/pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}\s*pageDescription=\{tab\.kind === 'overview' \? tab\.description \?\? undefined : undefined\}/, "");
+  // Every list route of both consoles: its page, the component the page draws, and each component (file, function)
+  // between the page frame and the list.
+  type Hop = [file: string, name: string];
+  const ROUTES: [route: string, page: string, draws: string, hops: Hop[]][] = [
+    ["/app/<tab> (area, runs, reports, schedules, sections tabs)", "app/app/[page]/page.tsx", "TabPage",
+      [["features/tabs/tab-page.tsx", "TabPage"], ["features/tabs/tab-page.tsx", "AreaTab"], ["features/tabs/tab-page.tsx", "SectionsTab"], ["features/tabs/runs.tsx", "RunsTable"], ["features/schedules/schedules-page.tsx", "SchedulesBody"]]],
+    ["/app/records/<area>", "app/app/records/[area]/page.tsx", "RecordListPage", [["features/records/record-pages.tsx", "RecordListPage"], ["features/records/record-pages.tsx", "RecordTableView"]]],
+    ["/app/schedules", "app/app/schedules/page.tsx", "SchedulesPage", [["features/schedules/schedules-page.tsx", "SchedulesPage"], ["features/schedules/schedules-page.tsx", "SchedulesBody"]]],
+    ["/app/settings (Credentials, Email)", "app/app/settings/page.tsx", "SettingsPage",
+      [["features/settings/settings-page.tsx", "SettingsPage"], ["features/credentials/credentials-tab.tsx", "CredentialsTab"], ["features/email/email-tab.tsx", "EmailTab"]]],
+    ["/app/notices", "app/app/notices/page.tsx", "NoticesPage", [["features/schedules/notices-page.tsx", "NoticesPage"]]],
+    ["/app/billing?tab=access-log", "app/app/billing/page.tsx", "BillingPage", [["features/audit/access-log.tsx", "WorkspaceAccessLog"]]],
+    ["/admin/records/<area>", "app/admin/records/[area]/page.tsx", "StaffRecordListPage", [["features/records/staff-records.tsx", "StaffRecordListPage"]]],
+    ["/admin/compute (and its Emails tab)", "app/admin/compute/page.tsx", "AdminCompute", [["features/admin/compute.tsx", "ComputePage"], ["features/admin/emails.tsx", "AdminEmails"]]],
+    ["/admin/finops", "app/admin/finops/page.tsx", "AdminFinOps",
+      [["features/admin/spend.tsx", "SpendPage"], ["features/admin/spend.tsx", "SpendTab"], ["features/admin/spend.tsx", "SpendAccounts"], ["features/admin/spend.tsx", "SpendProviders"],
+        ["features/admin/spend.tsx", "ComputeTab"], ["features/admin/spend.tsx", "StorageTab"], ["features/admin/spend.tsx", "ChargesTab"], ["features/admin/spend.tsx", "RevenueTab"]]],
+    ["/admin/access-log", "app/admin/access-log/page.tsx", "OperatorAccessLogPage", [["features/audit/access-log.tsx", "OperatorAccessLogPage"]]],
+    ["/admin/health (its tabs)", "app/admin/health/page.tsx", "AdminAnalytics",
+      [["features/admin/analytics.tsx", "ErrorsReport"], ["features/admin/health-tabs.tsx", "HealthTab"], ["features/admin/health-tabs.tsx", "RunsTab"], ["features/admin/health-tabs.tsx", "ScheduledTab"],
+        ["features/admin/health-tabs.tsx", "DeliveriesTab"], ["features/admin/health-tabs.tsx", "WebhooksTab"]]],
+    ["/admin/requests", "app/admin/requests/page.tsx", "AdminRequests", [["features/admin/requests.tsx", "AdminRequests"]]],
+    ["/admin/accounts (Accounts, Admins)", "app/admin/accounts/page.tsx", "AccountsPage",
+      [["features/admin/accounts-tabs.tsx", "AccountsPage"], ["features/admin/accounts.tsx", "AdminAccounts"], ["features/admin/admins.tsx", "AdminAdmins"]]],
+    ["/admin/configuration", "app/admin/configuration/page.tsx", "AdminConfiguration", [["features/admin/configuration.tsx", "AdminConfiguration"]]],
+    ["/admin/keys", "app/admin/keys/page.tsx", "AdminKeyVault", [["features/admin/keyvault.tsx", "AdminKeyVault"]]],
+    ["/admin/journeys", "app/admin/journeys/page.tsx", "AdminJourneys", [["features/journeys/admin.tsx", "AdminJourneys"]]],
+  ];
+  const walked: string[] = [];
+  for (const [route, page, draws, hops] of ROUTES) {
+    assert.ok(exists(path.join(WEB, page)), `${route}: its page ${page}`);
+    assert.match(src(page), new RegExp(`<${draws}\\b`), `${route}: ${page} draws ${draws}`);
+    for (const [file, name] of hops) {
+      const body = fn(file, name);
+      const props = overviewOnly(body);
+      assert.doesNotMatch(props, /pageTitle|pageDescription|pageHeaderAction/, `${route}: ${file} ${name} puts no title, description or header row above the list (an overview tab alone has its title)`);
+      const head = before(body);
+      assert.ok(head !== null, `${route}: ${file} ${name} draws a list (its cards, its table or its tab strip)`);
+      const t = TITLE.exec(head!);
+      assert.equal(t, null, `${route}: ${file} ${name}: no title or description above the list's cards (${t?.[0]})`);
+    }
+    walked.push(route);
+  }
+  // And every other page of the console: a component in a page frame (PageContainer) that draws a list of records or
+  // rows (the table, a trail, its cards) gives that frame no title or description.
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const f = path.join(d, n); return statSync(f).isDirectory() ? walk(f) : [f]; });
+  const titled: string[] = [];
+  for (const f of walk(path.join(WEB, "features")).filter((x) => x.endsWith(".tsx"))) {
+    const rel = path.relative(WEB, f);
+    for (const m of `\n${code(rel)}\n`.matchAll(/\n(?:export )?function ([A-Z]\w*)\b[\s\S]*?\n\}\n/g)) {
+      const body = overviewOnly(m[0]);
+      if (/<PageContainer\b[^>]*\bpage(?:Title|Description)=/.test(body) && /<(?:RecordView|RecordTableView|TrailTable)\b|summary=/.test(body)) titled.push(`${rel} ${m[1]}`);
+    }
+  }
+  assert.deepEqual(titled, [], "no list page (the database table, a trail, its cards) in a titled page frame");
+  ok(`no title or description above a list (mold_v0-231): ${walked.join(", ")}; and no titled page frame around any other list`);
 }

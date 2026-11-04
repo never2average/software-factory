@@ -84,6 +84,7 @@ function NoticesList({ limit, label }: { limit?: number; label?: string }) {
  * /app/notices as the console's database table (mold_v0-176, as on Accounts): due date, record, area, when it was posted
  * and whether it was emailed; search, filters, a pager, Export CSV; a row opens the notice beside the list with Open
  * record, and each row's menu dismisses it. Home's section and card keep their short lists (NoticesList, DueSoonCard).
+ * A list page (mold_v0-231): no title or description above it; its search row first.
  */
 export function NoticesPage() {
   const { data, error, reload } = useOrgLoad(() => call<{ notices: Notice[] }>('GET'));
@@ -107,7 +108,7 @@ export function NoticesPage() {
     { key: 'emailed', label: 'Emailed', type: 'boolean', value: (n) => n.emailed, render: (n) => (n.emailed ? 'Yes' : 'No') }
   ];
   return (
-    <PageContainer pageTitle='Notices' pageDescription={DESCRIPTION}>
+    <PageContainer>
       {error ? <ErrorState error={error} /> : (
         <RecordView<Notice>
           id='app-notices' compact noun='notices' properties

@@ -187,8 +187,9 @@ async function drawInBrowser(chrome: string, web: string, name: string, input: u
  * Draw a build's home tab (mold_v0-134) in a real browser: the console's TabPage for fixture_vulns' overview, bundled,
  * its API answered in the page (the account, the setup steps, the pack's onboarding, seven notices, the metrics);
  * `complete`: every step done. Returns the DOM; with CONSOLE_TABS_SNAPSHOT_DIR also screenshots (light, dark).
+ * `tabId`: another of the pack's tabs drawn the same way (mold_v0-231: a list tab).
  */
-async function renderHome(chrome: string, web: string, complete: boolean, extra: Record<string, unknown> = {}, name = "home"): Promise<string> {
+async function renderHome(chrome: string, web: string, complete: boolean, extra: Record<string, unknown> = {}, name = "home", tabId = "overview"): Promise<string> {
   const { build } = await import("esbuild");
   const dir = path.join(TMP, `render-${name}-${complete ? "done" : "open"}`);
   mkdirSync(dir, { recursive: true });
@@ -196,7 +197,7 @@ async function renderHome(chrome: string, web: string, complete: boolean, extra:
 import { NuqsAdapter } from 'nuqs/adapters/react';
 import { packTabs } from '@/config/pack-nav.generated';
 import { TabPage } from '@/features/tabs/tab-page';
-const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'overview')!;
+const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === ${JSON.stringify(tabId)})!;
 createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1180 }}><TabPage tab={tab} /></div></NuqsAdapter>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);
 `);
@@ -506,6 +507,22 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.equal([...done.matchAll(/Copy prompt/g)].length, 0, "no prompt for a done step");
       assert.equal([...done.matchAll(/<span class="sr-only">Done:<\/span>/g)].length, 5, "every step checked");
       console.log("✓ rendered home tab: the Setup page's layout: one checklist (shell steps then the pack's, one count, every step described, a Copy prompt on each open one with a prompt), the connection card, the number card with a link to Dashboard, five of seven notices with Show all, no charts grid (mold_v0-207); all done, the same page with every step checked");
+      // mold_v0-231: a list tab (an area's table, runs, reports), drawn by the same TabPage: no title or description
+      // (no h1 or h2) above its four cards; the cards, then its search row.
+      const weeks = 12, spark = (end: number) => Array.from({ length: weeks }, (_, i) => Math.round((end * (i + 1)) / weeks));
+      const four = { weeks, buckets: Array.from({ length: weeks }, (_, i) => `2026-08-${String(i + 1).padStart(2, "0")}`), as_of: "2026-10-21T12:00:00.000Z",
+        cards: ["One", "Two", "Three", "Four"].map((label, i) => ({ id: `c${i}`, label, unit: "count", mode: "total", value: i + 1, series: spark(i + 1) })) };
+      const lists: [string, Record<string, unknown>][] = [["applications", { "/api/records/audit_apps": { records: [], next: null } }], ["vulnerabilities", { "/api/records/audit_findings": { records: [], next: null } }],
+        ["audits", { "/api/runs": { runs: [] } }], ["reports", { "/api/runs": { runs: [] } }]];
+      for (const [id, answers] of lists) {
+        const html = await renderHome(chrome, hweb, false, { ...answers, [`/api/sparklines/fixture_vulns/${id}`]: four }, `list-${id}`, id);
+        const cardsAt = html.indexOf(`data-sparklines="fixture_vulns/${id}"`);
+        assert.ok(cardsAt >= 0, `${id}: its four cards are drawn`);
+        const above = html.slice(html.indexOf('<div id="root">'), cardsAt);
+        assert.doesNotMatch(above, /<h1|<h2/, `${id}: no title above its cards (${/<h[12][^>]*>[^<]*/.exec(above)?.[0]})`);
+        assert.ok(html.indexOf('type="search"', cardsAt) > cardsAt, `${id}: its search row after its cards`);
+      }
+      console.log(`✓ rendered list tabs (mold_v0-231): ${lists.map(([id]) => id).join(", ")}: no h1 or h2 above the four cards, the search row after them`);
     }
     // 5b. the merge itself (mold_v0-146)
     const { mergeSetupSteps } = await import("../web/src/features/portal/setup-steps.js");

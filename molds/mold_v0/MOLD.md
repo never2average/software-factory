@@ -1854,7 +1854,9 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
   again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
   full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too. A
-  list (an area, runs, reports or schedules tab, a records page) has no title or description above it, no count toggle
+  list (an area, runs, reports or schedules tab, a records page; mold_v0-231: every list page of both consoles, Notices,
+  Billing's Access log and the staff `/admin/access-log` too; proof: `npm run test:record-pages` section 10 walks them
+  and `npm run test:console-tabs` draws the list tabs) has no title or description above it, no count toggle
   in its toolbar (the Overdue filter is the Filter menu's rule, `?overdue=1`), and its cells show a status as plain
   text, not a badge. Every area list has **Export** in its search row just left of the primary action (empty or not;
   `web/src/features/tabs/export.tsx`, the same pages with `?audit=export`, so the data trail records it, and withheld where
