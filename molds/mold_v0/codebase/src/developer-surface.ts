@@ -18,11 +18,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { LATEST_API_VERSION, type DeveloperSurfaceConfig } from "./developer-config.js";
 import { packConfigs } from "./host.js";
+import { featureSetting } from "./feature-flags.js";
 
 /** The build's developer surface (its one pack's declaration, defaults filled in), or null: off. */
 export function developerSurface(): DeveloperSurfaceConfig | null {
   const c = packConfigs().find((x) => x.developer_surface)?.developer_surface;
-  if (!c) return null;
+  if (!c || !featureSetting("developer_surface")) return null; // the features registry (mold_v0-219): off, none
   return { ...c, client_sessions: { ...c.client_sessions, ttl_seconds: c.client_sessions.ttl_seconds ?? 3600 } };
 }
 export const developerOn = () => developerSurface() !== null;

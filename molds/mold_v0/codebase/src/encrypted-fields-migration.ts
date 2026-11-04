@@ -25,6 +25,7 @@ import { vaultUnlocked } from "./keyvault.js";
 import { isSealed, openJson, sealJson } from "./orgcrypto.js";
 import { recordAreas, STATE_TIMES, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { featureSetting } from "./feature-flags.js";
 
 /** Rows rewritten per tick, at most (across every area). */
 export const MIGRATION_BATCH = 500;
@@ -32,7 +33,8 @@ export const MIGRATION_BATCH = 500;
 export interface EncryptionReport { ran: boolean; areas: number; rows: number; updated: number; raced: number; failed: number; pending: number }
 
 /** The areas whose rows may need the migration: every area with an encrypted field. */
-export const encryptedAreas = (): RecordArea[] => recordAreas().filter((a) => a.scope === "workspace" && encryptedFields(a).length > 0);
+// The features registry (mold_v0-219): none while encrypted_fields is off (no migration job; reads stay masked).
+export const encryptedAreas = (): RecordArea[] => (!featureSetting("encrypted_fields") ? [] : recordAreas()).filter((a) => a.scope === "workspace" && encryptedFields(a).length > 0);
 
 /** Per area, the last row id a pass reached (in this process): a row that will not open does not hold up the rest. */
 const cursors = new Map<string, number>();

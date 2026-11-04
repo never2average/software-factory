@@ -29,10 +29,13 @@ import { isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { optionValues, PackError, type Clock, type PackTool, type RecordRow, type Workspace } from "./pack-api.js";
 import { getFor, isSealedArea, may, recordAreas, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { featureOn, featureSetting } from "./features.js";
 
 export type ClockArea = RecordArea & { clocks: Clock[] };
-/** The workspace areas that declare clocks. */
-export const clockAreas = (): ClockArea[] => recordAreas().filter((a): a is ClockArea => a.scope === "workspace" && (a.clocks?.length ?? 0) > 0);
+/** The workspace areas that declare clocks; none while the features registry's record_clocks flag is off (mold_v0-219). */
+export const clockAreas = (): ClockArea[] => (featureSetting("record_clocks") ? recordAreas().filter((a): a is ClockArea => a.scope === "workspace" && (a.clocks?.length ?? 0) > 0) : []);
+/** Whether the clocks' reminders and escalation steps run (mold_v0-219: the scheduled_alerts flag). */
+export const clockStepsOn = () => featureOn("scheduled_alerts");
 export const findClockArea = (name: string) => clockAreas().find((a) => a.name === name) ?? null;
 
 /** The clocks' clock: the wall clock, or one a test sets. */
@@ -227,7 +230,8 @@ async function checkRecord(db: Queryable, orgId: number, area: ClockArea, c: Clo
       [orgId, area.pack, area.name, row.key, c.name, ch, markOf[ch] ?? now.toISOString(), v.due_at, now]);
     report.changes += got.length;
   }
-  const due = stepsDue(c, v, now);
+  // The steps (reminders, escalation) are the scheduled_alerts flag's (mold_v0-219): off, the clock keeps its status only.
+  const due = clockStepsOn() ? stepsDue(c, v, now) : [];
   if (!due.length) return;
   // Steps due at once (a record first seen long overdue): every one is recorded and its changes made; only the latest
   // tells people (the others say so), so nobody gets a pile of old reminders.

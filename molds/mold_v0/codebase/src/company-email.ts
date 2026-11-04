@@ -24,6 +24,7 @@ import { openBytes, sealBytes } from "./orgcrypto.js";
 import { EmailPackSchema, type EmailIntake } from "./company-email-config.js";
 import { PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
+import { featureSetting } from "./feature-flags.js";
 import { asPlatform } from "./tenant-scope.js";
 import * as wire from "./mail-protocols.js";
 
@@ -35,7 +36,10 @@ export const PROVIDER_LABELS: Record<Provider, string> = { smtp: "SMTP / IMAP", 
 
 export interface IntakeSpec { pack: string; intake: EmailIntake }
 let cache: { from: unknown; sender: boolean; intakes: IntakeSpec[] } | null = null;
+const NONE = { from: null, sender: false, intakes: [] as IntakeSpec[] };
 function specs() {
+  // The features registry (mold_v0-219): with company_email off nothing of it is mounted, polled or offered.
+  if (!featureSetting("company_email")) return NONE;
   const list = packs();
   if (cache?.from === list) return cache;
   const parsed = list.filter((p) => p.definition.email).map((p) => ({ pack: p.id, email: EmailPackSchema.parse(p.definition.email) }));

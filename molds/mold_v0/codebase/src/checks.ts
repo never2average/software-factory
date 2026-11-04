@@ -30,6 +30,7 @@ import { ANY_CANDIDATES, CHECK_SCOPE_PATTERN, CheckSchema, checkIndexHint, check
 import { evaluate, leafWords, pickLatest, valueAt, type EvalContext, type EvalRecord, type Leaf } from "./check-eval.js";
 import { PackError, type PackTool, type RecordQuery, type RecordRow, type Workspace } from "./pack-api.js";
 import { packs } from "./packs.js";
+import { featureSetting } from "./feature-flags.js";
 import { findArea, getFor, listFor, type Actor, type RecordArea } from "./record-areas.js";
 
 /** Who asks: the workspace (from the session or key, never from input), the person's role and id, the scopes held. */
@@ -62,6 +63,7 @@ export interface DeclaredCheck extends Check { pack: string }
 let cache: { from: unknown; list: DeclaredCheck[] } | null = null;
 /** Every check the build's packs declare (checked when the packs were installed: src/packs.ts). */
 export function declaredChecks(): DeclaredCheck[] {
+  if (!featureSetting("declarative_checks")) return []; // the features registry (mold_v0-219): off, no route or tool
   const all = packs();
   if (cache?.from === all) return cache.list;
   const list = all.flatMap((p) => (p.definition.checks ?? []).map((c) => ({ ...CheckSchema.parse(c), pack: p.id })));

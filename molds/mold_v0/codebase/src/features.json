@@ -1,0 +1,143 @@
+{
+  "$comment": "mold_v0-219: the one registry of the shell's optional capabilities, each an on/off flag in the app's profile (profile.json `features`, {\"<id>\": true|false}). Read by src/features.ts (the server's gates), scripts/gen-packs.mjs (the console's pages and sidebar, web/src/config/features.generated.ts), the factory (.claude/scripts/lib/features.py: the app spec's `features`, the brief's `features.<id> = true|false` lines in ## Profile, `factory.py spec check`) and the factory board (plugins/factory-board). A capability is ON only when something asks for it (`requested_by`: a pack's declaration, or `always` for a profile toggle) AND its flag is not false. `default`: the flag's value when neither `features` nor a `legacy` key says: true where the capability was on whenever a pack declared it before this registry (so turning the flags on changes no existing app), false where it was an opt-in profile toggle. `legacy`: the profile key that said it before (still read; it and `features` must agree). `requires`: flags that must be on with it (`requires_any`: one of them). Never edit an id: apps' state names them.",
+  "flags": [
+    {
+      "id": "customer_key_vault",
+      "short": "vault",
+      "label": "Workspace credentials",
+      "default": true,
+      "requested_by": "credentials",
+      "requested_words": "a pack declares credential fields (pack.json credentials)",
+      "since": "mold_v0-034",
+      "about": "Each workspace keeps its own credentials for the packs' runs (write-only, sealed with the workspace's key): the console's Credentials page (Settings › Credentials), /api/credentials, its OAuth connections (/api/credential-connections) and GitHub App installation (/api/github-app).",
+      "off": "No Credentials page or sidebar entry, and /api/credentials, /api/credential-connections and /api/github-app answer not found. Refused while a job kind needs a credential that is not optional (nobody could give it)."
+    },
+    {
+      "id": "company_email",
+      "short": "email",
+      "label": "Company email",
+      "default": true,
+      "requested_by": "email",
+      "requested_words": "a pack declares the company's own email (pack.json email: sender.allow or intake)",
+      "since": "mold_v0-192",
+      "about": "A workspace's own sender (SMTP, Microsoft 365, Google Workspace) and mailboxes read into a record area: Settings › Email, /api/email, the email intake job and its MCP tools, Health's Email Delivery tab.",
+      "off": "No Settings › Email page or sidebar entry, /api/email answers not found, no mailbox is polled, no intake tool is listed, and every email goes out through the app's default sender."
+    },
+    {
+      "id": "scheduled_alerts",
+      "short": "alerts",
+      "label": "Scheduled alerts",
+      "default": true,
+      "requested_by": "alerts",
+      "requested_words": "a record area declares due dates (record_areas[].due), or a workspace area declares clocks (record_areas[].clocks, with record_clocks on): their reminders and escalation steps",
+      "since": "mold_v0-035, mold_v0-191",
+      "about": "The daily due-date notices and their emails, and the clocks' reminders and escalation steps (an in-app notice, an email, a reassignment or a raised value): the Notices page and /api/notices.",
+      "off": "No due-date notice or email is posted and no clock step runs (clocks still show each record's deadline and status when record_clocks is on); no Notices page or sidebar entry, and /api/notices answers not found."
+    },
+    {
+      "id": "record_clocks",
+      "short": "clocks",
+      "label": "Record clocks",
+      "default": true,
+      "requested_by": "clocks",
+      "requested_words": "a workspace record area declares clocks (record_areas[].clocks)",
+      "since": "mold_v0-191",
+      "about": "Each record's deadlines: the clock check job, the records' `clocks` and `due` fields, the clock columns and Overdue filter, the record page's history, the Due soon card (/api/records/due-soon) and the clock MCP tools.",
+      "off": "No clock is computed or kept, no clock column, filter or history shows, the Due soon card is empty and no clock tool is listed; a metric or tab that counts by a clock is refused at build."
+    },
+    {
+      "id": "audit.data",
+      "short": "audit.data",
+      "label": "Data audit trail",
+      "default": false,
+      "legacy": "audit.data",
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it)",
+      "since": "mold_v0-197",
+      "about": "Every read, change, reveal and export of a workspace's records: Billing's Access log tab, /api/audit/data, the read_audit_trail MCP tool, staff's /admin/access-log.",
+      "off": "Nothing is written, no route answers, no tab or page shows and no tool is listed."
+    },
+    {
+      "id": "audit.platform",
+      "short": "audit.platform",
+      "label": "Platform audit trail",
+      "default": false,
+      "legacy": "audit.platform",
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it)",
+      "since": "mold_v0-197",
+      "about": "Every API and MCP request and sign-in, and every staff action on an account: /admin/access-log, /api/audit/platform, the admin MCP's read_platform_trail.",
+      "off": "Nothing is written, no route answers, no page shows and no tool is listed."
+    },
+    {
+      "id": "audit.sign",
+      "short": "audit.sign",
+      "label": "Chain and sign",
+      "default": false,
+      "legacy": "audit.sign",
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it)",
+      "requires_any": ["audit.data", "audit.platform"],
+      "since": "mold_v0-195",
+      "about": "Signed checkpoints of the hash-chained audit trails (Ed25519 over Merkle roots, with APP_LEDGER_SIGNING_KEY): the ledger checkpoint job, /api/ledger/verify, /.well-known/ledger-keys.json and the verify_audit_trail MCP tool.",
+      "off": "No checkpoint is signed, no route or well-known key answers and no tool is listed (the chain itself is always kept where entries are written)."
+    },
+    {
+      "id": "onprem_runners",
+      "short": "runners",
+      "label": "On-premises runners",
+      "default": false,
+      "legacy": "onprem_runners",
+      "requested_by": "private_network",
+      "requested_words": "a job kind declares private_network: true",
+      "since": "mold_v0-205",
+      "about": "A workspace installs a runner inside its own network for the kinds that need it: /api/runners, /api/runner, the runners section of Credentials, staff's Runners tab.",
+      "off": "No runner route, page, tab or enrolment; every run is hosted."
+    },
+    {
+      "id": "developer_surface",
+      "short": "developer",
+      "label": "Developer surface",
+      "default": true,
+      "requested_by": "developer_surface",
+      "requested_words": "a pack declares developer_surface (in the app spec: kind embedded with a developer_surface block)",
+      "requires": ["audit.platform"],
+      "since": "mold_v0-193",
+      "about": "The REST API at /v1, /openapi.json, scoped keys, client sessions, Standard Webhooks out and in, the SDKs, the developer console (/app/developers) and Health's Webhook Delivery tab. In the app spec `kind` stays the switch: kind embedded (with its developer_surface block) is what requests it; this flag only turns a declared surface off and must agree with kind.",
+      "off": "Nothing of it is mounted, no table is read, no event is queued and no page shows."
+    },
+    {
+      "id": "declarative_checks",
+      "short": "checks",
+      "label": "Declarative checks",
+      "default": true,
+      "requested_by": "checks",
+      "requested_words": "a pack declares checks (pack.json checks)",
+      "since": "mold_v0-196",
+      "about": "Yes/no questions the records answer: /api/checks, /v1/checks, the check_<name> MCP tools.",
+      "off": "No check route answers and no check tool is listed."
+    },
+    {
+      "id": "encrypted_fields",
+      "short": "encrypted",
+      "label": "Encrypted fields",
+      "default": true,
+      "requested_by": "encrypted",
+      "requested_words": "a record area's field declares encrypted: true",
+      "since": "mold_v0-194",
+      "about": "Fields envelope-encrypted at rest, masked on every read, revealed on purpose: the reveal routes and MCP tools and the encrypted-field migration job.",
+      "off": "Refused at build while a pack declares an encrypted field (turning it off never stores a value in the clear); with none, nothing of it runs."
+    },
+    {
+      "id": "health_history",
+      "short": "health",
+      "label": "Health history",
+      "default": true,
+      "requested_by": "no_engine",
+      "requested_words": "a build without the session engine (no host pack owns products, scenarios, simulations and agent_sessions)",
+      "since": "mold_v0-210",
+      "about": "Health › Status's graphs: a sample of the live checks every few minutes (health_samples), its scheduled job and GET /api/admin/onboarding/health/history.",
+      "off": "No sample is taken or kept, the job is not scheduled, the history route answers an empty history and Status shows its live checks only."
+    }
+  ]
+}

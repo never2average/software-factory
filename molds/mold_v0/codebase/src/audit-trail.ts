@@ -34,6 +34,7 @@ import { getDb, type Queryable } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { tracked } from "./scheduler-jobs.js";
+import { featureSetting } from "./feature-flags.js";
 
 // ---------------------------------------------------------------- settings
 
@@ -47,7 +48,11 @@ export function auditSettings(profile?: { audit?: Partial<AuditSettings> }): Aud
   const retention = days(p.retention_days, DEFAULT_RETENTION_DAYS);
   // Chain and sign (mold_v0-195, src/ledger.ts): signed checkpoints, every checkpoint_minutes (default 60) with new entries.
   const mins = typeof p.checkpoint_minutes === "number" && Number.isInteger(p.checkpoint_minutes) && p.checkpoint_minutes >= 5 && p.checkpoint_minutes <= 1440 ? p.checkpoint_minutes : 60;
-  return { data: p.data === true, platform: p.platform === true, retention_days: retention, platform_retention_days: days(p.platform_retention_days, retention), sign: p.sign === true, checkpoint_minutes: mins };
+  // The three toggles are the features registry's flags (mold_v0-219: profile `features`, else the legacy audit.* keys);
+  // a test's setAuditForTest still wins for the ones it names.
+  const t = profile ? {} : (testSettings ?? {});
+  const flag = (k: "data" | "platform" | "sign") => (typeof t[k] === "boolean" ? t[k] === true : featureSetting(`audit.${k}`, profile as Record<string, unknown> | undefined));
+  return { data: flag("data"), platform: flag("platform"), retention_days: retention, platform_retention_days: days(p.platform_retention_days, retention), sign: flag("sign"), checkpoint_minutes: mins };
 }
 export const dataTrailOn = () => auditSettings().data;
 export const platformTrailOn = () => auditSettings().platform;
