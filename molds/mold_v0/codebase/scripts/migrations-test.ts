@@ -955,6 +955,25 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} health samples' webhook columns: counts checked; its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Staff overrides on shared areas (mold_v0-221, platform_record_overrides, found by name): one nullable column keeping
+  // a repository's version behind a staff row; its rollback drops it, the rows staying (the override as a hand row),
+  // leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "platform_record_overrides")!.version;
+    const d = await shellAt(kind);
+    await d.query(`INSERT INTO platform_records (pack, area, key, title, data, upstream) VALUES ('p', 'a', 'k', 'Staff', '{}', '{"title": "Repository", "data": {}, "source": "r"}')`);
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_platform_record_overrides.sql`), "utf8");
+    await d.exec(rb);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    assert.equal((await d.query<{ title: string }>("SELECT title FROM platform_records WHERE key = 'k'"))[0]?.title, "Staff", "the staff row stays, without what was behind it");
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_platform_record_overrides")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} shared rows' repository versions behind staff overrides: its rollback keeps the rows and leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);
