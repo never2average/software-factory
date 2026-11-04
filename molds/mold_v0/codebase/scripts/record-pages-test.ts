@@ -26,6 +26,10 @@
 //   8. The staff record pages (mold_v0-212): /admin/records/<area> is the standard list with no title or description
 //      above it (its cards from the staff route, its search row, its table), New record as the primary floating action
 //      and Edit on an open record only where the server offers them; the record's page is one details card.
+//   9. Settings (mold_v0-218): one /app/settings page with in-page tabs Credentials | Email (?tab=, no title above the
+//      strip; one alone without a strip), each the standard list (four cards, the search row, the table; a row opens its
+//      full details card; Add mailbox and Set sender in Email's search row); /app/credentials and /app/settings/email are
+//      gone (no page, no route, no redirect, nothing in the console linking there).
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -131,7 +135,8 @@ const lists: Record<string, string> = {
   "features/tabs/runs.tsx": "runs and reports",
   "features/schedules/schedules-page.tsx": "schedules",
   "features/schedules/notices-page.tsx": "notices",
-  "features/credentials/credentials-page.tsx": "credentials",
+  "features/credentials/credentials-tab.tsx": "credentials",
+  "features/email/email-tab.tsx": "senders and mailboxes",
 };
 for (const [file, what] of Object.entries(lists)) {
   const s = src(file);
@@ -235,4 +240,38 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(src("app/admin/records/[area]/page.tsx"), /<StaffRecordListPage area=\{spec\} \/>/);
   assert.match(src("app/admin/records/[area]/[key]/page.tsx"), /<StaffRecordDetailPage area=\{spec\}/);
   ok("the staff record pages: no title above the list, its cards, search row and table, New record and Edit where staff may write, the record's page one details card");
+}
+
+// 9. Settings: Credentials and Email as one page's in-page tabs (mold_v0-218).
+{
+  const { existsSync: exists } = await import("node:fs");
+  const page = src("features/settings/settings-page.tsx").replace(/\/\/.*$/gm, "");
+  assert.deepEqual([...page.matchAll(/<TabsTrigger value='([^']+)'/g)].map((m) => m[1]), ["credentials", "email"], "Settings' tabs: Credentials, then Email");
+  assert.match(page, /useQueryState\('tab'/, "the open tab is kept in the address (?tab=)");
+  assert.doesNotMatch(page, /pageTitle|pageDescription/, "no title above the tab strip");
+  assert.match(page, /tabs\.length < 2 \?/, "one tab alone: its table, with no strip");
+  for (const [file, cards] of [["features/credentials/credentials-tab.tsx", ["Set", "Missing", "Required missing", "Changed in the last 7 days"]],
+    ["features/email/email-tab.tsx", ["Mailboxes", "Messages taken in", "With an error", "Sender"]]] as const) {
+    const code = src(file).replace(/\/\/.*$/gm, "");
+    assert.match(code, /summary=\{<StatStrip quad items=\{\[/, `${file}: four cards above the search row`);
+    assert.deepEqual([...code.matchAll(/\{ label: '([^']+)', value:/g)].map((m) => m[1]), cards, `${file}: its four cards`);
+    assert.match(code, /detail=\{\(r\) =>/, `${file}: a row opens its details card`);
+    assert.doesNotMatch(code, /PageContainer|<Badge/, `${file}: no page title of its own, no badges in the table`);
+  }
+  const email = src("features/email/email-tab.tsx");
+  assert.match(email, /setAdding\('mailbox'\)[^\n]*Add mailbox/, "Add mailbox: the search row's primary action");
+  assert.match(email, /setAdding\('sender'\)[^\n]*Set sender/, "Set sender, until one is set");
+  assert.match(email, /<SettingsCard title='Add mailbox'/, "it opens the full card in the list's place");
+  assert.match(email, /\/inboxes\/\$\{b\.id\}\/test/, "Test in a mailbox's card");
+  for (const gone of ["credentials", path.join("settings", "email")]) assert.ok(!exists(path.join(WEB, "app", "app", gone)), `no /app/${gone} page`);
+  assert.ok(exists(path.join(WEB, "app", "app", "settings", "page.tsx")), "the /app/settings page");
+  const routes = JSON.parse(src("config/console-routes.generated.json")) as { routes: string[] };
+  assert.ok(routes.routes.includes("/app/settings") && !routes.routes.includes("/app/credentials") && !routes.routes.includes("/app/settings/email"), "the route list: /app/settings only");
+  assert.match(src("lib/console-routes.ts"), /'\/app\/settings': \(\) => settingsPage\.credentials \|\| settingsPage\.email/, "Settings is a page only with one of its tabs");
+  const { readdirSync, statSync } = await import("node:fs");
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const f = path.join(d, n); return statSync(f).isDirectory() ? walk(f) : [f]; });
+  const linking = walk(WEB).filter((f) => /\.(tsx?|json|md)$/.test(f) && /\/app\/credentials\b|\/app\/settings\/email/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(linking, [], "nothing in the console links to /app/credentials or /app/settings/email");
+  for (const f of ["oauth-routes.ts", "github-app-routes.ts", "mcp-tools.ts"]) assert.doesNotMatch(readFileSync(path.join(WEB, "..", "..", "src", f), "utf8"), /\/app\/credentials\b|\/credentials"\)/, `src/${f}: leads to Settings › Credentials`);
+  ok("Settings: Credentials | Email as in-page tabs (?tab=, no title, one alone without a strip), each its four cards, search row and table, a row's details card, Add mailbox and Set sender; /app/credentials and /app/settings/email gone");
 }

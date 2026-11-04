@@ -1,15 +1,18 @@
 'use client';
-// Settings › Email (mold_v0-192; src/email-routes.ts at /api/email): the workspace's own email, for its owners.
-//   Sending   one sender (SMTP, Microsoft 365, Google Workspace): the app's emails to this workspace's people go out
-//             through it while it is on; otherwise through the app's own sender.
+// Settings › Email (mold_v0-192, mold_v0-218; src/email-routes.ts at /api/email): the workspace's own email, for its
+// owners, as one full-page table in the standard list layout: four cards, the search row (its primary action Add mailbox,
+// and Set sender until one is set), then the table. A row is the company's sender or one of the mailboxes the intake
+// reads; opening one shows its full details card (status, the form, On, Test, Remove or Disconnect).
+//   Sender    one per workspace (SMTP, Microsoft 365, Google Workspace): the app's emails to this workspace's people go
+//             out through it while it is on; otherwise through the app's own sender.
 //   Mailboxes the mailboxes the intake reads (IMAP, Microsoft 365, Google Workspace), each limited to the folder or label
 //             the app declares, read only; every new message becomes a record.
 // A secret (a password, a client secret, a key file) is typed once, sent once and never shown again, not even in part:
-// the page says only that it is set, when and by whom, and offers Replace. Each has a Test button.
+// the card says only that it is set, when and by whom, and offers Replace. Each has a Test button in its card.
 import { useState } from 'react';
 import { toast } from 'sonner';
-import PageContainer from '@/components/layout/page-container';
-import { Badge } from '@/components/ui/badge';
+import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { StatStrip } from '@/components/layout/section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -17,6 +20,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { ErrorState, FormRow, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
+import { SettingsCard } from '@/features/settings/settings-card';
+import { Icons } from '@/components/icons';
 
 type Provider = 'smtp' | 'graph' | 'gmail';
 type Settings = Record<string, string | number | string[] | null>;
@@ -44,27 +49,88 @@ async function call<T>(method: string, path = '', body?: unknown): Promise<T> {
   return json;
 }
 
-const STATUS: Record<Status['status'], { label: string; variant: 'secondary' | 'outline' | 'destructive' }> = {
-  connected: { label: 'Connected', variant: 'secondary' }, untested: { label: 'Not tested yet', variant: 'outline' },
-  error: { label: 'Error', variant: 'destructive' }, paused: { label: 'Paused', variant: 'outline' }
-};
-const StatusBadge = ({ s }: { s: Status['status'] }) => <Badge variant={STATUS[s].variant}>{STATUS[s].label}</Badge>;
+const STATUS: Record<Status['status'], string> = { connected: 'Connected', untested: 'Not tested yet', error: 'Error', paused: 'Paused' };
+const StatusText = ({ s }: { s: Status['status'] }) => <span className={s === 'error' ? 'text-destructive' : undefined}>{STATUS[s]}</span>;
 
-export function EmailSettingsPage() {
+/** One row of the table: the company's sender or one of its mailboxes. */
+interface Row {
+  key: string; kind: 'sender' | 'mailbox'; name: string; provider: string; address: string; folder: string; status: Status['status'];
+  last_checked: string | null; messages: number | null; last_error: string | null; sender?: Sender; inbox?: Inbox;
+}
+function rowsOf(v: View): Row[] {
+  const rows: Row[] = [];
+  const s = v.sender;
+  if (s) rows.push({ key: 'sender', kind: 'sender', name: 'Sender', provider: s.provider === 'smtp' ? 'SMTP' : s.provider_label, address: String(s.settings.from_address ?? ''),
+    folder: '', status: s.status, last_checked: s.last_tested_at ?? s.last_sent_at, messages: null, last_error: s.status === 'error' ? s.last_error : null, sender: s });
+  for (const b of v.inboxes ?? []) rows.push({ key: `mailbox:${b.id}`, kind: 'mailbox', name: b.label, provider: b.provider === 'smtp' ? 'IMAP' : b.provider_label,
+    address: String(b.settings.mailbox ?? ''), folder: b.intake?.folder ?? '', status: b.status, last_checked: b.last_poll_at, messages: b.received,
+    last_error: b.status === 'error' ? b.last_error : null, inbox: b });
+  return rows;
+}
+const COLUMNS: RecordCol<Row>[] = [
+  { key: 'name', label: 'Name', title: true, keep: true, type: 'text', className: 'min-w-40', value: (r) => r.name, render: (r) => <span className='leading-snug font-medium'>{r.name}</span> },
+  { key: 'kind', label: 'Kind', type: 'select', options: [{ value: 'sender', label: 'Sender' }, { value: 'mailbox', label: 'Mailbox' }], value: (r) => r.kind, render: (r) => (r.kind === 'sender' ? 'Sender' : 'Mailbox') },
+  { key: 'provider', label: 'Provider', type: 'text', value: (r) => r.provider, render: (r) => r.provider },
+  { key: 'address', label: 'Address', type: 'text', value: (r) => r.address, render: (r) => <span className='break-all'>{r.address}</span> },
+  { key: 'folder', label: 'Folder or label', type: 'text', value: (r) => r.folder, render: (r) => (r.folder ? <span className='font-mono text-xs'>{r.folder}</span> : '') },
+  { key: 'status', label: 'Status', type: 'select', keep: true, options: Object.entries(STATUS).map(([value, label]) => ({ value, label })), value: (r) => r.status, render: (r) => <StatusText s={r.status} /> },
+  { key: 'checked', label: 'Last checked', type: 'date', value: (r) => r.last_checked, render: (r) => (r.last_checked ? <When d={r.last_checked} /> : <span className='text-muted-foreground'>Never</span>) },
+  { key: 'messages', label: 'Messages taken in', type: 'number', value: (r) => r.messages, render: (r) => (r.messages === null ? '' : String(r.messages)) },
+  { key: 'error', label: 'Last error', type: 'text', className: 'max-w-xs', value: (r) => r.last_error, render: (r) => (r.last_error ? <span className='text-destructive line-clamp-2 text-sm'>{r.last_error}</span> : '') }
+];
+
+/** Settings › Email: the cards, the search row with Add mailbox (and Set sender), the table; a row opens its full card. */
+export function EmailTab() {
   const { data, error, reload } = useOrgLoad(() => call<View>('GET'));
-  return (
-    <PageContainer pageTitle='Email' pageDescription="Your company's own email: send this app's emails from your own address, and bring the messages of a mailbox in as records.">
-      {error ? ((error as { status?: number }).status === 404 ? <p className='text-muted-foreground text-sm'>This app has no email settings.</p> : <ErrorState error={error} />)
-        : !data ? <LoadingCards count={2} />
-        : !data.can_manage ? <p className='text-muted-foreground text-sm'>An owner of this workspace sets up its email.</p>
-        : (
-          <div className='flex flex-col gap-12'>
-            {data.offer.sender && <SenderSection view={data} onChanged={reload} />}
-            {data.offer.intakes.length > 0 && <InboxesSection view={data} onChanged={reload} />}
-          </div>
-        )}
-    </PageContainer>
+  const [adding, setAdding] = useState<'mailbox' | 'sender' | null>(null);
+  if (error) return (error as { status?: number }).status === 404 ? <p className='text-muted-foreground text-sm'>This app has no email settings.</p> : <ErrorState error={error} />;
+  if (!data) return <LoadingCards count={2} />;
+  if (!data.can_manage) return <p className='text-muted-foreground text-sm'>An owner of this workspace sets up its email.</p>;
+  const done = async () => { setAdding(null); await reload(); };
+  if (adding === 'mailbox') return (
+    <SettingsCard title='Add mailbox' onBack={() => setAdding(null)} description={<IntakeWords view={data} />}>
+      <InboxForm view={data} inbox={null} onDone={done} onCancel={() => setAdding(null)} />
+    </SettingsCard>
   );
+  if (adding === 'sender') return (
+    <SettingsCard title='Set sender' onBack={() => setAdding(null)} description="Send this app's emails to your workspace's people from your own address.">
+      <SenderForm view={data} onChanged={done} />
+    </SettingsCard>
+  );
+  const rows = rowsOf(data);
+  const inboxes = data.inboxes ?? [];
+  const taken = inboxes.reduce((n, b) => n + b.received, 0);
+  const failing = rows.filter((r) => r.status === 'error').length;
+  const s = data.sender;
+  const actions = (
+    <div className='ml-auto flex shrink-0 gap-2'>
+      {data.offer.sender && !s && <Button type='button' variant={data.offer.intakes.length ? 'outline' : 'default'} onClick={() => setAdding('sender')} aria-label='Set sender' title='Set sender' className='max-sm:w-8 max-sm:px-0'><Icons.mail /><span className='hidden sm:inline'>Set sender</span></Button>}
+      {data.offer.intakes.length > 0 && <Button type='button' onClick={() => setAdding('mailbox')} aria-label='Add mailbox' title='Add mailbox' className='max-sm:w-8 max-sm:px-0'><Icons.add /><span className='hidden sm:inline'>Add mailbox</span></Button>}
+    </div>
+  );
+  return (
+    <RecordView<Row>
+      id='settings-email' compact noun='senders and mailboxes' properties
+      rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
+      summary={<StatStrip quad items={[
+        { label: 'Mailboxes', value: inboxes.length, said: `${inboxes.length} mailboxes` },
+        { label: 'Messages taken in', value: taken, said: `${taken} messages taken in` },
+        { label: 'With an error', value: failing, said: `${failing} with an error` },
+        { label: 'Sender', value: !s ? 'Not set' : s.enabled ? 'On' : 'Off', said: `Sender ${!s ? 'not set' : s.enabled ? 'on' : 'off'}` }
+      ]} />}
+      searchText={(r) => `${r.name} ${r.kind === 'sender' ? 'sender' : 'mailbox'} ${r.provider} ${r.address} ${r.folder} ${STATUS[r.status]} ${r.last_error ?? ''}`}
+      searchPlaceholder='Search senders and mailboxes'
+      primary={actions}
+      empty={<p className='text-muted-foreground text-sm'>{data.offer.intakes.length ? 'No mailbox connected yet: Add mailbox brings its new messages in as records.' : 'No sender set yet: until one is, this app sends from its own address.'}</p>}
+      detailTitle={(r) => r.name}
+      detail={(r) => r.kind === 'sender' ? <SenderForm view={data} onChanged={reload} /> : <InboxCard view={data} inbox={r.inbox!} onChanged={reload} />}
+    />
+  );
+}
+
+function IntakeWords({ view }: { view: View }) {
+  const intakes = view.offer.intakes;
+  return <>New messages become records{intakes.length === 1 ? ` (${intakes[0]!.label ?? intakes[0]!.area})` : ''}, once each, with their attachments. Only {intakes.length === 1 ? <>the <span className='font-mono'>{intakes[0]!.folder}</span> folder</> : 'the folder this app names'} is read, and nothing in the mailbox is changed, moved or deleted.</>;
 }
 
 function SecretState({ s }: { s: Status }) {
@@ -119,7 +185,7 @@ function SecretInput({ provider, use, value, set }: { provider: Provider; use: '
   );
 }
 
-function SenderSection({ view, onChanged }: { view: View; onChanged: () => unknown }) {
+function SenderForm({ view, onChanged }: { view: View; onChanged: () => unknown }) {
   const s = view.sender ?? null;
   const [provider, setProvider] = useState<Provider>(s?.provider ?? 'smtp');
   const [settings, setSettings] = useState<Settings>(s ? { ...s.settings, reply_to: ((s.settings.reply_to as string[] | null) ?? []).join(', ') } : {});
@@ -136,10 +202,9 @@ function SenderSection({ view, onChanged }: { view: View; onChanged: () => unkno
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <section className='flex flex-col gap-4'>
+    <div className='flex flex-col gap-4'>
       <div className='flex flex-wrap items-center gap-3'>
-        <h2 className='text-lg font-semibold'>Sending</h2>
-        {s && <StatusBadge s={s.status} />}
+        {s && <span className='text-sm'>Status: <StatusText s={s.status} /></span>}
         {s && <span className='text-muted-foreground text-xs'>{s.sent} sent, {s.failed} failed{s.last_sent_at ? <>; last <When d={s.last_sent_at} /></> : null}</span>}
         {s && <label className='ml-auto flex items-center gap-2 text-sm'>On
           <Switch checked={s.enabled} onCheckedChange={(v) => void call('PATCH', '/sender', { enabled: v }).then(onChanged).catch(fail)} /></label>}
@@ -159,7 +224,7 @@ function SenderSection({ view, onChanged }: { view: View; onChanged: () => unkno
         <SecretInput provider={provider} use='sender' value={secret} set={setSecret} />
         {s && <SecretState s={s} />}
         <div className='flex flex-wrap gap-2'>
-          <Button type='submit' size='sm' disabled={busy}>{s ? 'Save' : 'Set up sending'}</Button>
+          <Button type='submit' size='sm' disabled={busy}>{s ? 'Save' : 'Set sender'}</Button>
           {s && <Button type='button' size='sm' variant='ghost' onClick={() => void call('DELETE', '/sender').then(() => { toast.success("Removed: the app's own sender sends again"); return onChanged(); }).catch(fail)}>Remove</Button>}
         </div>
       </form>
@@ -172,51 +237,34 @@ function SenderSection({ view, onChanged }: { view: View; onChanged: () => unkno
           <TestOutcome r={test} />
         </form>
       )}
-    </section>
+    </div>
   );
 }
 
-function InboxesSection({ view, onChanged }: { view: View; onChanged: () => unknown }) {
-  const [editing, setEditing] = useState<Inbox | 'new' | null>(null);
-  const [tests, setTests] = useState<Record<string, TestResult>>({});
-  const inboxes = view.inboxes ?? [];
-  const intakes = view.offer.intakes;
+/** One mailbox's details card: its status, On, Test, the edit form, Disconnect. */
+function InboxCard({ view, inbox: b, onChanged }: { view: View; inbox: Inbox; onChanged: () => unknown }) {
+  const [test, setTest] = useState<TestResult | null>(null);
   return (
-    <section className='flex flex-col gap-4'>
+    <div className='flex flex-col gap-4'>
       <div className='flex flex-wrap items-center gap-3'>
-        <h2 className='text-lg font-semibold'>Mailboxes</h2>
-        <Button size='sm' variant='outline' className='ml-auto' onClick={() => setEditing('new')}>Connect a mailbox</Button>
+        <span className='text-sm'>Status: <StatusText s={b.status} /></span>
+        <span className='text-muted-foreground text-xs'>{b.received} taken in{b.last_poll_at ? <>; read <When d={b.last_poll_at} /></> : null}; every {b.poll_minutes} min</span>
+        <label className='ml-auto flex items-center gap-2 text-sm'>On
+          <Switch checked={b.enabled} onCheckedChange={(v) => void call('PATCH', `/inboxes/${b.id}`, { enabled: v }).then(onChanged).catch(fail)} /></label>
       </div>
-      <p className='text-muted-foreground text-sm'>
-        New messages become records{intakes.length === 1 ? ` (${intakes[0]!.label ?? intakes[0]!.area})` : ''}, once each, with their attachments. Only {intakes.length === 1 ? <>the <span className='font-mono'>{intakes[0]!.folder}</span> folder</> : 'the folder this app names'} is read, and nothing in the mailbox is changed, moved or deleted.
-      </p>
-      {inboxes.length === 0 && editing === null && <p className='text-muted-foreground text-sm'>No mailbox connected.</p>}
-      {inboxes.map((b) => (
-        <div key={b.id} className='flex flex-col gap-2 rounded-lg border p-4'>
-          <div className='flex flex-wrap items-center gap-3'>
-            <span className='font-medium'>{b.label}</span>
-            <Badge variant='outline'>{b.provider_label}</Badge>
-            <StatusBadge s={b.status} />
-            <span className='text-muted-foreground text-xs'>{b.received} received{b.last_poll_at ? <>; read <When d={b.last_poll_at} /></> : null}; every {b.poll_minutes} min</span>
-            <label className='ml-auto flex items-center gap-2 text-sm'>On
-              <Switch checked={b.enabled} onCheckedChange={(v) => void call('PATCH', `/inboxes/${b.id}`, { enabled: v }).then(onChanged).catch(fail)} /></label>
-          </div>
-          {b.status === 'error' && b.last_error && <div className='text-sm'><p className='text-destructive'>{b.last_error}</p>{b.hint && <p className='text-muted-foreground mt-1 text-xs'>{b.hint}</p>}</div>}
-          <SecretState s={b} />
-          <div className='flex flex-wrap items-center gap-2'>
-            <Button size='sm' variant='outline' onClick={() => void call<TestResult>('POST', `/inboxes/${b.id}/test`).then(async (r) => { setTests((x) => ({ ...x, [b.id]: r })); await onChanged(); }).catch(fail)}>Test</Button>
-            <Button size='sm' variant='ghost' onClick={() => setEditing(b)}>Edit</Button>
-            <Button size='sm' variant='ghost' onClick={() => void call('DELETE', `/inboxes/${b.id}`).then(() => { toast.success('Disconnected'); return onChanged(); }).catch(fail)}>Disconnect</Button>
-            <TestOutcome r={tests[b.id] ?? null} />
-          </div>
-        </div>
-      ))}
-      {editing !== null && <InboxForm view={view} inbox={editing === 'new' ? null : editing} onDone={async () => { setEditing(null); await onChanged(); }} onCancel={() => setEditing(null)} />}
-    </section>
+      {b.status === 'error' && b.last_error && <div className='text-sm'><p className='text-destructive'>{b.last_error}</p>{b.hint && <p className='text-muted-foreground mt-1 text-xs'>{b.hint}</p>}</div>}
+      <p className='text-muted-foreground text-sm'><IntakeWords view={view} /></p>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button size='sm' variant='outline' onClick={() => void call<TestResult>('POST', `/inboxes/${b.id}/test`).then(async (r) => { setTest(r); await onChanged(); }).catch(fail)}>Test</Button>
+        <Button size='sm' variant='ghost' onClick={() => { if (window.confirm(`Disconnect ${b.label}? Its records stay; no new messages come in from it.`)) void call('DELETE', `/inboxes/${b.id}`).then(() => { toast.success('Disconnected'); return onChanged(); }).catch(fail); }}>Disconnect</Button>
+        <TestOutcome r={test} />
+      </div>
+      <InboxForm view={view} inbox={b} onDone={onChanged} />
+    </div>
   );
 }
 
-function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox | null; onDone: () => unknown; onCancel: () => void }) {
+function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox | null; onDone: () => unknown; onCancel?: () => void }) {
   const intakes = view.offer.intakes;
   const [pack, setPack] = useState(inbox?.pack ?? intakes[0]?.pack ?? '');
   const [provider, setProvider] = useState<Provider>(inbox?.provider ?? 'smtp');
@@ -234,8 +282,7 @@ function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <form className='grid max-w-2xl gap-3 rounded-lg border p-4' onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <h3 className='font-medium'>{inbox ? `Edit ${inbox.label}` : 'Connect a mailbox'}</h3>
+    <form className='grid max-w-2xl gap-3' onSubmit={(e) => { e.preventDefault(); void save(); }}>
       {intakes.length > 1 && (
         <FormRow label='Brings messages into' htmlFor='email-inbox-pack'>
           <NativeSelect id='email-inbox-pack' value={pack} onChange={(e) => setPack(e.target.value)}>
@@ -255,7 +302,7 @@ function InboxForm({ view, inbox, onDone, onCancel }: { view: View; inbox: Inbox
       <FormRow label='Check every (minutes)' htmlFor='email-inbox-minutes'><Input id='email-inbox-minutes' className='w-28' type='number' min={1} max={1440} value={minutes} onChange={(e) => setMinutes(e.target.value)} /></FormRow>
       <div className='flex gap-2'>
         <Button type='submit' size='sm' disabled={busy}>{inbox ? 'Save' : 'Connect'}</Button>
-        <Button type='button' size='sm' variant='ghost' onClick={onCancel}>Cancel</Button>
+        {onCancel && <Button type='button' size='sm' variant='outline' onClick={onCancel}>Cancel</Button>}
       </div>
     </form>
   );

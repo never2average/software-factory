@@ -12,6 +12,12 @@
       "s"
      ],
      "items": []
+    },
+    {
+     "title": "Settings",
+     "url": "/app/settings",
+     "icon": "settings",
+     "items": []
     }
    ]
   },
@@ -80,12 +86,6 @@
   {
    "label": "Workspace",
    "items": [
-    {
-     "title": "Credentials",
-     "url": "/app/credentials",
-     "icon": "lock",
-     "items": []
-    },
     {
      "title": "Files",
      "url": "/app/files",

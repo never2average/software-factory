@@ -27,7 +27,9 @@ export const CONSOLE_PAGES = {
   usage: "/app/usage",
   billing: "/app/billing",
   profile: "/app/profile",
-  credentials: "/app/credentials",
+  // Settings › Credentials (mold_v0-218): an in-page tab of /app/settings since its own page went. Hidden, the tab
+  // leaves Settings (and Settings the sidebar when it has no Email tab either); there is no old address to redirect.
+  credentials: "/app/settings?tab=credentials",
   schedules: "/app/schedules",
   notices: "/app/notices",
   files: "/app/files",
@@ -148,7 +150,8 @@ export function hiddenPages(blocks: unknown[]): ConsolePage[] {
 /** Is this console address one of the hidden pages, or under one? */
 export const isHiddenUrl = (url: string, hidden: readonly ConsolePage[]) => {
   const p = url.split(/[?#]/)[0]!;
-  return hidden.some((h) => p === CONSOLE_PAGES[h] || p.startsWith(`${CONSOLE_PAGES[h]}/`));
+  // An in-page tab (a page's ?tab=, mold_v0-218: Settings › Credentials) is that address exactly.
+  return hidden.some((h) => CONSOLE_PAGES[h].includes("?") ? url === CONSOLE_PAGES[h] : p === CONSOLE_PAGES[h] || p.startsWith(`${CONSOLE_PAGES[h]}/`));
 };
 
 /**
@@ -156,4 +159,5 @@ export const isHiddenUrl = (url: string, hidden: readonly ConsolePage[]) => {
  * the tab that includes the Setup page's checklist, mold_v0-134, so a redirect takes one hop).
  */
 export const hiddenRedirects = (hidden: readonly ConsolePage[], home = "/app") =>
-  hidden.flatMap((h) => [CONSOLE_PAGES[h], `${CONSOLE_PAGES[h]}/:path*`].map((source) => ({ source, destination: home, permanent: false })));
+  // An in-page tab (mold_v0-218) has no address of its own to redirect: its page simply leaves it out.
+  hidden.filter((h) => !CONSOLE_PAGES[h].includes("?")).flatMap((h) => [CONSOLE_PAGES[h], `${CONSOLE_PAGES[h]}/:path*`].map((source) => ({ source, destination: home, permanent: false })));
