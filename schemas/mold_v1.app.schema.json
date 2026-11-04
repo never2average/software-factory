@@ -605,11 +605,13 @@
             "scopes": {
               "type": "array",
               "uniqueItems": true,
-              "description": "What a client session may do, e.g. read, write, run. Absent: read and write.",
-              "markdownDescription": "What a client session may do, e.g. read, write, run. Absent: read and write.",
+              "maxItems": 50,
+              "description": "What a client session may do: read, write, run or checks (ask the app's yes/no checks), each maybe narrowed to one area, job kind or check (read:<area>, checks:<check>). Absent: read and write. A session never holds more than the key that mints it.",
+              "markdownDescription": "What a client session may do: read, write, run or checks (ask the app's yes/no checks), each maybe narrowed to one area, job kind or check (read:<area>, checks:<check>). Absent: read and write. A session never holds more than the key that mints it.",
               "items": {
                 "type": "string",
-                "pattern": "^[a-z][a-z0-9_:.-]{1,40}$"
+                "pattern": "^(read|write|run|checks)(:[a-z][a-z0-9_]{0,63})?$",
+                "x-hint": "read, write, run or checks, or one narrowed like read:<area> or checks:<check>"
               }
             }
           }

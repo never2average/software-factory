@@ -7,7 +7,7 @@ mint the spec it produced directly.
 
 - kind embedded: the REST API at /v1 with its OpenAPI description, scoped keys, client sessions, signed webhooks out (five events) and in (a CI release receiver), and TypeScript and Python SDKs.
 - Append-only, hash-chained record areas (rollouts and per-user overrides) with signed hourly checkpoints (audit.sign; the key is set by name).
-- Two declarative yes/no checks answered from the records: is this flag on in this environment, and is it forced on for this user (matched through an encrypted, equality-searchable user id).
+- One declarative yes/no check answered from the records with a fallback across areas: the user's current override (matched through an encrypted, equality-searchable user id) decides when there is one, else the latest rollout, its flag not archived, and a deterministic percentage bucket of the user for the rollout's share. Client sessions may ask it from a browser (`checks:is_flag_on`), and the onboarding step "ask is_flag_on" is done once it has been asked.
 - A clean-up clock on every flag (90 days, capped by its remove-by date) and a decide-by clock on running experiments.
 - An agent job kind that writes an experiment readout, with an optional analytics credential and its egress host; rate limits per key and per workspace; a list tab that opts out of a primary button with its reason.
 

@@ -8,7 +8,7 @@
  * Checks (mold_v0-196) join here when they land: they are record areas of role check today, and listed as such.
  */
 import { declaredChecks } from "./checks.js";
-import { inputKind } from "./check-spec.js";
+import { checkBuckets, inputKind } from "./check-spec.js";
 import { API_VERSIONS, EVENT_CATALOG, TEST_EVENT, type EventName } from "./developer-config.js";
 import { currentApiVersion, developerSurface } from "./developer-surface.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
@@ -269,7 +269,9 @@ export function openApiDocument(serverUrl: string): Schema {
     jsonSchemaDialect: "https://json-schema.org/draft/2020-12/schema",
     servers: [{ url: serverUrl }],
     security: [{ bearer: [] }],
-    "x-sdk": { npm: `${NS.replace(/_/g, "-")}-api`, python: `${NS.replace(/-/g, "_")}_api`, languages: cfg.sdk_languages },
+    "x-sdk": { npm: `${NS.replace(/_/g, "-")}-api`, python: `${NS.replace(/-/g, "_")}_api`, languages: cfg.sdk_languages,
+      // A check that buckets (mold_v0-226): the SDKs carry the same bucket function (scripts/lib/sdk-gen.ts).
+      ...(declaredChecks().some(checkBuckets) ? { bucketing: true } : {}) },
     paths,
     webhooks,
     components: {

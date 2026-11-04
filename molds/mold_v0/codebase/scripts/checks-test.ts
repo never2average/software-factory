@@ -17,8 +17,20 @@
 // 6. Scopes, on the developer surface (mold_v0-193): keys and client sessions with checks, checks:<name>, or neither.
 // 7. Audit: each answer one platform-trail entry (name and outcome, never an input) when audit.platform is on; none off.
 // 8. Speed: answers over 3,000 records of one workspace, with the declaration's index hint.
+// mold_v0-226:
+// 2b. Bucketing: the bucket is a pure function of (salt, input), stable run to run and equal to an independent SHA-256
+//     (Python's hashlib, the SDKs' copies in JavaScript and Python); over 100,000 ids the buckets are uniform within
+//     tolerance and each percent holds its share; 0% holds no one, 100% everyone; a larger percent keeps everyone a
+//     smaller one held; two salts bucket independently.
+// 4b. A fallback across areas (first_of): an exception decides when one exists and is current (allowing or denying),
+//     an expired one or none passes to the consent, nothing at all denies; the explanation lists each step and the
+//     area that decided; the share's bucket decides among consents, as bucketOf says.
+// 9. Onboarding (mold_v0-225): an answer at /api/checks or /v1/checks is recorded once per workspace and check
+//    (check/answer, the tool's name, nothing of the inputs), so a step tool:check_<name> is done.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 import type * as SpecT from "../src/check-spec.js";
@@ -148,6 +160,66 @@ try {
     console.log("✓ the evaluator, at random: all/any/not by definition, De Morgan, eq/ne and gt/lte complements, in and not_in as eq, within as two bounds, latest-wins under any order, absent inputs fail closed");
   }
 
+  // ---------- 2b. bucketing (mold_v0-226) ----------
+  {
+    const N = 100_000;
+    const ids = Array.from({ length: N }, (_, i) => `user-${i}`);
+    // Stable: the same (salt, input) gives the same bucket, every time; a known vector (independent of this code).
+    const first = ids.slice(0, 2000).map((id) => spec.bucketOf("rollout", id));
+    assert.deepEqual(ids.slice(0, 2000).map((id) => spec.bucketOf("rollout", id)), first, "stable run to run");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "bucket-"));
+    try {
+      const sample = [...ids.slice(0, 300), "", "é", "ünïcødé 😀", "x".repeat(200), "a:b", "user-1 "];
+      writeFileSync(path.join(dir, "ids.json"), JSON.stringify(sample));
+      // Python's hashlib, written from the definition (not the SDK's code): sha256(salt + ":" + input), 4 bytes, mod 10000.
+      const py = JSON.parse(execFileSync("python3", ["-I", "-c", "import hashlib,json,sys\nids=json.load(open(sys.argv[1]))\nprint(json.dumps([int.from_bytes(hashlib.sha256(('rollout:'+i).encode('utf-8')).digest()[:4],'big')%10000 for i in ids]))", path.join(dir, "ids.json")], { encoding: "utf8" }));
+      assert.deepEqual(sample.map((id) => spec.bucketOf("rollout", id)), py, "the same bucket as an independent SHA-256 (Python)");
+      // The SDKs' copies (scripts/lib/sdk-gen.ts): JavaScript (its own SHA-256) and Python agree with the server's.
+      const sdk = await import("./lib/sdk-gen.js");
+      writeFileSync(path.join(dir, "b.mjs"), sdk.TS_BUCKETING);
+      const js = await import(path.join(dir, "b.mjs"));
+      assert.deepEqual(sample.map((id) => js.bucket(id, "rollout")), py, "the JavaScript SDK's bucket");
+      assert.deepEqual([js.inRollout("user-1", "rollout", 0), js.inRollout("user-1", "rollout", 100), js.inRollout("user-1", "rollout", 101)], [false, true, false]);
+      writeFileSync(path.join(dir, "b.py"), `import hashlib\nimport math\n${sdk.PY_BUCKETING}`);
+      const pySdk = JSON.parse(execFileSync("python3", ["-I", "-c", "import json,sys,importlib.util as u\ns=u.spec_from_file_location('b',sys.argv[1]);m=u.module_from_spec(s);s.loader.exec_module(m)\nids=json.load(open(sys.argv[2]))\nprint(json.dumps([[m.bucket(i,'rollout') for i in ids],[m.in_rollout(i,'rollout',37.5) for i in ids],[m.in_rollout('u','rollout',p) for p in (0,100,-1,101)]]))", path.join(dir, "b.py"), path.join(dir, "ids.json")], { encoding: "utf8" }));
+      assert.deepEqual(pySdk[0], py, "the Python SDK's bucket");
+      assert.deepEqual(pySdk[1], sample.map((id) => spec.inBucket("rollout", id, 37.5)), "the Python SDK's in_rollout agrees with the server");
+      assert.deepEqual(pySdk[2], [false, true, false, false], "Python: 0 holds no one, 100 everyone, out of range no one");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+    // Uniform: ten bands of buckets each hold a tenth of 100,000 ids within 3% of it (about six standard deviations).
+    const buckets = ids.map((id) => spec.bucketOf("rollout", id));
+    assert.ok(buckets.every((b) => Number.isInteger(b) && b >= 0 && b < spec.BUCKETS), "0 to 9999");
+    const bands = Array.from({ length: 10 }, () => 0);
+    for (const b of buckets) bands[Math.floor(b / 1000)]!++;
+    for (const [i, n] of bands.entries()) assert.ok(Math.abs(n - N / 10) < N / 10 * 0.03, `band ${i}: ${n} of ${N} ids (expected ${N / 10})`);
+    // Each percent holds its share (within half a point over 100,000 ids); 0% no one; 100% everyone; monotone.
+    for (const pct of [0.5, 1, 5, 10, 25, 33.33, 50, 75, 99]) {
+      const held = ids.filter((id) => spec.inBucket("rollout", id, pct)).length;
+      assert.ok(Math.abs(held / N * 100 - pct) < 0.5, `${pct}%: ${(held / N * 100).toFixed(2)}% of ids`);
+    }
+    assert.equal(ids.filter((id) => spec.inBucket("rollout", id, 0)).length, 0, "0% holds no one");
+    assert.equal(ids.filter((id) => spec.inBucket("rollout", id, 100)).length, N, "100% holds everyone");
+    assert.ok(ids.slice(0, 20_000).every((id) => !spec.inBucket("rollout", id, 20) || spec.inBucket("rollout", id, 20.01)), "a larger percent keeps everyone a smaller one held");
+    assert.deepEqual([spec.bucketThreshold(-1), spec.bucketThreshold(100.01), spec.bucketThreshold(Number.NaN), spec.bucketThreshold("50"), spec.bucketThreshold(12.345)], [null, null, null, null, 1235]);
+    // Two salts bucket independently: about a quarter of ids are in the first half under both.
+    const both = ids.filter((id) => spec.inBucket("a", id, 50) && spec.inBucket("b", id, 50)).length / N;
+    assert.ok(Math.abs(both - 0.25) < 0.01, `independent salts: ${both.toFixed(4)} in both halves`);
+    // As a condition: the evaluator's leaf says the bucket and the threshold, and fails closed with no value or percent.
+    const NOW = Date.now();
+    const kindOf = (p: string) => (p === "share" ? "number" as const : "string" as const);
+    const ctx = (data: Record<string, unknown>, inputs: Record<string, unknown>) => ({ record: { key: "r", data }, lookup: null, lookupAs: null, inputs, now: NOW, kindOf });
+    const b = { bucket: { input: "$who", salt: "s1", percent: "@share" } };
+    const o = ev.evaluate(b, ctx({ share: 30 }, { who: "user-5" }), "require", "c");
+    assert.equal(o.passed, spec.inBucket("s1", "user-5", 30));
+    assert.deepEqual([o.evaluated[0]!.actual, (o.evaluated[0]!.expected as { below: number }).below], [spec.bucketOf("s1", "user-5"), 3000]);
+    assert.match(ev.leafWords(o.evaluated[0]!), new RegExp(`who is in bucket ${spec.bucketOf("s1", "user-5")} of 10000, (not )?below 3000 \\(30%\\)`));
+    assert.equal(ev.evaluate(b, ctx({}, { who: "user-5" })).passed, false, "no percent: fails closed");
+    assert.equal(ev.evaluate(b, ctx({ share: 100 }, {})).passed, false, "no input: fails closed");
+    assert.equal(ev.evaluate({ bucket: { input: "$who", percent: 100 } }, ctx({}, { who: "x" }), "require", "c").passed, true, "100: everyone");
+    assert.equal(ev.evaluate({ bucket: { input: "$who", percent: 50 } }, ctx({}, { who: "user-5" }), "require", "my_check").passed, spec.inBucket("my_check", "user-5", 50), "the salt defaults to the check's name");
+    console.log(`✓ bucketing: stable, equal to an independent SHA-256 and to both SDKs' copies; over ${N.toLocaleString("en")} ids each band within 3% and each percent within half a point; 0% no one, 100% everyone; salts independent`);
+  }
+
   // ---------- 3. declarations refused ----------
   {
     const areas: import("../src/check-spec.js").CheckArea[] = [
@@ -184,8 +256,30 @@ try {
       ["$x|now on a string input", (c) => { c.rule.require = [{ field: "who", eq: "$who|now" }]; }, /only a date or datetime input falls back to now/],
       ["JSON in a match", (c) => { c.rule.match = { who: "$who", blob: "x" }; }, /match on single values/],
       ["a bad shape", (c) => { c.rule.require = [{ field: "num", between: [1, 2] }]; }, /checks\[0\]/],
+      // mold_v0-226: buckets and fallbacks.
+      ["a bucket of a literal", (c) => { c.rule.require = [{ bucket: { input: "everyone", percent: 10 } }]; }, /bucket.input: "everyone": name what is bucketed/],
+      ["a bucket of a number input", (c) => { c.rule.require = [{ bucket: { input: "$kk", percent: 10 } }]; }, /bucket.input: \$kk is a number: a bucket hashes text/],
+      ["a bucket of an unknown input", (c) => { c.rule.require = [{ bucket: { input: "$ghost", percent: 10 } }]; }, /bucket.input: \$ghost is not one of the check's inputs/],
+      ["a bucket salted with a date field", (c) => { c.rule.require = [{ bucket: { input: "$who", salt: "@at", percent: 10 } }]; }, /bucket.salt: @at holds a date: a bucket hashes text/],
+      ["a percent over 100", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: 150 } }]; }, /bucket.percent: 150 is not a share from 0 to 100/],
+      ["a percent below 0", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: -1 } }]; }, /bucket.percent: -1 is not a share/],
+      ["a percent from a text field", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: "@who" } }]; }, /bucket.percent: @who holds a string/],
+      ["a percent that is a word", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: "lots" } }]; }, /bucket.percent: "lots" is not a number/],
+      ["a percent from an unknown field", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: "@nope" } }]; }, /bucket.percent: @nope: nope is not a field/],
+      ["a bucket without latest_by", (c) => { delete c.rule.latest_by; c.rule.require = [{ bucket: { input: "$who", percent: 10 } }]; }, /without latest_by, a rule has no bucket/],
+      ["a bucket with an unknown key", (c) => { c.rule.require = [{ bucket: { input: "$who", percent: 10, seed: 1 } }]; }, /checks\[0\]/],
+      ["first_of of one step", (c) => { c.rule = { first_of: [c.rule] }; }, /checks\[0\]/],
+      ["first_of of five steps", (c) => { c.rule = { first_of: [c.rule, c.rule, c.rule, c.rule, c.rule] }; }, /checks\[0\]/],
+      ["a first_of step before the last without latest_by", (c) => { const s = structuredClone(c.rule); delete s.latest_by; c.rule = { first_of: [s, c.rule] }; }, /rule.first_of.0.latest_by: a first_of step before the last decides by its latest record/],
+      ["when on a rule of its own", (c) => { c.rule.when = [{ field: "state", eq: "on" }]; }, /rule.when: when: a rule of its own has no when/],
+      ["when on the last step", (c) => { const s = { ...structuredClone(c.rule), when: [{ field: "state", eq: "on" }] }; c.rule = { first_of: [c.rule, s] }; }, /rule.first_of.1.when: when: the last step decides/],
+      ["a first_of step of an unknown area", (c) => { c.rule = { first_of: [c.rule, { ...structuredClone(c.rule), area: "nope" }] }; }, /rule.first_of\[1\].area: nope is not a record area/],
+      ["a when naming an unknown field", (c) => { c.rule = { first_of: [{ ...structuredClone(c.rule), when: [{ field: "nope", exists: true }] }, c.rule] }; }, /rule.first_of.0.when.*nope is not a field/],
+      ["a step's unknown input", (c) => { c.rule = { first_of: [c.rule, { ...structuredClone(c.rule), match: { who: "$ghost" } }] }; }, /rule.first_of.1.match.who: \$ghost is not one of the check's inputs/],
     ];
     for (const [what, patch, re] of refused) assert.match(problems(patch), re, what);
+    // A sound fallback with a bucket: no problem; the shared areas' fields too.
+    assert.equal(problems((c) => { c.rule = { first_of: [{ ...structuredClone(c.rule), when: [{ field: "at", gt: "$tt|now" }] }, { ...structuredClone(c.rule), require: [{ bucket: { input: "$who", salt: "@who", percent: "@num" } }] }] }; }), "", "a fallback with a when and a bucket");
     const twice = spec.checksProblems([{ id: "p", checks: [base] }, { id: "q", checks: [base] }], areas).join("\n");
     assert.match(twice, /check ok_check is already pack p's/);
     // A pack that declares a check whose tool a pack tool already has is refused when the packs are installed.
@@ -197,8 +291,9 @@ try {
 
   // ---------- the fixture ----------
   setPacksForTest([{ manifest: { id: "fixture_checks", name: "Fixture checks", version: "1", entry: null, migrations: null, words: {}, dir: FIX }, declared: compileDeclarations(json), definition: null }]);
-  assert.deepEqual(ck.declaredChecks().map((c) => c.name), ["may_process", "may_email"]);
-  assert.deepEqual(ck.checkTools().map((t) => t.name), ["check_may_process", "check_may_email"]);
+  assert.deepEqual(ck.declaredChecks().map((c) => c.name), ["may_process", "may_email", "may_contact"]);
+  assert.deepEqual(ck.checkTools().map((t) => t.name), ["check_may_process", "check_may_email", "check_may_contact"]);
+  assert.match(ck.checkTools()[2]!.description, /Reads this workspace's exceptions records \(the latest by recorded_at, when there is one, decides\), else its consents records \(the latest by recorded_at decides\)/);
   const A = await createOrg(`Checks A ${STAMP}`), B = await createOrg(`Checks B ${STAMP}`);
   const recs = (o: { orgId: number }) => rec.workspaceRecords("fixture_checks", o.orgId);
   await rec.adminRecords.put(SHARED, "marketing", { data: { lawful_basis: BASIS, active: true } });
@@ -266,6 +361,61 @@ try {
     console.log("✓ the fixture's checks: granted, withdrawn and granted again (latest wins both ways), expired and not yet at an earlier time, the lookup's purpose inactive, no record; an any-record rule; each with the condition that decided it");
   }
 
+  // ---------- 4b. a fallback across areas, with a bucket (mold_v0-226) ----------
+  {
+    const EXC = json.record_areas[2].name as string, EXC_LABEL = json.record_areas[2].label as string;
+    const exc = (o: { orgId: number }, key: string, data: Record<string, unknown>) => recs(o).create(EXC, key, { data });
+    await exc(A.org, "x1", { subject: "s1", purpose: "marketing", allowed: false, recorded_at: day(-1) });
+    await exc(A.org, "x2", { subject: "s2", purpose: "marketing", allowed: true, recorded_at: day(-1), until: day(10) });
+    await exc(A.org, "x3", { subject: "s3", purpose: "marketing", allowed: false, recorded_at: day(-9), until: day(-2) });
+    const steps = (a: Awaited<ReturnType<typeof ask>>) => a.explanation!.steps!.map((x) => [x.area, x.outcome, x.record?.key ?? null]);
+    // An exception that exists decides, denying even a granted consent...
+    const denied = await ask(A.org, "may_contact", { subject: "s1", purpose: "marketing" });
+    assert.equal(denied.allowed, false, "s1's exception denies, though its consent is granted");
+    assert.equal(denied.explanation!.decided_by_area, EXC);
+    assert.deepEqual(steps(denied), [[EXC, "decided", "x1"], [MAIN, "not_reached", null]]);
+    assert.deepEqual(denied.record_refs, [{ area: EXC, key: "x1" }]);
+    assert.match(denied.reason, new RegExp(`the latest ${esc(EXC_LABEL)} record \\(x1\\) does not: The exception allows it is false, not true`));
+    // ...or allowing even a withdrawn one.
+    const allowed = await ask(A.org, "may_contact", { subject: "s2", purpose: "marketing" });
+    assert.deepEqual([allowed.allowed, allowed.explanation!.decided_by_area], [true, EXC], "s2's current exception allows, though its consent is withdrawn");
+    // An expired exception does not apply: the consent decides, and the reason says why the first step passed.
+    const expired = await ask(A.org, "may_contact", { subject: "s3", purpose: "marketing" });
+    assert.deepEqual([expired.allowed, expired.explanation!.decided_by_area], [true, MAIN], "s3's exception expired: its granted consent decides");
+    assert.deepEqual(steps(expired), [[EXC, "not_applicable", "x3"], [MAIN, "decided", "s3-2"]]);
+    assert.match(expired.reason, new RegExp(`^the latest ${esc(EXC_LABEL)} record \\(x3\\) does not apply: until has a value .*until is "${day(-2)}", not after .*; the latest ${esc(MAIN_LABEL)} record \\(s3-2\\) meets every condition$`));
+    assert.deepEqual(expired.record_refs, [{ area: MAIN, key: "s3-2" }, { area: SHARED, key: "marketing" }]);
+    assert.ok(expired.explanation!.steps![0]!.conditions!.some((l) => l.field === "until"), "the step that passed lists its when");
+    // Asked at a time the exception was current: it decides.
+    const then = await ask(A.org, "may_contact", { subject: "s3", purpose: "marketing", at: new Date(NOW - 5 * DAY).toISOString() });
+    assert.deepEqual([then.allowed, then.explanation!.decided_by_area], [false, EXC], "at a time the exception was current, it decides");
+    // No exception: the consent decides; nothing at all: denied, every step listed.
+    const plain = await ask(A.org, "may_contact", { subject: "s4", purpose: "marketing" });
+    assert.deepEqual([plain.allowed, steps(plain)], [true, [[EXC, "no_record", null], [MAIN, "decided", "s4-1"]]]);
+    assert.match(plain.reason, new RegExp(`^no ${esc(EXC_LABEL)} record matches \\(subject, purpose\\); the latest ${esc(MAIN_LABEL)} record`));
+    const nobody = await ask(A.org, "may_contact", { subject: "nobody", purpose: "marketing" });
+    assert.deepEqual([nobody.allowed, nobody.record_refs, steps(nobody)], [false, [], [[EXC, "no_record", null], [MAIN, "decided", null]]]);
+    assert.match(nobody.reason, new RegExp(`no ${esc(EXC_LABEL)} record matches \\(subject, purpose\\); no ${esc(MAIN_LABEL)} record matches`));
+    // Another workspace's exception never decides for A.
+    await exc(B.org, "x9", { subject: "s4", purpose: "marketing", allowed: false, recorded_at: day(-1) });
+    assert.equal((await ask(A.org, "may_contact", { subject: "s4", purpose: "marketing" })).allowed, true, "B's exception never answers for A");
+    // The share's bucket decides among granted consents, exactly as bucketOf says (salted by the purpose).
+    const shares: [string, number][] = [...Array.from({ length: 60 }, (_, i) => [`b30-${i}`, 30] as [string, number]), ...Array.from({ length: 6 }, (_, i) => [`b0-${i}`, 0] as [string, number]), ...Array.from({ length: 6 }, (_, i) => [`b100-${i}`, 100] as [string, number])];
+    for (const [sub, share] of shares) await put(A.org, `${sub}-c`, { subject: sub, purpose: "marketing", status: "granted", recorded_at: day(-1), share });
+    let inShare = 0;
+    for (const [sub, share] of shares) {
+      const a = await ask(A.org, "may_contact", { subject: sub, purpose: "marketing" });
+      assert.equal(a.allowed, spec.inBucket("marketing", sub, share), `${sub} at ${share}%`);
+      if (share === 0) assert.equal(a.allowed, false, "0%: no one");
+      if (share === 100) assert.equal(a.allowed, true, "100%: everyone");
+      if (share === 30 && a.allowed) inShare++;
+      const leafB = a.explanation!.conditions.find((l) => l.op === "bucket")!;
+      assert.equal(leafB.actual, spec.bucketOf("marketing", sub), "the explanation shows the subject's bucket");
+    }
+    assert.ok(inShare > 5 && inShare < 35, `about 30% of 60 subjects in a 30% share (${inShare})`);
+    console.log(`✓ a fallback across areas: an existing exception decides (denying a granted consent, allowing a withdrawn one), an expired one or none passes to the consent, nothing denies; each step and the deciding area explained; the share's bucket decides as bucketOf (${inShare} of 60 at 30%, 0% none, 100% all)`);
+  }
+
   // ---------- 5. workspaces ----------
   // The developer surface on (mold_v0-193), as gen-packs would carry a pack's developer_surface: its /v1/checks door.
   await import("../src/hosts.js");
@@ -300,7 +450,9 @@ try {
       r = await http.req("POST", "/api/checks/may_process", {}, { subject: "s9", purpose: "marketing" });
       assert.equal(r.status, 401, "no one: refused");
       r = await http.req("GET", "/api/checks", { authorization: `Bearer ${memberA}` });
-      assert.deepEqual((await r.json()).checks.map((c: { name: string }) => c.name), ["may_process", "may_email"]);
+      const listed = (await r.json()).checks;
+      assert.deepEqual(listed.map((c: { name: string }) => c.name), ["may_process", "may_email", "may_contact"]);
+      assert.deepEqual(listed[2].first_of.map((x: { area: string }) => x.area), [json.record_areas[2].name, MAIN], "a fallback lists its areas in order");
       const mcpA = await connect(A.org), mcpB = await connect(B.org);
       const tools = (await mcpA.client.listTools()).tools.map((t) => t.name);
       assert.ok(tools.includes("check_may_process") && tools.includes("check_may_email"));
@@ -371,6 +523,21 @@ try {
       audit.setAuditForTest(null);
       console.log("✓ audit: each answer one platform-trail entry (the check and its outcome, by the asker, never an input) with audit.platform on; none off");
     }
+
+    // ---------- 9. onboarding: answers recorded once (mold_v0-225) ----------
+    {
+      const rows = await db.query<{ org_id: number; name: string; client: string; ok: boolean }>("SELECT org_id, name, client, ok FROM mcp_events WHERE method = 'check/answer' ORDER BY id");
+      const pairs = rows.map((r) => `${r.org_id === A.org.orgId ? "A" : r.org_id === B.org.orgId ? "B" : r.org_id} ${r.name}`);
+      assert.equal(new Set(pairs).size, pairs.length, `once per workspace and check (${pairs.join(", ")})`);
+      for (const want of ["A check_may_process", "A check_may_email", "A check_may_contact", "B check_may_process"]) assert.ok(pairs.includes(want), `${want} recorded`);
+      assert.ok(rows.every((r) => r.ok && r.client === "api"));
+      const all = JSON.stringify(await db.query("SELECT * FROM mcp_events WHERE method = 'check/answer'"));
+      assert.ok(!all.includes("marketing") && !all.includes('"s1"'), "no input in the event");
+      // Asked again by another door: still one.
+      await http.req("POST", "/api/checks/may_email", { authorization: `Bearer ${A.key}` }, { subject: "s6" });
+      assert.equal((await db.query("SELECT 1 FROM mcp_events WHERE org_id = $1 AND method = 'check/answer' AND name = 'check_may_email'", [A.org.orgId])).length, 1);
+      console.log("✓ onboarding: an answer at the HTTP doors is recorded once per workspace and check (check/answer under the tool's name), never an input");
+    }
   } finally {
     await http.close();
   }
@@ -392,7 +559,9 @@ try {
     const median = times[15]!;
     assert.ok(median < 250, `median answer ${median.toFixed(1)} ms over 3,000 records (embedded database)`);
     const hints = ck.checkHints();
-    assert.deepEqual(hints.map((h) => [h.check, h.by, h.equal, h.order, h.limit]), [["may_process", "fields", ["purpose", "subject"], "recorded_at", 1], ["may_email", "fields", ["status", "subject"], null, 20]]);
+    assert.deepEqual(hints.map((h) => [h.check, h.by, h.equal, h.order, h.limit]), [["may_process", "fields", ["purpose", "subject"], "recorded_at", 1], ["may_email", "fields", ["status", "subject"], null, 20],
+      ["may_contact", "fields", ["purpose", "subject"], "recorded_at", 1], ["may_contact", "fields", ["purpose", "subject"], "recorded_at", 1]]);
+    assert.deepEqual(hints.slice(2).map((h) => [h.area, (h as { step?: number }).step]), [[json.record_areas[2].name, 0], [MAIN, 1]], "a fallback's hint per step");
     assert.match(hints[0]!.suggest!, /CREATE INDEX ON workspace_records \(org_id, \(COALESCE\(data -> 'purpose'/);
     console.log(`✓ speed: median ${median.toFixed(1)} ms per answer over 3,000 records of one workspace (p90 ${times[27]!.toFixed(1)} ms); each check's index hint (the area's key index, its match fields, the latest by LIMIT 1)`);
   }
