@@ -129,7 +129,7 @@ try {
   for (const [id, value, key] of turns) {
     F.setFeaturesForTest({ [id]: value });
     const got = await probe();
-    const want = { ...defaults, [key]: value };
+    const want: Record<string, boolean> = { ...defaults, [key]: value };
     // the clock steps are alerts: with the clocks off and due dates still there, alerts stay on (due-date notices)
     assert.deepEqual(got, want, `${id} = ${value}: only its own capability changes`);
     assert.equal(F.featureOn(id), value, `${id}: featureOn follows the flag`);
