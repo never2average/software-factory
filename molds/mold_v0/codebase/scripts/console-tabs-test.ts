@@ -45,6 +45,8 @@ const TMP = mkdtempSync(path.join(tmpdir(), "console-tabs-"));
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
 const SNAP = path.join(ROOT, "scripts", "fixtures", "console-nav");
 
+/** What the last build copy's gen-packs printed (its warnings). */
+let lastGen = "";
 /** A build copy of the codebase with these fixture packs, its registry generated (node_modules linked, never written). */
 function buildCopy(name: string, packs: string[], edit?: (packsDir: string) => void) {
   const copy = path.join(TMP, name);
@@ -57,6 +59,7 @@ function buildCopy(name: string, packs: string[], edit?: (packsDir: string) => v
   edit?.(path.join(copy, "packs"));
   const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
   assert.equal(g.status, 0, `gen-packs in the ${name} copy: ${g.stderr}`);
+  lastGen = g.stdout;
   return copy;
 }
 
@@ -676,6 +679,32 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");
     assert.match(ex, /audit=export/, "the data trail records it");
     console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text; Export on every area list just left of it, the view's rows when narrowed");
+  }
+
+  // ---------- 3d. an area's own lists: its Settings tab and its Records page have a primary action or a reason (mold_v0-237) ----------
+  {
+    const own = buildCopy("own-lists", ["fixture_vulns"], (packs) => {
+      const f = path.join(packs, "fixture_vulns", "pack.json");
+      const j = JSON.parse(readFileSync(f, "utf8"));
+      j.record_areas.push(
+        { name: "audit_owners", label: "Owners", role: "source", scope: "workspace", settings: { group: "access" }, fields: [{ name: "who", label: "Who" }, { name: "page", label: "Page", type: "url" }] },
+        { name: "audit_keys", label: "Keys", role: "source", scope: "workspace", settings: { group: "automation" }, fields: [{ name: "note", label: "Note" }] },
+        { name: "audit_notes", label: "Notes", role: "source", scope: "workspace", settings: { group: "data_trust" }, fields: [{ name: "note", label: "Note" }], action: false, action_reason: "Notes come from the nightly scan." },
+        { name: "audit_extra", label: "Extras", role: "source", scope: "workspace", fields: [{ name: "note", label: "Note" }] });
+      j.mcp = { ...(j.mcp ?? {}), exclude: [...(j.mcp?.exclude ?? []), "fixture_vulns_create_audit_keys"] };
+      writeFileSync(f, JSON.stringify(j, null, 2));
+    });
+    const nav = readFileSync(path.join(own, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const areas = Object.fromEntries((JSON.parse(/export const recordAreas: RecordAreaSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { name: string }[]).map((a) => [a.name, a])) as Record<string, any>;
+    assert.deepEqual(areas.audit_owners.action, { kind: "create_record", label: "Add owner", area: "audit_owners" }, "a Settings area a workspace adds to: Add <its singular>");
+    assert.deepEqual(areas.audit_extra.action, { kind: "create_record", label: "Add extra", area: "audit_extra" }, "a Records page (no tab shows it): the same");
+    assert.equal(areas.audit_findings.action?.kind, "create_record", "an area a tab shows: its own lists (the Records page) add too");
+    for (const a of ["audit_controls", "audit_keys", "audit_notes"]) assert.ok(!("action" in areas[a]), `${a}: none (shared; its create withheld; action: false)`);
+    assert.ok(!/nightly scan|action_reason|no_action/.test(nav), "a reason is shown nowhere: not in the console's registry");
+    assert.match(lastGen, /gen-packs: warning: 1 Settings tab\(s\) without a primary action:\n  fixture_vulns\/audit_keys \(Settings › Keys\): audit_keys's create tool is not offered to a workspace[^\n]*declare action: false with its action_reason/,
+      `the build lists a Settings tab with none its area does not say: ${lastGen}`);
+    assert.doesNotMatch(lastGen, /audit_notes|audit_extra|\(Settings › Owners\)/, "action: false with its reason is said; an area with its action is not listed");
+    console.log("✓ an area's own lists (mold_v0-237): a Settings tab and a Records page add a record (Add <its singular>) where a workspace may; none for a shared area, a withheld create (listed as a warning on a Settings tab) or action: false with its action_reason; no reason in the console's registry");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------

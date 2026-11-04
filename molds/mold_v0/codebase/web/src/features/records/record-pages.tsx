@@ -2,11 +2,12 @@
 // The shell's generic record-area pages (mold_v0-047): a list page and a detail page for every area a pack declares in
 // definePack({ recordAreas }), with no pack code. Labels and columns come from the generated registry
 // (web/src/config/pack-nav.generated.ts); rows from /api/records (a workspace's view: shared areas and its own) or
-// /api/admin/records (platform staff: the shared areas). Read only: records are written by the packs and the platform.
+// /api/admin/records (platform staff: the shared areas). The lists read; a workspace adds records through an area's own
+// lists' primary action (mold_v0-237: AreaRecordList, its Settings tab and its Records page, as an area tab's).
 // The list is the console's database table (RecordView, as on Accounts; mold_v0-170), and so is every customer list of
 // an area's records (mold_v0-176: RecordTableView, which a pack's area tab draws too, features/tabs/tab-page.tsx).
 import Link from 'next/link';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
@@ -25,6 +26,8 @@ import { ExportCsvButton } from '@/features/tabs/export';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
+import { Sparklines } from '@/features/tabs/sparklines';
+import { isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -152,6 +155,10 @@ export function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: '
       {keys.map((k) => <Link key={k} className='underline-offset-4 hover:underline' href={`/${base}/records/${to}/${encodeURIComponent(k)}`}>{k}</Link>)}
     </span>
   );
+  // A url field (mold_v0-238): its address as a link, opened in a new tab (only an http or https address).
+  if (f.type === 'url' && typeof v === 'string' && isWebAddress(v)) return (
+    <a className='break-all underline-offset-4 hover:underline' href={v} target='_blank' rel='noopener noreferrer nofollow'>{v}</a>
+  );
   return <>{fieldText(f, v) || dash}</>;
 }
 
@@ -230,11 +237,31 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   );
 }
 
+/**
+ * An area's own list in a workspace (mold_v0-237): its Records page and its Settings tab. The standard list, as an area
+ * tab's: its four cards (the server's for the area, /api/records/_console/<area>/sparklines), the search row with Export
+ * CSV and the area's primary action (the registry's `action`, for the people the server says may use it: Add <its
+ * singular>, its form a full card in the list's place, ?new=1), then the table. An area with none (`no_action` says
+ * why) has Export alone.
+ */
+export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string }) {
+  // A record added from the primary action: the list is read again.
+  const [round, setRound] = useState(0);
+  const { button, card } = useAreaAction(area, () => setRound((n) => n + 1));
+  if (card) return card;
+  return (
+    <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
+      summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
+      toolbarAction={button ?? undefined} />
+  );
+}
+
 export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'app' | 'admin' }) {
   return (
     // A list (mold_v0-217): no title or description above it.
     <PageContainer>
-      <RecordTableView area={area} base={base} url={`${recordsApi(base)}/${area.name}`} id={`${base}-records-${area.name}`} empty={<RecordEmpty area={area} base={base} />} />
+      {base === 'app' ? <AreaRecordList area={area} id={`app-records-${area.name}`} />
+        : <RecordTableView area={area} base={base} url={`${recordsApi(base)}/${area.name}`} id={`${base}-records-${area.name}`} empty={<RecordEmpty area={area} base={base} />} />}
     </PageContainer>
   );
 }

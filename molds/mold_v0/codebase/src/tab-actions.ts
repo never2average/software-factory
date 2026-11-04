@@ -13,6 +13,11 @@
  *                                              for a schedule, the area's create roles and edit for a record
  *   POST /api/tab-actions/<pack>/<tab>/start   {kind, input}: a run of one of the action's kinds, started as the
  *                                              generated start_<kind> tool starts it (src/mcp-tools.ts startFromConsole)
+ *   GET  /api/tab-actions/_areas/<area>        (mold_v0-237) the action of the area's own lists, its Settings tab and
+ *                                              its Records page (src/metric-spec.ts areaListAction): create_record as
+ *                                              a tab's, or 404 when they have none. (A pack id starts with a letter.)
+ * A create_record answer says `upload_max` (mold_v0-238): the most bytes one file of its file fields may have when the
+ * form uploads them (src/record-files.ts uploadMax), null when it uploads none.
  *
  * A schedule is added through /api/schedules and a record through /api/data/<area>, their own routes and checks: this
  * module never writes either. The tab itself is refused to a role the sidebar does not show it to (403).
@@ -23,13 +28,14 @@ import { canAccount } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { Org } from "./auth.js";
 import { buildViews } from "./metrics.js";
-import { tabAction, tabRoles, type SpecTab } from "./metric-spec.js";
+import { areaListAction, tabAction, tabRoles, type SpecTab } from "./metric-spec.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { generatedTools, permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema, type TabAction } from "./pack-api.js";
 import { fill } from "./vocabulary.js";
 import { packs } from "./packs.js";
 import { findArea, may, recordAreas } from "./record-areas.js";
+import { uploadMax } from "./record-files.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.status(status).json(await fn(req, res)); }
@@ -42,12 +48,12 @@ const session = (res: Response) => res.locals.session as Session;
 
 /** A field as the console's form draws it (an argument of a kind, a field of an area). */
 export type FormField = { name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
-  multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null };
+  multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: "document" };
 export const formField = (raw: unknown): FormField => {
   const f = RecordFieldSchema.parse(raw);
   return { name: f.name, label: f.label, type: f.type, help: f.help ?? null, required: f.required === true,
     options: f.options ? f.options.map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })) : null,
-    multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null };
+    multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null, ...(f.preview ? { preview: f.preview } : {}) };
 };
 
 /** The pack's job kinds, parsed (the declared ones; a malformed one was refused when the packs were installed). */
@@ -76,6 +82,17 @@ function actionsOf(): Map<string, TabAction> {
   return actions;
 }
 const actionOf = (t: SpecTab): TabAction => actionsOf().get(`${t.pack}/${t.id}`)!;
+/** Each area's own lists' action (mold_v0-237), as the build's registry has it. Memoised per build. */
+let areaResolved: { from: unknown; actions: Map<string, TabAction> } | null = null;
+function areaActionsOf(): Map<string, TabAction> {
+  const b = buildViews();
+  if (areaResolved?.from === b) return areaResolved.actions;
+  const creatable = new Set(generatedTools().filter((t) => t.door === "workspace" && !t.admin_only && t.op === "create").map((t) => t.area));
+  const actions = new Map<string, TabAction>();
+  for (const a of b.areas) { const r = areaListAction(a, (x) => creatable.has(x)); if (r.action) actions.set(a.name, r.action); }
+  areaResolved = { from: b, actions };
+  return actions;
+}
 
 /** The kinds a start_run action offers, in its order: its job_kind, its job_kinds, else every kind of the pack. */
 const actionKinds = (t: SpecTab) => {
@@ -95,7 +112,7 @@ const environmentsOf = (input: z.ZodRawShape): string[] | null => {
 
 export function tabActionAppRouter(): Router {
   const r = express.Router();
-  if (!actionsOf().size) return r;
+  if (!actionsOf().size && !areaActionsOf().size) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(express.json({ limit: "256kb" }));
   r.use(customerSession);
@@ -116,6 +133,19 @@ export function tabActionAppRouter(): Router {
     .map((k) => ({ k, tool: startToolOf(t.pack, k.name) }))
     .filter((x): x is { k: typeof x.k; tool: NonNullable<typeof x.tool> } => !!x.tool && permitted(x.tool, roleOf(res)));
 
+  // A create_record action as this person may use it: the area, its fields, and whether its files upload.
+  const createSpec = (a: TabAction, res: Response) => {
+    const area = findArea(a.area!), role = roleOf(res);
+    const actor = { role, userId: session(res).user ?? null };
+    const allowed = !!area && !areaOpWithheld(area.name, "create") && (role === null || canAccount(role, "edit")) && may(area, "read", actor) && may(area, "create", actor);
+    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.map(formField) } : null, upload_max: area ? uploadMax(area) : null };
+  };
+  // An area's own lists (mold_v0-237): its Settings tab and its Records page, for the people who may read the area.
+  r.get("/_areas/:area", answer(async (req, res) => {
+    const a = areaActionsOf().get(String(req.params.area));
+    if (!a) throw new PackError("Not found", 404);
+    return createSpec(a, res);
+  }));
   r.get("/:pack/:tab", answer(async (req, res) => {
     const t = tabOf(req, res), a = actionOf(t), role = roleOf(res);
     // A link (mold_v0-213) is everyone's who sees the tab: nothing to check.
@@ -131,10 +161,7 @@ export function tabActionAppRouter(): Router {
       return { kind: a.kind, label: a.label ?? null, allowed: kinds.length > 0, kinds };
     }
     if (a.kind === "new_schedule") return { kind: a.kind, label: a.label ?? null, allowed: role === null || canAccount(role, "manage"), job_kind: a.job_kind ?? null };
-    const area = findArea(a.area!);
-    const actor = { role, userId: session(res).user ?? null };
-    const allowed = !!area && !areaOpWithheld(area.name, "create") && (role === null || canAccount(role, "edit")) && may(area, "read", actor) && may(area, "create", actor);
-    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.map(formField) } : null };
+    return createSpec(a, res);
   }));
 
   r.post("/:pack/:tab/start", answer(async (req, res) => {

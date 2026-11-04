@@ -1262,7 +1262,7 @@ const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, off
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
-const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAction, tabAreas, tabColumns, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, tabAction, areaListAction, tabAreas, tabColumns, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
 const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const { compileGuide } = await import(pathToFileURL(guideApi).href);
@@ -1374,6 +1374,11 @@ if (loaded.length === entries.length) {
     const { action: _declared, reason: _why, ...rest } = t;
     return { ...rest, ...(r.action ? { action: r.action } : {}), ...(r.reason ? { no_action: { reason: r.reason, declared: r.declared } } : {}) };
   });
+  // Each area's own lists' primary action (mold_v0-237): its Settings tab and its Records page (no tab declares theirs).
+  if (b) views.areaActions = Object.fromEntries(b.areas.map((a) => {
+    const r = areaListAction(a, (x) => addable.has(x));
+    return [a.name, { ...(r.action ? { action: { kind: r.action.kind, label: r.action.label ?? null, area: r.action.area } } : {}), ...(r.reason ? { no_action: { reason: r.reason, declared: r.declared } } : {}) }];
+  }));
   // The generated tools a workspace's client sees (mold_v0-106: the guide groups the tools by what they reach).
   mcp.tools = catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => ({ name: t.name, pack: t.pack, op: t.op, area: t.area ?? null, kind: t.kind ?? null }));
   mcp.records = [...RECORD_TOOL_NAMES];
@@ -2388,14 +2393,18 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
   "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
-  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n}\n\n" +
+  "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
+  "  /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */\n" +
+  "  action?: { kind: 'create_record'; label: string | null; area: string };\n}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
-    ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}) })))};\n\n` +
+    ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
+    // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
+    ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
@@ -2686,6 +2695,10 @@ console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((
   const without = shownTabs().filter((t) => t.no_action);
   if (without.length) console.log(`gen-packs: warning: ${without.length} list tab(s) without a primary action:\n  ${without.map((t) =>
     `${t.pack}/${t.id} (${t.label}): ${t.no_action.declared ? "action: false: " : ""}${t.no_action.reason}`).join("\n  ")}`);
+  // A Settings tab of a record area (mold_v0-237) with none that its area does not say (action: false, action_reason).
+  const settingsWithout = SETTINGS_TABS.filter((t) => t.kind === "area" && packViews.areaActions?.[t.area]?.no_action && !packViews.areaActions[t.area].no_action.declared);
+  if (settingsWithout.length) console.log(`gen-packs: warning: ${settingsWithout.length} Settings tab(s) without a primary action:\n  ${settingsWithout.map((t) =>
+    `${t.pack}/${t.area} (Settings › ${t.label}): ${packViews.areaActions[t.area].no_action.reason}: declare action: false with its action_reason`).join("\n  ")}`);
 }
 // A pack's link to a customer page that is gone (mold_v0-218: Credentials and Email are Settings' in-page tabs; their
 // old pages answer 404, with no redirect): a warning naming the address to link instead.

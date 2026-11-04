@@ -29,7 +29,7 @@
 import { z } from "zod";
 import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
-import { AgentJobKindSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
+import { AgentJobKindSchema, CredentialSchema, isFieldUrl, URL_MAX, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
 export type GeneratedOp = "get_started" | "list" | "get" | "export" | "reveal" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
@@ -105,6 +105,7 @@ function fieldInput(f: Field, labelOf: (area: string) => string): z.ZodType {
   let one: z.ZodType, what: string;
   switch (f.type) {
     case "text": one = z.string().max(f.max_length ?? 20_000); what = `text, up to ${f.max_length ?? 20_000} characters`; break;
+    case "url": one = z.string().max(URL_MAX).refine(isFieldUrl, "an http or https address, with no user name or password"); what = `an http or https address, up to ${URL_MAX} characters`; break;
     case "number": {
       let n = z.number();
       if (f.min !== undefined) n = n.min(f.min);

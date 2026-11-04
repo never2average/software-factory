@@ -1774,7 +1774,8 @@
                         "enum",
                         "person",
                         "reference",
-                        "file"
+                        "file",
+                        "url"
                       ]
                     },
                     "help": {
@@ -2084,6 +2085,16 @@
                   "group"
                 ],
                 "additionalProperties": false
+              },
+              "action": {
+                "type": "boolean",
+                "const": false
+              },
+              "action_reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "pattern": "^[^\\n\\r{}<>]*$"
               },
               "rows": {
                 "type": "string",
@@ -2900,7 +2911,7 @@
                         "additionalProperties": false
                       }
                     ],
-                    "description": "The area's list tab's primary action, or {none: reason} (no tab shows it, or the tab has none)"
+                    "description": "The primary action of every list that shows the area (each tab whose own area it is, its Settings tab, its Records page), or {none: reason}"
                   },
                   "$comment": {
                     "type": "string",
@@ -3195,7 +3206,8 @@
                             "enum",
                             "person",
                             "reference",
-                            "file"
+                            "file",
+                            "url"
                           ]
                         },
                         "help": {
@@ -3584,7 +3596,8 @@
                             "enum",
                             "person",
                             "reference",
-                            "file"
+                            "file",
+                            "url"
                           ]
                         },
                         "help": {
