@@ -3,6 +3,7 @@
 import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
+import { settingsGroups } from '@/config/settings';
 
 type BreadcrumbItem = {
   title: string;
@@ -23,6 +24,8 @@ const routeMapping: Record<string, BreadcrumbItem[]> = {};
  */
 const PACK_TITLES = new Map<string, string>([
   ...packPages.map((p) => [p.url, p.title] as [string, string]),
+  // Settings' group pages past 5 tabs (mold_v0-219): Access, Connections, Automation, Data & trust.
+  ...settingsGroups().map((g) => [g.url, g.label] as [string, string]),
   // A credentials tab opens Settings (mold_v0-218): that page is Settings, whatever the tab's label.
   ...packTabs.filter((t) => t.url !== '/app' && !t.url.includes('?') && t.kind !== 'credentials').map((t) => [t.url, t.label] as [string, string]),
   // A record area's pages (mold_v0-170): named by the area's label, as the sidebar names them ("Control library", not
