@@ -38,7 +38,7 @@ import { orgMac } from "./orgcrypto.js";
 import { LIST_PATH, PackError, RECORD_KEY, RepositorySchema, VALUE_PATH, type FieldValue, type RecordOperation, type RecordRow, type Repository, type RepositoryInput, type RepositoryRows, type RowMap } from "./pack-api.js";
 import { patternMatches } from "./safe-pattern.js";
 import { packs } from "./packs.js";
-import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTOR, writeFromRepository, type RecordArea } from "./record-areas.js";
+import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTOR, writeFromRepository, type BehindOp, type RecordArea } from "./record-areas.js";
 import { pageInMemory, type Parsed } from "./record-query.js";
 import { asPlatform } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
@@ -536,13 +536,14 @@ export interface IndexReport { pack: string; repository: string; kind: string; v
  * Bring the areas a repository feeds to exactly `rows` (for one workspace, or the shared rows when orgId is null), as
  * one transaction. Unchanged rows (same fingerprint, same source) are not written; rows this repository wrote that are
  * no longer produced are pruned, unless that would empty an area that has rows (refused unless `allow_empty`) or
- * remove more than `max_fraction` of its rows (refused unless `force`). Rows written by hand (no source) are kept.
+ * remove more than `max_fraction` of its rows (refused unless `force`). Rows written by hand (no source) are kept; a
+ * shared one (staff's, mold_v0-221) even when forced, with the repository's version of its key kept behind it.
  */
 export async function applyIndex(orgId: number | null, pack: string, repo: { name: string; settings: Repository; areas: RecordArea[] }, rows: Map<string, Desired[]>,
   opts: { force?: boolean; describe?: string; version?: string | null } = {}): Promise<IndexReport> {
   const prune = (repo.settings as { prune?: { max_fraction?: number; allow_empty?: boolean } }).prune ?? {};
   const maxFraction = prune.max_fraction ?? 0.5;
-  const puts: RecordOperation[] = [], deletes: RecordOperation[] = [];
+  const puts: RecordOperation[] = [], deletes: RecordOperation[] = [], behind: BehindOp[] = [];
   const fingerprints = new Map<string, string>();
   const counts: AreaCounts[] = [];
   // References first: an area whose rows refer to another area this repository feeds is written after it.
@@ -565,13 +566,21 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
       fingerprints.set(`${area.name}\u0000${d.key}`, fp);
       const m = marks.get(d.key);
       if (m && m.source === repo.name && m.fingerprint === fp) { c.unchanged++; continue; }
-      // A row written or changed by hand (no source) is the hand's: kept, and counted, unless staff force the index.
-      if (m && m.source === null && !opts.force) { c.kept_by_hand++; continue; }
+      // A row written or changed by hand (no source) is the hand's: kept, and counted, unless staff force the index. A
+      // shared one is staff's (mold_v0-221): kept even then, the repository's version kept behind it (an override)
+      // so removing it puts that back; written again only when it changed.
+      if (m && m.source === null && (orgId === null || !opts.force)) {
+        c.kept_by_hand++;
+        if (orgId === null && !(m.behind_source === repo.name && m.behind_fingerprint === fp)) behind.push({ op: "put", area: area.name, key: d.key, title: d.title, data, version: d.version });
+        continue;
+      }
       puts.push({ op: "put", area: area.name, key: d.key, title: d.title, data, version: d.version });
       if (m) c.updated++; else c.created++;
     }
     const gone = ours.filter((m) => !keys.has(m.key));
     c.kept_by_hand += [...marks.values()].filter((m) => m.source === null && !keys.has(m.key)).length;
+    // An override whose key the repository no longer has: the staff row stays, with nothing behind it (mold_v0-221).
+    for (const m of marks.values()) if (m.source === null && m.behind_source === repo.name && !keys.has(m.key)) behind.push({ op: "clear", area: area.name, key: m.key });
     // The guards are an upstream's (a fetch that came back short): a workspace's committed files are the truth.
     const guarded = repo.settings.kind === "upstream_catalog" && !opts.force;
     if (guarded && !desired.length && ours.length && !prune.allow_empty)
@@ -584,8 +593,8 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
   }
   // Deletes after every put, in the reverse order: nothing written refers to a row removed in the same index.
   const ops = [...puts, ...deletes.reverse()];
-  if (ops.length) await writeFromRepository(orgId, pack, repo.name, ops, fingerprints, !!opts.force);
-  return { pack, repository: repo.name, kind: repo.settings.kind, version: opts.version ?? null, source: opts.describe ?? "", written: ops.length > 0, areas: counts };
+  if (ops.length || behind.length) await writeFromRepository(orgId, pack, repo.name, ops, fingerprints, !!opts.force, behind);
+  return { pack, repository: repo.name, kind: repo.settings.kind, version: opts.version ?? null, source: opts.describe ?? "", written: ops.length + behind.length > 0, areas: counts };
 }
 const refersTo = (a: RecordArea, b: RecordArea) => a.fields.some((f) => f.type === "reference" && f.to === b.name);
 
