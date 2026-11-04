@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ago, appRow, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, parseUptime, productRows, since, uptimeBanner, verdict } from './board'
+import { ago, appFlags, appRow, parseFeatureRegistry, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, parseUptime, productRows, since, uptimeBanner, verdict } from './board'
 
 import { allowanceBar, allowanceText, buildParts as partsOf, monthWord, parseBuild as buildOf, parseHeartbeat, parseSpend, runStatusWord, spendBanner, spendColor, spendStatus, withLive } from './board'
 const TASKS = [
@@ -525,4 +525,30 @@ test('spend: the live build figure goes over the hourly report; its estimate sta
   expect(withLive(hourly, null, '')).toBe(hourly)
   expect(withLive(undefined, { ...live!, cost_usd: null, uncounted_est_usd: null }, '')).toBeUndefined()
   expect(withLive(undefined, live, 'x')?.cost_usd).toBe(34)
+})
+
+// mold_v0-219: each mold_v0 app's capability flags on its line, read as the factory's lib/features.py reads them.
+// The registry's flags as molds/mold_v0/codebase/src/features.json has them (a plugin's test reads nothing outside its folder).
+const REGISTRY = parseFeatureRegistry({ flags: [{"id": "customer_key_vault", "short": "vault", "default": true, "requested_by": "credentials"}, {"id": "company_email", "short": "email", "default": true, "requested_by": "email"}, {"id": "scheduled_alerts", "short": "alerts", "default": true, "requested_by": "alerts"}, {"id": "record_clocks", "short": "clocks", "default": true, "requested_by": "clocks"}, {"id": "audit.data", "short": "audit.data", "default": false, "legacy": "audit.data", "requested_by": "always"}, {"id": "audit.platform", "short": "audit.platform", "default": false, "legacy": "audit.platform", "requested_by": "always"}, {"id": "audit.sign", "short": "audit.sign", "default": false, "legacy": "audit.sign", "requested_by": "always"}, {"id": "onprem_runners", "short": "runners", "default": false, "legacy": "onprem_runners", "requested_by": "private_network"}, {"id": "developer_surface", "short": "developer", "default": true, "requested_by": "developer_surface"}, {"id": "declarative_checks", "short": "checks", "default": true, "requested_by": "checks"}, {"id": "encrypted_fields", "short": "encrypted", "default": true, "requested_by": "encrypted"}, {"id": "health_history", "short": "health", "default": true, "requested_by": "no_engine"}] })
+
+test('appFlags: a Maxwell-like app shows vault, email, alerts, clocks, audit.data, runners, health', () => {
+  const docs = [{
+    credentials: [{ name: 't' }],
+    email: { sender: { allow: true } },
+    record_areas: [{ name: 'a', scope: 'workspace', due: { field: 'd' } }, { name: 'b', scope: 'workspace', clocks: [{ name: 'c' }] }],
+    job_kinds: [{ name: 'k', private_network: true }],
+  }]
+  const app = { profile: { audit: { data: true, platform: false }, onprem_runners: true } }
+  expect(REGISTRY.length).toBe(12)
+  expect(appFlags(app, docs, REGISTRY).join(', ')).toBe('vault, email, alerts, clocks, audit.data, runners, health')
+  // a features block wins over the legacy key and turns a requested capability off
+  expect(appFlags({ profile: { ...app.profile, features: { company_email: false, 'audit.data': true, record_clocks: false } } }, docs, REGISTRY).join(', '))
+    .toBe('vault, alerts, audit.data, runners, health')
+})
+
+test('appFlags: an engine host pack (Octillion-like) and no profile has none on', () => {
+  const docs = [{ host: { schema: { tables: ['products', 'scenarios', 'simulations', 'agent_sessions'] } } }]
+  expect(appFlags({}, docs, REGISTRY)).toEqual([])
+  expect(appFlags({}, [], REGISTRY)).toEqual(['health'])
+  expect(parseFeatureRegistry(null)).toEqual([])
 })

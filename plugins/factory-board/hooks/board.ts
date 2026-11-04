@@ -781,3 +781,63 @@ export function withLive(b: Build | undefined, live: LiveBuild | null | undefine
   }
   return { ...b, cost_usd: live.cost_usd ?? b.cost_usd, basis: live.basis ?? b.basis, uncounted_est_usd: live.uncounted_est_usd, live: { at, sessions, from: live.live_from } }
 }
+
+/* ---- mold_v0's capability flags (mold_v0-219) ------------------------------------------------------------------- */
+
+/** One flag of the mold's registry (molds/mold_v0/codebase/src/features.json). */
+export type FeatureFlag = { id: string; short: string; default: boolean; legacy?: string; requested_by: string }
+
+const ENGINE_TABLES = ['products', 'scenarios', 'simulations', 'agent_sessions']
+const legacyOf = (profile: Json, path: string): boolean | undefined => {
+  let v: any = profile
+  for (const k of path.split('.')) v = v && typeof v === 'object' ? v[k] : undefined
+  return typeof v === 'boolean' ? v : undefined
+}
+
+/** Whether the app's packs (their pack.json docs) ask for a flag: the same signals as the factory's lib/features.py. */
+function flagRequested(by: string, docs: readonly Json[], clocksOn: boolean): boolean {
+  const areas = docs.flatMap(d => (Array.isArray(d.record_areas) ? d.record_areas : []))
+  const kinds = docs.flatMap(d => [...(Array.isArray(d.job_kinds) ? d.job_kinds : []), ...(Array.isArray(d.agent_job_kinds) ? d.agent_job_kinds : [])])
+  switch (by) {
+    case 'always': return true
+    case 'credentials': return docs.some(d => Array.isArray(d.credentials) && d.credentials.length > 0)
+    case 'email': return docs.some(d => d.email && (d.email.sender?.allow === true || !!d.email.intake))
+    case 'clocks': return areas.some((a: Json) => a?.scope === 'workspace' && Array.isArray(a.clocks) && a.clocks.length > 0)
+    case 'alerts': return areas.some((a: Json) => !!a?.due) || clocksOn
+    case 'private_network': return kinds.some((k: Json) => k?.private_network === true)
+    case 'developer_surface': return docs.some(d => d.developer_surface !== undefined && d.developer_surface !== null)
+    case 'checks': return docs.some(d => Array.isArray(d.checks) && d.checks.length > 0)
+    case 'encrypted': return areas.some((a: Json) => (Array.isArray(a?.fields) ? a.fields : []).some((f: Json) => f?.encrypted === true))
+    case 'no_engine': {
+      const owned = new Set(docs.flatMap(d => (Array.isArray(d.host?.schema?.tables) ? d.host.schema.tables : []).map(String)))
+      return !ENGINE_TABLES.every(t => owned.has(t))
+    }
+    default: return false
+  }
+}
+
+/**
+ * The short names of a mold_v0 app's capabilities that are on (mold_v0-219): something asks for each (its packs'
+ * pack.json) and its flag (application.json profile.features, else its legacy key, else the registry's default) is not
+ * false. The same reading as `factory.py spec apps`.
+ */
+export function appFlags(application: Json, docs: readonly Json[], registry: readonly FeatureFlag[]): string[] {
+  const profile: Json = application.profile ?? {}
+  const features: Json = profile.features && typeof profile.features === 'object' ? profile.features : {}
+  const setting = (f: FeatureFlag): boolean => {
+    if (typeof features[f.id] === 'boolean') return features[f.id]
+    const legacy = f.legacy ? legacyOf(profile, f.legacy) : undefined
+    return legacy ?? f.default
+  }
+  const clocks = registry.find(f => f.id === 'record_clocks')
+  const clocksOn = !!clocks && setting(clocks) && flagRequested(clocks.requested_by, docs, false)
+  return registry.filter(f => setting(f) && flagRequested(f.requested_by, docs, clocksOn)).map(f => f.short)
+}
+
+/** The registry's flags from features.json's text; [] when it cannot be read. */
+export function parseFeatureRegistry(raw: Json | null): FeatureFlag[] {
+  const flags = Array.isArray(raw?.flags) ? raw!.flags : []
+  return flags
+    .filter((f: Json) => typeof f?.id === 'string' && typeof f?.short === 'string')
+    .map((f: Json) => ({ id: f.id, short: f.short, default: f.default === true, ...(typeof f.legacy === 'string' ? { legacy: f.legacy } : {}), requested_by: String(f.requested_by ?? '') }))
+}
