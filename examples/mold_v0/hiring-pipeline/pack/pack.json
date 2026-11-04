@@ -1,0 +1,293 @@
+{
+  "$schema": "../../../../molds/mold_v0/codebase/packs/pack.schema.json",
+  "$comment": "Panelwise's config-only pack (examples/mold_v0/hiring-pipeline). JSON only; prompt.md describes the same product in words.",
+  "id": "panelwise",
+  "name": "Panelwise hiring",
+  "version": "1.0.0",
+  "description": "Open roles, candidates with their documents and private contact details, interviews with feedback clocks, and agents that screen a CV against its role, summarise a candidate's interviews and write the weekly pipeline digest.",
+  "words": { "run": "brief", "runs": "briefs", "workspace": "hiring team" },
+  "record_areas": [
+    {
+      "name": "roles",
+      "label": "Roles",
+      "description": "A position the team is hiring for.",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["team", "location", "employment", "state", "openings"],
+      "fields": [
+        { "name": "team", "label": "Team", "type": "enum", "required": true, "options": [
+          { "value": "engineering", "label": "Engineering" }, { "value": "design", "label": "Design" },
+          { "value": "sales", "label": "Sales" }, { "value": "operations", "label": "Operations" },
+          { "value": "support", "label": "Support" } ] },
+        { "name": "location", "label": "Location", "type": "text", "max_length": 120 },
+        { "name": "employment", "label": "Employment", "type": "enum", "options": [
+          { "value": "full_time", "label": "Full time" }, { "value": "part_time", "label": "Part time" },
+          { "value": "contract", "label": "Contract" } ] },
+        { "name": "hiring_manager", "label": "Hiring manager", "type": "person" },
+        { "name": "openings", "label": "Openings", "type": "number", "min": 1, "max": 50 },
+        { "name": "target_start", "label": "Target start", "type": "date" },
+        { "name": "requirements", "label": "Must-haves", "type": "text", "max_length": 4000, "help": "What a candidate must show; the screening agent reads this." },
+        { "name": "description", "label": "Job description", "type": "file" },
+        { "name": "state", "label": "State", "type": "enum", "options": [
+          { "value": "draft", "label": "Draft" }, { "value": "open", "label": "Open" },
+          { "value": "on_hold", "label": "On hold" }, { "value": "filled", "label": "Filled" },
+          { "value": "closed", "label": "Closed" } ] }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "draft",
+        "transitions": [
+          { "from": ["draft", "on_hold"], "to": "open", "label": "Open the role", "roles": ["owner"] },
+          { "from": ["open"], "to": "on_hold", "label": "Put on hold", "roles": ["owner"] },
+          { "from": ["open"], "to": "filled", "label": "Mark filled" },
+          { "from": ["draft", "open", "on_hold"], "to": "closed", "label": "Close", "roles": ["owner"] }
+        ]
+      }
+    },
+    {
+      "name": "candidates",
+      "label": "Candidates",
+      "description": "One person applying for one role.",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": ["role", "stage", "source", "recruiter", "applied_on"],
+      "fields": [
+        { "name": "role", "label": "Role", "type": "reference", "to": "roles", "required": true },
+        { "name": "stage", "label": "Stage", "type": "enum", "options": [
+          { "value": "applied", "label": "Applied" }, { "value": "screening", "label": "Screening" },
+          { "value": "interviewing", "label": "Interviewing" }, { "value": "offer", "label": "Offer" },
+          { "value": "hired", "label": "Hired" }, { "value": "rejected", "label": "Rejected" },
+          { "value": "withdrew", "label": "Withdrew" } ] },
+        { "name": "email", "label": "Email", "type": "text", "max_length": 200, "encrypted": true, "searchable": "equality", "reveal_roles": ["member", "owner"] },
+        { "name": "phone", "label": "Phone", "type": "text", "max_length": 40, "encrypted": true, "reveal_roles": ["owner"] },
+        { "name": "source", "label": "Source", "type": "enum", "options": [
+          { "value": "careers_page", "label": "Careers page" }, { "value": "referral", "label": "Referral" },
+          { "value": "agency", "label": "Agency" }, { "value": "sourced", "label": "Sourced" } ] },
+        { "name": "applied_on", "label": "Applied", "type": "date", "required": true },
+        { "name": "recruiter", "label": "Recruiter", "type": "person" },
+        { "name": "cv", "label": "CV", "type": "file" },
+        { "name": "cover_letter", "label": "Cover letter", "type": "file" },
+        { "name": "portfolio", "label": "Portfolio", "type": "link" },
+        { "name": "salary_expectation", "label": "Salary expectation", "type": "number", "min": 0, "encrypted": true, "reveal_roles": ["owner"] },
+        { "name": "notes", "label": "Notes", "type": "text", "max_length": 4000 }
+      ],
+      "lifecycle": {
+        "field": "stage",
+        "initial": "applied",
+        "transitions": [
+          { "from": ["applied"], "to": "screening", "label": "Screen" },
+          { "from": ["screening"], "to": "interviewing", "label": "Invite to interview" },
+          { "from": ["interviewing"], "to": "offer", "label": "Make an offer", "roles": ["owner"] },
+          { "from": ["offer"], "to": "hired", "label": "Hired" },
+          { "from": ["applied", "screening", "interviewing", "offer"], "to": "rejected", "label": "Reject" },
+          { "from": ["applied", "screening", "interviewing", "offer"], "to": "withdrew", "label": "Withdrew" },
+          { "from": ["rejected", "withdrew"], "to": "screening", "label": "Reconsider", "roles": ["owner"] }
+        ]
+      },
+      "permissions": {
+        "read": ["member", "billing", "owner"],
+        "create": ["member", "owner"],
+        "update": ["member", "owner"],
+        "move": ["member", "owner"],
+        "delete": ["owner"]
+      },
+      "clocks": [
+        {
+          "name": "first_reply",
+          "label": "Reply by",
+          "starts": { "event": "created" },
+          "after": "5bd",
+          "stops_when": { "field": "stage", "in": ["screening", "interviewing", "offer", "hired", "rejected", "withdrew"] },
+          "assignee": "recruiter",
+          "notify": ["assignee"],
+          "remind": [ { "before": "1bd" } ],
+          "escalate": [ { "after": "1bd", "label": "Tell the owners", "notify": ["owner"] } ]
+        },
+        {
+          "name": "decision",
+          "label": "Decide by",
+          "starts": { "event": "entered", "state": "interviewing" },
+          "after": "10bd",
+          "stops_when": { "field": "stage", "in": ["offer", "hired", "rejected", "withdrew"] },
+          "assignee": "recruiter",
+          "notify": ["assignee", "owner"],
+          "remind": [ { "before": "2bd" } ],
+          "escalate": [ { "after": "2bd", "label": "Tell the owners", "notify": ["owner"] } ]
+        }
+      ]
+    },
+    {
+      "name": "interviews",
+      "label": "Interviews",
+      "description": "One interview with one candidate, and the interviewer's feedback.",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": ["candidate", "kind", "scheduled_on", "interviewer", "state", "recommendation"],
+      "fields": [
+        { "name": "candidate", "label": "Candidate", "type": "reference", "to": "candidates", "required": true },
+        { "name": "kind", "label": "Kind", "type": "enum", "required": true, "options": [
+          { "value": "phone_screen", "label": "Phone screen" }, { "value": "skills", "label": "Skills" },
+          { "value": "panel", "label": "Panel" }, { "value": "values", "label": "Values" },
+          { "value": "final", "label": "Final" } ] },
+        { "name": "scheduled_on", "label": "Scheduled", "type": "date", "required": true },
+        { "name": "interviewer", "label": "Interviewer", "type": "person", "required": true },
+        { "name": "state", "label": "State", "type": "enum", "options": [
+          { "value": "scheduled", "label": "Scheduled" }, { "value": "done", "label": "Done" },
+          { "value": "cancelled", "label": "Cancelled" }, { "value": "no_show", "label": "No show" } ] },
+        { "name": "score", "label": "Score", "type": "number", "min": 1, "max": 5 },
+        { "name": "recommendation", "label": "Recommendation", "type": "enum", "options": [
+          { "value": "strong_yes", "label": "Strong yes" }, { "value": "yes", "label": "Yes" },
+          { "value": "no", "label": "No" }, { "value": "strong_no", "label": "Strong no" } ] },
+        { "name": "notes", "label": "Interview notes", "type": "text", "max_length": 12000 },
+        { "name": "scorecard", "label": "Scorecard", "type": "file" }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "scheduled",
+        "transitions": [
+          { "from": ["scheduled"], "to": "done", "label": "Mark done" },
+          { "from": ["scheduled"], "to": "cancelled", "label": "Cancel" },
+          { "from": ["scheduled"], "to": "no_show", "label": "No show" }
+        ]
+      },
+      "clocks": [
+        {
+          "name": "feedback",
+          "label": "Feedback by",
+          "starts": { "field": "scheduled_on" },
+          "after": "2bd",
+          "stops_when": { "field": "recommendation", "in": ["strong_yes", "yes", "no", "strong_no"] },
+          "assignee": "interviewer",
+          "notify": ["assignee"],
+          "remind": [ { "before": "1bd" } ],
+          "escalate": [ { "after": "1bd", "label": "Tell the owners", "notify": ["owner"] } ]
+        }
+      ]
+    }
+  ],
+  "email": { "sender": { "allow": true } },
+  "job_kinds": [
+    {
+      "name": "screen_cv",
+      "label": "Screen a CV",
+      "description": "Reads one candidate's CV and cover letter against their role's must-haves and writes a screening note: each must-have met, partly met or not shown, with the line of the CV that shows it, and questions for the phone screen. It never ranks people by anything but the role's must-haves.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 2,
+      "budget_usd": 1,
+      "month_budget_usd": 80,
+      "concurrency_per_workspace": 4,
+      "args": [ { "name": "candidate", "label": "Candidate", "type": "reference", "to": "candidates", "required": true } ],
+      "report": { "path": "out/screening-note.md", "label": "Screening note", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/cv-screen",
+        "commit": "3333333333333333333333333333333333333333",
+        "command": ["node", "screen.mjs", "--candidate", "{candidate}"],
+        "args": { "candidate": { "from": "scope.candidate" } },
+        "validate": { "command": ["node", "validate-note.mjs", "out/screening-note.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 600
+      }
+    },
+    {
+      "name": "summarise_interviews",
+      "label": "Summarise interviews",
+      "description": "Reads every finished interview of one candidate (notes, scores, recommendations, scorecards) and writes the panel summary: strengths and concerns with the interviewer who raised each, where interviewers disagree, the recommendations tallied, and what is still unknown.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 2,
+      "budget_usd": 2,
+      "month_budget_usd": 100,
+      "concurrency_per_workspace": 4,
+      "args": [ { "name": "candidate", "label": "Candidate", "type": "reference", "to": "candidates", "required": true } ],
+      "report": { "path": "out/panel-summary.md", "label": "Panel summary", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/panel-summary",
+        "commit": "4444444444444444444444444444444444444444",
+        "command": ["node", "summarise.mjs", "--candidate", "{candidate}"],
+        "args": { "candidate": { "from": "scope.candidate" } },
+        "validate": { "command": ["node", "validate-summary.mjs", "out/panel-summary.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 900
+      }
+    },
+    {
+      "name": "pipeline_digest",
+      "label": "Weekly pipeline digest",
+      "description": "Writes the week's hiring digest: per open role, how many candidates are at each stage, who moved, interviews waiting for feedback, candidates past their reply-by or decide-by, and roles with nobody in interviews.",
+      "runner": "agent-workspace",
+      "providers": ["anthropic"],
+      "max_attempts": 1,
+      "budget_usd": 2,
+      "month_budget_usd": 20,
+      "concurrency_per_workspace": 1,
+      "report": { "path": "out/pipeline-digest.md", "label": "Pipeline digest", "format": "markdown" },
+      "agent": {
+        "repository": "https://git.example.com/agents/pipeline-digest",
+        "commit": "5555555555555555555555555555555555555555",
+        "command": ["node", "digest.mjs"],
+        "validate": { "command": ["node", "validate-digest.mjs", "out/pipeline-digest.md"] },
+        "write_back": ["out"],
+        "timeout_seconds": 600
+      }
+    }
+  ],
+  "schedules": [
+    { "name": "monday_digest", "label": "Monday pipeline digest", "job_kind": "pipeline_digest", "cron": "0 7 * * 1", "enabled": true }
+  ],
+  "onboarding": [
+    { "id": "open_role", "label": "Add the first role you are hiring for", "done_when": "record:roles" },
+    { "id": "first_candidate", "label": "Add a candidate with their CV", "done_when": "record:candidates" },
+    { "id": "first_screen", "label": "Screen a CV", "done_when": "run:screen_cv" },
+    { "id": "first_interview", "label": "Schedule an interview", "done_when": "record:interviews" },
+    { "id": "connect_ai", "label": "Connect your AI app", "done_when": "connected" }
+  ],
+  "metrics": [
+    { "name": "active_candidates", "label": "Active candidates", "over": "candidates",
+      "where": [ { "field": "stage", "op": "in", "value": ["applied", "screening", "interviewing", "offer"] } ] },
+    { "name": "awaiting_reply", "label": "Past reply-by", "over": "candidates", "clock": { "name": "first_reply", "is": ["overdue", "missed"] },
+      "where": [ { "field": "stage", "op": "eq", "value": "applied" } ] },
+    { "name": "time_to_hire", "label": "Median days to hire", "over": "candidates", "measure": "duration",
+      "duration": { "from": "created", "to": "state:hired", "stat": "median" },
+      "where": [ { "field": "stage", "op": "eq", "value": "hired" } ] },
+    { "name": "offer_rate", "label": "Interviewed who got an offer", "over": "candidates", "measure": "rate",
+      "rate": { "where": [ { "field": "stage", "op": "in", "value": ["offer", "hired"] } ] },
+      "where": [ { "field": "stage", "op": "in", "value": ["interviewing", "offer", "hired", "rejected"] } ] },
+    { "name": "by_stage", "label": "Candidates by stage", "over": "candidates", "group_by": "stage" },
+    { "name": "by_source", "label": "Candidates by source", "over": "candidates", "group_by": "source" },
+    { "name": "applied_per_week", "label": "Applied", "over": "candidates", "by_time": { "at": "applied_on", "every": "week", "last": 8 } },
+    { "name": "hired_per_week", "label": "Hired", "over": "candidates", "by_time": { "at": "state:hired", "every": "week", "last": 8 } },
+    { "name": "open_roles", "label": "Open roles", "over": "roles", "where": [ { "field": "state", "op": "eq", "value": "open" } ] },
+    { "name": "interviews_per_week", "label": "Interviews", "over": "interviews", "by_time": { "at": "scheduled_on", "every": "week", "last": 8 } },
+    { "name": "feedback_late", "label": "Feedback late", "over": "interviews", "clock": { "name": "feedback", "is": ["overdue", "missed"] } },
+    { "name": "average_score", "label": "Average score", "over": "interviews", "measure": "average", "field": "score",
+      "where": [ { "field": "state", "op": "eq", "value": "done" } ] }
+  ],
+  "charts": [
+    { "name": "headline", "title": "The pipeline", "type": "number", "metrics": ["active_candidates", "awaiting_reply", "time_to_hire", "offer_rate"] },
+    { "name": "stages", "title": "Candidates by stage", "type": "bar", "metrics": ["by_stage"] },
+    { "name": "flow", "title": "Applied and hired per week", "type": "line", "metrics": ["applied_per_week", "hired_per_week"] },
+    { "name": "sources", "title": "Where candidates come from", "type": "bar", "metrics": ["by_source"] }
+  ],
+  "tabs": [
+    { "id": "overview", "kind": "overview", "label": "Overview", "icon": "dashboard", "include": ["setup"],
+      "sparklines": ["active_candidates", "awaiting_reply", "time_to_hire", "offer_rate"],
+      "charts": ["stages", "flow", "sources"] },
+    { "id": "candidates", "kind": "area", "area": "candidates", "label": "Candidates", "icon": "teams", "group": "Hiring",
+      "views": ["table", "detail"],
+      "action": { "kind": "create_record", "label": "Add a candidate", "area": "candidates" } },
+    { "id": "interviews", "kind": "area", "area": "interviews", "label": "Interviews", "icon": "calendar", "group": "Hiring",
+      "views": ["table", "detail"],
+      "sparklines": ["interviews_per_week", "feedback_late", "average_score", "active_candidates"],
+      "action": { "kind": "create_record", "label": "Schedule an interview", "area": "interviews" } },
+    { "id": "roles", "kind": "area", "area": "roles", "label": "Roles", "icon": "building", "group": "Hiring",
+      "action": { "kind": "create_record", "label": "Add a role", "area": "roles" } },
+    { "id": "briefs", "kind": "reports", "label": "Briefs", "icon": "post", "group": "Agents",
+      "action": { "kind": "start_run", "label": "Write a brief", "job_kinds": ["screen_cv", "summarise_interviews"] } },
+    { "id": "digests", "kind": "schedules", "label": "Digests", "icon": "clock", "group": "Agents",
+      "action": { "kind": "new_schedule", "label": "New digest schedule", "job_kind": "pipeline_digest" } }
+  ],
+  "mcp": {
+    "instructions": "Panelwise keeps a hiring team's roles, candidates and interviews. Candidates' email, phone and salary expectation are encrypted: ask to reveal them only when needed. Use list_due_records to find candidates waiting for a reply or a decision and interviews waiting for feedback; start screen_cv or summarise_interviews on a candidate."
+  }
+}

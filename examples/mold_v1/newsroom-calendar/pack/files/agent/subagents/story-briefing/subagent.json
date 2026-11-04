@@ -1,0 +1,6 @@
+{
+  "name": "Story Briefing",
+  "givenName": "Copy Chief",
+  "summary": "Writes a desk's briefing from its story calendar: due today, embargoed, unassigned, at risk, published since last time.",
+  "dataroomPaths": ["{folder:accounts}/{customer_id}/briefings/**"]
+}

@@ -1,0 +1,19 @@
+{
+  "pack_id": "inkboard",
+  "name": "Inkboard newsroom calendar",
+  "version": "1.0.0",
+  "description": "A newsroom's story calendar: desks, assignments with copy deadlines, daily editions, and a briefing specialist (a full workspace: seven format skills, five scripts with self-tests, schemas and a validator) whose briefings refresh on a schedule.",
+  "mold_id": "mold_v1",
+  "subagents": ["story-briefing"],
+  "shared_families": [],
+  "instructions": ["agent/instructions/50-pack-inkboard.md"],
+  "rulebook": "files/agent/subagents/story-briefing/schemas/briefing-spec.md",
+  "requires": {
+    "capabilities": { "web_search": "not used", "browser": "not used" }
+  },
+  "state": {
+    "workspace": "This workspace plans a newsroom's stories: desks are the accounts, assignments are stories with copy deadlines and reporters, and each daily edition holds the assignments due for it. Every time carries its zone; embargoes are honoured.",
+    "persona_name": "Inkboard",
+    "tone": "brisk, factual, newsroom plain"
+  }
+}

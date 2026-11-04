@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One defect from an inspection report (defects.jsonl)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text", "location", "severity", "due", "inspected", "source", "format"],
+  "properties": {
+    "text": { "type": "string", "description": "What is wrong, in the report's words." },
+    "location_raw": { "type": ["string", "null"] },
+    "location": { "type": ["string", "null"], "description": "The building's own name for the place (normalise_location.py)." },
+    "location_note": { "type": "string" },
+    "severity": { "type": "string", "enum": ["urgent", "high", "normal", "low"] },
+    "matched": { "type": "string", "description": "The rulebook rule that decided the severity (R1 to R4, or default)." },
+    "due": { "type": "string", "description": "YYYY-MM-DD." },
+    "inspected": { "type": "string", "description": "The inspection date, YYYY-MM-DD." },
+    "evidence": { "type": ["string", "null"], "description": "The image a photo-log defect was read from." },
+    "duplicate_of": { "type": ["string", "null"], "description": "The open ticket that already covers it." },
+    "similarity": { "type": "number" },
+    "ticket_id": { "type": ["string", "null"], "description": "The ticket filed for it, once filed." },
+    "source": { "type": "string", "description": "Where in the report: row n, line n." },
+    "format": { "type": "string", "enum": ["checklist_csv", "photo_log", "narrative_text"] }
+  }
+}

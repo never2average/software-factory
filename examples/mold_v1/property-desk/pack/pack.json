@@ -1,0 +1,19 @@
+{
+  "pack_id": "keyward",
+  "name": "Keyward property maintenance desk",
+  "version": "1.0.0",
+  "description": "A residential property maintenance desk: buildings, maintenance tickets with fix-by dates, quarterly inspection rounds, vendors' service contracts, and an inspection-intake specialist (a full workspace: seven format skills, six scripts with self-tests, a schema and a validator).",
+  "mold_id": "mold_v1",
+  "subagents": ["inspection-intake"],
+  "shared_families": [],
+  "instructions": ["agent/instructions/50-pack-keyward.md"],
+  "rulebook": "files/agent/subagents/inspection-intake/schemas/inspection-spec.md",
+  "requires": {
+    "capabilities": { "web_search": "not used", "browser": "not used" }
+  },
+  "state": {
+    "workspace": "This workspace runs maintenance for residential buildings: buildings are the accounts; maintenance tickets carry a place, a trade, a vendor and a fix-by date; inspection rounds hold each quarter's tickets; service contracts say which vendor covers which trade.",
+    "persona_name": "Keyward",
+    "tone": "calm, practical, urgent things first"
+  }
+}

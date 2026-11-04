@@ -180,7 +180,10 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // the shell's texts in the product's words (mold_v0-141: src/shell-texts.ts)
   "texts",
   // the developer surface of an embedded app (mold_v0-193, src/developer-config.ts; PACK_CONFIG and the guide's Developers pages)
-  "developer_surface"]);
+  "developer_surface",
+  // declarative yes/no checks answered from the records (mold_v0-196, src/check-spec.ts; src/pack-manifest.ts compiles them).
+  // Missing here until mold_v0-223, so a pack.json declaring checks was refused at build ("unknown field checks").
+  "checks"]);
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
