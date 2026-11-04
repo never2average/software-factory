@@ -275,7 +275,7 @@ async function getStarted(t: GeneratedTool, ws: Workspace) {
 }
 
 /**
- * The generated start_<kind> tool of one of a pack's job kinds on the customer door (mold_v0-208: a tab's floating action
+ * The generated start_<kind> tool of one of a pack's job kinds on the customer door (mold_v0-208: a tab's primary action
  * starts runs through it), or null when the pack withholds it or moved it to the admin MCP.
  */
 export function startToolOf(pack: string, kind: string): GeneratedTool | null {

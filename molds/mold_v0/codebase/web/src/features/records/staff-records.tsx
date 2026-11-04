@@ -7,7 +7,7 @@
 //
 // Writes, only where the server says this staff role may make them (GET /api/admin/records/_console/<area>/form,
 // src/record-routes.ts: never an area a repository fills, the role's "library", the staff tool not withheld): a primary
-// floating New record button opening the create form (features/tabs/action-fab.tsx, as a tab's create_record action),
+// New record button at the search row's right end opening the create form as a full card (features/tabs/tab-action.tsx, as a tab's create_record action),
 // and Edit on an open record and on its page. Both go to /api/admin/data, whose checks are unchanged; read-only areas
 // (an upstream catalog's registry) show neither.
 import Link from 'next/link';
@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Icons } from '@/components/icons';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
-import { ActionSheet, CreateRecordForm, Fab, FieldsForm, fieldValues, type FormField } from '@/features/tabs/action-fab';
+import { ActionCard, CardForm, CreateRecordForm, FieldsForm, ToolbarAction, fieldValues, useActionOpen, type FormField } from '@/features/tabs/tab-action';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { ErrorState, fail, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
@@ -53,26 +53,27 @@ function useStaffForm(area: string): StaffForm | null {
 export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   const form = useStaffForm(area.name);
   const [round, setRound] = useState(0);
-  const [creating, setCreating] = useState(false);
+  // mold_v0-217: New record and Edit are full cards in the list's place; New record kept in the address (?new=1).
+  const [creating, setCreating] = useActionOpen('new');
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const reload = () => setRound((n) => n + 1);
   return (
     <PageContainer>
+      {form?.create && creating ? (
+        <ActionCard open onOpenChange={setCreating} title='New record' description={`A new record in ${area.label}, added to the list at once.`}>
+          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
+            post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
+        </ActionCard>
+      ) : form?.edit && editing ? (
+        <ActionCard open onOpenChange={(o) => { if (!o) setEditing(null); }} title={`Edit ${editing.title || editing.key}`} description={`${area.label}: its title and fields, saved whole.`}>
+          <EditRecordForm area={area.name} fields={form.fields} row={editing} onDone={() => { setEditing(null); reload(); }} />
+        </ActionCard>
+      ) : (
       <RecordTableView key={round} area={area} base='admin' url={`${recordsApi('admin')}/${area.name}`} id={`admin-records-${area.name}`}
         empty={<RecordEmpty area={area} base='admin' />}
         summary={<Sparklines url={consoleUrl(area.name, 'sparklines')} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-        fab={form?.create ? <Fab label='New record' icon={<Icons.add />} onClick={() => setCreating(true)} /> : undefined}
+        toolbarAction={form?.create ? <ToolbarAction label='New record' icon={<Icons.add />} onClick={() => setCreating(true)} /> : undefined}
         rowAction={form?.edit ? (r) => <Button variant='outline' size='sm' onClick={() => setEditing(r)}><Icons.edit /> Edit</Button> : undefined} />
-      {form?.create && (
-        <ActionSheet open={creating} onOpenChange={setCreating} title='New record' description={area.label}>
-          <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
-            post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
-        </ActionSheet>
-      )}
-      {form?.edit && editing && (
-        <ActionSheet open onOpenChange={(o) => { if (!o) setEditing(null); }} title={`Edit ${editing.title || editing.key}`} description={area.label}>
-          <EditRecordForm area={area.name} fields={form.fields} row={editing} onDone={() => { setEditing(null); reload(); }} />
-        </ActionSheet>
       )}
     </PageContainer>
   );
@@ -87,7 +88,11 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
   const listHref = `/admin/records/${area.name}`;
   return (
     <PageContainer>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : form?.edit && editing ? (
+        <ActionCard open onOpenChange={setEditing} title={`Edit ${data.record.title || data.record.key}`} description={`${area.label}: its title and fields, saved whole.`}>
+          <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
+        </ActionCard>
+      ) : (
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
             <CardDescription>
@@ -122,11 +127,6 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
           </CardContent>
         </Card>
       )}
-      {form?.edit && data && editing && (
-        <ActionSheet open onOpenChange={setEditing} title={`Edit ${data.record.title || data.record.key}`} description={area.label}>
-          <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
-        </ActionSheet>
-      )}
     </PageContainer>
   );
 }
@@ -160,7 +160,7 @@ function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: F
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
-    <form className='flex flex-col gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy}><Icons.check /> {busy ? 'Saving…' : 'Save'}</Button>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='edit-key'>Key</Label>
         <Input id='edit-key' value={row.key} readOnly disabled className='font-mono text-xs' />
@@ -170,7 +170,6 @@ function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: F
         <Input id='edit-title' value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
       <FieldsForm fields={fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='edit-field' />
-      <Button type='submit' disabled={busy} className='self-start'><Icons.check /> {busy ? 'Saving…' : 'Save'}</Button>
-    </form>
+    </CardForm>
   );
 }

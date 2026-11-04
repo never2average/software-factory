@@ -3,8 +3,8 @@
 // copied into the workspace; owners turn them off and on, change when they run (UTC) and over which records, and add
 // their own. Everyone else in the workspace sees them, with the last time each ran. The list is the console's database
 // table (mold_v0-176): a row opens the schedule beside it, where owners change when it runs or remove one they added.
-// A schedules tab's floating action (mold_v0-208: pack.json tabs[].action new_schedule) opens the Add a schedule form in
-// a drawer, its run kind preset, in place of the form below the list; shown to the owners who may add one.
+// A schedules tab's primary action (mold_v0-208: pack.json tabs[].action new_schedule) opens the Add a schedule form in
+// a full card in the list's place (mold_v0-217, ?new=1), its run kind preset, in place of the form below the list; shown to the owners who may add one.
 import { useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -12,10 +12,9 @@ import { Section } from '@/components/layout/section';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { JOB_KINDS } from '@/config/build-facts.generated';
 import { EmptyState } from '@/features/tabs/empty';
-import { ActionSheet, Fab, LinkFab, actionLabel } from '@/features/tabs/action-fab';
+import { ActionCard, CardForm, LinkAction, ToolbarAction, actionLabel, useActionOpen } from '@/features/tabs/tab-action';
 import { packTabs, type PackTabSpec } from '@/config/pack-nav.generated';
 import { ExportRowsButton } from '@/features/tabs/export';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,8 +48,9 @@ const assetWords = (s: Schedule) => (!s.assets ? 'the workspace' : s.assets.keys
 
 export function SchedulesPage() {
   return (
-    <PageContainer pageTitle='Schedules' pageDescription='When runs start by themselves. Times are cron expressions in UTC; a time missed while nothing was running runs once, not once per missed time.'>
-      {/* A pack's own schedules tab opens this page (it is not an in-page tab): its floating action is drawn here. */}
+    // A list (mold_v0-217): no title or description above it.
+    <PageContainer>
+      {/* A pack's own schedules tab opens this page (it is not an in-page tab): its primary action is drawn here. */}
       <SchedulesBody action={packTabs.find((t) => t.kind === 'schedules' && t.url === '/app/schedules' && t.action)?.action} />
     </PageContainer>
   );
@@ -60,23 +60,27 @@ export function SchedulesPage() {
 export function SchedulesBody({ summary, action }: { summary?: ReactNode; action?: PackTabSpec['action'] } = {}) {
   const { data, error, reload } = useOrgLoad(() => call<Data>('GET'));
   const cols = useMemo(() => (data ? columns(data, reload) : []), [data, reload]);
-  const [adding, setAdding] = useState(false);
-  // The floating action (mold_v0-208) for those who may add a schedule, when there is a kind to schedule.
+  // mold_v0-217: the Add a schedule form as a full card in the list's place, kept in the address (?new=1).
+  const [adding, setAdding] = useActionOpen('new');
+  // The primary action (mold_v0-208; the search row's last control, mold_v0-217) for those who may add a schedule, when
+  // there is a kind to schedule.
   const canAdd = !!data?.can_manage && data.kinds.length > 0;
-  const fab = action?.kind === 'new_schedule' && canAdd ? (<>
-    <Fab label={actionLabel(action)} icon={<Icons.calendar />} onClick={() => setAdding(true)} />
-    <ActionSheet open={adding} onOpenChange={setAdding} title={actionLabel(action)}
+  const toolbarAction = action?.kind === 'new_schedule' && canAdd
+    ? <ToolbarAction label={actionLabel(action)} icon={<Icons.calendar />} onClick={() => setAdding(true)} />
+    : action?.kind === 'link' ? <LinkAction action={action} /> : undefined;
+  if (action?.kind === 'new_schedule' && canAdd && adding) return (
+    <ActionCard open onOpenChange={setAdding} title={actionLabel(action)}
       description='When it runs is a cron expression in UTC (minute hour day month weekday), at most every 5 minutes. Optionally, which records it runs over: one run per record.'>
       <AddScheduleForm data={data!} preset={action.job_kind} stacked onAdded={async () => { setAdding(false); await reload(); }} />
-    </ActionSheet>
-  </>) : action?.kind === 'link' ? <LinkFab action={action} /> : undefined;
+    </ActionCard>
+  );
   return (
     <>
       {error ? <ErrorState error={error} /> : (
         <div className='flex flex-col gap-10'>
           {/* The console's database table (mold_v0-176, as on Accounts): a row opens the schedule beside the list. */}
           <RecordView<Schedule>
-            id='app-schedules' compact noun='schedules' properties summary={summary} fab={fab}
+            id='app-schedules' compact noun='schedules' properties summary={summary} toolbarAction={toolbarAction}
             rows={data?.schedules ?? []} rowKey={(s) => s.id} cols={cols} loading={!data}
             searchText={(s) => `${s.label ?? ''} ${s.name} ${kindLabel(s)} ${s.cron} ${assetWords(s)}`}
             searchPlaceholder='Search schedules'
@@ -84,13 +88,13 @@ export function SchedulesBody({ summary, action }: { summary?: ReactNode; action
             primary={data?.schedules.length ? <ExportRowsButton name='schedules' rows={data.schedules} cols={cols} /> : undefined}
             empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState id='empty-schedules' empty={{
               title: 'No schedules yet.',
-              text: data?.can_manage && data.kinds.length ? (fab && action?.kind === 'new_schedule' ? `${actionLabel(action)}: pick what runs, and when (UTC).` : 'Add one below: pick what runs, and when (UTC).') : 'An owner of this workspace adds them.',
+              text: data?.can_manage && data.kinds.length ? (toolbarAction && action?.kind === 'new_schedule' ? `${actionLabel(action)}: pick what runs, and when (UTC).` : 'Add one below: pick what runs, and when (UTC).') : 'An owner of this workspace adds them.',
               cta: null
             }} /></div>}
             detailTitle={(s) => s.label ?? s.name}
             detail={(s) => <ScheduleDetail key={s.id} s={s} canManage={!!data?.can_manage} onChanged={reload} />}
           />
-          {canAdd && !fab && <AddSchedule data={data} onAdded={reload} />}
+          {canAdd && !toolbarAction && <AddSchedule data={data} onAdded={reload} />}
         </div>
       )}
     </>
@@ -115,7 +119,7 @@ function columns(data: Data, onChanged: () => unknown): RecordCol<Schedule>[] {
     },
     { key: 'kind', label: 'Runs', type: 'select', options: kinds, value: (s) => `${s.pack}/${s.job_kind}`, render: (s) => kindLabel(s) },
     { key: 'cron', label: 'When (UTC)', type: 'text', value: (s) => s.cron, render: (s) => <span className='font-mono text-xs'>{s.cron}</span> },
-    { key: 'over', label: 'Over', type: 'text', value: (s) => assetWords(s), render: (s) => <>{assetWords(s)}{s.environment ? <Badge variant='secondary' className='ml-1'>{s.environment}</Badge> : null}</> },
+    { key: 'over', label: 'Over', type: 'text', value: (s) => assetWords(s), render: (s) => <>{assetWords(s)}{s.environment ? <span className='text-muted-foreground'> · {s.environment}</span> : null}</> },
     { key: 'next', label: 'Next', type: 'date', value: (s) => (s.enabled ? s.next_at : null), render: (s) => (s.enabled ? <When d={s.next_at} /> : <span className='text-muted-foreground'>off</span>) },
     {
       key: 'last', label: 'Last', type: 'date', value: (s) => s.last?.slot_at ?? null,
@@ -170,7 +174,7 @@ function AddSchedule({ data, onAdded }: { data: Data; onAdded: () => unknown }) 
 }
 
 /**
- * The Add a schedule form: below the list, in a row; or in the floating action's drawer (mold_v0-208: `stacked`, one
+ * The Add a schedule form: below the list, in a row; or the primary action's full card (mold_v0-208: `stacked`, one
  * labelled field a line, the kinds by their labels, `preset` the kind chosen first).
  */
 function AddScheduleForm({ data, onAdded, preset, stacked = false }: { data: Data; onAdded: () => unknown; preset?: string; stacked?: boolean }) {
@@ -194,8 +198,7 @@ function AddScheduleForm({ data, onAdded, preset, stacked = false }: { data: Dat
   };
   const row = (label: string, id: string, control: ReactNode) => (stacked
     ? <div className='flex flex-col gap-1.5'><Label htmlFor={id}>{label}</Label>{control}</div> : control);
-  return (
-      <form className={stacked ? 'flex flex-col gap-4' : 'flex flex-wrap items-end gap-2'} onSubmit={(e) => { e.preventDefault(); void add(); }}>
+  const fields = (<>
         {row('Runs', 'schedule-kind', <NativeSelect id='schedule-kind' className={stacked ? 'w-full' : undefined} value={kind} onChange={(e) => { setKind(e.target.value); setArea(''); }} aria-label='Run kind'>
           {data.kinds.map((k) => <NativeSelectOption key={`${k.pack}/${k.name}`} value={`${k.pack}/${k.name}`}>{stacked ? kindLabel({ pack: k.pack, job_kind: k.name }) : `${k.pack}/${k.name}`}</NativeSelectOption>)}
         </NativeSelect>)}
@@ -208,7 +211,13 @@ function AddScheduleForm({ data, onAdded, preset, stacked = false }: { data: Dat
           </NativeSelect>
         ))}
         {area && row('Record keys', 'schedule-keys', <Input id='schedule-keys' className={stacked ? undefined : 'w-56'} placeholder='record keys (blank: every record)' value={keys} onChange={(e) => setKeys(e.target.value)} aria-label='Record keys' />)}
-        <Button type='submit' size='sm' className={stacked ? 'self-start' : undefined} disabled={busy || !name || !cron}>Add</Button>
+  </>);
+  // In the action's card (mold_v0-217): the fields, then Add and Cancel.
+  if (stacked) return <CardForm onSubmit={add} submit={<Button type='submit' disabled={busy || !name || !cron}><Icons.calendar /> {busy ? 'Adding…' : 'Add'}</Button>}>{fields}</CardForm>;
+  return (
+      <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        {fields}
+        <Button type='submit' size='sm' disabled={busy || !name || !cron}>Add</Button>
       </form>
   );
 }

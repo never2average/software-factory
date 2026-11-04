@@ -347,7 +347,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   platform areas). `check:rls` probes both tables; `npm run test:record-areas` proves it with two workspaces.
   The list page (mold_v0-170) is the console's database table (`RecordView`): the area's `list_columns` typed by their
   fields (an enum filters by its options, a date or number sorts as one), search, a record count, sorting and filters,
-  a row opening the record beside the list with **Open record** for its own page; empty, it says where the area's rows
+  a row opening the record as a full card in the list's place (mold_v0-217) with **Open record** for its own page; empty, it says where the area's rows
   come from (for staff: its data repository, what to press on Data repositories, the admin MCP's sync tool;
   `web/src/features/records/empty.ts`). The breadcrumb names the area by its label, as the sidebar does. An area of
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
@@ -357,8 +357,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `/admin/records/<area>` has no title or description above it; it reads as a customer's list tab does (mold_v0-208):
   the area's four cards (`GET /api/admin/records/_console/<area>/sparklines`, `src/sparklines.ts` `areaSparklines`: an
   area tab's defaults over the shared rows, counted as platform work since they name no workspace; staff read every
-  card), the search row, the table, a row opening the record beside the list. Where staff may write, **New record** is
-  the primary floating action (the tab action's create form, `CreateRecordForm`) and an open record has **Edit** (its
+  card), the search row, the table, a row opening the record as a full card in its place. Where staff may write, **New record** is
+  the primary action at the search row's right end (the tab action's create form, `CreateRecordForm`, as a full card) and an open record has **Edit** (its
   title and fields, data the form does not show kept); both write through `/api/admin/data`, whose checks are unchanged.
   `GET /api/admin/records/_console/<area>/form` says what the role is offered: create and edit only for an area no
   repository fills (an upstream catalog's registry, such as a regulators list, stays read only on the console: its
@@ -372,7 +372,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   started or finished, duration, results and cost; status and kind filter by their options; a row opens the run beside
   the list with its error and results and a link to that record), Schedules (a row opens the schedule, where owners
   change when it runs or remove one they added; the switch turns it on and off in its row), Notices (a row's menu
-  dismisses it) and Credentials (a credential per row, opening its values and the form beside the list) all draw
+  dismisses it) and Credentials (a credential per row, opening its values and the form as a full card in the list's place) all draw
   `RecordView`, with the page's own empty state guiding the person (a tab's `empty`) and nothing linking to a staff page.
   Boards and timelines stay as they were. Pages a build's original look gives a look of their own (API keys, Usage,
   Activity, Connected apps, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
@@ -1809,7 +1809,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   charts are an overview's), so no chart grid sits above or around a list. Why ignored and not refused: every pack
   written before (Maxwell's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
   pack change, not a broken build.
-  **A list tab's floating action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
+  **A list tab's primary action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
   config only: `{"kind": "start_run", "label"?, "job_kind"? | "job_kinds"?}` on an area, runs or reports tab (one of
   the pack's job kinds, a picker of 2 to 20 in order, or every kind of the pack; never one gated by an approval),
   `{"kind": "new_schedule", "label"?, "job_kind"?}` on a schedules tab (a kind the pack itself schedules, preset in the
@@ -1820,10 +1820,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   as a form (typed as record fields), the asset record it runs over and its environment when the kind takes them; a
   schedule through the schedules page's Add a schedule form (in a drawer, in place of the form below the list); a record
   through the data API's create (`POST /api/data/<area>`), its key, title and fields. The button
-  (`web/src/features/tabs/action-fab.tsx`) is the brand's primary colour, fixed at the bottom right 1.5rem from the
-  window's edges plus the safe-area insets, an icon and its label from `sm` up and the icon alone on a phone (its
-  label the accessible name); the list's height leaves its space free below the pager (`RecordView` `fab`,
-  `FAB_SPACE`), so it never covers the last row or the pager. It is shown only to a role that may use it
+  (`web/src/features/tabs/tab-action.tsx`; mold_v0-217, before it floated at the window's bottom right) is a normal
+  primary button, the last control of the list's search row at its right end (`RecordView` `toolbarAction`; a board or
+  a timeline: after Export CSV in the views' row), the toolbar's button size, an icon and its label from `sm` up and the
+  icon alone on a phone (its label the accessible name and title), the row wrapping as it must. Its form opens as a full
+  card in the list's place (`ActionCard`, `CardForm`; the record details card's style): a way back, the title, a short
+  summary of what will happen, the fields, then the submit and Cancel. It is kept in the address (`?start=1` for a run,
+  `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
+  again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
+  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too. A
+  list (an area, runs, reports or schedules tab, a records page) has no title or description above it, no count toggle
+  in its toolbar (the Overdue filter is the Filter menu's rule, `?overdue=1`), and its cells show a status as plain
+  text, not a badge. It is shown only to a role that may use it
   (`GET /api/tab-actions/<pack>/<tab>`: the start tool offered to the role, `manage` for a schedule, the area's create
   roles and `edit`), and the server refuses the rest. The route is mounted only when a tab has an action (since
   mold_v0-213 every list tab's by default), so a build without a list tab (zero packs, Octillion) answers nothing and

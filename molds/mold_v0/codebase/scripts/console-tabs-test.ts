@@ -626,6 +626,35 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     }
   }
 
+  // ---------- 3c. the tab's primary action in the search row; its form, an open record and a record page as full cards (mold_v0-217) ----------
+  {
+    const read = (f: string) => readFileSync(path.join(ROOT, "web", "src", f), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    const rv = read("components/layout/record-view.tsx"), ta = read("features/tabs/tab-action.tsx"), tp = read("features/tabs/tab-page.tsx");
+    const rp = read("features/records/record-pages.tsx"), sc = read("features/schedules/schedules-page.tsx"), ru = read("features/tabs/runs.tsx");
+    assert.match(rv, /\{primaryNode\}\s*\{toolbarAction\}\s*<\/div>/, "RecordView: the action is the search row's last control");
+    assert.doesNotMatch(rv + ta + tp, /\bfab\b|FAB_SPACE|data-fab|pb-24|100svh-10rem/, "no floating action and no space kept free for one");
+    assert.match(ta, /ACTION_CLASS = 'ml-auto shrink-0 max-sm:w-8 max-sm:px-0'/, "a normal primary button at the row's right end, square on a phone");
+    assert.doesNotMatch(ta, /fixed|rounded-full|size-14|shadow-lg|<Sheet|Dialog|Popover/, "nothing fixed, round or lifted; no sheet, dialog or popover");
+    assert.match(ta, /aria-label=\{label\} title=\{label\} data-toolbar-action=''[\s\S]*<span className='hidden sm:inline'>\{label\}<\/span>/, "the icon alone on a phone, the label its accessible name and title");
+    assert.match(ta, /useQueryState\(name, parseAsBoolean[\s\S]*history: open \? 'push' : 'replace'/, "the card is kept in the address (?start=1, ?new=1): Back returns to the list");
+    assert.match(ta, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>[\s\S]*Back to the list[\s\S]*<CardTitle[\s\S]*<CardContent[\s\S]*<CardFooter[\s\S]*\{submit\}\s*<Button type='button' variant='outline' onClick=\{cancel\}>Cancel<\/Button>/,
+      "the form's card: a way back, the title and what will happen, the fields, then the submit and Cancel");
+    assert.equal((ta.match(/<CardForm onSubmit=/g) ?? []).length, 2, "the start-run and create-record forms are the card's");
+    assert.match(sc, /if \(stacked\) return <CardForm onSubmit=\{add\}/, "the new-schedule form too");
+    assert.match(sc, /useActionOpen\('new'\)/); assert.match(ru, /if \(card\) return card;/, "runs: the card in the list's place");
+    assert.match(tp, /card \? card : <div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
+    assert.match(tp, /<ExportCsvButton [^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Export CSV in the views' row");
+    assert.match(tp, /pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}/, "no title or description above a list tab");
+    assert.match(rv, /if \(current && detail\) return \([\s\S]*data-record-card='' role='region' aria-label='Record'/, "an open record: the full details card in the list's place");
+    assert.doesNotMatch(rv, /<aside|lg:w-\[40%\]/, "no peek beside a narrowed list");
+    assert.match(rp, /export function RecordDetailPage[\s\S]*data-record-card=''/, "a record's page: the same details card");
+    assert.doesNotMatch(rp + read("features/records/clocks.tsx"), /OverdueToggle|data-overdue-filter/, "no count toggle above the table");
+    assert.match(rp, /initialRules=\{initialRules\}/, "?overdue=1: the Filter menu's Overdue rule");
+    assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
+    assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
+    console.log("✓ the tab's primary action (mold_v0-217): the search row's last control, a normal primary button (the icon alone on a phone, labelled), no floating button; its form, an open record and a record's page full cards in the list's place (?start=1, ?new=1); no title above a list, no count toggle, cell statuses plain text");
+  }
+
   // ---------- 4. the console typechecks with the tabs ----------
   if (process.env.CONSOLE_TABS_TYPECHECK !== "off" && existsSync(path.join(ROOT, "web", "node_modules"))) {
     for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"]] as const) {
