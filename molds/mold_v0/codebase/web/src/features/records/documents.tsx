@@ -81,8 +81,12 @@ function Preview({ c }: { c: FileCard }) {
         </Button>
       </div>
       {/* No script, no same-origin: the server's policy runs nothing and its links open in a new tab. */}
-      <iframe key={images ? 'on' : 'off'} src={`${c.preview_url}${images ? '&images=1' : ''}`} title={`${c.name} (preview)`}
-        sandbox='allow-popups allow-popups-to-escape-sandbox' referrerPolicy='no-referrer' className='h-[28rem] w-full rounded-b-lg border-0 bg-white' />
+      {/* Mail is written for a light page (its own inline colours): in dark mode it sits as a light sheet on a framed, muted background. */}
+      <div className='dark:bg-muted/50 rounded-b-lg dark:p-3'>
+        <iframe key={images ? 'on' : 'off'} src={`${c.preview_url}${images ? '&images=1' : ''}`} title={`${c.name} (preview)`}
+          sandbox='allow-popups allow-popups-to-escape-sandbox' referrerPolicy='no-referrer'
+          className='block h-[28rem] w-full rounded-b-lg border-0 bg-white dark:rounded-md dark:shadow-sm dark:ring-1 dark:ring-border' />
+      </div>
     </div>
   );
 }
