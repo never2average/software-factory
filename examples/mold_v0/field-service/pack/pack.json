@@ -24,7 +24,7 @@
           "delete": ["member", "billing", "owner"],
           "move": { "none": "A site has no lifecycle" },
           "reveal": { "none": "No encrypted field" },
-          "import": { "none": "The shell has no import for a team's own records yet" }
+          "import": ["member", "billing", "owner"]
         },
         "primary_action": "create_record"
       },
@@ -58,7 +58,7 @@
           "delete": ["member", "billing", "owner"],
           "move": { "none": "Equipment has no lifecycle" },
           "reveal": { "none": "No encrypted field" },
-          "import": { "none": "The shell has no import for a team's own records yet" }
+          "import": ["member", "billing", "owner"]
         },
         "primary_action": "create_record"
       },
@@ -95,7 +95,7 @@
           "move": ["member", "owner"],
           "delete": ["owner"],
           "reveal": { "none": "No encrypted field" },
-          "import": { "none": "The shell has no import for a team's own records yet: requests arrive by email (the intake)" }
+          "import": { "none": "Work orders arrive one by one, by email (the intake) or New work order, never from a file" }
         },
         "primary_action": "create_record"
       },
@@ -186,7 +186,7 @@
           "delete": ["member", "billing", "owner"],
           "move": { "none": "A visit has no lifecycle" },
           "reveal": { "none": "No encrypted field" },
-          "import": { "none": "The shell has no import for a team's own records yet" }
+          "import": { "none": "A visit is logged when it happens, never loaded from a file" }
         },
         "primary_action": "create_record"
       },

@@ -39,6 +39,10 @@ export interface RecordAreaSpec {
   lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;
   /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */
   clocks?: { name: string; label: string }[];
+  /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */
+  export_roles?: string[];
+  /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */
+  import_roles?: string[];
   /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */
   action?: { kind: 'create_record'; label: string | null; area: string };
 }

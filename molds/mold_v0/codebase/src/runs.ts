@@ -711,7 +711,7 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
     // The run's own workspace, from the run row: the hook's records, database and files are that workspace's only.
     const [org] = await asPlatform(async () => (await getDb()).query<{ slug: string; name: string | null }>("SELECT slug, name FROM organizations WHERE id = $1", [run.org_id]));
     const { workspaceDb } = await import("./packs.js");
-    const { workspaceRecords } = await import("./record-areas.js");
+    const { asWriter, workspaceRecords } = await import("./record-areas.js");
     // Handles that stop working when the hook's time is up: a hook still going after it cannot write on.
     let live = true;
     const alive = <T>(f: () => T): T => { if (!live) throw new Error("the workspace hook's time is up: refused"); return f(); };
@@ -726,7 +726,8 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
     };
     let timer: NodeJS.Timeout | undefined;
     await withTenant(run.org_id, () => Promise.race([
-      Promise.resolve().then(() => hook(ctx, files)),
+      // mold_v0-236: what the hook writes is the run's (provenance run, written by run:<id>).
+      Promise.resolve().then(() => asWriter({ by: "run", id: `run:${run.id}` }, () => hook(ctx, files))),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`it took longer than ${hookSeconds()} s`)), hookSeconds() * 1000); }),
     ])).finally(() => { clearTimeout(timer); live = false; });
     await event(run.id, run.org_id, run.attempt, "workspace_hook", { version: snap?.version ?? 0, files: files.length });

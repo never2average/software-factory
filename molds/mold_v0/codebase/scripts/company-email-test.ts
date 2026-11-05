@@ -270,6 +270,11 @@ try {
       assert.equal(byTitle["Many files"]!.data.file_count, 3);
       const listB = await withTenant(B.orgId, () => rec.listFor(B.orgId, "mf_mail", { limit: 50 }));
       assert.deepEqual(listB.records.map((r) => r.title), ["B only"], "B's poll wrote B's records only");
+      // mold_v0-236: each record is the intake's, named by its message's ledger row.
+      const marks = await db.query<{ provenance: string; written_by: string; led: string }>(
+        `SELECT r.provenance, r.written_by, 'intake:message:' || m.id AS led FROM workspace_records r JOIN workspace_email_messages m ON m.org_id = r.org_id AND m.record_key = r.key AND m.area = r.area
+          WHERE r.org_id = $1 AND r.area = 'mf_mail'`, [A.orgId]);
+      assert.ok(marks.length >= 3 && marks.every((m) => m.provenance === "intake" && m.written_by === m.led), `every intake record says the intake wrote it: ${JSON.stringify(marks.slice(0, 3))}`);
       // Read only, and only the declared folder.
       assert.deepEqual(imap.mutating, [], "no SELECT, STORE, COPY, MOVE, EXPUNGE or non-PEEK fetch");
       assert.ok(imap.log.some((l) => l.line.includes("EXAMINE") && l.line.includes("INBOX")));

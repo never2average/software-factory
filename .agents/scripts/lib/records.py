@@ -15,22 +15,28 @@ it from the rest of the declaration exactly as the shell behaves, so
 What is derived (the shell's own rules, each named where it lives in molds/mold_v0/codebase):
   read      permissions.read, else every role (src/record-areas.ts allowedRoles); none when the pack withholds both its
             list and get tools (src/mcp-withheld.ts)
-  export    as read (the console's Export CSV pages through the list routes; export_<area> needs read); none when
-            the list or export tool is withheld
+  export    its own permission (mold_v0-235, src/record-areas.ts exportRoles): the contract's export roles that may
+            read, or read's roles when the contract does not say it; none when it says none, or when the list or export
+            tool is withheld
   create, update, move, delete
             a workspace area: permissions, else member, billing, owner; delete as update, or the owner alone on an area
             with a lifecycle; never viewer. None for an area read from workspace files or an API, for a write tool
             the pack withholds (exclude, include, admin_only), for move without a lifecycle, for update, move and
             delete on an append-only area. A shared area: {staff: library} (create, update) and {staff: delete}
             (src/record-routes.ts _console form; the admin tools) unless read only or withheld; move none
-  reveal    a workspace area with encrypted fields: each field's reveal_roles, else the update roles (joined); none
-            without one, or when the reveal tool is withheld
+  reveal    a workspace area with encrypted fields: the area's (mold_v0-235, src/record-areas.ts revealRoles): each
+            field's reveal_roles (within the contract's reveal roles), else the contract's reveal roles, else the
+            update roles (joined); none without one, when the contract says none, or when the reveal tool is withheld
   import    a shared area: {staff: library} where staff may create and update (src/record-import.ts); a workspace
-            area: none (the shell has no import for a workspace's own records yet)
+            area (mold_v0-234, src/record-areas.ts importRoles): the contract's import roles that may create and
+            update it, or none when the contract does not grant it (today's), when it is read only, has an encrypted
+            field, or its create or update is withheld
   provenance
             repository (the area's repository); staff (a shared area staff may write; a workspace area whose write
             tool is admin_only); people (a workspace area its people may create, update or move); intake (the pack's
-            email.intake.area). run is never derived: the pack's own code may declare it (a pack with an entry)
+            email.intake.area). run is not derived from the declaration: the pack's own code may declare it (a pack
+            with an entry); the app works it out from its rows (mold_v0-236: each workspace row records its writer;
+            GET /api/admin/records/_provenance names a provenance the rows show and the contract leaves out)
   primary action
             every list that shows the area (mold_v0-237): each area tab of the pack whose own area it is (tab.area, or
             the first of tab.areas): its action, or action: false with its reason, else the shell's default
@@ -110,8 +116,14 @@ def _derive(p, a):
     g = {}
     read_roles = _roles(perms.get("read") or ROLES)
     g["read"] = none("the pack withholds its list and get tools (mcp)") if p.off_workspace("list", name) and p.off_workspace("get", name) else read_roles
-    g["export"] = (none("the pack withholds its list or export tool (mcp)") if p.off_workspace("list", name) or p.off_workspace("export", name)
-                   else g["read"])
+    declared = (a.get("contract") or {}).get("actions") if isinstance(a.get("contract"), dict) else None
+    declared = declared if isinstance(declared, dict) else {}
+    if p.off_workspace("list", name) or p.off_workspace("export", name): g["export"] = none("the pack withholds its list or export tool (mcp)")
+    elif is_none(g["read"]): g["export"] = g["read"]
+    elif is_none(declared.get("export")): g["export"] = declared["export"]
+    elif isinstance(declared.get("export"), list):
+        g["export"] = [r for r in g["read"] if r in declared["export"]] or none("no role the contract lets export may read it")
+    else: g["export"] = g["read"]
     if shared:
         def staff(op, perm):
             if read_only: return none(src)
@@ -137,10 +149,22 @@ def _derive(p, a):
     elif append_only: g["delete"] = none("append-only: a record is never deleted")
     elif all(p.off_workspace(o, name) for o in ops): g["delete"] = none("the pack withholds every write of it from a workspace (mcp), its delete with them")
     else: g["delete"] = [r for r in _roles(perms.get("delete") or (["owner"] if lifecycle else update_roles)) if r != "viewer"]
+    area_reveal = declared.get("reveal")
     if not encrypted: g["reveal"] = none("no encrypted field")
     elif p.off_workspace("reveal", name): g["reveal"] = none("the pack withholds its reveal tool (mcp)")
-    else: g["reveal"] = _roles([r for f in encrypted for r in (f.get("reveal_roles") or update_roles)])
-    g["import"] = none("the shell has no import for a workspace's own records (staff import shared areas only)")
+    elif is_none(area_reveal): g["reveal"] = area_reveal
+    else:
+        def field_roles(f):
+            own = f.get("reveal_roles")
+            if isinstance(area_reveal, list): return [r for r in own if r in area_reveal] if own else area_reveal
+            return own or update_roles
+        g["reveal"] = _roles([r for f in encrypted for r in field_roles(f)]) or none("no role may reveal any of its encrypted fields")
+    want = declared.get("import")
+    if not isinstance(want, list): g["import"] = want if is_none(want) else none("its contract grants no import (a workspace imports only where the contract says who may)")
+    elif read_only: g["import"] = none(src)
+    elif encrypted: g["import"] = none("an encrypted field's values never come from a file")
+    elif is_none(g["create"]) or is_none(g["update"]): g["import"] = none("an import creates and updates, and one of them is not offered to a workspace")
+    else: g["import"] = [r for r in _roles(want) if r in g["create"] and r in g["update"]] or none("no role the contract lets import may both create and update it")
     return g
 
 def _provenance(p, a, g):
@@ -353,6 +377,19 @@ def self_test():
     pack["mcp"] = {"exclude": ["acme_create_jobs", "acme_update_jobs", "acme_move_jobs"]}
     d = {r["area"]: r for r in resolve([pack])}["jobs"]["derived"]
     ok(is_none(d["actions"]["create"]) and is_none(d["actions"]["delete"]) and "people" not in d["provenance"], "withheld writes take their deletes and the people's provenance with them")
+    # mold_v0-234/235: import, export and reveal are read from the contract, today's behaviour when it does not say
+    pack["mcp"] = {}
+    ws["contract"]["actions"] = {**j["actions"], "export": ["owner"], "reveal": {"none": "never shown"}, "import": {"none": "x"}}
+    d = {r["area"]: r for r in resolve([pack])}["jobs"]["derived"]["actions"]
+    ok(d["export"] == ["owner"] and is_none(d["reveal"]), "export narrowed below read, reveal closed: as the contract says")
+    plain = {"name": "notes", "label": "Notes", "role": "check", "scope": "workspace", "fields": [{"name": "x", "label": "X"}],
+             "contract": {"provenance": ["people"], "primary_action": {"none": "x"}, "actions": {**j["actions"], "move": {"none": "x"}, "reveal": {"none": "x"},
+                          "delete": ["member", "billing", "owner"], "import": ["viewer", "member", "owner"]}}}
+    pack["record_areas"].append(plain)
+    d = {r["area"]: r for r in resolve([pack])}["notes"]["derived"]["actions"]
+    ok(d["import"] == ["member", "owner"], "a workspace import: the contract's roles that may create and update")
+    ok(is_none({r["area"]: r for r in resolve([{**pack, "record_areas": [dict(plain, contract=None)]}])}["notes"]["derived"]["actions"]["import"]), "no contract: no import (today's)")
+    pack["record_areas"].pop()
     del ws["contract"]; pack["mcp"] = {}; pack.pop("email"); pack.pop("entry")
     ws["settings"] = {"group": "automation"}
     pack["tabs"] = pack["tabs"][1:]

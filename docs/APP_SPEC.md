@@ -95,7 +95,9 @@ through the same check `factory.py validate` and the build use.
   (`record_areas[].contract`); `spec check` holds a declared one to what the build does and derives it for an area that
   declares none, which is then incomplete only when nothing writes its rows or a list tab of it has no primary action
   and no reason. `spec check <file> --records` prints each area's contract. A field may be `url` (mold_v0-238: an http or
-  https address, which may preview its document), and a `file` field takes uploads from the console's create form.
+  https address, which may preview its document), and a `file` field takes uploads from the console's create form. The app itself
+  reads its `import`, `export` and `reveal` (mold_v0-234, mold_v0-235: a workspace import, export as its own permission,
+  reveal per area) and records each workspace row's writer (mold_v0-236).
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on
   Vercel, `run_keys.sandbox` (`boat`). `compose_remote` needs `product.domain`. At least one platform administrator.

@@ -1427,6 +1427,23 @@ let withheld = [];
 /** The generated tools a workspace's client sees, and the shell's record tools (mold_v0-106: the guide's MCP tools page). */
 let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
+/**
+ * The console's view of an area's contract (mold_v0-234, mold_v0-235; the server decides, src/record-areas.ts
+ * exportRoles and importRoles): who may export it (the contract's export roles that may read it) and who may import a
+ * file into it (the contract's import roles that may add and change its records). Only when the area declares a
+ * contract: an area without one keeps today's (export as read, no import) and adds nothing here.
+ */
+const ROLES_ORDER = ["viewer", "member", "billing", "owner"], WRITERS = ["member", "billing", "owner"];
+function contractRoles(a) {
+  const g = a.contract?.actions;
+  if (!g) return {};
+  const p = a.permissions ?? {};
+  const of = (x) => (Array.isArray(x) ? ROLES_ORDER.filter((r) => x.includes(r)) : []);
+  const read = of(p.read ?? ROLES_ORDER);
+  const create = of(p.create ?? WRITERS).filter((r) => r !== "viewer"), update = of(p.update ?? WRITERS).filter((r) => r !== "viewer");
+  const imp = a.scope === "workspace" ? of(g.import).filter((r) => create.includes(r) && update.includes(r)) : [];
+  return { export_roles: of(g.export).filter((r) => read.includes(r)), ...(imp.length ? { import_roles: imp } : {}) };
+}
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
 // A tab's primary action (mold_v0-208) never offers what the pack withholds from a workspace (its mcp settings): a job
@@ -2394,6 +2411,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
   "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
   "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
+  "  /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */\n  export_roles?: string[];\n" +
+  "  /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */\n  import_roles?: string[];\n" +
   "  /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */\n" +
   "  action?: { kind: 'create_record'; label: string | null; area: string };\n}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
@@ -2404,7 +2423,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
-    ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}) })))};\n\n` +
+    ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +

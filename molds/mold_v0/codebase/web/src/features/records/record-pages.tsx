@@ -23,6 +23,7 @@ import { recordEmptyText, repoOf } from './empty';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
 import { ExportCsvButton } from '@/features/tabs/export';
+import { useImportAction } from './workspace-import';
 import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
@@ -35,7 +36,11 @@ export type RecordRow = { key: string; title: string | null; data: Record<string
   provenance?: Provenance };
 export type Provenance = { by: 'staff' | 'repository'; repository: string | null; overrides: { title: string | null; version: string | null } | null };
 export type Page = { records: RecordRow[]; next: string | null };
-type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[] };
+type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[];
+  /** A workspace record's writer (mold_v0-236, src/record-areas.ts RowProvenance): where it came from. */
+  provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null } };
+/** Where a workspace record came from, in words (mold_v0-236). */
+const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -176,7 +181,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, rowAction, detailNote }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowAction, detailNote }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -184,6 +189,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   summary?: ReactNode;
   /** The tab's primary action (mold_v0-208, features/tabs/tab-action.tsx): the search row's last control (mold_v0-217). */
   toolbarAction?: ReactNode;
+  /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, just left of Export in the search row. */
+  importAction?: ReactNode;
   /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
   rowAction?: (r: RecordRow) => ReactNode;
   /** An open record's first lines (mold_v0-221: a staff row's provenance and an override's mark, features/records/staff-records.tsx). */
@@ -215,10 +222,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
       // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
-      primary={source ? source.primary : ({ rows: view, narrowed }) => (
+      primary={source ? source.primary : ({ rows: view, narrowed }) => (importAction ? (
+        // mold_v0-234: Import and Export side by side (two buttons, one group: they wrap together on a phone).
+        <div className='flex shrink-0 items-center gap-2'>
+          {importAction}
+          <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
+            keys={narrowed ? view.map((r) => r.key) : null} />
+        </div>
+      ) : (
         <ExportCsvButton url={url} area={area} rows={rows} name={exportName ?? area.name} areas={exportAreas ?? [area.name]} compact
           keys={narrowed ? view.map((r) => r.key) : null} />
-      )}
+      ))}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
       detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
@@ -248,11 +262,14 @@ export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string 
   // A record added from the primary action: the list is read again.
   const [round, setRound] = useState(0);
   const { button, card } = useAreaAction(area, () => setRound((n) => n + 1));
+  // mold_v0-234: Import, where the area's contract grants it to this person: its button beside Export, its card in the list's place.
+  const imp = useImportAction(area, () => setRound((n) => n + 1));
   if (card) return card;
+  if (imp.card) return imp.card;
   return (
     <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
       summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-      toolbarAction={button ?? undefined} />
+      toolbarAction={button ?? undefined} importAction={imp.button} />
   );
 }
 
@@ -282,6 +299,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
             <dl>
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
+              {data.provenance?.by && <Field label='Added by'>{ADDED_BY[data.provenance.by] ?? data.provenance.by}</Field>}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
                 <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} /></span></Field>
               ))}

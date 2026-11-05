@@ -12,6 +12,11 @@
  *                                                       allowed to reveal them, each reveal in the data trail (mold_v0-194)
  *                         DELETE /:area/:key
  *                         POST   /_batch               {operations: [{op, area, key, ...}]}: all or none
+ *                         GET    /:area/_import        what the console's Import offers this person (mold_v0-234)
+ *                         POST   /:area/_import        {rows: [{key, title?, data}], dry_run?}: a CSV or JSON file's
+ *                                                       rows into the workspace's own records, where the area's
+ *                                                       contract grants import (src/record-import.ts): a preview
+ *                                                       unless dry_run is false, then one transaction
  *                         POST   /:area/:key/files/:field  one file's bytes (application/octet-stream, X-File-Name,
  *                                                       X-File-Type), kept for that record (mold_v0-238,
  *                                                       src/record-files.ts uploadRecordFile): its reference
@@ -84,6 +89,10 @@ export function dataAppRouter(): Router {
   r.get("/", answer(async () => dataApi.areas()));
   r.post("/_batch", batchOpen("workspace"), answer(async (req, res) => dataApi.batch(caller(res), body(req).operations)));
   r.get("/:area", open("list"), answer(async (req, res) => dataApi.list(caller(res), String(req.params.area), queryOf(req))));
+  // mold_v0-234: a workspace's import ("_import" is no record's key: a key starts with a letter or digit). It writes
+  // what a create and an update write, so either withheld withholds it.
+  r.get("/:area/_import", open("create"), open("update"), answer(async (req, res) => dataApi.importForm(caller(res), String(req.params.area))));
+  r.post("/:area/_import", open("create"), open("update"), answer(async (req, res) => dataApi.import(caller(res), String(req.params.area), body(req).rows, body(req).dry_run !== false)));
   r.post("/:area", open("create"), answer(async (req, res) => {
     const b = body(req);
     if (typeof b.key !== "string") throw new PackError("give the new record's key", 400);

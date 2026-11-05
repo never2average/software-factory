@@ -52,17 +52,17 @@
       "scope": "workspace",
       "list_columns": ["role", "stage", "source", "recruiter", "applied_on"],
       "contract": {
-        "$comment": "mold_v0-222: viewers never see a candidate, so they cannot export one either; the contact details stay masked on every read until a member or owner reveals them (each reveal in the data trail).",
+        "$comment": "mold_v0-222: viewers never see a candidate; only an owner exports the list (mold_v0-235: export is its own permission, narrower than read); the contact details stay masked on every read until a member or owner reveals them (each reveal in the data trail).",
         "provenance": ["people"],
         "actions": {
           "read": ["member", "billing", "owner"],
-          "export": ["member", "billing", "owner"],
+          "export": ["owner"],
           "create": ["member", "owner"],
           "update": ["member", "owner"],
           "move": ["member", "owner"],
           "delete": ["owner"],
           "reveal": ["member", "owner"],
-          "import": { "none": "The shell has no import for a team's own records yet" }
+          "import": { "none": "A candidate's contact details are encrypted: they never come from a file" }
         },
         "primary_action": "create_record"
       },

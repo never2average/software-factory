@@ -20,7 +20,7 @@ import { registerGeneratedTools } from "./mcp-tools.js";
 import { checkViews, viewsOf } from "./metric-spec.js";
 import { upstreamProblems, type UpstreamPin } from "./source-offer.js";
 import { PACKS } from "./packs.generated.js";
-import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
+import { asWriter, RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { clockTools } from "./record-clocks.js";
 import { CLOCK_TOOL_NAMES } from "./shell-tools.js";
 import { checksProblems, checkToolName } from "./check-spec.js";
@@ -248,7 +248,11 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     const { workspaceRuns } = await import("./runs.js");
     const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId, { role: org.role ?? null, userId: org.userId ?? null }),
       runs: declaredRuns(pack, workspaceRuns(pack, org.orgId, org.userId ?? null, org), org.orgId, { role: org.role ?? null, userId: org.userId ?? null }) };
-    const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
+    // mold_v0-236: a pack's own tool writes as the pack's code (provenance run); the shell's tools (the generated ones
+    // write through the data API) as the person they are called for.
+    const call = () => withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
+    const own = !!packs().find((p) => p.id === pack)?.definition.tools?.includes(t as never);
+    const value = await (own ? asWriter({ by: "run", id: `tool:${t.name}` }, call) : call());
     // The size cap and the call's record with its sizes (mold_v0-018, 008).
     const { capResult } = await import("./server.js");
     return capResult(org, t.name, toToolResult(value), t0, args);

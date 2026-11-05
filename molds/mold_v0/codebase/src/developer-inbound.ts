@@ -18,7 +18,7 @@ import { verifySigned, newSecret } from "./developer-webhooks.js";
 import { getDb } from "./db.js";
 import { open, seal } from "./orgcrypto.js";
 import type { RecordOperation } from "./pack-api.js";
-import { recordAreas, workspaceRecords } from "./record-areas.js";
+import { asWriter, recordAreas, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
 /** The most items one payload may write. */
@@ -128,7 +128,8 @@ async function write(s: SourceRaw, raw: string) {
     return { op: "put", area: area.name, key: String(k), ...(typeof t === "string" ? { title: t.slice(0, 500) } : {}), data };
   });
   if (!ops.length) { await touch(s); return { written: 0 }; }
-  const results = await withTenant(s.org_id, () => workspaceRecords(area.pack, s.org_id, { role: null, userId: `inbound:${s.id}` }).batch(ops));
+  // mold_v0-236: an inbound source the workspace's people set up writes as they do (provenance people), named by its id.
+  const results = await asWriter({ by: "people", id: `inbound:${s.id}` }, () => withTenant(s.org_id, () => workspaceRecords(area.pack, s.org_id, { role: null, userId: `inbound:${s.id}` }).batch(ops)));
   await touch(s);
   return { written: results.length, area: area.name, keys: results.map((x) => x.key) };
 }

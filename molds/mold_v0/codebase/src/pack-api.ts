@@ -781,8 +781,10 @@ export function clockProblems(a: { scope: string; fields: z.output<typeof field>
  *                generated create, update and move tools (a workspace area whose writes are not withheld)
  *   repository   the area's `repository`: its index, or its live API
  *   intake       the company email's intake (the pack's `email.intake.area`): one record per message
- *   run          the pack's own code during a run (onWorkspaceCommit, ctx.records): never derived, only declared
- * The runtime keeps a shared row's provenance (staff or repository, mold_v0-221); a workspace row's is not stored.
+ *   run          the pack's own code (ctx.records): a run's onWorkspaceCommit hook, the pack's own tools and routes
+ * The runtime keeps a shared row's provenance (staff or repository, mold_v0-221) and, since mold_v0-236, a workspace
+ * row's (workspace_records.provenance, written_by, updated_by: src/record-areas.ts RecordWriter), so what wrote an area's
+ * rows, `run` included, is read from the rows themselves (GET /api/admin/records/_provenance), not only declared.
  */
 export const RECORD_PROVENANCES = ["staff", "people", "repository", "intake", "run"] as const;
 /** The actions a record contract speaks for (mold_v0-222): the record store's five, plus reveal, export and import. */
@@ -798,9 +800,16 @@ const contractGrant = z.union([
 ]);
 /**
  * A record area's contract (mold_v0-222): what the area promises, said in one place and checked against what the shell
- * does with the rest of the declaration. Read by no runtime code: the build checks what one area can tell alone (below);
- * the factory's `spec check` checks the rest (its permissions' defaults, the pack's mcp settings, its tabs, its email
- * intake) and derives the contract of an area that declares none (docs/RECORDS.md).
+ * does with the rest of the declaration. The build checks what one area can tell alone (below); the factory's `spec
+ * check` checks the rest (its permissions' defaults, the pack's mcp settings, its tabs, its email intake) and derives the
+ * contract of an area that declares none (docs/RECORDS.md). Three of its actions are read by the runtime too, each with
+ * today's behaviour when the contract does not say it (src/record-areas.ts):
+ *   import   a workspace area's import (mold_v0-234): the roles that may import a CSV or JSON file into the workspace's
+ *            own records (POST /api/data/<area>/_import, src/record-import.ts); none when not said
+ *   export   its own permission (mold_v0-235): the roles that may export (Export CSV, export_<area>), within read's;
+ *            read's roles when not said
+ *   reveal   the area's (mold_v0-235): the roles that may reveal its encrypted fields, a field's reveal_roles narrowing
+ *            it; {none} reveals nothing to anyone; each field's reveal_roles, else the update roles, when not said
  *   provenance       where its rows come from (RECORD_PROVENANCES)
  *   actions          each of CONTRACT_ACTIONS: the roles that may, {staff: permission}, or {none: reason}
  *   primary_action   the primary action of every list that shows the area (mold_v0-237: each tab whose own area it is,
@@ -822,7 +831,7 @@ export type ContractGrant = z.output<typeof contractGrant>;
 
 /** What a record area's contract says that the area's own declaration contradicts (mold_v0-222), each with its path. */
 export function contractProblems(a: {
-  scope: string; repository?: string; lifecycle?: unknown; append_only?: boolean; fields: { encrypted?: boolean }[]; contract?: RecordContract;
+  scope: string; repository?: string; lifecycle?: unknown; append_only?: boolean; fields: { name: string; encrypted?: boolean; reveal_roles?: readonly string[] }[]; contract?: RecordContract;
   action?: false; settings?: unknown;
 }): { message: string; path: (string | number)[] }[] {
   const c = a.contract;
@@ -848,7 +857,25 @@ export function contractProblems(a: {
   if (!none(g.move) && !a.lifecycle) bad("move is a lifecycle's: an area without one says {none: reason}", "actions", "move");
   if (!none(g.reveal) && !a.fields.some((f) => f.encrypted)) bad("reveal is for encrypted fields: an area without one says {none: reason}", "actions", "reveal");
   if (a.append_only) for (const k of ["update", "move", "delete"] as const) if (!none(g[k])) bad(`an append-only area's records are never changed: ${k} is {none: reason}`, "actions", k);
-  if (!shared && !none(g.import)) bad("the shell has no import for a workspace's own records (docs/RECORDS.md, follow-ups): import is {none: reason}", "actions", "import");
+  // mold_v0-235: export is its own permission, never wider than read (a role exports only what it may read).
+  const outside = (x: ContractGrant, of: ContractGrant) => (Array.isArray(x) && Array.isArray(of) ? x.filter((r) => !of.includes(r)) : []);
+  if (outside(g.export, g.read).length) bad(`export names ${outside(g.export, g.read).join(", ")}, whom read leaves out: a role exports only what it may read`, "actions", "export");
+  // mold_v0-235: reveal is the area's; a field's reveal_roles may narrow it, never widen or reopen it.
+  for (const f of a.fields) {
+    if (!f.encrypted || !f.reveal_roles) continue;
+    if (none(g.reveal)) bad(`field ${f.name} declares reveal_roles, but the contract's reveal is none: nothing of the area is revealed`, "actions", "reveal");
+    else if (Array.isArray(g.reveal) && f.reveal_roles.some((r) => !(g.reveal as string[]).includes(r)))
+      bad(`field ${f.name}'s reveal_roles name ${f.reveal_roles.filter((r) => !(g.reveal as string[]).includes(r)).join(", ")}, whom the area's reveal leaves out`, "actions", "reveal");
+  }
+  // mold_v0-234: a workspace's import writes its rows as creates and updates, so its roles must be able to do both.
+  if (!shared && Array.isArray(g.import)) {
+    if (a.fields.some((f) => f.encrypted)) bad("an area with an encrypted field takes no import (its values never come from a file): import is {none: reason}", "actions", "import");
+    for (const k of ["create", "update"] as const) {
+      const x = g[k];
+      if (none(x)) bad(`import writes new and changed records, and ${k} is none: import is {none: reason}`, "actions", "import");
+      else if (outside(g.import, x).length) bad(`import names ${outside(g.import, x).join(", ")}, whom ${k} leaves out: an import ${k === "create" ? "adds" : "changes"} records`, "actions", "import");
+    }
+  }
   // mold_v0-237: an area that turns its own lists' action off (action: false) has none there.
   if (a.action === false && typeof c.primary_action === "string" && a.settings) bad("its Settings tab has no primary action (action: false): primary_action is {none: reason}", "primary_action");
   return out;
@@ -928,7 +955,8 @@ export const RecordAreaSchema = z.object({
   clocks: z.array(ClockSchema).max(5).optional(),
   /**
    * The area's contract (mold_v0-222; RecordContractSchema above): its provenance, who may do each action, its primary
-   * action. Declarative: no runtime code reads it; contractProblems refuses one its own declaration contradicts.
+   * action. The runtime reads its import, export and reveal (mold_v0-234, mold_v0-235); the rest is declarative.
+   * contractProblems refuses one its own declaration contradicts.
    */
   contract: RecordContractSchema.optional(),
   /**

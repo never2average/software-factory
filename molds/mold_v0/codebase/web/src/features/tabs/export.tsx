@@ -7,10 +7,14 @@
 // JSON text, and text a spreadsheet would run as a formula defused with a leading apostrophe. mold_v0-217: a list's
 // Export (its search row, just left of the primary action) writes the view: when search or a filter narrows the list,
 // the file holds those rows alone (the same pages are read, so the data trail records the export as before).
+// mold_v0-235: on a workspace's list Export shows only to the roles that may export (an area's contract may narrow it
+// below read; the server refuses the rest). mold_v0-234's Import is its own button beside it (features/records/
+// workspace-import.tsx useImportAction), placed by the list.
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
-import { exportWithheldAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
+import { exportWithheldAreas, recordAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
+import { useAccountRole } from '@/features/portal/role';
 import { downloadText, today } from '@/lib/csv';
 
 type Row = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string };
@@ -53,14 +57,30 @@ export async function exportCsv(url: string, area: Pick<RecordAreaSpec, 'fields'
   }
 }
 
-/** The Export CSV button: nothing when the area's pack withholds its export (mold_v0-067 mcp settings). */
-export function ExportCsvButton({ url, area, name, rows, areas, keys, compact = false }: {
+type ExportProps = {
   url: string; area: Pick<RecordAreaSpec, 'fields'>; name: string; rows?: (p: Page) => Page; areas: string[];
   /** The view's rows when search or a filter narrows the list (mold_v0-217): the file holds these alone. */
   keys?: readonly string[] | null;
   /** In a list's search row: "Export", the icon alone on a phone. */
   compact?: boolean;
-}) {
+};
+
+/**
+ * The Export CSV button: nothing when the area's pack withholds its export (mold_v0-067 mcp settings). On a workspace's
+ * list (/api/records) it follows the person's role: shown to the roles that may export (mold_v0-235).
+ */
+export function ExportCsvButton(props: ExportProps) {
+  return props.url.startsWith('/api/records') ? <WorkspaceListData {...props} /> : <ExportControl {...props} />;
+}
+
+function WorkspaceListData(props: ExportProps) {
+  const { role, loaded } = useAccountRole();
+  // Until the role is known nothing is hidden (the server refuses what the role may not do).
+  const exportable = !loaded || !role || props.areas.every((n) => { const s = recordAreas.find((a) => a.name === n); return !s?.export_roles || s.export_roles.includes(role); });
+  return exportable ? <ExportControl {...props} /> : null;
+}
+
+function ExportControl({ url, area, name, rows, areas, keys, compact = false }: ExportProps) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ error: boolean; text: string } | null>(null);
   if (areas.some((a) => exportWithheldAreas.includes(a))) return null;

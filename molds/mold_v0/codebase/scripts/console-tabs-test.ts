@@ -664,6 +664,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.match(sc, /useActionOpen\('new'\)/); assert.match(ru, /if \(card\) return card;/, "runs: the card in the list's place");
     assert.match(tp, /card \? card : <div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
     assert.match(tp, /<ExportCsvButton [^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Export CSV in the views' row");
+    // mold_v0-234: a workspace's Import, its own button just left of Export, its form a card in the list's place.
+    assert.match(tp, /const card = actionCard \?\? imp\.card;/, "an area tab: the import's card in the list's place too");
+    assert.match(tp, /\{imp\.button\}\s*<ExportCsvButton /, "a board or a timeline: Import just left of Export CSV");
     assert.match(tp, /pageTitle=\{tab\.kind === 'overview' \? tab\.label : undefined\}/, "no title or description above a list tab");
     assert.match(rv, /if \(current && detail\) return \([\s\S]*data-record-card='' role='region' aria-label='Record'/, "an open record: the full details card in the list's place");
     assert.doesNotMatch(rv, /<aside|lg:w-\[40%\]/, "no peek beside a narrowed list");
@@ -673,7 +676,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.doesNotMatch(read("features/records/clocks.tsx").slice(0, read("features/records/clocks.tsx").indexOf("export function ClockSection")), /<ClockBadge/, "a clock's status in a cell: plain text");
     assert.doesNotMatch(ru + sc, /<Badge/, "runs' and schedules' cells: plain text");
     // Export (mold_v0-217): every area list's, empty or not, just left of the primary action; the view's rows when narrowed.
-    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed");
+    assert.match(rp, /primary=\{source \? source\.primary : \(\{ rows: view, narrowed \}\) => \(importAction \? \([\s\S]*?\{importAction\}\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>[\s\S]*?\) : \(\s*<ExportCsvButton [^>]*compact\s*keys=\{narrowed \? view\.map\(\(r\) => r\.key\) : null\} \/>/, "Export on every area list, the view's rows when narrowed (mold_v0-234: a workspace's Import, its own button, just left of it)");
     assert.doesNotMatch(rp, /data\?\.records\.length \? <ExportCsvButton/, "Export shown on an empty list too");
     const ex = read("features/tabs/export.tsx");
     assert.match(ex, /if \(keep && !keep\.has\(r\.key\)\) continue;/, "a narrowed export: the same pages (audit=export), the rows shown alone");

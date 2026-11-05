@@ -35,7 +35,7 @@ import { declaredRuns, packs, runPackTool, workspaceDb, workspaceOf, type Instal
 import { PROFILE } from "./profile.js";
 import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
-import { findArea, may, mayReveal, workspaceRecords } from "./record-areas.js";
+import { asWriter, findArea, may, mayExport, mayReveal, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
 export type { GeneratedTool } from "./mcp-catalog.js";
@@ -78,6 +78,8 @@ export function permitted(t: GeneratedTool, role: AccountRole | null): boolean {
     if (!a || !may(a, "read", actor) || !may(a, t.action, actor)) return false;
     // mold_v0-194: reveal_<area> is offered to a role that may reveal at least one of its encrypted fields.
     if (t.op === "reveal" && !a.fields.some((f) => f.encrypted && mayReveal(a, f, actor))) return false;
+    // mold_v0-235: export_<area> is offered to the roles the area's export permission names (read's by default).
+    if (t.op === "export" && !mayExport(a, actor)) return false;
   }
   return true;
 }
@@ -460,7 +462,8 @@ export function adminGeneratedTools(): GeneratedAdminTool[] {
             runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, staffId(c.actor, org.orgId), org), org.orgId, { role: null, userId: null }) };
           const t0 = performance.now();
           try {
-            const value = await withTenant(org.orgId, () => pt.handler(ws, args, ctx));
+            // mold_v0-236: what staff write for the workspace is staff's (provenance staff), named by their pseudonym.
+            const value = await asWriter({ by: "staff", id: staffId(c.actor, org.orgId).replace(/^staff:/, "") }, () => withTenant(org.orgId, () => pt.handler(ws, args, ctx)));
             const out = { workspace: org.slug, ...(value && typeof value === "object" && !Array.isArray(value) ? value : { value }) };
             recordMcpEvent(org, { method: "tools/call", name: t.name, ok: true, ms: performance.now() - t0, req_bytes: jsonBytes(args), res_bytes: jsonBytes(out) });
             return out;

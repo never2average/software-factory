@@ -27,7 +27,7 @@ import { getDb, type Db, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { optionValues, PackError, type Clock, type PackTool, type RecordRow, type Workspace } from "./pack-api.js";
-import { getFor, isSealedArea, may, recordAreas, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
+import { asWriter, getFor, isSealedArea, may, recordAreas, STATE_TIMES, SYSTEM_ACTOR, workspaceRecords, type Actor, type RecordArea } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { featureOn, featureSetting } from "./features.js";
 
@@ -290,7 +290,8 @@ async function planAction(orgId: number, area: ClockArea, key: string, e: NonNul
     if (next !== null) { detail.raised = { field: f.name, from: data[f.name] ?? null, to: next }; data[f.name] = next; }
   }
   if (!detail.reassigned && !detail.raised) return null;
-  return () => workspaceRecords(area.pack, orgId, SYSTEM_ACTOR).update(area.name, key, { title: rec.title, data });
+  // mold_v0-236: the shell's own change (it never adds a row): the row's provenance stays, updated_by names the clock.
+  return () => asWriter({ by: "shell", id: "clock" }, () => workspaceRecords(area.pack, orgId, SYSTEM_ACTOR).update(area.name, key, { title: rec.title, data }));
 }
 
 /** One workspace's steps: a notice per record and deadline (raised again by each step), then one email per person. */
