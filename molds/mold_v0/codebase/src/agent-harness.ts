@@ -22,7 +22,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { EGRESS_PROXY_PORT, proxyEnv } from "../orchestrator/core/egress.js";
@@ -185,6 +185,44 @@ export type AgentCliOverride = { command: string; args: string[] };
 export interface AgentHarnessOptions { agentCli?: AgentCliOverride; clock?: () => number; pollMs?: number; beatMs?: number }
 
 const STATE = "state", WORK = "work", HOME = "home";
+/** The file in a session's scratch (beside its state, never in a checkpoint) naming the wake that holds it. */
+const HOLDER = ".wake";
+
+/**
+ * A session's scratch for one wake (mold_v0-246): `<base>/agent-sessions-<uid>/<session>`, the same path on every wake
+ * of the session, so the harness's working directory (state/work) never changes under it (a model notices, and Claude
+ * Code keys its saved sessions by that path). Other sessions have their own: the parent is the runner's (0711: passed
+ * through, never listed; refused when it is a link or another user's), each session's directory 0700. What a wake
+ * before this one left (a runner that died before removing it) is taken away first: one wake of a session runs at a
+ * time, so it is no one's. The wake's run id is written beside the state; releaseSessionScratch removes the directory
+ * only while it still says so (a wake that lost its lease leaves the next wake's alone).
+ */
+export function sessionScratch(base: string, sessionId: string, runId: string): string {
+  const uid = process.getuid?.() ?? 0;
+  const root = path.join(base, `agent-sessions-${uid}`);
+  try { mkdirSync(root, { mode: 0o711 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+  const st = lstatSync(root);
+  if (!st.isDirectory() || st.isSymbolicLink() || (process.getuid && st.uid !== uid)) throw new Error(`the sessions' scratch ${root} is not this runner's own directory`);
+  chmodSync(root, 0o711);
+  const name = /^[A-Za-z0-9_-]{1,64}$/.test(sessionId) ? sessionId : createHash("sha256").update(sessionId).digest("hex").slice(0, 32);
+  const dir = path.join(root, name);
+  if (existsSync(dir) || isLink(dir)) {
+    const stale = `${dir}.stale-${randomUUID()}`;
+    renameSync(dir, stale);
+    rmSync(stale, { recursive: true, force: true });
+  }
+  mkdirSync(dir, { mode: 0o700 });
+  writeFileSync(path.join(dir, HOLDER), runId, { mode: 0o600 });
+  return dir;
+}
+
+/** Removes a wake's session scratch, unless a later wake of the session holds it now. */
+export function releaseSessionScratch(dir: string, runId: string) {
+  let holder: string | null = null;
+  try { holder = readFileSync(path.join(dir, HOLDER), "utf8"); } catch { /* gone */ }
+  if (holder === null || holder === runId) rmSync(dir, { recursive: true, force: true });
+}
+const isLink = (p: string) => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
 
 /** Carry out one wake of an agent session. Never throws for the wake's own failures: it ends and completes them. */
 export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions & AgentHarnessOptions = {}): Promise<RunView | null> {
@@ -203,8 +241,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
   }
   const as = user ? { uid: user.uid, gid: user.gid } : null;
   if (as) { killUser(as); sweepUserFiles(as.uid); }
-  const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `agent-${run.id.slice(4, 12)}-`));
-  const state = path.join(scratch, STATE), work = path.join(state, WORK), home = path.join(state, HOME), hooksDir = path.join(scratch, "hooks");
+  let scratch: string | null = null;
   const secrets: Secret[] = claim.gateway.token ? [{ name: "gateway token", value: claim.gateway.token }] : [];
   const clean = (s: string) => (secrets.length ? redactText(s, secrets) : s);
   let proxy: RunProxy | null = null;
@@ -213,6 +250,10 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
   let completed: RunView | null = null;
   try {
     const w = await agent.start(run.id, lease);
+    // The session's own scratch, at the same path on every wake (the harness sees its working directory's path).
+    scratch = sessionScratch(opts.tmp ?? tmpdir(), w.session_id, run.id);
+    if (as) chmodSync(scratch, 0o711); // the run's user may pass through to its own directories (run-harness.ts does the same)
+    const state = path.join(scratch, STATE), work = path.join(state, WORK), home = path.join(state, HOME), hooksDir = path.join(scratch, "hooks");
     const policy = w.policy;
     const flavour = policy.flavour;
     // The checkpoint: the harness's own session files and the working directory, as the last wake left them.
@@ -228,7 +269,11 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       if (h.text) writeFileSync(path.join(hooksDir, h.event, "prompt.md"), h.text + "\n");
     }
     const appendSystem = policy.hooks?.find((h) => h.event === "append_system")?.text ?? null;
-    if (as) { chownTree(state, as.uid, as.gid); }
+    if (as) {
+      chownTree(state, as.uid, as.gid);
+      // The scratch is passed through (0711); what the agent reads in it is its own user's alone.
+      if (existsSync(hooksDir)) { chownTree(hooksDir, as.uid, as.gid); chmodSync(hooksDir, 0o700); }
+    }
     // The program: the pinned run tool (or a test's stand-in).
     let argv: string[];
     let binDir: string | null = null;
@@ -431,7 +476,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
   } finally {
     proxy?.stop();
     if (as) killUser(as);
-    rmSync(scratch, { recursive: true, force: true });
+    if (scratch) releaseSessionScratch(scratch, run.id);
     if (user && iso?.mode !== "given") await user.release().catch(() => false);
   }
 }

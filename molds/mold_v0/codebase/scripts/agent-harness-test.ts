@@ -9,6 +9,9 @@
 //     policy check of a tool call.
 //  2. Steer mid-run: a message sent while the agent works reaches it on the next beat and is answered; the
 //     conversation parks when quiet (no run, no slot) and the next message wakes it on the same harness session.
+//  2b. The working directory (mold_v0-246): the same path on every wake of a session, another session's elsewhere;
+//     removed when its wake ends; one a dead runner left is taken away by the next wake; a wake that lost its
+//     session's scratch to a later wake leaves it alone.
 //  3. Spend counted once per session: a resumed harness re-reports its earlier total, and the session is charged
 //     only what each wake added.
 //  4. Pause, resume, stop: a running wake stops and keeps its session; resume continues it; stop ends it read only.
@@ -27,6 +30,7 @@
 // 10. The doors: /api/agent (a member starts, a viewer cannot), the MCP tools, staff's /api/admin/onboarding/agent.
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
@@ -175,6 +179,45 @@ try {
     await w2.done;
     assert.equal((await read(sid)).phase, "parked");
     ok("parking: the next message wakes the parked session on its same harness session (--resume)");
+  }
+
+  // ---------- 2b. the working directory ----------
+  {
+    const said = async (id: string) => (await read(id)).messages.filter((m) => m.role === "agent").map((m) => /Working in (.+)\.$/.exec(m.body)?.[1]).filter(Boolean) as string[];
+    const turn = async (id: string, n: number) => {
+      const w = await wake(id);
+      await until(`answer ${n}`, async () => (await said(id)).length >= n);
+      await until("waiting", async () => (await read(id)).phase === "waiting");
+      await park();
+      await w.done;
+      return { run: w.claim.run.id, cwd: (await said(id))[n - 1]! };
+    };
+    const s1 = await H.startSession(org.orgId, member, { message: "pwd" });
+    const a = await turn(s1.id, 1);
+    const scratch = path.dirname(path.dirname(a.cwd));
+    assert.equal(path.basename(scratch), s1.id, "the session's own directory");
+    assert.equal(path.basename(path.dirname(scratch)), `agent-sessions-${process.getuid?.() ?? 0}`, "under the runner's sessions' directory");
+    assert.ok(!existsSync(scratch), "removed when the wake ended");
+    // A dead runner's leftover at that path (what it held, a file of its own): the next wake takes it away.
+    mkdirSync(path.join(scratch, "state", "work"), { recursive: true });
+    writeFileSync(path.join(scratch, ".wake"), "run_dead"); writeFileSync(path.join(scratch, "state", "work", "leftover"), "x");
+    await H.messageSession(org.orgId, s1.id, member, "pwd");
+    const b = await turn(s1.id, 2);
+    assert.equal(b.cwd, a.cwd, "the same working directory on the next wake");
+    assert.ok(!existsSync(scratch), "the leftover went with it; removed again");
+    const s2 = await H.startSession(org.orgId, member, { message: "pwd" });
+    const c2 = await turn(s2.id, 1);
+    assert.notEqual(c2.cwd, a.cwd, "another session works elsewhere");
+    assert.equal(path.dirname(path.dirname(path.dirname(c2.cwd))), path.dirname(scratch), "beside it, under the same runner directory");
+    // A wake that lost its lease: a later wake holds the scratch now, so the earlier one leaves it.
+    const held = A.sessionScratch(TMP, "hs_probe", "run_later");
+    A.releaseSessionScratch(held, "run_earlier");
+    assert.ok(existsSync(held), "a later wake's scratch is left alone");
+    assert.equal(statSync(held).mode & 0o777, 0o700, "a session's scratch is its own (0700)");
+    assert.equal(statSync(path.dirname(held)).mode & 0o777, 0o711, "the runner's directory is passed through, never listed (0711)");
+    A.releaseSessionScratch(held, "run_later");
+    assert.ok(!existsSync(held), "its own wake removes it");
+    ok("the working directory: the same path on every wake of a session, another session's elsewhere; removed when the wake ends; a dead runner's leftover taken away; a later wake's left alone");
   }
 
   // ---------- 3. spend once ----------

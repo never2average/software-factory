@@ -6,7 +6,7 @@ import { settingText } from "./settings.js";
 import { findAgent } from "./agents.js";
 import { getProvider, providersForEnv, useCredential, useVertexCredential, VERTEX_LABEL, type ProviderRow } from "./keyvault.js";
 import { adaptGeminiBody, geminiWantsThinkingLevel, toVertex, toVertexGemini, vertexAccessToken, vertexConfig, type VertexConfig } from "./vertex.js";
-import { costOf, recordModelUsage } from "./usage.js";
+import { costOf, hasPrice, recordModelUsage } from "./usage.js";
 import { SCENARIO_ROWS } from "./session-engine.js";
 import { sessionEngine } from "./host-tables.js";
 import { ENV } from "./env-names.js";
@@ -227,6 +227,36 @@ export async function sessionGatewayUsage(sessionId: string) {
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host"]);
 const CLIENT_AUTH = ["authorization", "x-api-key", "x-goog-api-key", "api-key", "cookie"];
 
+/** Request bodies the gateway reads whole: JSON up to the largest a model API takes (Anthropic's 32 MB); Vertex's 30 MB. */
+const BODY_LIMIT = 32 * 1024 * 1024, VERTEX_LIMIT = 30 * 1024 * 1024;
+async function readBody(req: Request, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > limit) throw Object.assign(new Error(`Request exceeds the ${Math.round(limit / 1048576)} MB limit`), { status: 413 });
+    chunks.push(c as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** The model a request asks for: its JSON body's "model", else the path's (.../models/<id>:generateContent). "" when neither names one. */
+export function requestedModel(body: Buffer | null, pathname: string): string {
+  if (body?.length) {
+    try {
+      const m = (JSON.parse(body.toString("utf8")) as { model?: unknown } | null)?.model;
+      if (typeof m === "string" && m.trim()) return m.trim();
+    } catch { /* not JSON: the upstream says so */ }
+  }
+  const p = pathname.match(/\/models\/([^/:]+)(?::|\/|$)/)?.[1];
+  return p ? decodeURIComponent(p) : "";
+}
+
+/** Why a model with no price is not routed, in words a person (and the agent relaying it) can act on. */
+export const unpricedModel = (model: string) =>
+  `The model "${model}" has no price in ${PROFILE.name}'s price list, so what it spends could not be counted or kept within a budget. ` +
+  "Nothing was sent to it. Choose a model that has a price, or ask an administrator to add this model's price first.";
+
 function tokenFrom(req: Request): string | null {
   const h = req.headers;
   const candidates = [
@@ -240,8 +270,8 @@ const gwError = (res: Response, status: number, type: string, message: string) =
   void res.status(status).json({ type: "error", error: { type, message } });
 
 /** Pulls token usage out of JSON or SSE bodies from Anthropic, OpenAI (chat + responses) and Gemini. */
-class UsageMeter {
-  input = 0; output = 0; cached = 0; bytes = 0; model = "";
+export class UsageMeter {
+  input = 0; output = 0; cached = 0; cacheWrite = 0; cacheWrite1h = 0; bytes = 0; model = "";
   private buf = "";
   private sse: boolean;
   constructor(contentType: string) { this.sse = /event-stream/.test(contentType); }
@@ -267,11 +297,16 @@ class UsageMeter {
       // Anthropic: message_start carries input, message_delta the cumulative output; OpenAI: prompt/completion or input/output.
       const inp = u.input_tokens ?? u.prompt_tokens ?? 0;
       const out = u.output_tokens ?? u.completion_tokens ?? 0;
+      // Anthropic's input_tokens is the plain part only: its cache reads and writes are apart (and priced apart,
+      // src/usage.ts priceTokens), the writes split by how long they are kept (cache_creation.ephemeral_*).
       const anthropicCache = (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-      if (inp) this.input = Math.max(this.input, inp + anthropicCache);
+      if (inp || anthropicCache) this.input = Math.max(this.input, inp + anthropicCache);
       if (out) this.output = Math.max(this.output, out);
       const cached = u.cache_read_input_tokens ?? u.input_tokens_details?.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0;
       if (cached) this.cached = Math.max(this.cached, cached);
+      if (u.cache_creation_input_tokens) this.cacheWrite = Math.max(this.cacheWrite, u.cache_creation_input_tokens);
+      const write1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+      if (write1h) this.cacheWrite1h = Math.max(this.cacheWrite1h, write1h);
     }
     const g = e?.usageMetadata ?? (Array.isArray(e) ? e.at(-1)?.usageMetadata : null);
     if (g) {
@@ -315,6 +350,19 @@ export async function gatewayHandler(req: Request, res: Response) {
       return gwError(res, 429, BUDGET_EXCEEDED, "This session's gateway budget is used up");
   }
 
+  // The model asked for (mold_v0-246): a JSON body's "model", else the path's (Gemini's .../models/<id>:...). One with
+  // no price is refused before anything is sent: its spend could not be counted, so no budget could hold it. The
+  // body is read here once (JSON only: every model API's), and sent on as read.
+  const isCountTokens = /\/count_tokens$|:countTokens$/.test(req.path); // free endpoints: never billed as usage
+  const hasBody = !["GET", "HEAD"].includes(req.method);
+  let json: Buffer | null = null;
+  if (hasBody && /json/i.test(String(req.headers["content-type"] ?? ""))) {
+    try { json = await readBody(req, BODY_LIMIT); }
+    catch (e) { return gwError(res, (e as { status?: number }).status ?? 400, "invalid_request_error", (e as Error).message); }
+  }
+  const asked = hasBody ? requestedModel(json, req.path) : "";
+  if (hasBody && asked && !isCountTokens && !(await hasPrice(asked))) return gwError(res, 400, "invalid_request_error", unpricedModel(asked));
+
   let cred: { id: number; secret: string };
   // Vertex signs in with a service-account key (the Vertex AI provider's, or the provider's own "vertex" key, or
   // backend_config.credential_provider's); project from that key and region from the VERTEX_REGION setting unless
@@ -348,9 +396,7 @@ export async function gatewayHandler(req: Request, res: Response) {
   // Where and what to send: straight through to upstream_url, or rewritten for Google Cloud Vertex AI.
   let upstream: string;
   let body: BodyInit | undefined;
-  let requestModel = "";                                  // fallback when the response does not name the model
-  const isCountTokens = /\/count_tokens$|:countTokens$/.test(rest); // free endpoints: never billed as usage
-  const hasBody = !["GET", "HEAD"].includes(req.method);
+  let requestModel = asked;                               // fallback when the response does not name the model
   if (p.backend === "vertex" && slug === "google") {
     // Gemini on Vertex: same body, different URL and auth; the request streams through.
     try {
@@ -362,25 +408,21 @@ export async function gatewayHandler(req: Request, res: Response) {
       headers.set("authorization", `Bearer ${await vertexAccessToken(cred.id, cred.secret)}`);
       if (hasBody && geminiWantsThinkingLevel(v.model)) {
         // This model needs its request adjusted (thinking budget -> level), so the body is read in full first.
-        const chunks: Buffer[] = [];
-        let size = 0;
-        for await (const c of req) { size += (c as Buffer).length; if (size > 30 * 1024 * 1024) throw Object.assign(new Error("Request exceeds Vertex's 30 MB limit"), { status: 413 }); chunks.push(c as Buffer); }
-        body = adaptGeminiBody(v.model, Buffer.concat(chunks)).toString("utf8");
+        body = adaptGeminiBody(v.model, json ?? await readBody(req, VERTEX_LIMIT)).toString("utf8");
         headers.delete("content-length");
-      } else body = hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined;
+      } else body = hasBody ? (json ? new Uint8Array(json) : (Readable.toWeb(req) as ReadableStream)) : undefined;
     } catch (e) {
       const err = e as Error & { status?: number };
       return gwError(res, err.status ?? 502, err.status && err.status < 500 ? "invalid_request_error" : "api_error", err.message);
     }
   } else if (p.backend === "vertex") {
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const c of req) { size += (c as Buffer).length; if (size > 30 * 1024 * 1024) throw Object.assign(new Error("Request exceeds Vertex's 30 MB limit"), { status: 413 }); chunks.push(c as Buffer); }
-      const v = toVertex(vcfg, rest, Buffer.concat(chunks), String(req.headers["anthropic-beta"] ?? ""));
+      const raw = json ?? await readBody(req, VERTEX_LIMIT);
+      if (raw.length > VERTEX_LIMIT) throw Object.assign(new Error("Request exceeds Vertex's 30 MB limit"), { status: 413 });
+      const v = toVertex(vcfg, rest, raw, String(req.headers["anthropic-beta"] ?? ""));
       upstream = v.url;
       body = v.body;
-      requestModel = decodeURIComponent(v.url.match(/\/models\/([^/:]+):/)?.[1] ?? "");
+      requestModel = decodeURIComponent(v.url.match(/\/models\/([^/:]+):/)?.[1] ?? "") || asked;
       headers.delete("anthropic-version"); // carried in the body on Vertex
       headers.delete("anthropic-beta");
       headers.delete("content-length");
@@ -395,7 +437,7 @@ export async function gatewayHandler(req: Request, res: Response) {
     headers.set(p.auth_header, `${p.auth_prefix}${cred.secret}`);
     // Anthropic's OpenAI-compatible endpoint (used by Cline) is called with OpenAI-style auth; give it both forms.
     if (slug === "anthropic" && /\/chat\/completions$/.test(rest)) headers.set("authorization", `Bearer ${cred.secret}`);
-    body = hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined;
+    body = hasBody ? (json ? new Uint8Array(json) : (Readable.toWeb(req) as ReadableStream)) : undefined;
   }
 
   let up: globalThis.Response;
@@ -425,16 +467,18 @@ export async function gatewayHandler(req: Request, res: Response) {
     res.end();
     const billed = !isCountTokens;
     await record(hash, slug, t, { requests: 1, errors: up.status >= 400 ? 1 : 0, input: billed ? meter.input : 0, cached: billed ? meter.cached : 0,
-                                  output: billed ? meter.output : 0, bytes: meter.bytes, model: meter.model || requestModel });
+                                  cacheWrite: billed ? meter.cacheWrite : 0, cacheWrite1h: billed ? meter.cacheWrite1h : 0,
+                                  output: billed ? meter.output : 0, bytes: meter.bytes, model: meter.model || requestModel, priceAs: requestModel });
   }
 }
 
 async function record(hash: string, provider: string, t: { kind: string; session_id: string | null; orchestrator_id: string | null; run_id: string | null },
-                      u: { requests: number; errors: number; input: number; cached: number; output: number; bytes: number; model: string }) {
-  await recordModelUsage(provider, u.model || "unknown", t.kind === "orchestrator" ? "orchestrator" : "session",
-                         { requests: u.requests, errors: u.errors, input: u.input, cached: u.cached, output: u.output })
+                      u: { requests: number; errors: number; input: number; cached: number; cacheWrite?: number; cacheWrite1h?: number; output: number; bytes: number; model: string; priceAs?: string }) {
+  const m = { requests: u.requests, errors: u.errors, input: u.input, cached: u.cached, cacheWrite: u.cacheWrite ?? 0, cacheWrite1h: u.cacheWrite1h ?? 0, output: u.output };
+  await recordModelUsage(provider, u.model || "unknown", t.kind === "orchestrator" ? "orchestrator" : "session", m, u.priceAs)
     .catch((e) => console.error("model usage record failed:", (e as Error).message));
-  const cost = (await costOf(u.model || "unknown", u).catch(() => null)) ?? 0;
+  // Priced as the model the provider served, else as the one asked for (a served name with no row of its own).
+  const cost = (await costOf(u.model || "unknown", m).catch(() => null)) ?? (u.priceAs ? await costOf(u.priceAs, m).catch(() => null) : null) ?? 0;
   await (await getDb()).query(
     `/* tenant: internal: metering for the gateway token's own session/orchestrator/run */ INSERT INTO gateway_usage (token_hash, provider, session_id, orchestrator_id, run_id, requests, errors, input_tokens, output_tokens, bytes, cost_usd, last_at)
      VALUES ($1, $2, $3, $4, $11, $5, $6, $7, $8, $9, $10, now())

@@ -13,6 +13,7 @@
 //   spend <usd>     the turn costs <usd> (default 0.01)
 //   die             exits 3 without answering (the harness's own failure: a crash)
 //   budget          the turn ends on the CLI's own budget (subtype error_max_budget_usd)
+//   pwd             the answer is "Working in <its working directory>." (what a model would see of the path)
 // Its answer is "Echo: <the turn's text>"; a resumed session's first answer starts "(resumed <id>) ".
 // --script <file> (the lane shots): a JSON list of {match, say, delay_ms, fetch, cost}; the first whose match (a regular
 // expression) finds the turn's text decides the turn instead: its words, how long it takes, a WebFetch it makes first.
@@ -84,7 +85,8 @@ async function turn(m) {
   }
   turns++;
   total = Math.round((total + cost) * 1e6) / 1e6;
-  const reply = `${first && resume ? `(resumed ${resume}) ` : ""}Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
+  const said = /^pwd$/m.test(text) ? `Working in ${process.cwd()}.` : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
+  const reply = `${first && resume ? `(resumed ${resume}) ` : ""}${said}`;
   first = false;
   say({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: reply }] } });
   save();
