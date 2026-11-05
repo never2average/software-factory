@@ -27,7 +27,7 @@ NOTHING HERE TOUCHES A SERVER OR CHANGES THIS MACHINE: every path the scripts to
 commands that would change a machine are stand-ins, and the real python3, bash, node, flock, timeout, ln and mv only
 ever act on that temp directory.
 """
-import hashlib, json, os, re, shutil, subprocess, sys, time
+import ast, hashlib, json, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 import vm_remote as V
@@ -63,6 +63,19 @@ def rehearsal(check, tmp):
     lines = "\n".join(V.rehearsal_lines())
     check("rehearsal:   ...it isolates Python from this machine (-I) and says which imports are the factory's own",
           "python3 -I -B" in lines and all(m in lines for m in V.REHEARSAL_FACTORY_SIDE) and "provision.py" in lines)
+    # mold_v1-306: `cryptography` is allowed only while lib/ledger_key.py imports it inside functions: a module-level
+    # import would stop the server's tool at import, and the rehearsal's static allowance would hide that.
+    lk = os.path.join(V.HERE, "ledger_key.py"); top = set()
+    for n in ast.parse(open(lk).read()).body:
+        if isinstance(n, ast.Import): top |= {a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module and not n.level: top.add(n.module.split(".")[0])
+    blocked = os.path.join(tmp, "no-cryptography"); os.makedirs(os.path.join(blocked, "cryptography"), exist_ok=True)
+    open(os.path.join(blocked, "cryptography", "__init__.py"), "w").write("raise ImportError('not on this server')\n")
+    r = subprocess.run([sys.executable, "-I", "-B", "-c", V.REHEARSAL_IMPORT, blocked, V.HERE, os.path.dirname(V.HERE), "ledger_key"],
+                       capture_output=True, text=True, cwd=tmp)
+    check("rehearsal:   ...cryptography, the one outside package it allows, is imported by lib/ledger_key.py only inside functions, "
+          "so the module imports where cryptography is absent", "cryptography" in V.REHEARSAL_FACTORY_SIDE and "cryptography" not in top
+          and r.returncode == 0, (sorted(top), r.stderr[-300:]))
 
     def broken(name, hurt, self_tests=False):
         d = os.path.join(tmp, f"rehearse-{name}"); V.write_bundle(S, crons, d); hurt(d)

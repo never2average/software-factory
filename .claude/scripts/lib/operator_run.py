@@ -63,7 +63,7 @@ AUDIT_FILE = re.compile(r"^scripts/audit-[a-z0-9-]+\.mjs$")   # the read-only au
 SHELL_BITS = re.compile(r"[;&|<>`$\\]")
 SECRET_FLAG = re.compile(r"(?i)(pass(word|wd)?|secret|token|api[-_]?key|credential|private[-_]?key|^--key$)")
 MARK = "OPERATOR "
-CRONS_FOR_TEST = False   # the self-test has no mold on disk: the module's own cron list stands in
+CRONS_FOR_TEST = False   # the self-test has no mold on disk: vm_remote.CRONS (the mold_v1 snapshot's vercel.json) stands in
 TIMEOUT = int(os.environ.get("OPERATOR_TIMEOUT_S") or 1800)
 OWN_FLAGS = ("--operator", "--dry-run", "--yes")
 

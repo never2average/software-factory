@@ -153,10 +153,10 @@ NO_DOMAIN = "domain-not-supplied-yet.invalid"
 DENY_REQUIRED = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")
 # The uid-level second layer cannot include loopback: the services themselves talk to Postgres and to each other there.
 EGRESS_DENY = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
-# vercel.json's six schedules. plan() reads them from the SOURCE being shipped and refuses a schedule it cannot
-# express; this list is only the fallback when a source has no vercel.json, and the self-test pins it to the mold's.
-CRONS = (("resume-workflows", "*/5 * * * *"), ("run-cron-workflows", "* * * * *"), ("refresh-apps", "* * * * *"),
-         ("sync-inbox", "*/10 * * * *"), ("close-abandoned-runs", "*/15 * * * *"), ("deliver-queued", "* * * * *"))
+# The cron schedules (route, expression) come from vercel.json, never from a list kept here (mold_v1-306: a hand-kept
+# list fell one cron behind the mold). read_crons() reads the mold's vercel.json for every plan and deploy; CRONS, set
+# below read_crons, is the same reading of the factory's mold_v1 snapshot, for a source that has no vercel.json.
+MOLD_CRONS_FILE = os.path.join(ROOT, "molds", "mold_v1", "codebase", "vercel.json")
 # The switches the mold must carry before it can run off Vercel (all upstream since upstream da581f2). A real deploy
 # refuses while any is missing from the source it ships, and a dry run names them.
 MOLD_SWITCHES = (("SANDBOX_BACKEND", "the sandbox setting (microVM backend, vCPUs, memory, network deny list)", "upstream #100 (mold_v1-151)"),
@@ -705,7 +705,7 @@ def qualify(facts):
                    f"answers on the two web ports and gets the security certificate; two cannot share those ports. Use a fresh "
                    f"server with nothing else on it.")
     if facts["SYSTEMD"] != "yes":
-        bad.append("This server does not run systemd, which is what keeps the app's three services and six timers alive. Use a "
+        bad.append("This server does not run systemd, which is what keeps the app's three services and its cron timers alive. Use a "
                    "standard Ubuntu 24.04 server image.")
     return bad
 
@@ -727,9 +727,16 @@ def cron_to_oncalendar(expr):
 
 def read_crons(source_dir):
     """(route name, cron expression) for every cron the source declares. The deploy mirrors vercel.json rather than
-    a list in this file, so a seventh cron upstream becomes a seventh timer without an edit here."""
+    a list in this file, so a new cron upstream becomes a new timer without an edit here. A source without a
+    vercel.json gets the factory's mold_v1 snapshot's crons (CRONS); with neither there is nothing to mirror."""
     f = os.path.join(source_dir or "", "vercel.json")
-    if not (source_dir and os.path.isfile(f)): return list(CRONS)
+    if not (source_dir and os.path.isfile(f)):
+        if CRONS: return list(CRONS)
+        raise Stop(f"{source_dir or 'the source'} has no vercel.json and {MOLD_CRONS_FILE} is not on this machine either, so the "
+                   f"app's cron schedules are unknown and no timer can be written. Fetch the mold: python3 .claude/scripts/mold.py fetch mold_v1")
+    return _crons_in(f)
+
+def _crons_in(f):
     out = []
     for c in load(f).get("crons") or []:
         p = str(c.get("path", ""))
@@ -740,6 +747,12 @@ def read_crons(source_dir):
                        f"turned into a timer here. Add that shape to cron_to_oncalendar in .claude/scripts/lib/vm_remote.py.")
         out.append((m.group(1), c["schedule"]))
     return out
+
+# The factory's mold_v1 snapshot's crons, read from its vercel.json like any source's: empty where the snapshot is not
+# on disk (the server, which runs this file from its bundle and never plans a deploy). The self-test compares it with
+# the vercel.json file and with the cron routes the mold's code has.
+try: CRONS = tuple(_crons_in(MOLD_CRONS_FILE)) if os.path.isfile(MOLD_CRONS_FILE) else ()
+except (Stop, ValueError, OSError): CRONS = ()
 
 def unit_names(S, crons):
     svc = [f"{S['unit']}-{n}.service" for n in ("workflow", "api", "web")]
@@ -915,7 +928,7 @@ def caddyfile(S):
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}}
-	# The six cron routes are called on loopback by this server's own timers; nobody outside needs them.
+	# The cron routes (one timer per vercel.json cron) are called on loopback by this server's own timers; nobody outside needs them.
 	@cron path /api/cron/*
 	respond @cron 404
 	# Everything goes to the web app, which keeps its session-ownership gate in front of /eve/v1/session/* and
@@ -2067,11 +2080,20 @@ REHEARSAL_FACTORY_SIDE = {
     "vm_remote_selftest": "vm_remote.py --self-test, the factory's own test",
     "vm_capacity_selftest": "vm_capacity.py --self-test, the factory's own test",
     "vm_release_selftest": "buildfit.py --self-test, the factory's own test (its checks are that file's buildfit section)",
+    "leakcheck": "lib/mold_private.py regenerate (mold.py public mold_v1), which writes the mold's public replacements on the factory",
+    # Not bundled on purpose (mold_v1-306): the bundle is plain files copied from this checkout, and `cryptography` is a
+    # compiled package, not a file it could carry; installing it on every server for a step no server runs would add a
+    # dependency for nothing. lib/ledger_key.py imports it only inside the functions that make or check a key, which
+    # run on the factory, with Node's crypto as their fallback; the self-test holds it there.
+    "cryptography": "lib/ledger_key.py makes a signing key on the factory (provision.py --generate-secret), imported only inside "
+                    "the functions that make or check one, with Node's crypto as fallback; the server never makes a key",
 }
 # Files whose own --self-test is the factory's test, not the server's: it reads what only the factory has.
 REHEARSAL_NO_SELF_TEST = {
     "provision.py": "its self-test drives the factory's Vercel and local paths with the factory's own fixtures (fixtures/release/...), "
                     "which no server bundle carries; the server runs only its database chain, which the import and the tool checks cover",
+    "db_usage.py": "its self-test files tickets through factory.py add, into the factory's own backlog, which no server bundle carries",
+    "ledger_key.py": "its self-test reads the molds' manifests and profiles (molds/ is not in a server bundle); keys are made on the factory, never on a server",
 }
 REHEARSAL_JOB_MB = 150
 REHEARSAL_IMPORT = "import importlib, sys; sys.path[:0] = sys.argv[1:4]; importlib.import_module(sys.argv[4])"

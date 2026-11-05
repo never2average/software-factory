@@ -82,7 +82,9 @@ field the app does not set is put back to the mold's, so a setting taken out of 
 then the mold's generator checks it again and compiles it. A deploy rebuilds the copy, so a change takes effect at the
 next deploy. The server's environment (OCTILLION_LIMIT_*) still wins over the profile: the operator's own knob.
 """
-import json, os, re
+import json, os, re, sys
+# Run as a script under python3 -I (the server bundle's rehearsal), lib/ is not on the path by itself (mold_v1-306).
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path: sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import features as _features   # lib/features.py (mold_v0-219): the mold's capability flags
 
 # What the factory refuses outright, and why (a sentence a person can act on).

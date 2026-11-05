@@ -30,7 +30,10 @@ MOLD = os.path.join(ROOT, "molds", "mold_v1", "codebase")
 SECRET = "s3cr3t-VALUE-9f2b7c"          # a stand-in for an operator value; it must never surface anywhere but one stdin
 
 def load(p): return json.load(open(p))
-def fx(name): return open(os.path.join(FX, name)).read()
+def fx(name):
+    """A fixture's text. health-ok.txt is a healthy server's answer, so its timer count is the mold's cron count (every
+    cron in the mold's vercel.json has a timer), never a number written there that the mold can outgrow (mold_v1-306)."""
+    return open(os.path.join(FX, name)).read().replace("TIMERS=@CRONS@", f"TIMERS={len(V.CRONS)}")
 def fixture_docs(): return {n: load(os.path.join(V.FIXTURE, f"{n}.json")) for n in ("application", "infrastructure", "datastores", "datainfra")}
 def digest(d):
     h = hashlib.sha256()
@@ -211,7 +214,16 @@ def _settings(mut=None):
 def _generated_files(check, tmp):
     S = _settings(); mold = os.path.join(ROOT, "molds/mold_v1/codebase")
     crons = V.read_crons(mold)
-    check("the cron list is read from the source's vercel.json, and it is the six this file names", crons == list(V.CRONS) and len(crons) == 6, crons)
+    # mold_v1-306: CRONS is the mold's vercel.json, read the same way a deploy reads it; nothing in vm_remote.py lists a
+    # cron by hand. Compared here with the file itself (plain json, not read_crons) and with the cron routes the code has.
+    vj = json.load(open(os.path.join(mold, "vercel.json")))["crons"]
+    check("CRONS matches the mold's vercel.json: every cron, its schedule and its order", len(V.CRONS) == len(vj) > 0
+          and list(V.CRONS) == [(c["path"].rsplit("/", 1)[1], c["schedule"]) for c in vj] and all(c["path"].startswith("/api/cron/") for c in vj), (V.CRONS, vj))
+    routes = sorted(d for d in os.listdir(os.path.join(mold, "app", "api", "cron")) if os.path.isfile(os.path.join(mold, "app", "api", "cron", d, "route.ts")))
+    check("  ...and the cron routes in the mold's code are exactly the crons it schedules", routes == sorted(n for n, _ in V.CRONS), (routes, V.CRONS))
+    check("  ...and it is read from the factory's mold_v1 snapshot, not kept in vm_remote.py", V.MOLD_CRONS_FILE == os.path.join(ROOT, "molds", "mold_v1", "codebase", "vercel.json")
+          and not re.search(r"\(\s*\(\s*\"resume-workflows\"", open(os.path.join(SCRIPTS, "lib", "vm_remote.py")).read()))
+    check("the cron list a deploy uses is read from the source's vercel.json, and it is CRONS", crons == list(V.CRONS), crons)
     check("cron expressions become systemd calendars", [V.cron_to_oncalendar(x) for x in ("* * * * *", "*/5 * * * *", "*/10 * * * *", "*/15 * * * *")]
           == ["*-*-* *:*:00", "*-*-* *:0/5:00", "*-*-* *:0/10:00", "*-*-* *:0/15:00"])
     check("  ...and a shape it cannot express is refused, not approximated", V.cron_to_oncalendar("0 3 * * *") is None and V.cron_to_oncalendar("*/0 * * * *") is None)
@@ -219,11 +231,22 @@ def _generated_files(check, tmp):
     json.dump({"crons": [{"path": "/api/cron/nightly", "schedule": "0 3 * * *"}]}, open(os.path.join(src, "vercel.json"), "w"))
     out, _ = quiet(V.read_crons, src)
     check("  ...with a sentence naming the route", isinstance(out, V.Stop) and "/api/cron/nightly" in str(out), out)
-    check("a source without vercel.json falls back to the six", V.read_crons(os.path.join(tmp, "nowhere")) == list(V.CRONS))
+    check("a source without vercel.json falls back to the mold's crons", V.read_crons(os.path.join(tmp, "nowhere")) == list(V.CRONS))
+    saved = V.CRONS; V.CRONS = ()
+    try: out, _ = quiet(V.read_crons, os.path.join(tmp, "nowhere"))
+    finally: V.CRONS = saved
+    check("  ...and with no mold on disk either, it stops and says so instead of writing no timers", isinstance(out, V.Stop) and "mold.py fetch mold_v1" in str(out), out)
+    up = os.path.join(tmp, "src-cron-upstream"); os.makedirs(up)
+    json.dump({"crons": [{"path": f"/api/cron/{n}", "schedule": e} for n, e in V.CRONS] + [{"path": "/api/cron/send-reminders", "schedule": "*/15 * * * *"}]},
+              open(os.path.join(up, "vercel.json"), "w"))
+    upc = V.read_crons(up); _, uptim = V.unit_names(S, upc)
+    check("a cron added upstream (send-reminders, every 15 minutes) becomes one more timer with no edit to vm_remote.py",
+          len(upc) == len(V.CRONS) + 1 and upc[-1] == ("send-reminders", "*/15 * * * *") and uptim[-1].endswith("-cron-send-reminders.timer")
+          and "OnCalendar=*-*-* *:0/15:00" in V.unit_files(S, upc)[uptim[-1]], upc)
     U = V.unit_files(S, crons); svc, tim = V.unit_names(S, crons)
     app_units = [k for k in U if k.endswith(".service") and "-cron-" not in k and "-egress" not in k and "-sandbox-prune" not in k and "-storage" not in k]
     check("exactly three application services", sorted(app_units) == sorted(svc) and len(svc) == 3, app_units)
-    check("exactly six timers, each with its service", len(tim) == 6 and all(t in U and t.replace(".timer", ".service") in U for t in tim), tim)
+    check("one timer per cron in the mold, each with its service", len(tim) == len(V.CRONS) and all(t in U and t.replace(".timer", ".service") in U for t in tim), tim)
     api = U[f"{S['unit']}-api.service"]
     check("the API unit runs as the non-root service user, in group kvm", "User=sfapp" in api and "SupplementaryGroups=kvm" in api and "User=root" not in api, api)
     check("  ...clears stale locks and prewarms BEFORE it starts", "ExecStartPre=/bin/bash /opt/software-factory/vm_remote_fixture/factory/api-prestart.sh" in api
@@ -248,7 +271,7 @@ def _generated_files(check, tmp):
     cc = V.cron_call_sh(S, crons); curl_line = next(l for l in cc.splitlines() if "/usr/bin/curl" in l)
     check("the cron call hands CRON_SECRET to curl on stdin, never on its command line", "--config -" in curl_line and "$CRON_SECRET" not in curl_line.split("| /usr/bin/curl", 1)[1]
           and "127.0.0.1:3000/api/cron/$1" in curl_line, curl_line)
-    check("  ...and refuses a route that is not one of the six", all(r in cc for r, _ in crons) and "not one of this app's cron routes" in cc)
+    check("  ...and refuses a route that is not one of the mold's crons", all(r in cc for r, _ in crons) and "not one of this app's cron routes" in cc)
     cf = V.caddyfile(S)
     check("the Caddyfile serves the domain over TLS and proxies only to the web app on loopback", "app.example.com {" in cf and "reverse_proxy 127.0.0.1:3000" in cf
           and "3001" not in cf and "3002" not in cf and "http://" not in cf, cf)
@@ -349,7 +372,7 @@ def _generated_files(check, tmp):
                                    ("the API as root", {"API_USER": "root"}, "non-root", "ok"),
                                    ("the API outside group kvm", {"API_IN_KVM": "no"}, "group kvm", "api_not_in_kvm_group"),
                                    ("no /dev/kvm", {"KVM": "absent"}, "/dev/kvm", "device_missing"),
-                                   ("five timers", {"TIMERS": "5"}, "5 of 6", "ok"),
+                                   ("a timer missing", {"TIMERS": str(len(crons) - 1)}, f"{len(crons) - 1} of {len(crons)}", "ok"),
                                    ("an inactive firewall", {"UFW": "inactive"}, "firewall", "ok"),
                                    ("a world-readable env file", {"ENV_MODE": "644 root"}, "mode 600", "ok"),
                                    ("a service env file the service user owns", {"ENV_FILES": "web=600-root api=600-sfapp workflow=600-root cron=600-root"}, "api.env is 600-sfapp", "ok"),
@@ -745,7 +768,7 @@ def _plan_and_dry_run(check, tmp):
     check("a non-root login runs every changing step through sudo", p2["packages"]["argv"][-1].startswith("sudo env SF_REMOTE_DEPLOY=") and "sudo rsync" in p2["source"]["argv"], p2["packages"]["argv"][-1])
     lines = []; V.print_plan(S, steps, B, crons, V.mold_gaps(mold), out=lines.append); text = "\n".join(lines)
     check("the dry run prints every step, its local command and its remote script", all(f"[{i:02d} {sid}]" in text for i, sid in enumerate(STEP_IDS, 1)) and all(f"remote script factory/{s['script']}:" in text for s in steps if s.get("script")))
-    check("  ...every generated file, unit and timer included", all(f"--- factory/{k}" in text for k in B if k not in {s.get("script") for s in steps}) and text.count("OnCalendar=") == 7)      # the six cron timers and the nightly sandbox prune
+    check("  ...every generated file, unit and timer included", all(f"--- factory/{k}" in text for k in B if k not in {s.get("script") for s in steps}) and text.count("OnCalendar=") == len(crons) + 1)      # one timer per cron, and the nightly sandbox prune
     check("  ...says twice that nothing was run, and never shows a key path or a secret value", text.startswith("DRY RUN") and lines[-1].endswith("nothing was run and nothing was contacted.") and os.path.expanduser("~/.ssh") not in text and "~/.ssh/sf_vm_remote_fixture" in text)
     check("  ...lists the operator's names and says they are typed hidden", "CLOUDFLARE_API_TOKEN" in text and "hidden" in text and "minted on the server, never here" in text)
     d = fixture_docs()
@@ -1295,14 +1318,16 @@ def _brief_to_plan(check, tmp):
     T = os.path.join(tmp, "factory"); os.makedirs(os.path.join(T, ".claude"))
     shutil.copytree(SCRIPTS, os.path.join(T, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(os.path.join(ROOT, "state"), os.path.join(T, "state"))
-    for d in ("packs", "molds"): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
+    for d in ("packs", "molds", "schemas"): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))   # schemas: intake validates against them (mold_v0-190)
     os.makedirs(os.path.join(T, "briefs"))
     open(os.path.join(T, "briefs", "acme_remote.md"), "w").write(
-        "Delivered for Acme's research team, on the customer's own server.\nFresh database. Product: delivered.\n"
+        "Delivered for Acme's research team.\nDeploy on our own server.\nFresh database. Product: delivered.\n"
         "Workspace: Acme. Operator: you@acme.example. Members: a@acme.example.\nNo browser subagent. Keep web search on.\n")
     py = lambda *a: subprocess.run([sys.executable, *a], cwd=T, capture_output=True, text=True)
     r = py(".claude/scripts/intake.py", "briefs/acme_remote.md", "--app", "acme_remote")
-    check("a brief that says \"the customer's own server\" becomes a valid vm_remote application", r.returncode == 0 and "target=vm_remote" in r.stdout and r.stdout.splitlines()[0] == "ok", r.stdout + r.stderr)
+    # mold_v1-306: the target is a setting line intake recognises ("Deploy on our own server."); the same words inside a
+    # sentence of the description are a question for the operator since mold_v0-230, never a setting.
+    check("a brief whose setting line says \"Deploy on our own server.\" becomes a valid vm_remote application, with nothing left to ask", r.returncode == 0 and "target=vm_remote" in r.stdout and r.stdout.splitlines()[0] == "ok", r.stdout + r.stderr)
     if r.returncode: return
     infra = load(os.path.join(T, "state/application/acme_remote/infrastructure.json"))
     check("  ...with no server address invented and every default filled", "host" not in infra["vm_remote"] and infra["vm_remote"]["install_path"] == "/opt/software-factory/acme_remote" and infra["secret_store"] == "vm_remote_env_file")

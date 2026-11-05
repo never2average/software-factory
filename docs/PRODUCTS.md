@@ -44,7 +44,7 @@ codes) carry the product name too.
 Three Vercel deployments per application — the web dashboard (Next.js), the eve agent API, the task-workflow
 service — on the projects `<project>`, `<project>-api`, `<project>-workflow`; one free Neon Postgres with an
 `app_rw` role and row-level security proven before `DATABASE_URL` is written; one private Vercel Blob store;
-six crons (`vercel.json`); and one inference provider chosen at intake (`infrastructure.inference.provider`):
+the crons in `vercel.json`; and one inference provider chosen at intake (`infrastructure.inference.provider`):
 
 | `inference_provider` | model the app runs (`application.model`) | credential the customer brings | `MODEL_PROVIDER` |
 |---|---|---|---|

@@ -8,4 +8,5 @@ application. The address is from the documentation range (203.0.113.0/24) and th
     python3 .claude/scripts/lib/vm_remote.py --self-test
 
 `qualify-*.txt` are host-probe answers (the output of the generated `qualify.sh`) the self-test parses; `health-ok.txt` is a
-healthy server's answer to `health.sh`.
+healthy server's answer to `health.sh`; its `TIMERS=@CRONS@` is filled with the mold's cron count by the
+self-test's `fx()`, so the fixture never names a number of crons the mold can outgrow.
