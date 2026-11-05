@@ -4,6 +4,7 @@ import { packConfigs } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
 import { sessionEngine } from "./host-tables.js";
+import { featureSetting } from "./feature-flags.js";
 
 /**
  * Global platform settings (/admin/compute): knobs that used to be environment variables only. Each setting is keyed
@@ -32,8 +33,11 @@ export interface SettingDef {
   kind: "text" | "int" | "number" | "choice";
   default: string | number;
   options?: string[]; min?: number; max?: number;
-  /** What a text setting holds (default: a model id). sender = "Name <address>" or an address; emails = addresses, comma-separated, or empty. */
-  format?: "model" | "sender" | "emails";
+  /**
+   * What a text setting holds (default: a model id). sender = "Name <address>" or an address; emails = addresses,
+   * comma-separated, or empty; hosts = host names (`*.suffix` allowed), comma-separated, or empty (mold_v0-243).
+   */
+  format?: "model" | "sender" | "emails" | "hosts";
   /**
    * A shell setting only some builds read (mold_v0-169; listSettings lists it only there): "engine" the session engine's
    * (its orchestrators, sessions and capacity: a build whose host pack owns its tables, src/host-tables.ts); "vertex" Claude
@@ -85,11 +89,60 @@ export const SETTINGS: SettingDef[] = [
     help: "Who gets new access requests and library submissions, comma-separated. Empty: the platform owners (Admins)." },
 ];
 /**
+ * The workspace agent's settings (mold_v0-243; src/agent-harness-config.ts, molds/mold_v0/docs/agent-harness.md): part
+ * of the build only while the app's profile turns `agent_harness` on (listed, set and read only then). A session freezes
+ * them when it starts, so a change applies to sessions started afterwards (the budgets of running sessions stay theirs).
+ */
+export const AGENT_SETTING_GROUP = { id: "agent", label: "Workspace agent" } as const;
+export const AGENT_SETTINGS: SettingDef[] = [
+  { key: "AGENT_HARNESS", group: "agent", label: "Harness", kind: "choice", default: "claude-code", options: ["claude-code"],
+    help: "The program each agent session runs in its own workspace: it reads the person's messages, works with its tools and answers. Only a harness this platform has pinned and checked can be chosen. Applies to sessions started after the change." },
+  { key: "AGENT_PROVIDER", group: "agent", label: "Model provider", kind: "choice", default: "anthropic", options: ["anthropic"],
+    help: "Whose models the harness calls. Always through this platform's gateway: the provider's key stays in Key vault and a session only gets a token that stops working at its budget." },
+  { key: "AGENT_MODEL", group: "agent", label: "Model", kind: "text", default: "claude-sonnet-5-5",
+    help: "The model the harness asks, by its provider's id. Applies to sessions started after the change." },
+  { key: "AGENT_SESSION_BUDGET_USD", group: "agent", label: "Budget per session (USD)", kind: "number", default: 5, min: 0.5, max: 500,
+    help: "What one session may spend on its model, across all its wakes. When it reaches this it stops and asks for more (Raise budget). Fixed when a session starts." },
+  { key: "AGENT_BUDGET_CEILING_USD", group: "agent", label: "Most a budget can be raised to (USD)", kind: "number", default: 20, min: 1, max: 1000,
+    help: "The highest a session's budget can be raised to with Raise budget, by a workspace's billing managers and owners or by staff, with a reason. Never above the platform's own ceiling for one run." },
+  { key: "AGENT_MONTH_BUDGET_USD", group: "agent", label: "Agent spend a month per workspace (USD)", kind: "number", default: 200, min: 1, max: 100000,
+    help: "What all of one workspace's agent sessions may spend in a calendar month. The account's own allowance still applies on top." },
+  { key: "AGENT_SESSIONS_PER_WORKSPACE", group: "agent", label: "Sessions working at once per workspace", kind: "int", default: 3, min: 1, max: 50,
+    help: "How many of one workspace's sessions may be working at the same time. Others wait their turn; a parked session holds no place." },
+  { key: "AGENT_MAX_TURNS", group: "agent", label: "Turns per wake", kind: "int", default: 60, min: 1, max: 1000,
+    help: "The most steps (a model answer with its tool calls) the agent takes in one wake before it stops and waits." },
+  { key: "AGENT_WAKE_MAX_MINUTES", group: "agent", label: "Longest wake (minutes)", kind: "int", default: 60, min: 5, max: 720,
+    help: "How long one wake may run. Then the session parks (its sandbox is let go) and the next message wakes it where it left off." },
+  { key: "AGENT_PARK_AFTER_MINUTES", group: "agent", label: "Park after quiet (minutes)", kind: "int", default: 10, min: 1, max: 240,
+    help: "How long a session waits for the next message before it parks. A parked session costs nothing and holds no place; the next message wakes it." },
+  { key: "AGENT_STDIN_IDLE_SECONDS", group: "agent", label: "Finish a task left waiting (seconds)", kind: "int", default: 120, min: 10, max: 3600,
+    help: "A task session (not a conversation) ends once its work is answered. If it is still held open by a message it never took in, it is ended after this long." },
+  { key: "AGENT_CHECKPOINT_SECONDS", group: "agent", label: "Checkpoint every (seconds)", kind: "int", default: 300, min: 0, max: 3600,
+    help: "How often a working session saves its conversation and working files, so a crash loses at most this much. 0 saves only when it parks or pauses." },
+  { key: "AGENT_APPROVAL_WINDOW_HOURS", group: "agent", label: "How long a request waits (hours)", kind: "int", default: 24, min: 1, max: 336,
+    help: "How long a session waits for someone to approve or decline what it asked for (a web address, a tool, more budget). Unanswered, the request expires and the session parks with that said." },
+  { key: "AGENT_CRASH_RESUMES", group: "agent", label: "Resumes after a crash", kind: "int", default: 3, min: 0, max: 3,
+    help: "How many times in a row a session may continue after its sandbox stopped unexpectedly. Past it, the session fails and says why." },
+  { key: "AGENT_AUTO_RESUME", group: "agent", label: "Resume after a crash without asking", kind: "choice", default: "off", options: ["on", "off"],
+    help: "On: a session whose sandbox stopped unexpectedly continues by itself (within Resumes after a crash, and not once crashes have used half its budget). Off: it waits for the person's next message." },
+  { key: "AGENT_RETENTION_DAYS", group: "agent", label: "Keep conversations for (days)", kind: "int", default: 60, min: 1, max: 3650,
+    help: "How long after a session ends its messages, requests and checkpoints are kept. Then they are removed; what it spent and every budget raise are kept." },
+  { key: "AGENT_ARCHIVE_AFTER_DAYS", group: "agent", label: "Archive parked sessions after (days)", kind: "int", default: 14, min: 1, max: 365,
+    help: "A parked session nobody has written to for this long is archived: read only, and counted for retention from then." },
+  { key: "AGENT_WEB_TOOLS", group: "agent", label: "Web tools", kind: "choice", default: "off", options: ["off", "fetch", "search"],
+    help: "Off: the agent cannot reach the web. Fetch: it may read the web addresses allowed below, and asks before any other. Search: also search the web where the provider offers it. Anything it reads from the web is treated as untrusted." },
+  { key: "AGENT_WEB_HOSTS", group: "agent", label: "Web hosts allowed without asking", kind: "text", format: "hosts", default: "",
+    help: "Host names the agent may read without asking, separated by commas; *.example.com allows a domain and everything under it. Empty: it asks for each." },
+  { key: "AGENT_WEB_CALLS_MAX", group: "agent", label: "Web calls per session", kind: "int", default: 20, min: 0, max: 500,
+    help: "The most web reads and searches one session makes. Past it, the session stops and says so." },
+];
+
+/**
  * Every group of this build, in order: the shell's, then each pack's (its pack.json `settings.groups`, mold_v0-140) after
  * the group it names (at the end when it names none, or one the build lacks).
  */
 export function settingGroups(): { id: SettingGroup; label: string }[] {
-  const out = [...SETTING_GROUPS];
+  const out = [...SETTING_GROUPS, ...(featureSetting("agent_harness") ? [AGENT_SETTING_GROUP] : [])];
   for (const c of packConfigs()) for (const g of c.settings?.groups ?? []) {
     const at = g.after ? out.findIndex((x) => x.id === g.after) : out.length - 1;
     out.splice(at < 0 ? out.length : at + 1, 0, { id: g.id, label: g.label });
@@ -107,6 +160,8 @@ export function allSettings(): SettingDef[] {
   // build without the session engine says what a setting does there (withoutEngine, mold_v0-169).
   const eng = sessionEngine();
   const all: SettingDef[] = SETTINGS.map(({ withoutEngine, ...d }) => ({ ...d, ...(!eng && withoutEngine ? withoutEngine : {}), help: fill(!eng && withoutEngine ? withoutEngine.help : d.help) }));
+  // The workspace agent's (mold_v0-243): part of the build only with its flag on.
+  if (featureSetting("agent_harness")) all.push(...AGENT_SETTINGS);
   for (const c of packConfigs()) for (const { before, ...d } of c.settings?.defs ?? []) {
     if (all.some((x) => x.key === d.key)) throw new Error(`pack ${c.pack}: pack.json settings.defs ${d.key} is a setting the build already has`);
     const at = before ? all.findIndex((x) => x.key === before) : -1;
@@ -114,9 +169,10 @@ export function allSettings(): SettingDef[] {
   }
   return all.map((d, i) => [d, i] as const).sort(([a, i], [b, j]) => (order.get(a.group) ?? 999) - (order.get(b.group) ?? 999) || i - j).map(([d]) => d);
 }
-let defsFor: { packs: unknown; defs: Map<string, SettingDef> } | null = null;
+let defsFor: { packs: unknown; agent: boolean; defs: Map<string, SettingDef> } | null = null;
 const defOf = (key: string) => {
-  if (defsFor?.packs !== packConfigs()) defsFor = { packs: packConfigs(), defs: new Map(allSettings().map((d) => [d.key, d])) };
+  const agent = featureSetting("agent_harness");
+  if (defsFor?.packs !== packConfigs() || defsFor.agent !== agent) defsFor = { packs: packConfigs(), agent, defs: new Map(allSettings().map((d) => [d.key, d])) };
   return defsFor.defs.get(key);
 };
 
@@ -178,6 +234,12 @@ function clean(d: SettingDef, v: unknown): { value: string | number } | { error:
     if (list.length > 20 || list.some((x) => !address.test(x))) return { error: `${d.label} must be email addresses, comma-separated` };
     return { value: list.join(", ") };
   }
+  if (d.format === "hosts") {
+    const list = s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    const host = /^(\*\.)?(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/;
+    if (list.length > 100 || list.some((x) => !host.test(x) || /^(\*\.)?\d+(\.\d+)+$/.test(x))) return { error: `${d.label} must be host names (example.com, *.example.com), comma-separated` };
+    return { value: list.join(", ") };
+  }
   if (d.format === "sender") {
     const m = /^(?:([^<>"\r\n]{1,80}?)\s*<([^<>]+)>|([^<>]+))$/.exec(s);
     const addr = (m?.[2] ?? m?.[3] ?? "").trim();
@@ -213,7 +275,13 @@ export async function setSettings(actor: string, values: Record<string, unknown>
         `INSERT INTO platform_settings (key, value, updated_at, updated_by) VALUES ($1, $2, now(), $3)
          ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now(), updated_by = excluded.updated_by`,
         [d.key, JSON.stringify(v), actor]);
-      if (JSON.stringify(before) !== JSON.stringify(v)) changes.push({ key: d.key, from: before, to: v });
+      if (JSON.stringify(before) !== JSON.stringify(v)) {
+        changes.push({ key: d.key, from: before, to: v });
+        // The workspace agent's settings (mold_v0-243): every change kept, with who made it and the value before.
+        if (d.group === AGENT_SETTING_GROUP.id)
+          await tx.query("INSERT INTO platform_setting_changes (key, from_value, to_value, changed_by) VALUES ($1, $2, $3, $4)",
+            [d.key, JSON.stringify(before), JSON.stringify(v), actor]);
+      }
     }
   });
   await refreshSettings();

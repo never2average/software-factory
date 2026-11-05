@@ -1,5 +1,5 @@
 {
-  "$comment": "mold_v0-219: the one registry of the shell's optional capabilities, each an on/off flag in the app's profile (profile.json `features`, {\"<id>\": true|false}). Read by src/features.ts (the server's gates), scripts/gen-packs.mjs (the console's pages and sidebar, web/src/config/features.generated.ts), the factory (.claude/scripts/lib/features.py: the app spec's `features`, the brief's `features.<id> = true|false` lines in ## Profile, `factory.py spec check`) and the factory board (plugins/factory-board). A capability is ON only when something asks for it (`requested_by`: a pack's declaration, or `always` for a profile toggle) AND its flag is not false. `default`: the flag's value when neither `features` nor a `legacy` key says: true where the capability was on whenever a pack declared it before this registry (so turning the flags on changes no existing app), false where it was an opt-in profile toggle. `legacy`: the profile key that said it before (still read; it and `features` must agree). `requires`: flags that must be on with it (`requires_any`: one of them). Never edit an id: apps' state names them.",
+  "$comment": "mold_v0-219: the one registry of the shell's optional capabilities, each an on/off flag in the app's profile (profile.json `features`, {\"<id>\": true|false}). Read by src/features.ts (the server's gates), scripts/gen-packs.mjs (the console's pages and sidebar, web/src/config/features.generated.ts), the factory (.claude/scripts/lib/features.py: the app spec's `features`, the brief's `features.<id> = true|false` lines in ## Profile, `factory.py spec check`) and the factory board (plugins/factory-board). A capability is ON only when something asks for it (`requested_by`: a pack's declaration, or `always` for a profile toggle) AND its flag is not false. `default`: the flag's value when neither `features` nor a `legacy` key says: true where the capability was on whenever a pack declared it before this registry (so turning the flags on changes no existing app), false where it was an opt-in profile toggle. `legacy`: the profile key that said it before (still read; it and `features` must agree). `requires`: flags that must be on with it (`requires_any`: one of them). `quiet_off` (mold_v0-243): while off, the flag is left out of the build's generated files, so an app that never turns it on builds exactly what it built before the flag existed. Never edit an id: apps' state names them.",
   "flags": [
     {
       "id": "customer_key_vault",
@@ -149,6 +149,18 @@
       "since": "mold_v0-220",
       "about": "A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards.",
       "off": "The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields."
+    },
+    {
+      "id": "agent_harness",
+      "short": "agent",
+      "label": "Workspace agent",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it)",
+      "since": "mold_v0-243",
+      "about": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings).",
+      "off": "No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out."
     }
   ]
 }

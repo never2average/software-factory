@@ -101,7 +101,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // Health › Status's samples (mold_v0-210, 0038_health_samples): numbers and states, platform bookkeeping.
   "health_samples",
   // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
-  "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages"];
+  "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages",
+  // The workspace agent's platform settings' change history (mold_v0-243, 0044_harness_sessions): staff bookkeeping.
+  "platform_setting_changes"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

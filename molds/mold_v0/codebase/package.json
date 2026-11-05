@@ -102,6 +102,7 @@
     "test:schedules": "tsx scripts/schedules-test.ts",
     "test:record-clocks": "tsx scripts/record-clocks-test.ts",
     "test:features": "tsx scripts/features-test.ts",
+    "test:agent-harness": "tsx scripts/agent-harness-test.ts",
     "test:checks": "tsx scripts/checks-test.ts",
     "test:run-sandboxes": "tsx scripts/run-sandboxes-test.ts",
     "test:run-firewall": "tsx scripts/run-firewall-test.ts",

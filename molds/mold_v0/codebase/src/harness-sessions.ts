@@ -1,0 +1,880 @@
+/**
+ * The workspace agent's control plane (mold_v0-243; molds/mold_v0/docs/agent-harness.md): sessions a person talks to,
+ * each wake a run of the generic run engine (the built-in kind _agent/session, src/agent-harness-config.ts), carried
+ * out by src/agent-harness.ts. The only writer of the harness_* tables (sql/migrations/0044_harness_sessions.sql).
+ *
+ *   start      a person (or an account key) starts a session with its first message: the policy in force is frozen into
+ *              it (harness, model, provider, limits, web tools, hooks) and its budget (the setting, at most the ceiling);
+ *              its first wake is queued as a run whose budget is what the session has left
+ *   message    the person who started it sends more: delivered on the running wake's next beat (steer), or, when the
+ *              session is parked or paused, it wakes it (a new run, the same harness session)
+ *   pause      the starter, an owner or staff: a running wake is asked to stop and keep its session (SIGTERM, so the
+ *              harness flushes it), a queued one is withdrawn; resume (the starter) wakes it on the same session
+ *   stop       the starter, an owner or staff: ends it for good (a turn in progress finishes); read only afterwards
+ *   requests   what the agent asked for that its policy does not allow (a web host, a tool) and a stop on its budget:
+ *              approve grants exactly that and wakes it; decline records the refusal and parks it with that said
+ *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, never while a wake runs
+ *   beat       the wake's heartbeat (src/run-routes.ts /agent/beat): the lease, the spend, the steer, pause and end
+ *   reconcile  after a wake's run ends (src/runs.ts completeRun, sweepRuns, and the sweep below): parked, paused,
+ *              awaiting a decision, stopped, or crashed (parked with its checkpoint; resumed by the next message, or by
+ *              itself with AGENT_AUTO_RESUME, within AGENT_CRASH_RESUMES and half its budget)
+ *   sweep      requests past their window expire, quiet parked sessions are archived, ended sessions past retention lose
+ *              their messages, requests and checkpoints (their spend and budget raises stay)
+ *
+ * Spend is counted once per session: each wake is one run, the gateway meters every request of it once, and the
+ * harness's own cumulative reports are accrued against a high-water mark per wake from a baseline that takes out what
+ * a resumed harness session re-reports (accrueSpend); a wake's spend is the greater of the two, never their sum.
+ */
+import { randomBytes, randomUUID, createHash } from "node:crypto";
+import { getDb, type Queryable } from "./db.js";
+import { PackError } from "./pack-api.js";
+import { asPlatform } from "./tenant-scope.js";
+import { canAccount, type AccountRole } from "./account-roles.js";
+import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, hostAllowed, validHost, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
+import { settingNumber } from "./settings.js";
+
+// ---------------------------------------------------------------- types
+
+export type HarnessState = "starting" | "live" | "parked" | "waking" | "paused" | "awaiting" | "stopped" | "failed";
+export type AgentPhase = "starting" | "working" | "waiting" | "parked" | "waking" | "paused" | "awaiting_approval" | "stopped" | "failed" | "archived";
+export type RequestKind = "web" | "tool" | "budget";
+export type EndReason = "parked" | "paused" | "awaiting" | "budget" | "stopped" | "done" | "web_limit" | "failed";
+
+/** Who acts: a signed-in person (with their account role), an account key (no person), platform staff, or the platform. */
+export interface Actor { kind: "person" | "key" | "staff" | "system"; user: string | null; name: string | null; role: AccountRole | null }
+
+interface SessionRow {
+  id: string; org_id: number; title: string; started_by: string | null; started_by_name: string | null; state: HarnessState; in_turn: boolean;
+  state_reason: string | null; pause_requested_at: Date | null; stop_requested_at: Date | null; flavour: string; model: string; provider: string;
+  policy: AgentPolicy; harness_session: string | null; checkpoint: Checkpoint | null; checkpoint_seq: number; budget_usd: string | number;
+  spent_usd: string | number; reserve_usd: string | number; crash_spent_usd: string | number; wakes: number; crashes: number; web_calls: number;
+  current_run_id: string | null; last_activity_at: Date; created_at: Date; updated_at: Date; ended_at: Date | null; archived_at: Date | null;
+  retention_until: Date | null; pruned_at: Date | null;
+}
+export interface Checkpoint { seq: number; key: string; sha256: string; bytes: number; at: string; run_id: string }
+const COLS = `id, org_id, title, started_by, started_by_name, state, in_turn, state_reason, pause_requested_at, stop_requested_at, flavour, model, provider,
+  policy, harness_session, checkpoint, checkpoint_seq, budget_usd, spent_usd, reserve_usd, crash_spent_usd, wakes, crashes, web_calls, current_run_id,
+  last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at`;
+
+export interface RequestView { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
+export interface MessageView { id: number; role: "person" | "agent" | "system"; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }
+export interface SessionView {
+  id: string; title: string; phase: AgentPhase; state: HarnessState; reason: string | null; mode: AgentPolicy["mode"]; started_by: string | null; mine: boolean;
+  workspace?: { id: number; slug: string | null };
+  harness: { flavour: string; label: string; model: string; provider: string; steerable: boolean };
+  budget_usd: number; spent_usd: number; remaining_usd: number; ceiling_usd: number; reserve_usd: number;
+  wakes: number; crashes: number; web_calls: number; pause_requested: boolean; stop_requested: boolean;
+  pending_request: RequestView | null; created_at: string; last_activity_at: string; ended_at: string | null; archived_at: string | null; pruned: boolean;
+  can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
+}
+export interface SessionDetail extends SessionView {
+  messages: MessageView[]; requests: RequestView[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
+  wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
+  hooks: { event: HookEvent; source: string; text: string | null }[];
+  policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number };
+}
+
+const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
+const num = (v: unknown) => Number(v ?? 0);
+const money = (v: number) => Math.round(v * 1e6) / 1e6;
+const tx = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => (await getDb()).transaction(fn));
+const read = <T>(fn: (q: Queryable) => Promise<T>) => asPlatform(async () => fn(await getDb()));
+const SESSION_ID = /^hss_[A-Za-z0-9_-]{8,40}$/;
+const REQUEST_ID = /^hsr_[A-Za-z0-9_-]{8,40}$/;
+export const MAX_MESSAGE_CHARS = 20_000;
+const newId = (p: string) => `${p}_${randomBytes(12).toString("base64url")}`;
+
+function off(): never { throw new PackError("The workspace agent is not on in this app", 404); }
+function needOn() { if (!agentHarnessOn()) off(); }
+
+// ---------------------------------------------------------------- the spend ledger (pure)
+
+/**
+ * One cumulative report from a wake's harness: what to charge now. `reported` is the harness's running total (a resumed
+ * harness session starts it from the total its transcript saved), `baseline` the part of it earlier wakes were already
+ * charged for (the lower of the saved figure and what the session was charged, so a turn killed before it reported is
+ * billed once and a crash before the save never swallows new work), `high` this wake's high-water mark so far. A
+ * replayed or lower report charges nothing and never refunds.
+ */
+export function accrueSpend(high: number, baseline: number, reported: number): { charge: number; high: number } {
+  if (!Number.isFinite(reported) || reported < 0) return { charge: 0, high };
+  const effective = Math.max(0, reported - Math.max(0, baseline));
+  if (effective <= high) return { charge: 0, high };
+  return { charge: money(effective - high), high: money(effective) };
+}
+/** The baseline a resumed harness session's reports are reduced by: min(saved, charged); the saved figure alone when charged is unknown. */
+export const resumedBaseline = (savedUsd: number, chargedUsd: number | null) => (chargedUsd == null ? Math.max(0, savedUsd) : Math.max(0, Math.min(savedUsd, chargedUsd)));
+
+/**
+ * The spend a crash's silence most likely cost (the reference's unaccounted window): the wake's own burn rate across the
+ * time between its last beat and its end, capped at what it had left. Held back from the next wake, never charged.
+ */
+export function crashReserve(wakeSpent: number, activeSeconds: number, silentSeconds: number, left: number): number {
+  if (!(activeSeconds > 0) || !(silentSeconds > 0) || !(wakeSpent > 0)) return 0;
+  return money(Math.max(0, Math.min(left, (wakeSpent / activeSeconds) * silentSeconds)));
+}
+
+// ---------------------------------------------------------------- views
+
+const phaseOf = (r: SessionRow): AgentPhase => r.archived_at ? "archived"
+  : r.state === "live" ? (r.in_turn ? "working" : "waiting") : r.state === "awaiting" ? "awaiting_approval" : r.state;
+const mineOf = (r: SessionRow, a: Actor) => a.kind !== "staff" && a.kind !== "system" && (r.started_by ?? null) === startedByOf(a);
+const startedByOf = (a: Actor) => (a.kind === "person" ? a.user : a.kind === "key" ? "account" : null);
+const closed = (r: SessionRow) => r.state === "stopped" || r.state === "failed" || !!r.archived_at;
+
+function permissions(r: SessionRow, a: Actor) {
+  const mine = mineOf(r, a), staff = a.kind === "staff", owner = a.kind === "key" || canAccount(a.role, "manage");
+  const steerable = flavourOf(r.flavour)?.holds_stdin_open !== false;
+  const open = !closed(r);
+  return {
+    message: open && mine && r.state !== "awaiting" && (r.state !== "live" || steerable),
+    pause: open && (mine || owner || staff) && ["starting", "live", "waking", "parked"].includes(r.state) && !r.pause_requested_at,
+    resume: open && mine && (r.state === "paused" || r.state === "parked"),
+    stop: open && (mine || owner || staff),
+    decide: open && (mine || owner),
+    raise: open && (staff || a.kind === "key" || canAccount(a.role, "budget")) && !["live", "starting", "waking"].includes(r.state),
+  };
+}
+
+function requestView(q: { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: Date | null; reason: string | null; created_at: Date }, windowHours: number): RequestView {
+  return { id: q.id, kind: q.kind, subject: q.subject, detail: q.detail ?? {}, status: q.status, decided_by: q.decided_by, decided_at: iso(q.decided_at), reason: q.reason,
+    created_at: iso(q.created_at)!, expires_at: q.status === "pending" ? new Date(new Date(q.created_at).getTime() + windowHours * 3600_000).toISOString() : null };
+}
+
+function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: string | null): SessionView {
+  const f = flavourOf(r.flavour);
+  const budget = num(r.budget_usd), spent = num(r.spent_usd), reserve = num(r.reserve_usd);
+  return {
+    id: r.id, title: r.title, phase: phaseOf(r), state: r.state, reason: r.state_reason, mode: r.policy?.mode ?? "conversation",
+    started_by: r.started_by_name, mine: mineOf(r, a),
+    ...(a.kind === "staff" ? { workspace: { id: r.org_id, slug: slug ?? null } } : {}),
+    harness: { flavour: r.flavour, label: f?.label ?? r.flavour, model: r.model, provider: r.provider, steerable: f?.holds_stdin_open !== false },
+    budget_usd: budget, spent_usd: money(spent), remaining_usd: money(Math.max(0, budget - spent - reserve)), ceiling_usd: ceilingOf(r.policy), reserve_usd: money(reserve),
+    wakes: r.wakes, crashes: r.crashes, web_calls: r.web_calls, pause_requested: !!r.pause_requested_at, stop_requested: !!r.stop_requested_at,
+    pending_request: pending, created_at: iso(r.created_at)!, last_activity_at: iso(r.last_activity_at)!, ended_at: iso(r.ended_at), archived_at: iso(r.archived_at),
+    pruned: !!r.pruned_at, can: permissions(r, a),
+  };
+}
+
+/** A session's budget ceiling: the setting it froze, never above the platform's own ceiling for one run. */
+function ceilingOf(p: AgentPolicy | null): number {
+  const frozen = Number(p?.budget_ceiling_usd ?? 0) || settingNumber("AGENT_BUDGET_CEILING_USD");
+  return Math.min(frozen, platformRunCeiling());
+}
+let ceilingCache: number | null = null;
+function platformRunCeiling(): number {
+  if (ceilingCache !== null) return ceilingCache;
+  return Number.POSITIVE_INFINITY;
+}
+/** Loaded once per process (src/rate-limits.ts: the profile and the environment). */
+async function loadPlatformCeiling(orgId: number): Promise<number> {
+  const { limitsFor, planOf } = await import("./rate-limits.js");
+  const c = limitsFor(await planOf(orgId)).runs.budget_usd_max;
+  ceilingCache = ceilingCache === null ? c : Math.max(ceilingCache, c);
+  return c;
+}
+
+async function rowOf(q: Queryable, orgId: number | null, id: string, lock = false): Promise<SessionRow> {
+  if (!SESSION_ID.test(String(id))) throw new PackError("no such session", 404);
+  const [r] = await q.query<SessionRow>(
+    `/* tenant: by session id, within the caller's workspace when it has one (staff: any) */ SELECT ${COLS} FROM harness_sessions
+      WHERE id = $1 AND ($2::int IS NULL OR org_id = $2)${lock ? " FOR UPDATE" : ""}`, [String(id), orgId]);
+  if (!r) throw new PackError("no such session", 404);
+  return r;
+}
+async function pendingOf(q: Queryable, r: SessionRow): Promise<RequestView | null> {
+  const [p] = await q.query<Parameters<typeof requestView>[0]>(
+    "SELECT id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND status = 'pending'",
+    [r.org_id, r.id]);
+  return p ? requestView(p, r.policy?.approval_window_hours ?? 24) : null;
+}
+
+async function systemMessage(q: Queryable, r: { id: string; org_id: number }, body: string, runId: string | null = null) {
+  await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, run_id) VALUES ($1, $2, 'system', $3, $4)", [r.id, r.org_id, body.slice(0, 2000), runId]);
+}
+async function runEvent(q: Queryable, runId: string | null, orgId: number, type: string, data: Record<string, unknown>) {
+  if (!runId) return;
+  await q.query(
+    `INSERT INTO run_events (run_id, org_id, attempt, type, data) SELECT $1, $2, attempt, $3, $4 FROM runs WHERE id = $1 AND org_id = $2`,
+    [runId, orgId, type, JSON.stringify(data)]);
+}
+
+/** Recompute a session's spend from its wakes: per wake the greater of the gateway's meter and the harness's accrual. */
+async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): Promise<number> {
+  const [r] = await q.query<{ spent: string }>(
+    `UPDATE harness_sessions s SET spent_usd = coalesce((
+        SELECT sum(GREATEST(r.cost_usd, coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.cost_usd) FROM gateway_usage g WHERE g.run_id = r.id), 0),
+                            coalesce(w.charged_usd, 0)))
+          FROM runs r LEFT JOIN harness_wake_spend w ON w.run_id = r.id AND w.org_id = r.org_id
+         WHERE r.org_id = s.org_id AND r.harness_session_id = s.id), 0), updated_at = now()
+      WHERE s.id = $1 AND s.org_id = $2 RETURNING spent_usd AS spent`, [sessionId, orgId]);
+  return num(r?.spent);
+}
+
+// ---------------------------------------------------------------- the workspace's side
+
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown }
+
+/** Start a session with its first message (the person's words are its on_start). */
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org): Promise<SessionDetail> {
+  needOn();
+  if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
+  if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
+  const message = text(input.message, "message");
+  const mode = input.mode === "task" ? "task" : "conversation";
+  const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
+  const policy = currentPolicy(mode);
+  const ceiling = Math.min(policy.budget_ceiling_usd, await loadPlatformCeiling(orgId));
+  const budget = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+  const id = newId("hss");
+  await tx(async (q) => {
+    await q.query(
+      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd)
+       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10)`,
+      [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget]);
+    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
+      [id, orgId, message, actor.user, actor.name]);
+  });
+  try { await queueWake(orgId, id, "start", actor, org); }
+  catch (e) {
+    // Nothing ran: the session goes with the refusal (its run never started), and the caller hears why.
+    await tx(async (q) => { await q.query("DELETE FROM harness_sessions WHERE id = $1 AND org_id = $2", [id, orgId]); });
+    throw e;
+  }
+  return readSession(orgId, id, actor);
+}
+
+const text = (v: unknown, what: string) => {
+  if (typeof v !== "string" || !v.trim()) throw new PackError(`${what}: say something`, 400);
+  if (v.length > MAX_MESSAGE_CHARS) throw new PackError(`${what}: at most ${MAX_MESSAGE_CHARS} characters`, 413);
+  return v.trim();
+};
+
+/**
+ * Queue a wake: a run of the built-in kind whose budget is what the session has left (the gateway refuses past it). A
+ * session with nothing left waits for a raise instead (a budget request).
+ */
+async function queueWake(orgId: number, sessionId: string, reason: "start" | "message" | "resume" | "approval" | "auto_resume" | "raise", actor: Actor, org?: import("./auth.js").Org): Promise<string | null> {
+  const { startRun } = await import("./runs.js");
+  // One wake at a time: taken under the session's lock while nothing runs for it (a wake still ending is settled by
+  // reconcileWake, which wakes it again for what arrived meanwhile). Undone if the run cannot start.
+  const taken = await tx(async (q) => {
+    const r = await rowOf(q, orgId, sessionId, true);
+    if (r.current_run_id || r.archived_at || !["starting", "parked", "paused", "awaiting"].includes(r.state)) return null;
+    const left = money(num(r.budget_usd) - num(r.spent_usd) - num(r.reserve_usd));
+    if (left < 0.01) {
+      await ensureBudgetRequest(q, r, "the session has spent its budget");
+      await q.query("UPDATE harness_sessions SET state = 'awaiting', state_reason = 'budget', updated_at = now() WHERE id = $1 AND org_id = $2", [r.id, orgId]);
+      return null;
+    }
+    await q.query("UPDATE harness_sessions SET state = CASE WHEN wakes = 0 THEN 'starting' ELSE 'waking' END, updated_at = now() WHERE id = $1 AND org_id = $2", [r.id, orgId]);
+    return { r, left };
+  });
+  if (!taken) return null;
+  let run;
+  try {
+    run = await startRun(orgId, AGENT_PACK, AGENT_KIND, { scope: { session: sessionId, reason } }, actor.user ?? actor.name ?? actor.kind,
+      org, { kind: agentKind(taken.r.policy), budget_usd: taken.left, harness_session_id: sessionId });
+  } catch (e) {
+    await tx(async (q) => q.query("UPDATE harness_sessions SET state = $3, updated_at = now() WHERE id = $1 AND org_id = $2 AND current_run_id IS NULL", [sessionId, orgId, taken.r.state]));
+    throw e;
+  }
+  await tx(async (q) => {
+    await q.query(
+      `UPDATE harness_sessions SET current_run_id = $3, wakes = wakes + 1, in_turn = false, pause_requested_at = NULL, last_activity_at = now(), updated_at = now()
+        WHERE id = $1 AND org_id = $2`, [sessionId, orgId, run.id]);
+    await q.query("INSERT INTO harness_wake_spend (run_id, session_id, org_id) VALUES ($1, $2, $3) ON CONFLICT (run_id) DO NOTHING", [run.id, sessionId, orgId]);
+  });
+  return run.id;
+}
+
+async function ensureBudgetRequest(q: Queryable, r: SessionRow, why: string, runId: string | null = null) {
+  const [p] = await q.query<{ id: string; kind: string }>("SELECT id, kind FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [r.org_id, r.id]);
+  if (p) return;
+  await q.query(
+    "INSERT INTO harness_session_requests (id, session_id, org_id, run_id, kind, subject, detail) VALUES ($1, $2, $3, $4, 'budget', $5, $6)",
+    [newId("hsr"), r.id, r.org_id, runId, `$${num(r.budget_usd).toFixed(2)}`, JSON.stringify({ why, budget_usd: num(r.budget_usd), spent_usd: num(r.spent_usd), ceiling_usd: ceilingOf(r.policy) })]);
+}
+
+export async function listSessions(orgId: number | null, actor: Actor, opts: { limit?: number; state?: string } = {}): Promise<SessionView[]> {
+  needOn();
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit ?? 200)) || 200, 1), 500);
+  return read(async (q) => {
+    const rows = await q.query<SessionRow & { slug: string | null }>(
+      `/* tenant: the caller's workspace (staff: every workspace) */ SELECT ${COLS.split(",").map((c) => `s.${c.trim()}`).join(", ")}, o.slug
+         FROM harness_sessions s JOIN organizations o ON o.id = s.org_id
+        WHERE ($1::int IS NULL OR s.org_id = $1) ORDER BY s.last_activity_at DESC, s.id DESC LIMIT $2`, [orgId, limit]);
+    const pend = rows.length ? await q.query<Parameters<typeof requestView>[0] & { session_id: string }>(
+      `/* tenant: the sessions just listed, by id */ SELECT session_id, id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests
+        WHERE session_id = ANY ($1::text[]) AND status = 'pending'`, [rows.map((r) => r.id)]) : [];
+    const byS = new Map(pend.map((p) => [p.session_id, p]));
+    return rows.map((r) => { const p = byS.get(r.id); return view(r, actor, p ? requestView(p, r.policy?.approval_window_hours ?? 24) : null, r.slug); });
+  });
+}
+
+export async function readSession(orgId: number | null, id: string, actor: Actor): Promise<SessionDetail> {
+  needOn();
+  return read(async (q) => {
+    const r = await rowOf(q, orgId, id);
+    const [o] = await q.query<{ slug: string }>("SELECT slug FROM organizations WHERE id = $1", [r.org_id]);
+    const msgs = await q.query<{ id: string; role: MessageView["role"]; body: string; status: string | null; by_name: string | null; cost_usd: string | null; created_at: Date; run_id: string | null }>(
+      "SELECT id, role, body, status, by_name, cost_usd, created_at, run_id FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 ORDER BY id LIMIT 2000", [r.org_id, r.id]);
+    const reqs = await q.query<Parameters<typeof requestView>[0]>(
+      "SELECT id, kind, subject, detail, status, decided_by, decided_at, reason, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
+    const grants = await q.query<{ id: string; from_usd: string; to_usd: string; reason: string; granted_by: string; created_at: Date }>(
+      "SELECT id, from_usd, to_usd, reason, granted_by, created_at FROM harness_budget_grants WHERE org_id = $1 AND session_id = $2 ORDER BY created_at", [r.org_id, r.id]);
+    const wakes = await q.query<{ id: string; status: string; started_at: Date | null; ended_at: Date | null; cost: string; end_reason: string | null; error: string | null }>(
+      `SELECT r.id, r.status, r.started_at, r.ended_at, GREATEST(r.cost_usd, coalesce(w.charged_usd, 0),
+              coalesce((SELECT /* tenant: the usage of run r, a row its query scoped */ sum(g.cost_usd) FROM gateway_usage g WHERE g.run_id = r.id), 0)) AS cost, w.end_reason, r.error
+         FROM runs r LEFT JOIN harness_wake_spend w ON w.run_id = r.id AND w.org_id = r.org_id
+        WHERE r.org_id = $1 AND r.harness_session_id = $2 ORDER BY r.created_at`, [r.org_id, r.id]);
+    const win = r.policy?.approval_window_hours ?? 24;
+    const requests = reqs.map((x) => requestView(x, win));
+    const p = r.policy;
+    return {
+      ...view(r, actor, requests.find((x) => x.status === "pending") ?? null, o?.slug ?? null),
+      messages: msgs.map((m) => ({ id: Number(m.id), role: m.role, body: m.body, status: m.status, by: m.by_name, cost_usd: m.cost_usd === null ? null : num(m.cost_usd), at: iso(m.created_at)!, run_id: m.run_id })),
+      requests, grants: grants.map((g) => ({ id: g.id, from_usd: num(g.from_usd), to_usd: num(g.to_usd), reason: g.reason, by: g.granted_by, at: iso(g.created_at)! })),
+      wakes_list: wakes.map((w) => ({ run_id: w.id, status: w.status, started_at: iso(w.started_at), ended_at: iso(w.ended_at), cost_usd: money(num(w.cost)), end_reason: w.end_reason, error: w.error })),
+      hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
+      policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
+        web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: p?.tools ?? [], auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0 },
+    };
+  });
+}
+
+/** The person who started it sends guidance: steer a running wake, or wake a parked or paused session with it. */
+export async function messageSession(orgId: number, id: string, actor: Actor, body: unknown, org?: import("./auth.js").Org): Promise<{ status: "queued" | "waking"; phase: AgentPhase }> {
+  needOn();
+  const message = text(body, "message");
+  const r = await read((q) => rowOf(q, orgId, id));
+  if (!mineOf(r, actor)) throw new PackError("Only the person who started this session can message it", 403);
+  if (closed(r)) throw new PackError(r.archived_at ? "This session is archived" : r.state === "failed" ? "This session failed and takes no more messages: start a new one" : "This session was stopped: start a new one", 409);
+  if (r.state === "awaiting") throw new PackError("This session is waiting for a decision on what it asked for: approve or decline it first", 409);
+  if (r.state === "live" && flavourOf(r.flavour)?.holds_stdin_open === false)
+    throw new PackError(`${flavourOf(r.flavour)?.label ?? r.flavour} reads its instructions once: it cannot be steered while it works`, 409);
+  // Locked, so two messages racing onto a parked session wake it once: the second finds it waking and waits pending.
+  const wake = await tx(async (q) => {
+    const x = await rowOf(q, orgId, id, true);
+    await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
+      [x.id, x.org_id, message, actor.user, actor.name]);
+    await q.query("UPDATE harness_sessions SET last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+    if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "steer_queued", { length: message.length, by: actor.name });
+    return x.state === "parked" || x.state === "paused" ? x.state : null;
+  });
+  if (wake) {
+    await queueWake(orgId, id, "message", actor, org);
+    return { status: "waking", phase: "waking" };
+  }
+  return { status: "queued", phase: phaseOf(await read((q) => rowOf(q, orgId, id))) };
+}
+
+/** Pause: a running wake stops and keeps its session (resume continues it); a queued one is withdrawn. */
+export async function pauseSession(orgId: number | null, id: string, actor: Actor): Promise<SessionView> {
+  needOn();
+  const r = await read((q) => rowOf(q, orgId, id));
+  if (!permissions(r, actor).pause) throw denied(r, actor, "pause");
+  const cancelQueued = await tx(async (q) => {
+    const x = await rowOf(q, orgId, id, true);
+    if (x.state === "parked") {
+      await q.query("UPDATE harness_sessions SET state = 'paused', state_reason = 'paused', updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+      await systemMessage(q, x, `Paused by ${actor.name ?? "someone"}.`);
+      return null;
+    }
+    await q.query("UPDATE harness_sessions SET pause_requested_at = coalesce(pause_requested_at, now()), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+    await systemMessage(q, x, `Pause asked by ${actor.name ?? "someone"}.`, x.current_run_id);
+    if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "pause_requested", { by: actor.name });
+    const [run] = x.current_run_id ? await q.query<{ status: string }>("SELECT status FROM runs WHERE id = $1 AND org_id = $2", [x.current_run_id, x.org_id]) : [];
+    return run?.status === "queued" ? x.current_run_id : null;
+  });
+  if (cancelQueued) await withdraw(r.org_id, cancelQueued, actor);
+  return (await read(async (q) => view(await rowOf(q, orgId, id), actor, null)));
+}
+
+/** A queued wake withdrawn (a pause or a stop before its sandbox started): the run is cancelled and the session settles. */
+async function withdraw(orgId: number, runId: string, actor: Actor) {
+  const { cancelRun } = await import("./runs.js");
+  await cancelRun(orgId, runId, actor.name ?? actor.kind);
+  await reconcileWake(runId);
+}
+
+export async function resumeSession(orgId: number, id: string, actor: Actor, org?: import("./auth.js").Org): Promise<SessionView> {
+  needOn();
+  const r = await read((q) => rowOf(q, orgId, id));
+  if (!permissions(r, actor).resume) throw denied(r, actor, "resume");
+  await tx(async (q) => systemMessage(q, r, `Resumed by ${actor.name ?? "someone"}.`));
+  await queueWake(orgId, id, "resume", actor, org);
+  return read(async (q) => view(await rowOf(q, orgId, id), actor, null));
+}
+
+/** Stop for good: a running wake finishes its turn and ends; anything else ends now. Read only afterwards. */
+export async function stopSession(orgId: number | null, id: string, actor: Actor): Promise<SessionView> {
+  needOn();
+  const r = await read((q) => rowOf(q, orgId, id));
+  if (!permissions(r, actor).stop) throw denied(r, actor, "stop");
+  const queued = await tx(async (q) => {
+    const x = await rowOf(q, orgId, id, true);
+    await systemMessage(q, x, `Stopped by ${actor.name ?? "someone"}.`, x.current_run_id);
+    if (!x.current_run_id) {
+      await endSession(q, x, "stopped", "stopped");
+      return null;
+    }
+    await q.query("UPDATE harness_sessions SET stop_requested_at = coalesce(stop_requested_at, now()), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+    await runEvent(q, x.current_run_id, x.org_id, "stop_requested", { by: actor.name });
+    const [run] = await q.query<{ status: string }>("SELECT status FROM runs WHERE id = $1 AND org_id = $2", [x.current_run_id, x.org_id]);
+    return run?.status === "queued" ? x.current_run_id : null;
+  });
+  if (queued) await withdraw(r.org_id, queued, actor);
+  return read(async (q) => view(await rowOf(q, orgId, id), actor, null));
+}
+
+async function endSession(q: Queryable, x: { id: string; org_id: number }, state: "stopped" | "failed", reason: string) {
+  const days = settingNumber("AGENT_RETENTION_DAYS");
+  await q.query(
+    `UPDATE harness_sessions SET state = $3, state_reason = $4, in_turn = false, current_run_id = NULL, ended_at = coalesce(ended_at, now()),
+            retention_until = coalesce(retention_until, now() + make_interval(days => $5)), pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now()
+      WHERE id = $1 AND org_id = $2`, [x.id, x.org_id, state, reason.slice(0, 500), days]);
+  await q.query("UPDATE harness_session_requests SET status = 'expired', decided_at = now(), reason = 'the session ended' WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [x.org_id, x.id]);
+}
+
+function denied(r: SessionRow, a: Actor, what: string) {
+  if (closed(r)) return new PackError(`This session has ended: it cannot ${what}`, 409);
+  const c = permissions(r, a) as Record<string, boolean>;
+  if (c[what] === false && !mineOf(r, a) && a.kind !== "staff") return new PackError(`Only the person who started this session${what === "resume" ? "" : ", an owner or staff"} can ${what} it`, 403);
+  return new PackError(`This session cannot ${what} now (it is ${phaseOf(r).replace("_", " ")})`, 409);
+}
+
+/**
+ * Approve or decline what the session asked for. Approve grants exactly that (a web host, a tool) to this session and
+ * wakes it on the same harness session; a budget request is approved by raising the budget (raiseBudget). Decline
+ * records the refusal and parks the session: its next wake is told.
+ */
+export async function decideRequest(orgId: number | null, sessionId: string, requestId: string, actor: Actor, decision: unknown, reason?: unknown, org?: import("./auth.js").Org): Promise<SessionDetail> {
+  needOn();
+  if (decision !== "approve" && decision !== "decline") throw new PackError("decision: approve or decline", 400);
+  if (!REQUEST_ID.test(String(requestId))) throw new PackError("no such request", 404);
+  const r = await read((q) => rowOf(q, orgId, sessionId));
+  if (!permissions(r, actor).decide && !(actor.kind === "staff")) throw new PackError("Only the person who started this session or an owner can decide what it asked for", 403);
+  const why = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
+  const wake = await tx(async (q) => {
+    const x = await rowOf(q, orgId, sessionId, true);
+    const [req] = await q.query<{ id: string; kind: RequestKind; subject: string; status: string; created_at: Date }>(
+      "SELECT id, kind, subject, status, created_at FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND id = $3 FOR UPDATE", [x.org_id, x.id, String(requestId)]);
+    if (!req) throw new PackError("no such request", 404);
+    if (req.status !== "pending") throw new PackError(`This request was already ${req.status}`, 409);
+    if (req.kind === "budget" && decision === "approve") throw new PackError("Approve a budget request with Raise budget (an amount and a reason)", 400);
+    if (decision === "approve" && actor.kind === "staff") throw new PackError("Staff may decline a request, not grant a session more than its workspace allows", 403);
+    if (decision === "decline") {
+      await q.query("UPDATE harness_session_requests SET status = 'declined', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
+      await systemMessage(q, x, `${actor.name ?? "Someone"} declined ${requestWords(req.kind, req.subject)}${why ? `: ${why}` : ""}.`);
+      // Its next wake (the person's next message) is told why the request went unanswered.
+      await q.query("UPDATE harness_sessions SET state = CASE WHEN state = 'awaiting' THEN 'parked' ELSE state END, state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2",
+        [x.id, x.org_id, `declined: ${requestWords(req.kind, req.subject)}`]);
+      return false;
+    }
+    const p = { ...x.policy, web: { ...x.policy.web, hosts: [...(x.policy.web?.hosts ?? [])] }, tools: [...(x.policy.tools ?? [])] };
+    if (req.kind === "web" && !hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
+    if (req.kind === "tool" && !p.tools.includes(req.subject)) p.tools.push(req.subject);
+    await q.query("UPDATE harness_session_requests SET status = 'approved', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND id = $2", [x.org_id, req.id, actor.name ?? actor.kind, why || null]);
+    await q.query("UPDATE harness_sessions SET policy = $3, state_reason = $4, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, JSON.stringify(p), `approved: ${requestWords(req.kind, req.subject)}`]);
+    await systemMessage(q, x, `${actor.name ?? "Someone"} approved ${requestWords(req.kind, req.subject)}.`);
+    return x.state === "awaiting" || x.state === "parked";
+  });
+  if (wake) await queueWake(r.org_id, sessionId, "approval", actor, org);
+  return readSession(orgId, sessionId, actor);
+}
+const requestWords = (kind: RequestKind, subject: string) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${subject}` : `more budget (at ${subject})`;
+
+/**
+ * Raise a session's budget, with a reason: up to its ceiling (never above the platform's own ceiling for one run), never
+ * while a wake runs (a running harness was told its allowance when it started). Recorded as its own grant; a session
+ * waiting on its budget is woken.
+ */
+export async function raiseBudget(orgId: number | null, id: string, actor: Actor, input: { to_usd?: unknown; by_usd?: unknown; reason?: unknown }, org?: import("./auth.js").Org): Promise<SessionDetail> {
+  needOn();
+  const r = await read((q) => rowOf(q, orgId, id));
+  const why = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (!why) throw new PackError("reason: say why this session needs more (it is kept with the raise)", 400);
+  const c = permissions(r, actor);
+  if (closed(r)) throw new PackError("This session has ended: its budget cannot be raised", 409);
+  if (["live", "starting", "waking"].includes(r.state)) throw new PackError("A budget cannot be raised while the session is working: pause it first, or wait until it stops at its budget", 409);
+  if (!c.raise) throw new PackError("Raising a budget needs the Billing manager or Owner role", 403);
+  const from = num(r.budget_usd);
+  const to = input.to_usd !== undefined ? Number(input.to_usd) : from + Number(input.by_usd);
+  if (!Number.isFinite(to) || to <= from) throw new PackError(`to_usd: more than the budget now ($${from.toFixed(2)})`, 400);
+  const ceiling = Math.min(ceilingOf(r.policy), await loadPlatformCeiling(r.org_id));
+  if (to > ceiling + 1e-9) throw new PackError(`A session's budget can be raised to at most $${ceiling.toFixed(2)}`, 400);
+  if (to - num(r.spent_usd) - num(r.reserve_usd) < 0.01) throw new PackError("That raise would leave this session nothing to spend: raise it further", 400);
+  const wake = await tx(async (q) => {
+    const x = await rowOf(q, orgId, id, true);
+    if (Math.abs(num(x.budget_usd) - from) > 1e-9) throw new PackError("The budget changed meanwhile: look again", 409);
+    await q.query("INSERT INTO harness_budget_grants (id, session_id, org_id, from_usd, to_usd, reason, granted_by) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [newId("hsg"), x.id, x.org_id, from, money(to), why.slice(0, 500), actor.name ?? actor.kind]);
+    await q.query("UPDATE harness_sessions SET budget_usd = $3, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, money(to)]);
+    const [req] = await q.query<{ id: string }>(
+      "UPDATE harness_session_requests SET status = 'approved', decided_by = $3, decided_at = now(), reason = $4 WHERE org_id = $1 AND session_id = $2 AND status = 'pending' AND kind = 'budget' RETURNING id",
+      [x.org_id, x.id, actor.name ?? actor.kind, why.slice(0, 500)]);
+    await systemMessage(q, x, `${actor.name ?? "Someone"} raised the budget from $${from.toFixed(2)} to $${to.toFixed(2)}: ${why.slice(0, 300)}`);
+    if (req) await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = 'budget raised' WHERE id = $1 AND org_id = $2 AND state = 'awaiting'", [x.id, x.org_id]);
+    return !!req;
+  });
+  if (wake) await queueWake(r.org_id, id, "raise", actor, org);
+  return readSession(orgId, id, actor);
+}
+
+// ---------------------------------------------------------------- the wake's side (the runner, with the run's lease)
+
+interface WakeRun { id: string; org_id: number; status: string; session: SessionRow }
+async function wakeOf(q: Queryable, runId: string, leaseToken: string, lock = false): Promise<WakeRun> {
+  // The run's lease, checked on this query's own connection (as src/runs.ts leased does): only its current attempt's holder.
+  const [run] = await q.query<{ id: string; org_id: number; harness_session_id: string | null }>(
+    "/* tenant: the leased run, by id and its lease */ SELECT id, org_id, harness_session_id FROM runs WHERE id = $1 AND lease_token_hash = $2 AND status = 'running'",
+    [String(runId), createHash("sha256").update(String(leaseToken)).digest("hex")]);
+  if (!run) { const { RunLeaseError } = await import("./runs.js"); throw new RunLeaseError(); }
+  const x = run;
+  if (!x?.harness_session_id) throw new PackError("this run is not an agent session's wake", 400);
+  const s = await rowOf(q, run.org_id, x.harness_session_id, lock);
+  if (s.current_run_id !== run.id) throw new PackError("this wake is no longer its session's", 409);
+  return { id: run.id, org_id: run.org_id, status: "running", session: s };
+}
+
+export interface WakeStart {
+  session_id: string; title: string; policy: AgentPolicy; resume: string | null; checkpoint: Pick<Checkpoint, "seq" | "sha256" | "bytes"> | null;
+  /** What the session was charged for its harness's reports before this wake (the baseline's other half). */
+  charged_usd: number; budget_usd: number;
+  /** The wake's first turn: the person's messages waiting (each with the uuid the harness echoes), or the on_resume text. */
+  first: { id: number; uuid: string; text: string }[]; preface: string | null; web_calls: number;
+}
+
+/** The wake started: what it is told (its policy, the session to resume, the first turn), its messages marked delivered. */
+export async function wakeStart(runId: string, leaseToken: string): Promise<WakeStart> {
+  return tx(async (q) => {
+    const w = await wakeOf(q, runId, leaseToken, true);
+    const s = w.session;
+    const msgs = await q.query<{ id: string; body: string }>(
+      "SELECT id, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') ORDER BY id LIMIT 50", [s.org_id, s.id]);
+    const first = [];
+    for (const m of msgs) {
+      const uuid = randomUUID();
+      await q.query("UPDATE harness_session_messages SET status = 'delivered', uuid = $3, run_id = $4, delivered_at = now() WHERE org_id = $1 AND id = $2", [s.org_id, m.id, uuid, w.id]);
+      first.push({ id: Number(m.id), uuid, text: m.body });
+    }
+    // Why it talks again, when the person did not say (a resume, an approval, a crash): the on_resume hook and the reason.
+    const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed)/.test(s.state_reason) ? `(${s.state_reason})` : null;
+    const resumeHook = s.policy.hooks?.find((h) => h.event === "on_resume")?.text ?? null;
+    const preface = s.wakes > 1 ? [why, first.length ? null : resumeHook].filter(Boolean).join(" ") || null : null;
+    const [charged] = await q.query<{ c: string }>("SELECT coalesce(sum(charged_usd), 0) AS c FROM harness_wake_spend WHERE org_id = $1 AND session_id = $2 AND run_id <> $3", [s.org_id, s.id, w.id]);
+    const [run] = await q.query<{ budget_usd: string }>("SELECT budget_usd FROM runs WHERE id = $1 AND org_id = $2", [w.id, s.org_id]);
+    await q.query("UPDATE harness_sessions SET state = 'live', in_turn = true, last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]);
+    await runEvent(q, w.id, s.org_id, "agent_wake", { session: s.id, resume: !!s.harness_session, messages: first.length, checkpoint: s.checkpoint?.seq ?? null });
+    return { session_id: s.id, title: s.title, policy: s.policy, resume: s.harness_session, checkpoint: s.checkpoint ? { seq: s.checkpoint.seq, sha256: s.checkpoint.sha256, bytes: s.checkpoint.bytes } : null,
+      charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls };
+  });
+}
+
+export interface BeatInput {
+  in_turn?: boolean; total_cost_usd?: number | null; baseline_usd?: number | null; session_id?: string | null; web_calls?: number;
+  /** Messages the harness was handed but could not write (its stdin was gone): carried to the next wake. */
+  discarded?: number[];
+}
+export interface BeatAnswer { cancel: boolean; reason: string | null; steer: { id: number; uuid: string; text: string }[]; pause: boolean; end: boolean; budget: boolean; interval_seconds: number }
+
+/** A wake's heartbeat: its lease renewed, its spend accrued, and the person's messages, pause and end handed over. */
+export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput): Promise<BeatAnswer> {
+  const { heartbeatRun } = await import("./runs.js");
+  const hb = await heartbeatRun(runId, leaseToken);
+  return tx(async (q) => {
+    const w = await wakeOf(q, runId, leaseToken, true);
+    const s = w.session;
+    // The spend: the harness's cumulative report, over this wake's high-water mark, from its baseline (set once).
+    const [ws] = await q.query<{ baseline_usd: string; reported_usd: string; charged_usd: string }>(
+      `INSERT INTO harness_wake_spend (run_id, session_id, org_id, baseline_usd) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (run_id) DO UPDATE SET updated_at = now() RETURNING baseline_usd, reported_usd, charged_usd`, [w.id, s.id, s.org_id, Math.max(0, Number(b.baseline_usd ?? 0)) || 0]);
+    let baseline = num(ws!.baseline_usd);
+    if (baseline === 0 && Number(b.baseline_usd) > 0) {
+      baseline = Number(b.baseline_usd);
+      await q.query("UPDATE harness_wake_spend SET baseline_usd = $3 WHERE run_id = $1 AND org_id = $2 AND baseline_usd = 0 AND reported_usd = 0", [w.id, s.org_id, baseline]);
+    }
+    if (typeof b.total_cost_usd === "number") {
+      const a = accrueSpend(num(ws!.reported_usd), baseline, b.total_cost_usd);
+      if (a.charge > 0) await q.query("UPDATE harness_wake_spend SET reported_usd = $3, charged_usd = charged_usd + $4, updated_at = now() WHERE run_id = $1 AND org_id = $2",
+        [w.id, s.org_id, a.high, a.charge]);
+    }
+    const spent = await recomputeSpend(q, s.id, s.org_id);
+    for (const id of (b.discarded ?? []).filter((x) => Number.isSafeInteger(x)).slice(0, 100))
+      await q.query("UPDATE harness_session_messages SET status = 'discarded' WHERE org_id = $1 AND session_id = $2 AND id = $3 AND status = 'delivered'", [s.org_id, s.id, id]);
+    const sid = typeof b.session_id === "string" && /^[A-Za-z0-9._:-]{1,120}$/.test(b.session_id) ? b.session_id : null;
+    await q.query(
+      `UPDATE harness_sessions SET in_turn = $3, harness_session = coalesce($4, harness_session), web_calls = GREATEST(web_calls, $5),
+              last_activity_at = CASE WHEN $3 THEN now() ELSE last_activity_at END, updated_at = now() WHERE id = $1 AND org_id = $2`,
+      [s.id, s.org_id, b.in_turn === true, sid, Math.max(0, Math.trunc(Number(b.web_calls ?? 0)) || 0)]);
+    // The person's messages waiting, handed over now (a flavour with no live stdin gets none: they wait for its next wake).
+    const steer: BeatAnswer["steer"] = [];
+    if (flavourOf(s.flavour)?.holds_stdin_open !== false && !s.pause_requested_at && !s.stop_requested_at) {
+      const msgs = await q.query<{ id: string; body: string }>(
+        "SELECT id, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' ORDER BY id LIMIT 20", [s.org_id, s.id]);
+      for (const m of msgs) {
+        const uuid = randomUUID();
+        await q.query("UPDATE harness_session_messages SET status = 'delivered', uuid = $3, run_id = $4, delivered_at = now() WHERE org_id = $1 AND id = $2", [s.org_id, m.id, uuid, w.id]);
+        steer.push({ id: Number(m.id), uuid, text: m.body });
+      }
+      if (steer.length) await runEvent(q, w.id, s.org_id, "steer_delivered", { count: steer.length });
+    }
+    const pending = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' LIMIT 1", [s.org_id, s.id]);
+    return { cancel: hb.cancel, reason: hb.reason, steer, pause: !!s.pause_requested_at, end: !!s.stop_requested_at, budget: spent >= num(s.budget_usd) - 1e-9,
+      // Quicker while a person is talking to it, so a message arrives in seconds.
+      interval_seconds: pending.length || b.in_turn ? 3 : 10 };
+  });
+}
+
+/** One finished turn of the agent: its words for the person; the messages it answered are marked so. */
+export async function wakeTurn(runId: string, leaseToken: string, t: { text?: unknown; cost_usd?: unknown; answered?: unknown }): Promise<{ id: number }> {
+  const body = typeof t.text === "string" ? t.text.slice(0, MAX_MESSAGE_CHARS) : "";
+  return tx(async (q) => {
+    const w = await wakeOf(q, runId, leaseToken, true);
+    const s = w.session;
+    const [m] = await q.query<{ id: string }>("INSERT INTO harness_session_messages (session_id, org_id, role, body, run_id, cost_usd) VALUES ($1, $2, 'agent', $3, $4, $5) RETURNING id",
+      [s.id, s.org_id, body || "(no words: the agent only worked with its tools this turn)", w.id, Number.isFinite(Number(t.cost_usd)) ? Number(t.cost_usd) : null]);
+    // The messages the harness saw the CLI take in (echoed) are answered by this turn; without echoes, every one delivered before it.
+    const ids = Array.isArray(t.answered) ? (t.answered as unknown[]).filter((x): x is number => Number.isSafeInteger(x)).slice(0, 100) : null;
+    if (ids) await q.query("UPDATE harness_session_messages SET status = 'answered' WHERE org_id = $1 AND session_id = $2 AND status = 'delivered' AND id = ANY ($3::bigint[])", [s.org_id, s.id, ids]);
+    else await q.query("UPDATE harness_session_messages SET status = 'answered' WHERE org_id = $1 AND session_id = $2 AND status = 'delivered' AND id < $3", [s.org_id, s.id, m!.id]);
+    await q.query("UPDATE harness_sessions SET in_turn = false, last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]);
+    return { id: Number(m!.id) };
+  });
+}
+
+/** The agent asked for something its policy does not allow (a web host, a tool): a pending request; the wake then stops. */
+export async function wakeRequest(runId: string, leaseToken: string, r: { kind?: unknown; subject?: unknown; detail?: unknown }): Promise<{ id: string }> {
+  const kind = r.kind;
+  if (kind !== "web" && kind !== "tool") throw new PackError("kind: web or tool", 400);
+  const subject = typeof r.subject === "string" ? r.subject.trim().toLowerCase().slice(0, 200) : "";
+  if (kind === "web" && !validHost(subject)) throw new PackError("subject: a host name", 400);
+  if (kind === "tool" && !/^[a-z][a-z0-9_.:-]{0,99}$/i.test(String(r.subject ?? ""))) throw new PackError("subject: a tool name", 400);
+  const raw = r.detail && typeof r.detail === "object" && !Array.isArray(r.detail) ? JSON.stringify(r.detail) : "{}";
+  const detail = raw.length <= 4000 ? JSON.parse(raw) : { note: "the request's details were too long to keep" };
+  return tx(async (q) => {
+    const w = await wakeOf(q, runId, leaseToken, true);
+    const s = w.session;
+    const [p] = await q.query<{ id: string }>("SELECT id FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [s.org_id, s.id]);
+    if (p) return { id: p.id };
+    const id = newId("hsr");
+    await q.query("INSERT INTO harness_session_requests (id, session_id, org_id, run_id, kind, subject, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [id, s.id, s.org_id, w.id, kind, kind === "tool" ? String(r.subject).trim() : subject, JSON.stringify(detail)]);
+    await systemMessage(q, s, `The agent asks to ${kind === "web" ? `reach ${subject}` : `use ${String(r.subject).trim()}`}.`, w.id);
+    await runEvent(q, w.id, s.org_id, "agent_request", { kind, subject: kind === "tool" ? String(r.subject).trim() : subject });
+    return { id };
+  });
+}
+
+/** How the wake ends, as the harness saw it (before it completes its run): the session's next state. */
+export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: unknown; detail?: unknown }): Promise<{ state: HarnessState }> {
+  const reasons: EndReason[] = ["parked", "paused", "awaiting", "budget", "stopped", "done", "web_limit", "failed"];
+  const reason = reasons.includes(e.reason as EndReason) ? (e.reason as EndReason) : "failed";
+  const detail = typeof e.detail === "string" ? e.detail.slice(0, 300) : null;
+  return tx(async (q) => {
+    const w = await wakeOf(q, runId, leaseToken, true);
+    const s = w.session;
+    await q.query("UPDATE harness_wake_spend SET end_reason = $3, updated_at = now() WHERE run_id = $1 AND org_id = $2", [w.id, s.org_id, detail ? `${reason}: ${detail}` : reason]);
+    await runEvent(q, w.id, s.org_id, "agent_end", { reason, detail });
+    let state: HarnessState = s.state;
+    if (reason === "budget") { await ensureBudgetRequest(q, s, "the session reached its budget", w.id); state = "awaiting"; }
+    else if (reason === "awaiting") state = (await pendingOf(q, s)) ? "awaiting" : "parked";
+    else if (reason === "parked" || reason === "web_limit") state = "parked";
+    else if (reason === "paused") state = "paused";
+    else if (reason === "stopped" || reason === "done") state = "stopped";
+    if (state !== s.state) await q.query("UPDATE harness_sessions SET state = $3, state_reason = $4, in_turn = false, updated_at = now() WHERE id = $1 AND org_id = $2",
+      [s.id, s.org_id, state, reason === "web_limit" ? "web calls used up" : detail ?? reason]);
+    return { state };
+  });
+}
+
+/** The hosts a wake's egress allows besides the gateway: its session's web hosts, when its web tools are on (src/runs.ts claimRun). */
+export async function wakeEgressHosts(runId: string): Promise<string[]> {
+  const [r] = await read((q) => q.query<{ policy: AgentPolicy }>(
+    "/* tenant: the claimed run's own session, by run id */ SELECT s.policy FROM runs r JOIN harness_sessions s ON s.id = r.harness_session_id AND s.org_id = r.org_id WHERE r.id = $1", [runId]));
+  if (!r || (r.policy?.web?.tools ?? "off") === "off") return [];
+  return (r.policy.web.hosts ?? []).map((h) => h.replace(/^\*\./, "")).filter(validHost);
+}
+
+// ---------------------------------------------------------------- checkpoints
+
+const checkpointKey = (orgId: number, sessionId: string, seq: number) => `workspaces/org-${orgId}/.agent/${sessionId}/${seq}.wse`;
+const aad = (sessionId: string, seq: number) => `harness-checkpoint:${sessionId}:${seq}`;
+
+/** A wake's checkpoint (its harness session and working files, a workspace bundle): sealed, stored, the pointer moved forward. */
+export async function wakeCheckpoint(runId: string, leaseToken: string, seq: number, body: Buffer, sha256: string): Promise<{ seq: number; stored: boolean }> {
+  if (!Number.isSafeInteger(seq) || seq < 1) throw new PackError("seq: a positive whole number", 400);
+  if (createHash("sha256").update(body).digest("hex") !== sha256) throw new PackError("the checkpoint is not what its sha256 says", 400);
+  const s = await read(async (q) => (await wakeOf(q, runId, leaseToken)).session);
+  if (seq <= s.checkpoint_seq) return { seq: s.checkpoint_seq, stored: false }; // a redelivery: the pointer only moves forward
+  const { objectStore } = await import("./storage.js");
+  const { sealBytes } = await import("./orgcrypto.js");
+  const store = await objectStore();
+  const key = checkpointKey(s.org_id, s.id, seq);
+  await store.put(key, await sealBytes(s.org_id, body, aad(s.id, seq)), "application/octet-stream");
+  const old = await tx(async (q) => {
+    const x = (await wakeOf(q, runId, leaseToken, true)).session;
+    if (seq <= x.checkpoint_seq) return key; // another checkpoint got there first: this one goes
+    const cp: Checkpoint = { seq, key, sha256, bytes: body.length, at: new Date().toISOString(), run_id: runId };
+    await q.query("UPDATE harness_sessions SET checkpoint = $3, checkpoint_seq = $4, updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id, JSON.stringify(cp), seq]);
+    await runEvent(q, runId, x.org_id, "agent_checkpoint", { seq, bytes: body.length });
+    return x.checkpoint?.key ?? null;
+  });
+  if (old) await store.remove([old]).catch(() => {});
+  return { seq, stored: true };
+}
+
+/** The session's last checkpoint for a wake to continue from (null: none). */
+export async function wakeCheckpointBody(runId: string, leaseToken: string): Promise<{ body: Buffer; seq: number; sha256: string } | null> {
+  const s = await read(async (q) => (await wakeOf(q, runId, leaseToken)).session);
+  if (!s.checkpoint) return null;
+  const { objectStore } = await import("./storage.js");
+  const { openBytes } = await import("./orgcrypto.js");
+  const sealed = await (await objectStore()).get(s.checkpoint.key);
+  if (!sealed) return null;
+  const body = await openBytes(s.org_id, sealed, aad(s.id, s.checkpoint.seq));
+  if (createHash("sha256").update(body).digest("hex") !== s.checkpoint.sha256) throw new PackError("the session's checkpoint does not match its sha256", 500);
+  return { body, seq: s.checkpoint.seq, sha256: s.checkpoint.sha256 };
+}
+
+// ---------------------------------------------------------------- after a wake's run ends
+
+/**
+ * A wake's run ended (completed, failed, cancelled, or its lease lapsed): the session settles. What the harness said
+ * (wakeEnd) stands; a wake that ended without saying is a crash: the session parks with its last checkpoint, its
+ * unanswered messages pending again, and resumes on the next message (or by itself, AGENT_AUTO_RESUME) within its
+ * crash limits. Idempotent: called from completeRun, sweepRuns and the sweep.
+ */
+export async function reconcileWake(runId: string): Promise<void> {
+  if (!agentHarnessOn()) return;
+  const auto = await tx(async (q) => {
+    const [run] = await q.query<{ id: string; org_id: number; status: string; error_kind: string | null; error: string | null; harness_session_id: string | null;
+      started_at: Date | null; heartbeat_at: Date | null; ended_at: Date | null }>(
+      "/* tenant: the ended run, by id */ SELECT id, org_id, status, error_kind, error, harness_session_id, started_at, heartbeat_at, ended_at FROM runs WHERE id = $1", [runId]);
+    if (!run?.harness_session_id || !["succeeded", "failed", "cancelled"].includes(run.status)) return null;
+    const s = await rowOf(q, run.org_id, run.harness_session_id, true);
+    const spent = await recomputeSpend(q, s.id, s.org_id);
+    if (s.current_run_id !== run.id) return null;
+    const [w] = await q.query<{ end_reason: string | null; charged_usd: string }>("SELECT end_reason, charged_usd FROM harness_wake_spend WHERE run_id = $1 AND org_id = $2", [run.id, s.org_id]);
+    const said = w?.end_reason?.split(":")[0] as EndReason | undefined;
+    const clear = "current_run_id = NULL, in_turn = false, pause_requested_at = NULL, updated_at = now()";
+    if (s.stop_requested_at || said === "stopped" || said === "done") { await endSession(q, s, "stopped", said === "done" ? "done" : "stopped"); return null; }
+    // What arrived while the wake was ending wakes it again: a message (a parked session), or a decision made meanwhile.
+    const next = async (state: HarnessState) => {
+      if (state === "parked") {
+        const waiting = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') LIMIT 1", [s.org_id, s.id]);
+        if (waiting.length) return { org: s.org_id, id: s.id, reason: "message" as const };
+        if (/^(approved|budget raised)/.test(s.state_reason ?? "") && !(await pendingOf(q, s))) return { org: s.org_id, id: s.id, reason: "approval" as const };
+      }
+      return null;
+    };
+    if (run.status === "cancelled") {
+      const state: HarnessState = s.pause_requested_at ? "paused" : "parked";
+      await q.query(`UPDATE harness_sessions SET state = $3, state_reason = $4, ${clear} WHERE id = $1 AND org_id = $2`, [s.id, s.org_id, state, s.pause_requested_at ? "paused" : "withdrawn"]);
+      return null;
+    }
+    if (said && said !== "failed") {
+      // The harness settled it (parked, paused, awaiting, budget): a clean wake ends a crash streak.
+      let state: HarnessState = s.pause_requested_at && said !== "awaiting" && said !== "budget" ? "paused"
+        : s.state === "live" || s.state === "waking" || s.state === "starting" ? "parked" : s.state;
+      // Awaiting a request decided while the wake was still ending: parked, and woken if it was approved.
+      if (state === "awaiting" && !(await pendingOf(q, s))) state = "parked";
+      await q.query(`UPDATE harness_sessions SET state = $3, crashes = 0, ${clear} WHERE id = $1 AND org_id = $2`, [s.id, s.org_id, state]);
+      return next(state);
+    }
+    // A crash: the wake ended without saying how (its runner stopped heartbeating, its deadline, the harness failed).
+    const wakeSpent = Math.max(num(w?.charged_usd), await (async () => {
+      const [g] = await q.query<{ c: string }>("/* tenant: the ended run's usage, by run id */ SELECT coalesce(sum(cost_usd), 0) AS c FROM gateway_usage WHERE run_id = $1", [run.id]);
+      return num(g?.c);
+    })());
+    const active = run.started_at && run.heartbeat_at ? (new Date(run.heartbeat_at).getTime() - new Date(run.started_at).getTime()) / 1000 : 0;
+    const silent = run.heartbeat_at && run.ended_at ? (new Date(run.ended_at).getTime() - new Date(run.heartbeat_at).getTime()) / 1000 : 0;
+    const left = Math.max(0, num(s.budget_usd) - spent - num(s.reserve_usd));
+    const reserve = run.error_kind === "infrastructure" ? crashReserve(wakeSpent, active, silent, left) : 0;
+    const crashes = s.crashes + 1;
+    // What the dead wake was handed and never answered is asked again by the next.
+    const carried = await q.query("UPDATE harness_session_messages SET status = 'pending' WHERE org_id = $1 AND session_id = $2 AND run_id = $3 AND status IN ('delivered', 'discarded') RETURNING id", [s.org_id, s.id, run.id]);
+    const why = `the wake stopped unexpectedly (${run.error_kind ?? "error"}${run.error ? `: ${run.error.slice(0, 160)}` : ""})`;
+    await runEvent(q, run.id, s.org_id, "agent_crashed", { crashes, reserve_usd: reserve, wake_spent_usd: money(wakeSpent), carried: carried.length, checkpoint: s.checkpoint?.seq ?? null });
+    if (crashes > (s.policy.crash_resumes ?? 3)) {
+      await endSession(q, s, "failed", `crashed ${crashes} times in a row: ${why}`);
+      await systemMessage(q, s, `The session failed: ${why}, ${crashes} times in a row.`, run.id);
+      return null;
+    }
+    await q.query(`UPDATE harness_sessions SET state = 'parked', state_reason = $3, crashes = $4, crash_spent_usd = crash_spent_usd + $5, reserve_usd = reserve_usd + $6, ${clear}
+                    WHERE id = $1 AND org_id = $2`, [s.id, s.org_id, `crashed: ${why}`, crashes, money(wakeSpent), reserve]);
+    await systemMessage(q, s, `The session stopped unexpectedly: ${why}. ${s.policy.auto_resume ? "It continues by itself where its last checkpoint left it." : "Send a message to continue where its last checkpoint left it."}`, run.id);
+    const crashSpent = num(s.crash_spent_usd) + wakeSpent;
+    // Automatic resume: the platform's switch, a session with something to resume, and crashes under half its budget.
+    if (s.policy.auto_resume && (s.harness_session || s.checkpoint) && crashSpent < num(s.budget_usd) / 2) return { org: s.org_id, id: s.id, reason: "auto_resume" as const };
+    return null;
+  });
+  if (auto) {
+    if (auto.reason === "auto_resume") {
+      // Spending a workspace's budget without anyone asking is never quiet: the staff console's audit log says so.
+      const { log } = await import("./admin.js");
+      log("system", "agent.auto_resume", null, { session: auto.id, org: auto.org });
+    }
+    await queueWake(auto.org, auto.id, auto.reason, { kind: "system", user: null, name: "the platform", role: null }).catch((e) =>
+      console.error(`agent session ${auto.id}: ${auto.reason === "auto_resume" ? "automatic resume" : "wake"} refused: ${(e as Error).message}`));
+  }
+}
+
+// ---------------------------------------------------------------- the sweep (src/schedules.ts schedulerTick)
+
+export interface HarnessSweep { expired: number; archived: number; pruned: number; settled: number }
+/** Requests past their window expire, quiet sessions are archived, ended ones past retention are pruned; bounded batches. */
+export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSweep> {
+  if (!agentHarnessOn()) return { expired: 0, archived: 0, pruned: 0, settled: 0 };
+  const out: HarnessSweep = { expired: 0, archived: 0, pruned: 0, settled: 0 };
+  // 1. Wakes whose run ended and nothing settled the session (a run failed before it was launched, a lost completion).
+  const loose = await read((q) => q.query<{ current_run_id: string }>(
+    `/* tenant: platform sweep across workspaces, by run id */ SELECT s.current_run_id FROM harness_sessions s JOIN runs r ON r.id = s.current_run_id AND r.org_id = s.org_id
+      WHERE r.status IN ('succeeded', 'failed', 'cancelled') LIMIT 200`));
+  for (const l of loose) { await reconcileWake(l.current_run_id); out.settled++; }
+  // 2. Requests nobody answered within the session's window: expired, the session parked with that said.
+  out.expired = await tx(async (q) => {
+    const rows = await q.query<{ id: string; session_id: string; org_id: number; kind: RequestKind; subject: string }>(
+      `/* tenant: platform sweep across workspaces */ UPDATE harness_session_requests x SET status = 'expired', decided_at = $1, reason = 'nobody answered in time'
+        FROM harness_sessions s WHERE x.session_id = s.id AND x.org_id = s.org_id AND x.status = 'pending'
+          AND x.created_at < $1::timestamptz - make_interval(hours => coalesce((s.policy->>'approval_window_hours')::int, 24))
+        RETURNING x.id, x.session_id, x.org_id, x.kind, x.subject`, [now]);
+    for (const r of rows) {
+      await q.query("UPDATE harness_sessions SET state = 'parked', state_reason = $3, updated_at = now() WHERE id = $1 AND org_id = $2 AND state = 'awaiting'",
+        [r.session_id, r.org_id, `expired: ${requestWords(r.kind, r.subject)}`]);
+      await systemMessage(q, { id: r.session_id, org_id: r.org_id }, `Nobody answered the request for ${requestWords(r.kind, r.subject)} in time: it expired.`);
+    }
+    return rows.length;
+  });
+  // 3. Sessions quiet for AGENT_ARCHIVE_AFTER_DAYS: archived (read only), retention counted from now.
+  out.archived = await tx(async (q) => (await q.query(
+    `/* tenant: platform sweep across workspaces */ UPDATE harness_sessions SET archived_at = $1, retention_until = coalesce(retention_until, $1::timestamptz + make_interval(days => $3)), updated_at = now()
+      WHERE id IN (SELECT id FROM harness_sessions WHERE archived_at IS NULL AND current_run_id IS NULL AND state IN ('parked', 'paused', 'awaiting', 'stopped', 'failed')
+                     AND last_activity_at < $1::timestamptz - make_interval(days => $2) ORDER BY last_activity_at LIMIT 200 FOR UPDATE SKIP LOCKED) RETURNING id`,
+    [now, settingNumber("AGENT_ARCHIVE_AFTER_DAYS"), settingNumber("AGENT_RETENTION_DAYS")])).length);
+  // 4. Past retention: the conversation, its requests and checkpoint go; its spend, wakes and budget raises stay.
+  const due = await read((q) => q.query<{ id: string; org_id: number; checkpoint: Checkpoint | null }>(
+    `/* tenant: platform sweep across workspaces */ SELECT id, org_id, checkpoint FROM harness_sessions WHERE pruned_at IS NULL AND retention_until < $1 AND current_run_id IS NULL
+      ORDER BY retention_until LIMIT 100`, [now]));
+  if (due.length) {
+    const keys: string[] = [];
+    for (const d of due) await tx(async (q) => {
+      await q.query("DELETE FROM harness_session_messages WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
+      await q.query("DELETE FROM harness_session_requests WHERE org_id = $1 AND session_id = $2", [d.org_id, d.id]);
+      await q.query("UPDATE harness_sessions SET pruned_at = $3, checkpoint = NULL, harness_session = NULL, archived_at = coalesce(archived_at, $3), updated_at = now() WHERE id = $1 AND org_id = $2",
+        [d.id, d.org_id, now]);
+      if (d.checkpoint?.key) keys.push(d.checkpoint.key);
+      out.pruned++;
+    });
+    if (keys.length) await (await import("./storage.js")).objectStore().then((st) => st.remove(keys)).catch((e) => console.error(`agent sessions: checkpoints not removed: ${(e as Error).message}`));
+  }
+  return out;
+}
+
+/** The actor of a customer request: the signed-in person (with their role), or an account key. */
+export function actorOf(s: { user: string | null; email: string | null; accountRole: AccountRole | null } | null, key = false): Actor {
+  if (!s || key || !s.user) return { kind: "key", user: null, name: s?.email ?? "an account key", role: null };
+  return { kind: "person", user: s.user, name: s.email, role: s.accountRole };
+}
+export const staffActor = (who: string): Actor => ({ kind: "staff", user: null, name: who, role: null });

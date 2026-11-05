@@ -25,6 +25,7 @@
  * one-minute loop on a server (startScheduler, src/http.ts; APP_SCHEDULER=off turns it off). Every time here is
  * the `now` handed in, so a test drives the clock. With no job kind and no due area nothing is read or written.
  */
+import { agentHarnessOn } from "./agent-harness-config.js";
 import { CronError, countBetween, latestAtOrBefore, nextAfter, parseCron } from "./cron.js";
 import { getDb } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
@@ -569,7 +570,8 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 
 // ---------- both, from the cron entry and the server's loop ----------
 
-export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; encryption?: EncryptionReport | { error: string }; retention?: RetentionReport | { error: string }; ledger?: LedgerTick | { error: string } }> {
+export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; clocks?: ClockReport | { error: string }; encryption?: EncryptionReport | { error: string }; retention?: RetentionReport | { error: string }; ledger?: LedgerTick | { error: string };
+  agent?: import("./harness-sessions.js").HarnessSweep | { error: string } }> {
   // Each step's run is kept for the staff console's Health › Scheduled work (mold_v0-204, src/scheduler-jobs.ts), only
   // for the steps this build has: with no job kind and no due area nothing is written there either.
   const keep = schedulesWired() || dueAreas().length > 0;
@@ -582,10 +584,13 @@ export async function schedulerTick(now = clock()): Promise<{ schedules: TickRep
   const ledger = signOn() ? { ledger: await tracked("ledger_checkpoints", () => checkpointTick(now)).catch(err) } : {};
   // Encrypted fields (mold_v0-194, src/encrypted-fields-migration.ts): rows written before a field was encrypted, a batch a tick.
   const encryption = encryptedAreas().length ? { encryption: await tracked("encrypted_fields", () => encryptFieldsTick()).catch(err) } : {};
+  // The workspace agent's sessions (mold_v0-243, src/harness-sessions.ts): requests past their window, quiet sessions
+  // archived, ended ones past retention pruned, wakes nothing settled. Only with its flag on.
+  const agent = agentHarnessOn() ? { agent: await tracked("harness_sessions", async () => (await import("./harness-sessions.js")).sweepHarnessSessions(now)).catch(err) } : {};
   // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
-  if (!retentionWired()) return { schedules, due, ...clocks, ...ledger, ...encryption };
+  if (!retentionWired()) return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent };
   const retention = await tracked("workspace_retention", () => retentionSweep(now)).catch(err);
-  return { schedules, due, ...clocks, ...ledger, ...encryption, retention };
+  return { schedules, due, ...clocks, ...ledger, ...encryption, ...agent, retention };
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -593,7 +598,7 @@ let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
   if (timer || (ENV.APP_SCHEDULER ?? "on").toLowerCase() === "off") return false;
-  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired() && !signOn() && !encryptedAreas().length) return false;
+  if (!schedulesWired() && !dueAreas().length && !clockAreas().length && !retentionWired() && !signOn() && !encryptedAreas().length && !agentHarnessOn()) return false;
   const run = () => {
     if (busy) return;
     busy = true;

@@ -46,6 +46,7 @@ import { reserveAdminTools } from "./packs.js";
 import type { AdminShellToolName, SameNames } from "./shell-tools.js";
 import { labelledAnswers } from "./access-request.js";
 import { auditAdminTools, auditStaff, withAuditActor } from "./audit-trail.js";
+import { agentAdminTools } from "./agent-tools.js";
 import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 
 /** update_setting's example key: a shell setting, or in a build with the session engine (a host pack's tables) the
@@ -299,6 +300,8 @@ export function adminTools(): Record<string, AdminTool> {
   }
   // The audit trails' reads (mold_v0-197, src/audit-trail.ts): only when a trail is on, after the shell's reads.
   for (const [name, t] of Object.entries(auditAdminTools())) out.push([name, t]);
+  // The workspace agent's (mold_v0-243, src/agent-tools.ts): only with its flag on.
+  for (const [name, t] of Object.entries(agentAdminTools())) out.push([name, t as AdminTool]);
   for (const h of hosts()) for (const [name, t] of Object.entries(h.adminMcp?.tools ?? {})) {
     if (out.some(([n]) => n === name)) throw new Error(`host pack ${h.id}: admin tool ${name} is already the shell's`);
     let lastRead = -1;

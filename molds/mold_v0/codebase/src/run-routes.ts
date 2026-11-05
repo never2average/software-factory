@@ -22,6 +22,15 @@
  *   POST /:id/complete        also {upload}: an uploaded completion
  *   GET  /:id/credentials     the workspace credentials the run receives (mold_v0-034; src/credentials.ts):
  *                             {credentials: [{name, env | file, value}], missing: [name]}. Never cached, never logged.
+ *
+ * The workspace agent's wakes (mold_v0-243, src/harness-sessions.ts; only while its flag is on, else not found):
+ *   POST /:id/agent/start     -> its session's policy, the harness session to resume, the first turn
+ *   POST /:id/agent/beat      {in_turn, total_cost_usd, baseline_usd?, session_id, web_calls, discarded} -> the lease
+ *                             renewed and {cancel, steer: [{id, uuid, text}], pause, end, budget, interval_seconds}
+ *   POST /:id/agent/turn      {text, cost_usd, consumed} an answer of the agent's
+ *   POST /:id/agent/request   {kind: web | tool, subject, detail} what it asks for that its policy does not allow
+ *   POST /:id/agent/end       {reason, detail} how the wake ended, before it completes
+ *   PUT  /:id/agent/checkpoint?seq=&sha256=  a bundle of its state (sealed and kept by the API); GET: the last one (204: none)
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
@@ -30,6 +39,7 @@ import { claimForSandbox, sandboxDone } from "./run-sandboxes.js";
 import { assertWriteBackLease, checkoutBundle, stageBundle, stageUpload } from "./workspace-store.js";
 import { createDownload, createUpload, inlineMaxBytes, maxBundleBytes, takeUpload, tooLarge } from "./run-transfers.js";
 import type { WorkerAuth } from "./workerauth.js";
+import { agentHarnessOn } from "./agent-harness-config.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -100,6 +110,24 @@ export function runWorkerRouter(): Router {
     res.end(out.bundle);
   }));
   r.get("/:id/credentials", answer((req) => runCredentialsForLease(String(req.params.id), leaseOf(req))));
+  if (agentHarnessOn()) {
+    const h = () => import("./harness-sessions.js");
+    r.post("/:id/agent/start", answer(async (req) => (await h()).wakeStart(String(req.params.id), leaseOf(req))));
+    r.post("/:id/agent/beat", answer(async (req) => (await h()).wakeBeat(String(req.params.id), leaseOf(req), req.body ?? {})));
+    r.post("/:id/agent/turn", answer(async (req) => (await h()).wakeTurn(String(req.params.id), leaseOf(req), req.body ?? {})));
+    r.post("/:id/agent/request", answer(async (req) => (await h()).wakeRequest(String(req.params.id), leaseOf(req), req.body ?? {})));
+    r.post("/:id/agent/end", answer(async (req) => (await h()).wakeEnd(String(req.params.id), leaseOf(req), req.body ?? {})));
+    r.put("/:id/agent/checkpoint", express.raw({ type: "application/octet-stream", limit: inlineMaxBytes() }), answer(async (req) => {
+      if (!Buffer.isBuffer(req.body)) throw new PackError("send the checkpoint as application/octet-stream", 400);
+      return (await h()).wakeCheckpoint(String(req.params.id), leaseOf(req), Number(req.query.seq), req.body, String(req.query.sha256 ?? ""));
+    }));
+    r.get("/:id/agent/checkpoint", answer(async (req, res) => {
+      const cp = await (await h()).wakeCheckpointBody(String(req.params.id), leaseOf(req));
+      if (!cp) return void res.status(204).end();
+      res.set({ "content-type": "application/octet-stream", "x-checkpoint-seq": String(cp.seq), "x-checkpoint-sha256": cp.sha256 });
+      res.end(cp.body);
+    }));
+  }
   const maxBundle = maxBundleBytes();
   // A write-back past the limit: refused naming its size and the limit (express's own answer names neither).
   r.put("/:id/workspace", (req, res, next) => {

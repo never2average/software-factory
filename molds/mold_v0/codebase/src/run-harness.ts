@@ -60,6 +60,7 @@ import { linkToolData, linkTools, RUN_TOOL_CATALOG, RunToolError, verifyToolSet,
 import { hostDir, killUser, LEGACY_HOST_DIRS, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
 import { ENV } from "./env-names.js";
 import { now as clockNow, REFRESH_MARGIN_MS } from "./clock.js";
+import { runAgentHarness, type AgentCliOverride, type AgentRunnerClient } from "./agent-harness.js";
 
 /** Kept here for callers that imported it from the harness (it lives in src/run-users.ts, mold_v0-078). */
 export { sweepUserFiles };
@@ -76,6 +77,8 @@ export interface RunnerClient {
   stage(runId: string, lease: string, dir: string): Promise<{ manifest_sha256: string; files: number; unchanged: boolean }>;
   /** The workspace credentials the run receives (mold_v0-034): only for the lease holder, only what its kind names. */
   credentials(runId: string, lease: string): Promise<RunCredentials>;
+  /** The workspace agent's wake (mold_v0-243, src/agent-harness.ts): its start, beat, turns, requests, checkpoints and end. */
+  agent?: AgentRunnerClient;
 }
 
 /**
@@ -104,6 +107,15 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
     checkout: (id, lease, dir) => store.checkoutForRun(id, lease, dir),
     stage: (id, lease, dir) => store.stageForRun(id, lease, dir),
     credentials: (id, lease) => runs.runCredentialsForLease(id, lease),
+    agent: {
+      start: async (id, lease) => (await import("./harness-sessions.js")).wakeStart(id, lease),
+      beat: async (id, lease, b) => (await import("./harness-sessions.js")).wakeBeat(id, lease, b),
+      turn: async (id, lease, t) => (await import("./harness-sessions.js")).wakeTurn(id, lease, t),
+      request: async (id, lease, r) => (await import("./harness-sessions.js")).wakeRequest(id, lease, r),
+      end: async (id, lease, e) => (await import("./harness-sessions.js")).wakeEnd(id, lease, e),
+      checkpointPut: async (id, lease, seq, body) => (await import("./harness-sessions.js")).wakeCheckpoint(id, lease, seq, body, sha256Hex(body)),
+      checkpointGet: async (id, lease) => (await (await import("./harness-sessions.js")).wakeCheckpointBody(id, lease))?.body ?? null,
+    },
   };
 }
 
@@ -224,6 +236,20 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
       } catch (e) { if ((e as { status?: number }).status === 413) throw refused("the workspace's write-back", bundle.length, e); throw e; }
     },
     credentials: (id, lease) => call("GET", runPath(id, "/credentials"), lease),
+    agent: {
+      start: (id, lease) => call("POST", runPath(id, "/agent/start"), lease, {}),
+      beat: (id, lease, b) => call("POST", runPath(id, "/agent/beat"), lease, b),
+      turn: (id, lease, t) => call("POST", runPath(id, "/agent/turn"), lease, t),
+      request: (id, lease, r) => call("POST", runPath(id, "/agent/request"), lease, r),
+      end: (id, lease, e) => call("POST", runPath(id, "/agent/end"), lease, e),
+      checkpointPut: (id, lease, seq, body) => call("PUT", runPath(id, `/agent/checkpoint?seq=${seq}&sha256=${sha256Hex(body)}`), lease, undefined, body),
+      checkpointGet: async (id, lease) => {
+        const res = await fetch(url(runPath(id, "/agent/checkpoint")), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });
+        if (res.status === 204) return null;
+        if (!res.ok) throw Object.assign(new Error(`GET agent checkpoint: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+        return Buffer.from(await res.arrayBuffer());
+      },
+    },
   };
 }
 
@@ -306,6 +332,13 @@ export interface HarnessOptions {
   secretsBase?: string;
   /** Called with the egress proxy's decision log before the scratch directory is removed (tests, diagnostics). */
   onProxyLog?: (log: string) => void;
+  /** The workspace agent's wakes (mold_v0-243): a stand-in for the pinned harness CLI (offline tests only). */
+  agentCli?: AgentCliOverride;
+  /** The workspace agent's wakes: how often its conversation watcher looks, and a fixed beat (tests). */
+  pollMs?: number;
+  beatMs?: number;
+  /** The workspace agent's wakes: the watcher's clock (tests move it to park a quiet conversation). */
+  clock?: () => number;
   /** Agent-workspace runs (mold_v0-061): accept a file:/// agent repository (a mirror on this machine; offline tests). */
   allowFileUpstream?: boolean;
   /** Agent-workspace runs: accept an http:// agent repository (tests of the redirect refusal only). */
@@ -429,6 +462,8 @@ function runProgram(cmd0: string, args0: string[], o: { cwd: string; env: Record
 
 /** Carry out one claimed run, from checkout to completion. Never throws for the run's own failures: it completes them. */
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
+  // The workspace agent's wakes (mold_v0-243): a harness CLI a person talks to, carried out by src/agent-harness.ts.
+  if ((claim.run.spec as { runner?: string }).runner === "agent-harness") return runAgentHarness(client, claim, opts);
   const iso = runIsolation(opts);
   const prog = (cmd: string, args: string[], o: Omit<Parameters<typeof runProgram>[2], "nnp">) => runProgram(cmd, args, { ...o, nnp: !!opts.noNewPrivs });
   const run = claim.run, spec = run.spec, lease = claim.lease_token;

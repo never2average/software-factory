@@ -39,6 +39,7 @@ import { priceForStart } from "./run-charges.js";
 import { ENV } from "./env-names.js";
 import { auditAs, auditData } from "./audit-trail.js";
 import { noteOnPremisesStart, onPremAvailable, runLocationFor } from "./onprem-runners.js";
+import { AGENT_PACK, builtInKinds } from "./agent-harness-config.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -55,7 +56,13 @@ export function jobKinds(): JobKind[] {
   ]) };
   return cache.kinds;
 }
-export const findKind = (pack: string, name: string) => jobKinds().find((k) => k.pack === pack && k.name === name) ?? null;
+export const findKind = (pack: string, name: string) => (pack === AGENT_PACK ? builtInKinds() : jobKinds()).find((k) => k.pack === pack && k.name === name) ?? null;
+/**
+ * The kinds a runner claims and the run sandboxes are launched for: the packs' and, with its flag on, the workspace
+ * agent's built-in kind (mold_v0-243, src/agent-harness-config.ts). Never in jobKinds(): no schedule, developer API,
+ * start tool or Compute row sees it.
+ */
+export const runnableKinds = (): JobKind[] => [...jobKinds(), ...builtInKinds()];
 
 export class RunLeaseError extends PackError {
   constructor(message = "This run's lease is not yours (it lapsed, or the run ended): stop working on it") { super(message, 409); }
@@ -96,8 +103,11 @@ const jsonObject = (v: unknown, what: string) => {
  * platform staff acting for the workspace (`org.staff`, mold_v0-067), the account's rules with no person (checkAccountRun).
  */
 export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown; approval?: unknown } = {}, requestedBy: string | null = null,
-                               org?: import("./auth.js").Org): Promise<RunView> {
-  const k = findKind(pack, kind);
+                               org?: import("./auth.js").Org,
+                               /** The workspace agent's wake (mold_v0-243, src/harness-sessions.ts): its frozen kind, the session's remaining budget, the session. */
+                               wake?: { kind: JobKind; budget_usd: number; harness_session_id: string }): Promise<RunView> {
+  if (wake && pack !== AGENT_PACK) throw new PackError("only the workspace agent's wakes start with a kind of their own", 400);
+  const k = wake?.kind ?? findKind(pack, kind);
   if (!k) throw new PackError(`pack ${pack} has no job kind ${JSON.stringify(String(kind).slice(0, 64))}`, 404);
   const scope = jsonObject(input.scope, "scope"), targets = jsonObject(input.targets, "targets");
   // mold_v0-079: a write that waits for an approval of its preview starts only with one; any other kind takes none.
@@ -120,7 +130,10 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
   // allowance; the run's budget is the kind's, never above the platform's ceiling.
   // The workspace's plan must include runs (src/entitlements.ts, mold_v0-083).
-  const { budget_usd, live_per_workspace, run_charges } = await checkRunStart(orgId, pack, kind, k, n);
+  const lim = await checkRunStart(orgId, pack, kind, k, n);
+  const { live_per_workspace, run_charges } = lim;
+  // A wake's budget is what its session has left, never above the kind's (clamped to the platform's ceiling).
+  const budget_usd = wake ? Math.min(lim.budget_usd, wake.budget_usd) : lim.budget_usd;
   // Price per run (mold_v0-019, src/run-charges.ts): what the platform allows of the kind's price, frozen into the run
   // (null with billing off, or on a plan whose runs are included: the run is never charged). Its charge is written when
   // the run ends (0014_run_charges.sql).
@@ -141,10 +154,11 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     // workspace chose that (src/onprem-runners.ts); every other run, and every run of a build without such a kind, is hosted.
     location = k.private_network ? await runLocationFor(tx, orgId) : "hosted";
     const rows = await tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id, runner_location)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING ${COLS}`,
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id, runner_location, harness_session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null, location]);
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null, location,
+       wake?.harness_session_id ?? null]);
     if (approval) await event(id, orgId, 0, "approval_used", { approval: approval.id, preview_run_id: approval.preview_run_id, sha256: approval.output_sha256,
       approved_by: approval.approved_by, role: approval.approver_role }, tx);
     return rows;
@@ -254,9 +268,9 @@ export function runEgressHosts(kindHosts: string[], gatewayUrl: string): string[
  * infrastructure may be at fault and attempts remain; else failed. A run past its deadline (its token expired) fails.
  */
 export async function sweepRuns(): Promise<{ requeued: number; failed: number; cancelled: number }> {
-  const gone: string[] = [];
+  const gone: string[] = [], wakes: string[] = [];
   const out = await asPlatform(async () => (await getDb()).transaction(async (db) => {
-    const rows = await db.query<{ id: string; org_id: number; attempt: number; status: string; error_kind: string | null }>(
+    const rows = await db.query<{ id: string; org_id: number; pack: string; attempt: number; status: string; error_kind: string | null }>(
       `/* tenant: platform sweep of lapsed leases, every workspace */ UPDATE runs SET
           status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
                         WHEN deadline_at < now() THEN 'failed'
@@ -267,16 +281,19 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
           ended_at = CASE WHEN cancel_requested_at IS NULL AND deadline_at >= now() AND attempt < max_attempts THEN NULL ELSE now() END,
           worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now()
         WHERE status = 'running' AND lease_expires_at < now()
-        RETURNING id, org_id, attempt, status, error_kind`);
+        RETURNING id, org_id, pack, attempt, status, error_kind`);
     // In the same transaction as the status change: no later attempt can be claimed before its tokens and lease are gone.
     for (const r of rows) {
       await revokeRunTokens(r.id, db);
       gone.push(...(await endAttempt(db, r.id)));
       await event(r.id, r.org_id, r.attempt, r.status === "queued" ? "retry" : r.status, { reason: "lease lapsed", error_kind: r.error_kind }, db);
     }
+    wakes.push(...rows.filter((r) => r.pack === AGENT_PACK).map((r) => r.id));
     return { requeued: rows.filter((r) => r.status === "queued").length, failed: rows.filter((r) => r.status === "failed").length, cancelled: rows.filter((r) => r.status === "cancelled").length };
   }));
   await removeObjects(gone);
+  // The workspace agent's wakes whose runner went silent (mold_v0-243): their sessions settle (a crash, src/harness-sessions.ts).
+  for (const id of wakes) await import("./harness-sessions.js").then((h) => h.reconcileWake(id)).catch((e) => console.error(`run ${id}: its agent session: ${(e as Error).message}`));
   // mold_v0-014: GitHub App tokens of ended runs that GitHub was not yet told to revoke (a process that ended before its
   // own revocation ran, a serverless function frozen after its answer): told now, in the background.
   // At most once a minute per process.
@@ -295,7 +312,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   // A run sandbox (mold_v0-055) claims only the run it was launched for.
   const only = opts.runId === undefined ? null : String(opts.runId);
   // Only kinds this build has (a run of a kind it lacks waits for a build that has it), and only those asked for.
-  const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
+  const known = runnableKinds().map((k) => `${k.pack}/${k.name}`);
   const asked = (opts.kinds ?? []).filter((k) => typeof k === "string").slice(0, 50);
   const kinds = asked.length ? known.filter((k) => asked.includes(k)) : known;
   if (!kinds.length) return null;
@@ -358,6 +375,8 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   // mold_v0-184: a kind's hosts reached only when the run's slot holds a value of the credential that needs them (a
   // cloud's API for an optional read-only key, say): without it the run's allowlist is the kind's egress alone.
   const credHosts = await credentialEgressHosts(row);
+  // mold_v0-243: a workspace agent's wake reaches the web hosts its session may read (the settings', and each one approved).
+  if (row.pack === AGENT_PACK) credHosts.push(...(await import("./harness-sessions.js").then((h) => h.wakeEgressHosts(row.id))));
   const approval = row.approval_id ? await asPlatform(async () => approvedPreview(await getDb(), row)) : null;
   await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at), ...(exact.length ? { company_hosts: exact } : {}),
     ...(credHosts.length ? { credential_hosts: credHosts } : {}) });
@@ -384,7 +403,7 @@ export interface ClaimableRun { id: string; org_id: number; pack: string; kind: 
  * ceiling (mold_v0-018), as claimRun's own candidates. Counts and ids only; nothing is locked or changed.
  */
 export async function claimableRuns(limit = 200, where: { location?: "hosted" | "on_premises"; orgId?: number } = {}): Promise<ClaimableRun[]> {
-  const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
+  const known = runnableKinds().map((k) => `${k.pack}/${k.name}`);
   if (!known.length) return [];
   // The hosted run scaler's (the default), or one workspace's runs for its on-premises runners (mold_v0-036).
   const location = where.location ?? "hosted", org = where.orgId ?? null;
@@ -644,6 +663,8 @@ const withHook = (r: RunRow | null) => !!r?.spec?.workspace && (typeof packs().f
 /** End the current attempt (the lease holder only). Returns the run as it now stands. */
 export async function completeRun(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
   const run = await complete(runId, leaseToken, c);
+  // A workspace agent's wake (mold_v0-243): its session settles now (parked, paused, awaiting, stopped, or a crash).
+  if (run.pack === AGENT_PACK && run.status !== "queued") await import("./harness-sessions.js").then((h) => h.reconcileWake(runId));
   // A run that ended counts against the account's month (mold_v0-053): the usage alert at 80% and 100% of its allowance
   // goes through the email adapter (src/email.ts checkBudget: once a month per threshold, only when the profile turns
   // usage notifications on), after the run's own writes and never in their way.

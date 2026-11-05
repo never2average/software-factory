@@ -2848,6 +2848,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `encrypted_fields` | on | an `encrypted: true` field | reveal routes and tools, the migration job. Refused off while a field is encrypted (never stored in the clear) |
 | `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
 | `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
+| `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -2874,6 +2875,60 @@ its routes, tools and jobs go or come and nothing else changes; the same per fla
 pages, sidebar and Settings tabs; the refusals), `npm run test:console-sidebar` (0, 1, 2 to 5 and past 5 tabs; a 9-tab
 build grouped; every Settings page lights its group's entry), `npm run test:developer-console`, `npm run test:zero-pack`
 (the zero-pack MCP surface stays `4e3e14917286b00c`).
+
+## Workspace agent (mold_v0-243)
+
+A long-lived agent a person talks to, run through a harness, with full steering: the design note
+[docs/agent-harness.md](docs/agent-harness.md) maps each piece of the reference's approach to its home here and lists what
+is not copied. **Off by default** (`features.agent_harness`): off, nothing below exists, the zero-pack MCP surface stays
+`4e3e14917286b00c`, and the generated files are what they were (the flag is `quiet_off`: left out of
+`features.generated.ts`, and its two pages out of `console-routes.generated.json`, so the proxy answers them not found).
+
+- **A session is a row, each wake a run.** `harness_sessions` (migration 0044; named apart from the session engine's own
+  `agent_sessions`) holds a conversation or a task: its state, the policy frozen at its start (harness, model, provider,
+  limits, web tools, the resolved hooks), its budget and spend, the harness's session id and its last checkpoint. Each
+  wake is a run of the built-in kind `_agent/session` (`runner: "agent-harness"`, `src/agent-harness-config.ts`), so the
+  run engine's lease, deadline, per-attempt gateway token, budget refusal, run sandboxes (boat, docker), on-premises
+  runners and limits apply unchanged. `runnableKinds()` adds it for claims and the sandboxes' demand only; `jobKinds()`
+  never lists it (no schedule, start tool, developer API or Compute row sees it).
+- **The harness** (`src/agent-harness.ts`, dispatched from `run-harness.ts` for its runner): the pinned `claude-code` run
+  tool with stream-json on an **open stdin** (`--input-format stream-json --replay-user-messages`): the first turn is one
+  line, each message the person sends while it works one more (steer), echoed back as the CLI takes it in. It beats every
+  few seconds (`POST /api/worker/runs/:id/agent/beat`: the lease, its cumulative spend, the person's messages, pause, end,
+  budget), checks each tool call against the session's policy (a host or a tool not allowed becomes a request and the wake
+  stops with SIGTERM so the CLI keeps its session), parks a quiet conversation (or one past its wake's cap) by closing
+  stdin, ends a task once its work is answered (the stdin ledger), and checkpoints the CLI's session files and its
+  working directory (sealed with the workspace's key in the object store, `workspaces/org-<id>/.agent/<session>/`).
+- **Steering** (`src/harness-sessions.ts`, through `/api/agent`, the MCP tools and the console): message (mid-run, or a
+  wake), pause / resume / stop, approve / decline (a web host or a tool: exactly that, for that session), raise budget (a
+  reason, the role, under the ceiling, never while it works, recorded in `harness_budget_grants`). Only the person who
+  started a session messages or resumes it; the starter or an owner pauses, stops and decides; billing managers and
+  owners raise; staff see every workspace's, pause, stop, raise and decline, never message or approve.
+- **Crash recovery and parking.** A wake that ends without saying how (its runner went silent: the lease sweep; or the
+  CLI died) parks the session with its unanswered messages pending again; the next message continues it on the same
+  harness session, or, with `AGENT_AUTO_RESUME` on, it continues by itself, at most `AGENT_CRASH_RESUMES` in a row and
+  not once crashes have spent half its budget. A crash's silent window is held back from the next wake (`reserve_usd`).
+- **Spend once per session.** Per wake the greater of the gateway's meter and the harness's own cumulative reports,
+  accrued over a high-water mark from a baseline that takes out what a resumed session re-reports (`min(saved, charged)`).
+- **Budgets.** The session's budget (setting, at most the ceiling, at most the platform's `runs.budget_usd_max`) less what
+  it spent is each wake's `budget_usd`; the kind's month budget per workspace is `AGENT_MONTH_BUDGET_USD`; the account's
+  allowance applies as for every run.
+- **Retention.** The sweep (scheduler job `harness_sessions`) expires requests past `AGENT_APPROVAL_WINDOW_HOURS`, archives
+  sessions quiet for `AGENT_ARCHIVE_AFTER_DAYS`, and past `AGENT_RETENTION_DAYS` after a session ended removes its
+  messages, requests and checkpoint; its spend, wakes and budget raises stay.
+- **Platform settings** (group "Workspace agent" in `src/settings.ts`, listed only with the flag on): harness, provider,
+  model, budget per session, raise ceiling, month budget per workspace, sessions at once, turns per wake, longest wake, park
+  after, task idle close, checkpoint interval, request window, crash resumes, automatic resume, retention, archive, web tools,
+  web hosts, web calls. Each has plain words; the staff Agent configuration page, `list_settings` and `update_setting` show
+  and change them; every change is kept in `platform_setting_changes` (key, before, after, who, when) beside the staff
+  log's `settings.save` line.
+- **The console.** The top bar's last item, after Search, Docs and the theme switcher, is one icon button
+  (`aria-label="Workspace agent"`) opening `/app/agent` (staff `/admin/agent`) as a full page: four cards, the search row
+  with Start a session, the table; a session opens as the list's full card (`?session=<id>`) with its transcript, the
+  composer, the request's card (Approve / Decline, or Raise budget), Pause, Resume and Stop (stop asks once more in place).
+
+Proof: `npm run test:agent-harness` (offline, with a stand-in CLI that speaks the harness's stream-json,
+`scripts/fixtures/agent-cli/cli.mjs`), `npm run test:features`, `npm run test:zero-pack`.
 
 ## Audit trails (mold_v0-197)
 

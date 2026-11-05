@@ -1,0 +1,98 @@
+# The workspace agent: a long-lived agent driven through a harness (mold_v0-243)
+
+Design note. It maps each piece of the reference product's agent harness onto mold_v0's existing machinery, and
+lists what is deliberately not copied. The reference is a private product; this note names its approach, not its names.
+The capability is the features flag `agent_harness` ("Workspace agent"), **off by default**: off, nothing below exists
+(no route, no MCP tool, no console page, no top-bar icon, no setting listed, no claimable kind) and the generated files
+are byte for byte what they were.
+
+## What the reference does
+
+A person talks to a coding-agent CLI that runs in a sandbox. The CLI is started once per *wake* with its prompt on
+**stdin as stream-json** (`--input-format stream-json --output-format stream-json --replay-user-messages`), and stdin
+is **held open**: every further instruction is one more stream-json user line. The control plane is a database row per
+run (a *conversation*) and one *attempt* per wake. The harness heartbeats; the heartbeat's answer carries the
+person's queued instructions (*steer*), a pause request and an end request. Around that:
+
+| Reference piece | What it is |
+|---|---|
+| Harness flavours and the hooks directory | Each harness flavour declares its lifecycle hooks (`on_start`, `on_resume`, `append_system`); a run snapshots the resolved hook text at launch and writes it beside the agent |
+| stdin ledger | A turn's result closes stdin only when no injected message is still unconsumed (the CLI's replay echo tells which were taken in); else an idle grace closes it |
+| Steer | Queued `pending`; delivered on the next heartbeat; `discarded` when stdin is gone, then carried to the next wake |
+| Approvals | A tool call outside the run's policy (a web domain not granted) pauses the run with a request; Approve grants exactly that and resumes the same session; Decline ends the wait with the refusal as the reason |
+| Pause / resume / stop | Pause = SIGTERM so the CLI flushes its session file, attempt ends `paused`; resume = a new attempt with `--resume <session>` and the `on_resume` prompt; stop = EOF (a turn in progress finishes) |
+| Parking | An idle conversation (or one past a wake's duration cap) closes stdin and its attempt ends `conversation_parked`: no sandbox, no slot, not counted against the attempt ceiling; the next message wakes it on the same session |
+| Crash recovery | A wake that dies is reaped; with a session id and a checkpoint it can resume (operator, or automatically under a master switch and a crash-loop spend fraction); at most N consecutive crashes; what the dead wake left unanswered is asked again |
+| Spend once per session | Cumulative cost per heartbeat, charged as the climb over a per-attempt high-water mark; a resumed session's CLI restarts its running total from the saved figure, so the baseline is `min(saved, charged)` |
+| Budget increase | A per-run raise, with a reason, up to the platform ceiling, refused while executing, recorded as its own fact |
+| Retention and workload budgets | Short-lived payloads (messages, events, steer lines) pruned N days after a run ends; a workload's own allowance is authoritative and frozen at admission |
+| Multi-provider credentials | The run never holds a provider key: a per-attempt token to a metering broker that refuses past the allowance |
+| Web tools policy | Web tools off by default, opted in per workload; allowed hosts exact or suffix; calls counted against a ceiling; anything else becomes an approval |
+| Agent image: process and exec guards, the CLI's permission file | The CLI's own permission file denies by default; a preload library keeps provider secrets out of every child's environment |
+
+## Where each piece lives in mold_v0
+
+Nothing here is a second engine: a conversation is a row of its own, and **each wake is a run of the generic run
+engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly as every other run.
+
+| Reference | mold_v0 home |
+|---|---|
+| Conversation (run) | `harness_sessions` (migration 0044; named apart from the session engine's own `agent_sessions`, a host pack's table): one row per conversation or task, its state, its frozen policy (harness, model, provider, limits, web tools, the resolved hooks), its budget and ledger, its harness session id and checkpoint, its retention deadline. Control plane: `src/harness-sessions.ts` |
+| Attempt / wake | A row of `runs`: the built-in kind `_agent/session` (`runner: "agent-harness"`, `src/agent-harness-config.ts`), not a pack's; listed by `runnableKinds()` for claims and the run sandboxes' demand only when the flag is on (never by `jobKinds()`, so schedules, the developer API, Compute's kinds and the MCP's `start_<kind>` tools do not see it). `runs.harness_session_id` links a wake to its session |
+| Harness runner | `src/agent-harness.ts`, dispatched from `src/run-harness.ts runWorkspaceHarness` for `runner: "agent-harness"`: the same run user per run (`run-users.ts`), the same egress proxy and sandbox lockdown, the same run tools (`claude-code`, pinned in `run-tools.ts`), and the same `RunnerClient` (in process, or over `/api/worker/runs` with the fleet or a run sandbox's token). Runs on boat or docker run sandboxes and on-premises runners unchanged |
+| Flavours and hooks directory | `src/agent-harness-config.ts` `AGENT_FLAVOURS` and `AGENT_HOOKS`: a typed declaration bundled with the server (the API and the runner read the same module, so they cannot disagree, which is the reference's reason for the directory). `claude-code` has `on_start`, `on_resume`, `append_system`; a flavour that reads stdin to EOF is declared `holds_stdin_open: false` and gets no steer (refused at the API, discarded at the runner). The resolved hooks are frozen into the session at start and written to `<scratch>/hooks/<event>/{prompt.md,source}` before the CLI starts |
+| Heartbeat carrying steer, pause, end | `POST /api/worker/runs/:id/agent/beat` (lease-checked like every worker step): renews the lease (`heartbeatRun`), accrues spend, and answers `{steer: [...], pause, end, budget, cancel}`; `/agent/turn`, `/agent/request`, `/agent/checkpoint`, `/agent/end` |
+| stdin ledger, replay echo, idle close, transient retry | `src/agent-harness.ts` (`encodeStdinMessage`, `replayedUuid`, `SteerLedger`, `transientUpstreamError`), pure and unit-tested |
+| Spend accounting | The gateway already meters every request of a run (`gateway_usage.run_id`): each request counted once, to the wake that made it. The harness's cumulative report is accrued too (`accrueSpend`: high-water per wake, baseline `min(saved, charged)` on a resumed session) and the session's spend is the greater of the two ledgers, never their sum |
+| Budgets (run, workload, platform) | The session's budget (frozen at start from the setting, clamped to the ceiling) less what it spent and the crash reserve becomes each wake's `budget_usd`, so the gateway refuses past it as for any run. The workload budget is the built-in kind's month budget per workspace (`run-limits.ts`), and the account's allowance applies as for every run (`checkRunStart`, `runSpendRefusal`) |
+| Budget increase | `harness_budget_grants`: per session, a reason required, up to the ceiling setting (itself at most the platform's `runs.budget_usd_max`), refused while a wake runs, recorded with who and why; it moves the session's budget and so the next wake's |
+| Approvals | `harness_session_requests` (`web` a host, `tool` a tool outside the policy, `budget` a stop on budget): pending → approved / declined / expired. Approve grants exactly that to the session and wakes it on the same session; Decline records the refusal and parks it with the refusal said on the next wake. A pause past `AGENT_APPROVAL_WINDOW_HOURS` expires |
+| Parking, waking | Phase `parked` (no run, no slot); a message wakes it: a new wake run with `--resume`; messages sent while starting or waking wait `pending` for the next beat |
+| Crash recovery | A wake that ends without saying how (the run engine's lease sweep: its runner stopped heartbeating; or the harness CLI died) parks the session with its last checkpoint and the messages it left unanswered pending again; the next message (or, with `AGENT_AUTO_RESUME` on, at once) wakes it on the same harness session, at most `AGENT_CRASH_RESUMES` in a row and not once crashes have spent half its budget; the silent window's estimated cost is held back from the next wake (`reserve_usd`). `reconcileWake` is called from `completeRun`, `sweepRuns` and the sweep, for agent wakes only |
+| Session checkpoints | The CLI's session directory and the working directory, a gzipped bundle (`workspace-bundle.ts` format) sent with the lease (`PUT .../agent/checkpoint`, at most the API's one-request size, `APP_WORKER_INLINE_MAX_BYTES`, 4 MiB: a larger one is refused and the previous stays), sealed with the workspace's key and kept in the object store (`storage.ts`: a bucket, or `APP_STORAGE_DIR`) under `workspaces/org-<id>/.agent/<session>/<seq>.wse`. Each checkpoint takes a newer sequence; the pointer only moves forward and the older object goes |
+| Retention | `retention_until` per session (`AGENT_RETENTION_DAYS` after it ends or is archived); the scheduler job `harness_sessions` (`src/schedules.ts` tick) removes its messages, requests and checkpoint, keeps the session's spend, its budget raises and the run rows. Parked sessions quiet for `AGENT_ARCHIVE_AFTER_DAYS` are archived; requests past `AGENT_APPROVAL_WINDOW_HOURS` expire |
+| Credentials broker  | Already the shell's gateway (`src/gateway.ts`): a per-attempt token, gateway-mode providers only, refused past the run's budget |
+| Web tools | Settings `AGENT_WEB_TOOLS` (off, fetch, search and fetch), `AGENT_WEB_HOSTS` (allowed without asking: exact or `*.suffix`) and `AGENT_WEB_CALLS_MAX`; frozen into the session; the harness renders them into the CLI's allow and deny rules, refuses a call past the ceiling and turns a host not granted into an approval request. The run's egress proxy allowlist is the session's hosts plus the gateway |
+| Process guards | The shell's run user per run already keeps the runner's environment unreadable (`/proc`), and the CLI gets only the gateway token and `RUN_*`; the harness redacts the token from every line it posts |
+| Console | The top bar's last item, after Search, Docs and the theme switcher: one icon button (`aria-label="Workspace agent"`) that opens `/app/agent` (staff: `/admin/agent`). The agent opens as a **full in-page view**, not a modal: the sessions list in the standard layout (four cards, the search row with Start a session, the table), a row opening the session's full card: the transcript, the composer, approval cards, Pause / Resume / Stop, the budget and Raise budget. Staff see every workspace's sessions and may pause, stop and raise, never message (a session acts for the person who started it) |
+| Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
+| API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
+
+## Deliberately not copied
+
+- **The reference's product surfaces**: its pipelines, findings, entities, report proposals, checklists, eval datasets,
+  use-case picker and the agent's own domain MCP tools. The mold's agent works in its own workspace; what it may reach
+  is the run's egress and the tools its policy allows. A pack that wants domain tools for it is a later change.
+- **Per-workload prompts overriding hooks.** The reference lets each workload override `on_start`/`on_resume`/
+  `append_system`. The mold has no workloads: the flavour's defaults apply and the person's message is the turn. The
+  hook resolution still records each hook's `source`, so a pack-level override can be added without changing the record.
+- **A second harness flavour that runs.** The catalogue declares the contract for a stdin-to-EOF flavour (no steer),
+  but only `claude-code` is pinned in the run tools' catalogue; another CLI is offered only once it is pinned with its
+  checksums. The harness choice setting lists the flavours that can run.
+- **The preload process guard and the exec guard (C libraries).** The run user per run and the clean environment cover
+  what they protect in the mold's sandbox model; adding a native library to every run image is a separate change.
+- **Provider-side billing reconciliation and an IAM credential per run.** The gateway is the ledger the budget guard
+  trusts; there is no per-run cloud identity to retain or revoke.
+- **Model-call tracing, voice input, shared threads, the thread sidebar.** Not part of steering.
+- **Native web search.** `search` only allows the CLI's own search tool where the provider serves it; no search
+  backend is added.
+
+## Mold pieces this does not use yet, and why
+
+- **The workspace credentials vault.** A session receives no workspace credential: the reference's agent works with what
+  its platform's tools give it, and the mold has no declaration yet of which credentials a session may hold. A kind's
+  `credentials` list is the model to follow when one is wanted (the run engine already delivers and redacts them).
+- **Record clocks.** A request's window is the session's own deadline (`AGENT_APPROVAL_WINDOW_HOURS`, expired by the
+  sweep), not a record's clock: sessions are not records of a declared area, so a clock has nothing to attach to.
+- **The event outbox.** The reference raises an alert row in the transaction that resumes a crash automatically. Here
+  that decision is a run event (`agent_crashed`, the next wake's `agent_wake`) and a staff log line
+  (`agent.auto_resume`); a declared developer event (`agent.session.*` webhooks) is left for when an app asks for one.
+- **The data audit trail.** Steering is recorded in the session's own tables and the run's events; staff actions on a
+  session are in the staff log and, with `audit.platform` on, the platform trail (every `/api/admin` request).
+
+## Proofs
+
+`npm run test:agent-harness` (offline, an embedded database, a stand-in CLI speaking stream-json): steer mid-run,
+approvals, pause / resume / stop, parking and waking, crash recovery, spend counted once, budgets and a raise,
+retention, and the settings' audit; `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
+Octillion parity with the flag off, and screenshots on the example app's lane copy with the flag on.

@@ -11,6 +11,7 @@
  * (never their address); the live checks as /healthz and the key vault's status give them (set or missing, never a
  * value).
  */
+import { agentHarnessOn } from "./agent-harness-config.js";
 import { createRequire } from "node:module";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
@@ -169,6 +170,7 @@ export const JOB_SPECS: readonly JobSpec[] = [
   { id: "ledger_checkpoints", label: "Ledger checkpoints", about: "Signs a checkpoint of each audit chain with new entries.", on: () => signOn(), every: () => (onVercel() ? 300 : 60) },
   { id: "encrypted_fields", label: "Encrypted-field migration", about: "Rewrites rows written before a field was encrypted, a batch at a time.", on: () => encryptedAreas().length > 0, every: () => (onVercel() ? 300 : 60) },
   { id: "audit_retention", label: "Audit retention", about: "Removes audit entries older than the app's retention.", on: () => { const s = auditSettings(); return s.data || s.platform; }, every: () => (onVercel() ? 300 : 3600) },
+  { id: "harness_sessions", label: "Workspace agent sessions", about: "Expires requests nobody answered, archives quiet sessions and removes ended ones' conversations past retention.", on: () => agentHarnessOn(), every: () => (onVercel() ? 300 : 60) },
   { id: "workspace_retention", label: "Workspace store retention", about: "Expires old versions of the workspaces' stored files (daily).", on: () => retentionWired(), every: () => (onVercel() ? 300 : 60) },
   { id: "run_charges", label: "Run charges", about: "Hands pending run charges to billing.", on: () => runBillingOn(), every: () => (onVercel() ? 300 : 60) },
   { id: "health_samples", label: "Health samples", about: "Samples the live checks for Health › Status's graphs every few minutes and drops samples older than 35 days.", on: () => healthSamplingOn(), every: () => (onVercel() ? 300 : 240) },
