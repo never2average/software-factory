@@ -243,7 +243,8 @@ function StateLine({ d, area }: { d: Detail; area: Area }) {
         <span className='tabular-nums'>{usd(d.spent_usd)} of {usd(d.budget_usd)}</span>
         <span className='text-muted-foreground tabular-nums'>{usd(d.remaining_usd)} left · {d.wakes} wake{d.wakes === 1 ? '' : 's'}{d.crashes ? ` · ${d.crashes} crash${d.crashes === 1 ? '' : 'es'} in a row` : ''}</span>
       </div>
-      {d.reason && !['paused', 'withdrawn', 'budget'].includes(d.reason) && <p className='text-muted-foreground text-sm'>{reasonWords(d.reason)}</p>}
+      {/* While it waits for a decision the request's own card says what it asked for (the reason is its raw subject). */}
+      {d.reason && !d.pending_request && d.phase !== 'awaiting_approval' && !['paused', 'withdrawn', 'budget'].includes(d.reason) && <p className='text-muted-foreground text-sm' data-agent-reason>{reasonWords(d.reason)}</p>}
     </div>
   );
 }
