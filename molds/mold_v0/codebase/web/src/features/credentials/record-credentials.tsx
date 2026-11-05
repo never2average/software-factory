@@ -10,7 +10,7 @@
 // scrolled to it (once the card is drawn: the record and its credentials load after the page).
 import { useCallback, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { When, useOrgLoad } from '@/features/portal/shared';
 import { singular } from '@/features/tabs/run-rows';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
@@ -70,13 +70,11 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
       </div>
     );
   }
-  const all = [...sections.record.map((x) => x.state), ...sections.environments.flatMap((g) => g.items.map((x) => x.state))];
-  const setCount = all.filter((s) => s.status === 'Set').length;
   const section = (
     <Card id={CREDENTIALS_ANCHOR} ref={anchor} className='w-full max-w-4xl scroll-mt-4 gap-0 py-0' data-record-credentials=''>
       <CardHeader className='border-b py-4 [.border-b]:pb-4'>
+        {/* No count line under the heading (mold_v0-240): each credential says its own status. */}
         <CardTitle className='text-base'>Credentials</CardTitle>
-        <CardDescription>{setCount} of {all.length} set</CardDescription>
       </CardHeader>
       <CardContent className='flex flex-col gap-6 py-4'>
         {sections.record.length > 0 && (

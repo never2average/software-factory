@@ -30,6 +30,8 @@ import { RecordDocuments, isStoredFile } from './documents';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
 import { useRecordCredentials } from '@/features/credentials/record-credentials';
+import { isDocument, jsonLine } from './json-text';
+import { JsonValue } from './json-value';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -50,7 +52,8 @@ async function getJson<T>(url: string): Promise<T> {
   return body;
 }
 
-const cell = (v: unknown) => (v == null ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : String(v));
+// A json value (mold_v0-240, ./json-text.ts): one readable line, never raw JSON.
+const cell = (v: unknown, recordKey?: string) => (v == null ? '' : isDocument(v) ? jsonLine(v, recordKey) : Array.isArray(v) ? v.join(', ') : String(v));
 const where = (area: RecordAreaSpec) => (area.scope === 'platform' ? 'Shared by every workspace (read only)' : "This workspace's own");
 
 /** How many records the list reads in one go (pages of 200, the API's most): search, sort and filter run on these. */
@@ -73,8 +76,11 @@ const optionLabel = (f: RecordFieldSpec, v: unknown) => {
   const o = f.options?.find((x) => (typeof x === 'string' ? x : x.value) === v);
   return o && typeof o !== 'string' ? o.label ?? o.value : String(v);
 };
-/** A field's value as the list and the peek show it: an option's label, Yes / No, a date, lists joined. */
-export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
+/**
+ * A field's value as the list and the peek show it: an option's label, Yes / No, a date, lists joined; a json value
+ * one readable line (mold_v0-240; `recordKey` hides a value repeating the record's own key).
+ */
+export function fieldText(f: RecordFieldSpec | undefined, v: unknown, recordKey?: string): string {
   if (v == null || v === '') return '';
   // An encrypted field (mold_v0-194) is never read here: every answer carries the mask; a reveal is its own request.
   if (f?.encrypted) return '•••••• (encrypted)';
@@ -83,11 +89,12 @@ export function fieldText(f: RecordFieldSpec | undefined, v: unknown): string {
     const names = (Array.isArray(v) ? v : [v]).map((x) => (x && typeof x === 'object' ? String((x as { name?: unknown; path?: unknown }).name ?? (x as { path?: unknown }).path ?? '') : String(x))).filter(Boolean);
     return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0] ?? '';
   }
-  if (Array.isArray(v)) return v.map((x) => fieldText(f, x)).filter(Boolean).join(', ');
+  if (isDocument(v)) return jsonLine(v, recordKey);
+  if (Array.isArray(v)) return v.map((x) => fieldText(f, x, recordKey)).filter(Boolean).join(', ');
   if (f?.type === 'enum') return optionLabel(f, v);
   if (f?.type === 'boolean' || typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10);
-  return cell(v);
+  return cell(v, recordKey);
 }
 /** The filter-only column of an area with a clock: any of its clocks overdue (mold_v0-217). */
 const OVERDUE_COL = '_overdue';
@@ -137,10 +144,10 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<Recor
         if (v == null) return null;
         if (type === 'number') return typeof v === 'number' ? v : Number(v);
         if (type === 'boolean') return Boolean(v);
-        return type === 'select' || type === 'date' ? String(v) : fieldText(f, v);
+        return type === 'select' || type === 'date' ? String(v) : fieldText(f, v, r.key);
       },
       render: (r) => {
-        const t = fieldText(f, r.data[name]);
+        const t = fieldText(f, r.data[name], r.key);
         return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums')}>{t}</span> : dash;
       }
     };
@@ -152,8 +159,12 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<Recor
   return [record, ...fields, ...clockColumns<RecordRow>(area), ...overdue, ...(source?.updated === false ? [] : [updated])];
 }
 
-/** A field's value in the peek: a reference to a record this page can show links to it. */
-export function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown }) {
+/**
+ * A field's value in the peek and on a record's page: a reference to a record this page can show links to it; a json
+ * value readable (mold_v0-240, ./json-value.tsx: a list of objects one line per item, an object one line per field,
+ * bookkeeping and `recordKey` repeated hidden, common short values in words).
+ */
+export function FieldValue({ area, base, f, v, recordKey }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown; recordKey?: string }) {
   const to = f.type === 'reference' ? f.to : area.links.find((l) => l.field === f.name)?.area;
   const keys = (Array.isArray(v) ? v : [v]).filter((k): k is string => typeof k === 'string' && k !== '');
   if (to && keys.length && findRecordArea(base, to)) return (
@@ -165,7 +176,8 @@ export function FieldValue({ area, base, f, v }: { area: RecordAreaSpec; base: '
   if (f.type === 'url' && typeof v === 'string' && isWebAddress(v)) return (
     <a className='break-all underline-offset-4 hover:underline' href={v} target='_blank' rel='noopener noreferrer nofollow'>{v}</a>
   );
-  return <>{fieldText(f, v) || dash}</>;
+  if (!f.encrypted && f.type !== 'file' && isDocument(v)) return <JsonValue v={v} recordKey={recordKey} empty={dash} />;
+  return <>{fieldText(f, v, recordKey) || dash}</>;
 }
 
 /** The empty state inside the table: what fills the area and, for staff, where to fill it now. */
@@ -219,7 +231,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
       initialRules={initialRules} onRulesChange={(r) => { if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null); }}
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
-      searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c])).join(' ')}`}
+      searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
       // Export (mold_v0-217): every list's, empty or not, just left of the primary action; the view's rows when narrowed.
@@ -242,7 +254,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           {detailNote?.(r)}
           {r.version && <Field label='Version'>{r.version}</Field>}
           {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name) && !isStoredFile(f, r.data[f.name])).map((f) => (
-            <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} /></Field>
+            <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} recordKey={r.key} /></Field>
           ))}
         </dl>
         {/* mold_v0-220: its files and documents as cards (a merged tab's row: the first of its areas). */}
@@ -308,7 +320,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
               {data.provenance?.by && <Field label='Added by'>{ADDED_BY[data.provenance.by] ?? data.provenance.by}</Field>}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
-                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} /></span></Field>
+                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} recordKey={data.record.key} /></span></Field>
               ))}
             </dl>
             <RecordDocuments area={area} base={base} recordKey={data.record.key} />

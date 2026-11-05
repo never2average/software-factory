@@ -42,9 +42,15 @@
 //      page draws its Credentials card (the record's, then one group per environment) and, while one is open, the set
 //      card in the page's place; Set, Replace and Clear are full cards (never a dialog or a side sheet) whose value
 //      inputs are hidden; an environment is picked (a select of the record's), never typed; no internal word
-//      (bound_to, deliver_as, asset, a variable's or a pack's name, a record area's id) reaches the screen. mold_v0-241:
-//      Settings › Credentials also lists one row per record (one request per area, after the workspace's rows, its
-//      status in words, searched by name), opening the record's page at its Credentials card (#credentials).
+//      (bound_to, deliver_as, asset, a variable's or a pack's name, a record area's id) reaches the screen; no count
+//      line under the Credentials card's heading (mold_v0-240). mold_v0-241: Settings › Credentials also lists one row
+//      per record (one request per area, after the workspace's rows, its status in words, searched by name), opening the
+//      record's page at its Credentials card (#credentials).
+//  13. A record's json field in words (mold_v0-240; web/src/features/records/json-text.ts): a list of objects one line per
+//      item (its name, then its meaningful fields), an object one line per field, nested objects flattened, bookkeeping
+//      and a value repeating the record's own key hidden, common short values in words (the credentials card's
+//      mapping); one line in a list's cell and a board's card; drawn by a record's page, an open row's card and a staff
+//      record's page, never as raw JSON.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -434,6 +440,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(detail, /<\/Card>\s*\{credentials\.section\}/, "its Credentials card below the details card");
   assert.match(rc, /'\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}'|`\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}`/, "the record's own credentials");
   assert.match(rc, /<CardTitle className='text-base'>Credentials<\/CardTitle>/, "titled Credentials");
+  assert.doesNotMatch(rc, /<CardDescription\b|of \{[\w.]+\} set|setCount/, "no count line under the heading (mold_v0-240)");
   assert.match(rc, /For this \{noun\}/, "the record's own first, in its area's words");
   assert.match(rc, /sections\.environments\.map\(\(g\) => \([\s\S]*?<h3 className='text-sm font-medium'>\{g\.label\}<\/h3>/, "then one group per environment, named in words");
   assert.match(card, /<NativeSelect id='credential-environment'[\s\S]*?environments\.map\(\(x\) => <NativeSelectOption key=\{x\} value=\{x\}>\{envWord\(x\)\}<\/NativeSelectOption>\)/, "an environment is picked from the record's");
@@ -464,4 +471,53 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.equal(model.CREDENTIALS_ANCHOR, "credentials");
   assert.match(model.recordCredentialsHref("apps", "a-1"), /^\/app\/records\/apps\/a-1#credentials$/, "a row links to the record's page at its Credentials card");
   ok("the credential vault in its places (mold_v0-239): Settings › Credentials the workspace's only, no caption, no Bound to; a record's page its Credentials card (the record's, then per environment) and the set card in the page's place; full cards, hidden values, environments picked; no internal word shown");
+}
+
+// 13. A record's json field in words (mold_v0-240).
+{
+  const { jsonView, jsonLine, isDocument, keyLabel } = await web("features/records/json-text.ts");
+  const words = await web("lib/value-words.ts");
+  const model = await web("features/credentials/model.ts");
+  assert.equal(model.envWord, words.envWord, "the credentials card's environment names and a json field's words: one mapping");
+  // An application's environments as a pack's index writes them (each its own small document).
+  const KEY = "example-service";
+  const env = (envId: string, tier: string) => ({ schemaVersion: "1", kind: "example.app.environment", appId: KEY, envId, tier, hosting: { provider: "aws", region: "ap-south-1" } });
+  const envs = [env("prod", "prod"), env("staging", "staging")];
+  assert.ok(isDocument(envs) && isDocument({ a: 1 }) && !isDocument(["a", "b"]) && !isDocument("x") && !isDocument(null), "a document: an object, or a list holding one");
+  assert.deepEqual(jsonView(envs, KEY), { kind: "items", items: [
+    { name: "Production", parts: [{ label: "Hosting", text: "AWS, ap-south-1" }] },
+    { name: "Staging", parts: [{ label: "Hosting", text: "AWS, ap-south-1" }] }
+  ] }, "a list of objects: one item each, its name in words, its nested hosting flattened; schemaVersion, kind, the record's own key and a tier repeating the name hidden");
+  assert.equal(jsonLine(envs, KEY), "Production (AWS, ap-south-1); Staging (AWS, ap-south-1)", "the same on one line (a list's cell)");
+  // A tier that is not the name is said; another key's id is kept, labelled.
+  assert.deepEqual(jsonView([{ envId: "eu-1", tier: "prod", hosting: { provider: "gcp" } }], KEY).items[0],
+    { name: "eu-1", parts: [{ label: "Tier", text: "Production" }, { label: "Hosting", text: "GCP" }] }, "a tier other than the name: Tier: Production");
+  assert.deepEqual(jsonView([{ name: "Billing", id: "b-7", owner: { team: "Payments", oncall: true } }]).items[0],
+    { name: "Billing", parts: [{ label: "ID", text: "b-7" }, { label: "Owner", text: "Payments, Yes" }] }, "a name key first; an id kept; Yes for true");
+  assert.deepEqual(jsonView({ $schema: "x", _rev: 3, schema_version: 2, region: "eu-west-1", stage: "dev", contacts: [{ name: "Ops", email: "ops@example.com" }] }),
+    { kind: "fields", parts: [{ label: "Region", text: "eu-west-1" }, { label: "Stage", text: "Development" }, { label: "Contacts", text: "Ops (ops@example.com)" }] },
+    "an object: one line per field, bookkeeping ($, _, schema_version) hidden, nested lists of objects flattened");
+  assert.equal(jsonLine({ region: "eu-west-1", stage: "dev" }), "Region: eu-west-1; Stage: Development", "an object on one line");
+  assert.deepEqual(["envId", "hosting_region", "apiUrl", "tier"].map(keyLabel), ["Env ID", "Hosting region", "API URL", "Tier"], "keys in words");
+  assert.equal(jsonView([], KEY).kind, "text", "an empty list: nothing to say");
+  for (const v of [envs, envs[0], { a: { b: { c: "d" } } }]) assert.doesNotMatch(jsonLine(v, KEY), /[{}[\]"]|schemaVersion|example\.app\.environment/, "never raw JSON or bookkeeping");
+
+  // Where the console shows a record's json field: fieldText (a list's cell, its search, the peek's one line), FieldValue
+  // (a record's page, an open row's card, a staff record's page) and a board's card.
+  const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const pages = strip(src("features/records/record-pages.tsx")), staff = strip(src("features/records/staff-records.tsx"));
+  const board = strip(src("features/tabs/board.tsx")), jv = strip(src("features/records/json-value.tsx"));
+  const ft = /export function fieldText\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
+  assert.match(ft, /if \(isDocument\(v\)\) return jsonLine\(v, recordKey\);/, "fieldText: a json value one readable line");
+  assert.doesNotMatch(pages, /JSON\.stringify/, "record-pages.tsx never prints raw JSON");
+  const fv = /export function FieldValue\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
+  assert.match(fv, /isDocument\(v\)\) return <JsonValue v=\{v\} recordKey=\{recordKey\} empty=\{dash\} \/>/, "FieldValue: a json value drawn readable");
+  assert.equal((pages.match(/<FieldValue [^>]*recordKey=\{(?:r|data\.record)\.key\} \/>/g) ?? []).length, 2, "a record's page and an open row's card pass the record's key");
+  assert.match(staff, /<FieldValue area=\{area\} base='admin' f=\{f\} v=\{data\.record\.data\[f\.name\]\} recordKey=\{data\.record\.key\} \/>/, "a staff record's page too");
+  assert.match(pages, /fieldText\(f, r\.data\[name\], r\.key\)/, "a list's cell: one line");
+  assert.match(board, /isDocument\(v\)\) return jsonLine\(v, recordKey\);/, "a board's card: one line");
+  assert.doesNotMatch(board, /JSON\.stringify/, "board.tsx never prints raw JSON");
+  assert.match(jv, /jsonView\(v, recordKey\)/, "JsonValue draws jsonView");
+  assert.doesNotMatch(jv, /JSON\.stringify/, "nor does JsonValue");
+  ok("a record's json field in words (mold_v0-240): a list of objects one line per item (its name, its meaningful fields), an object one line per field, nested objects flattened, bookkeeping and the record's own key hidden, short values in the credentials card's words; one line in a list's cell and a board's card; drawn readable on a record's page, an open row's card and a staff record's page");
 }
