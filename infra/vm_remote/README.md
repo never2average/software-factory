@@ -34,7 +34,7 @@ The operator's click-by-click steps are `docs/RUNBOOK.md` §9. The state fields 
 | `/etc/software-factory/<app_id>/{web,api,workflow,cron}.env` | each service's own file, split from the master by `env-split` (`factory/env-services.json` says which names): the web app gets the sign-in private key; the agent gets the public key, `SERVICE_AUTH=session-key` and its own settings, never the private key; the task-workflow service gets `DATABASE_URL`, `TASK_WORKFLOW_SERVICE_TOKEN` and its own `WORKFLOW_LOCAL_DATA_DIR`; the cron calls get `CRON_SECRET` | root, 600 |
 | `/var/lib/software-factory/<app_id>/` | `home/` (the sandbox runtime links), `workflow-data/` (the agent's), `task-workflow-data/`, `storage/` (`STORAGE_FS_ROOT`), `build-stamps/`: everything a redeploy must keep | `sfapp` |
 | `/etc/systemd/system/sf-<app>-{workflow,api,web}.service` | the three services, all on 127.0.0.1 | |
-| `/etc/systemd/system/sf-<app>-cron-<route>.{service,timer}` | six timers, one per `vercel.json` cron, each a loopback `curl` with `CRON_SECRET` on stdin | |
+| `/etc/systemd/system/sf-<app>-cron-<route>.{service,timer}` | one timer per `vercel.json` cron (read from the mold at every deploy), each a loopback `curl` with `CRON_SECRET` on stdin | |
 | `/etc/systemd/system/sf-<app>-egress.service` | loads the nftables rule that keeps the app's four users off the metadata address, the private ranges, and this server's own SSH port | |
 | `/etc/systemd/system/sf-<app>-storage.service` | filesystem storage only: mounts the web app's view of the file store at `<data>/storage-web` (`storage-view.sh`) | |
 | `/etc/systemd/system/sf-<app>-sandbox-prune.{service,timer}` | nightly (03:17): removes stopped session sandboxes and their state snapshots untouched for `sandbox.retention_days` (7), as `sfapp`, with `msb`'s own commands | |
@@ -117,7 +117,7 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
 
   | user | runs | home | notes |
   |---|---|---|---|
-  | `sfweb` | the web app (`next start`), and the six cron calls | `/var/lib/sfweb` | the cron calls only call the web app, with `CRON_SECRET`, which it already holds |
+  | `sfweb` | the web app (`next start`), and the cron calls | `/var/lib/sfweb` | the cron calls only call the web app, with `CRON_SECRET`, which it already holds |
   | `sfapp` | the agent API, its prewarm, the nightly sandbox prune | `/var/lib/sfapp` | the old single user's name, uid and short HOME, kept on purpose: the sandbox store (`~/.microsandbox`, about 15 GB on the first server) and the file store already belong to it, so neither is moved or re-owned. The only process in group kvm (from its unit; nobody is a member in `/etc/group`) |
   | `sfwork` | the task-workflow service | `/var/lib/sfwork` | |
   | `sfbuild` | every build | `/var/lib/sfbuild` | owns the code; runs no service, so no service can change the code another one (or it) runs |

@@ -89,7 +89,7 @@ def users(check, tmp):
     check("users: nobody is put in group kvm in /etc/group: the API's process gets it from its unit alone", "kvm" not in " ".join(l for l in V.accounts_sh().splitlines() if "usermod" in l or "useradd" in l))
     cron_units = [v for k, v in U.items() if "-cron-" in k and k.endswith(".service")]
     check("users: the cron calls run as the web app's user (they only call the web app, with a secret it already holds), never as the agent's",
-          len(cron_units) == 6 and all(f"User={WEB}\nGroup={WEB}\n" in v and f"User={API}" not in v for v in cron_units))
+          len(cron_units) == len(V.CRONS) > 0 and all(f"User={WEB}\nGroup={WEB}\n" in v and f"User={API}" not in v for v in cron_units))
     pr = U[f"{pre}-sandbox-prune.service"]
     check("users: the nightly prune runs as the store's owner, the agent API's user, with its HOME", f"User={API}\nGroup={API}\nEnvironment=HOME={V.SERVICE_HOME}\n" in pr and f"--home {V.SERVICE_HOME} " in pr, pr)
     pa = V.shown_cmd(S, V.prune_argv(S, shown=True))

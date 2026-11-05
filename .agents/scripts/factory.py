@@ -1129,11 +1129,7 @@ def cmd_app_status(a):
 SELFTEST_TIMEOUT = 1200
 # A self-test `selftests` does not run, and why (a tool or a server this run does not have). validate refuses an entry
 # here that names no self-test, so the list cannot outlive what it excuses.
-SELFTEST_SKIP = {
-    "lib/vm_remote_selftest": "red on a fresh clone of main before mold_v0-244, for reasons of its own (a follow-up ticket): the mold's vercel.json now has a "
-                              "seventh cron (deliver-step-actions) that lib/vm_remote.py CRONS does not; its \"customer's own server\" brief "
-                              "is now a prose question (mold_v0-230); lib/ledger_key.py imports cryptography, which the server bundle lacks",
-}
+SELFTEST_SKIP = {}
 # A self-test that needs a tool installed on this machine first: run when it is there, else listed as not run (with
 # what to install), never failed for it. {name: (path under the repository root, what it is)}
 SELFTEST_NEEDS = {"branding": ("molds/mold_v0/codebase/node_modules/.bin/tsx", "mold_v0's node_modules (npm ci in molds/mold_v0/codebase): its profile generator runs with tsx")}
