@@ -101,7 +101,8 @@ turns it into shell, or builds it where nothing exists yet.
 
 - **Today.** `/gw/:provider` in `src/http.ts`, handled by `src/gateway.ts`: per-session and per-orchestrator tokens
   (`gateway_tokens`), the credential broker, session and org budgets. Providers include `src/vertex.ts`. Each request
-  is priced by `src/usage.ts` from `model_prices` into `gateway_usage` and `gateway_model_usage`; model spend for
+  is priced by `src/usage.ts` from `model_prices` into `gateway_usage` and `gateway_model_usage` (plain input, cache
+  reads and cache writes each at their own price, mold_v0-246; a model with no price is refused); model spend for
   admins is `src/spend.ts` and `src/spend-usage.ts`; per-account budgets and throughput are `src/limits.ts`.
 - **Generalised by.** mold_v0-041, **built** (token lifetime per run kind, so a long run's token does not expire
   mid-run; cost per run; a run's budget across its attempts), mold_v0-053, **built** (run spend in the account's month figures, budgets and spend pages; `src/run-spend.ts`),

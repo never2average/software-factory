@@ -974,6 +974,37 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} shared rows' repository versions behind staff overrides: its rollback keeps the rows and leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Cache writes priced apart and the Haiku rows (mold_v0-246, model_price_cache_writes, found by name): the write prices
+  // are empty (the provider's premium applies) and the day's cache-write count starts at 0; a price row an operator set
+  // for a Haiku model before it is kept; its rollback drops the columns, keeps the price rows (the older release reads
+  // them), leaves exactly the catalog the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "model_price_cache_writes")!.version;
+    const own = await shellAt(kind, v - 1);
+    await own.query("INSERT INTO model_prices (model, input_per_mtok, cached_input_per_mtok, output_per_mtok, source) VALUES ('claude-haiku-4-5', 9, 9, 9, 'operator')");
+    await own.query("INSERT INTO gateway_model_usage (day, provider, model, consumer, requests, input_tokens, cached_input_tokens, output_tokens, cost_usd) VALUES (current_date, 'anthropic', 'claude-sonnet-5-5', 'session', 6, 60045, 17986, 744, 0.095156)");
+    assert.deepEqual((await runMigrations(own, { packDirs: [] })).applied.filter((m) => m.endsWith("_model_price_cache_writes")).length, 1);
+    const rows = await own.query<{ model: string; input_per_mtok: string; source: string; cache_write_per_mtok: string | null; cache_write_1h_per_mtok: string | null }>(
+      "SELECT model, input_per_mtok, source, cache_write_per_mtok, cache_write_1h_per_mtok FROM model_prices WHERE model LIKE 'claude-%' ORDER BY model");
+    assert.deepEqual(rows.map((r) => [r.model, Number(r.input_per_mtok), r.cache_write_per_mtok, r.cache_write_1h_per_mtok]),
+      [["claude-haiku-4-5", 9, null, null], ["claude-haiku-5-5", 0.1, null, null], ["claude-opus-5-5", 4, null, null], ["claude-sonnet-5-5", 2, null, null]],
+      "Haiku priced; an operator's own row kept; write prices empty (the premium applies)");
+    const [u] = await own.query<{ cache_write_tokens: string; cost_usd: string }>("SELECT cache_write_tokens, cost_usd FROM gateway_model_usage WHERE model = 'claude-sonnet-5-5'");
+    assert.deepEqual([Number(u!.cache_write_tokens), Number(u!.cost_usd)], [0, 0.095156], "earlier usage is not repriced");
+    await own.drop();
+    const d = await shellAt(kind);
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_model_price_cache_writes.sql`), "utf8");
+    await d.exec(rb);
+    const before = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(before), `${kind}: rolled back from ${v}`);
+    assert.equal((await d.query("SELECT 1 FROM model_prices WHERE model LIKE 'claude-haiku-%'")).length, 2, "the Haiku price rows stay");
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_model_price_cache_writes")).length, 1, "and it applies again");
+    await d.drop(); await before.drop();
+    log(`  ✓ ${kind}: ${v} cache writes priced apart: Haiku priced (an operator's row kept), write prices empty, earlier usage not repriced; its rollback keeps the price rows and leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

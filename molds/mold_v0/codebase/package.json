@@ -92,6 +92,7 @@
     "test:mcp-prompts": "tsx scripts/mcp-prompts-test.ts",
     "test:pack-guide": "tsx scripts/pack-guide-test.ts",
     "test:run-spend": "tsx scripts/run-spend-test.ts",
+    "test:gateway-pricing": "tsx scripts/gateway-pricing-test.ts",
     "test:run-charges": "tsx scripts/run-charges-test.ts",
     "test:run-charges-race": "tsx scripts/run-charges-race.ts",
     "test:usage": "tsx scripts/usage-test.ts",

@@ -49,6 +49,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Approvals | `harness_session_requests` (`web` a host, `tool` a tool outside the policy, `budget` a stop on budget): pending → approved / declined / expired. Approve grants exactly that to the session and wakes it on the same session; Decline records the refusal and parks it with the refusal said on the next wake. A pause past `AGENT_APPROVAL_WINDOW_HOURS` expires |
 | Parking, waking | Phase `parked` (no run, no slot); a message wakes it: a new wake run with `--resume`; messages sent while starting or waking wait `pending` for the next beat |
 | Crash recovery | A wake that ends without saying how (the run engine's lease sweep: its runner stopped heartbeating; or the harness CLI died) parks the session with its last checkpoint and the messages it left unanswered pending again; the next message (or, with `AGENT_AUTO_RESUME` on, at once) wakes it on the same harness session, at most `AGENT_CRASH_RESUMES` in a row and not once crashes have spent half its budget; the silent window's estimated cost is held back from the next wake (`reserve_usd`). `reconcileWake` is called from `completeRun`, `sweepRuns` and the sweep, for agent wakes only |
+| Working directory | Each wake works in the session's own scratch, `<tmp>/agent-sessions-<runner uid>/<session id>/` (`sessionScratch`, mold_v0-246): the same path on every wake, so the CLI's working directory (`state/work`) never changes under it and the CLI finds its saved session under the same project. The parent is the runner's (0711, refused if it is a link or another user's); each session's directory is its own (0700, the state its run user's). A wake writes its run id beside the state; the directory is removed when the wake ends unless a later wake holds it, and one a dead runner left is taken away by the next wake |
 | Session checkpoints | The CLI's session directory and the working directory, a gzipped bundle (`workspace-bundle.ts` format) sent with the lease (`PUT .../agent/checkpoint`, at most the API's one-request size, `APP_WORKER_INLINE_MAX_BYTES`, 4 MiB: a larger one is refused and the previous stays), sealed with the workspace's key and kept in the object store (`storage.ts`: a bucket, or `APP_STORAGE_DIR`) under `workspaces/org-<id>/.agent/<session>/<seq>.wse`. Each checkpoint takes a newer sequence; the pointer only moves forward and the older object goes |
 | Retention | `retention_until` per session (`AGENT_RETENTION_DAYS` after it ends or is archived); the scheduler job `harness_sessions` (`src/schedules.ts` tick) removes its messages, requests and checkpoint, keeps the session's spend, its budget raises and the run rows. Parked sessions quiet for `AGENT_ARCHIVE_AFTER_DAYS` are archived; requests past `AGENT_APPROVAL_WINDOW_HOURS` expire |
 | Credentials broker  | Already the shell's gateway (`src/gateway.ts`): a per-attempt token, gateway-mode providers only, refused past the run's budget |
@@ -122,3 +123,13 @@ the object store).
   cache writes at the plain input rate (40,796 of them: exactly the $0.020398 gap). A resumed CLI re-reports what it had
   already spent (its total went on from $0.078566), and the baseline took that out: the second wake was charged $0.035189,
   nothing twice.
+
+Its three findings were fixed in mold_v0-246:
+
+- **Cache writes at their own price.** The gateway meters Anthropic's cache writes apart (`cache_creation_input_tokens`,
+  and the 1-hour ones among them) and prices them at the row's `cache_write_per_mtok` / `cache_write_1h_per_mtok`, or
+  1.25x / 2x the input price when those are empty (migration 0045); cache reads stay at the cached price. The session
+  above, priced by the gateway now: **$0.115553**, the provider's list-price figure (`npm run test:gateway-pricing`).
+- **Haiku priced.** `claude-haiku-5-5` and `claude-haiku-4-5` have rows (0045), and the gateway refuses a request for
+  a model with no row (400, in words: nothing is sent) instead of metering it at $0.
+- **A stable working directory.** See "Working directory" above: the path is the session's, not the wake's.
