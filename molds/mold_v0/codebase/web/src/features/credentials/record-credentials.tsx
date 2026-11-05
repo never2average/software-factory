@@ -6,14 +6,16 @@
 // its status, when it was set and last used, what works without it, and how to get it. Set, Replace and Clear open a
 // full card in the page's place (./credential-card.tsx); an environment is picked from the record's own, never typed.
 // Nothing here is shown when the record's area has no credential (the API answers 404).
-import type { ReactNode } from 'react';
+// mold_v0-241: the card is the page's #credentials anchor: a record's row on Settings › Credentials opens the page
+// scrolled to it (once the card is drawn: the record and its credentials load after the page).
+import { useCallback, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { When, useOrgLoad } from '@/features/portal/shared';
 import { singular } from '@/features/tabs/run-rows';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
 import { CredentialCard, HowToGet, StatusText, credentialsCall, useCredentialCard } from './credential-card';
-import { credentialsOf, envWord, forRecord, recordSections, stateIn, type Credential, type CredField, type CredValue, type SlotState } from './model';
+import { CREDENTIALS_ANCHOR, credentialsOf, envWord, forRecord, recordSections, stateIn, type Credential, type CredField, type CredValue, type SlotState } from './model';
 import { OAuthConnections, oauthCall, useOAuthOutcome, type OAuthView } from './oauth-connections';
 
 interface RecordVault {
@@ -34,6 +36,14 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
   const { data: oauth, reload: reloadOAuth } = useOrgLoad(() => (needsOAuth ? oauthCall<OAuthView>('GET') : Promise.resolve(null)), [needsOAuth]);
   const open = useCredentialCard();
   useOAuthOutcome();
+  // Opened at #credentials: scroll to the card when it is first drawn (once, so a later redraw does not move the page),
+  // its heading below the page's sticky header (scroll-mt-20).
+  const scrolled = useRef(false);
+  const anchor = useCallback((el: HTMLElement | null) => {
+    if (!el || scrolled.current || window.location.hash !== `#${CREDENTIALS_ANCHOR}`) return;
+    scrolled.current = true;
+    requestAnimationFrame(() => el.scrollIntoView({ block: 'start' }));
+  }, []);
   if (!data) return { section: null, card: null };
   const noun = singular(area.label).toLowerCase();
   const creds = credentialsOf(data.fields);
@@ -62,7 +72,7 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
     );
   }
   const section = (
-    <Card className='w-full max-w-4xl gap-0 py-0' data-record-credentials=''>
+    <Card id={CREDENTIALS_ANCHOR} ref={anchor} className='w-full max-w-4xl scroll-mt-20 gap-0 py-0' data-record-credentials=''>
       <CardHeader className='border-b py-4 [.border-b]:pb-4'>
         {/* No count line under the heading (mold_v0-240): each credential says its own status. */}
         <CardTitle className='text-base'>Credentials</CardTitle>

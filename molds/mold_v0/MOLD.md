@@ -1062,6 +1062,17 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     last 4 characters). The binding, the delivery, a variable's or a pack's name and an area's id are never shown. A
     get-started step for a record's credential points to the area's records. `npm run test:credentials` (section 9)
     proves the places with the API and the console's model; `npm run test:record-pages` (12) the pages.
+  - **A row per record on Settings › Credentials** (mold_v0-241). Below the workspace's own rows, one row per record of
+    each area whose records have credentials (an application): its title; "Credentials for this <record> and its
+    environments"; its status in plain words ("All set", "N missing": N required and not set, "Optional only"); when one
+    of its credentials last changed, was last used, and who set it. One request per area, never per record
+    (`GET /api/credentials?records=<area>`, `src/credentials.ts` areaCredentials: every record of the workspace the
+    person may read, its environments and its values' slots, no last 4 characters; 403 for an area they may not read,
+    and `?scope=workspace` names only the areas they may read in `record_areas`; the record page's own answer checks the
+    same read permission). The four cards count credentials, not rows: the workspace's, and each record's one by one
+    (each environment's apart). Opening the row opens the record's page at its Credentials card
+    (`/app/records/<area>/<key>#credentials`); the card is never drawn on Settings. Search finds a record by its name. `npm run test:credentials`
+    (section 10) proves the counts, the read permission and the link.
 - **Repository access by a GitHub App per workspace** (mold_v0-014, built; `src/github-app.ts`,
   `src/github-app-routes.ts`, `sql/migrations/0021_github_app.sql`; `npm run test:github-app`). A credential field may
   say `github_app: true` (pack.json `credentials[].github_app`): a GitHub repository token. When the platform holds a

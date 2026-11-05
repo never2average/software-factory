@@ -43,7 +43,9 @@
 //      card in the page's place; Set, Replace and Clear are full cards (never a dialog or a side sheet) whose value
 //      inputs are hidden; an environment is picked (a select of the record's), never typed; no internal word
 //      (bound_to, deliver_as, asset, a variable's or a pack's name, a record area's id) reaches the screen; no count
-//      line under the Credentials card's heading (mold_v0-240).
+//      line under the Credentials card's heading (mold_v0-240). mold_v0-241: Settings › Credentials also lists one row
+//      per record (one request per area, after the workspace's rows, its status in words, searched by name), opening the
+//      record's page at its Credentials card (#credentials).
 //  13. A record's json field in words (mold_v0-240; web/src/features/records/json-text.ts): a list of objects one line per
 //      item (its name, then its meaningful fields), an object one line per field, nested objects flattened, bookkeeping
 //      and a value repeating the record's own key hidden, common short values in words (the credentials card's
@@ -457,6 +459,17 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   }
   const model = await web("features/credentials/model.ts");
   assert.deepEqual(["prod", "staging", "qa", "eu-west"].map(model.envWord), ["Production", "Staging", "QA", "Eu west"], "environments named in words");
+  // mold_v0-241: Settings › Credentials also lists one row per record whose credentials are its own, after the workspace's.
+  assert.match(tab, /areas\.split\(','\)\.filter\(Boolean\)\.map\(\(area\) =>\s*credentialsCall<AreaVault>\('GET', undefined, `\?records=\$\{encodeURIComponent\(area\)\}`\)/, "one request per area (?records=), for the areas the workspace's answer names");
+  assert.doesNotMatch(tab, /\?area=|useRecordCredentials|RecordCredentials/, "never one request per record, and the record's Credentials card is not drawn here");
+  assert.match(tab, /const rows = \[\.\.\.rowsOf\(creds, data, oauth, github, runners\), \.\.\.recordRowsOf\(records\)\];/, "the workspace's own rows first, then one per record");
+  assert.match(tab, /const n = settingsCounts\(rows\.flatMap\(\(r\) => r\.units \?\? /, "the cards count each record's credentials one by one");
+  assert.match(tab, /if \(href\) router\.push\(href\)/, "a record's row opens its page");
+  assert.match(tab, /\{r\.words \?\? r\.status\}/, "its status in words, plain text");
+  assert.match(tab, /searchText=\{\(r\) => `\$\{r\.name\} /, "searched by its name");
+  assert.match(rc, /<Card id=\{CREDENTIALS_ANCHOR\} ref=\{anchor\}/, "the record page's Credentials card is the #credentials anchor");
+  assert.equal(model.CREDENTIALS_ANCHOR, "credentials");
+  assert.match(model.recordCredentialsHref("apps", "a-1"), /^\/app\/records\/apps\/a-1#credentials$/, "a row links to the record's page at its Credentials card");
   ok("the credential vault in its places (mold_v0-239): Settings › Credentials the workspace's only, no caption, no Bound to; a record's page its Credentials card (the record's, then per environment) and the set card in the page's place; full cards, hidden values, environments picked; no internal word shown");
 }
 

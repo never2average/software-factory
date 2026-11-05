@@ -5,7 +5,11 @@
  *   GET    /api/credentials   a signed-in person of the workspace: the fields the packs declare and, for each stored
  *                             value, its slot (and, for an owner, its last 4 characters). Never a value.
  *                             ?scope=workspace: only the workspace's own (Settings › Credentials, mold_v0-239);
- *                             ?area=<area>&key=<key>: one record's (its own page's Credentials card), with its environments
+ *                             (and record_areas: the areas whose records have credentials, that this person may read);
+ *                             ?area=<area>&key=<key>: one record's (its own page's Credentials card), with its environments;
+ *                             ?records=<area>: mold_v0-241, Settings › Credentials' one row per record of that area, in one
+ *                             answer: every record the person may read (the area's read permission), its environments and
+ *                             its values' slots (no last 4 characters)
  *   PUT    /api/credentials   {pack, name, asset?, environment?, value}: set or replace one value ("manage": an owner);
  *                             {pack, group, asset?, environment?, values: {<field>: <value>}}: every field of a group at once
  *   DELETE /api/credentials   {pack, name | group, asset?, environment?}: remove one, or a group's ("manage")
@@ -18,7 +22,8 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { accountRefusal, canAccount } from "./account-roles.js";
 import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
-import { deleteCredential, deleteCredentialGroup, listCredentials, recordCredentials, setCredential, setCredentialGroup } from "./credentials.js";
+import { areaCredentials, credentialAreas, deleteCredential, deleteCredentialGroup, listCredentials, recordCredentials, setCredential, setCredentialGroup } from "./credentials.js";
+import { findArea, may } from "./record-areas.js";
 import { featureOn } from "./features.js";
 import { PackError } from "./pack-api.js";
 import { addCompanyHost, companyEgressPacks, listCompanyHosts, removeCompanyHost } from "./egress-hosts.js";
@@ -99,10 +104,15 @@ export function credentialAppRouter(): Router {
   r.get("/", answer(async (req, res) => {
     const can = canAccount(S(res).accountRole, "manage");
     const q = req.query as Record<string, unknown>;
+    const actor = { role: S(res).accountRole ?? null, userId: S(res).user ?? null };
+    // mold_v0-241: one area's records, for Settings › Credentials' rows (one request per area, never one per record).
+    if (q.records !== undefined) return { ...await areaCredentials(S(res).org, q.records, actor), can_manage: can };
     // mold_v0-239: each credential in its own place: the workspace's on Settings, a record's on the record's page.
-    const v = q.area !== undefined || q.key !== undefined ? await recordCredentials(S(res).org, q.area, q.key)
+    const v = q.area !== undefined || q.key !== undefined ? await recordCredentials(S(res).org, q.area, q.key, actor)
       : await listCredentials(S(res).org, { scope: q.scope === "workspace" ? "workspace" : "all" });
-    return { ...v, values: can ? v.values : v.values.map((x) => ({ ...x, last4: null })), can_manage: can };
+    // Settings › Credentials then asks for the rows of each area whose records have credentials and the person may read.
+    const areas = q.scope === "workspace" ? { record_areas: credentialAreas().filter((a) => { const x = findArea(a); return !!x && may(x, "read", actor); }) } : {};
+    return { ...v, ...areas, values: can ? v.values : v.values.map((x) => ({ ...x, last4: null })), can_manage: can };
   }));
   r.put("/", answer(async (req, res) => {
     manage(res);
