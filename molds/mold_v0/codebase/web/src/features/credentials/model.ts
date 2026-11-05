@@ -140,6 +140,51 @@ export function recordSections(cs: readonly Credential[], area: string, environm
   };
 }
 
+/** A record as GET /api/credentials?records=<area> answers it (mold_v0-241; src/credentials.ts areaCredentials). */
+export interface AreaRecord { key: string; title: string; environments: string[]; field_environments: Record<string, string[] | null> }
+
+/** One credential in one slot of a record, as Settings › Credentials counts it: its status and whether it is required. */
+export interface RecordSlot { c: Credential; environment: string | null; state: SlotState; required: boolean }
+
+/**
+ * A record's row on Settings › Credentials (mold_v0-241): its credentials counted one by one (each of the record's own,
+ * and each environment's for every environment the record has), in one line of plain words: "All set", "N missing" (N
+ * required and not set), "Optional only" (only optional ones are not set), or "No environments yet" (it needs them per
+ * environment and lists none); when one of them last changed and who changed it, and when one was last used.
+ */
+export function recordSummary(cs: readonly Credential[], area: string, rec: AreaRecord, values: readonly CredValue[]) {
+  const sec = recordSections(cs, area, rec.environments, values, rec.key, rec.field_environments);
+  const slots: RecordSlot[] = [
+    ...sec.record.map((x) => ({ c: x.c, environment: null, state: x.state, required: !x.c.optional })),
+    ...sec.environments.flatMap((g) => g.items.map((x) => ({ c: x.c, environment: g.environment, state: x.state, required: !x.c.optional })))
+  ];
+  const missing = slots.filter((x) => x.state.status === 'Missing').length;
+  const optional = slots.filter((x) => x.state.status === 'Optional').length;
+  const status: Status = missing ? 'Missing' : optional || !slots.length ? 'Optional' : 'Set';
+  const words = !slots.length ? 'No environments yet' : missing ? `${missing} missing` : optional ? 'Optional only' : 'All set';
+  const newest = slots.filter((x) => x.state.set_at).sort((a, b) => a.state.set_at!.localeCompare(b.state.set_at!)).at(-1)?.state ?? null;
+  return { slots, missing, optional, status, words, changed_at: newest?.set_at ?? null, changed_by: newest?.set_by ?? null,
+    used_at: latest(slots.map((x) => x.state.last_used_at)) };
+}
+
+/** What a record's credentials are for, in its area's words ("Credentials for this application and its environments"). */
+export const recordPurpose = (cs: readonly Credential[], area: string, noun: string) =>
+  `Credentials for this ${noun}${forRecord(cs, area).environment.length ? ' and its environments' : ''}`;
+
+/** The anchor of a record page's Credentials card: a Settings › Credentials row opens the record's page scrolled to it. */
+export const CREDENTIALS_ANCHOR = 'credentials';
+/** A record's own page, at its Credentials card. */
+export const recordCredentialsHref = (area: string, key: string) => `/app/records/${encodeURIComponent(area)}/${encodeURIComponent(key)}#${CREDENTIALS_ANCHOR}`;
+
+/** One credential the four cards count: a workspace row's, or one of a record's (each environment's apart). */
+export interface Unit { status: Status; required: boolean; changed_at: string | null }
+/** Settings › Credentials' four cards (mold_v0-241: credentials, not rows): set, not set, required and not set, changed this week. */
+export function settingsCounts(units: readonly Unit[], now = Date.now()) {
+  const n = (f: (u: Unit) => boolean) => units.filter(f).length;
+  return { set: n((u) => u.status === 'Set'), missing: n((u) => u.status !== 'Set'), required_missing: n((u) => u.status === 'Missing' && u.required),
+    recent: n((u) => !!u.changed_at && now - new Date(u.changed_at).getTime() < 7 * 86_400_000) };
+}
+
 /**
  * Words a customer never reads in the vault (mold_v0-239): the binding, the delivery, the record role. The console's
  * text is held to it (scripts/record-pages-test.ts), with every variable name and pack id the build declares.

@@ -14,6 +14,8 @@
  *             record's own page the ones bound to that record and its environments (recordCredentials); fields that
  *             share a `group` are set and cleared together (setCredentialGroup, deleteCredentialGroup); a stored
  *             value says when a run (or the shell) last received it (last_used_at, 0043_credential_last_used).
+ *             mold_v0-241: Settings › Credentials also lists one row per record whose area has credentials of its own
+ *             (areaCredentials: one answer per area, every record the person may read, with its stored values' slots).
  *   runs      runCredentials(run): the values the run's kind names, looked up with the run row's own workspace (never a
  *             runner's input), its pack, and its targets (targets.asset, a key in the field's asset area;
  *             targets.environment). A value bound to an asset the run does not target is never delivered.
@@ -23,9 +25,10 @@
 import { getDb, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
-import { CredentialSchema, OperatorCredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
+import { CredentialSchema, OperatorCredentialSchema, PackError, RECORD_KEY, z, type RecordRow } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { checkKey, getFor } from "./record-areas.js";
+import { checkKey, getFor, listFor, SYSTEM_ACTOR, type Actor } from "./record-areas.js";
+import { MAX_LIMIT } from "./record-query.js";
 import { asPlatform } from "./tenant-scope.js";
 import type { Secret } from "./credential-redact.js";
 
@@ -105,7 +108,7 @@ const COLS = "pack, name, bound_to, asset_key, environment, last4, updated_at, u
  * Which credentials a list shows (mold_v0-239): all of them (the default, for the API), only the workspace's
  * (Settings › Credentials), or one record's (its own page: the fields bound to its area, the values of that record).
  */
-export type CredentialScope = { scope?: "all" | "workspace" } | { area: string; asset: string };
+export type CredentialScope = { scope?: "all" | "workspace" } | { area: string; asset?: string };
 
 /** A workspace's fields and stored values (last 4 characters only), for the console. */
 export async function listCredentials(orgId: number, where: CredentialScope = {}) {
@@ -114,8 +117,8 @@ export async function listCredentials(orgId: number, where: CredentialScope = {}
     : (where as { scope?: string }).scope === "workspace" ? c.bound_to === "workspace" : true);
   const rows = await asPlatform(async () => (await getDb()).query<Row>(
     `SELECT ${COLS} FROM workspace_credentials
-      WHERE org_id = $1 ${record ? "AND asset_area = $2 AND asset_key = $3" : ""} ORDER BY pack, name, asset_key NULLS FIRST, environment NULLS FIRST`,
-    record ? [orgId, record.area, record.asset] : [orgId]));
+      WHERE org_id = $1 ${record ? `AND asset_area = $2${record.asset !== undefined ? " AND asset_key = $3" : ""}` : ""} ORDER BY pack, name, asset_key NULLS FIRST, environment NULLS FIRST`,
+    record ? (record.asset !== undefined ? [orgId, record.area, record.asset] : [orgId, record.area]) : [orgId]));
   // A value whose field a later build no longer declares is not shown (nor delivered): it waits for a build that has it.
   const known = rows.filter((r) => specs.some((c) => c.pack === r.pack && c.name === r.name && c.bound_to === r.bound_to));
   return { fields: specs.map(fieldSummary), values: known.map(stored) };
@@ -144,19 +147,57 @@ export function environmentsOf(spec: CredentialSpec, data: Record<string, unknow
  * or by the record and an environment), its stored values, and its environments: the record's own (environmentsOf) and
  * any a value is still stored under. 404 when the record is not one of this workspace's.
  */
-export async function recordCredentials(orgId: number, area: unknown, asset: unknown) {
-  if (typeof area !== "string" || !credentialSpecs().some((c) => c.bound_to !== "workspace" && c.area === area)) throw new PackError("no credentials belong to these records", 404);
+export async function recordCredentials(orgId: number, area: unknown, asset: unknown, actor: Actor = SYSTEM_ACTOR) {
+  if (typeof area !== "string" || !credentialAreas().includes(area)) throw new PackError("no credentials belong to these records", 404);
   const key = checkKey(asset);
-  const rec = await getFor(orgId, area, key);
+  // mold_v0-241: the area's read permission, for the person asking (a record they may not read has no Credentials card).
+  const rec = await getFor(orgId, area, key, actor);
   if (!rec) throw new PackError("no such record in this workspace", 404);
   const v = await listCredentials(orgId, { area, asset: key });
+  return { ...v, record: { area, key, title: rec.title ?? key }, ...recordEnvironments(area, rec, v.values) };
+}
+
+/** The areas whose records have credentials of their own (one per record, or one per record and environment), in pack order. */
+export const credentialAreas = (): string[] => [...new Set(credentialSpecs().filter((c) => c.bound_to !== "workspace" && c.area).map((c) => c.area!))];
+
+/**
+ * A record's environments (environmentsOf, then any a value is still stored under) and which of them each field takes
+ * (a fixed list narrows it), so the console offers and counts only those.
+ */
+function recordEnvironments(area: string, rec: Pick<RecordRow, "key" | "data">, values: readonly Pick<StoredCredential, "asset" | "environment">[]) {
+  const specs = credentialSpecs().filter((c) => c.area === area && c.bound_to === "environment");
   const environments: string[] = [];
-  for (const spec of credentialSpecs().filter((c) => c.area === area && c.bound_to === "environment"))
-    for (const e of environmentsOf(spec, rec.data) ?? []) if (!environments.includes(e)) environments.push(e);
-  for (const s of v.values) if (s.environment && !environments.includes(s.environment)) environments.push(s.environment);
-  return { ...v, record: { area, key, title: rec.title ?? key }, environments,
-    // Which of them each field takes (a fixed list narrows it), so the console offers only those.
-    field_environments: Object.fromEntries(credentialSpecs().filter((c) => c.area === area && c.bound_to === "environment").map((c) => [`${c.pack}/${c.name}`, environmentsOf(c, rec.data)])) };
+  for (const spec of specs) for (const e of environmentsOf(spec, rec.data) ?? []) if (!environments.includes(e)) environments.push(e);
+  for (const s of values) if (s.asset === rec.key && s.environment && !environments.includes(s.environment)) environments.push(s.environment);
+  return { environments, field_environments: Object.fromEntries(specs.map((c) => [`${c.pack}/${c.name}`, environmentsOf(c, rec.data)])) as Record<string, string[] | null> };
+}
+
+/** At most this many records of one area are summarised on Settings › Credentials (the rest are on the area's own page). */
+export const AREA_CREDENTIALS_LIMIT = 2000;
+
+/**
+ * mold_v0-241: Settings › Credentials' rows for one area's records, in one answer (never one request per record): the
+ * area's record and environment credentials, every record of the workspace the person may read (the area's read
+ * permission: refused with 403 otherwise) with its title and environments, and the stored values' slots of those
+ * records only (never a value, nor its last 4 characters: the row says only how many are set and when). The console
+ * counts each record's credentials one by one (web/src/features/credentials/model.ts recordSummary).
+ */
+export async function areaCredentials(orgId: number, area: unknown, actor: Actor = SYSTEM_ACTOR) {
+  if (typeof area !== "string" || !credentialAreas().includes(area)) throw new PackError("no credentials belong to these records", 404);
+  const records: RecordRow[] = [];
+  let more = false;
+  for (let after: string | null = null; ;) {
+    const page = await listFor(orgId, area, { limit: MAX_LIMIT, ...(after ? { after } : {}) }, actor);
+    records.push(...page.records);
+    if (!page.next) break;
+    if (records.length >= AREA_CREDENTIALS_LIMIT) { more = true; break; }
+    after = page.next;
+  }
+  const keys = new Set(records.map((r) => r.key));
+  const v = await listCredentials(orgId, { area });
+  const values = v.values.filter((x) => x.asset !== null && keys.has(x.asset)).map((x) => ({ ...x, last4: null }));
+  return { fields: v.fields, values, more,
+    records: records.map((r) => ({ key: r.key, title: r.title ?? r.key, ...recordEnvironments(area, r, values) })) };
 }
 
 /** A record's environments must include the one a value is set for, when the field reads them from the record. */

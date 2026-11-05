@@ -26,6 +26,12 @@
 //    id and its secret) is one credential, set and cleared together, refused half given; an environment is one of the
 //    record's own; "last used" is when a run received it. The console's model (web/src/features/credentials/model.ts)
 //    places each credential in exactly one of the three places. definePack refuses a group that does not hold together.
+// 10. A row per record on Settings › Credentials (mold_v0-241): ?scope=workspace names the areas whose records have
+//    credentials and the person may read; ?records=<area> answers every record of the workspace the person may read in
+//    one request (title, environments, its values' slots, never the last 4 characters), refused for an area they may not
+//    read (and so is that area's record page); the console counts each record's credentials one by one ("All set",
+//    "N missing", "Optional only"), the four cards count every credential, and a row links to the record's page at its
+//    Credentials card (#credentials).
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -430,6 +436,97 @@ try {
       await ok("DELETE", { ...P, group: "cloud_key", asset: "app-1", environment: "prod" });
       assert.deepEqual((await req("GET", "/api/credentials?area=pl_apps&key=app-1", as)).body.values.map((v: { name: string }) => v.name), ["app_token"], "a pair is cleared together");
       console.log("✓ each in its own place: the workspace's on Settings only, a record's and its environments' on that record's page only (environments read from the record, picked, never another's); a pair set, refused half given and cleared as one; last used when a run received it");
+    }
+
+    // ---------- 10. a row per record on Settings › Credentials (mold_v0-241) ----------
+    {
+      const envs = { name: "environments", label: "Environments", type: "json" };
+      const rows = definePack({
+        id: "fixture_rows",
+        recordAreas: [
+          { name: "rw_apps", label: "Applications", role: "asset", scope: "workspace", fields: [{ name: "url", label: "Address" }, envs] },
+          // Read by owners only: a member sees neither its rows on Settings nor its records' Credentials cards.
+          { name: "rw_vaults", label: "Vaults", role: "asset", scope: "workspace", permissions: { read: ["owner"] }, fields: [{ name: "url", label: "Address" }] },
+        ] as never,
+        credentials: [
+          { name: "ws_token", label: "Workspace token", bound_to: "workspace", deliver_as: { env: "RW_WS_TOKEN" } },
+          { name: "app_token", label: "Application token", bound_to: "asset", area: "rw_apps", deliver_as: { env: "RW_APP_TOKEN" } },
+          { name: "app_extra", label: "Extra token", bound_to: "asset", area: "rw_apps", optional: true, deliver_as: { env: "RW_APP_EXTRA" } },
+          { name: "cloud_id", label: "Access key ID", bound_to: "environment", area: "rw_apps", environments_from: { field: "environments", key: "envId" },
+            deliver_as: { env: "RW_KEY_ID" }, group: "cloud", group_label: "Cloud key" },
+          { name: "cloud_secret", label: "Secret access key", bound_to: "environment", area: "rw_apps", environments_from: { field: "environments", key: "envId" },
+            deliver_as: { env: "RW_KEY_SECRET" }, group: "cloud" },
+          { name: "vault_key", label: "Vault key", bound_to: "asset", area: "rw_vaults", deliver_as: { env: "RW_VAULT_KEY" } },
+        ] as never,
+      });
+      setPacksForTest([{ manifest: { id: "fixture_rows", name: "Fixture rows", version: "1", entry: "index.ts", migrations: null, words: {}, dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: rows }]);
+      const put = (o: typeof A, area: string, key: string, title: string, data: Record<string, unknown>) =>
+        withTenant(o.orgId, () => rec.workspaceRecords("fixture_rows", o.orgId).put(area, key, { title, data: { url: `https://${key}.example`, ...data } }));
+      await put(A, "rw_apps", "app-1", "Alpha app", { environments: [{ envId: "prod" }, { envId: "staging" }] });
+      await put(A, "rw_apps", "app-2", "Beta app", { environments: [{ envId: "prod" }] });
+      await put(A, "rw_apps", "app-3", "Gamma app", { environments: [] });
+      await put(A, "rw_vaults", "vault-1", "Main vault", {});
+      await put(B, "rw_apps", "app-1", "Other workspace app", { environments: [{ envId: "prod" }] });
+      const owner = { authorization: `Bearer ${await http.signIn(A, "owner")}` }, member = { authorization: `Bearer ${await http.signIn(A)}` };
+      const ownerB = { authorization: `Bearer ${await http.signIn(B, "owner")}` };
+      const R = { pack: "fixture_rows" };
+      const ok = async (h: Record<string, string>, body: unknown) => { const r = await req("PUT", "/api/credentials", h, body); assert.equal(r.status, 200, JSON.stringify(r.body)); };
+      await ok(owner, { ...R, name: "ws_token", value: "rows-workspace-0001" });
+      // Alpha: its token, Production's key; Staging's key and the optional one not set. Beta: all but the optional one.
+      // Gamma: no environments, both of its own. The other workspace's app-1: everything.
+      await ok(owner, { ...R, name: "app_token", asset: "app-1", value: "rows-alpha-token-0002" });
+      await ok(owner, { ...R, group: "cloud", asset: "app-1", environment: "prod", values: { cloud_id: "AKIDROWS0003", cloud_secret: "rows-secret-0004" } });
+      await ok(owner, { ...R, name: "app_token", asset: "app-2", value: "rows-beta-token-0005" });
+      await ok(owner, { ...R, group: "cloud", asset: "app-2", environment: "prod", values: { cloud_id: "AKIDROWS0006", cloud_secret: "rows-secret-0007" } });
+      await ok(owner, { ...R, name: "app_token", asset: "app-3", value: "rows-gamma-token-0008" });
+      await ok(owner, { ...R, name: "app_extra", asset: "app-3", value: "rows-gamma-extra-0009" });
+      await ok(ownerB, { ...R, name: "app_token", asset: "app-1", value: "rows-other-token-0010" });
+      await ok(ownerB, { ...R, group: "cloud", asset: "app-1", environment: "prod", values: { cloud_id: "AKIDROWS0011", cloud_secret: "rows-secret-0012" } });
+      await creds.runCredentials({ org_id: A.orgId, pack: "fixture_rows", spec: { credentials: ["app_token"] }, targets: { asset: "app-2" } });
+
+      // The areas Settings asks about: those whose records have credentials, and the person may read.
+      assert.deepEqual((await req("GET", "/api/credentials?scope=workspace", owner)).body.record_areas, ["rw_apps", "rw_vaults"], "an owner: both areas");
+      assert.deepEqual((await req("GET", "/api/credentials?scope=workspace", member)).body.record_areas, ["rw_apps"], "a member: only the area they may read");
+      // One request per area: every record of this workspace, its environments and its values' slots.
+      const apps = await req("GET", "/api/credentials?records=rw_apps", owner);
+      assert.equal(apps.status, 200, JSON.stringify(apps.body));
+      const body = apps.body as { fields: { name: string }[]; values: { asset: string; name: string; environment: string | null; last4: string | null; last_used_at: string | null }[];
+        records: { key: string; title: string; environments: string[]; field_environments: Record<string, string[] | null> }[]; more: boolean; can_manage: boolean };
+      assert.deepEqual(body.records.map((r) => [r.key, r.title, r.environments]), [["app-1", "Alpha app", ["prod", "staging"]], ["app-2", "Beta app", ["prod"]], ["app-3", "Gamma app", []]], "every record, its title and environments");
+      assert.deepEqual(body.fields.map((f) => f.name), ["app_token", "app_extra", "cloud_id", "cloud_secret"], "the area's credentials, not the workspace's");
+      assert.equal(body.values.length, 8, "this workspace's values only (none of the other workspace's)");
+      assert.ok(body.values.every((v) => v.last4 === null), "never the last 4 characters, not even for an owner");
+      assert.equal(body.more, false);
+      const other = (await req("GET", "/api/credentials?records=rw_apps", ownerB)).body as typeof body;
+      assert.deepEqual(other.records.map((r) => r.title), ["Other workspace app"], "another workspace: its own records only");
+      assert.equal(other.values.length, 3);
+      // The area's read permission: refused for a member (here and on the record's page), answered for an owner.
+      assert.equal((await req("GET", "/api/credentials?records=rw_vaults", member)).status, 403, "a member may not read Vaults: no rows");
+      assert.equal((await req("GET", "/api/credentials?area=rw_vaults&key=vault-1", member)).status, 403, "nor its record's Credentials card");
+      assert.deepEqual((await req("GET", "/api/credentials?records=rw_vaults", owner)).body.records.map((r: { title: string }) => r.title), ["Main vault"]);
+      assert.equal((await req("GET", "/api/credentials?records=rw_apps", member)).status, 200, "a member reads Applications");
+      assert.equal((await req("GET", "/api/credentials?records=nope", owner)).status, 404, "an area with no record credentials");
+      // The console's counts: each record's credentials one by one, each environment's apart.
+      const model = await import("../web/src/features/credentials/model.js");
+      const cs = model.credentialsOf(body.fields as never);
+      const sum = body.records.map((r) => model.recordSummary(cs, "rw_apps", r, body.values as never));
+      assert.deepEqual(sum.map((x) => [x.words, x.slots.length]), [["1 missing", 4], ["Optional only", 3], ["All set", 2]],
+        "Alpha: Staging's key missing; Beta: only the optional one; Gamma: all set (no environments)");
+      assert.deepEqual(sum.map((x) => !!x.changed_at && !!x.changed_by), [true, true, true], "when one last changed, and who");
+      assert.deepEqual(sum.map((x) => !!x.used_at), [false, true, false], "last used: when a run received one");
+      assert.equal(model.recordPurpose(cs, "rw_apps", "application"), "Credentials for this application and its environments");
+      const noEnv = model.credentialsOf((await req("GET", "/api/credentials?records=rw_vaults", owner)).body.fields);
+      assert.equal(model.recordPurpose(noEnv, "rw_vaults", "vault"), "Credentials for this vault");
+      assert.equal(model.recordSummary(cs, "rw_apps", { key: "app-9", title: "Empty", environments: [], field_environments: {} }, [] as never).words, "1 missing", "a record with nothing set: its required one missing");
+      const envOnly = model.credentialsOf(body.fields.filter((f) => f.name.startsWith("cloud")) as never);
+      assert.equal(model.recordSummary(envOnly, "rw_apps", { key: "app-9", title: "Empty", environments: [], field_environments: {} }, []).words, "No environments yet");
+      // The four cards: the workspace's token, then every record's credential counted one by one.
+      const units = [{ status: "Set" as const, required: true, changed_at: new Date().toISOString() }, ...sum.flatMap((x) => x.slots.map((u) => ({ status: u.state.status, required: u.required, changed_at: u.state.set_at })))];
+      assert.deepEqual(model.settingsCounts(units), { set: 7, missing: 3, required_missing: 1, recent: 7 }, "the cards count credentials, not rows");
+      // A row opens the record's own page at its Credentials card.
+      assert.equal(model.recordCredentialsHref("rw_apps", "app-1"), "/app/records/rw_apps/app-1#credentials");
+      assert.equal(model.recordCredentialsHref("rw_apps", "a b/c"), "/app/records/rw_apps/a%20b%2Fc#credentials");
+      console.log("✓ a row per record on Settings › Credentials: one request per area, only the areas and records the person may read, no last 4 characters; each record's credentials counted one by one (All set, N missing, Optional only), the cards count every credential, a row opens the record's Credentials card");
     }
   } finally {
     await ca.close(); await cb.close();
