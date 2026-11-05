@@ -2926,9 +2926,14 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   (`aria-label="Workspace agent"`) opening `/app/agent` (staff `/admin/agent`) as a full page: four cards, the search row
   with Start a session, the table; a session opens as the list's full card (`?session=<id>`) with its transcript, the
   composer, the request's card (Approve / Decline, or Raise budget), Pause, Resume and Stop (stop asks once more in place).
+  While a session waits for a decision its state line shows no reason of its own: the request's card says what it
+  asked for (mold_v0-245).
 
 Proof: `npm run test:agent-harness` (offline, with a stand-in CLI that speaks the harness's stream-json,
-`scripts/fixtures/agent-cli/cli.mjs`), `npm run test:features`, `npm run test:zero-pack`.
+`scripts/fixtures/agent-cli/cli.mjs`), `npm run test:features`, `npm run test:zero-pack`. One real session was measured
+once on the example app's lane copy (mold_v0-245, [docs/agent-harness.md](docs/agent-harness.md) "A real session"): the
+pinned Claude Code, steered mid-turn, parked, restored from its checkpoint, coherent, and its spend against the
+provider's usage.
 
 ## Audit trails (mold_v0-197)
 

@@ -96,3 +96,29 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 approvals, pause / resume / stop, parking and waking, crash recovery, spend counted once, budgets and a raise,
 retention, and the settings' audit; `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
 Octillion parity with the flag off, and screenshots on the example app's lane copy with the flag on.
+
+### A real session (mold_v0-245, measured once, 2026-11-05)
+
+On the example app's lane copy with the flag on (the lane world: its API on an embedded database, its gateway), one
+session ran the **real** Claude Code: the pinned `claude-code` 2.1.316, installed and verified by `run-tools.ts` as a
+wake verifies it, `claude-sonnet-5-5` on Claude on Vertex AI (global) through the lane's own gateway, budget $1.
+Egress was off (the lane gateway listens on 127.0.0.1, which the run's proxy does not allow) and the CLI ran as the
+runner's user; everything else was the shipped path (`runWorkspaceHarness`, the beat, the stdin ledger, checkpoints in
+the object store).
+
+- **Steer mid-turn.** A message sent while the first turn worked was delivered on the next beat (1 s later, the CLI
+  still in its turn) and answered by that same turn: the file it was asked for got the extra item.
+- **Park and restore.** The watcher's clock was moved past the quiet window: stdin closed, the CLI exited, checkpoint
+  1 (22 KB, sealed) was kept and the wake's directory removed. The next message woke a new run that unpacked the
+  checkpoint into a fresh directory and ran `--resume <the CLI's session>`.
+- **Coherent.** The restored session gave back a code word said only in the first wake and written nowhere, and read
+  the file the first wake wrote (all four items). It also noticed its working directory's path had changed (each wake
+  has its own scratch directory); harmless, but the path is visible to the model.
+- **Spend against the provider's usage.** 6 model calls, none refused. The gateway's tokens equal the provider's,
+  call for call (input with cache 60,045, output 744). In dollars, at the platform's own price for the model ($2 input,
+  $0.20 cache read, $10 output per million) with the provider's 1.25x cache-write rate: **$0.115553**. The session
+  counted **$0.113755** (its larger ledger, the CLI's own total), 1.6% under: the CLI prices cache reads at $0.10 per
+  million (17,986 of them: exactly the $0.001798 gap). The gateway's meter counted **$0.095156**, 18% under: it prices
+  cache writes at the plain input rate (40,796 of them: exactly the $0.020398 gap). A resumed CLI re-reports what it had
+  already spent (its total went on from $0.078566), and the baseline took that out: the second wake was charged $0.035189,
+  nothing twice.
