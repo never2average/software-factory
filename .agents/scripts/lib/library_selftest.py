@@ -126,7 +126,10 @@ def stamp(check, L, tmp):
     fx = os.path.join(tmp, "stamp"); mold = _mold_copy(os.path.join(fx, "molds", "mold_v1", "codebase"))
     os.makedirs(os.path.join(mold, "node_modules"), exist_ok=True)          # build_copy hard-links it; empty is enough for the generators
     shutil.copytree(os.path.join(ROOT, "molds", "mold_v1", "branding"), os.path.join(fx, "molds", "mold_v1", "branding"))
-    os.symlink(os.path.join(ROOT, "packs"), os.path.join(fx, "packs"))
+    # packs/ is this machine's own (git-ignored): a fresh clone has none, and then the copy's packs/ is empty and the
+    # pack cases below are not run (said in the summary), never a crash (mold_v0-244)
+    if os.path.isdir(os.path.join(ROOT, "packs")): os.symlink(os.path.join(ROOT, "packs"), os.path.join(fx, "packs"))
+    else: os.makedirs(os.path.join(fx, "packs"))
     # A pack that can carry the account-delivery library at all: one whose profile excludes a specialist that
     # library's starter apps are written by cannot (the mold's generator refuses it), so it is no pack to try "all" with.
     try: need = {(a.get("source") or {}).get("specialist") for a in json.load(open(os.path.join(MOLD, "library", "account-delivery", "apps.json"))).get("apps", [])} - {None}
@@ -138,7 +141,7 @@ def stamp(check, L, tmp):
                 try: out |= set(((json.load(open(os.path.join(r, f))) or {}).get("specialists") or {}).get("exclude") or [])
                 except (OSError, ValueError, AttributeError): pass
         return out
-    pack = next((p for p in sorted(os.listdir(os.path.join(ROOT, "packs"))) if os.path.isfile(os.path.join(ROOT, "packs", p, "pack.json")) and not packs.check_pack(p) and not (need & excludes(p))), None)
+    pack = next((p for p in sorted(os.listdir(os.path.join(fx, "packs"))) if os.path.isfile(os.path.join(ROOT, "packs", p, "pack.json")) and not packs.check_pack(p) and not (need & excludes(p))), None)
     def state(app_id, **kw):
         d = os.path.join(fx, "state", "application", app_id); os.makedirs(d, exist_ok=True)
         app = _app(app_id=app_id, **kw); json.dump(app, open(os.path.join(d, "application.json"), "w")); return app

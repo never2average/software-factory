@@ -30,7 +30,7 @@ Merge a PR only when **all** hold:
   read, and `clashes` is empty (no migration number already on main, below main's highest, or added by another open PR).
   `mergeable: UNKNOWN` right after a push means GitHub has not computed it yet: leave it for the next pass.
 - The builder's own checks are green: when the repository's CI is parked (checks `none`), read the builder's results in
-  the PR description or its last comment (self-tests, `factory.py validate`, the lanes or light checks the ticket asked
+  the PR description or its last comment (self-tests, `factory.py selftests` when it changes `.claude/scripts`, `factory.py validate`, the lanes or light checks the ticket asked
   for). No results, or a red one: do not merge; tell the builder.
 - It is the change the ticket (`ticket`) asked for, and nothing from a same-day parallel PR breaks it: look at what merged
   since the branch was cut.

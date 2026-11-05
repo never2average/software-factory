@@ -10,6 +10,11 @@
   factory.py tasks [mold] [--all]        open tasks (default: todo/in_progress/blocked), priority order
   factory.py next [mold] [--json]        the highest-priority unblocked todo task
   factory.py --self-test
+  factory.py selftests [--list] [--json] [-j N] [name ...]
+                                         run every self-test under .claude/scripts (each script's --self-test and
+                                         lib/*_selftest.py) on a copy of what git would commit, with none of this
+                                         machine's state (no app, products.json or factory.local.json): what a fresh
+                                         clone runs. Exit 0 all passed, 1 one failed (mold_v0-244)
   factory.py add <mold> "<title>" --type build [--pri 2] [--owner fable] [--lane x] [--dep id ...]
                  [--product <product_id>] [--advances <stage>] [--accept "<criterion>" ...]
                                          --product defaults to the mold's first product; --advances sets
@@ -977,6 +982,7 @@ def cmd_validate(a):
     errs += _lane_specs()
     errs += _spec_schemas()
     errs += _leaks()
+    errs += _selftest_skips()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 
@@ -1113,6 +1119,103 @@ def cmd_app_status(a):
     if as_json: sys.exit(AR.emit(res))
     print(f"{app}\n  deploy: {dep['summary']}\n  lanes:  {ln['summary']}" + (f"\nnext: {res['next']}" if res["next"] else ""))
     sys.exit(AR.exit_code(res))
+
+# ---- the factory's own self-tests, on what the repository tracks (mold_v0-244) ------------------------------------
+# intake.py --self-test and lib/brief_pack_selftest.py read this machine's own state (a deployed app, products.json,
+# factory.local.json's sending domain), git-ignored since the open-source split: they passed here and failed on every
+# fresh clone, and nothing ran them anywhere else, so nobody saw. `factory.py selftests` runs every self-test in a copy
+# of what git would commit (tracked files and new ones it does not ignore; molds linked read-only), with no
+# FACTORY_* variable, so a self-test that leans on this machine fails here first.
+SELFTEST_TIMEOUT = 1200
+# A self-test `selftests` does not run, and why (a tool or a server this run does not have). validate refuses an entry
+# here that names no self-test, so the list cannot outlive what it excuses.
+SELFTEST_SKIP = {
+    "lib/vm_remote_selftest": "red on a fresh clone of main before mold_v0-244, for reasons of its own (a follow-up ticket): the mold's vercel.json now has a "
+                              "seventh cron (deliver-step-actions) that lib/vm_remote.py CRONS does not; its \"customer's own server\" brief "
+                              "is now a prose question (mold_v0-230); lib/ledger_key.py imports cryptography, which the server bundle lacks",
+}
+# A self-test that needs a tool installed on this machine first: run when it is there, else listed as not run (with
+# what to install), never failed for it. {name: (path under the repository root, what it is)}
+SELFTEST_NEEDS = {"branding": ("molds/mold_v0/codebase/node_modules/.bin/tsx", "mold_v0's node_modules (npm ci in molds/mold_v0/codebase): its profile generator runs with tsx")}
+def selftest_entries(scripts=None):
+    """Every self-test entry point under .claude/scripts, in a stable order: [(name, argv after python3)], the name its
+    path without .py. A script that takes --self-test (a top-level one, or a lib module that runs as __main__), and each
+    lib/*_selftest.py that runs as __main__ (one that does not is run by its script's own --self-test)."""
+    scripts = scripts or os.path.dirname(os.path.abspath(__file__))
+    out = []
+    for rel in sorted(os.listdir(scripts)) + sorted("lib/" + f for f in os.listdir(os.path.join(scripts, "lib"))):
+        p = os.path.join(scripts, rel)
+        if not rel.endswith(".py") or not os.path.isfile(p): continue
+        src = open(p).read()
+        if "/" in rel and "__main__" not in src: continue   # a lib module its script's own --self-test runs
+        if rel.startswith("lib/") and not rel.endswith("_selftest.py") and os.path.isfile(p[:-3] + "_selftest.py") \
+                and "__main__" in open(p[:-3] + "_selftest.py").read(): continue   # lib/x.py --self-test runs lib/x_selftest.py: once
+        if rel.endswith("_selftest.py"): out.append((rel[:-3], [rel]))
+        elif '"--self-test"' in src: out.append((rel[:-3], [rel, "--self-test"]))
+    return out
+def selftest_tree(dst):
+    """A copy of what git would commit from this checkout (tracked files, and new ones it does not ignore), molds linked
+    read-only; none of this machine's own state. Returns the list of copied paths."""
+    import subprocess, shutil
+    r = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode: sys.exit(f"selftests: `git ls-files` failed here ({r.stderr.strip()}): it needs this repository's git checkout.")
+    files = [f for f in r.stdout.split("\0") if f and not f.startswith("molds/") and os.path.lexists(os.path.join(ROOT, f))]
+    for f in files:
+        os.makedirs(os.path.dirname(os.path.join(dst, f)) or dst, exist_ok=True)
+        src = os.path.join(ROOT, f)
+        if os.path.islink(src): os.symlink(os.readlink(src), os.path.join(dst, f))
+        else: shutil.copy2(src, os.path.join(dst, f))
+    os.symlink(os.path.join(ROOT, "molds"), os.path.join(dst, "molds"))
+    return files
+def cmd_selftests(a):
+    """factory.py selftests [--list] [--json] [-j N] [name ...]: run the factory's self-tests in a copy of what git would
+    commit (selftest_tree), none of this machine's state. Exit 0 every one passed, 1 one failed."""
+    import subprocess, tempfile, shutil, concurrent.futures
+    as_json = "--json" in a; a = [x for x in a if x != "--json"]
+    jobs = 2
+    if "-j" in a:
+        i = a.index("-j"); jobs = int(a[i + 1]) if i + 1 < len(a) and a[i + 1].isdigit() else sys.exit(__doc__); del a[i:i + 2]
+    entries = selftest_entries()
+    if "--list" in a:
+        for nm, argv in entries: print(f"{nm:24} python3 .claude/scripts/{' '.join(argv)}" + (f"   (skipped: {SELFTEST_SKIP[nm]})" if nm in SELFTEST_SKIP else "")
+                                       + (f"   (needs {SELFTEST_NEEDS[nm][1]})" if nm in SELFTEST_NEEDS else ""))
+        return
+    names = {nm for nm, _ in entries}
+    if [x for x in a if x not in names]: sys.exit(f"no self-test named {', '.join(x for x in a if x not in names)}; `factory.py selftests --list` names them")
+    run = [(nm, argv) for nm, argv in entries if (nm in a if a else nm not in SELFTEST_SKIP)]
+    unmet = {nm: SELFTEST_NEEDS[nm][1] for nm, _ in run if nm in SELFTEST_NEEDS and not os.path.exists(os.path.join(ROOT, SELFTEST_NEEDS[nm][0]))}
+    run = [e for e in run if e[0] not in unmet]
+    for nm, what in unmet.items():
+        if not as_json: print(f"skip  {nm:24}       needs {what}", flush=True)
+    T = tempfile.mkdtemp(prefix="factory-selftests-")
+    try:
+        selftest_tree(T)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_") and k not in ("INTAKE_SELFTEST_APP",)}
+        def one(e):
+            nm, argv = e; t0 = datetime.datetime.now()
+            try:
+                r = subprocess.run([sys.executable, os.path.join(T, ".claude", "scripts", argv[0]), *argv[1:]], cwd=T, env=env,
+                                   capture_output=True, text=True, timeout=SELFTEST_TIMEOUT)
+                rc, out = r.returncode, (r.stdout + r.stderr).strip()
+            except subprocess.TimeoutExpired: rc, out = 1, f"did not finish within {SELFTEST_TIMEOUT} s"
+            secs = int((datetime.datetime.now() - t0).total_seconds())
+            if not as_json: print(f"{'pass' if rc == 0 else 'FAIL'}  {nm:24} {secs:4d}s" + ("" if rc == 0 else "\n      " + out[-1500:].replace("\n", "\n      ")), flush=True)
+            return {"name": nm, "ok": rc == 0, "seconds": secs, "tail": out[-1500:]}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as ex: res = list(ex.map(one, run))
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+    bad = [x["name"] for x in res if not x["ok"]]
+    summary = f"{len(res) - len(bad)} of {len(res)} self-tests passed on a copy of what git would commit" + (f"; failed: {', '.join(bad)}" if bad else "") \
+        + (f"; not run: {', '.join(sorted(set(SELFTEST_SKIP) - set(a) | set(unmet)))}" if (SELFTEST_SKIP and not a) or unmet else "")
+    if as_json: sys.exit(AR.emit(AR.result(not bad, "failed" if bad else "done", summary, "fix the failed self-tests" if bad else "", [], "",
+                                           {"results": res, "not_run": {**{k: v for k, v in SELFTEST_SKIP.items() if not a}, **unmet}})))
+    print(summary); sys.exit(1 if bad else 0)
+def _selftest_skips():
+    """validate: every SELFTEST_SKIP and SELFTEST_NEEDS entry names a self-test there is; a skip gives its reason (mold_v0-244)."""
+    names = {nm for nm, _ in selftest_entries()}
+    return [f"factory.py {lst} names {nm!r}, which is no self-test under .claude/scripts (`factory.py selftests --list`): drop it"
+            for lst, d in (("SELFTEST_SKIP", SELFTEST_SKIP), ("SELFTEST_NEEDS", SELFTEST_NEEDS)) for nm in d if nm not in names] + \
+           [f"factory.py SELFTEST_SKIP {nm!r} gives no reason" for nm, why in SELFTEST_SKIP.items() if not str(why).strip()]
 
 def self_test():
     import tempfile, shutil, subprocess, io, contextlib
@@ -1251,12 +1354,22 @@ def self_test():
     ok(_rls_claim("x", {"application": app0, "infrastructure": inf0, "datastores": {"postgres": {"provider": "self_hosted", "rls": "off"}}}) == [], "validate: rls off asks for nothing")
     ok(_rls_claim("x", {"application": app0, "infrastructure": {"target": "vercel", "deployed_at": inf0["deployed_at"]}, "datastores": ds(None)}) == [],
        "validate: an app never deployed on the target it has now (a switch) is asked for evidence by its first deploy there, not here")
+    # mold_v0-244: `selftests` finds every self-test itself, so a new one is run without being listed anywhere
+    es = dict(selftest_entries())
+    ok(es.get("intake") == ["intake.py", "--self-test"] and es.get("lib/brief_pack_selftest") == ["lib/brief_pack_selftest.py"] and es.get("factory") == ["factory.py", "--self-test"]
+       and "lib/library_selftest" not in es and "lib/selftest_tree" not in es and len(es) == len(selftest_entries()),
+       "selftests: each script's --self-test and each lib/*_selftest.py that runs on its own, one name each; a lib module its script runs is not run twice")
+    ok(_selftest_skips() == [], "validate: every self-test SELFTEST_SKIP or SELFTEST_NEEDS names is one there is")
+    global SELFTEST_SKIP
+    was = SELFTEST_SKIP; SELFTEST_SKIP = {"gone": "x", "intake": " "}
+    try: ok(len(_selftest_skips()) == 2, "validate: a skip naming no self-test, or one with no reason, is refused")
+    finally: SELFTEST_SKIP = was
     print(f"factory: {len(checks)} checks passed")
     return 0
 
 if __name__ == "__main__":
     cmds = {"status":cmd_status,"tasks":cmd_tasks,"next":cmd_next,"add":cmd_add,"set":cmd_set,"close":cmd_close,"validate":cmd_validate,
-            "doctor":cmd_doctor,"spec":cmd_spec}
+            "doctor":cmd_doctor,"spec":cmd_spec,"selftests":cmd_selftests}
     if sys.argv[1:2] == ["--self-test"]: sys.exit(self_test())
     if len(sys.argv)<2 or sys.argv[1] not in cmds: sys.exit(__doc__)
     services.script_start("factory.py", sys.argv[1:])

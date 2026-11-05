@@ -525,11 +525,18 @@ def coerce(v):
     if isinstance(v, str) and v.lower() in ("true","false"): return v.lower()=="true"
     return v
 
+def products():
+    """state/products.json: this machine's own (git-ignored since mold_v0-198). A fresh checkout reads the example
+    until intake's first write creates it, as factory.py's products() does (mold_v0-244: intake read the real file
+    only, so it could not stamp an app on a fresh clone)."""
+    p = os.path.join(ST, "products.json")
+    return load(p if os.path.exists(p) else os.path.join(ST, "products.example.json"))
+
 def pick_product(mold_id, hints, existing=None):
     """A mold can carry several products — the same codebase under different brands. A brief names one
     with `product: <id>`; otherwise a re-run keeps the app's own, and a mold with exactly one product
     needs no answer at all."""
-    prods = [p for p in load(os.path.join(ST, "products.json"))["products"] if p["mold_id"] == mold_id]
+    prods = [p for p in products()["products"] if p["mold_id"] == mold_id]
     if not prods: sys.exit(f"no product is defined for {mold_id} in state/products.json")
     want = hints.get("product_id") or (existing or {}).get("application", {}).get("product_id")
     if want:
@@ -543,7 +550,7 @@ def pick_product(mold_id, hints, existing=None):
         pid = re.sub(r"[^a-z0-9]+", "_", hints["product_name"].lower()).strip("_")
         hit = next((p for p in prods if p["product_id"] == pid), None)
         if hit: return hit
-        base = prods[0]; P = load(os.path.join(ST, "products.json"))
+        base = prods[0]; P = products()
         new = {"product_id": pid, "mold_id": mold_id, "name": hints["product_name"], "tagline": hints.get("tagline", ""), "stage": "defined",
                "target_model": base.get("target_model"), "gates": base.get("gates"), "app_ids": [],
                "deploy_targets": [hints.get("target", "vercel")], "vercel_project": pid.replace("_", "-"), "packs": hints.get("packs") or []}
@@ -823,30 +830,17 @@ def self_test_single(n, fails):
     """mold_v0-028: a single-service mold's intake, in a temp copy of the factory (scripts and state copied, molds
     linked read-only): where it runs is asked unless the brief says; state validates; a re-run keeps what a deploy wrote;
     a switch of target drops the other target's object. The real state/ is never written."""
-    import shutil, tempfile
+    import shutil
     h = parse_brief("Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n")
     n += 1
     if (h.get("mold_id"), h.get("deploy_target"), h.get("custom_domain")) != ("mold_v0", "vm_remote", "shop.example.org"):
         fails.append(f"a mold_v0 brief's hints: {h}")
-    T = tempfile.mkdtemp(prefix="intake-single-")
+    # A temp tree of what the repository tracks, never this machine's own state (lib/selftest_tree.py, mold_v0-244);
+    # mail_local: the same neutral values on every machine (a verified sending domain: mold_v0-101 asks the sender otherwise).
+    import selftest_tree
+    T, mail_local = selftest_tree.tree("intake-single-")
     try:
-        shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
-        os.makedirs(os.path.join(T, "state", "application")); os.makedirs(os.path.join(T, "briefs"))
-        for f in os.listdir(ST):
-            if os.path.isfile(os.path.join(ST, f)): shutil.copy(os.path.join(ST, f), os.path.join(T, "state", f))
-        if os.path.isdir(os.path.join(ST, "tasks")): shutil.copytree(os.path.join(ST, "tasks"), os.path.join(T, "state", "tasks"))   # this machine's own (mold_v0-198)
-        # The repository's factory.json names no workspace (mold_v0-198: it lives in factory.local.json), so the copy
-        # gets a neutral one, as it had before: these cases are not about that question.
-        _fj = os.path.join(T, "state", "factory.json"); _f = json.load(open(_fj)); _f.setdefault("defaults", {}).setdefault("workspace_name", "Acme")
-        json.dump(_f, open(_fj, "w"), indent=2)
-        shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
-        os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
-        # factory.py validate also checks the generated app schemas against the molds (app_spec.py stale): linked read-only
-        if os.path.isdir(os.path.join(ROOT, "schemas")): os.symlink(os.path.join(ROOT, "schemas"), os.path.join(T, "schemas"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
-        # This machine's own values, the same on every machine: a verified sending domain (mold_v0-101: without one the
-        # emails' sender is asked).
-        mail_local = os.path.join(T, "mail-local.json"); save(mail_local, {"defaults": {"notify_domain": "mail.example.test"}})
         def go(app, brief, answers=None, env=None, admins=True, legal=True):
             # every brief here names its platform administrator (mold_v0's admin console) unless the case is about that
             if admins and "admins:" not in brief.lower(): brief += "Admins: ops@example.com\n"
@@ -1192,8 +1186,9 @@ def self_test_prose(n, fails):
     return n, None
 
 def _selftest_app():
-    """The app the re-run test copies when none is named: INTAKE_SELFTEST_APP, else the first mold_v1 app on Vercel with
-    answers.json on this machine (mold_v0-198: the repository names no real application)."""
+    """This machine's own app the re-run test also copies when none is named: INTAKE_SELFTEST_APP, else the first mold_v1
+    app on Vercel with answers.json on this machine (mold_v0-198: the repository names no real application), else None:
+    a fresh clone has none, and the deployed fixture the test builds itself is then the only one (mold_v0-244)."""
     if os.environ.get("INTAKE_SELFTEST_APP"): return os.environ["INTAKE_SELFTEST_APP"]
     A = os.path.join(ST, "application")
     for a in sorted(os.listdir(A)) if os.path.isdir(A) else []:
@@ -1201,61 +1196,71 @@ def _selftest_app():
             if (a != "app_id" and os.path.exists(os.path.join(A, a, "answers.json")) and load(os.path.join(A, a, "application.json")).get("mold_id") == "mold_v1"
                     and load(os.path.join(A, a, "infrastructure.json")).get("target") == "vercel"): return a
         except (OSError, ValueError): continue
-    return "example_app"
+    return None
 
-def self_test(app_id=None):
-    """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
-    verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
-    (scripts and state copied; packs, molds and briefs linked read-only) and state/ is hashed around it."""
-    import hashlib, shutil, tempfile
-    def digest(d):
-        h = hashlib.sha256()
-        for r, _, fs in sorted(os.walk(d)):
-            for f in sorted(fs): h.update(f.encode()); h.update(open(os.path.join(r, f), "rb").read())
-        return h.hexdigest()
-    def paths(o, p=""):
-        if isinstance(o, dict):
-            for k, v in o.items(): yield from paths(v, f"{p}.{k}" if p else k)
-        else: yield p, o
-    real = digest(ST); fails, n = [], 0
-    # The speech-model hints and question (pure): brief words, the list with prices, today's model as the default.
-    H = lambda txt: {k: v for k, v in parse_brief(txt).items() if k.startswith("asr")}
-    pure = [(H("Speech model: nova-3\nspeech language: hi\n"), {"asr_model": "@cf/deepgram/nova-3", "asr_language": "hi"}),
-            (H("Dictation model: @cf/openai/whisper\n"), {"asr_model": "@cf/openai/whisper"}),
-            (H("speech model: gpt-4o-transcribe\n"), {"asr_model_unknown": "gpt-4o-transcribe"}),
-            (H("No dictation, please.\n"), {"asr_enabled": False}),
-            (H("A research desk for analysts.\n"), {})]
-    for got, want in pure:
-        n += 1
-        if got != want: fails.append(f"brief hints for the speech model: {got} != {want}")
-    q = next(x for x in QUESTIONS if x[0] == "asr_model"); n += 1
-    if q[1] != "application.asr.model" or q[3][0] != asr.DEFAULT_MODEL or set(q[3]) != set(asr.MODELS) or "$0.000513 per audio minute" not in q[2] or "asr_model" not in OPTIONAL:
-        fails.append(f"the asr_model question is not the optional list with prices and today's default first: {q[:4]}")
+def _paths(o, p=""):
+    if isinstance(o, dict):
+        for k, v in o.items(): yield from _paths(v, f"{p}.{k}" if p else k)
+    else: yield p, o
+
+# mold_v0-244: the deployed app the re-run checks always have, on every machine. A mold_v1 app on Vercel minted in a
+# temp tree, then given what provision.py --deploy / --verify-rls, a lane and the operator write into state, so a
+# same-answers re-run has something to drop. The checks used to need this machine's own deployed app (git-ignored
+# since the open-source split): on a fresh clone the test could only stop.
+FIXTURE_APP = "zz_deployed"
+FIXTURE_BRIEF = "Mold: mold_v1\nDeploy on vercel.\nWorkspace: Acme Desk\nOwner: ops@example.com\nCustomer: acme\nWorkflows: all\n"
+def _deployed_fixture(F, local, n, fails):
+    b = os.path.join(F, "briefs", FIXTURE_APP + ".md"); open(b, "w").write(FIXTURE_BRIEF)
+    save(os.path.join(F, "fixture-answers.json"), {"legal": "later"})
+    r = subprocess.run([sys.executable, os.path.join(F, ".claude", "scripts", "intake.py"), b, "--app", FIXTURE_APP, "--answers", os.path.join(F, "fixture-answers.json")],
+                       cwd=F, capture_output=True, text=True, env=dict(os.environ, FACTORY_LOCAL=local)); n += 1
+    if r.returncode:
+        fails.append(f"the deployed fixture (a mold_v1 app on Vercel) did not stamp: {(r.stdout + r.stderr).strip()[-400:]}"); return n
+    a = os.path.join(F, "state", "application", FIXTURE_APP)
+    d = {nm: load(os.path.join(a, nm + ".json")) for nm in ("application", "infrastructure", "datastores", "datainfra")}
+    app, infra, pg = d["application"], d["infrastructure"], d["datastores"]["postgres"]
     n += 1
-    if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
-        fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
-    n, _ = self_test_prose(n, fails)
-    n, _ = self_test_single(n, fails)
-    import brief_pack_selftest   # mold_v0-062: a brief's pack sections -> packs/<id>/ (lib/brief_pack_selftest.py)
-    n, _ = brief_pack_selftest.run(n, fails)
-    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
-    app_id = app_id or _selftest_app()
-    src = os.path.join(ST, "application", app_id)
-    if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none "
-                                                                      f"(the {n} checks before it passed, the mold_v0 ones among them)")
+    if app.get("customer_id") != "acme" or (app["surface"]["custom_workflow_builder"].get("library") or {}).get("install") != "all":
+        fails.append(f"the deployed fixture's brief did not reach state: customer {app.get('customer_id')!r}, library {app['surface']['custom_workflow_builder'].get('library')}")
+    # provision.py --deploy: the shipped commit (an older pin than today's), the deploy's instant, the status
+    app.update(status="stamped", mold_commit="0123456789abcdef0123456789abcdef01234567")
+    infra["deployed_at"] = "2026-10-20T00:00:00+00:00"
+    # provision.py --verify-rls: the database's isolation proof, measured after that deploy (factory.py validate's rules)
+    pg["rls_verified"] = {"at": "2026-10-20T00:05:00+00:00", "backend": pg["provider"], "mode": pg["rls"], "source": "provision.py --verify-rls (fixture)",
+                          "role": "app_rw", "superuser": False, "bypassrls": False, "org_scoped_tables": 3, "protected": 3, "unprotected": [],
+                          "open_policies": [], "leaking_policies": [], "foreign_rows_readable": 0, "cross_org_write": "42501", "unset_org_rows": 0,
+                          "probe_table": "workflows", "running_app": "enforced", "running_app_detail": "fixture"}
+    # a lane's revert, and what the operator and a hand-over leave
+    app["revert"] = {"lane": "load", "at": "2026-10-19T00:00:00+00:00", "reason": "fixture: a lane that failed once"}
+    infra["note"] = "fixture: a note the operator left"; infra.setdefault("datastores", {})["handed_to"] = "acme"
+    for nm, v in d.items(): save(os.path.join(a, nm + ".json"), v)
+    r = subprocess.run([sys.executable, os.path.join(F, ".claude", "scripts", "factory.py"), "validate"], cwd=F, capture_output=True, text=True,
+                       env=dict(os.environ, FACTORY_LOCAL=local)); n += 1
+    if r.returncode: fails.append(f"the deployed fixture does not validate: {(r.stdout + r.stderr).strip()[-600:]}")
+    return n
+
+def _rerun_checks(src_root, app_id, local, n, fails):
+    """Re-run intake with the app's own answers on a temp copy of src_root's state (scripts copied; packs, molds,
+    briefs and schemas linked read-only) and prove nothing a deploy or a verify wrote is dropped. src_root is the
+    fixture's temp tree, or ROOT for this machine's own deployed app (then local is None: its own factory.local.json)."""
+    import shutil, tempfile
+    paths = _paths
+    sst = os.path.join(src_root, "state")
+    src = os.path.join(sst, "application", app_id)
     T = tempfile.mkdtemp(prefix="intake-selftest-")
     try:
         shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"))
-        shutil.copytree(ST, os.path.join(T, "state"))
+        shutil.copytree(sst, os.path.join(T, "state"))
         for d in ("packs", "molds", "briefs", "schemas"):
-            if os.path.exists(os.path.join(ROOT, d)): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
+            if os.path.exists(os.path.join(src_root, d)): os.symlink(os.path.realpath(os.path.join(src_root, d)), os.path.join(T, d))
         tapp = os.path.join(T, "state", "application", app_id)
         before = {nm: load(os.path.join(src, f"{nm}.json")) for nm in ("application", "infrastructure", "datastores", "datainfra")}
         brief = before["application"]["brief"]
+        env = dict(os.environ, FACTORY_LOCAL=local) if local else None
         def rerun(answers):
             save(os.path.join(T, "answers.in.json"), answers)
             return subprocess.run([sys.executable, os.path.join(T, ".claude/scripts/intake.py"), os.path.join(T, brief), "--app", app_id,
-                                   "--answers", os.path.join(T, "answers.in.json")], cwd=T, capture_output=True, text=True)
+                                   "--answers", os.path.join(T, "answers.in.json")], cwd=T, capture_output=True, text=True, env=env)
         answers = load(os.path.join(src, "answers.json"))
         r = rerun(answers); n += 1
         if r.returncode: fails.append(f"re-run exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
@@ -1326,10 +1331,61 @@ def self_test(app_id=None):
         if other != "neon" and "pooling" in ds2["postgres"]: fails.append("switching away from neon kept postgres.pooling")
     finally:
         shutil.rmtree(T, ignore_errors=True)
+    return n
+
+
+def self_test(app_id=None):
+    """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
+    verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
+    (scripts and state copied; packs, molds and briefs linked read-only) and state/ is hashed around it."""
+    import hashlib, shutil
+    def digest(d):
+        h = hashlib.sha256()
+        for r, _, fs in sorted(os.walk(d)):
+            for f in sorted(fs): h.update(f.encode()); h.update(open(os.path.join(r, f), "rb").read())
+        return h.hexdigest()
+    real = digest(ST); fails, n = [], 0
+    # The speech-model hints and question (pure): brief words, the list with prices, today's model as the default.
+    H = lambda txt: {k: v for k, v in parse_brief(txt).items() if k.startswith("asr")}
+    pure = [(H("Speech model: nova-3\nspeech language: hi\n"), {"asr_model": "@cf/deepgram/nova-3", "asr_language": "hi"}),
+            (H("Dictation model: @cf/openai/whisper\n"), {"asr_model": "@cf/openai/whisper"}),
+            (H("speech model: gpt-4o-transcribe\n"), {"asr_model_unknown": "gpt-4o-transcribe"}),
+            (H("No dictation, please.\n"), {"asr_enabled": False}),
+            (H("A research desk for analysts.\n"), {})]
+    for got, want in pure:
+        n += 1
+        if got != want: fails.append(f"brief hints for the speech model: {got} != {want}")
+    q = next(x for x in QUESTIONS if x[0] == "asr_model"); n += 1
+    if q[1] != "application.asr.model" or q[3][0] != asr.DEFAULT_MODEL or set(q[3]) != set(asr.MODELS) or "$0.000513 per audio minute" not in q[2] or "asr_model" not in OPTIONAL:
+        fails.append(f"the asr_model question is not the optional list with prices and today's default first: {q[:4]}")
+    n += 1
+    if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
+        fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
+    n, _ = self_test_prose(n, fails)
+    n, _ = self_test_single(n, fails)
+    import brief_pack_selftest   # mold_v0-062: a brief's pack sections -> packs/<id>/ (lib/brief_pack_selftest.py)
+    n, _ = brief_pack_selftest.run(n, fails)
+    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
+    # The re-run checks (below, _rerun_checks): on the deployed fixture, on every machine (mold_v0-244); and on this
+    # machine's own deployed app as well, when it has one or one is named.
+    import selftest_tree
+    F, flocal = selftest_tree.tree("intake-fixture-")
+    try:
+        n = _deployed_fixture(F, flocal, n, fails)
+        if not fails: n = _rerun_checks(F, FIXTURE_APP, flocal, n, fails)
+    finally:
+        shutil.rmtree(F, ignore_errors=True)
+    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
+    on = ["a deployed fixture"]
+    named, app_id = app_id, app_id or _selftest_app()
+    if app_id and os.path.exists(os.path.join(ST, "application", app_id, "answers.json")):
+        n = _rerun_checks(ROOT, app_id, None, n, fails); on.append(app_id)
+    elif named or os.environ.get("INTAKE_SELFTEST_APP"):
+        fails.append(f"self-test needs a deployed app with answers.json; {app_id} has none")
     n += 1
     if digest(ST) != real: fails.append("the REAL state/ changed during the self-test")
     if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
-    print(f"intake: {n} checks passed (re-run on a temp copy of {app_id}; real state untouched)")
+    print(f"intake: {n} checks passed (re-run on a temp copy of {' and '.join(on)}; real state untouched)")
 
 # ---- a single-service mold (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028) ----------------------------
 # Its state uses the same four schemas, with only the fields that shape needs (lib/single_service.py shape_state). Most
@@ -1539,7 +1595,7 @@ def _pack_brand_known(hints, mold_id, existing):
     """Read-only: does the app already have a brand (the brief, the product it will get, or its own state)?"""
     if hints.get("brand_name") or hints.get("no_branding"): return True
     if (((existing.get("application") or {}).get("surface") or {}).get("branding") or {}).get("product_name"): return True
-    prods = [p for p in load(os.path.join(ST, "products.json"))["products"] if p["mold_id"] == mold_id]
+    prods = [p for p in products()["products"] if p["mold_id"] == mold_id]
     want = hints.get("product_id") or (existing.get("application") or {}).get("product_id") or \
            (re.sub(r"[^a-z0-9]+", "_", hints["product_name"].lower()).strip("_") if hints.get("product_name") else None)
     p = next((x for x in prods if x["product_id"] == want), None)   # only a product the brief or the app names: never a default product's brand
@@ -1812,7 +1868,7 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     if not resolved.get("platform_admins"): resolved.pop("platform_admins", None)   # none recorded: asked again, never answered "nobody"
     save(os.path.join(outdir, "answers.json"), {**resolved, **extra})
     # (mold_v0-198: no longer listed in the repository's factory.json; the folders under state/application/ are the list)
-    P = load(os.path.join(ST, "products.json"))
+    P = products()
     for p in P["products"]:
         if p["product_id"] == app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
     save(os.path.join(ST, "products.json"), P)
@@ -1965,7 +2021,7 @@ def main(a):
         for k in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store"): rd[k] = resolved[k]
         rd["confirmed"] = True
     save(os.path.join(ST,"factory.json"), raw)   # the app is not listed here (mold_v0-198): state/application/ is the list
-    P = load(os.path.join(ST,"products.json"))
+    P = products()
     for p in P["products"]:
         if p["product_id"]==app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
     save(os.path.join(ST,"products.json"), P)

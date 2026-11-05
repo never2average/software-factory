@@ -16,6 +16,7 @@ import json, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import brief_pack as BP
+import selftest_tree
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 ST = os.path.join(ROOT, "state")
 
@@ -180,21 +181,9 @@ MCP_WANT = {"prefix": "vd", "exclude": ["vd_cancel_audit"], "admin_only": ["vd_s
 
 def run(n=0, fails=None):
     fails = [] if fails is None else fails
-    T = tempfile.mkdtemp(prefix="brief-pack-selftest-")
+    # A temp tree of what the repository tracks, never this machine's own state (lib/selftest_tree.py, mold_v0-244).
+    T, mail_local = selftest_tree.tree("brief-pack-selftest-")
     try:
-        shutil.copytree(os.path.join(ROOT, ".claude", "scripts"), os.path.join(T, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
-        os.makedirs(os.path.join(T, "state", "application")); os.makedirs(os.path.join(T, "briefs"))
-        for f in os.listdir(ST):
-            if os.path.isfile(os.path.join(ST, f)): shutil.copy(os.path.join(ST, f), os.path.join(T, "state", f))
-        if os.path.isdir(os.path.join(ST, "tasks")): shutil.copytree(os.path.join(ST, "tasks"), os.path.join(T, "state", "tasks"))   # this machine's own (mold_v0-198)
-        # The repository's factory.json names no workspace (mold_v0-198: it lives in factory.local.json), so the copy
-        # gets a neutral one, as it had before: these cases are not about that question.
-        _fj = os.path.join(T, "state", "factory.json"); _f = json.load(open(_fj)); _f.setdefault("defaults", {}).setdefault("workspace_name", "Acme")
-        json.dump(_f, open(_fj, "w"), indent=2)
-        shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
-        os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
-        # factory.py validate also checks the generated app schemas against the molds (app_spec.py stale): linked read-only
-        if os.path.isdir(os.path.join(ROOT, "schemas")): os.symlink(os.path.join(ROOT, "schemas"), os.path.join(T, "schemas"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application"); P = os.path.join(T, "packs")
         schema = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "codebase", "packs", "pack.schema.json")))
         # mold_v0-242: a record area's icon line (one of the console's tab icons, the same list as src/pack-api.ts TAB_ICONS)
@@ -219,7 +208,7 @@ def run(n=0, fails=None):
             if not (os.path.isfile(ap) and "legal" in json.load(open(ap))): answers = {**(answers or {}), "legal": "later"}
             if answers is not None: json.dump(answers, open(os.path.join(T, "ans.json"), "w"))
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
-                                  cwd=T, capture_output=True, text=True)
+                                  cwd=T, capture_output=True, text=True, env=dict(os.environ, FACTORY_LOCAL=mail_local))
         out = lambda r: (r.stdout + r.stderr).strip()
         def shell(pid): return os.path.join(P, pid, "files", "packs", pid, "pack.json")
         def snap(pid):
