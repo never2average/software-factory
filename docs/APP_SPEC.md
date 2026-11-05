@@ -89,6 +89,14 @@ through the same check `factory.py validate` and the build use.
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |
   encrypted | searchable | reveal owner`. The pack schema refuses it elsewhere; molds/mold_v0/MOLD.md "Encrypted fields".
+- **Credentials** (mold_v0-239): a pack's `credentials[]` may say, in the customer's words, what each is for
+  (`purpose`, one sentence), how to get it (`steps`, numbered, the first naming the `https://` address to open) and,
+  for an optional one, what still works without it (`without`). Fields that belong together (an access key id and its
+  secret) share a `group`; the group's first field names it (`group_label`) and carries those words, and every member
+  has the same binding, area, environments and optional flag (refused otherwise). An environment-bound field reads the
+  record's environments with `environments_from: {"field": "<a field of the area>", "key": "<the name's key in each
+  object>"}` (or lists them in `environments`, not both). The console places each credential once: the workspace's on
+  Settings › Credentials, a record's (and its environments') on that record's page (docs/RECORDS.md section 6).
 - **Records** (mold_v0-222; [RECORDS.md](RECORDS.md)): every record area of every mold_v0 pack has a contract (its
   provenance, who may read, create, update, move, delete, reveal, export and import, the primary action of every list
   that shows it, each tab, its Settings tab, its Records page, or why it has none: mold_v0-237). A pack may declare it

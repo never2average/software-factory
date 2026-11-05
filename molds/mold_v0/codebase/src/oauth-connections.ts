@@ -149,7 +149,7 @@ export async function beginConnect(orgId: number, userId: string, input: { pack?
 }
 
 /** The provider's return: checks the state for the signed-in `who`, exchanges the code, stores the tokens sealed. */
-export async function completeConnect(who: { org: number; user: string; by: string }, q: Record<string, unknown>): Promise<{ pack: string; name: string; label: string }> {
+export async function completeConnect(who: { org: number; user: string; by: string }, q: Record<string, unknown>): Promise<{ pack: string; name: string; label: string; area: string | null; asset: string | null }> {
   let data: Record<string, unknown>;
   try { data = await consumeState(q.state, who, "oauth"); }
   catch (e) { if (e instanceof StateRefused) throw new ConnectRefused(e.code, e.status); throw e; }
@@ -179,7 +179,8 @@ export async function completeConnect(who: { org: number; user: string; by: stri
      DO UPDATE SET bound_to = excluded.bound_to, asset_area = excluded.asset_area, provider = excluded.provider, sealed = excluded.sealed, scopes = excluded.scopes,
                    access_expires_at = excluded.access_expires_at, status = 'active', last_error = NULL, connected_by = excluded.connected_by, updated_at = now(), refreshed_at = NULL`,
     [who.org, s.spec.pack, s.spec.name, s.spec.bound_to, s.spec.area ?? null, s.asset, s.environment, p.name, sealed, t.scope ?? p.scopes.join(" "), t.expires_at ? new Date(t.expires_at) : null, who.by]));
-  return { pack: s.spec.pack, name: s.spec.name, label: s.spec.label };
+  // mold_v0-239: the record a record's connection belongs to, so the console returns to that record's page.
+  return { pack: s.spec.pack, name: s.spec.name, label: s.spec.label, area: s.asset !== null ? s.spec.area ?? null : null, asset: s.asset };
 }
 
 export type TokenResult = { value: string; expires_at: string | null } | { missing: string } | null;

@@ -37,6 +37,12 @@
 //      Accounts, Configuration, Key vault, Journeys) walked from its page to the components that draw the list: no page
 //      title, description or header row, and no heading, titled section or muted paragraph before its cards; and no other
 //      list in a titled page frame.
+//  12. The customer credential vault in its places (mold_v0-239): Settings › Credentials reads only the workspace's
+//      credentials (?scope=workspace) with no caption beside its search row and no "Bound to" column; a record's own
+//      page draws its Credentials card (the record's, then one group per environment) and, while one is open, the set
+//      card in the page's place; Set, Replace and Clear are full cards (never a dialog or a side sheet) whose value
+//      inputs are hidden; an environment is picked (a select of the record's), never typed; no internal word
+//      (bound_to, deliver_as, asset, a variable's or a pack's name, a record area's id) reaches the screen.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -407,4 +413,42 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   for (const [name, t] of [["tab-action.tsx", ta], ["record-pages.tsx", pages], ["settings-page.tsx", settings]] as const)
     assert.doesNotMatch(t, /<(?:Dialog|Sheet|AlertDialog|Drawer)\b|from '@\/components\/ui\/(?:dialog|sheet|drawer|alert-dialog)'/, `${name}: forms are full cards, never a dialog or a side sheet`);
   ok("an area's own lists (mold_v0-237): the Records page and a Settings area tab draw the area's cards, the search row with Export and its primary action, the table, the form a full card; the create form uploads its file fields' files with each one's progress, then Uploaded, and takes a url field as an address (mold_v0-238); no dialog or side sheet");
+}
+
+// 12. The customer credential vault in its places (mold_v0-239).
+{
+  const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const tab = strip(src("features/credentials/credentials-tab.tsx")), card = strip(src("features/credentials/credential-card.tsx"));
+  const rc = strip(src("features/credentials/record-credentials.tsx")), pages = strip(src("features/records/record-pages.tsx"));
+  const oauth = strip(src("features/credentials/oauth-connections.tsx")), gh = strip(src("features/credentials/github-app-section.tsx"));
+  assert.match(tab, /credentialsCall<Vault>\('GET', undefined, '\?scope=workspace'\)/, "Settings › Credentials reads the workspace's own credentials only");
+  assert.match(tab, /const creds = forSettings\(credentialsOf\(data\.fields\)\);/, "and lists only those (a group as one row)");
+  assert.doesNotMatch(tab, /filters=|Open a credential to set, replace or clear it/, "no caption beside the search row");
+  assert.doesNotMatch(tab, /label: 'Bound to'/, "no Bound to column");
+  assert.match(tab, /if \(opened && data\.can_manage\) return <CredentialCard /, "Set, Replace and Clear: the full card in the list's place");
+  const detail = /export function RecordDetailPage\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
+  assert.match(detail, /const credentials = useRecordCredentials\(area, recordKey, base === 'app' && area\.role === 'asset'\);/, "a record's page reads its credentials (a workspace's page only)");
+  assert.match(detail, /if \(credentials\.card\) return <PageContainer>\{credentials\.card\}<\/PageContainer>;/, "the set card takes the page's place");
+  assert.match(detail, /<\/Card>\s*\{credentials\.section\}/, "its Credentials card below the details card");
+  assert.match(rc, /'\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}'|`\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}`/, "the record's own credentials");
+  assert.match(rc, /<CardTitle className='text-base'>Credentials<\/CardTitle>/, "titled Credentials");
+  assert.match(rc, /For this \{noun\}/, "the record's own first, in its area's words");
+  assert.match(rc, /sections\.environments\.map\(\(g\) => \([\s\S]*?<h3 className='text-sm font-medium'>\{g\.label\}<\/h3>/, "then one group per environment, named in words");
+  assert.match(card, /<NativeSelect id='credential-environment'[\s\S]*?environments\.map\(\(x\) => <NativeSelectOption key=\{x\} value=\{x\}>\{envWord\(x\)\}<\/NativeSelectOption>\)/, "an environment is picked from the record's");
+  assert.doesNotMatch(card, /placeholder='environment'|aria-label='Environment' \/>/, "never typed");
+  assert.match(card, /type='password' autoComplete='new-password'/, "a value is hidden as you type");
+  assert.match(card, /\[-webkit-text-security:disc\]/, "a file's text too");
+  assert.match(card, /<Card className='w-full max-w-4xl gap-0 py-0' data-action-card='' data-credential-card=\{mode\}>/, "the card: the console's full card");
+  assert.match(card, /if \(c\.group\) await credentialsCall\('PUT', \{ \.\.\.slot, group: c\.group, values \}\)/, "a pair set in one request");
+  assert.match(card, /c\.group \? \{ \.\.\.slot, group: c\.group \}/, "and cleared as one");
+  for (const [name, t] of [["credentials-tab.tsx", tab], ["credential-card.tsx", card], ["record-credentials.tsx", rc], ["oauth-connections.tsx", oauth], ["github-app-section.tsx", gh]] as const) {
+    assert.doesNotMatch(t, /<(?:Dialog|Sheet|AlertDialog|Drawer)\b|from '@\/components\/ui\/(?:dialog|sheet|drawer|alert-dialog)'/, `${name}: never a dialog or a side sheet`);
+    // What a person reads: JSX text and the words in quotes a component shows. None of the internal words.
+    const shown = [...t.matchAll(/>([^<>{}]+)</g), ...t.matchAll(/(?:placeholder|aria-label|label|title|back|forWhat)=(?:'([^']*)'|\{`([^`]*)`\})/g)].map((m) => m.slice(1).join(" "));
+    for (const w of ["bound_to", "deliver_as", "asset", "environments_from", "path_env", "group_label"]) assert.ok(!shown.some((x) => new RegExp(`\\b${w}\\b`, "i").test(x)), `${name}: "${w}" is never shown`);
+    assert.doesNotMatch(t, /(?<!\$)\{(?:f|c|v|r)\.(?:pack|area|asset|bound_to)\}|deliver_as\.(?:env|file)\b|\{f\.deliver_as/, `${name}: no pack id, area id, record key column, binding or variable name drawn`);
+  }
+  const model = await web("features/credentials/model.ts");
+  assert.deepEqual(["prod", "staging", "qa", "eu-west"].map(model.envWord), ["Production", "Staging", "QA", "Eu west"], "environments named in words");
+  ok("the credential vault in its places (mold_v0-239): Settings › Credentials the workspace's only, no caption, no Bound to; a record's page its Credentials card (the record's, then per environment) and the set card in the page's place; full cards, hidden values, environments picked; no internal word shown");
 }

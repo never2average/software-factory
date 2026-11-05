@@ -188,6 +188,16 @@ Where an area's list is drawn, and what it has:
   upload is a `create` of target `file` in the data trail, a removal a `delete`. Gated by the `document_preview` flag
   (off: no upload, no card).
 
+- **Credentials on the record's page** (mold_v0-239): an asset area's record page carries a Credentials card when a
+  pack's credential is bound to that area: first the credentials of the record itself (`bound_to: asset`), then one
+  group per environment the record has (`bound_to: environment`; the environments are the field's fixed
+  `environments`, or read from the record by `environments_from: {field, key}`). Each is shown in the customer's
+  words (`purpose`, `steps`, `without`), with its status (set, missing or optional), when it was set and when it was
+  last used; Set, Replace and Clear open a full card in the page's place, the environment picked from the record's own.
+  Settings › Credentials lists only the workspace's own credentials. Fields that share a `group` (a key id and its
+  secret) are one credential. None of this changes an area's contract: a credential is not a field of the record and is
+  never read, exported or imported with it.
+
 ## 7. Settings placement
 
 `"settings": {"group": "access" | "connections" | "automation" | "data_trust", "label": "..."}` (mold_v0-219) shows a

@@ -29,6 +29,7 @@ import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView 
 import { RecordDocuments, isStoredFile } from './documents';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
+import { useRecordCredentials } from '@/features/credentials/record-credentials';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -283,13 +284,19 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
   );
 }
 
-/** A record's own page (mold_v0-217): one details card, as a staff record page's (./staff-records.tsx) and an open row's. */
+/**
+ * A record's own page (mold_v0-217): one details card, as a staff record page's (./staff-records.tsx) and an open row's.
+ * In a workspace, its Credentials card below it when credentials belong to its records (mold_v0-239,
+ * features/credentials/record-credentials.tsx); setting one opens a full card in the page's place.
+ */
 export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin' }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error } = useOrgLoad(() => getJson<Detail>(url), [url]);
+  const credentials = useRecordCredentials(area, recordKey, base === 'app' && area.role === 'asset');
+  if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
   return (
     <PageContainer>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (<div className='flex w-full flex-col gap-6'>
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
             <CardDescription>{area.label} · {where(area)}</CardDescription>
@@ -321,7 +328,8 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
             })}
           </CardContent>
         </Card>
-      )}
+        {credentials.section}
+      </div>)}
     </PageContainer>
   );
 }

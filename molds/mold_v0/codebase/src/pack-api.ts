@@ -1628,6 +1628,10 @@ const envLabel = z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment nam
  * credential: src/runs.ts records which were delivered and which were missing). The console shows the field as
  * Optional; `adds` says in one line what a value adds (shown beside an optional field that is not set; the field's
  * help is used when absent).
+ *
+ * mold_v0-239: where the console shows it follows the binding (a workspace's on Settings › Credentials, a record's and a
+ * record environment's on that record's own page), in the words of `purpose`, `steps` and `without`; `group` makes
+ * fields one credential; `environments_from` reads a record's environments from the record (credentialGroupProblems).
  */
 /**
  * How a run receives a credential: an environment variable (`env`), or a file (`file`, 0400, the run user's, in a
@@ -1645,6 +1649,8 @@ const deliverAs = z.union([
 const optionalFlag = z.boolean().default(false);
 /** mold_v0-186: what a value of an optional credential adds, for the console and operator:vault-status. */
 const addsText = z.string().min(1).max(200).optional();
+/** mold_v0-239: a credential's words for a customer: plain text on one line, no markup. */
+const credentialText = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f\u007f<>`]*$/, "plain text: one line, no control characters, no < > or `");
 export const CredentialSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -1671,11 +1677,76 @@ export const CredentialSchema = z.object({
   optional: optionalFlag,
   /** mold_v0-186: what a value adds, one line (an optional field only). */
   adds: addsText,
+  /**
+   * mold_v0-239: the customer's own words for it, shown on Settings › Credentials (a workspace binding) or on the
+   * record's own page (an asset or environment binding), never the binding, the delivery or a variable's name:
+   *   purpose   what it is for, in one sentence (the field's help is shown when absent)
+   *   steps     how to get it: numbered steps, the first naming the web address to open (https://...)
+   *   without   what still works without it (an optional field only; built from `adds` when absent)
+   */
+  purpose: credentialText(300).optional(),
+  steps: z.array(credentialText(400)).min(1).max(12).optional()
+    .refine((s) => !s || /https:\/\/[A-Za-z0-9.-]+/.test(s[0]!), "steps: the first step names the web address to open (https://...)"),
+  without: credentialText(300).optional(),
+  /**
+   * mold_v0-239: fields that belong together (an access key id and its secret) share a `group`: the console sets,
+   * replaces, clears and shows them as one credential with one input each (its `label`). The group's first field
+   * names it (`group_label`) and carries its words (purpose, steps, without); every member has the same binding, area,
+   * environments and optional flag. A pair is set and cleared together, in one request.
+   */
+  group: name.optional(),
+  group_label: z.string().min(1).max(80).optional(),
+  /**
+   * mold_v0-239: where a record's environments come from (an environment binding): `field`, a field of the area whose
+   * value is a list of environment names, or of objects whose `key` holds one (an environment document's id). The console
+   * offers exactly these (one group per environment on the record's page; a value is set by picking one, never by
+   * typing) and a value is accepted only for one of them. Not with `environments`, the fixed list.
+   */
+  environments_from: z.object({ field: name, key: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,62}$/, "a key of the field's objects").optional() }).strict().optional(),
 }).strict()
   .refine((c) => !(c.github_app && c.oauth), "a field is either github_app or oauth, not both")
+  .refine((c) => c.without === undefined || c.optional, "without is for an optional field only (optional: true)")
+  .refine((c) => c.group_label === undefined || c.group !== undefined, "group_label names a group: give the field a group")
+  .refine((c) => c.group === undefined || !(c.github_app || c.oauth), "a GitHub App or OAuth field is one credential on its own: no group")
+  .refine((c) => c.environments_from === undefined || c.bound_to === "environment", "environments_from is for an environment binding only")
+  .refine((c) => !(c.environments_from && c.environments), "environments_from or environments, not both")
   .refine((c) => c.adds === undefined || c.optional, "adds is for an optional field only (optional: true)")
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
+
+/**
+ * mold_v0-239: what makes a pack's credentials one credential each in the console. A group (fields sharing `group`)
+ * has 2 to 4 fields with the same binding, area, environments, environments_from and optional flag; its first field
+ * names it (group_label) and alone carries its words (purpose, steps, without), and a group is not also a field's name.
+ * An `environments_from` field is a field of the credential's area.
+ */
+export function credentialGroupProblems(creds: readonly unknown[], areas: readonly { name?: string; fields?: { name?: string }[] }[]): string[] {
+  const out: string[] = [];
+  type C = { name?: string; group?: string; group_label?: string; bound_to?: string; area?: string; environments?: string[]; environments_from?: { field?: string; key?: string }; optional?: boolean; purpose?: string; steps?: string[]; without?: string };
+  const list = creds.filter((c): c is C => !!c && typeof c === "object");
+  const groups = new Map<string, C[]>();
+  for (const c of list) if (c.group) groups.set(c.group, [...(groups.get(c.group) ?? []), c]);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const [g, members] of groups) {
+    if (members.length < 2 || members.length > 4) out.push(`credential group ${g}: 2 to 4 fields belong together (it has ${members.length})`);
+    if (list.some((c) => c.name === g && c.group !== g)) out.push(`credential group ${g}: a group is not also the name of another field`);
+    const [lead, ...rest] = members;
+    if (!lead!.group_label) out.push(`credential group ${g}: its first field (${lead!.name}) names the credential (group_label)`);
+    for (const c of rest) {
+      if (c.group_label !== undefined || c.purpose !== undefined || c.steps !== undefined || c.without !== undefined)
+        out.push(`credential ${c.name}: group_label, purpose, steps and without go on the group's first field (${lead!.name})`);
+      for (const k of ["bound_to", "area", "environments", "environments_from", "optional"] as const)
+        if (!same(c[k] ?? (k === "optional" ? false : undefined), lead![k] ?? (k === "optional" ? false : undefined))) out.push(`credential ${c.name}: every field of group ${g} has the same ${k} as ${lead!.name}`);
+    }
+  }
+  for (const c of list) {
+    if (!c.environments_from?.field || !c.area) continue;
+    const a = areas.find((x) => x?.name === c.area);
+    if (a && !(a.fields ?? []).some((f) => f?.name === c.environments_from!.field))
+      out.push(`credential ${c.name}: environments_from names field ${c.environments_from.field}, which area ${c.area} does not have`);
+  }
+  return out;
+}
 
 /**
  * A generic OAuth 2.0 provider a credential field connects to (mold_v0-014; src/oauth-connections.ts). The authorization
@@ -2095,6 +2166,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     if (c?.oauth !== undefined && !(p.oauthProviders ?? []).some((o) => o?.name === c.oauth))
       problems.push(at(`credential ${c.name} connects to OAuth provider ${c.oauth}, which this pack does not declare (oauthProviders)`));
   }
+  problems.push(...credentialGroupProblems(p.credentials ?? [], (p.recordAreas ?? []).filter(Boolean) as never).map(at));
   const oauthNames = (p.oauthProviders ?? []).map((o) => o?.name);
   if (new Set(oauthNames).size !== oauthNames.length) problems.push(at("each OAuth provider name once"));
   // Workspace and operator credentials (mold_v0-075) share the targets: two never deliver to the same variable or file

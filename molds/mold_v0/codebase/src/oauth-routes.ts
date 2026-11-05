@@ -53,12 +53,15 @@ export function oauthRouter(): Router {
     return out;
   }));
   r.get("/callback", async (req, res) => {
-    const back = (code: string) => res.redirect(303, `${consoleUrl()}/app/settings?tab=credentials&oauth=${encodeURIComponent(code)}`);
+    // A record's connection (mold_v0-239) returns to that record's page, where its Credentials card is; else Settings.
+    const back = (code: string, at?: { area: string | null; asset: string | null }) => res.redirect(303, at?.area && at.asset
+      ? `${consoleUrl()}/app/records/${encodeURIComponent(at.area)}/${encodeURIComponent(at.asset)}?oauth=${encodeURIComponent(code)}`
+      : `${consoleUrl()}/app/settings?tab=credentials&oauth=${encodeURIComponent(code)}`);
     if (!can(res) || !S(res).user) return void back("not_owner");
     try {
       const out = await completeConnect({ org: S(res).org, user: S(res).user!, by: who(res) }, req.query as Record<string, unknown>);
       log(who(res), "oauth.connected", S(res).slug, { pack: out.pack, name: out.name });
-      back("connected");
+      back("connected", out);
     } catch (e) {
       const code = e instanceof ConnectRefused ? e.code : "failed";
       log(who(res), "oauth.refused", S(res).slug, { code });
