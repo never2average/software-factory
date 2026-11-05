@@ -115,7 +115,6 @@ export function CredentialsTab() {
       ]} />}
       searchText={(r) => `${r.name} ${r.purpose} ${r.bound} ${r.status} ${r.changed_by ?? ''}`}
       searchPlaceholder='Search credentials'
-      filters={<span className='text-muted-foreground hidden text-xs sm:inline'>{canManage ? 'Open a credential to set, replace or clear it.' : 'An owner of this workspace sets these.'}</span>}
       empty={<p className='text-muted-foreground text-sm'>Nothing here needs a credential.</p>}
       detailTitle={(r) => r.name}
       detail={(r) => r.kind === 'github' ? <GithubAppSection bare onChanged={reloadGithub} />
