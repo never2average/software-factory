@@ -106,6 +106,10 @@ through the same check `factory.py validate` and the build use.
   https address, which may preview its document), and a `file` field takes uploads from the console's create form. The app itself
   reads its `import`, `export` and `reveal` (mold_v0-234, mold_v0-235: a workspace import, export as its own permission,
   reveal per area) and records each workspace row's writer (mold_v0-236).
+- **A record area's icon** (mold_v0-242): `record_areas[].icon`, one of the console's tab icons (`src/pack-api.ts`
+  `TAB_ICONS`; brief line `- icon: shield` under the area), is its icon in the staff and customer consoles' Records
+  groups. Unset, the icon of the customer tab that shows it, else one the build picks so that no two Records entries
+  share one ([RECORDS.md](RECORDS.md) section 5). Two areas declaring the same icon is a build warning.
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on
   Vercel, `run_keys.sandbox` (`boat`). `compose_remote` needs `product.domain`. At least one platform administrator.

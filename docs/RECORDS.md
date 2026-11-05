@@ -20,6 +20,7 @@ pack's areas as you type. `factory.py spec check` adds the completeness rules be
 |---|---|
 | `name` | Unique in the build: the area's address (`/app/records/<name>`, `/api/data/<name>`) and the MCP tools' last word. `areas` is reserved. |
 | `label`, `description`, `rows`, `version` | People's words. `rows` (what one row is and how it is keyed) and `version` (where a shared row's version comes from) are read by no code. |
+| `icon` | Its icon wherever it shows (mold_v0-242): one of the console's tab icons (`src/pack-api.ts` `TAB_ICONS`). Section 5 says what an area without one gets. |
 | `role` | `source`, `check` or `asset`: what a run's results may name (src/runs.ts). An `asset` area is always sealed and always workspace scope. |
 | `scope` | `workspace` (each workspace's own rows, `workspace_records` under row-level security) or `platform`: **shared** by every workspace (`platform_records`; the tenant role may only read it). |
 | `fields` | 1 to 60 (section 2). |
@@ -162,6 +163,14 @@ Where an area's list is drawn, and what it has:
   <its singular>, a new record, for a workspace area of the shell's tables a workspace may add to; the server's
   `GET /api/tab-actions/_areas/<area>` says who may use it), else none, said by what the area is (shared, read from a
   repository, its create withheld; the registry's `no_action`). A tab over the area keeps its own `action`.
+- **Its icon** (mold_v0-242, `src/record-icons.ts`) is one and the same in every place the area shows: its entry in the
+  staff console's Records group (a shared area), its entry in the customer console's Records group and its spec
+  (`recordAreas` in `web/src/config/pack-nav.generated.ts`). The area's own `icon`; unset, the icon of the customer tab
+  that shows it (the sidebar entry of the first tab over it: that tab, or the sections tab it is an in-page tab of), if
+  that entry declares one no other area has taken; else one the build picks from the area's name out of a short list
+  (`RECORD_FALLBACK_ICONS`), so that no two Records entries share an icon and none repeats another staff sidebar entry's.
+  Shared areas choose before the workspace's own. Two areas that declare the same icon keep it, and the build warns
+  (`gen-packs: warning: ... icon(s) declared by more than one record area`). The icon is not part of the contract.
 - **Staff** see a shared area at `/admin/records/<name>`: the four cards, **New <noun>** and **Import** for a role with
   `library`, Edit or Override on a row, Remove for `delete`, each row's provenance (mold_v0-212, mold_v0-221).
 

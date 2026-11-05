@@ -261,8 +261,12 @@ try {
     const text = readFileSync(path.join(TMP, "packs-gen-out", "web", "src", "config", "pack-nav.generated.ts"), "utf8");
     const exp = (name: string) => JSON.parse(new RegExp(`export const ${name}[^=]*= ([\\s\\S]*?);\\n`).exec(text)![1]!);
     assert.deepEqual(exp("recordAreas").map((a: any) => [a.name, a.scope, a.fields[0].type, a.list_columns]), [["gp_sources", "platform", "text", ["body"]], ["gp_apps", "workspace", "text", ["url", "src"]]], "defaults filled in");
-    assert.deepEqual(exp("recordPortalNav"), [{ label: "Records", items: [{ title: "Sources", url: "/app/records/gp_sources", items: [] }, { title: "Apps", url: "/app/records/gp_apps", items: [] }] }], "the /app sidebar lists every area");
-    assert.deepEqual(exp("recordAdminNav"), [{ label: "Records", items: [{ title: "Sources", url: "/admin/records/gp_sources", items: [] }] }], "the /admin sidebar lists shared areas only");
+    // Each entry with its area's one icon (mold_v0-242: the spec's, the same in both sidebars; test:console-sidebar says which).
+    const icons = Object.fromEntries(exp("recordAreas").map((a: any) => [a.name, a.icon]));
+    assert.ok(icons.gp_sources && icons.gp_apps && icons.gp_sources !== icons.gp_apps, `each area its own icon: ${JSON.stringify(icons)}`);
+    const withIcon = (base: string, title: string, name: string) => ({ title, url: `/${base}/records/${name}`, icon: icons[name], items: [] });
+    assert.deepEqual(exp("recordPortalNav"), [{ label: "Records", items: [withIcon("app", "Sources", "gp_sources"), withIcon("app", "Apps", "gp_apps")] }], "the /app sidebar lists every area");
+    assert.deepEqual(exp("recordAdminNav"), [{ label: "Records", items: [withIcon("admin", "Sources", "gp_sources")] }], "the /admin sidebar lists shared areas only");
     write("gq", JSON.stringify([{ name: "gp_sources", label: "Again", role: "source", scope: "platform", fields: [{ name: "bb", label: "B" }] }]));
     const dup = gen();
     assert.equal(dup.status, 1);

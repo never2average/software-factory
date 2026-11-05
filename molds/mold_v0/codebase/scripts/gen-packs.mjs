@@ -125,6 +125,8 @@ const { JOURNEY_WEB_WORDS, TIP_WEB_WORDS } = await import(pathToFileURL(path.joi
 // The developer surface's catalog and build checks (mold_v0-193): plain TypeScript with no imports.
 const { developerSurfaceProblems, LATEST_API_VERSION } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-config.ts")).href);
 const { developerGuidePages } = await import(pathToFileURL(path.join(HERE, "..", "src", "developer-docs.ts")).href);
+// Each record area's one icon (mold_v0-242): its own, its customer tab's, else a distinct one from its name.
+const { recordAreaIcons, recordIconDuplicates } = await import(pathToFileURL(path.join(HERE, "..", "src", "record-icons.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -2075,6 +2077,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
 // Their sidebar entries and the shell components their routes serve (mold_v0-140: pack.json console.nav and
 // console.components; they were web/src/packs/<id>/nav.ts), as data apart from their pages so the sidebar's bundle never
 // carries the pages. Each entry names one of the pack's own console pages (its routes.json), in the console it is in.
+/** The icons of the host packs' sidebar entries in each console (mold_v0-242: a record area's fallback icon avoids them). */
+const hostNavIcons = { app: [], admin: [] };
 {
   const navs = [];
   for (const p of packs) {
@@ -2119,6 +2123,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
   if (memoryFacts && !navs.some((n) => (n.app ?? []).some((pl) => pl.items.some((it) => it.url.startsWith("/app/context/")))))
     navs.push({ pack: memoryFacts.pack, app: [{ label: "Context", items: memoryFacts.sections.map((x) => ({ title: x.title.split(" · ")[0], url: x.path, icon: x.icon })) }] });
   refuse();
+  for (const area of ["app", "admin"]) hostNavIcons[area] = navs.flatMap((n) => (n[area] ?? []).flatMap((pl) => pl.items.map((it) => it.icon)));
   files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
     `export const HOST_NAV: readonly unknown[] = ${navs.length ? json(navs) : "[]"};\n`);
@@ -2394,10 +2399,48 @@ const nav = (area) => {
   return [...groups].map(([label, items]) => ({ label, items }));
 };
 const allPages = packs.flatMap((p) => p.pages);
+/** A tab's icon when it declares none, by kind (the sidebar's entry for it). */
+const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
+/**
+ * Each record area's icon (mold_v0-242; src/record-icons.ts): its own `icon`; else the icon of the customer tab that
+ * shows it (the sidebar entry of the first shown tab over it alone, else of one that merges it: the tab itself, or the
+ * sections tab it is an in-page tab of), when that entry declares one; else one from its name that no other Records entry
+ * has and no other staff sidebar entry shows (the shell's, read from web/src/config/nav-config.ts adminNav, the host
+ * packs', the packs' admin pages), nor, while one is left, any customer sidebar entry.
+ */
+const areaIcons = (() => {
+  const shown = shownTabs();
+  const entryIcon = (t) => (sectionParent(t) ?? t).icon ?? null;
+  const tabIcons = {};
+  for (const a of recordAreas) {
+    const over = shown.filter((t) => t.kind === "area" && t.area === a.name);
+    const merged = shown.filter((t) => t.kind === "area" && t.area !== a.name && (t.areas ?? []).some((x) => x.area === a.name));
+    const icon = [...over, ...merged].map(entryIcon).find(Boolean);
+    if (icon) tabIcons[a.name] = icon;
+  }
+  // The shell's own entries of each sidebar, as nav-config.ts writes them (test:console-sidebar holds the result to the
+  // sidebars the console builds).
+  const navConfig = readFileSync(path.join(HERE, "..", "web", "src", "config", "nav-config.ts"), "utf8");
+  const block = (start, end) => { const i = navConfig.indexOf(start); const j = navConfig.indexOf(end, i + 1); return i < 0 ? "" : navConfig.slice(i, j < 0 ? undefined : j); };
+  const iconsIn = (text) => [...text.matchAll(/icon:\s*'([A-Za-z]+)'/g)].map((m) => m[1]);
+  const shellAdmin = iconsIn(block("export const adminNav", "export function mergeNav"));
+  const shellApp = iconsIn(block("const shellPortalNav", "export function withSettings"));
+  const pageIcons = (area) => allPages.filter((pg) => pg.area === area && pg.icon).map((pg) => pg.icon);
+  const staffIcons = [...shellAdmin, ...hostNavIcons.admin, ...pageIcons("admin"), ...(journeyFacts || tipFacts ? ["route"] : [])];
+  const avoidIcons = [...shellApp, ...hostNavIcons.app, ...pageIcons("app"), ...workspaceItems.map((x) => x.icon), "chartLine", "settings",
+    ...shown.filter((t) => !sectionParent(t)).map((t) => t.icon ?? DEFAULT_ICONS[t.kind])];
+  return recordAreaIcons(recordAreas.map((a) => ({ name: a.name, scope: a.scope, icon: a.icon ?? null })), { tabIcons, staffIcons, avoidIcons });
+})();
+// Two areas that declare one icon keep it (their entries then look alike): a warning, not a refusal (mold_v0-242).
+{
+  const twice = recordIconDuplicates(recordAreas.map((a) => ({ name: a.name, icon: a.icon ?? null })));
+  if (twice.length) console.log(`gen-packs: warning: ${twice.length} icon(s) declared by more than one record area (their Records entries look alike):\n  ${twice.map((d) =>
+    `${d.icon}: ${d.areas.map((n) => `${recordAreas.find((a) => a.name === n).pack}/${n}`).join(", ")}`).join("\n  ")}`);
+}
 /** A pack page's address: flat in the customer console (mold_v0-132), /admin/packs/<pack>/<id> in the admin console. */
 function packPageUrl(pg) { return pg.area === "app" ? appPageUrl(pg.id) : `/admin/packs/${pg.pack}/${pg.id}`; }
 files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADER +
-  "import type { NavGroup } from '@/types';\n\n" +
+  "import type { NavGroup, NavItem } from '@/types';\n\n" +
   "/**\n * A pack's console page: the shell's generic page (app/app/[page], flat since mold_v0-132; app/admin/packs/[pack]/[page])\n" +
   " * shows the rows its data route returns.\n */\n" +
   "export interface PackPage {\n  pack: string;\n  id: string;\n  area: 'app' | 'admin';\n  /** Its address: /app/<id>, or /admin/packs/<pack>/<id>. */\n  url: string;\n  title: string;\n  description: string | null;\n  data: string;\n  columns: { key: string; label: string }[];\n}\n\n" +
@@ -2407,7 +2450,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** Sidebar groups the packs add to /admin (after the shell's own). */\n" +
   `export const packAdminNav: NavGroup[] = ${json(nav("admin"))};\n\n` +
   "/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */\n" +
-  "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
+  "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n" +
+  "  /** Its icon wherever it shows (mold_v0-242; src/record-icons.ts): its own, its customer tab's, else one picked from its name. */\n  icon: NonNullable<NavItem['icon']>;\n" +
+  "  role: 'source' | 'check' | 'asset';\n" +
   "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
   "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n" +
   "  /** Its clocks (mold_v0-191): each record's deadline, shown as a column and filtered by its status. */\n  clocks?: { name: string; label: string }[];\n" +
@@ -2419,17 +2464,17 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n}\n\n" +
-  `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
+  `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
     ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
-  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
   `export const exportWithheldAreas: string[] = ${json(recordAreas.filter((a) => listWithheld(a.name, "export")).map((a) => a.name))};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
-  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
   " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates, Files (mold_v0-056)\n" +
   " * when a pack has a workspace store. */\n" +
@@ -2614,7 +2659,6 @@ function shownTabsAlone() {
  * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
  */
 function viewsModule() {
-  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "settings", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", team: "teams", keys: "lock", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = shownTabs();
   const tabs = shown.map((t) => ({

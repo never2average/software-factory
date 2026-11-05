@@ -197,6 +197,20 @@ def run(n=0, fails=None):
         if os.path.isdir(os.path.join(ROOT, "schemas")): os.symlink(os.path.join(ROOT, "schemas"), os.path.join(T, "schemas"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application"); P = os.path.join(T, "packs")
         schema = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "codebase", "packs", "pack.schema.json")))
+        # mold_v0-242: a record area's icon line (one of the console's tab icons, the same list as src/pack-api.ts TAB_ICONS)
+        _api = open(os.path.join(ROOT, "molds", "mold_v0", "codebase", "src", "pack-api.ts")).read()
+        _icons = tuple(re.findall(r'"(\w+)"', re.search(r"export const TAB_ICONS = \[(.*?)\] as const", _api, re.S).group(1)))
+        n += 1
+        if _icons != BP.TAB_ICONS: fails.append(f"lib/brief_pack.py TAB_ICONS is src/pack-api.ts TAB_ICONS: {set(_icons) ^ set(BP.TAB_ICONS)}")
+        _area = "## Records\n### regulators: Regulators\n- role: source\n- scope: platform\n- icon: {}\n- field code: Code | text | required\n"
+        n += 1
+        try: _icon = BP.parse(_area.format("shield"))[0]["records"][0].get("icon")
+        except BP.BriefError as x: _icon = str(x)
+        if _icon != "shield": fails.append(f"an area's icon line is its record_areas[].icon: {_icon}")
+        n += 1
+        try: BP.parse(_area.format("landmark")); fails.append("an area's icon outside the console's icons must be refused")
+        except BP.BriefError as x:
+            if "line 5: area regulators: icon is one of the console's icons" not in str(x): fails.append(f"an area's unknown icon is refused at its line: {x}")
         def go(app, brief, answers=None):
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
             # The legal question (mold_v0-109) is answered "later" until the app's answers.json records an answer (intake

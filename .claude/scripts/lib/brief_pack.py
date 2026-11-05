@@ -48,7 +48,8 @@ CHART_TYPES = ("bar", "stacked_bar", "line", "area", "number", "table")
 TAB_KINDS = ("overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "page")
 TAB_ICONS = ("dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
              "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle",
-             "shield", "lock", "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments")
+             "shield", "lock", "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments",
+             "userPen")   # src/pack-api.ts TAB_ICONS
 RESERVED_ENV = re.compile(r"(PATH|HOME|LANG|LC_[A-Z_]+|RUN_[A-Z0-9_]*|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|NODE_USE_ENV_PROXY|NODE_OPTIONS|NPM_CONFIG_[A-Z0-9_]*|LD_[A-Z0-9_]*)")
 GATEWAY = re.compile(r"gateway\.(token|url|([a-z][a-z0-9_-]{1,40})\.base_url)")
 COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -250,6 +251,9 @@ def parse_records(lines, c):
                 else: c.err(ln, f"scope is workspace (each workspace's own) or platform (one shared list), not {v!r}")
             elif k == "description": a["description"] = v
             elif k == "columns": a["list_columns"] = _list(v)
+            elif k == "icon":  # mold_v0-242: its Records entries' icon, one of the console's tab icons
+                if v in TAB_ICONS: a["icon"] = v
+                else: c.err(ln, f"area {name}: icon is one of the console's icons ({', '.join(TAB_ICONS)}), not {v!r}")
             elif k == "sealed":
                 if v.lower() in ("yes", "true"): a["sealed"] = True
                 elif v.lower() in ("no", "false"): a["sealed"] = False
@@ -280,7 +284,7 @@ def parse_records(lines, c):
                 act = k.split()[-1]
                 perms[act] = _roles(v, lambda m_: c.err(ln, m_), f"who can {act}", write=act != "read")
                 if not perms[act]: c.err(ln, f"who can {act}: name at least one role")
-            else: c.err(ln, f"area {name}: unknown line {k!r} (role, scope, description, field, columns, lifecycle, initial, transition, due, sealed, who can read|create|update|move|delete)")
+            else: c.err(ln, f"area {name}: unknown line {k!r} (role, scope, description, icon, field, columns, lifecycle, initial, transition, due, sealed, who can read|create|update|move|delete)")
         a["fields"] = fields
         for i, f in enumerate(fields):
             if f["name"] in [g["name"] for g in fields[:i]]: c.err(c.lines[("field", name, f["name"])], f"area {name}: field {f['name']} is declared twice")

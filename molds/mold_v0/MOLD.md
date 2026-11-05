@@ -351,7 +351,10 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   fields (an enum filters by its options, a date or number sorts as one), search, a record count, sorting and filters,
   a row opening the record as a full card in the list's place (mold_v0-217) with **Open record** for its own page; empty, it says where the area's rows
   come from (for staff: its data repository, what to press on Data repositories, the admin MCP's sync tool;
-  `web/src/features/records/empty.ts`). The breadcrumb names the area by its label, as the sidebar does. An area of
+  `web/src/features/records/empty.ts`). The breadcrumb names the area by its label, as the sidebar does. Each area has
+  one icon (mold_v0-242, `src/record-icons.ts`), in both consoles' Records groups and its spec: its own `icon` (a tab
+  icon), else its customer tab's, else one picked from its name so that no two Records entries share one and none
+  repeats another staff sidebar entry's; two areas declaring one icon is a build warning (docs/RECORDS.md section 5). An area of
   platform scope may declare `samples` (at most 20 records, each data key a declared field): the lane world
   (`testing/console/world.mts`) writes them into its throwaway database so the pages are graded with rows; a deployed
   build never writes them. `npm run test:record-pages` checks the empty states, the staff guide and the samples rule.

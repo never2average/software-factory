@@ -69,16 +69,19 @@
     {
      "title": "Policies",
      "url": "/app/records/tracker_policies",
+     "icon": "post",
      "items": []
     },
     {
      "title": "Applications",
      "url": "/app/records/tracker_apps",
+     "icon": "clock",
      "items": []
     },
     {
      "title": "Findings",
      "url": "/app/records/tracker_findings",
+     "icon": "search",
      "items": []
     }
    ]
@@ -216,6 +219,7 @@
     {
      "title": "Policies",
      "url": "/admin/records/tracker_policies",
+     "icon": "post",
      "items": []
     }
    ]
