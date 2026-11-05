@@ -140,7 +140,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 13 and len(set(ids(root))) == 13, "the registry names 13 flags, each once")
+    ok(len(flags) == 14 and len(set(ids(root))) == 14, "the registry names 14 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -148,6 +148,7 @@ def self_test(root):
     prof = {"audit": {"data": True, "platform": False}, "onprem_runners": True}
     ok(words(effective(prof, audit_app_like, root)) == "vault, email, alerts, clocks, audit.data, runners, health", "legacy keys and pack signals give the effective flags")
     ok(words(effective({}, [], root)) == "health", "zero packs and no profile: only health history (no engine)")
+    ok("agent" not in words(effective({}, [], root)) and "agent" in words(effective({"features": {"agent_harness": True}}, [], root)), "the workspace agent: off by default, on when the profile says (mold_v0-243)")
     ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")

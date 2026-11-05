@@ -13,7 +13,7 @@ import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
 
 export const SCHEDULER_JOBS = ["schedules", "record_clocks", "email_intake", "event_outbox", "webhook_deliveries", "ledger_checkpoints",
-  "encrypted_fields", "audit_retention", "workspace_retention", "run_charges", "health_samples"] as const;
+  "encrypted_fields", "audit_retention", "workspace_retention", "run_charges", "health_samples", "harness_sessions"] as const;
 export type SchedulerJob = (typeof SCHEDULER_JOBS)[number];
 
 const WRITE_EVERY_MS = 30_000;

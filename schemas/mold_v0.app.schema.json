@@ -15006,6 +15006,13 @@
           "title": "Document previews (mold_v0-220)",
           "description": "A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards. Asked for when a record area's field of type file, or a field that previews its URL's document (preview: document). Default true. Off: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.",
           "markdownDescription": "**Document previews** (mold_v0-220; board name `documents`). A record's documents as cards under its fields: GET /api/records/<area>/<key>/files (and staff's), each file's preview (PDF, images, text, sanitised HTML) or download, and the console's document cards.\n\n- **Asked for** when a record area's field of type file, or a field that previews its URL's document (preview: document).\n- **Default** `true`.\n- **Off**: The file card routes answer not found and the console shows no document card; the files stay stored and the records keep their file fields.\n\nBrief line: `features.document_preview = false` in `## Profile`."
+        },
+        "agent_harness": {
+          "type": "boolean",
+          "default": false,
+          "title": "Workspace agent (mold_v0-243)",
+          "description": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings). Asked for when the app's profile (no pack declares it). Default false. Off: No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out.",
+          "markdownDescription": "**Workspace agent** (mold_v0-243; board name `agent`). A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings).\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out.\n\nBrief line: `features.agent_harness = true` in `## Profile`."
         }
       }
     }

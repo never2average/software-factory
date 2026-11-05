@@ -8,7 +8,8 @@ import { PROFILE } from "./profile.js";
 
 export type FeatureId =
   | "customer_key_vault" | "company_email" | "scheduled_alerts" | "record_clocks" | "audit.data" | "audit.platform"
-  | "audit.sign" | "onprem_runners" | "developer_surface" | "declarative_checks" | "encrypted_fields" | "health_history" | "document_preview";
+  | "audit.sign" | "onprem_runners" | "developer_surface" | "declarative_checks" | "encrypted_fields" | "health_history" | "document_preview"
+  | "agent_harness";
 
 export interface FeatureSpec {
   id: FeatureId;
@@ -20,6 +21,8 @@ export interface FeatureSpec {
   requested_words: string;
   requires?: FeatureId[];
   requires_any?: FeatureId[];
+  /** mold_v0-243: while off, left out of the build's generated files (an app that never turns it on builds as before it existed). */
+  quiet_off?: boolean;
   since: string;
   about: string;
   off: string;

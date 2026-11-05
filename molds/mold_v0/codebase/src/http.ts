@@ -20,6 +20,7 @@ import { emailAppRouter } from "./email-routes.js";
 import { backfillMessageFiles, intakeWired, pollIntake, startEmailIntake } from "./email-intake.js";
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
+import { agentAdminRoutes, agentAppRouter } from "./agent-routes.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
@@ -283,6 +284,8 @@ export function createApp() {
   // protocol; only when a kind needs a workspace's private network.
   app.use("/api/runners", onPremAppRouter());
   app.use("/api/runner", onPremRunnerRouter());
+  // The workspace agent (mold_v0-243, src/agent-routes.ts): its sessions and their steering; only with its flag on.
+  app.use("/api/agent", agentAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
@@ -819,6 +822,7 @@ export function createApp() {
   // declares a credential field that asks for one.
   githubAppAdminRoutes(ob, need, adminActor);
   onPremAdminRoutes(ob, need, adminActor);
+  agentAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });

@@ -7,6 +7,7 @@ import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
 import { registerMemoryTools } from "./account-context-tools.js";
 import { registerAuditTools } from "./audit-trail.js";
+import { registerAgentTools } from "./agent-tools.js";
 import { registerLedgerTools } from "./ledger.js";
 import { generatedInstructions, packInstructions } from "./mcp-tools.js";
 import { registerPackPrompts } from "./mcp-prompts.js";
@@ -132,6 +133,7 @@ export function createServer(org: Org, context = ""): McpServer {
   // The access log's tool (mold_v0-197): only when an audit trail is on, and only for the workspace's owners.
   registerAuditTools(server, org);
   registerLedgerTools(server, org); // mold_v0-195: verify_audit_trail, with audit.sign on
+  registerAgentTools(server, org); // mold_v0-243: the workspace agent's sessions, with agent_harness on
   // Slash commands after every tool: the host packs' own, then the ones the packs declare (mold_v0-137, pack.json mcp.prompts).
   for (const h of hosts()) h.mcp?.registerPrompts?.(server, org);
   registerPackPrompts(server);

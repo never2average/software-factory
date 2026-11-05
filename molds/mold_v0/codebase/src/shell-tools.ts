@@ -18,6 +18,11 @@ export const AUDIT_TOOL_NAMES = ["read_audit_trail", "verify_audit_trail"] as co
 /** The admin MCP tools the shell adds when the data trail, the platform trail is on (src/audit-trail.ts auditAdminTools). */
 export const ADMIN_AUDIT_TOOL_NAMES = ["read_audit_trail", "read_platform_trail"] as const;
 
+/** The MCP tools the shell adds when the workspace agent is on (src/agent-tools.ts, mold_v0-243), and the admin MCP's. */
+export const AGENT_TOOL_NAMES = ["list_agent_sessions", "start_agent_session", "read_agent_session", "message_agent_session", "pause_agent_session",
+  "resume_agent_session", "stop_agent_session", "decide_agent_request", "raise_agent_budget"] as const;
+export const ADMIN_AGENT_TOOL_NAMES = ["list_agent_sessions", "stop_agent_session"] as const;
+
 /** The MCP tools the shell adds when at least one record area is declared (src/record-areas.ts). */
 export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
 /** The MCP tool the shell adds when at least one record area declares clocks (mold_v0-191, src/record-clocks.ts). */

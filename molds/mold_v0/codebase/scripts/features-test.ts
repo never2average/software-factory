@@ -56,20 +56,23 @@ try {
   const { declaredChecks } = await import("../src/checks.js");
   const { developerSurface } = await import("../src/developer-surface.js");
   const rec = await import("../src/record-areas.js");
+  const { agentAppRouter } = await import("../src/agent-routes.js");
+  const { runnableKinds } = await import("../src/runs.js");
+  const { settingGroups } = await import("../src/settings.js");
 
   // ---------- 1. the registry ----------
   {
     const reg = JSON.parse(readFileSync(path.join(ROOT, "src", "features.json"), "utf8"));
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
-      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview"]);
-    assert.equal(reg.flags.length, 13);
+      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness"]);
+    assert.equal(reg.flags.length, 14);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
     }
     // defaults: on for what a pack declared before the registry, off for the opt-in toggles
     const off = F.FEATURES.filter((f) => !f.default).map((f) => f.id);
-    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners"]);
+    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness"]);
     // the profile's features over the legacy key over the default
     assert.equal(F.featureSetting("audit.data", {}), false);
     assert.equal(F.featureSetting("audit.data", { audit: { data: true } }), true);
@@ -77,13 +80,13 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 13 flags, each documented with a default; profile.features over the legacy key over the default");
+    console.log("✓ the registry: 14 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------
   {
     await installEmbedded(null);
-    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history"]);
+    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history", "agent_harness"]);
     assert.equal(F.featuresOnWords(), "health");
     console.log("✓ zero packs: nothing asked for but the audit toggles (profile only) and health history; on: health");
   }
@@ -120,13 +123,16 @@ try {
       encrypted_fields: encryptedAreas().length > 0 && jobs().includes("encrypted_fields"),
       health_history: healthSamplingOn() && jobs().includes("health_samples"),
       document_preview: F.featureOn("document_preview") && !(await filesGateOff()),
+      // The workspace agent (mold_v0-243): its routes, its MCP tools, its claimable kind, its settings and its sweep.
+      agent_harness: stack(agentAppRouter()) > 0 && t.includes("start_agent_session") && runnableKinds().some((k) => k.pack === "_agent")
+        && settingGroups().some((g) => g.id === "agent") && jobs().includes("harness_sessions"),
     } as Record<string, boolean>;
   };
 
   F.setFeaturesForTest(null);
   const defaults = await probe();
   assert.deepEqual(defaults, { customer_key_vault: true, company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
-    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true }, "with the defaults: every pack-asked capability on, the toggles off");
+    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true, agent_harness: false }, "with the defaults: every pack-asked capability on, the toggles off");
   assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health, documents");
   assert.equal(deliveriesOn(), true);
   console.log(`✓ defaults: on ${F.featuresOnWords()}; audit and runners off (their routes, tools and jobs absent)`);
@@ -144,6 +150,7 @@ try {
     ["encrypted_fields", false, "encrypted_fields"],
     ["health_history", false, "health_history"],
     ["document_preview", false, "document_preview"],
+    ["agent_harness", true, "agent_harness"],
   ];
   for (const [id, value, key] of turns) {
     F.setFeaturesForTest({ [id]: value });

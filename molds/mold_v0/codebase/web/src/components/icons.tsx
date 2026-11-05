@@ -1,4 +1,10 @@
 import {
+  IconRobot,
+  IconPlayerPause,
+  IconPlayerStop,
+  IconWorld,
+  IconCoin,
+  IconTool,
   IconDownload,
   IconShieldLock,
   IconAdjustmentsHorizontal,
@@ -109,6 +115,13 @@ import {
 export type Icon = React.ComponentType<IconProps>;
 
 export const Icons = {
+  // The workspace agent (mold_v0-243): its top-bar button and its steering controls.
+  agent: IconRobot,
+  pause: IconPlayerPause,
+  stop: IconPlayerStop,
+  world: IconWorld,
+  coin: IconCoin,
+  tool: IconTool,
   // General
   alertCircle: IconAlertCircle,
   warning: IconAlertTriangle,
