@@ -187,7 +187,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
               <ProvenanceFields row={data.record} form={form} />
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
               {area.fields.map((f) => (
-                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base='admin' f={f} v={data.record.data[f.name]} /></span></Field>
+                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base='admin' f={f} v={data.record.data[f.name]} recordKey={data.record.key} /></span></Field>
               ))}
               <Field label='Updated'>{data.record.updated_at.slice(0, 10)}</Field>
             </dl>

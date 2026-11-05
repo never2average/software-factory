@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { useScrollsSideways } from '@/hooks/use-scrolls-sideways';
+import { isDocument, jsonLine } from '@/features/records/json-text';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; areas?: string[] };
@@ -15,14 +16,15 @@ export const optionLabel = (f: RecordFieldSpec | undefined, v: string) => {
   const o = f?.options?.find((x) => (typeof x === 'string' ? x : x.value) === v);
   return o === undefined ? v : typeof o === 'string' ? o : o.label ?? o.value;
 };
-/** A field's value in words: an enum's option label, a list joined, a date as written. */
-export function show(area: RecordAreaSpec, field: string, v: unknown): string {
+/** A field's value in words: an enum's option label, a list joined, a date as written; a json value one readable line (mold_v0-240). */
+export function show(area: RecordAreaSpec, field: string, v: unknown, recordKey?: string): string {
   if (v === null || v === undefined || v === '') return '';
   const f = area.fields.find((x) => x.name === field);
-  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? optionLabel(f, x) : typeof x === 'object' && x && 'path' in x ? String((x as { name?: string; path: string }).name ?? (x as { path: string }).path) : JSON.stringify(x))).join(', ');
+  if (f?.type !== 'file' && isDocument(v)) return jsonLine(v, recordKey);
+  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? optionLabel(f, x) : typeof x === 'object' && x && 'path' in x ? String((x as { name?: string; path: string }).name ?? (x as { path: string }).path) : jsonLine(x, recordKey))).join(', ');
   if (typeof v === 'string') return f?.type === 'enum' ? optionLabel(f, v) : v;
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
-  return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return typeof v === 'object' ? jsonLine(v, recordKey) : String(v);
 }
 export const fieldLabel = (area: RecordAreaSpec, field: string) => area.fields.find((f) => f.name === field)?.label ?? field;
 
@@ -90,8 +92,8 @@ export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
                     )}
                     {cols.length > 0 && (
                       <dl className='text-muted-foreground mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-xs'>
-                        {cols.map((c) => show(area, c, r.data[c]) && (
-                          <div key={c} className='contents'><dt>{fieldLabel(area, c)}</dt><dd className='truncate'>{show(area, c, r.data[c])}</dd></div>
+                        {cols.map((c) => show(area, c, r.data[c], r.key) && (
+                          <div key={c} className='contents'><dt>{fieldLabel(area, c)}</dt><dd className='truncate'>{show(area, c, r.data[c], r.key)}</dd></div>
                         ))}
                       </dl>
                     )}
@@ -122,7 +124,7 @@ export function RecordTable({ area, detail, data }: { area: RecordAreaSpec; deta
         {data.records.map((r) => (
           <TableRow key={r.key}>
             <TableCell><RecordLink area={area} r={r} detail={detail} /></TableCell>
-            {area.list_columns.map((c) => <TableCell key={c}>{show(area, c, r.data[c])}</TableCell>)}
+            {area.list_columns.map((c) => <TableCell key={c}>{show(area, c, r.data[c], r.key)}</TableCell>)}
           </TableRow>
         ))}
       </TableBody>
@@ -158,7 +160,7 @@ export function TimelineList({ area, by, badge, detail, data }: { area: RecordAr
                 <span className='text-muted-foreground mr-3 inline-block w-14 tabular-nums'><span className='sr-only'>{label}: </span>{day(when(r)!)}</span>
                 <RecordLink area={area} r={r} detail={detail} />
                 {badge && r.data[badge] !== undefined && r.data[badge] !== null && r.data[badge] !== '' && (
-                  <Badge variant='outline' className='ml-2'>{show(area, badge, r.data[badge])}</Badge>
+                  <Badge variant='outline' className='ml-2'>{show(area, badge, r.data[badge], r.key)}</Badge>
                 )}
               </li>
             ))}

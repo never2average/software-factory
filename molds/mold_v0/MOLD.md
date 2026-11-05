@@ -1912,7 +1912,16 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   summary of what will happen, the fields, then the submit and Cancel. It is kept in the address (`?start=1` for a run,
   `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
   again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
-  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too. A
+  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too.
+  A json field never shows raw JSON (mold_v0-240, `web/src/features/records/json-text.ts`, `json-value.tsx`): on a
+  record's page, an open row's card and a staff record's page a list of objects is one line per item (its name, then
+  its meaningful fields: "Production · Hosting: AWS, ap-south-1") and an object one "Label: value" line per field;
+  nested objects flatten to their values; bookkeeping (`schemaVersion`, `kind`, `$`/`_` keys, a value repeating the
+  record's own key, a field repeating its item's name) is hidden; common short values read in words with the
+  credentials card's mapping (`web/src/lib/value-words.ts`: prod reads Production). A list's cell, its search and a
+  board's card keep it one line ("Production (AWS, ap-south-1); Staging (AWS, ap-south-1)"); Export CSV keeps the
+  stored JSON. A record's Credentials card has no count line under its heading. Proof: `npm run test:record-pages`
+  section 13. A
   list (an area, runs, reports or schedules tab, a records page; mold_v0-231: every list page of both consoles, Notices,
   Billing's Access log and the staff `/admin/access-log` too; proof: `npm run test:record-pages` section 10 walks them
   and `npm run test:console-tabs` draws the list tabs) has no title or description above it, no count toggle
