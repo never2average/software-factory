@@ -142,19 +142,19 @@ def self_test(root):
     def ok(c, what): checks.append(what); assert c, what
     ok(len(flags) == 13 and len(set(ids(root))) == 13, "the registry names 13 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
-    maxwell_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
+    audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
         "job_kinds": [{"name": "k", "private_network": True, "credentials": ["t"]}]}]
     prof = {"audit": {"data": True, "platform": False}, "onprem_runners": True}
-    ok(words(effective(prof, maxwell_like, root)) == "vault, email, alerts, clocks, audit.data, runners, health", "legacy keys and pack signals give the effective flags")
+    ok(words(effective(prof, audit_app_like, root)) == "vault, email, alerts, clocks, audit.data, runners, health", "legacy keys and pack signals give the effective flags")
     ok(words(effective({}, [], root)) == "health", "zero packs and no profile: only health history (no engine)")
-    ok(words(effective({"features": {"record_clocks": False}}, maxwell_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
+    ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")
     ok(any("needs audit.platform" in e for e in problems({}, [{"developer_surface": {}}], root)), "a developer surface needs the platform audit trail")
     ok(problems({"features": {"audit.platform": True}}, [{"developer_surface": {}}], root) == [], "a developer surface with the platform trail is right")
     ok(any("in the clear" in e for e in problems({"features": {"encrypted_fields": False}}, [{"record_areas": [{"scope": "workspace", "fields": [{"name": "x", "encrypted": True}]}]}], root)), "encrypted_fields off with an encrypted field is refused")
-    ok(any("nobody could give" in e for e in problems({"features": {"customer_key_vault": False}}, maxwell_like, root)), "the key vault off while a kind needs a credential is refused")
+    ok(any("nobody could give" in e for e in problems({"features": {"customer_key_vault": False}}, audit_app_like, root)), "the key vault off while a kind needs a credential is refused")
     ok(any("not a flag" in e for e in problems({"features": {"nope": True}}, [], root)), "an unknown flag is refused")
     ok(any("kind is the switch" in e for e in problems({"features": {"developer_surface": True, "audit.platform": True}}, [], root, kind="tool")), "developer_surface true on a tool app is refused (kind is the switch)")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")

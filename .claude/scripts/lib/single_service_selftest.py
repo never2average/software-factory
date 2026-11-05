@@ -529,8 +529,8 @@ def run():
         csteps = [st["id"] for st in SS.plan(S, FCAT, cb)]
         ok("catalogs" in csteps and csteps.index("catalogs") > csteps.index("rls") and "npm run --silent catalogs:index" in " ".join({st["id"]: st for st in SS.plan(S, FCAT, cb)}["catalogs"]["argv"])
            and "catalogs" not in [st["id"] for st in SS.plan(S, FR, cb)], f"the plan indexes the catalogs after the RLS check, in a one-off container, only when declared: {csteps}")
-        CSAID = "CATALOGS INDEX: maxwell_catalogs indexed (regulators 12, controls 340); rows now: controls 340, regulators 12"
-        for what, ans, want in (("an index that ran", (0, "  maxwell/maxwell_catalogs: indexed\n" + CSAID + "\n"), CSAID), ("an index that failed", (1, "boom: the database is unreachable"), "boom: the database is unreachable")):
+        CSAID = "CATALOGS INDEX: example_app_catalogs indexed (regulators 12, controls 340); rows now: controls 340, regulators 12"
+        for what, ans, want in (("an index that ran", (0, "  example_app/example_app_catalogs: indexed\n" + CSAID + "\n"), CSAID), ("an index that failed", (1, "boom: the database is unreachable"), "boom: the database is unreachable")):
             R7 = Runner(dict(R.answers, rls=(0, PASS + "\n"), catalogs=ans))
             res7 = SS.deploy(S, FCAT, cb, runner=R7, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
                              say=lambda s_: None, release="20261020T000007Z", wait=lambda s_: None)

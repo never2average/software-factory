@@ -25,7 +25,7 @@
 //  9. Two workspaces: each run sees only its own workspace's files; each store holds only its own.
 // 11. (mold_v0-183) A run that exits 0 and validates but changes nothing in its workspace: it succeeds as before for a
 //     kind that may (its workspace_written event says unchanged), and FAILS for a kind with write_back_required, saying
-//     it changed nothing (Maxwell's seed-company that stopped to ask a question, its refresh-apps refused its writes).
+//     it changed nothing (the audit app's seed-company that stopped to ask a question, its refresh-apps refused its writes).
 // 12. (mold_v0-188) A kind's required output: a run that would succeed but did not write it fails "output_missing",
 //     naming it, and nothing is written back; a quiet exit passes under "workspace_changed"; writing it succeeds.
 import assert from "node:assert/strict";
@@ -413,7 +413,7 @@ try {
     // ---------- 12. a kind's required output (mold_v0-188) ----------
     {
       const before = (await latest(A.orgId))!.version;
-      // It wrote its notes but not its report (Maxwell's report_audit_findings, its report write refused): failed
+      // It wrote its notes but not its report (the audit app's report_audit_findings, its report write refused): failed
       // output_missing, naming the report; nothing written back, no results taken.
       await start(ca, "audit_report", "a-co");
       const miss = await runNext("audit_report");

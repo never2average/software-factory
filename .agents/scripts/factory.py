@@ -1210,11 +1210,11 @@ def self_test():
        "validate: a spending ceiling above the factory's (rules.json app_limits_max), a plan's own too, is refused")
     ok(pa({"limits": {"runs": {"live_per_workspace": 2.5}}}), "validate: a limit that counts things is a whole number")
     # mold_v0-099: member_keys and the app's part of source_offer (upstreams it owns), for its own packs only
-    pk = lambda prof, packs=("maxwell",): _app_profile("x", {"application": {"mold_id": "mold_v0", "packs": list(packs), "profile": prof}})
-    ok(pk({"member_keys": False, "source_offer": {"upstreams": {"maxwell": "licensor_owned"}}}) == [], "validate: member_keys false and an upstream the licensor owns validate")
+    pk = lambda prof, packs=("example_app",): _app_profile("x", {"application": {"mold_id": "mold_v0", "packs": list(packs), "profile": prof}})
+    ok(pk({"member_keys": False, "source_offer": {"upstreams": {"example_app": "licensor_owned"}}}) == [], "validate: member_keys false and an upstream the licensor owns validate")
     for bad, why in (({"member_keys": "false"}, "member_keys as text"), ({"source_offer": {"upstreams": {"other": "licensor_owned"}}}, "a pack the app does not have"),
-                     ({"source_offer": {"upstreams": {"maxwell": True}}}, "a value other than licensor_owned"), ({"source_offer": {"upstreams": {}}}, "no upstream named"),
-                     ({"source_offer": {"app": "licensor_exception", "upstreams": {"maxwell": "licensor_owned"}}}, "source_offer.app beside it")):
+                     ({"source_offer": {"upstreams": {"example_app": True}}}, "a value other than licensor_owned"), ({"source_offer": {"upstreams": {}}}, "no upstream named"),
+                     ({"source_offer": {"app": "licensor_exception", "upstreams": {"example_app": "licensor_owned"}}}, "source_offer.app beside it")):
         ok(pk(bad), f"validate: a profile with {why} is refused")
     with tempfile.TemporaryDirectory() as bt:
         os.makedirs(os.path.join(bt, "briefs")); open(os.path.join(bt, "briefs", "b.md"), "w").write("## Budgets\nlimits.runs.budget_usd_max = 40\n")
@@ -1228,8 +1228,8 @@ def self_test():
            "validate: a sender in state is accepted when intake recorded it as an answer, refused as a hand edit")
         ok(pa({"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}}) == []
            and pa({"email": {"notifications": ["nope"]}}) and pa({"email_from_address": "nope"}), "validate: email settings are checked (known groups, one address)")
-        open(os.path.join(bt, "briefs", "b.md"), "w").write("## Profile\nmember_keys = false\nsource_offer.upstreams.maxwell = licensor_owned\n")
-        own = {"member_keys": False, "source_offer": {"upstreams": {"maxwell": "licensor_owned"}}}
+        open(os.path.join(bt, "briefs", "b.md"), "w").write("## Profile\nmember_keys = false\nsource_offer.upstreams.example_app = licensor_owned\n")
+        own = {"member_keys": False, "source_offer": {"upstreams": {"example_app": "licensor_owned"}}}
         ok(ab(own) == [] and ab({"member_keys": False}), "validate: member_keys and source_offer.upstreams are read from the brief and must match it")
     # mold_v0-051: a single-service app's RLS claim is read against the product's own check, as lib/single_service.py records it
     ds = lambda ev: {"postgres": {"provider": "self_hosted", "rls": "fail_closed", **({"rls_verified": ev} if ev else {})}}

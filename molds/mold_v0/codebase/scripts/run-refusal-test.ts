@@ -107,7 +107,7 @@ try {
   const http = await startHttp();
   process.env.PUBLIC_URL = http.base;
   const kv = await import("../src/keyvault.js");
-  // Claude on Vertex, as Maxwell has it: no Anthropic key, a service-account key (a throwaway one, made here).
+  // Claude on Vertex, as the audit app has it: no Anthropic key, a service-account key (a throwaway one, made here).
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   await kv.upsertProvider({ slug: "anthropic", mode: "gateway", enabled: true, auth_header: "x-api-key", auth_prefix: "", env_vars: ["ANTHROPIC_API_KEY"],
     backend: "vertex", backend_config: { project_id: "p189-test", region: "global", endpoint: vertexBase } });

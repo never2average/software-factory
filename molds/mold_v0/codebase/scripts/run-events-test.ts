@@ -1,4 +1,4 @@
-// The operator's read-only run report (mold_v0-183), offline: an embedded database with a run shaped like Maxwell's
+// The operator's read-only run report (mold_v0-183), offline: an embedded database with a run shaped like the audit app's
 // first refresh (a "succeeded" run whose program said it was refused its write, and whose write-back changed nothing),
 // the report read in-process, then `npm run audit:run-events` itself as the factory runs it.
 //   npm run test:run-events
@@ -41,7 +41,7 @@ try {
     ["run_refresh01", 1, "workspace_restored", { restored: 3, kept_aside: 0 }],
     ["run_refresh01", 1, "log", { line: `  "result": "The repo record update was blocked. A permission deny rule covers applications/app-1/repos/app-1.json", "clone": "https://x-access-token:${PASS}@github.com/acme/app"` }],
     ["run_refresh01", 1, "stderr", { tail: `[run-headless] claude -p ... token ${TOKEN}` }],
-    ["run_refresh01", 1, "agent_output", { path: "maxwell-result.json", size: 99, sha256: "0".repeat(64), json: { result: "wrote no files", files: null, auth: `Bearer ${TOKEN}` } }],
+    ["run_refresh01", 1, "agent_output", { path: "example_app-result.json", size: 99, sha256: "0".repeat(64), json: { result: "wrote no files", files: null, auth: `Bearer ${TOKEN}` } }],
     ["run_refresh01", 1, "workspace_ignored", { paths: 1, sample: ["applications/app-1/repos/app-1"] }],
     ["run_refresh01", 1, "workspace_written", { version: 1, unchanged: true }],
     ["run_refresh01", 1, "succeeded", { cost_usd: 3.678372 }],
@@ -103,7 +103,7 @@ try {
   assert.match(text, /fixture_re\/refresh_apps: succeeded, attempt 1 of 1, cost 3\.678372 USD/);
   assert.match(text, /workspace_written \{"version":1,"unchanged":true\}/);
   assert.match(text, /A permission deny rule covers applications\/app-1\/repos\/app-1\.json/, "the program's own words");
-  assert.match(text, /maxwell-result\.json \(99 bytes\)\n {4}\{[^\n]*"result":"wrote no files"/, "its result file's JSON");
+  assert.match(text, /example_app-result\.json \(99 bytes\)\n {4}\{[^\n]*"result":"wrote no files"/, "its result file's JSON");
   assert.match(formatRunEvents(first), /2 of 9 event\(s\) shown \(raise --limit for the rest\)/);
   console.log("✓ the run's events in order with its state, cost and counts; --type, --attempt and --limit; the program's words and result file are readable");
 

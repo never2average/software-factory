@@ -237,7 +237,7 @@ test("masks: times, ports, minted ids and keys go; the build's own words stay", 
 test("snapshot helpers: file names, the prompt argument matrix", () => {
   assert.equal(fileFor("/"), "root");
   assert.equal(fileFor("/app?lane=no-account#no_account"), "app_lane_no-account_no_account");
-  assert.equal(fileFor("/admin/packs/maxwell/coverage"), "admin_packs_maxwell_coverage");
+  assert.equal(fileFor("/admin/packs/example_app/coverage"), "admin_packs_example_app_coverage");
   assert.deepEqual(promptMatrix([]), [{}]);
   assert.deepEqual(promptMatrix([{ name: "a" }]), [{}, { a: "parity-a" }]);
   assert.deepEqual(promptMatrix([{ name: "a" }, { name: "b" }]), [{}, { a: "parity-a" }, { b: "parity-b" }, { a: "parity-a", b: "parity-b" }]);

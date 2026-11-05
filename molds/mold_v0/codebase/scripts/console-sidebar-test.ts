@@ -224,7 +224,7 @@ try {
 
   // ---------- 6. exactly one active entry on every page (mold_v0-213) ----------
   {
-    // A Maxwell-like build: in-page tabs (a sections tab), a filtered tab of an area listed elsewhere, a page that moved
+    // An audit-app-like build: in-page tabs (a sections tab), a filtered tab of an area listed elsewhere, a page that moved
     // into another's tabs; and the shell's own sidebar with zero packs.
     const copy = built("active", ["fixture_vulns"], (_id, j) => {
       j.tabs.push({ id: "fixes", kind: "area", area: "audit_findings", label: "Fixes", filter: { state: { in: ["fixed", "accepted"] } } },

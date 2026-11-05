@@ -997,7 +997,7 @@ def self_test_single(n, fails):
         r = go("zz_lim", base + "\nThe old ceiling was limits.runs.budget_usd_max = 90, in prose.\n"); n += 1
         if r.returncode or "profile" in docs("zz_lim")["application"] or "outside a ## Profile or ## Budgets section: ignored" not in r.stdout:
             fails.append(f"a setting taken out of the brief is taken out of state (never carried forward), and one outside the sections is ignored and said: {(r.stdout + r.stderr).strip()[-300:]}")
-        for bad, why in (("## Profile\nhost_packs: maxwell\n", "host_packs cannot be set"), ("## Profile\nlimits.runs.budget_usd_max = 1,000\n", "no value I can read"),
+        for bad, why in (("## Profile\nhost_packs: example_app\n", "host_packs cannot be set"), ("## Profile\nlimits.runs.budget_usd_max = 1,000\n", "no value I can read"),
                          ("## Budgets\nlimits.runs.budget_usd = 40\n", "is not a limit"), ("## Profile\nlimits.runs.budget_usd_max = 40\nlimits.runs.budget_usd_max = 400\n", "set twice"),
                          ("## Profile\nbilling.enabled: true\n", "cannot be set by the app"), ("## Budgets\nWe weighed limits.runs.budget_usd_max = 400 but chose 40.\n", "no value I can read"),
                          ("## Budgets\nlimits.runs.budget_usd_max = 40k\n", "no value I can read"), ("## Budgets\nlimits.runs.budget_usd_max = 4000\n", "ceiling")):

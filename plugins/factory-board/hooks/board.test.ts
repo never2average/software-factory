@@ -138,10 +138,10 @@ test('analytics helpers: sparkline, usage report, tickets per app, short numbers
   expect(cost(null, 'estimated')).toBe('not measured')
   expect([isEstimate('estimated'), isEstimate('mixed'), isEstimate('recorded'), isEstimate(null)]).toEqual([true, true, false, false])
   const tickets = [
-    { id: '1', mold: 'm', title: 'Lane fail: functional on example_app — 1 check', status: 'todo', priority: 1 },
+    { id: '1', mold: 'm', title: 'Lane fail: functional on sample_app — 1 check', status: 'todo', priority: 1 },
     { id: '2', mold: 'm', title: 'Lane fail: functional on example_vm — 1 check', status: 'todo', priority: 1 },
   ]
-  expect(ticketsForApp(tickets, 'example_app').map(t => t.id)).toEqual(['1'])
+  expect(ticketsForApp(tickets, 'sample_app').map(t => t.id)).toEqual(['1'])
   expect(ticketsForApp(tickets, 'example_vm').map(t => t.id)).toEqual(['2'])
   expect(short(1234)).toBe('1.2k')
   expect(short(2_500_000)).toBe('2.5M')
@@ -460,49 +460,49 @@ test('the provider flag shows on the line with no plan; a pct rounded to 100 is 
 
 const AT = Date.parse('2026-10-31T07:30:00Z')
 const SPEND = {
-  app_id: 'maxwell', measured_at: '2026-10-31T07:29:30Z', month: '2026-10', today_usd: 41.1539, month_usd: 50.0089, month_recorded_usd: 49.9143,
-  last_run: { workspace: 'Lane check', kind: 'maxwell/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
+  app_id: 'sample_app', measured_at: '2026-10-31T07:29:30Z', month: '2026-10', today_usd: 41.1539, month_usd: 50.0089, month_recorded_usd: 49.9143,
+  last_run: { workspace: 'Lane check', kind: 'sample_app/probe_agent_graph', status: 'failed', cost_usd: 2.2866, at: '2026-10-31T04:18:09+00:00' },
   accounts: [
     { workspace: 'Lane check', used_usd: 50.0089, limit_usd: 50, source: 'override', pct: 100, level: 'limit', prev_month: { month: '2026-09', used_usd: 0, level: 'ok' } },
     { workspace: 'Trial', used_usd: 3, limit_usd: null, source: 'plan', pct: null, level: null },
   ],
-  kinds: [{ workspace: 'Lane check', pack: 'maxwell', kind: 'refresh_apps', month_runs: 3, used_usd: 12.1644, limit_usd: 500, pct: 2.4, level: 'ok' }],
+  kinds: [{ workspace: 'Lane check', pack: 'sample_app', kind: 'refresh_apps', month_runs: 3, used_usd: 12.1644, limit_usd: 500, pct: 2.4, level: 'ok' }],
   warnings: [
-    { workspace: 'Lane check', level: 'limit', text: 'maxwell: the Lane check account has used all of its $50.00 allowance' },
-    { workspace: 'Lane check', level: 'limit', kind: 'maxwell/x', text: 'a kind at its budget is not the account banner' },
+    { workspace: 'Lane check', level: 'limit', text: 'sample_app: the Lane check account has used all of its $50.00 allowance' },
+    { workspace: 'Lane check', level: 'limit', kind: 'sample_app/x', text: 'a kind at its budget is not the account banner' },
   ],
   active: true, building: false, cached: true,
   build: { cost_usd: 34, uncounted_est_usd: 2.5, basis: 'own', live_sessions: ['abc'], unreported_sessions: [], live_from: null },
 }
 
 test('spend: a heartbeat entry reads with every figure, and a missing one is not measured, never $0', async () => {
-  const s = parseSpend('maxwell', SPEND)!
+  const s = parseSpend('sample_app', SPEND)!
   expect([s.todayUsd, s.monthUsd, s.monthRecordedUsd, s.lastRun?.costUsd, s.accounts[0]?.level, s.accounts[0]?.prev?.month, s.kinds[0]?.kind]).toEqual([
-    41.1539, 50.0089, 49.9143, 2.2866, 'limit', '2026-09', 'maxwell/refresh_apps',
+    41.1539, 50.0089, 49.9143, 2.2866, 'limit', '2026-09', 'sample_app/refresh_apps',
   ])
   const bare = parseSpend('octillion', { app_id: 'octillion', error: 'the database could not be read: timeout' })!
   expect([bare.todayUsd, bare.monthUsd, bare.lastRun, bare.accounts, bare.error]).toEqual([null, null, null, [], 'the database could not be read: timeout'])
   expect([s.lastRun?.errorKind, s.monthOutputMissingRuns]).toEqual([null, null])
   // mold_v0-188: a run that failed with a required output missing reads as such, and the month's count with it
-  const om = parseSpend('maxwell', { ...SPEND, month_output_missing_runs: 1, last_run: { ...SPEND.last_run, status: 'failed', error_kind: 'output_missing' } })!
+  const om = parseSpend('sample_app', { ...SPEND, month_output_missing_runs: 1, last_run: { ...SPEND.last_run, status: 'failed', error_kind: 'output_missing' } })!
   expect([om.lastRun?.errorKind, om.monthOutputMissingRuns, runStatusWord(om.lastRun!), om.monthUsd]).toEqual(['output_missing', 1, 'failed (output missing)', 50.0089])
   expect(runStatusWord({ status: 'failed', errorKind: 'run' })).toBe('failed')
   expect(runStatusWord({ status: 'succeeded', errorKind: null })).toBe('succeeded')
   expect(parseSpend('x', null)).toBeNull()
-  expect(Object.keys(parseHeartbeat({ generated_at: '2026-10-31T07:29:30Z', apps: { maxwell: SPEND } }).apps)).toEqual(['maxwell'])
+  expect(Object.keys(parseHeartbeat({ generated_at: '2026-10-31T07:29:30Z', apps: { sample_app: SPEND } }).apps)).toEqual(['sample_app'])
   expect(parseHeartbeat(null)).toEqual({ at: '', apps: {} })
 })
 
 test('spend: the status line names each active app, today and this month; not measured says so; stale says when', async () => {
-  const apps = parseHeartbeat({ apps: { maxwell: SPEND, idle: { ...SPEND, app_id: 'idle', active: false, today_usd: 0 }, hfc: { app_id: 'hfc', active: true, error: 'not measured by the heartbeat' } } }).apps
-  expect(spendStatus(apps, AT, '2026-10-31T07:29:30Z')).toBe('hfc spend not measured; maxwell $41.15 today · $50.01 Oct')
-  expect(spendStatus(apps, AT, '2026-10-31T05:29:30Z')).toBe('hfc spend not measured; maxwell $41.15 today · $50.01 Oct (as of 2h ago)')
+  const apps = parseHeartbeat({ apps: { sample_app: SPEND, idle: { ...SPEND, app_id: 'idle', active: false, today_usd: 0 }, hfc: { app_id: 'hfc', active: true, error: 'not measured by the heartbeat' } } }).apps
+  expect(spendStatus(apps, AT, '2026-10-31T07:29:30Z')).toBe('hfc spend not measured; sample_app $41.15 today · $50.01 Oct')
+  expect(spendStatus(apps, AT, '2026-10-31T05:29:30Z')).toBe('hfc spend not measured; sample_app $41.15 today · $50.01 Oct (as of 2h ago)')
   expect(spendStatus({}, AT)).toBe('')
   expect([monthWord('2026-10'), monthWord('2026-01'), monthWord('soon')]).toEqual(['Oct', 'Jan', 'soon'])
 })
 
 test('spend: allowance bars are amber from 80% and red at the limit; a plan allowance is not measured', async () => {
-  const s = parseSpend('maxwell', SPEND)!
+  const s = parseSpend('sample_app', SPEND)!
   expect(allowanceBar({ usedUsd: 40, limitUsd: 50, pct: 80 }, 10)).toBe('████████░░ 80%')
   expect(allowanceBar({ usedUsd: 60, limitUsd: 50, pct: 120 }, 10)).toBe('██████████ 120%')
   expect(allowanceBar({ usedUsd: null, limitUsd: 50, pct: null }, 4)).toBe('···· not measured')
@@ -511,13 +511,13 @@ test('spend: allowance bars are amber from 80% and red at the limit; a plan allo
   expect(allowanceText(s.accounts[0]!, s.month)).toBe('$50.01 of $50.00 in Oct · LIMIT REACHED: no run can start')
   expect(allowanceText(s.accounts[1]!, s.month)).toBe('$3.00 spent in Oct · allowance not measured (set by its billing plan)')
   // the banner: accounts at the limit only (a kind at its budget is said on its own line, not as an account)
-  expect(spendBanner({ maxwell: s })).toEqual({ level: 'limit', lines: ['maxwell: the Lane check account has used all of its $50.00 allowance'] })
-  expect(spendBanner({ maxwell: { ...s, warnings: [] } })).toEqual({ level: 'ok', lines: [] })
+  expect(spendBanner({ sample_app: s })).toEqual({ level: 'limit', lines: ['sample_app: the Lane check account has used all of its $50.00 allowance'] })
+  expect(spendBanner({ sample_app: { ...s, warnings: [] } })).toEqual({ level: 'ok', lines: [] })
 })
 
 test('spend: the live build figure goes over the hourly report; its estimate stays ~ est.; no live figure leaves it alone', async () => {
   const hourly = buildOf({ generated_at: '2026-10-31T07:00:00Z', summary: { build_cost_usd: 29, build_cost_basis: 'own', build_cost_uncounted_est_usd: 1, deploys: 3 } })
-  const live = parseSpend('maxwell', SPEND)!.build
+  const live = parseSpend('sample_app', SPEND)!.build
   const b = withLive(hourly, live, '2026-10-31T07:29:30Z')!
   expect([b.cost_usd, b.uncounted_est_usd, b.deploys, b.live?.sessions]).toEqual([34, 2.5, 3, 1])
   expect(partsOf(b).map(p => p.text)).toEqual(['built: $34.00', '+ ~$2.50 est.', '· agent not measured', '· active not measured', '· first message → live not measured', '· 3 deploys', '· live (1 session now)'])
@@ -531,7 +531,7 @@ test('spend: the live build figure goes over the hourly report; its estimate sta
 // The registry's flags as molds/mold_v0/codebase/src/features.json has them (a plugin's test reads nothing outside its folder).
 const REGISTRY = parseFeatureRegistry({ flags: [{"id": "customer_key_vault", "short": "vault", "default": true, "requested_by": "credentials"}, {"id": "company_email", "short": "email", "default": true, "requested_by": "email"}, {"id": "scheduled_alerts", "short": "alerts", "default": true, "requested_by": "alerts"}, {"id": "record_clocks", "short": "clocks", "default": true, "requested_by": "clocks"}, {"id": "audit.data", "short": "audit.data", "default": false, "legacy": "audit.data", "requested_by": "always"}, {"id": "audit.platform", "short": "audit.platform", "default": false, "legacy": "audit.platform", "requested_by": "always"}, {"id": "audit.sign", "short": "audit.sign", "default": false, "legacy": "audit.sign", "requested_by": "always"}, {"id": "onprem_runners", "short": "runners", "default": false, "legacy": "onprem_runners", "requested_by": "private_network"}, {"id": "developer_surface", "short": "developer", "default": true, "requested_by": "developer_surface"}, {"id": "declarative_checks", "short": "checks", "default": true, "requested_by": "checks"}, {"id": "encrypted_fields", "short": "encrypted", "default": true, "requested_by": "encrypted"}, {"id": "health_history", "short": "health", "default": true, "requested_by": "no_engine"}, {"id": "document_preview", "short": "documents", "default": true, "requested_by": "documents"}] })
 
-test('appFlags: a Maxwell-like app shows vault, email, alerts, clocks, audit.data, runners, health', () => {
+test('appFlags: an audit-app-like app shows vault, email, alerts, clocks, audit.data, runners, health', () => {
   const docs = [{
     credentials: [{ name: 't' }],
     email: { sender: { allow: true } },

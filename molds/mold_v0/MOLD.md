@@ -27,7 +27,7 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 **Environment names.** Every variable the shell reads is `APP_` and a name (`APP_VAULT_KEY`, `APP_WORKER_TOKEN`,
 `APP_PROXY_HOPS`, ...): short, the factory's own word for what it mints, and no clash with the shell's `SHELL` or a
 product's name. Until mold_v0-045 they had the first product's prefix, and apps deployed before then (the re-mint
-`octillion`, Maxwell) hold their values under those names on Vercel or in a server's env file: **each old name is still
+`octillion`, the audit app) hold their values under those names on Vercel or in a server's env file: **each old name is still
 read, as a fallback** (`src/env-names.ts`, the code in `orchestrator/core/env-names.ts`, which the orchestrator and the run
 sandbox runner carry). The new name wins when both are set; reading an old name logs one line per name and process
 (`[env] <old> is a deprecated name, read as a fallback for <new>`), and an old name set beside a different new value logs
@@ -463,7 +463,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_TELEMETRY`: no self-update, no telemetry and so no remotely served
   feature flags), and, when the gateway does not serve it from Anthropic's own API (a Vertex backend, only a Vertex key,
   any other upstream), `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`: no beta request fields, so Vertex never sees
-  `context_management` (its "400 context_management: Extra inputs are not permitted" ended Maxwell's hosted run of
+  `context_management` (its "400 context_management: Extra inputs are not permitted" ended the audit app's hosted run of
   2026-11-01 10:06 in 3 s on a sandbox whose own Claude Code was 2.1.220). In the gateway's variables for a program, and
   under an agent-workspace kind's declared `env` (the kind's own values win). An attempt that fails after the model API
   refused it (an upstream error in its own tokens' `gateway_usage`) with no token metered and nothing spent is queued
@@ -1407,7 +1407,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`provision.py <app> --operator audit:run-events -- <run_id>`). `npm run test:run-events`.
 - **A kind that always writes** (mold_v0-183, built): an agent-workspace kind's `write_back_required: true` fails a run
   ("run": it changed nothing in its workspace) that exited 0 and validated but left every write-back path as it found
-  it, instead of letting it succeed silently (Maxwell's seed-company stopped to ask a question; its refresh-apps was
+  it, instead of letting it succeed silently (the audit app's seed-company stopped to ask a question; its refresh-apps was
   refused its writes; both "succeeded"). The harness learns it from the store's answer to the staged write-back
   (`unchanged`) and records `workspace_unchanged`. `npm run test:agent-runner` (11).
 - **Required outputs** (mold_v0-188, built): an agent-workspace kind's `required_outputs` (globs of write-back files,
@@ -1415,7 +1415,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   and staged its write-back but added or changed no file matching one fails with error_kind `output_missing`, naming
   it (event `workspace_output_missing`); nothing of it is written back and its results are not taken, as for any
   failed run. `required_outputs_when: "workspace_changed"` checks only a run that changed something (a program's
-  quiet exit, "the report is current", writes nothing and still succeeds); `"always"` is the default. Maxwell's
+  quiet exit, "the report is current", writes nothing and still succeeds); `"always"` is the default. The audit app's
   report_audit_findings had its write to the report refused, appended one ledger line and "succeeded" ($11.60,
   run_S59pF-Rit5xA3fsh): declared, that run fails, saying so. **Why a failure, not a new status:** every API, MCP and
   console reader, the charges, the schedules and the allowances already know `failed`; a fourth terminal state would
@@ -1791,7 +1791,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   state ("No <its label> yet.") and its onboarding step; a row opens the record of the first of its areas. Why a union
   by key and not stacked sections or a join on a field: an app's "everything that applies, with its status" is one list
   (one sort, one board, one count), its areas already share their keys (a status row is keyed by what it is the status
-  of, as Maxwell's ledger keys its control lines by the control's key), and a row only some areas hold (a control with no
+  of, as the audit app's ledger keys its control lines by the control's key), and a row only some areas hold (a control with no
   status yet) still shows. gen-packs refuses an undeclared area, an area twice, a first area that brings no rows, a
   column, `board_by` or `timeline_by` no area declares or that two areas declare with different types (an enum's options
   are every declaring area's), a merged board with no `board_by`, and a `source` word beside an area field named
@@ -1905,7 +1905,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **A list tab is its cards, its search row and its table** (mold_v0-208): an area tab draws no charts (`charts` on an
   area tab stays valid and is ignored: the console's registry carries none for it and the guide lists none; a pack's
   charts are an overview's), so no chart grid sits above or around a list. Why ignored and not refused: every pack
-  written before (Maxwell's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
+  written before (the audit app's five list tabs, the fixtures) keeps building unchanged, and dropping the key is its own
   pack change, not a broken build.
   **A list tab's primary action** (mold_v0-208): pack.json `tabs[].action` declares one primary button for the tab,
   config only: `{"kind": "start_run", "label"?, "job_kind"? | "job_kinds"?}` on an area, runs or reports tab (one of
@@ -1963,7 +1963,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `reason` (plain text, at most 300 characters: why the list has nothing to press; documented in pack.json, carried
   nowhere, shown nowhere). A fourth kind, `{"kind": "link", "label", "href"}` (both required; an /app path, an https://
   or a mailto: address, the empty state's rules), is a plain link on any list tab, everyone's who sees it, for a list
-  whose rows a setting brings (Maxwell's Private communications: "Connect mailbox", Settings › Email). gen-packs prints
+  whose rows a setting brings (the audit app's Private communications: "Connect mailbox", Settings › Email). gen-packs prints
   every shown list tab left without an action, and why, as a warning (`gen-packs: warning: N list tab(s) without a
   primary action:`, one line per tab: the opt-out's reason, or what kept the default away: a shared area, a
   repository, a withheld create tool, no startable or report kind, nothing scheduled). gen-packs refuses a link without
@@ -2379,7 +2379,7 @@ fails; the automatic retry at the same pin waits 15 minutes (the deploy retries 
 admin console's **Data repositories** page (Operations, `/admin/repositories`, with a repository declared) lists each
 repository: for a catalog its pin, the commit and time of its last index, the last attempt and who made it, the rows in
 each area, the last error and Index now (the library permission; forcing a refused prune, the delete permission); Health
-says when a catalog could not be indexed at its pin. `npm run test:catalog-index`. Maxwell's catalogs at its pin
+says when a catalog could not be indexed at its pin. `npm run test:catalog-index`. The audit app's catalogs at its pin
 5f7e77e2 index 37 regulators and 826 controls (GitHub transport, about 36 s).
 
 **Shell pages a build hides (mold_v0-130).** `console.hide` in a pack's pack.json or the app's profile.json (joined) names
@@ -2577,7 +2577,7 @@ pack keeps only their config. Every text is a word: the journeys' nouns are the 
   (the picker, the shell's) and on `/app/journeys`. **Every build has journeys** (mold_v0-175): the picker on the home
   page always offers "Get set up" first, the setup steps themselves (the shell's and the packs' onboarding steps, its
   progress theirs), so a build without the component (zero packs) shows the picker with Get set up alone and serves
-  nothing else of it; a pack adds its own journeys with `journeys.templates` (Maxwell: eight, JSON only). On
+  nothing else of it; a pack adds its own journeys with `journeys.templates` (the audit app: eight, JSON only). On
   `/app/journeys`: each use case person by person (how far, calls, errors, where stuck,
   who can help), help requests between teammates (ask, pick up, hand back, close), their own use cases (add, import JSON
   or CSV beyond the 16 kB body limit, export, remove). `launch` names the tools and Setup workflow groups that start work:
@@ -2860,7 +2860,7 @@ needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platfor
 `"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
 table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operational. The sidebar follows the
 tab count (`web/src/config/settings.ts`): **0** no Settings entry (Octillion); **1** one entry, `/app/settings` that table
-alone with no strip; **2 to 5** one entry directly below Overview, one in-page strip (Maxwell: Credentials | Email); **past
+alone with no strip; **2 to 5** one entry directly below Overview, one in-page strip (the audit app: Credentials | Email); **past
 5** a collapsible Settings entry with one item per group that has a tab, each `/app/settings/<group>` (`access`,
 `connections`, `automation`, `data-trust`) with its own strip. A tab is `?tab=<id>` on its page, the page's first bare
 (`/app/settings?tab=email`, `/app/settings/connections?tab=webhooks`); `/app/settings?tab=<id>` always works (past 5 it

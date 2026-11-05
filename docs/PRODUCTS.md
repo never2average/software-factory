@@ -74,7 +74,7 @@ exactly what closes it. It is a record, not a switch: `stage` still moves only t
 | `dover` | mold_v1 | released | none | vercel |
 | `example_research` | mold_v1 | released | example_app (Vercel), example_vm (own server) | vercel, vm_remote |
 | `example_compliance` | mold_v1 | deployed | example_compliance | vercel |
-| `mcp_product_shell` | mold_v0 | stamped (gates and their evidence: `gate_evidence` in `state/products.json`) | octillion, maxwell | vercel, compose_remote |
+| `mcp_product_shell` | mold_v0 | stamped (gates and their evidence: `gate_evidence` in `state/products.json`) | octillion, audit_app | vercel, compose_remote |
 | `governed_web` | mold_v2 | defined | none | vercel, vm |
 | `research_web` | mold_v3 | defined | none | vercel, vm |
 
@@ -96,7 +96,7 @@ record areas, schedules, onboarding steps, usage, billing and email, and a staff
 it gets from **a pack** (`packs/<pack_id>/`: one `pack.json` declaring its records, runs, credentials, schedules,
 onboarding, words, charts, landing page and customer guide; config only, no code) and **a brand**. Two apps today: the
 re-mint of the first product (`octillion`, its host pack, live with users) and an audit product made from a pack and a
-brand only (`maxwell`). The operator's path, brief to first customer: `docs/RUNBOOK.md` §11.
+brand only (`audit_app`). The operator's path, brief to first customer: `docs/RUNBOOK.md` §11.
 
 Customer-facing documentation is part of the build, never a separate site: the public install pages (`/install`, one
 per client, and `/install/tools`, every tool with its inputs), the customer guide in the console (`/app/docs`: the
@@ -110,7 +110,7 @@ A pack's guide pages are `pack.json` `guide.markdown`.
 **Pricing: running as option A (allowance only) since 2026-11-01; the price itself is the operator's, invoiced outside the app.** Nothing is charged in the app today. No price below is a proposal: this lists what the
 shell can already do, so the decision is one choice plus its numbers. What is fixed today, from the app's state:
 
-| Today (maxwell) | Value | Where it is set |
+| Today (audit_app) | Value | Where it is set |
 |---|---|---|
 | ceiling on one audit's model spend | US$40 | `application.json` `profile.limits.runs.budget_usd_max` (brief, `## Budgets`, operator 2026-10-22); the shell's default is 25 and the most an app may set is 200 (`molds/mold_v0/branding/rules.json` `profile.app_limits_max`) |
 | ceiling per audit kind, per company, per month | US$500 | `profile.limits.runs.kind_month_budget_usd` (same); default 200, at most 2000 |

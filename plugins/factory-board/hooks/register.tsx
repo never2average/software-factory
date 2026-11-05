@@ -239,7 +239,7 @@ async function readSpend($: $): Promise<Record<string, Spend>> {
   return beat.apps
 }
 
-/** " · maxwell $3.12 today · $52.03 Oct" for the status line; '' when no app is active. */
+/** " · example_app $3.12 today · $52.03 Oct" for the status line; '' when no app is active. */
 async function spendSuffix($: $): Promise<string> {
   const text = spendStatus(await read($, spend), await $.clock.now(), spendAt)
   return text ? ` · ${text}` : ''

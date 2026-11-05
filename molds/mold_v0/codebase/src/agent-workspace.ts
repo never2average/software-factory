@@ -254,7 +254,7 @@ export function restoreInto(snap: string, checkout: string, writeBack: string[])
  * Returns what was left out and why.
  *
  * mold_v0-182: `ignore` (writeBackIgnore) leaves out what is not the workspace's own records: a repository the run
- * cloned under a write-back path (Maxwell's applications/<app>/repos/<repo>/, with its .git), decrypted credentials,
+ * cloned under a write-back path (the audit app's applications/<app>/repos/<repo>/, with its .git), decrypted credentials,
  * anything the agent repository's .gitignore or the kind's write_back_ignore names. Those paths never leave the sandbox.
  */
 export function collectWriteBack(checkout: string, snap: string | null, stage: string, writeBack: string[], ignore?: WriteBackIgnore | null):

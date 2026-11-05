@@ -203,29 +203,29 @@ try {
   // ---------- 5. deploy facts ----------
   {
     const none = path.join(TMP, "no-packs"), out = path.join(TMP, "out-facts"), facts = path.join(TMP, "deploy-facts.json");
-    const good = { app_id: "maxwell", target: "vercel", source: "state/application/maxwell/infrastructure.json and datastores.json",
-      vercel: { team: "acme-team", api_project: "maxwell-api", web_project: "maxwell", production_url: "https://maxwell.vercel.app", api_url: "https://maxwell-api.vercel.app" },
-      database: { provider: "neon", exposure: "managed_provider", resource: "maxwell" }, object_store: { provider: "none" }, secret_store: "vercel_env",
+    const good = { app_id: "example_app", target: "vercel", source: "state/application/example_app/infrastructure.json and datastores.json",
+      vercel: { team: "acme-team", api_project: "example-app-api", web_project: "example-app", production_url: "https://example-app.vercel.app", api_url: "https://example-app-api.vercel.app" },
+      database: { provider: "neon", exposure: "managed_provider", resource: "example_app" }, object_store: { provider: "none" }, secret_store: "vercel_env",
       secrets: { required: ["DATABASE_URL", "APP_VAULT_KEY"], optional: ["R2_ACCESS_KEY_ID"] } };
     const withFacts = (f: unknown) => { writeFileSync(facts, JSON.stringify(f)); return gen(["--packs", none, "--out", out, "--facts", facts]); };
     const g = withFacts(good);
     assert.equal(g.status, 0, g.stderr);
     const generated = readFileSync(path.join(out, "src", "deploy-facts.generated.ts"), "utf8");
-    assert.ok(generated.includes('"api_project": "maxwell-api"') && generated.includes('"DATABASE_URL"'), "gen-packs copies the facts");
+    assert.ok(generated.includes('"api_project": "example-app-api"') && generated.includes('"DATABASE_URL"'), "gen-packs copies the facts");
     const md = dataMapMarkdown(dataMap([], good as any));
-    for (const want of ["Vercel project `maxwell-api` of the team `acme-team`", "Neon Postgres", "(resource `maxwell`)", "the Vercel projects' environment variables: DATABASE_URL, APP_VAULT_KEY", "used when set: R2_ACCESS_KEY_ID", "Deploy facts: app `maxwell`, target Vercel"])
+    for (const want of ["Vercel project `example-app-api` of the team `acme-team`", "Neon Postgres", "(resource `example_app`)", "the Vercel projects' environment variables: DATABASE_URL, APP_VAULT_KEY", "used when set: R2_ACCESS_KEY_ID", "Deploy facts: app `example_app`, target Vercel"])
       assert.ok(md.includes(want), `the statement names: ${want}\n${md}`);
-    const compose = dataMapMarkdown(dataMap([], { ...good, target: "compose_remote", vercel: undefined, server: { provider: "digitalocean", host: "203.0.113.7", domain: "audit.example.com", compose_project: "sf-maxwell" }, database: { provider: "self_hosted", exposure: "compose_network" }, secret_store: "compose_remote_env_file" } as any));
-    assert.ok(compose.includes("one Docker Compose stack (project `sf-maxwell`) on a server of the app's own rented from digitalocean (203.0.113.7), served at https://audit.example.com") && compose.includes("the stack's own Postgres container") && compose.includes("an env file on the server"), "a server of its own");
+    const compose = dataMapMarkdown(dataMap([], { ...good, target: "compose_remote", vercel: undefined, server: { provider: "digitalocean", host: "203.0.113.7", domain: "audit.example.com", compose_project: "sf-example-app" }, database: { provider: "self_hosted", exposure: "compose_network" }, secret_store: "compose_remote_env_file" } as any));
+    assert.ok(compose.includes("one Docker Compose stack (project `sf-example-app`) on a server of the app's own rented from digitalocean (203.0.113.7), served at https://audit.example.com") && compose.includes("the stack's own Postgres container") && compose.includes("an env file on the server"), "a server of its own");
     const SECRET = "s3cr3tV4lue";
     for (const [bad, why] of [
       [{ ...good, secrets: { required: [`sk_live_${SECRET}`], optional: [] } }, "a value in the names"],
       [{ ...good, password: SECRET }, "an unknown field"],
-      [{ ...good, vercel: { ...good.vercel, api_url: `https://user:${SECRET}@maxwell-api.vercel.app` } }, "a user and password in an address"],
-      [{ ...good, vercel: { ...good.vercel, api_url: `https://maxwell-api.vercel.app/?token=${SECRET}` } }, "a query in an address"],
+      [{ ...good, vercel: { ...good.vercel, api_url: `https://user:${SECRET}@example-app-api.vercel.app` } }, "a user and password in an address"],
+      [{ ...good, vercel: { ...good.vercel, api_url: `https://example-app-api.vercel.app/?token=${SECRET}` } }, "a query in an address"],
       [{ ...good, database: { provider: `postgres://u:${SECRET}@db.example/x` } }, "a database address for a provider"],
       [{ ...good, target: "vm" }, "an unknown target"],
-      [{ app_id: "maxwell", target: "vercel" }, "missing facts"],
+      [{ app_id: "example_app", target: "vercel" }, "missing facts"],
     ] as const) {
       const r = withFacts(bad);
       assert.equal(r.status, 1, `refused: ${why}`);

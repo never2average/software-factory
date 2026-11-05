@@ -727,7 +727,7 @@ export function monthWord(ym: string): string {
 /** True when the beat is too old to be a measurement. */
 export const spendStale = (at: string, now: number): boolean => !Number.isFinite(Date.parse(at)) || now - Date.parse(at) > SPEND_STALE_MS
 
-/** The status line's part: each active app's spend today / this month ("maxwell $3.12 today · $52.03 Oct"). An app that
+/** The status line's part: each active app's spend today / this month ("example_app $3.12 today · $52.03 Oct"). An app that
  * spent today counts as active. A figure that cannot be measured says so; a stale beat says when it was measured. */
 export function spendStatus(spend: Record<string, Spend>, now: number, at = ''): string {
   const shown = Object.values(spend)
