@@ -882,6 +882,14 @@ export function contractProblems(a: {
 }
 
 /**
+ * The icons a tab, a record area (mold_v0-242) or a host pack's sidebar entry may use: names of the console's icon set
+ * (web/src/components/icons.tsx).
+ */
+export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
+  "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
+  "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments", "userPen"] as const;
+
+/**
  * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
  * across every pack in a build (they are the `area` of the MCP tools and the path of the console pages). A `link`
  * names a field whose value is the key (or a list of keys) of records in another area; a `reference` field does the
@@ -893,6 +901,12 @@ export const RecordAreaSchema = z.object({
   name,
   label: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
+  /**
+   * Its icon wherever it shows (mold_v0-242): its entry in the staff console's Records group (a shared area) and in the
+   * customer console's. Absent, the icon of the customer tab that shows it, else one the build picks from the area's name
+   * so that no two Records entries share one (src/record-icons.ts). Two areas naming one icon is a build warning.
+   */
+  icon: z.enum(TAB_ICONS).optional(),
   role: z.enum(["source", "check", "asset"]),
   scope: z.enum(["platform", "workspace"]),
   fields: z.array(field).min(1).max(60),
@@ -1403,10 +1417,7 @@ export const SECTION_KINDS = ["area", "runs", "reports", "schedules"] as const;
 /** The kinds of tab drawn as a list with four sparkline cards below its toolbar (mold_v0-181: `sparklines`). */
 export const SPARK_KINDS = ["area", "runs", "reports", "schedules"] as const;
 export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "team", "keys", "page", "files", "sections"] as const;
-/** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
-export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
-  "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
-  "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments", "userPen"] as const;
+// TAB_ICONS: declared above RecordAreaSchema (a record area takes one too, mold_v0-242).
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
 /** The shell's sections an overview tab may show above its charts (mold_v0-134): the Setup page's checklist, the notices. */
 export const TAB_INCLUDES = ["setup", "notices"] as const;

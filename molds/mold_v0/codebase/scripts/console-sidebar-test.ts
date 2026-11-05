@@ -18,6 +18,10 @@
 //    staff console's Accounts › Admins: exactly one entry lit, the right one; a page outside the sidebar (Docs) none.
 // 7. Settings (mold_v0-218, web/src/config/nav-config.ts withSettings): one entry directly below Overview, a pack's
 //    credentials tab or a declared sidebar's credentials moved there (its roles kept); none without Credentials or Email.
+// 8. Each record area's icon (mold_v0-242, src/record-icons.ts): no two Records entries in a sidebar share one, both
+//    declared and picked (none repeats another staff entry's); an area's icon is the same in the staff sidebar, the
+//    customer sidebar and its spec; its own icon, else its customer tab's, else a fallback from its name; two areas
+//    declaring one icon is a build warning; an icon outside the set is refused.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -313,6 +317,100 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     for (const c of ["data-active:bg-primary/10", "dark:data-active:bg-primary/20", "data-active:text-primary"]) assert.ok(lit.split(" ").includes(c), `the active entry keeps ${c}: ${lit}`);
     assert.doesNotMatch(lit, /shadow|inset|border-l|before:/, "no bar at the active entry's edge (mold_v0-216)");
     console.log(`✓ the active entry (mold_v0-213): ${n} pages of both consoles each light exactly one entry, the right one (in-page tabs, a record's page, a filter, ?journey=, Accounts › Admins); Docs none`);
+  }
+
+  // ---------- 8. each record area's own icon (mold_v0-242) ----------
+  {
+    const { RECORD_FALLBACK_ICONS, recordAreaIcons, recordIconDuplicates } = await import("../src/record-icons.js");
+    const { TAB_ICONS } = await import("../src/pack-api.js");
+    const ICON_PROBE = `import { adminNav, portalNav } from '@/config/nav-config';
+import { recordAreas } from '@/config/pack-nav.generated';
+import { Icons } from '@/components/icons';
+process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: recordAreas.map((a) => ({ name: a.name, scope: a.scope, icon: a.icon })), icons: Object.keys(Icons) }));
+`;
+    type Probe = { adminNav: any[]; portalNav: any[]; areas: { name: string; scope: string; icon: string }[]; icons: string[] };
+    const iconProbe = (c: string): Probe => {
+      const web = path.join(c, "web"), file = path.join(web, "probe-icons.tsx");
+      writeFileSync(file, ICON_PROBE);
+      try {
+        const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        assert.equal(r.status, 0, `icon probe: ${r.stderr.slice(0, 2000)}`);
+        return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
+      } finally { rmSync(file, { force: true }); }
+    };
+    const records = (groups: any[], base: string) => groups.flatMap((g) => g.items).filter((i: any) => i.url.startsWith(`/${base}/records/`));
+    const others = (groups: any[], base: string) => groups.flatMap((g) => g.items).filter((i: any) => !i.url.startsWith(`/${base}/records/`));
+    /** Every Records entry has an icon of the set, none twice; each area's the same in both sidebars and its spec. */
+    const holds = (name: string, p: Probe, opts: { staffClash?: boolean } = {}) => {
+      const staff = records(p.adminNav, "admin"), portal = records(p.portalNav, "app");
+      for (const [where, list] of [["staff", staff], ["customer", portal]] as const) {
+        for (const i of list) assert.ok(i.icon && (TAB_ICONS as readonly string[]).includes(i.icon) && p.icons.includes(i.icon), `${name}: ${where} entry ${i.url} has an icon of the set (${i.icon})`);
+        const icons = list.map((i: any) => i.icon);
+        assert.equal(new Set(icons).size, icons.length, `${name}: no two ${where} Records entries share an icon: ${list.map((i: any) => `${i.url}=${i.icon}`).join(", ")}`);
+      }
+      const spec = Object.fromEntries(p.areas.map((a) => [a.name, a.icon]));
+      for (const i of staff) assert.equal(i.icon, spec[i.url.split("/").pop()], `${name}: ${i.url} shows its spec's icon`);
+      for (const i of portal) assert.equal(i.icon, spec[i.url.split("/").pop()], `${name}: ${i.url} shows its spec's icon`);
+      if (!opts.staffClash) {
+        const rest = new Set(others(p.adminNav, "admin").map((i: any) => i.icon));
+        for (const i of staff) assert.ok(!rest.has(i.icon), `${name}: staff entry ${i.url}'s icon ${i.icon} is no other staff entry's (${[...rest].join(", ")})`);
+      }
+      return { staff, portal, spec };
+    };
+    assert.ok(RECORD_FALLBACK_ICONS.every((x) => (TAB_ICONS as readonly string[]).includes(x)), "the fallback list is tab icons only");
+    assert.equal(new Set(RECORD_FALLBACK_ICONS).size, RECORD_FALLBACK_ICONS.length, "the fallback list names each icon once");
+
+    // a. Fallback: four packs with no tabs and no declared icon (5 shared areas, 13 of the workspace's own).
+    const many = ["fixture_catalog", "fixture_checks", "fixture_review", "fixture_tracker"];
+    const fb = iconProbe(built("icons-fallback", many));
+    const f = holds("fallback", fb);
+    assert.equal(f.staff.length, 5, `five shared areas in the staff sidebar: ${f.staff.map((i: any) => i.url).join(", ")}`);
+    assert.ok(f.portal.length >= 15, `every area in the customer sidebar's Records group: ${f.portal.length}`);
+    assert.ok(Object.values(f.spec).every((x) => (RECORD_FALLBACK_ICONS as readonly string[]).includes(x)), "picked from the fallback list");
+    const again = iconProbe(built("icons-fallback-again", many));
+    assert.deepEqual(again.areas, fb.areas, "the same build picks the same icons (deterministic)");
+    console.log(`✓ record icons, picked (mold_v0-242): ${f.staff.length} staff and ${f.portal.length} customer Records entries, each its own icon, none another staff entry's; the same each build`);
+
+    // b. The customer tab's: its own tab's sidebar icon, else the sections or merged tab's that shows it; one another area
+    // already took falls back (shared areas choose first).
+    const t = iconProbe(built("icons-tabs", ["fixture_vulns", "fixture_status"]));
+    holds("tabs", t, { staffClash: true });
+    const icon = (p: Probe, n: string) => p.areas.find((a) => a.name === n)!.icon;
+    // Packs in build order (fixture_status, then fixture_vulns): req_library takes book before audit_controls asks for it.
+    assert.deepEqual([icon(t, "req_library"), icon(t, "audit_findings"), icon(t, "audit_apps"), icon(t, "req_own")], ["book", "shield", "building", "circleCheck"],
+      "each its customer tab's icon (a merged tab's for req_own)");
+    assert.ok(![...["book", "shield", "building", "circleCheck"]].includes(icon(t, "audit_controls")), `audit_controls' tab icon (book) is req_library's: a fallback (${icon(t, "audit_controls")})`);
+    assert.ok(![...["book", "shield", "building", "circleCheck"]].includes(icon(t, "req_status")), `req_status's merged tab icon is req_own's: a fallback (${icon(t, "req_status")})`);
+    console.log("✓ record icons, from the customer tab: its own tab's or the merged tab's icon; one another area holds falls back");
+
+    // c. Declared: an area's own icon wins over its tab's; two areas declaring one icon keep it, with a build warning; a
+    // tab icon an area declared is a fallback for the area it would have gone to.
+    const dec = buildCopy("icons-declared", ["fixture_vulns", "fixture_status"], (id, j) => {
+      const area = (n: string) => j.record_areas.find((a: any) => a.name === n);
+      if (id === "fixture_vulns") { area("audit_apps").icon = "workspace"; area("audit_controls").icon = "shield"; }
+      if (id === "fixture_status") area("req_library").icon = "shield";
+    });
+    assert.equal(dec.status, 0, `two areas declaring one icon is a warning, not a refusal: ${dec.out.slice(-1500)}`);
+    assert.match(dec.out, /gen-packs: warning: 1 icon\(s\) declared by more than one record area \(their Records entries look alike\):\n  shield: fixture_status\/req_library, fixture_vulns\/audit_controls/);
+    const d = iconProbe(dec.copy);
+    assert.deepEqual([icon(d, "audit_apps"), icon(d, "audit_controls"), icon(d, "req_library")], ["workspace", "shield", "shield"], "their own icons, over their tabs'");
+    assert.notEqual(icon(d, "audit_findings"), "shield", "its tab's icon is declared by another area: a fallback");
+    assert.equal(records(d.adminNav, "admin").filter((i: any) => i.icon === "shield").length, 2, "the declared duplicate shows as declared");
+    const quiet = buildCopy("icons-quiet", ["fixture_vulns"]);
+    assert.doesNotMatch(quiet.out, /declared by more than one record area/, "no warning without a duplicate");
+    const bad = buildCopy("icons-bad", ["fixture_vulns"], (_id, j) => { j.record_areas[0].icon = "landmark"; });
+    assert.notEqual(bad.status, 0, "an icon outside the set is refused");
+    assert.match(bad.out, /record_areas\[0\]\.icon/, `refused at the area's icon: ${bad.out.slice(-600)}`);
+    console.log("✓ record icons, declared: its own wins; two areas declaring one keep it with a build warning; an icon outside the set is refused");
+
+    // d. The rule alone: more areas than the fallback list still get one each (repeating only past its end); a hash start.
+    const lots = Array.from({ length: RECORD_FALLBACK_ICONS.length + 3 }, (_x, k) => ({ name: `area_${k}`, scope: k % 2 ? "workspace" : "platform" }));
+    const got = recordAreaIcons(lots);
+    assert.equal(new Set(Object.values(got)).size, RECORD_FALLBACK_ICONS.length, "every fallback icon used once before any repeats");
+    assert.deepEqual(recordAreaIcons([{ name: "a", icon: "page" }, { name: "b" }], { tabIcons: { b: "page" }, fallback: ["page", "post"] }), { a: "page", b: "post" }, "a taken tab icon falls back");
+    assert.deepEqual(recordAreaIcons([{ name: "a" }], { staffIcons: ["page"], avoidIcons: ["post"], fallback: ["page", "post"] }).a, "post", "a staff entry's icon is never picked while another is free, even one the customer sidebar shows");
+    assert.deepEqual(recordIconDuplicates([{ name: "a", icon: "page" }, { name: "b", icon: "page" }, { name: "c", icon: "post" }, { name: "d" }]), [{ icon: "page", areas: ["a", "b"] }]);
+    console.log("✓ record icons, the rule: distinct while the list lasts; a staff entry's icon last of all; duplicates named");
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {

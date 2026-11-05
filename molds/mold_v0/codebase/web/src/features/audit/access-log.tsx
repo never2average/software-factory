@@ -52,7 +52,7 @@ const ACTOR_KINDS = opts(['user', 'key', 'staff', 'agent_run', 'system']);
 const f = (name: string, label: string, type: string, extra: Partial<RecordFieldSpec> = {}): RecordFieldSpec => ({ name, label, type, ...extra });
 /** A trail as a read-only system area: its fields typed as an area's are (an enum filters by its values). */
 const systemArea = (name: string, label: string, fields: RecordFieldSpec[], list: string[]): RecordAreaSpec =>
-  ({ pack: '_system', name, label, description: null, role: 'source', scope: 'workspace', fields, list_columns: list, links: [], lifecycle: null });
+  ({ pack: '_system', name, label, description: null, icon: 'shield', role: 'source', scope: 'workspace', fields, list_columns: list, links: [], lifecycle: null });
 
 const DATA_AREA = systemArea('access_log', 'Access log', [
   f('action', 'Action', 'enum', { options: ['list', 'read', 'reveal', 'export', 'create', 'update', 'move', 'delete'] }),
