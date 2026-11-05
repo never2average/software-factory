@@ -20,6 +20,12 @@
 //    output, every HTTP answer and everything this process logged: 0 hits of any value in any of its encodings.
 // 8. Row-level security: the catalog check and the live probe pass with the vault table; deleting a workspace deletes
 //    its values.
+// 9. Each credential in its own place (mold_v0-239): the workspace's on Settings › Credentials only (?scope=workspace),
+//    a record's (one per record) and an environment's (one per record and environment) on that record's own page only
+//    (?area=&key=, the record's environments read from the record), never on another record's; a group (an access key
+//    id and its secret) is one credential, set and cleared together, refused half given; an environment is one of the
+//    record's own; "last used" is when a run received it. The console's model (web/src/features/credentials/model.ts)
+//    places each credential in exactly one of the three places. definePack refuses a group that does not hold together.
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -342,6 +348,88 @@ try {
       const fromTenant = await withTenant(A.orgId, () => db.query("/* tenant: test */ SELECT 1 FROM workspace_credentials").then(() => "read", (e) => e.code));
       assert.equal(fromTenant, "42501", "tenant work (a pack's code) cannot read even its own workspace's sealed values");
       console.log(`✓ row-level security: catalog and probe pass (${probe.checked} checks); tenant work cannot reach the vault`);
+    }
+
+    // ---------- 9. each credential in its own place (mold_v0-239) ----------
+    {
+      const area = { name: "pl_apps", label: "Applications", role: "asset", scope: "workspace", fields: [{ name: "url", label: "Address" }, { name: "environments", label: "Environments", type: "json" }] };
+      const STEPS = ["Open https://console.example.com/keys and sign in.", "Press Create key and copy both parts."];
+      const credentials = [
+        { name: "ws_token", label: "Workspace token", bound_to: "workspace", deliver_as: { env: "PL_WS_TOKEN" }, purpose: "Reads your account's list of projects.", steps: STEPS },
+        { name: "app_token", label: "Application token", bound_to: "asset", area: "pl_apps", deliver_as: { env: "PL_APP_TOKEN" }, purpose: "Reads this application's code." },
+        { name: "cloud_key_id", label: "Access key ID", bound_to: "environment", area: "pl_apps", environments_from: { field: "environments", key: "envId" },
+          deliver_as: { env: "PL_KEY_ID" }, group: "cloud_key", group_label: "Cloud read-only key", purpose: "Lists this environment's cloud resources, read only.", steps: STEPS },
+        { name: "cloud_secret", label: "Secret access key", bound_to: "environment", area: "pl_apps", environments_from: { field: "environments", key: "envId" },
+          deliver_as: { env: "PL_KEY_SECRET" }, group: "cloud_key" },
+      ];
+      const make = (cs: unknown[], areas: unknown[] = [area]) => definePack({ id: "fixture_places", recordAreas: areas as never, credentials: cs as never });
+      // definePack: a group holds together.
+      const lead = credentials[2]!, tail = credentials[3]!;
+      assert.throws(() => make([{ ...lead, group_label: undefined }, tail]), /names the credential \(group_label\)/);
+      assert.throws(() => make([lead, { ...tail, purpose: "x" }]), /go on the group's first field/);
+      assert.throws(() => make([lead, { ...tail, bound_to: "asset", environments_from: undefined }]), /same bound_to/);
+      assert.throws(() => make([lead]), /2 to 4 fields belong together/);
+      assert.throws(() => make([{ ...lead, environments_from: { field: "nope" } }, { ...tail, environments_from: { field: "nope" } }]), /does not have/);
+      assert.throws(() => make([{ ...credentials[0]!, steps: ["Sign in first."] }]), /first step names the web address/);
+      assert.throws(() => make([{ ...credentials[0]!, without: "Everything else" }]), /optional field only/);
+      assert.throws(() => make([{ ...credentials[0]!, environments_from: { field: "environments" } }]), /environment binding only/);
+      const places = make(credentials);
+      setPacksForTest([{ manifest: { id: "fixture_places", name: "Fixture places", version: "1", entry: "index.ts", migrations: null, words: {}, dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: places }]);
+      await withTenant(A.orgId, () => rec.workspaceRecords("fixture_places", A.orgId).put("pl_apps", "app-1", { title: "App one", data: { url: "https://one.example", environments: [{ envId: "prod" }, { envId: "staging" }] } }));
+      await withTenant(A.orgId, () => rec.workspaceRecords("fixture_places", A.orgId).put("pl_apps", "app-2", { title: "App two", data: { url: "https://two.example", environments: [{ envId: "prod" }] } }));
+      const ownerA = await http.signIn(A, "owner");
+      const as = { authorization: `Bearer ${ownerA}` };
+      const P = { pack: "fixture_places" };
+      const ok = async (method: string, body: unknown) => { const r = await req(method, "/api/credentials", as, body); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
+      await ok("PUT", { ...P, name: "ws_token", value: "workspace-token-0001" });
+      await ok("PUT", { ...P, name: "app_token", asset: "app-1", value: "app-one-token-0002" });
+      // A pair: both parts at once, never half.
+      assert.equal((await req("PUT", "/api/credentials", as, { ...P, group: "cloud_key", asset: "app-1", environment: "prod", values: { cloud_key_id: "AKIDEXAMPLE0003" } })).status, 400, "half a pair is refused");
+      assert.equal((await req("PUT", "/api/credentials", as, { ...P, group: "cloud_key", asset: "app-1", environment: "qa", values: { cloud_key_id: "AKIDEXAMPLE0003", cloud_secret: "secret-example-0004" } })).status, 400, "an environment the record does not have");
+      assert.equal((await req("PUT", "/api/credentials", as, { ...P, name: "cloud_key_id", asset: "app-2", environment: "staging", value: "AKIDEXAMPLE0005" })).status, 400, "nor one of another record's");
+      const pair = await ok("PUT", { ...P, group: "cloud_key", asset: "app-1", environment: "prod", values: { cloud_key_id: "AKIDEXAMPLE0003", cloud_secret: "secret-example-0004" } });
+      assert.deepEqual(pair.values.map((v: { name: string; last4: string }) => [v.name, v.last4]), [["cloud_key_id", "0003"], ["cloud_secret", "0004"]], "a pair is set in one request");
+      await ok("PUT", { ...P, group: "cloud_key", asset: "app-2", environment: "prod", values: { cloud_key_id: "AKIDEXAMPLE0006", cloud_secret: "secret-example-0007" } });
+      // Settings: the workspace's own only.
+      const ws = (await req("GET", "/api/credentials?scope=workspace", as)).body;
+      assert.deepEqual(ws.fields.map((f: { name: string }) => f.name), ["ws_token"], "Settings › Credentials lists only the workspace's credential");
+      assert.deepEqual(ws.values.map((v: { name: string }) => v.name), ["ws_token"], "and only its value");
+      // A record's page: its own, and its environments from the record.
+      const one = (await req("GET", "/api/credentials?area=pl_apps&key=app-1", as)).body;
+      assert.deepEqual(one.fields.map((f: { name: string }) => f.name), ["app_token", "cloud_key_id", "cloud_secret"], "the record's page: the credentials of its records and their environments, not the workspace's");
+      assert.deepEqual(one.values.map((v: { name: string; asset: string; environment: string | null }) => [v.name, v.asset, v.environment]),
+        [["app_token", "app-1", null], ["cloud_key_id", "app-1", "prod"], ["cloud_secret", "app-1", "prod"]], "only this record's values");
+      assert.deepEqual(one.environments, ["prod", "staging"], "its environments, read from the record");
+      const two = (await req("GET", "/api/credentials?area=pl_apps&key=app-2", as)).body;
+      assert.deepEqual(two.values.map((v: { name: string; asset: string }) => [v.name, v.asset]), [["cloud_key_id", "app-2"], ["cloud_secret", "app-2"]], "another record's page: its own values only");
+      assert.deepEqual(two.environments, ["prod"]);
+      assert.equal((await req("GET", "/api/credentials?area=pl_apps&key=app-9", as)).status, 404, "a record this workspace does not have");
+      const bOwner = await http.signIn(B, "owner");
+      assert.equal((await req("GET", "/api/credentials?area=pl_apps&key=app-1", { authorization: `Bearer ${bOwner}` })).status, 404, "nor another workspace's record");
+      // The console's model: each credential in exactly one place, a pair one credential.
+      const model = await import("../web/src/features/credentials/model.js");
+      const cs = model.credentialsOf(one.fields.concat(ws.fields));
+      assert.deepEqual(cs.map((c) => [c.label, c.parts.length, c.place]), [["Application token", 1, "record"], ["Cloud read-only key", 2, "record-environment"], ["Workspace token", 1, "settings"]], "a pair is one credential with two inputs");
+      assert.deepEqual(model.forSettings(cs).map((c) => c.label), ["Workspace token"], "Settings: the workspace's only");
+      const onPage = model.forRecord(cs, "pl_apps");
+      assert.deepEqual([onPage.record.map((c) => c.label), onPage.environment.map((c) => c.label)], [["Application token"], ["Cloud read-only key"]]);
+      for (const c of cs) assert.equal([model.forSettings(cs).includes(c), onPage.record.includes(c), onPage.environment.includes(c)].filter(Boolean).length, 1, `${c.label}: in exactly one place`);
+      const sec = model.recordSections(cs, "pl_apps", one.environments, one.values, "app-1", one.field_environments);
+      assert.deepEqual(sec.record.map((x) => [x.c.label, x.state.status]), [["Application token", "Set"]]);
+      assert.deepEqual(sec.environments.map((g) => [g.label, g.items.map((x) => [x.c.label, x.state.status])]),
+        [["Production", [["Cloud read-only key", "Set"]]], ["Staging", [["Cloud read-only key", "Missing"]]]], "one group per environment of the record, each with its own status");
+      assert.deepEqual(model.stepPieces(STEPS[0]!).filter((x) => x.href).map((x) => x.href), ["https://console.example.com/keys"], "a step's web address is a link");
+      // Last used: when a run received it.
+      assert.equal(one.values.every((v: { last_used_at: string | null }) => v.last_used_at === null), true, "not used yet");
+      const got = await creds.runCredentials({ org_id: A.orgId, pack: "fixture_places", spec: { credentials: ["cloud_key_id", "cloud_secret"] }, targets: { asset: "app-1", environment: "prod" } });
+      assert.deepEqual(got.credentials.map((c) => c.name), ["cloud_key_id", "cloud_secret"]);
+      await creds.runCredentials({ org_id: A.orgId, pack: "fixture_places", spec: { credentials: ["app_token"] }, targets: { asset: "app-1" } }, { strict: true, mint: false });
+      const used = (await req("GET", "/api/credentials?area=pl_apps&key=app-1", as)).body.values as { name: string; last_used_at: string | null }[];
+      assert.deepEqual(used.map((v) => [v.name, !!v.last_used_at]), [["app_token", false], ["cloud_key_id", true], ["cloud_secret", true]], "last used: delivered to a run (reading it to redact does not count)");
+      // Cleared together.
+      await ok("DELETE", { ...P, group: "cloud_key", asset: "app-1", environment: "prod" });
+      assert.deepEqual((await req("GET", "/api/credentials?area=pl_apps&key=app-1", as)).body.values.map((v: { name: string }) => v.name), ["app_token"], "a pair is cleared together");
+      console.log("✓ each in its own place: the workspace's on Settings only, a record's and its environments' on that record's page only (environments read from the record, picked, never another's); a pair set, refused half given and cleared as one; last used when a run received it");
     }
   } finally {
     await ca.close(); await cb.close();

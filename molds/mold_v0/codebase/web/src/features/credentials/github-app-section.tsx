@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { When, fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
+import { singular } from '@/features/tabs/run-rows';
+import { recordAreas } from '@/config/pack-nav.generated';
 
 interface GhField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment'; area: string | null }
 interface Installation {
@@ -124,6 +126,8 @@ function Narrowing({ area, inst, canManage, onChanged }: { area: string; inst: I
   const [asset, setAsset] = useState('');
   const [repos, setRepos] = useState('');
   const [busy, setBusy] = useState(false);
+  // In the area's own words (mold_v0-239): "application", never the area's id.
+  const noun = singular(recordAreas.find((a) => a.name === area)?.label ?? 'record').toLowerCase();
   const rows = Object.entries(inst.asset_repositories).filter(([k]) => k.startsWith(`${area}/`)).map(([k, v]) => ({ key: k.slice(area.length + 1), repos: v }));
   const save = async (key: string, list: string[]) => {
     setBusy(true);
@@ -132,10 +136,10 @@ function Narrowing({ area, inst, canManage, onChanged }: { area: string; inst: I
   };
   return (
     <div className='flex flex-col gap-2'>
-      <p className='text-sm font-medium'>Repositories per {area} record</p>
+      <p className='text-sm font-medium'>Repositories per {noun}</p>
       {rows.length ? (
         <Table>
-          <TableHeader><TableRow><TableHead>{area}</TableHead><TableHead>Repositories</TableHead>{canManage && <TableHead />}</TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead className='capitalize'>{noun}</TableHead><TableHead>Repositories</TableHead>{canManage && <TableHead />}</TableRow></TableHeader>
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.key}>
@@ -146,10 +150,10 @@ function Narrowing({ area, inst, canManage, onChanged }: { area: string; inst: I
             ))}
           </TableBody>
         </Table>
-      ) : <p className='text-muted-foreground text-xs'>Every record's runs get all of the repositories above.</p>}
+      ) : <p className='text-muted-foreground text-xs'>Every {noun}'s runs get all of the repositories above.</p>}
       {canManage && (
         <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void save(asset.trim(), repos.split(/[\s,]+/).filter(Boolean)); }}>
-          <Input className='w-48' placeholder={`${area} key`} value={asset} onChange={(e) => setAsset(e.target.value)} aria-label={`${area} key`} />
+          <Input className='w-48' placeholder={`Which ${noun}`} value={asset} onChange={(e) => setAsset(e.target.value)} aria-label={`Which ${noun}`} />
           <Input className='w-80' placeholder='owner/name, owner/other' value={repos} onChange={(e) => setRepos(e.target.value)} aria-label='Repositories' />
           <Button type='submit' size='sm' variant='outline' disabled={busy || !asset.trim() || !repos.trim()}>Limit</Button>
         </form>

@@ -4,8 +4,11 @@
  *
  *   GET    /api/credentials   a signed-in person of the workspace: the fields the packs declare and, for each stored
  *                             value, its slot (and, for an owner, its last 4 characters). Never a value.
- *   PUT    /api/credentials   {pack, name, asset?, environment?, value}: set or replace one value ("manage": an owner)
- *   DELETE /api/credentials   {pack, name, asset?, environment?}: remove one ("manage")
+ *                             ?scope=workspace: only the workspace's own (Settings › Credentials, mold_v0-239);
+ *                             ?area=<area>&key=<key>: one record's (its own page's Credentials card), with its environments
+ *   PUT    /api/credentials   {pack, name, asset?, environment?, value}: set or replace one value ("manage": an owner);
+ *                             {pack, group, asset?, environment?, values: {<field>: <value>}}: every field of a group at once
+ *   DELETE /api/credentials   {pack, name | group, asset?, environment?}: remove one, or a group's ("manage")
  *
  * The workspace is the session's (src/app.ts customerSession). A change made with the session cookie carries
  * X-Pack-Request: 1 (CSRF, as the packs' routes). A body that is not JSON is refused without echoing any of it, and no
@@ -15,7 +18,7 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { accountRefusal, canAccount } from "./account-roles.js";
 import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
-import { credentialSpecs, deleteCredential, listCredentials, setCredential } from "./credentials.js";
+import { deleteCredential, deleteCredentialGroup, listCredentials, recordCredentials, setCredential, setCredentialGroup } from "./credentials.js";
 import { featureOn } from "./features.js";
 import { PackError } from "./pack-api.js";
 import { addCompanyHost, companyEgressPacks, listCompanyHosts, removeCompanyHost } from "./egress-hosts.js";
@@ -90,17 +93,25 @@ export function credentialAppRouter(): Router {
   };
   const manage = (res: Response) => { if (!canAccount(S(res).accountRole, "manage")) throw new PackError(accountRefusal("manage").message, 403); };
   const who = (res: Response) => `customer:${S(res).email ?? S(res).user ?? S(res).slug}`;
-  const slotOf = (b: Record<string, unknown>) => ({ pack: b.pack, name: b.name, asset: b.asset ?? null, environment: b.environment ?? null });
+  const slotOf = (b: Record<string, unknown>) => ({ pack: b.pack, ...(b.group !== undefined ? { group: b.group } : { name: b.name }), asset: b.asset ?? null, environment: b.environment ?? null });
 
   // The last 4 characters go to those who manage the values (owners); everyone else sees which are set.
-  r.get("/", answer(async (_req, res) => {
+  r.get("/", answer(async (req, res) => {
     const can = canAccount(S(res).accountRole, "manage");
-    const v = await listCredentials(S(res).org);
+    const q = req.query as Record<string, unknown>;
+    // mold_v0-239: each credential in its own place: the workspace's on Settings, a record's on the record's page.
+    const v = q.area !== undefined || q.key !== undefined ? await recordCredentials(S(res).org, q.area, q.key)
+      : await listCredentials(S(res).org, { scope: q.scope === "workspace" ? "workspace" : "all" });
     return { ...v, values: can ? v.values : v.values.map((x) => ({ ...x, last4: null })), can_manage: can };
   }));
   r.put("/", answer(async (req, res) => {
     manage(res);
     const b = (req.body ?? {}) as Record<string, unknown>;
+    if (b.group !== undefined) {
+      const out = await setCredentialGroup(S(res).org, who(res), b);
+      for (const o of out) log(who(res), "credential.set", S(res).slug, { pack: o.pack, name: o.name, asset: o.asset, environment: o.environment });
+      return { values: out };
+    }
     const out = await setCredential(S(res).org, who(res), b);
     log(who(res), "credential.set", S(res).slug, { pack: out.pack, name: out.name, asset: out.asset, environment: out.environment });
     return out;
@@ -108,7 +119,7 @@ export function credentialAppRouter(): Router {
   r.delete("/", answer(async (req, res) => {
     manage(res);
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const removed = await deleteCredential(S(res).org, b);
+    const removed = b.group !== undefined ? await deleteCredentialGroup(S(res).org, b) : await deleteCredential(S(res).org, b);
     if (!removed) throw new PackError("no such value", 404);
     log(who(res), "credential.remove", S(res).slug, slotOf(b));
     return { removed };

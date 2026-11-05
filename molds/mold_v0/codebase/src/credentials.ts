@@ -10,13 +10,17 @@
  *             The tenant role has no grant on the table: a pack's server code never reads it.
  *   console   lists the fields and, for each stored value, only its last 4 characters; sets, replaces and removes them.
  *             The workspace is the caller's session's; an asset binding must name an asset record of that workspace.
+ *             mold_v0-239: each in its own place: Settings › Credentials reads the workspace's (scope "workspace"), a
+ *             record's own page the ones bound to that record and its environments (recordCredentials); fields that
+ *             share a `group` are set and cleared together (setCredentialGroup, deleteCredentialGroup); a stored
+ *             value says when a run (or the shell) last received it (last_used_at, 0043_credential_last_used).
  *   runs      runCredentials(run): the values the run's kind names, looked up with the run row's own workspace (never a
  *             runner's input), its pack, and its targets (targets.asset, a key in the field's asset area;
  *             targets.environment). A value bound to an asset the run does not target is never delivered.
  *
  * No function here logs a value or puts one in an error message.
  */
-import { getDb } from "./db.js";
+import { getDb, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
 import { CredentialSchema, OperatorCredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
@@ -49,7 +53,14 @@ export const fieldSummary = (c: CredentialSpec) => ({
   ...(c.oauth ? { oauth: c.oauth } : {}),
   // mold_v0-186: the runs go ahead without a value; the console tags the field Optional and says what a value adds.
   ...(c.optional ? { optional: true, adds: c.adds ?? null } : {}),
+  // mold_v0-239: its words for the customer, and the credential it is part of.
+  purpose: c.purpose ?? null, steps: c.steps ?? null, without: c.without ?? null,
+  ...(c.group ? { group: c.group, group_label: groupLead(c).group_label ?? c.label } : {}),
 });
+/** The first field of a field's group (itself when it has none): it names the credential and carries its words. */
+export const groupLead = (c: CredentialSpec) => (c.group ? credentialSpecs().find((x) => x.pack === c.pack && x.group === c.group) ?? c : c);
+/** The fields of one group of a pack, in declared order. */
+export const groupFields = (pack: string, group: string) => credentialSpecs().filter((c) => c.pack === pack && c.group === group);
 /** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
 const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>
   "env" in d ? { env: d.env } : { file: d.file, ...(d.path_env ? { path_env: d.path_env } : {}) };
@@ -71,7 +82,7 @@ function slot(pack: unknown, name: unknown, asset: unknown, environment: unknown
     if (has(environment)) throw new PackError(`${spec.label} is one value per asset: give no environment`, 400);
     return { spec, asset: key, environment: null };
   }
-  if (typeof environment !== "string" || !ENV.test(environment)) throw new PackError("environment: lowercase letters, digits, _ and - (up to 40)", 400);
+  if (typeof environment !== "string" || !ENV.test(environment)) throw new PackError("pick one of the environments listed", 400);
   if (spec.environments && !spec.environments.includes(environment)) throw new PackError(`environment must be one of ${spec.environments.join(", ")}`, 400);
   return { spec, asset: key, environment };
 }
@@ -82,20 +93,78 @@ const aad = (orgId: number, s: Slot) => JSON.stringify(["workspace-credential/v1
 export interface StoredCredential {
   pack: string; name: string; bound_to: string; asset: string | null; environment: string | null;
   last4: string; updated_at: string; updated_by: string | null;
+  /** mold_v0-239: when a run (or the shell's own use) last received it; null: never since it was set. */
+  last_used_at: string | null;
 }
-interface Row { pack: string; name: string; bound_to: string; asset_key: string | null; environment: string | null; last4: string; updated_at: Date | string; updated_by: string | null }
+interface Row { pack: string; name: string; bound_to: string; asset_key: string | null; environment: string | null; last4: string; updated_at: Date | string; updated_by: string | null; last_used_at: Date | string | null }
 const stored = (r: Row): StoredCredential => ({ pack: r.pack, name: r.name, bound_to: r.bound_to, asset: r.asset_key, environment: r.environment,
-  last4: r.last4, updated_at: new Date(r.updated_at).toISOString(), updated_by: r.updated_by });
+  last4: r.last4, updated_at: new Date(r.updated_at).toISOString(), updated_by: r.updated_by, last_used_at: r.last_used_at ? new Date(r.last_used_at).toISOString() : null });
+const COLS = "pack, name, bound_to, asset_key, environment, last4, updated_at, updated_by, last_used_at";
+
+/**
+ * Which credentials a list shows (mold_v0-239): all of them (the default, for the API), only the workspace's
+ * (Settings › Credentials), or one record's (its own page: the fields bound to its area, the values of that record).
+ */
+export type CredentialScope = { scope?: "all" | "workspace" } | { area: string; asset: string };
 
 /** A workspace's fields and stored values (last 4 characters only), for the console. */
-export async function listCredentials(orgId: number) {
-  const specs = credentialSpecs();
+export async function listCredentials(orgId: number, where: CredentialScope = {}) {
+  const record = "area" in where ? where : null;
+  const specs = credentialSpecs().filter((c) => record ? c.bound_to !== "workspace" && c.area === record.area
+    : (where as { scope?: string }).scope === "workspace" ? c.bound_to === "workspace" : true);
   const rows = await asPlatform(async () => (await getDb()).query<Row>(
-    `SELECT pack, name, bound_to, asset_key, environment, last4, updated_at, updated_by FROM workspace_credentials
-      WHERE org_id = $1 ORDER BY pack, name, asset_key NULLS FIRST, environment NULLS FIRST`, [orgId]));
+    `SELECT ${COLS} FROM workspace_credentials
+      WHERE org_id = $1 ${record ? "AND asset_area = $2 AND asset_key = $3" : ""} ORDER BY pack, name, asset_key NULLS FIRST, environment NULLS FIRST`,
+    record ? [orgId, record.area, record.asset] : [orgId]));
   // A value whose field a later build no longer declares is not shown (nor delivered): it waits for a build that has it.
   const known = rows.filter((r) => specs.some((c) => c.pack === r.pack && c.name === r.name && c.bound_to === r.bound_to));
   return { fields: specs.map(fieldSummary), values: known.map(stored) };
+}
+
+/**
+ * The environments a record has, for an environment-bound field (mold_v0-239): the field's fixed list, else the
+ * record's own (environments_from: a field of the record holding names, or objects whose `key` holds one), in the
+ * record's order, each once. A field that declares neither has none of its own: only those a value is stored under.
+ */
+export function environmentsOf(spec: CredentialSpec, data: Record<string, unknown> | null): string[] | null {
+  if (spec.bound_to !== "environment") return null;
+  if (spec.environments) return [...spec.environments];
+  if (!spec.environments_from) return null;
+  const v = data?.[spec.environments_from.field];
+  const out: string[] = [];
+  for (const x of Array.isArray(v) ? v : []) {
+    const k = typeof x === "string" ? x : x && typeof x === "object" && spec.environments_from.key ? (x as Record<string, unknown>)[spec.environments_from.key] : null;
+    if (typeof k === "string" && ENV.test(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/**
+ * One record's credentials (mold_v0-239): its own page's Credentials card. The fields bound to its area (by the record
+ * or by the record and an environment), its stored values, and its environments: the record's own (environmentsOf) and
+ * any a value is still stored under. 404 when the record is not one of this workspace's.
+ */
+export async function recordCredentials(orgId: number, area: unknown, asset: unknown) {
+  if (typeof area !== "string" || !credentialSpecs().some((c) => c.bound_to !== "workspace" && c.area === area)) throw new PackError("no credentials belong to these records", 404);
+  const key = checkKey(asset);
+  const rec = await getFor(orgId, area, key);
+  if (!rec) throw new PackError("no such record in this workspace", 404);
+  const v = await listCredentials(orgId, { area, asset: key });
+  const environments: string[] = [];
+  for (const spec of credentialSpecs().filter((c) => c.area === area && c.bound_to === "environment"))
+    for (const e of environmentsOf(spec, rec.data) ?? []) if (!environments.includes(e)) environments.push(e);
+  for (const s of v.values) if (s.environment && !environments.includes(s.environment)) environments.push(s.environment);
+  return { ...v, record: { area, key, title: rec.title ?? key }, environments,
+    // Which of them each field takes (a fixed list narrows it), so the console offers only those.
+    field_environments: Object.fromEntries(credentialSpecs().filter((c) => c.area === area && c.bound_to === "environment").map((c) => [`${c.pack}/${c.name}`, environmentsOf(c, rec.data)])) };
+}
+
+/** A record's environments must include the one a value is set for, when the field reads them from the record. */
+async function checkRecordEnvironment(orgId: number, s: Slot) {
+  if (s.spec.bound_to !== "environment" || !s.spec.environments_from || s.asset === null) return;
+  const rec = await getFor(orgId, s.spec.area!, s.asset);
+  if (!rec) throw new PackError(`no ${s.spec.area} record ${s.asset} in this workspace`, 404);
+  if (!(environmentsOf(s.spec, rec.data) ?? []).includes(s.environment!)) throw new PackError("pick one of this record's own environments", 400);
 }
 
 /**
@@ -104,21 +173,76 @@ export async function listCredentials(orgId: number) {
  */
 export async function setCredential(orgId: number, by: string | null, input: { pack?: unknown; name?: unknown; asset?: unknown; environment?: unknown; value?: unknown }): Promise<StoredCredential> {
   const s = slot(input?.pack, input?.name, input?.asset, input?.environment);
-  const v = input?.value;
-  if (typeof v !== "string" || v.length < MIN || v.length > MAX) throw new PackError(`the value must be text of ${MIN} to ${MAX} characters`, 400);
-  if (v.includes("\u0000")) throw new PackError("the value may not contain a NUL character", 400);
-  if (v.trim() !== v && !v.includes("\n")) throw new PackError("the value starts or ends with a space: check what was pasted", 400);
+  checkValue(input?.value);
   if (s.asset !== null && !(await getFor(orgId, s.spec.area!, s.asset))) throw new PackError(`no ${s.spec.area} record ${s.asset} in this workspace`, 404);
-  const sealed = (await asPlatform(() => sealBytes(orgId, Buffer.from(v, "utf8"), aad(orgId, s)))).toString("base64");
-  const [r] = await asPlatform(async () => (await getDb()).query<Row>(
-    `INSERT INTO workspace_credentials (org_id, pack, name, bound_to, asset_area, asset_key, environment, sealed, last4, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
-     ON CONFLICT (org_id, pack, name, (coalesce(asset_key, '')), (coalesce(environment, '')))
-     DO UPDATE SET bound_to = excluded.bound_to, asset_area = excluded.asset_area, sealed = excluded.sealed, last4 = excluded.last4,
-                   updated_by = excluded.updated_by, updated_at = now()
-     RETURNING pack, name, bound_to, asset_key, environment, last4, updated_at, updated_by`,
-    [orgId, s.spec.pack, s.spec.name, s.spec.bound_to, s.spec.area ?? null, s.asset, s.environment, sealed, v.slice(-4), by]));
+  await checkRecordEnvironment(orgId, s);
+  const sealed = await seal(orgId, s, input.value as string);
+  const [r] = await asPlatform(async () => upsert(await getDb(), orgId, by, s, sealed, input.value as string));
   return stored(r!);
+}
+
+function checkValue(v: unknown, label?: string): asserts v is string {
+  const what = label ? `${label}: the value` : "the value";
+  if (typeof v !== "string" || v.length < MIN || v.length > MAX) throw new PackError(`${what} must be text of ${MIN} to ${MAX} characters`, 400);
+  if (v.includes("\u0000")) throw new PackError(`${what} may not contain a NUL character`, 400);
+  if (v.trim() !== v && !v.includes("\n")) throw new PackError(`${what} starts or ends with a space: check what was pasted`, 400);
+}
+const seal = async (orgId: number, s: Slot, v: string) => (await asPlatform(() => sealBytes(orgId, Buffer.from(v, "utf8"), aad(orgId, s)))).toString("base64");
+const upsert = (db: Queryable, orgId: number, by: string | null, s: Slot, sealed: string, v: string) => db.query<Row>(
+  `INSERT INTO workspace_credentials (org_id, pack, name, bound_to, asset_area, asset_key, environment, sealed, last4, created_by, updated_by)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+   ON CONFLICT (org_id, pack, name, (coalesce(asset_key, '')), (coalesce(environment, '')))
+   DO UPDATE SET bound_to = excluded.bound_to, asset_area = excluded.asset_area, sealed = excluded.sealed, last4 = excluded.last4,
+                 updated_by = excluded.updated_by, updated_at = now(), last_used_at = NULL
+   RETURNING ${COLS}`,
+  [orgId, s.spec.pack, s.spec.name, s.spec.bound_to, s.spec.area ?? null, s.asset, s.environment, sealed, v.slice(-4), by]);
+
+/**
+ * Set (or replace) every field of one group at once (mold_v0-239): `values` holds one value per field of the group,
+ * all of them (a pair is never half replaced), written in one transaction. Same slot rules as setCredential.
+ */
+export async function setCredentialGroup(orgId: number, by: string | null, input: { pack?: unknown; group?: unknown; asset?: unknown; environment?: unknown; values?: unknown }): Promise<StoredCredential[]> {
+  const fields = typeof input?.pack === "string" && typeof input?.group === "string" ? groupFields(input.pack, input.group) : [];
+  if (!fields.length) throw new PackError("no such credential", 404);
+  const values = input.values && typeof input.values === "object" && !Array.isArray(input.values) ? input.values as Record<string, unknown> : {};
+  const extra = Object.keys(values).filter((k) => !fields.some((f) => f.name === k));
+  if (extra.length) throw new PackError(`${groupLead(fields[0]!).group_label ?? fields[0]!.label} has no part ${extra[0]!.slice(0, 64)}`, 400);
+  const slots = fields.map((f) => slot(f.pack, f.name, input.asset, input.environment));
+  for (const s of slots) checkValue(values[s.spec.name], s.spec.label);
+  if (slots[0]!.asset !== null && !(await getFor(orgId, slots[0]!.spec.area!, slots[0]!.asset))) throw new PackError(`no ${slots[0]!.spec.area} record ${slots[0]!.asset} in this workspace`, 404);
+  await checkRecordEnvironment(orgId, slots[0]!);
+  const sealed: string[] = [];
+  for (const s of slots) sealed.push(await seal(orgId, s, values[s.spec.name] as string));
+  const rows = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    const out: Row[] = [];
+    for (const [i, s] of slots.entries()) out.push(...(await upsert(tx, orgId, by, s, sealed[i]!, values[s.spec.name] as string)));
+    return out;
+  }));
+  return rows.map(stored);
+}
+
+/** Remove every value of one group in one slot (mold_v0-239): a pair is cleared together. */
+export async function deleteCredentialGroup(orgId: number, input: { pack?: unknown; group?: unknown; asset?: unknown; environment?: unknown }): Promise<boolean> {
+  const fields = typeof input?.pack === "string" && typeof input?.group === "string" ? groupFields(input.pack, input.group) : [];
+  if (!fields.length) throw new PackError("no such credential", 404);
+  const slots = fields.map((f) => slot(f.pack, f.name, input.asset, input.environment));
+  const n = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    let k = 0;
+    for (const s of slots) k += (await tx.query(
+      `DELETE FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND coalesce(asset_key, '') = $4 AND coalesce(environment, '') = $5 RETURNING id`,
+      [orgId, s.spec.pack, s.spec.name, s.asset ?? "", s.environment ?? ""])).length;
+    return k;
+  }));
+  return n > 0;
+}
+
+/** mold_v0-239: when a stored value was last received (by a run, or the shell's own use). Never fails what used it. */
+async function touched(orgId: number, s: Slot) {
+  try {
+    await asPlatform(async () => (await getDb()).query(
+      `UPDATE workspace_credentials SET last_used_at = now() WHERE org_id = $1 AND pack = $2 AND name = $3 AND coalesce(asset_key, '') = $4 AND coalesce(environment, '') = $5`,
+      [orgId, s.spec.pack, s.spec.name, s.asset ?? "", s.environment ?? ""]));
+  } catch (e) { console.error(`workspace ${orgId}: could not record when ${s.spec.pack}/${s.spec.name} was last used: ${(e as Error).message}`); }
 }
 
 /** Remove one value of workspace `orgId`. */
@@ -234,6 +358,8 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
       void e; out.missing.push(name); continue;
     }
     out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value });
+    // Delivered to the run (not only read to redact what it wrote): the value's "last used".
+    if (opts.mint !== false && !opts.strict) await touched(run.org_id, s);
   }
   return out;
 }
@@ -287,8 +413,11 @@ export async function workspaceCredentialValue(orgId: number, pack: string, name
     `SELECT sealed FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = 'workspace' AND asset_key IS NULL AND environment IS NULL`,
     [orgId, spec.pack, spec.name]));
   if (!r) return null;
-  try { return (await asPlatform(() => openBytes(orgId, Buffer.from(r.sealed, "base64"), aad(orgId, s)))).toString("utf8"); }
+  let value: string;
+  try { value = (await asPlatform(() => openBytes(orgId, Buffer.from(r.sealed, "base64"), aad(orgId, s)))).toString("utf8"); }
   catch { throw new PackError("the workspace's credential cannot be opened now (the key vault is locked?): try again", 503); }
+  await touched(orgId, s);
+  return value;
 }
 
 // ---------- operator-held credentials (mold_v0-075) ----------

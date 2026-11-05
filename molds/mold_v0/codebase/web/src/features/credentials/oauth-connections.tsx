@@ -7,8 +7,6 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { When, fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
@@ -60,12 +58,15 @@ export function useOAuthOutcome() {
   }, []);
 }
 
-export function OAuthConnections({ f, view, onChanged }: { f: OAuthField; view: OAuthView; onChanged: () => unknown }) {
-  const [asset, setAsset] = useState('');
-  const [environment, setEnvironment] = useState(f.environments?.[0] ?? '');
+/**
+ * `slot` (mold_v0-239): one record's (and environment's) connection, on that record's own page: no record or environment
+ * to type, only that slot's connection listed. Without it, the workspace's (Settings › Credentials).
+ */
+export function OAuthConnections({ f, view, onChanged, slot }: { f: OAuthField; view: OAuthView; onChanged: () => unknown; slot?: { asset: string; environment: string | null } }) {
+  const asset = slot?.asset ?? '', environment = slot?.environment ?? '';
   const [busy, setBusy] = useState(false);
   const provider = view.providers.find((p) => p.pack === f.pack && p.name === f.oauth);
-  const mine = view.connections.filter((c) => c.pack === f.pack && c.name === f.name);
+  const mine = view.connections.filter((c) => c.pack === f.pack && c.name === f.name && (!slot || (c.asset === slot.asset && (c.environment ?? null) === (slot.environment ?? null))));
   const connect = async () => {
     setBusy(true);
     try {
@@ -86,8 +87,6 @@ export function OAuthConnections({ f, view, onChanged }: { f: OAuthField; view: 
         <Table>
           <TableHeader>
             <TableRow>
-              {f.bound_to !== 'workspace' && <TableHead>{f.area}</TableHead>}
-              {f.bound_to === 'environment' && <TableHead>Environment</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead>Connected</TableHead>
               {view.can_manage && <TableHead />}
@@ -96,8 +95,6 @@ export function OAuthConnections({ f, view, onChanged }: { f: OAuthField; view: 
           <TableBody>
             {mine.map((c) => (
               <TableRow key={`${c.asset ?? ''}/${c.environment ?? ''}`}>
-                {f.bound_to !== 'workspace' && <TableCell className='font-mono text-sm'>{c.asset}</TableCell>}
-                {f.bound_to === 'environment' && <TableCell>{c.environment}</TableCell>}
                 <TableCell>{c.status === 'active' ? <Badge variant='secondary'>Connected</Badge> : <Badge variant='destructive'>Connect again</Badge>}</TableCell>
                 <TableCell><When d={c.connected_at} /></TableCell>
                 {view.can_manage && <TableCell className='text-right'><Button variant='ghost' size='sm' onClick={() => void disconnect(c)}>Disconnect</Button></TableCell>}
@@ -108,13 +105,7 @@ export function OAuthConnections({ f, view, onChanged }: { f: OAuthField; view: 
       )}
       {view.can_manage && (
         <form className='flex flex-wrap items-end gap-2' onSubmit={(e) => { e.preventDefault(); void connect(); }}>
-          {f.bound_to !== 'workspace' && <Input className='w-48' placeholder={`${f.area} key`} value={asset} onChange={(e) => setAsset(e.target.value)} aria-label={`${f.area} key to connect`} />}
-          {f.bound_to === 'environment' && (f.environments ? (
-            <NativeSelect value={environment} onChange={(e) => setEnvironment(e.target.value)} aria-label='Environment to connect'>
-              {f.environments.map((x) => <NativeSelectOption key={x} value={x}>{x}</NativeSelectOption>)}
-            </NativeSelect>
-          ) : <Input className='w-36' placeholder='environment' value={environment} onChange={(e) => setEnvironment(e.target.value)} aria-label='Environment to connect' />)}
-          <Button type='submit' size='sm' disabled={busy || (f.bound_to !== 'workspace' && !asset.trim())}>{mine.length && f.bound_to === 'workspace' ? `Connect ${label} again` : `Connect ${label}`}</Button>
+          <Button type='submit' size='sm' disabled={busy || (f.bound_to !== 'workspace' && !asset.trim()) || (f.bound_to === 'environment' && !environment)}>{mine.length && (f.bound_to === 'workspace' || slot) ? `Connect ${label} again` : `Connect ${label}`}</Button>
         </form>
       )}
     </div>

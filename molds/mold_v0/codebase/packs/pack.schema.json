@@ -3146,6 +3146,55 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^[^\\u0000-\\u001f\\u007f<>`]*$"
+          },
+          "steps": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400,
+              "pattern": "^[^\\u0000-\\u001f\\u007f<>`]*$"
+            }
+          },
+          "without": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^[^\\u0000-\\u001f\\u007f<>`]*$"
+          },
+          "group": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "group_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "environments_from": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$"
+              }
+            },
+            "required": [
+              "field"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

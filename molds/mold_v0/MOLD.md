@@ -398,7 +398,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   started or finished, duration, results and cost; status and kind filter by their options; a row opens the run beside
   the list with its error and results and a link to that record), Schedules (a row opens the schedule, where owners
   change when it runs or remove one they added; the switch turns it on and off in its row), Notices (a row's menu
-  dismisses it) and Credentials (a credential per row, opening its values and the form as a full card in the list's place) all draw
+  dismisses it) and Credentials (a workspace credential per row, opening its details and its Set, Replace or Clear as a full card in the list's place; mold_v0-239) all draw
   `RecordView`, with the page's own empty state guiding the person (a tab's `empty`) and nothing linking to a staff page.
   Boards and timelines stay as they were. Pages a build's original look gives a look of their own (API keys, Usage,
   Activity, Connected apps, Files, Billing and a host pack's pages) are unchanged. The lane world also gives its
@@ -1038,6 +1038,30 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
   writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
   delivered); no rotation reminder or expiry.
+  - **Each credential in its own place, in the customer's words** (mold_v0-239; `web/src/features/credentials/`:
+    `model.ts`, `credentials-tab.tsx`, `record-credentials.tsx`, `credential-card.tsx`). Settings › Credentials lists only
+    the workspace's own credentials (`GET /api/credentials?scope=workspace`), as the standard list (its four cards, the
+    search row, the table; no caption). A credential of a record (`bound_to: asset`) and one of a record's environment
+    (`bound_to: environment`) are on that record's own page, `/app/records/<area>/<key>`: a Credentials card below its
+    details (`GET /api/credentials?area=<area>&key=<key>`: that record's values only, 404 for a record that is not the
+    workspace's), the record's own first, then one group per environment the record has (Production, Staging: the
+    usual names in words). The environments are the field's fixed `environments`, or the record's own through
+    `environments_from: {field, key}` (a field of the area holding names, or objects whose `key` holds one: an app's
+    per-environment documents and their id field); a value is accepted only for one of them, and the console offers them in a
+    select, never a text box. Fields that share a `group` (an access key id and its secret) are one credential: one
+    row, one card with an input each, set (`PUT {pack, group, asset?, environment?, values: {<field>: <value>}}`, all
+    of them, in one transaction) and cleared (`DELETE {pack, group, ...}`) together; the group's first field names it
+    (`group_label`). Every credential says what it is for (`purpose`, else its help), how to get it (`steps`: numbered,
+    the first naming the web address to open, addresses as links), what still works without it (`without`, an
+    optional one; else built from `adds`), its status (Set, Missing, Optional; a pair half set says so), when it was set
+    and by whom, and when it was last used (`workspace_credentials.last_used_at`, `sql/migrations/0043_credential_last_used.sql`:
+    stamped when a run receives the value or the shell uses a workspace value, never when it is only read to redact what
+    a run wrote; cleared on replace). Set, Replace and Clear open a full card in the page's (or the list's) place, never
+    a dialog or a side sheet, kept in the address (`?credential=<id>&do=set|clear&environment=<name>`); a value is typed
+    into a hidden field (a file's text too, or chosen from the computer), sent once and never shown again (owners see its
+    last 4 characters). The binding, the delivery, a variable's or a pack's name and an area's id are never shown. A
+    get-started step for a record's credential points to the area's records. `npm run test:credentials` (section 9)
+    proves the places with the API and the console's model; `npm run test:record-pages` (12) the pages.
 - **Repository access by a GitHub App per workspace** (mold_v0-014, built; `src/github-app.ts`,
   `src/github-app-routes.ts`, `sql/migrations/0021_github_app.sql`; `npm run test:github-app`). A credential field may
   say `github_app: true` (pack.json `credentials[].github_app`): a GitHub repository token. When the platform holds a

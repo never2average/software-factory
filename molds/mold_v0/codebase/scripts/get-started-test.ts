@@ -128,7 +128,8 @@ try {
     assert.deepEqual([second.done, second.next?.id], [1, "first_scan"], "the record ticks the step");
     assert.match(second.next!.how, /start a run of Scan an application with fixture_tracker_start_tracker_scan, then follow it with fixture_tracker_run_status/);
     assert.equal(second.next!.say, "Scan my first application.", "the step's own prompt");
-    assert.ok(second.steps.find((s) => s.id === "token")!.how!.includes("/app/settings?tab=credentials") && second.steps.find((s) => s.id === "token")!.how!.includes("never typed into the chat"));
+    // mold_v0-239: an application's token is given on that application's own page (its Credentials card), not Settings.
+    assert.ok(second.steps.find((s) => s.id === "token")!.how!.includes("/app/records/tracker_apps") && second.steps.find((s) => s.id === "token")!.how!.includes("never typed into the chat"));
     const other = await started(cb);
     assert.deepEqual([other.done, other.next?.id], [0, "first_app"], "another workspace's progress never shows");
     await ca.close(); await cb.close();
