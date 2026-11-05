@@ -1,5 +1,6 @@
 // The customer credential vault's model (mold_v0-239): what the console shows of the packs' credential fields, with no
-// React and no imports, so the placement rules are proven offline (scripts/credentials-test.ts).
+// React and no imports but the console's words (../../lib/value-words.ts), so the placement rules are proven offline
+// (scripts/credentials-test.ts).
 //
 //   one credential  a field, or the fields that share a `group` (an access key id and its secret): set, replaced,
 //                   cleared and shown together, one input each
@@ -8,6 +9,8 @@
 //   its words       what it is for, how to get it (numbered steps), what still works without it, its status (set,
 //                   missing or optional), when it was set and when it was last used. Never the binding, how it is
 //                   delivered, a variable's name or a pack's id.
+
+import { envWord } from '../../lib/value-words';
 
 /** A credential field as GET /api/credentials answers it (src/credentials.ts fieldSummary). */
 export interface CredField {
@@ -114,13 +117,8 @@ export function stateIn(c: Credential, values: readonly CredValue[], asset: stri
   };
 }
 
-/** The usual names of an environment, in words ("prod" reads Production); any other name capitalised. */
-const ENV_WORDS: Record<string, string> = {
-  prod: 'Production', production: 'Production', prd: 'Production', live: 'Live', staging: 'Staging', stage: 'Staging', stg: 'Staging',
-  uat: 'UAT', qa: 'QA', test: 'Test', testing: 'Test', dev: 'Development', development: 'Development', sandbox: 'Sandbox', preprod: 'Pre-production',
-  'pre-prod': 'Pre-production', dr: 'Disaster recovery', demo: 'Demo', local: 'Local'
-};
-export const envWord = (e: string) => ENV_WORDS[e.toLowerCase()] ?? e.replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
+/** An environment's name in words ("prod" reads Production): the console's one mapping (mold_v0-240, lib/value-words.ts). */
+export { envWord };
 
 /**
  * The record page's Credentials card, in order (mold_v0-239): the credentials of the record itself, then one group per
