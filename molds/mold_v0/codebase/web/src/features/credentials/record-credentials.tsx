@@ -36,7 +36,8 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
   const { data: oauth, reload: reloadOAuth } = useOrgLoad(() => (needsOAuth ? oauthCall<OAuthView>('GET') : Promise.resolve(null)), [needsOAuth]);
   const open = useCredentialCard();
   useOAuthOutcome();
-  // Opened at #credentials: scroll to the card when it is first drawn (once, so a later redraw does not move the page).
+  // Opened at #credentials: scroll to the card when it is first drawn (once, so a later redraw does not move the page),
+  // its heading below the page's sticky header (scroll-mt-20).
   const scrolled = useRef(false);
   const anchor = useCallback((el: HTMLElement | null) => {
     if (!el || scrolled.current || window.location.hash !== `#${CREDENTIALS_ANCHOR}`) return;
@@ -71,7 +72,7 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
     );
   }
   const section = (
-    <Card id={CREDENTIALS_ANCHOR} ref={anchor} className='w-full max-w-4xl scroll-mt-4 gap-0 py-0' data-record-credentials=''>
+    <Card id={CREDENTIALS_ANCHOR} ref={anchor} className='w-full max-w-4xl scroll-mt-20 gap-0 py-0' data-record-credentials=''>
       <CardHeader className='border-b py-4 [.border-b]:pb-4'>
         {/* No count line under the heading (mold_v0-240): each credential says its own status. */}
         <CardTitle className='text-base'>Credentials</CardTitle>

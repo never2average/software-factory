@@ -194,7 +194,8 @@ Where an area's list is drawn, and what it has:
   `environments`, or read from the record by `environments_from: {field, key}`). Each is shown in the customer's
   words (`purpose`, `steps`, `without`), with its status (set, missing or optional), when it was set and when it was
   last used; Set, Replace and Clear open a full card in the page's place, the environment picked from the record's own.
-  Settings › Credentials lists only the workspace's own credentials. Fields that share a `group` (a key id and its
+  Settings › Credentials lists the workspace's own credentials, then one row per record that has credentials (its name,
+  its status in words, when one last changed; it opens the record's page at its Credentials card). Fields that share a `group` (a key id and its
   secret) are one credential. None of this changes an area's contract: a credential is not a field of the record and is
   never read, exported or imported with it.
 
