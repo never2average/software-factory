@@ -9,7 +9,7 @@
 //  3. Patterns: "{name}" is the run's argument, taken literally (a value never widens the glob); "*" one segment.
 //  4. The kind's configuration: a required output outside the write-back, with an undeclared placeholder or listed
 //     twice is refused; the defaults are none and "always".
-//  5. Maxwell's run_S59pF-Rit5xA3fsh as it happened: one ledger line appended, the report left as it was: it fails.
+//  5. The audit app's run_S59pF-Rit5xA3fsh as it happened: one ledger line appended, the report left as it was: it fails.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,5 +1,5 @@
 {
-  "app_id": "maxwell",
+  "app_id": "example_app",
   "measured_at": "2026-10-31T07:30:00+00:00",
   "month": "2026-10",
   "source": "runs",
@@ -14,7 +14,7 @@
   "in_flight": 0,
   "last_run": {
     "workspace": "Lane check",
-    "kind": "maxwell/probe_agent_graph",
+    "kind": "example_app/probe_agent_graph",
     "status": "failed",
     "error_kind": null,
     "cost_usd": 2.2866,
@@ -58,7 +58,7 @@
   "kinds": [
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "probe_cicd_env",
       "month_runs": 1,
       "used_usd": 16.6332,
@@ -68,7 +68,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "refresh_soc",
       "month_runs": 1,
       "used_usd": 16.1341,
@@ -78,7 +78,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "refresh_apps",
       "month_runs": 3,
       "used_usd": 12.1644,
@@ -88,7 +88,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "probe_agent_graph",
       "month_runs": 1,
       "used_usd": 2.2866,
@@ -98,7 +98,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "seed_company",
       "month_runs": 3,
       "used_usd": 2.0255,
@@ -108,7 +108,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "probe_iac",
       "month_runs": 1,
       "used_usd": 0.7651,
@@ -118,7 +118,7 @@
     },
     {
       "workspace": "Lane check",
-      "pack": "maxwell",
+      "pack": "example_app",
       "kind": "add_application",
       "month_runs": 8,
       "used_usd": 0.0,

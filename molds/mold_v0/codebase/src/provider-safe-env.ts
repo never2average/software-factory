@@ -6,7 +6,7 @@
  * upstream is Claude on Google Cloud Vertex AI (src/vertex.ts) those fields can be refused: Claude Code up to 2.1.303
  * (measured: 2.1.220, 2.1.295, 2.1.302, 2.1.303) sends `context_management` (its context-editing beta) with every
  * request for current models, and Vertex answers
- * "400 context_management: Extra inputs are not permitted" before a single token is spent (Maxwell's hosted run of
+ * "400 context_management: Extra inputs are not permitted" before a single token is spent (the audit app's hosted run of
  * 2026-11-01 10:06, on a sandbox whose own Claude Code was 2.1.220). Claude Code 2.1.304 and later retry once without
  * the field; older ones end the session.
  *

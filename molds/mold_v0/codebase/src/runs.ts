@@ -742,7 +742,7 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
 /**
  * mold_v0-189: a failed attempt that the model API refused before it spent anything (a request of it refused, no
  * token metered: src/provider-safe-env.ts refusedBeforeSpend) is queued once more, whatever its kind's max_attempts: its
- * work never started (Maxwell's hosted run of 2026-11-01 10:06, "400 context_management: Extra inputs are not
+ * work never started (the audit app's hosted run of 2026-11-01 10:06, "400 context_management: Extra inputs are not
  * permitted" in 3 s, cost 0). Once per run: the retry is the event REFUSED_RETRY_EVENT, and a run that has it fails as
  * before. Not a cancelled run, one past its deadline, a timeout, nor a gated write (one attempt per approval).
  * Records the event and gives the run its extra attempt; the caller queues it.

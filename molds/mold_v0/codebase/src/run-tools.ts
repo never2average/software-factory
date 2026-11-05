@@ -59,7 +59,7 @@ export type ToolCatalog = Record<string, CatalogTool>;
  */
 export const RUN_TOOL_CATALOG: ToolCatalog = {
   git: { version: "system", format: "system", bins: { git: "git" }, source: "the image's distribution package (Dockerfile apt-get; the boat set-up)" },
-  // mold_v0-189 (pinned 2026-11-01): 2.1.316, the version Maxwell's hosted runs of 2026-11-01 09:13 and 10:10 completed
+  // mold_v0-189 (pinned 2026-11-01): 2.1.316, the version the audit app's hosted runs of 2026-11-01 09:13 and 10:10 completed
   // on (129 and 110 turns, through the gateway to Vertex AI). Claude Code 2.1.304 and later send `context_management`
   // and, refused by Vertex ("Extra inputs are not permitted"), retry once without it; 2.1.295 (the earlier pin) and
   // every version up to 2.1.303 end the session there (measured with a stand-in API; src/provider-safe-env.ts turns the
@@ -102,7 +102,7 @@ export const RUN_TOOL_CATALOG: ToolCatalog = {
   },
   // mold_v0-184 (pinned 2026-10-31): CloudFormation checked with AWS's own tools, offline. cfn-lint and moto run on their
   // own CPython 3.12.15 (python-build-standalone 20261013; the release's asset digests matched), with the wheels of
-  // scripts/run-tools-locks/<tool>.txt (cfn-lint[sarif] at the version Maxwell pins, and moto[server], each compiled
+  // scripts/run-tools-locks/<tool>.txt (cfn-lint[sarif] at the version the audit app pins, and moto[server], each compiled
   // with --exclude-newer 2026-10-17; the sarif extra is what `cfn-lint -f sarif` needs). cfn-guard's tarballs matched
   // the release's asset digests; the Guard rules registry publishes no digest (measured at pin).
   "cfn-lint": {

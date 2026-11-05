@@ -2,13 +2,13 @@
 // src/run-harness.ts httpRunnerClient), offline: an embedded database, the S3 stand-in of test:object-storage
 // (scripts/lib/s3-standin.ts, now checking presigned links too) and, in front of the API, a stand-in for a hosted
 // platform's function limits: a request body or an answer over 4.5 MB is refused as Vercel refuses it
-// (413 FUNCTION_PAYLOAD_TOO_LARGE). Maxwell's first audit on Vercel failed exactly there: refresh_apps cloned the
-// company's repositories into applications/<app>/repos/<repo>/ (Maxwell's git-ignored checkouts), the write-back sent
+// (413 FUNCTION_PAYLOAD_TOO_LARGE). The audit app's first audit on Vercel failed exactly there: refresh_apps cloned the
+// company's repositories into applications/<app>/repos/<repo>/ (the audit app's git-ignored checkouts), the write-back sent
 // them along, and PUT /api/worker/runs/<id>/workspace answered 413.
 //   npm run test:large-writeback
 //
 // Proves:
-//   1. git's ignore rules as Maxwell's .gitignore (at its pin, 5f7e77e) writes them: a checkout under
+//   1. git's ignore rules as the audit app's .gitignore (at its pin, 5f7e77e) writes them: a checkout under
 //      applications/*/repos/*/ and a decrypted credentials file are ignored, the repository's record next to it is not;
 //      "!" re-includes, anchoring, directory-only rules, deeper files win; a write-back path the repository itself
 //      ignores is the kind's (its rules are not applied inside it); the kind's write_back_ignore applies everywhere
@@ -44,8 +44,8 @@ delete process.env.APP_STORAGE_DIR;
 delete process.env.APP_WORKER_INLINE_MAX_BYTES;
 const MiB = 1024 * 1024, PLATFORM_LIMIT = 4_500_000;
 
-/** Maxwell's .gitignore at its pin (the upstream Maxwell repository, commit 5f7e77e22edd21d71e6806c9026273d94c392b65), verbatim. */
-const MAXWELL_GITIGNORE = `node_modules
+/** The audit app's .gitignore at its pin (the audit app's upstream repository, commit 5f7e77e22edd21d71e6806c9026273d94c392b65), verbatim. */
+const UPSTREAM_GITIGNORE = `node_modules
 # cloned application sources (manifests are committed, checkouts are not)
 applications/*/repos/*/
 # decrypted credentials must never be committed
@@ -61,11 +61,11 @@ kpis/data/raw/sessions/*/*.export.json
 .claude/worktrees/
 `;
 
-/** A Maxwell-like agent repository: its .gitignore, an agent that clones a "repository" under applications/, a validator. */
+/** An audit-app-like agent repository: its .gitignore, an agent that clones a "repository" under applications/, a validator. */
 function agentRepo() {
   const src = path.join(TMP, "mx-src"), bare = path.join(TMP, "mx.git");
   mkdirSync(src, { recursive: true });
-  writeFileSync(path.join(src, ".gitignore"), MAXWELL_GITIGNORE);
+  writeFileSync(path.join(src, ".gitignore"), UPSTREAM_GITIGNORE);
   writeFileSync(path.join(src, "agent.mjs"), `import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 const mode = process.argv[2] ?? "big";
@@ -80,7 +80,7 @@ writeFileSync("applications/app1/repos/repo1/.git/objects/pack/pack-1.pack", ran
 writeFileSync("applications/app1/repos/repo1/src/main.bin", randomBytes(3_000_000));
 writeFileSync("applications/app1/repos/repo1/README.md", "CHECKOUT-SENTINEL\\n");
 writeFileSync("applications/app1/credentials.dec.json", JSON.stringify({ token: "DECRYPTED-SENTINEL" }));
-// The workspace's own records: the application, its repository's record (committed in Maxwell), evidence.
+// The workspace's own records: the application, its repository's record (committed in the audit app), evidence.
 writeFileSync("applications/app1/app.json", JSON.stringify({ appId: "app1" }));
 writeFileSync("applications/app1/repos/repo1.json", JSON.stringify({ repoId: "repo1", localCheckout: "applications/app1/repos/repo1" }));
 if (mode === "big") writeFileSync("applications/app1/evidence.bin", randomBytes(5_500_000));
@@ -91,7 +91,7 @@ if (mode === "big") writeFileSync("applications/app1/evidence.bin", randomBytes(
     if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
     return r.stdout.trim();
   };
-  g("init", "-q", "-b", "main"); g("add", "."); g("commit", "-qm", "maxwell-like");
+  g("init", "-q", "-b", "main"); g("add", "."); g("commit", "-qm", "audit-app-like");
   const commit = g("rev-parse", "HEAD");
   spawnSync("git", ["clone", "-q", "--bare", src, bare], { env: { PATH: process.env.PATH!, HOME: TMP, GIT_CONFIG_GLOBAL: "/dev/null" } });
   return { url: `file://${bare}`, commit };
@@ -139,7 +139,7 @@ try {
   const paths = await import("../src/agent-workspace-paths.js");
   const aw = await import("../src/agent-workspace.js");
   {
-    const ig = paths.ignoreMatcher(paths.parseIgnore(MAXWELL_GITIGNORE));
+    const ig = paths.ignoreMatcher(paths.parseIgnore(UPSTREAM_GITIGNORE));
     const cases: [string, boolean, boolean][] = [
       ["applications/app1/repos/repo1", true, true], ["applications/app1/repos/repo1/src/main.bin", false, true],
       ["applications/app1/repos/repo1/.git/HEAD", false, true], ["applications/app1/repos/repo1.json", false, false],
@@ -170,7 +170,7 @@ try {
     assert.equal(wbi.under("data", true)!("data/records/scratch", true), false, "anchored at the checkout's root");
     assert.equal(wbi.under("nested", true)!("nested/cache", true), true, "a nested .gitignore, below its directory");
     assert.equal(aw.writeBackIgnore(pinned, [], false).under("records", true), null, "write_back_gitignore: false, no patterns: nothing left out");
-    console.log("✓ ignore rules as git reads them (Maxwell's .gitignore at its pin: the checkouts under applications/*/repos/*/ and decrypted credentials ignored, the records kept); a write-back path the repository ignores stays the kind's");
+    console.log("✓ ignore rules as git reads them (the audit app's .gitignore at its pin: the checkouts under applications/*/repos/*/ and decrypted credentials ignored, the records kept); a write-back path the repository ignores stays the kind's");
   }
 
   useBucket();

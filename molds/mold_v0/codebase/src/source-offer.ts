@@ -96,7 +96,7 @@ export function commitUrl(repo: string, commit: string): string {
 }
 /**
  * Who uses the upstream, in a sentence (mold_v0-095): the pack's name, unless the pack is named as the project itself
- * (an app minted from its own upstream, "Maxwell uses Maxwell"): then "This service".
+ * (an app minted from its own upstream, "the audit app uses the audit app"): then "This service".
  */
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
 export const offerSubject = (u: { pack_name: string; project: string }) => (norm(u.pack_name) && norm(u.pack_name) === norm(u.project) ? "This service" : u.pack_name);

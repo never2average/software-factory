@@ -5,7 +5,7 @@
 //   script writes nothing, so it runs without a yes)
 //
 // mold_v0-183: "the run succeeded but its records did not change" is answered from the run itself: its steps' output
-// lines (step_log), the agent's output files (agent_output: Maxwell's out/maxwell-result.json), what the write-back
+// lines (step_log), the agent's output files (agent_output: the audit app's out/example_app-result.json), what the write-back
 // left out (workspace_ignored), what it committed (workspace_written) and what the index made of it (workspace_indexed).
 //
 // It connects once with the app's own role (DATABASE_URL; without one, the local PGlite database), opens ONE

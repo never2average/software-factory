@@ -155,7 +155,7 @@ try {
   assert.match(text, /Queued runs: 3/);
   console.log("✓ what the run kinds need (providers, operator credentials' labels, boat), what is missing, queued runs and why they wait");
 
-  // mold_v0-186: kinds that name only optional operator credentials (Maxwell's probes and LocalStack): nothing missing.
+  // mold_v0-186: kinds that name only optional operator credentials (the audit app's probes and LocalStack): nothing missing.
   const onlyOptional = definePack({ ...fixture, id: "fixture_vs", jobKinds: [{ ...(fixture.jobKinds![1] as object), operator_credentials: ["speedup_token"] }] as never });
   setPacksForTest([{ manifest: { id: "fixture_vs", name: "Fixture vault status", version: "1", entry: "index.ts", migrations: null,
                                  dir: path.join(ROOT, "scripts", "fixtures", "runs") }, definition: onlyOptional } as never]);

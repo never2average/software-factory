@@ -104,20 +104,20 @@ Above the usage, **Spend now**, **Allowances** and **Month budget per kind** sho
 
 The numbers come from `.claude/scripts/app_usage.py`, which the board runs every 30 minutes and on **Collect usage**. It reads each app's own database as the app's own restricted role, one workspace at a time, in read-only transactions. Only counts leave the database: no messages, no names, no email addresses. The results are kept in `reports/usage/<app>.json`, which is not committed.
 
-An app built on mold_v0 (Maxwell, Octillion) has no chat turns or in-app tickets. Its usage is its **runs**: by agent is one row per kind of run, with its runs and their cost, and the bars show **Run cost per day**. Those fields say **not measured**, never `$0`.
+An app built on mold_v0 (the audit app, Octillion) has no chat turns or in-app tickets. Its usage is its **runs**: by agent is one row per kind of run, with its runs and their cost, and the bars show **Run cost per day**. Those fields say **not measured**, never `$0`.
 
 ## Spend heartbeat
 
 While the board is open it checks spend every minute with `python3 .claude/scripts/app_usage.py --spend --json --file-tickets`. Each check is kept in `reports/spend/<app>.json`, and the whole beat in `reports/spend/heartbeat.json` (neither is committed).
 
-- **Status line:** each active app's spend today and this month, e.g. `maxwell $3.12 today · $52.03 Oct`. An app counts as active when a run is queued or running, a run was active in the last hour, a build session named it in the last hour, or it spent something today. A figure that can't be measured says `<app> spend not measured`. A beat more than 5 minutes old says when it was measured: `(as of 2h ago)`.
+- **Status line:** each active app's spend today and this month, e.g. `example_app $3.12 today · $52.03 Oct`. An app counts as active when a run is queued or running, a run was active in the last hour, a build session named it in the last hour, or it spent something today. A figure that can't be measured says `<app> spend not measured`. A beat more than 5 minutes old says when it was measured: `(as of 2h ago)`.
 - **Analytics → Spend now:** today, this month, and the runs' recorded cost when it differs. Then the last run's kind, cost, result and time, and when the figures were read.
 - **Allowances:** one bar per account (workspace) with used of limit for this month. Amber at 80%, red at the limit, and last month's figure beside it. An allowance set by a billing plan can't be read from here, so it says **not measured**, never `$0`. An account with no allowance says so: no run can start.
 - **Month budget per kind:** each kind's spend this month against its budget. The budget is the kind's own, capped by the platform's.
 - **When an allowance is reached**, a red banner sits above the tabs on every tab and names the app, the account and the amount. The heartbeat also files one factory ticket for that app and account (P2, through `factory.py add`). It files no other while that one is open, and none again this month once it was closed. Raising an allowance is money, so it needs the operator's yes.
 - **Built (Products & apps):** the build line is the hourly report with every live session brought up to the minute (`mint_report.py --live`). Only the new lines of each transcript changed in the last hour are read, and where each one stopped is kept in `reports/mint/live-cache.json`. Measured stays measured. The work after a session's last cost record stays **~ est.**, and so does a new session that names only this app. A new session that names several apps waits for the hourly recompute, because only that recompute can split it fairly. `· live (1 session now)` marks a line that is live.
 
-**How it stays cheap.** An app's database is read again only when the app is active and its last reading is a minute old. An idle app is read every 15 minutes, and 5 minutes after an error. `--force` reads every app now. A Maxwell check takes about 3 seconds and a live build check under a tenth of a second. The first read of a long session transcript takes a few seconds, at most 20 per call, and carries on in the next call.
+**How it stays cheap.** An app's database is read again only when the app is active and its last reading is a minute old. An idle app is read every 15 minutes, and 5 minutes after an error. `--force` reads every app now. An audit app check takes about 3 seconds and a live build check under a tenth of a second. The first read of a long session transcript takes a few seconds, at most 20 per call, and carries on in the next call.
 
 **How mold_v0 spend is read** (`.claude/scripts/lib/run_spend.py`). Read-only, with `psql` (no `build/<app>`, no `node_modules`):
 

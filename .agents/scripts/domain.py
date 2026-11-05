@@ -505,7 +505,7 @@ def single_self_test():
         owns["ok"] = True
 
         # switch: APP_CONSOLE_URL on the API project only, and its old spelling too where the project holds it (an app
-        # deployed before mold_v0-045, as octillion and maxwell), production_url moved, the redeploy and Google named
+        # deployed before mold_v0-045, as octillion and the audit app), production_url moved, the redeploy and Google named
         rc, out = run(switch, "mv0"); i = load(ip)
         assert rc == 0 and sorted(wrote) == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "APP_MCP_URL", "https://mv0.example.com"),
                                              ("mv0-api", "OCTILLION_CONSOLE_URL", "https://mv0.example.com")], wrote; n += 1

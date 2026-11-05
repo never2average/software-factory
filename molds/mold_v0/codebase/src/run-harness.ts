@@ -1025,7 +1025,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         return await complete({ outcome: "failed", error_kind: status === 400 || status === 413 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
       }
       // mold_v0-183: a kind that always writes when it works (write_back_required) and changed nothing did not work,
-      // whatever its exit code said: Maxwell's seed-company stopped to ask a question and refresh-apps was refused its
+      // whatever its exit code said: the audit app's seed-company stopped to ask a question and refresh-apps was refused its
       // writes, and both "succeeded". Failed, saying so; the program's own account is in the run's events.
       if (agent?.write_back_required && staged?.unchanged) {
         pending.push({ type: "workspace_unchanged", data: { write_back: agent.write_back, required: true } });
@@ -1034,7 +1034,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
             + "nothing was written; what the program said is in the run's events" });
       }
       // mold_v0-188: a kind's required outputs (a report): a run that would succeed but wrote none of one fails
-      // "output_missing", naming it (Maxwell's report_audit_findings had its write to the report refused, appended one
+      // "output_missing", naming it (the audit app's report_audit_findings had its write to the report refused, appended one
       // ledger line, and "succeeded"). Its write-back is discarded with the failure, as any failed run's.
       const required = (agent as { required_outputs?: string[] } | null)?.required_outputs ?? [];
       if (agent && required.length) {

@@ -2,7 +2,7 @@
  * A job kind's required outputs (mold_v0-188): the files of its write-back an agent-workspace run must write when it
  * works. A run that exited 0, validated and staged its write-back, but left a required output as it found it, did not
  * do its job: it fails with error_kind "output_missing", naming the outputs, and nothing of it is written back (as any
- * failed run). Maxwell's report_audit_findings ran 20 minutes, appended one ledger line, had its write to the report
+ * failed run). The audit app's report_audit_findings ran 20 minutes, appended one ledger line, had its write to the report
  * refused and "succeeded" ($11.60, run_S59pF-Rit5xA3fsh): with the report declared, that run fails, saying so.
  *
  *   required_outputs       globs of write-back files (* one segment, ** any depth, ? a character; "{name}" a declared

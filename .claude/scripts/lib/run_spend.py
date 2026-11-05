@@ -385,7 +385,7 @@ def self_test():
     seen = {}
     def fake(argv, **kw):
         seen.update(kw, argv=argv)
-        return subprocess.CompletedProcess(argv, 0, open(os.path.join(FIX, "psql-maxwell.out")).read(), "")
+        return subprocess.CompletedProcess(argv, 0, open(os.path.join(FIX, "psql-example_app.out")).read(), "")
     raw = run_psql(u, "2026-10-02T00:00:00+00:00", run=fake, psql="/usr/bin/psql")
     ok(not any("S3cr3t" in a or "postgres" in a for a in seen["argv"]) and seen["env"]["PGPASSWORD"] == "S3cr3t/pw-123" and "DATABASE_URL" not in seen["env"] and seen["input"].startswith("\\set ON_ERROR_STOP 1"),
        "psql: address in its environment only, script on stdin")
@@ -395,13 +395,13 @@ def self_test():
     ok("S3cr3t" not in json.dumps(bad) and "password authentication failed" in bad["error"] and "[redacted]" in bad["error"], "error scrubbed: " + bad["error"])
     # the figures, from the stand-in answer (the shape of a live answer: a customer account with a $250 override, a test workspace with $50 that ran out)
     now = dt.datetime(2026, 10, 31, 7, 30, tzinfo=dt.timezone.utc)   # the day the lane-check account ran out
-    rep = assemble("maxwell", raw, {"APP_ORG_MONTHLY_BUDGET_USD": "", "APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD": "", "stripe": False}, {"kind_month_budget_usd": 500}, now=now)
-    want = json.load(open(os.path.join(FIX, "expected-maxwell.json")))
+    rep = assemble("example_app", raw, {"APP_ORG_MONTHLY_BUDGET_USD": "", "APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD": "", "stripe": False}, {"kind_month_budget_usd": 500}, now=now)
+    want = json.load(open(os.path.join(FIX, "expected-example_app.json")))
     rep.pop("_window", None)
     ok(rep == want, "assembled report differs from the fixture:\n" + json.dumps(rep, indent=2))
     # mold_v0-188: a run that failed with a required output missing is counted, its cost in the month as any run's
     om = json.loads(json.dumps(raw)); om["ws"]["3"]["month_output_missing"] = 1; om["ws"]["3"]["last_run"].update(kind="report_audit_findings", error_kind="output_missing")
-    r4 = assemble("maxwell", om, {"APP_ORG_MONTHLY_BUDGET_USD": "", "APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD": "", "stripe": False}, {"kind_month_budget_usd": 500}, now=now)
+    r4 = assemble("example_app", om, {"APP_ORG_MONTHLY_BUDGET_USD": "", "APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD": "", "stripe": False}, {"kind_month_budget_usd": 500}, now=now)
     ok(r4["month_output_missing_runs"] == 1 and r4["last_run"]["error_kind"] == "output_missing" and r4["month_usd"] == rep["month_usd"], "output_missing: counted, its cost in the month")
     ok("failed (output missing)" in summary_line(r4) and "1 run(s) this month failed with a required output missing" in summary_line(r4) and "output missing" not in summary_line(rep), "output_missing: said in the summary")
     lane = next(a for a in rep["accounts"] if a["workspace"] == "Lane check")
@@ -410,24 +410,24 @@ def self_test():
     ok(any(x["level"] == "limit" and "Lane check" in x["text"] and "$50.00" in x["text"] for x in w), "a warning at the limit: " + json.dumps(w))
     # not measured is never $0: an unread workspace makes the totals null; a refused role makes everything null
     part = json.loads(json.dumps(raw)); part["ws"].pop("3")
-    r2 = assemble("maxwell", part, {}, now=now)
+    r2 = assemble("example_app", part, {}, now=now)
     ok(r2["month_usd"] is None and r2["today_usd"] is None and any("were not read" in x for x in r2["not_measured"]), "partial -> null")
     byp = json.loads(json.dumps(raw)); byp["tenant"]["bypasses"] = True
-    ok(assemble("maxwell", byp, {}, now=now)["error"].startswith("refused"), "bypass role refused")
+    ok(assemble("example_app", byp, {}, now=now)["error"].startswith("refused"), "bypass role refused")
     rw = json.loads(json.dumps(raw)); rw["tx"]["read_only"] = "off"
-    ok(assemble("maxwell", rw, {}, now=now)["month_usd"] is None, "not read only -> nothing used")
+    ok(assemble("example_app", rw, {}, now=now)["month_usd"] is None, "not read only -> nothing used")
     wrong = json.loads(json.dumps(raw)); wrong["ws"]["1"]["role"] = "neondb_owner"
-    r3 = assemble("maxwell", wrong, {}, now=now)
+    r3 = assemble("example_app", wrong, {}, now=now)
     ok(r3["month_usd"] is None and any("refused" in x for x in r3["not_measured"]), "a workspace not read as the tenant role is not used")
     pl = json.loads(json.dumps(raw)); pl["ws"]["1"]["account"] = {"override_usd": None, "has_billing_customer": True}
-    st = assemble("maxwell", pl, {"stripe": True}, now=now)
+    st = assemble("example_app", pl, {"stripe": True}, now=now)
     ok(any(a["source"] == "plan" and a["limit_usd"] is None and a["level"] is None for a in st["accounts"]) and any("Stripe" in x for x in st["not_measured"]), "a plan allowance is not measured, never $0")
     ok(level(40, 50) == "warn" and level(39.9, 50) == "ok" and level(50, 50) == "limit" and level(1, 0) == "none" and level(None, 5) is None, "levels")
-    ok(next(a for a in assemble("maxwell", pl, {"stripe": False, "APP_ORG_MONTHLY_BUDGET_USD": "75"}, now=now)["accounts"] if a["workspace"] == "Customer A")["limit_usd"] == 75, "no override, no billing: the deployment's default allowance")
-    ok(next(a for a in assemble("maxwell", pl, {}, now=now)["accounts"] if a["workspace"] == "Customer A")["level"] == "none", "no allowance at all: none (no runs), not ok")
+    ok(next(a for a in assemble("example_app", pl, {"stripe": False, "APP_ORG_MONTHLY_BUDGET_USD": "75"}, now=now)["accounts"] if a["workspace"] == "Customer A")["limit_usd"] == 75, "no override, no billing: the deployment's default allowance")
+    ok(next(a for a in assemble("example_app", pl, {}, now=now)["accounts"] if a["workspace"] == "Customer A")["level"] == "none", "no allowance at all: none (no runs), not ok")
     ok(rep["month_recorded_usd"] == 49.9143 and rep["month_usd"] == 50.0089 and rep["today_usd"] == 41.1539 and rep["last_run"]["cost_usd"] == 2.2866, "the recorded cost (audit:run-events) beside the allowance's figure")
     ok([k["kind"] for k in rep["kinds"]][:2] == ["probe_cicd_env", "refresh_soc"] and all(k["limit_usd"] == 500 for k in rep["kinds"]), "kinds: the profile's 500 under the kind's own 500")
-    e2 = assemble("maxwell", {"error": "x"}, {}, now=now)
+    e2 = assemble("example_app", {"error": "x"}, {}, now=now)
     ok(e2["month_usd"] is None and e2["accounts"] == [] and e2["error"] == "x", "error report")
     # where the address comes from: the API project; anything else is said
     ok(target_of({"mold_id": "mold_v0"}, {"deployed_at": "x", "target": "vercel", "vercel": {"projects": {"api": "m-api", "web": "m"}}}) == ("vercel", "m-api"), "api project")
