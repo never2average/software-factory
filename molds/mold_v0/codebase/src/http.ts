@@ -21,6 +21,7 @@ import { backfillMessageFiles, intakeWired, pollIntake, startEmailIntake } from 
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { agentAdminRoutes, agentAppRouter } from "./agent-routes.js";
+import { agentHarnessOn } from "./agent-harness-config.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
@@ -54,6 +55,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createServer } from "./server.js";
 import { hosts, hostToolNames, memoryToolNames } from "./host.js";
 import { connectContext } from "./account-context.js";
+import { resolveToolToken, TOOL_TOKEN_PREFIX, toolCallRefusal } from "./harness-reach.js";
 import { runMemoryTool } from "./account-context-tools.js";
 import { JourneyError, journeyAdminRoutes } from "./journeys.js";
 import { TipError, tipAdminRoutes, tipPublicRoutes } from "./tips.js";
@@ -428,7 +430,15 @@ export function createApp() {
 
   const mcp = async (req: Request, res: Response, org0: Org) => {
     if (!(await mcpGate(req, res, org0))) return;
-    const org: Org = { ...org0, client: clientOf(req.get("user-agent")) };
+    const org: Org = { ...org0, client: org0.agentSession ? org0.client : clientOf(req.get("user-agent")) };
+    // A workspace agent session's token (mold_v0-250): a tool its session must ask the person for first is refused here
+    // too, so a token taken out of the sandbox can do no more than the session may.
+    const guard = org.agentSession ? toolCallRefusal(org, req.body) : null;
+    if (guard) {
+      const first = (Array.isArray(req.body) ? req.body : [req.body]).find((m: { method?: string }) => m?.method === "tools/call") as { params?: { name?: unknown } } | undefined;
+      recordMcpEvent(org, { method: "tools/call", name: typeof first?.params?.name === "string" ? first.params.name : null, ok: false, error: guard, error_class: "refused" });
+      return void res.status(403).json({ jsonrpc: "2.0", id: rpcId(req.body), error: { code: -32001, message: guard } });
+    }
     res.locals.org = org.slug;
     auditCaller(org);
     transcripts().warm(); // a user is here: have transcript search awake by the time they ask for evidence
@@ -472,6 +482,13 @@ export function createApp() {
     if (!(await ipGate(req, res))) return;
     const token = headerCredential(req.headers);
     const viaBearer = Boolean(bearer(req.headers.authorization));
+    // A workspace agent session's tool token (mold_v0-250, src/harness-reach.ts): only with the feature on, only here.
+    if (viaBearer && token?.startsWith(TOOL_TOKEN_PREFIX) && agentHarnessOn()) {
+      const t = await resolveToolToken(token);
+      if ("org" in t) return void (await mcp(req, res, t.org));
+      return void res.status(401).set("WWW-Authenticate", `Bearer error="invalid_token", error_description="${t.refused.replace(/"/g, "'")}"`)
+        .json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: `The workspace agent's token does not work: ${t.refused}.` } });
+    }
     // Built-in sign-in's OAuth access tokens (src/mcp-oauth.ts): audience, expiry, revocation and membership checked.
     if (viaBearer && mcpOAuth.oauthOn() && mcpOAuth.isOAuthAccessToken(token)) {
       const t = await mcpOAuth.resolveOAuthAccessToken(token!);

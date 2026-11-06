@@ -29,6 +29,8 @@ person's queued instructions (*steer*), a pause request and an end request. Arou
 | Multi-provider credentials | The run never holds a provider key: a per-attempt token to a metering broker that refuses past the allowance |
 | Web tools policy | Web tools off by default, opted in per workload; allowed hosts exact or suffix; calls counted against a ceiling; anything else becomes an approval |
 | Agent image: process and exec guards, the CLI's permission file | The CLI's own permission file denies by default; a preload library keeps provider secrets out of every child's environment |
+| Domain MCP tools | The platform's own MCP servers reach the agent through an MCP config the harness writes per attempt (`--mcp-config` with `--strict-mcp-config`): each server over HTTP, its `Authorization` a `${...}` reference to the attempt's token in the CLI's environment, its tools allowed by name (`mcp__<server>__<tool>`). The server takes the tenant and the run from the token, never from the input, and re-reads the acting person's membership and role on every call |
+| Context | Per-workload and platform text appended to the system prompt (`append_system`) at launch |
 
 ## Where each piece lives in mold_v0
 
@@ -55,15 +57,59 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Credentials broker  | Already the shell's gateway (`src/gateway.ts`): a per-attempt token, gateway-mode providers only, refused past the run's budget |
 | Web tools | Settings `AGENT_WEB_TOOLS` (off, fetch, search and fetch), `AGENT_WEB_HOSTS` (allowed without asking: exact or `*.suffix`) and `AGENT_WEB_CALLS_MAX`; frozen into the session; the harness renders them into the CLI's allow and deny rules, refuses a call past the ceiling and turns a host not granted into an approval request. The run's egress proxy allowlist is the session's hosts plus the gateway |
 | Process guards | The shell's run user per run already keeps the runner's environment unreadable (`/proc`), and the CLI gets only the gateway token and `RUN_*`; the harness redacts the token from every line it posts |
-| Console | The top bar's last item, after Search, Docs and the theme switcher: one icon button (`aria-label="Workspace agent"`) that opens `/app/agent` (staff: `/admin/agent`). The agent opens as a **full in-page view**, not a modal: the sessions list in the standard layout (four cards, the search row with Start a session, the table), a row opening the session's full card: the transcript, the composer, approval cards, Pause / Resume / Stop, the budget and Raise budget. Staff see every workspace's sessions and may pause, stop and raise, never message (a session acts for the person who started it) |
+| Console | The top bar's last item, after Search, Docs and the theme switcher: one icon button (`aria-label="Workspace agent"`) that opens `/app/agent` (staff: `/admin/agent`). The agent opens as a **full in-page view**: the sessions list in the standard layout (four cards, the search row with Start a session, the table), a row opening the session's full card: the transcript, the composer, approval cards, Pause / Resume / Stop, the budget and Raise budget, and "How this session runs" (what it reaches of the workspace, its limits, its wakes). **One exception to the console's full-card rule, the operator's (mold_v0-249): Start a session opens as a modal dialog** (the first message; the model, shown, set by staff; the budget, the setting's unless the person lowers it, or up to the ceiling for a billing manager or owner; the kind and an optional title; Start), with its focus held inside, Esc closing it and its title naming it; on Start the new session opens as its full card. Nothing else on the page is a dialog. Staff see every workspace's sessions and may pause, stop and raise, never message (a session acts for the person who started it) |
 | Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
+| Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `workspace`: `src/harness-reach.ts`. See "What a session reaches" below |
+| Context (mold_v0-250) | The workspace's context and memory and the server's own instructions, appended to the standing instructions: see below |
 | API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
+
+## What a session reaches (mold_v0-250)
+
+The reference's agent works with its platform's own MCP tools and is told its tenant's context; until mold_v0-250 the
+mold's agent had an empty working directory and nothing else. Now, with the flag on, a session reaches its workspace the
+same way (`src/harness-reach.ts`; nothing changes with the flag off):
+
+- **The app's own tools, as the person who started it.** At its start the session asks the customer MCP server what it
+  lists to that person (an in-memory client, as the client skill does): the host packs' and packs' tools, the record
+  tools, the memory tools; never the agent's own session tools (an agent does not start or steer sessions). Each wake gets
+  one token (`hst_...`, only its sha256 kept, `harness_session_tokens`, migration 0047) and its CLI an MCP config naming
+  the server `workspace` at the API's `/mcp` (the gateway's own address, so the run's egress already allows it), its
+  `Authorization` a `${RUN_WORKSPACE_TOKEN}` reference to the wake's environment; the runner redacts the token from every
+  line it posts. `/mcp` resolves the token on every call: the workspace is the session's (no argument names another),
+  the person's membership and role are read again (gone or suspended: refused), and it works only while its wake is the
+  session's current one and running, the session is not pausing or stopping and has budget left. It is revoked when its
+  wake ends (parked, paused, awaiting a decision, budget, stopped, a crash), when a pause or stop is asked, at budget and
+  when the session ends, and expires with its wake's deadline.
+- **Reads free, writes asked.** A tool is a read when it says so (`readOnlyHint`). The platform setting
+  `AGENT_WORKSPACE_TOOLS` ("Workspace tools used without asking": reads (default), reads and the tools named in
+  `AGENT_WORKSPACE_TOOLS_NAMED`, or all) decides which go into the session's allowed tools (`mcp__workspace__<tool>`),
+  frozen at its start like the other settings. Calling any other is an approval request of kind `tool` (the existing
+  `harness_session_requests` flow): the wake stops, the request carries what the call wanted to send, Approve lets that
+  session use the tool from now on and wakes it, Decline parks it. The server refuses such a call too (403), so a token
+  taken out of the sandbox can do no more than the session may. A tool's own role check still applies (a viewer's
+  session cannot write whatever the setting says).
+- **Context as standing instructions.** Appended to the `append_system` hook's text on every wake: who the session works
+  for and with which role, the workspace's tools (which are free, which ask first), then the server's own instructions
+  (the profile's or the packs', as an AI client gets them) and the company's and the person's context and memory
+  (`connectContext`: the memory component's, then a host pack's own), each cut to its share of `AGENT_CONTEXT_MAX_CHARS`
+  (12,000 by default; a third for the instructions, the rest for the context; 0 gives none). Frozen at the start; for
+  anything newer the session searches memory with the tool.
+- **The session card says what it reaches.** "How this session runs" lists who it acts as (and that the role is checked
+  again on every call), the tools it uses without asking and those that ask first, and the context it was given with each
+  part's size (and whether it was shortened). No internal id is shown (its wakes are numbered).
+- **Isolation.** A token opens `/mcp` only (never a URL, never another route); its workspace is the session's. The test
+  proves another workspace's record is not found through it, and that its list and memory searches return only its own.
 
 ## Deliberately not copied
 
-- **The reference's product surfaces**: its pipelines, findings, entities, report proposals, checklists, eval datasets,
-  use-case picker and the agent's own domain MCP tools. The mold's agent works in its own workspace; what it may reach
-  is the run's egress and the tools its policy allows. A pack that wants domain tools for it is a later change.
+- **The reference's product surfaces**: its pipelines, entities, report proposals, checklists, eval datasets and
+  use-case picker. The agent's domain tools are copied the reference's way (mold_v0-250, "What a session reaches"): the
+  app's own customer MCP tools, whatever its packs declare; the mold adds no domain tool of its own.
+- **A governed gateway in front of the MCP servers.** The reference serves its MCP servers through an egress gateway
+  that ledgers every call per attempt. Here the CLI calls the app's `/mcp` directly with the wake's token; each call is
+  in the MCP usage log (`mcp_events`, client `workspace-agent`) and, with `audit.data` on, the data trail.
+- **A refreshed context per wake.** The context is frozen at the session's start (as the reference freezes a run's
+  hooks); a session reads anything newer through the memory and record tools.
 - **Per-workload prompts overriding hooks.** The reference lets each workload override `on_start`/`on_resume`/
   `append_system`. The mold has no workloads: the flavour's defaults apply and the person's message is the turn. The
   hook resolution still records each hook's `source`, so a pack-level override can be added without changing the record.
@@ -80,6 +126,9 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 
 ## Mold pieces this does not use yet, and why
 
+Since mold_v0-250 a session does use the customer MCP server (and through it the record areas, the packs' tools and the
+memory component), the account context and the member role check: "What a session reaches" above.
+
 - **The workspace credentials vault.** A session receives no workspace credential: the reference's agent works with what
   its platform's tools give it, and the mold has no declaration yet of which credentials a session may hold. A kind's
   `credentials` list is the model to follow when one is wanted (the run engine already delivers and redacts them).
@@ -95,7 +144,10 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 
 `npm run test:agent-harness` (offline, an embedded database, a stand-in CLI speaking stream-json): steer mid-run,
 approvals, pause / resume / stop, parking and waking, crash recovery, spend counted once, budgets and a raise,
-retention, and the settings' audit; `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
+retention, the settings' audit, and what a session reaches (the context composed and capped; the tools as the person,
+reads free and writes as approvals; a wake end to end with the stand-in CLI calling the server through its MCP config;
+the token scoped, refused on another workspace's records, revoked at pause, park, stop, budget and when the person
+leaves); `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
 Octillion parity with the flag off, and screenshots on the example app's lane copy with the flag on.
 
 ### A real session (mold_v0-245, measured once, 2026-11-05)

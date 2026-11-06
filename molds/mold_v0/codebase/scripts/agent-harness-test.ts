@@ -28,6 +28,18 @@
 //  9. Settings: the group and its keys only with the flag on, each with words; every change recorded with who and
 //     the value before; the admin MCP's list_settings and update_setting.
 // 10. The doors: /api/agent (a member starts, a viewer cannot), the MCP tools, staff's /api/admin/onboarding/agent.
+// 11. What a session reaches of its workspace (mold_v0-250; src/harness-reach.ts):
+//     a. the context, pure: composed and capped (a third for the app's instructions, the rest for the context), and
+//        which tools are used without asking under each setting (reads, reads and named, all)
+//     b. at its start: the app's own tools as the person who started it (no agent session tool among them), reads
+//        without asking and the rest asking first, the context frozen into its policy within its cap
+//     c. a wake end to end: its CLI gets the workspace's server by --mcp-config and its token by reference, and the
+//        standing instructions; it reads the workspace's records and memory through the tools (reads free); another
+//        workspace's record is not found; a write becomes an approval request (and the server refuses it meanwhile);
+//        approved, the next wake writes it
+//     d. the token, directly: scoped to its session's workspace (another workspace's record refused), reads free,
+//        writes refused by the server, no other door opens with it; revoked at pause, park, stop and budget, and when
+//        the person is no longer a member; a newer wake's token works while the older one does not
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
@@ -484,6 +496,225 @@ try {
     assert.ok(!stopped.isError);
     await mcp.close();
     ok("the doors: /api/agent (a member starts, a viewer cannot, only the starter messages, an owner stops), staff's list of every workspace's, the MCP tools");
+  }
+
+  // ---------- 11. what a session reaches of its workspace ----------
+  {
+    const R = await import("../src/harness-reach.js");
+    // a. pure
+    {
+      const tools = [{ name: "list_records", read: true }, { name: "search_memory", read: true }, { name: "fx_put_item", read: false }, { name: "save_memory", read: false }];
+      assert.deepEqual(C.freeWorkspaceTools(tools, "reads", ["fx_put_item"]), ["list_records", "search_memory"], "reads: the named are ignored");
+      assert.deepEqual(C.freeWorkspaceTools(tools, "reads_and_named", ["fx_put_item"]), ["list_records", "search_memory", "fx_put_item"]);
+      assert.deepEqual(C.freeWorkspaceTools(tools, "all", []), tools.map((t) => t.name));
+      const c = R.composeContext({ workspace: "W", who: "p@example.org", role: "member", tools, free: ["list_records", "search_memory"], instructions: "I".repeat(5000), context: "word ".repeat(2000), max: 3000 });
+      assert.ok(c.text.startsWith("## This workspace") && /Without asking you may use: list_records, search_memory\./.test(c.text) && /ask the person first[^\n]*fx_put_item, save_memory/.test(c.text), c.text.slice(0, 600));
+      assert.deepEqual(c.parts.map((x) => [x.part, x.chars]), [["instructions", 5000], ["context", 9999]]);
+      assert.ok(c.parts[0]!.kept === 1000 && c.parts[1]!.kept <= 2000 && c.parts[1]!.kept > 1800, JSON.stringify(c.parts));
+      assert.ok(/\[…shortened\]/.test(c.text), "a cut part says so");
+      const none = R.composeContext({ workspace: "W", who: "x", role: null, tools, free: [], instructions: "abc", context: "def", max: 0 });
+      assert.ok(none.parts.every((x) => x.kept === 0) && !/### /.test(none.text), "0: no context, only who it acts for and its tools");
+      ok("reach, pure: the context composed and capped (a third for the app's instructions, the rest for the context); the tools used without asking under reads, reads and named, all");
+    }
+    const { setPacksForTest } = await import("../src/packs.js");
+    const { setPackConfigsForTest } = await import("../src/host.js");
+    const { definePack, defineTool, z } = await import("../src/pack-api.js");
+    const ctx = await import("../src/account-context.js");
+    const { memberships } = await import("../src/clerk.js");
+    setPacksForTest([{ manifest: { id: "fixture_reach", name: "fixture_reach", version: "1", entry: "index.ts", migrations: null, words: {} }, definition: definePack({
+      id: "fixture_reach",
+      recordAreas: [{ name: "fx_items", label: "Items", role: "check", scope: "workspace", fields: [{ name: "summary", label: "Summary" }] }],
+      tools: [defineTool({ name: "fx_put_item", description: "Save an item (test).", inputSchema: { key: z.string(), summary: z.string() },
+        handler: async (_ws, a, { records }) => records.put("fx_items", a.key, { title: `Item ${a.key}`, data: { summary: a.summary } }) })],
+    }) }]);
+    setPackConfigsForTest([{ pack: "fixture_reach", memory: { scopes: ["company", "user"], tools: { save: "save_memory", search: "search_memory" } } }]);
+    const http = await startHttp();
+    process.env.PUBLIC_URL = http.base; // the wake's gateway and workspace server: the API itself
+    const A = (await createOrg(`Reach A ${STAMP}`)).org, B = (await createOrg(`Reach B ${STAMP}`)).org;
+    const am = await http.signInAs(A, "member");
+    const person = { kind: "person" as const, user: am.userId, name: "a.member@example.org", role: "member" as const };
+    const ca = await connect({ ...A, role: "owner" }), cb = await connect({ ...B, role: "owner" });
+    for (const [k, t] of [["a-1", `A first ${STAMP}`], ["a-2", `A second ${STAMP}`]]) assert.ok(!(await ca.call("fx_put_item", { key: k, summary: t })).isError);
+    assert.ok(!(await cb.call("fx_put_item", { key: "b-secret", summary: `B private ${STAMP}` })).isError);
+    await ctx.saveCompany(A.orgId, "owner", { about: `A keeps items for its reach test ${STAMP}.`, notes_for_ai: "Answer in plain words." });
+    await ctx.addMemory(A.orgId, "owner", { scope: "company", body: `The reach marker is ${STAMP}.` }, "");
+    await ctx.addMemory(B.orgId, "owner", { scope: "company", body: `B's own memory ${STAMP}.` }, "");
+    await saveSettingValues("test-staff", { AGENT_WORKSPACE_TOOLS: "reads", AGENT_CONTEXT_MAX_CHARS: 12000, AGENT_PARK_AFTER_MINUTES: 1, AGENT_SESSION_BUDGET_USD: 1 });
+    const h = (t: string) => ({ authorization: `Bearer ${t}` });
+    const rd = (id: string) => H.readSession(A.orgId, id, person);
+    const said = async (id: string, re: RegExp) => (await rd(id)).messages.some((m) => m.role === "agent" && re.test(m.body));
+    const lastAgent = async (id: string) => (await rd(id)).messages.filter((m) => m.role === "agent").at(-1)?.body ?? "";
+    // b. at its start
+    let r = await http.req("POST", "/api/agent", h(am.token), { message: "standing" });
+    assert.equal(r.status, 201);
+    const sid = (await r.json() as { session: { id: string } }).session.id;
+    const d0 = await rd(sid);
+    const reach = d0.reach!;
+    assert.deepEqual([reach.acts_as.kind, reach.acts_as.role, reach.free], ["person", "member", "reads"]);
+    const byName = new Map(reach.tools.map((t) => [t.name, t]));
+    for (const n of ["list_records", "get_record", "search_memory"]) assert.equal(byName.get(n)?.asks, false, `${n}: a read, without asking`);
+    for (const n of ["fx_put_item", "save_memory"]) assert.equal(byName.get(n)?.asks, true, `${n}: a change, asks first`);
+    assert.ok(!reach.tools.some((t) => /agent_session/.test(t.name)), "no agent session tool: an agent does not start or steer sessions");
+    assert.ok(!d0.policy.tools.some((t) => t.startsWith("mcp__")), "the card's own tools list stays the harness's");
+    const [pol] = await db.query<{ policy: import("../src/agent-harness-config.js").AgentPolicy }>("SELECT policy FROM harness_sessions WHERE id = $1", [sid]);
+    assert.ok(pol!.policy.tools.includes("mcp__workspace__list_records") && !pol!.policy.tools.includes("mcp__workspace__fx_put_item"), "frozen: reads in its allowed tools, writes not");
+    const text = pol!.policy.workspace!.context.text;
+    assert.ok(text.includes(`The reach marker is ${STAMP}`) && text.includes("A keeps items") && !text.includes("B's own memory"), "its own workspace's context and memory, no other's");
+    assert.ok(reach.context.parts.every((x) => x.chars > 0 && x.kept === x.chars), JSON.stringify(reach.context.parts));
+    assert.ok(!/hss_|hst_|run_|org-|"id"/.test(JSON.stringify(reach)), "the card's reach names no internal id");
+    // Capped: a long company context is cut to its share, and the session says so.
+    await ctx.saveCompany(A.orgId, "owner", { about: `A keeps items. ${"Long background. ".repeat(400)}` });
+    await saveSettingValues("test-staff", { AGENT_CONTEXT_MAX_CHARS: 900 });
+    const capped = await H.startSession(A.orgId, person, { message: "x" });
+    const cr = (await rd(capped.id)).reach!;
+    const cp = cr.context.parts.find((x) => x.part === "context")!;
+    assert.ok(cr.context.max_chars === 900 && cp.chars > 1500 && cp.kept < cp.chars && cr.context.parts.reduce((t, x) => t + x.kept, 0) <= 900, JSON.stringify(cr.context));
+    await H.stopSession(A.orgId, capped.id, person);
+    await saveSettingValues("test-staff", { AGENT_CONTEXT_MAX_CHARS: 12000 });
+    await ctx.saveCompany(A.orgId, "owner", { about: `A keeps items for its reach test ${STAMP}.` });
+    // Reads and named: the named tool is used without asking; a bad name is refused by the setting.
+    await assert.rejects(saveSettingValues("test-staff", { AGENT_WORKSPACE_TOOLS_NAMED: "fx put item" }), /tool names/);
+    await saveSettingValues("test-staff", { AGENT_WORKSPACE_TOOLS: "reads_and_named", AGENT_WORKSPACE_TOOLS_NAMED: "fx_put_item" });
+    const named = await H.startSession(A.orgId, person, { message: "x" });
+    assert.equal((await rd(named.id)).reach!.tools.find((t) => t.name === "fx_put_item")?.asks, false, "reads and named: the named one without asking");
+    assert.equal((await rd(named.id)).reach!.tools.find((t) => t.name === "save_memory")?.asks, true, "the others still ask");
+    await H.stopSession(A.orgId, named.id, person);
+    await saveSettingValues("test-staff", { AGENT_WORKSPACE_TOOLS: "reads", AGENT_WORKSPACE_TOOLS_NAMED: "" });
+    ok("reach at its start: the app's own tools as the person who started it (reads without asking, the rest ask first; reads and named; no agent session tool), its own workspace's context and memory frozen in, capped");
+
+    // c. a wake, end to end with the stand-in CLI
+    {
+      const w = await wake(sid);
+      await until("standing", () => said(sid, /^Standing: \d+ characters; workspace: yes; servers: workspace; token: set$/), 20_000);
+      const cfg = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM harness_session_tokens WHERE session_id = $1 AND revoked_at IS NULL", [sid]);
+      assert.equal(cfg[0]!.n, 1, "one live token: this wake's");
+      await H.messageSession(A.orgId, sid, person, 'mcp list_records {"area":"fx_items"}');
+      await until("its records", () => said(sid, /^MCP list_records: /));
+      const listed = await lastAgent(sid);
+      assert.ok(listed.includes(`A first ${STAMP}`) && listed.includes(`A second ${STAMP}`) && !listed.includes("B private"), listed);
+      await H.messageSession(A.orgId, sid, person, 'mcp get_record {"area":"fx_items","key":"b-secret"}');
+      await until("another workspace's record", () => said(sid, /^MCP get_record: /));
+      assert.match(await lastAgent(sid), /error: .*no record b-secret/, "another workspace's record is not found through the session");
+      await H.messageSession(A.orgId, sid, person, 'mcp search_memory {"query":"reach marker"}');
+      await until("its memory", () => said(sid, /^MCP search_memory: /));
+      assert.ok((await lastAgent(sid)).includes(`The reach marker is ${STAMP}`) && !(await lastAgent(sid)).includes("B's own memory"));
+      // A write: asked for, the wake stops; the server refused the call meanwhile, so nothing was written.
+      await H.messageSession(A.orgId, sid, person, `mcp fx_put_item {"key":"a-new","summary":"written by the agent ${STAMP}"}`);
+      await w.done;
+      let d = await rd(sid);
+      assert.equal(d.phase, "awaiting_approval");
+      assert.equal(d.pending_request?.kind, "tool");
+      assert.equal(d.pending_request?.subject, "mcp__workspace__fx_put_item");
+      assert.equal(d.pending_request?.detail.workspace_tool, "fx_put_item");
+      assert.match(String(d.pending_request?.detail.input), /a-new/, "what it wanted to send is shown with the request");
+      assert.ok(d.messages.some((m) => m.role === "system" && m.body === "The agent asks to use the workspace tool fx_put_item."));
+      assert.ok((await ca.call("get_record", { area: "fx_items", key: "a-new" })).isError, "nothing written before the decision");
+      const [t1] = await db.query<{ revoked_reason: string }>("SELECT revoked_reason FROM harness_session_tokens WHERE run_id = $1", [w.claim.run.id]);
+      assert.equal(t1!.revoked_reason, "awaiting a decision", "the wake's token revoked as it stopped");
+      d = await H.decideRequest(A.orgId, sid, d.pending_request!.id, person, "approve");
+      assert.equal(d.reach!.tools.find((t) => t.name === "fx_put_item")?.asks, false, "approved: this session uses it without asking from now on");
+      const w2 = await wake(sid);
+      await until("woken", () => said(sid, /approved: using the workspace tool fx_put_item/));
+      await H.messageSession(A.orgId, sid, person, `mcp fx_put_item {"key":"a-new","summary":"written by the agent ${STAMP}"}`);
+      await until("written", () => said(sid, /^MCP fx_put_item: /));
+      const got = await ca.call("get_record", { area: "fx_items", key: "a-new" });
+      assert.ok(!got.isError && JSON.stringify(got.structuredContent).includes(`written by the agent ${STAMP}`), "approved, the next wake wrote it as the person");
+      await until("waiting", async () => (await rd(sid)).phase === "waiting");
+      await park(); await w2.done;
+      const [t2] = await db.query<{ revoked_reason: string }>("SELECT revoked_reason FROM harness_session_tokens WHERE run_id = $1", [w2.claim.run.id]);
+      assert.equal(t2!.revoked_reason, "parked", "parked: its token revoked");
+      offset = 0;
+      ok("a wake end to end: its CLI gets the workspace's server and token and the standing instructions; it reads records and memory (reads free), another workspace's record is not found, a write becomes an approval request (the server refused it meanwhile) and, approved, the next wake writes it");
+    }
+
+    // d. the token, directly
+    {
+      const rpc = async (token: string, method: string, params: Record<string, unknown> = {}, p = "/mcp") => {
+        const res = await http.req("POST", p, { ...h(token), accept: "application/json, text/event-stream" }, { jsonrpc: "2.0", id: 1, method, params });
+        const t = await res.text();
+        const j = t.trim().startsWith("{") ? JSON.parse(t) : JSON.parse((t.split("\n").find((l) => l.startsWith("data:")) ?? "data: {}").slice(5));
+        return { status: res.status, json: j as { error?: { message: string }; result?: { isError?: boolean; content: { text: string }[]; tools?: { name: string }[] } } };
+      };
+      const textOf = (x: Awaited<ReturnType<typeof rpc>>) => (x.json.result?.content ?? []).map((c) => c.text).join(" ");
+      const manual = async (id: string) => {
+        const c = (await client.claim([`${C.AGENT_PACK}/${C.AGENT_KIND}`]))!;
+        const ws = await client.agent!.start(c.run.id, c.lease_token);
+        return { c, token: ws.workspace!.token };
+      };
+      const endWake = async (c: { run: { id: string }; lease_token: string }, reason: "parked" | "paused" | "stopped" | "budget") => {
+        await client.agent!.end(c.run.id, c.lease_token, { reason });
+        await client.complete(c.run.id, c.lease_token, { outcome: "succeeded", results: [] });
+      };
+      const s2 = await H.startSession(A.orgId, person, { message: "direct" });
+      const m1 = await manual(s2.id);
+      assert.ok(m1.token.startsWith("hst_"));
+      let x = await rpc(m1.token, "tools/list");
+      const names = (x.json.result?.tools ?? []).map((t) => t.name);
+      assert.ok(names.includes("list_records") && names.includes("fx_put_item") && !names.some((n) => /agent_session/.test(n)), names.join(","));
+      x = await rpc(m1.token, "tools/call", { name: "list_records", arguments: { area: "fx_items" } });
+      assert.ok(x.status === 200 && textOf(x).includes(`A first ${STAMP}`) && !textOf(x).includes("B private"), "reads: its workspace's records only");
+      x = await rpc(m1.token, "tools/call", { name: "get_record", arguments: { area: "fx_items", key: "b-secret" } });
+      assert.ok(x.json.result?.isError && /no record b-secret/.test(textOf(x)), "another workspace's record is refused with the session's token");
+      x = await rpc(m1.token, "tools/call", { name: "fx_put_item", arguments: { key: "a-sneak", summary: "x" } });
+      assert.equal(x.status, 403); assert.match(x.json.error!.message, /must ask the person before it uses fx_put_item/, "a write the session must ask for is refused by the server too");
+      assert.ok((await ca.call("get_record", { area: "fx_items", key: "a-sneak" })).isError, "nothing written");
+      for (const [m, p] of [["GET", "/api/agent"], ["GET", "/api/records/fx_items"], ["GET", "/api/app/context"]] as const)
+        assert.equal((await http.req(m, p, h(m1.token))).status, 401, `${p}: no other door opens with it`);
+      assert.equal((await rpc(m1.token, "tools/list", {}, `/mcp/${m1.token}`)).status, 401, "never in a URL");
+      // Pause: refused at once; the wake ends paused.
+      await H.pauseSession(A.orgId, s2.id, person);
+      x = await rpc(m1.token, "tools/list");
+      assert.equal(x.status, 401); assert.match(x.json.error!.message, /revoked \(paused\)/);
+      await endWake(m1.c, "paused");
+      // Resume: a new wake, a new token; the older one stays refused.
+      await H.resumeSession(A.orgId, s2.id, person);
+      const m2 = await manual(s2.id);
+      assert.equal((await rpc(m2.token, "tools/list")).status, 200);
+      assert.equal((await rpc(m1.token, "tools/list")).status, 401, "the older wake's token stays refused");
+      // Park: its wake ends, its token goes.
+      await endWake(m2.c, "parked");
+      x = await rpc(m2.token, "tools/list");
+      assert.equal(x.status, 401); assert.match(x.json.error!.message, /revoked \(parked\)/);
+      // Stop: refused as soon as it is asked.
+      await H.messageSession(A.orgId, s2.id, person, "again");
+      const m3 = await manual(s2.id);
+      assert.equal((await rpc(m3.token, "tools/list")).status, 200);
+      await H.stopSession(A.orgId, s2.id, person);
+      x = await rpc(m3.token, "tools/list");
+      assert.equal(x.status, 401); assert.match(x.json.error!.message, /revoked \(stopped\)/);
+      await endWake(m3.c, "stopped");
+      // Budget: a session out of budget is refused (and its token revoked), before any beat says so.
+      const s3 = await H.startSession(A.orgId, person, { message: "budget" });
+      const m4 = await manual(s3.id);
+      assert.equal((await rpc(m4.token, "tools/list")).status, 200);
+      await db.query("UPDATE harness_sessions SET spent_usd = budget_usd WHERE id = $1", [s3.id]);
+      x = await rpc(m4.token, "tools/list");
+      assert.equal(x.status, 401); assert.match(x.json.error!.message, /reached its budget/);
+      const [t4] = await db.query<{ revoked_reason: string }>("SELECT revoked_reason FROM harness_session_tokens WHERE run_id = $1", [m4.c.run.id]);
+      assert.equal(t4!.revoked_reason, "budget");
+      await endWake(m4.c, "budget");
+      await H.stopSession(A.orgId, s3.id, person);
+      // The person: their membership is read on every call; once they leave the workspace the token is refused.
+      await db.query("UPDATE harness_sessions SET spent_usd = 0 WHERE id = $1", [s3.id]);
+      const s4 = await H.startSession(A.orgId, person, { message: "member" });
+      const m5 = await manual(s4.id);
+      assert.equal((await rpc(m5.token, "tools/list")).status, 200);
+      await memberships.remove(am.clerkOrg, am.userId);
+      x = await rpc(m5.token, "tools/list");
+      assert.equal(x.status, 401); assert.match(x.json.error!.message, /no longer a member/);
+      await endWake(m5.c, "stopped");
+      // An expired token, and one never issued.
+      await db.query("UPDATE harness_session_tokens SET expires_at = now() - interval '1 second', revoked_at = NULL WHERE run_id = $1", [m5.c.run.id]);
+      assert.match((await rpc(m5.token, "tools/list")).json.error!.message, /expired/);
+      assert.match((await rpc("hst_not-a-token-at-all-000000", "tools/list")).json.error!.message, /not known/);
+      // Never stored: only hashes.
+      const stored = await db.query<{ token_hash: string }>("SELECT token_hash FROM harness_session_tokens WHERE org_id = $1", [A.orgId]);
+      assert.ok(stored.length >= 6 && stored.every((t) => /^[0-9a-f]{64}$/.test(t.token_hash)) && !stored.some((t) => [m1, m2, m3, m4, m5].some((m) => t.token_hash === m.token)));
+      ok("the token: scoped to its session's workspace (another workspace's record refused), reads free, writes refused by the server, no other door or a URL; revoked at pause, park, stop and budget, and when the person leaves; a newer wake's works while the older's does not; expired and unknown refused; only hashes kept");
+    }
+    await ca.close(); await cb.close();
+    await http.close();
+    setPacksForTest(null); setPackConfigsForTest([]);
   }
 
   F.setFeaturesForTest(null);

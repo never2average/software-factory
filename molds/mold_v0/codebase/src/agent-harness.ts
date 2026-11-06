@@ -10,6 +10,9 @@
  *               person sends while it works is one more line (steer), echoed back by the CLI as it takes it in
  *   beat        every few seconds: the lease, the cumulative spend (once per session: from the baseline a resumed
  *               session re-reports), the person's messages, pause, end and budget
+ *   workspace   the app's own customer MCP server (mold_v0-250): an --mcp-config naming it "workspace" at the API's /mcp,
+ *               its Authorization a ${RUN_WORKSPACE_TOKEN} reference to this wake's token (never written to a file), and
+ *               the workspace's context appended to the standing instructions
  *   policy      each tool call is checked against the session's policy: a web host not granted or a tool not allowed
  *               becomes a request and the wake stops (SIGTERM: the CLI flushes its session) awaiting the decision
  *   park        a conversation quiet for park_after_seconds, or past its wake's cap, closes stdin (a turn in progress
@@ -35,6 +38,20 @@ import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { linkTools, RUN_TOOL_CATALOG, verifyToolSet } from "./run-tools.js";
 import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-users.js";
 import { runIsolation, startRunProxy, type HarnessOptions, type RunnerClient, type RunProxy } from "./run-harness.js";
+
+/** The workspace's MCP server name the CLI gets (src/agent-harness-config.ts WORKSPACE_SERVER: the same word). */
+const WORKSPACE = "workspace";
+/** The wake's environment variable holding its workspace token, referenced from its MCP config. */
+export const WORKSPACE_TOKEN_ENV = "RUN_WORKSPACE_TOKEN";
+
+/**
+ * The MCP config a wake's CLI reads: the workspace's server over HTTP, its token by reference (Claude Code expands ${...}),
+ * its tools loaded up front (alwaysLoad, as the reference does: not deferred behind the CLI's own tool search, which the
+ * session's policy would have to ask for).
+ */
+export function workspaceMcpConfig(apiUrl: string): { mcpServers: Record<string, { type: "http"; url: string; alwaysLoad: boolean; headers: Record<string, string> }> } {
+  return { mcpServers: { [WORKSPACE]: { type: "http", url: `${apiUrl.replace(/\/+$/, "")}/mcp`, alwaysLoad: true, headers: { Authorization: `Bearer \${${WORKSPACE_TOKEN_ENV}}` } } } };
+}
 
 /** What the runner needs of the API for an agent wake (in-process, or over /api/worker/runs/:id/agent with the lease). */
 export interface AgentRunnerClient {
@@ -162,7 +179,7 @@ export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number):
 const hostRule = (h: string, rules: string[]) => rules.some((r) => (r.startsWith("*.") ? h === r.slice(2) || h.endsWith(`.${r.slice(2)}`) : h === r));
 
 /** Claude Code's argv for one wake: stream-json both ways, its echoes, the policy's tools, its hooks, its budget, its session. */
-export function claudeCommand(bin: string, w: WakeStart, hooksText: { append_system: string | null }): string[] {
+export function claudeCommand(bin: string, w: WakeStart, hooksText: { append_system: string | null }, mcpConfig: string | null = null): string[] {
   const p = w.policy;
   const allowed = [...p.tools];
   const web: string[] = [];
@@ -170,7 +187,7 @@ export function claudeCommand(bin: string, w: WakeStart, hooksText: { append_sys
   if (p.web.tools === "search") web.push("WebSearch");
   const builtin = [...p.tools.filter((t) => /^[A-Z]/.test(t)), ...(p.web.tools !== "off" ? ["WebFetch"] : []), ...(p.web.tools === "search" ? ["WebSearch"] : [])];
   const argv = [bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--replay-user-messages",
-    "--model", p.model, "--max-turns", String(p.max_turns), "--permission-mode", "dontAsk", "--setting-sources", "", "--strict-mcp-config",
+    "--model", p.model, "--max-turns", String(p.max_turns), "--permission-mode", "dontAsk", "--setting-sources", "", ...(mcpConfig ? ["--mcp-config", mcpConfig] : []), "--strict-mcp-config",
     "--tools", builtin.join(","), "--allowedTools", ...allowed, ...web];
   if (w.budget_usd > 0) argv.push("--max-budget-usd", String(Math.round(w.budget_usd * 100) / 100));
   if (hooksText.append_system) argv.push("--append-system-prompt", hooksText.append_system);
@@ -268,7 +285,23 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       writeFileSync(path.join(hooksDir, h.event, "source"), h.source + "\n");
       if (h.text) writeFileSync(path.join(hooksDir, h.event, "prompt.md"), h.text + "\n");
     }
-    const appendSystem = policy.hooks?.find((h) => h.event === "append_system")?.text ?? null;
+    // The standing instructions: the hook's text, then (mold_v0-250) what the session was given of its workspace.
+    const hookSystem = policy.hooks?.find((h) => h.event === "append_system")?.text ?? null;
+    const appendSystem = [hookSystem, w.workspace ? policy.workspace?.context?.text : null].filter(Boolean).join("\n\n") || null;
+    if (w.workspace && policy.workspace?.context?.text) {
+      mkdirSync(path.join(hooksDir, "append_system"), { recursive: true });
+      writeFileSync(path.join(hooksDir, "append_system", "workspace.md"), policy.workspace.context.text + "\n");
+    }
+    // The workspace's tools: its MCP config (the token stays in the environment, by reference).
+    let mcpConfig: string | null = null;
+    if (w.workspace) {
+      secrets.push({ name: "workspace token", value: w.workspace.token });
+      const dir = path.join(scratch, "mcp");
+      mkdirSync(dir, { mode: 0o700 });
+      mcpConfig = path.join(dir, "config.json");
+      writeFileSync(mcpConfig, JSON.stringify(workspaceMcpConfig(claim.gateway.gateway_url)), { mode: 0o600 });
+      if (as) { chownTree(dir, as.uid, as.gid); }
+    }
     if (as) {
       chownTree(state, as.uid, as.gid);
       // The scratch is passed through (0711); what the agent reads in it is its own user's alone.
@@ -277,11 +310,11 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     // The program: the pinned run tool (or a test's stand-in).
     let argv: string[];
     let binDir: string | null = null;
-    if (opts.agentCli) argv = [opts.agentCli.command, ...opts.agentCli.args, ...claudeCommand("claude", w, { append_system: appendSystem }).slice(1)];
+    if (opts.agentCli) argv = [opts.agentCli.command, ...opts.agentCli.args, ...claudeCommand("claude", w, { append_system: appendSystem }, mcpConfig).slice(1)];
     else {
       const set = verifyToolSet([flavourTool(flavour)], { dir: opts.runTools?.dir, catalog: opts.runTools?.catalog ?? RUN_TOOL_CATALOG });
       binDir = linkTools(set.bins, path.join(scratch, "tools-bin"));
-      argv = claudeCommand(path.join(binDir, "claude"), w, { append_system: appendSystem });
+      argv = claudeCommand(path.join(binDir, "claude"), w, { append_system: appendSystem }, mcpConfig);
     }
     // Egress: the run's proxy (or its sandbox's own, behind the firewall), as for every run.
     const mode = opts.egress ?? "proxy";
@@ -290,7 +323,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
     const env: Record<string, string> = {
       PATH: [binDir, "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":"), HOME: home, LANG: "C.UTF-8",
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_HOOKS_DIR: hooksDir, DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1",
-      ...claim.gateway.env, ...(proxy?.env ?? {}),
+      ...claim.gateway.env, ...(proxy?.env ?? {}), ...(w.workspace ? { [WORKSPACE_TOKEN_ENV]: w.workspace.token, ENABLE_TOOL_SEARCH: "false" } : {}),
     };
     // A resumed session's running total restarts from its saved figure: reports are reduced by min(saved, charged).
     const baseline = w.resume ? resumedBaseline(savedSessionCost(path.join(home, ".claude"), w.resume), w.charged_usd) : 0;
@@ -347,7 +380,10 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
           if (c.ok) { if (c.web) s.webCalls++; continue; }
           if ("limit" in c) { await say(`the session used its ${policy.web.calls_max} web calls`); stop({ reason: "web_limit" }); return; }
           // Outside its policy: asked, and the wake stops for the decision (the egress proxy refuses the host meanwhile).
-          await agent.request(run.id, lease, { ...c.request, detail: { tool: u.name, ...(u.name === "WebFetch" ? { url: clean(String(u.input.url ?? "")).slice(0, 500) } : {}) } });
+          // A workspace tool (mold_v0-250): what it wanted to send, so the person sees the change before approving it.
+          const own = u.name.startsWith(`mcp__${WORKSPACE}__`) ? u.name.slice(`mcp__${WORKSPACE}__`.length) : null;
+          await agent.request(run.id, lease, { ...c.request, detail: { tool: u.name, ...(u.name === "WebFetch" ? { url: clean(String(u.input.url ?? "")).slice(0, 500) } : {}),
+            ...(own ? { workspace_tool: own, input: clean(JSON.stringify(u.input)).slice(0, 1500) } : {}) } });
           stop({ reason: "awaiting", detail: `${c.request.kind} ${c.request.subject}` });
           return;
         }

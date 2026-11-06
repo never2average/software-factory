@@ -14,10 +14,38 @@
 //   die             exits 3 without answering (the harness's own failure: a crash)
 //   budget          the turn ends on the CLI's own budget (subtype error_max_budget_usd)
 //   pwd             the answer is "Working in <its working directory>." (what a model would see of the path)
+//   standing        the answer says what it was given (mold_v0-250): "Standing: <n> characters; workspace: yes|no; servers:
+//                   <names>; token: set|unset" (the --append-system-prompt, the --mcp-config file, the token's variable)
+//   mcp <tool> <json>  a call of the workspace's tool (mold_v0-250): a tool_use of mcp__workspace__<tool> (the harness checks
+//                   it against the policy, as with any tool), then the call itself over HTTP to the server --mcp-config
+//                   names, its ${...} header expanded from the environment as the real CLI does; the answer is
+//                   "MCP <tool>: <the result's text>" or "MCP <tool> refused: <why>"
 // Its answer is "Echo: <the turn's text>"; a resumed session's first answer starts "(resumed <id>) ".
 // --script <file> (the lane shots): a JSON list of {match, say, delay_ms, fetch, cost}; the first whose match (a regular
 // expression) finds the turn's text decides the turn instead: its words, how long it takes, a WebFetch it makes first.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+
+/** The workspace server's config (--mcp-config), its headers' ${VAR} expanded from the environment. */
+function workspaceServer() {
+  const f = arg("--mcp-config");
+  if (!f || !existsSync(f)) return null;
+  const s = JSON.parse(readFileSync(f, "utf8")).mcpServers?.workspace;
+  if (!s) return null;
+  const headers = Object.fromEntries(Object.entries(s.headers ?? {}).map(([k, v]) => [k, String(v).replace(/\$\{([A-Z0-9_]+)\}/g, (_, n) => process.env[n] ?? "")]));
+  return { url: s.url, headers };
+}
+/** One tools/call to the workspace's server (stateless streamable HTTP: JSON or one SSE event back). */
+async function callWorkspace(tool, args) {
+  const s = workspaceServer();
+  if (!s) return "no workspace server";
+  const r = await fetch(s.url, { method: "POST", headers: { ...s.headers, "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: args } }) });
+  const t = await r.text();
+  const json = t.trim().startsWith("{") ? JSON.parse(t) : JSON.parse((t.split("\n").find((l) => l.startsWith("data:")) ?? "data: {}").slice(5));
+  if (json.error) return `refused: ${json.error.message}`;
+  const text = (json.result?.content ?? []).map((c) => c.text ?? "").join(" ").replace(/\s+/g, " ");
+  return json.result?.isError ? `error: ${text}` : text;
+}
 import path from "node:path";
 import { createInterface } from "node:readline";
 
@@ -38,6 +66,7 @@ const save = () => appendFileSync(transcript, JSON.stringify({ type: "cost-state
 process.on("SIGTERM", () => { save(); process.exit(143); });
 say({ type: "system", subtype: "init", model: arg("--model") ?? "", cwd: process.cwd() });
 let first = true, turns = 0;
+const mcpSaid = [];
 const lines = [];
 let busy = false, ended = false;
 const rl = createInterface({ input: process.stdin });
@@ -80,12 +109,21 @@ async function turn(m) {
       say({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${turns}`, content: "ok" }] } });
       say({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Read ${new URL(f[1]).hostname}.` }] } });
     }
+    const mc = /^mcp (\S+)(?: (.+))?$/.exec(w);
+    if (mc) {
+      say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `m${turns}`, name: `mcp__workspace__${mc[1]}`, input: mc[2] ? JSON.parse(mc[2]) : {} }] } });
+      await new Promise((r) => setTimeout(r, 300));
+      const got = await callWorkspace(mc[1], mc[2] ? JSON.parse(mc[2]) : {}).catch((e) => `failed: ${e.message}`);
+      mcpSaid.push(got.startsWith("refused: ") ? `MCP ${mc[1]} refused: ${got.slice(9)}` : `MCP ${mc[1]}: ${got.slice(0, 4000)}`);
+    }
     const u = /^use (\S+)/.exec(w);
     if (u) { say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `u${turns}`, name: u[1], input: {} }] } }); await new Promise((r) => setTimeout(r, 300)); }
   }
   turns++;
   total = Math.round((total + cost) * 1e6) / 1e6;
-  const said = /^pwd$/m.test(text) ? `Working in ${process.cwd()}.` : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
+  const standing = () => { const sys = arg("--append-system-prompt") ?? ""; const srv = workspaceServer();
+    return `Standing: ${sys.length} characters; workspace: ${/## This workspace/.test(sys) ? "yes" : "no"}; servers: ${srv ? "workspace" : "none"}; token: ${process.env.RUN_WORKSPACE_TOKEN ? "set" : "unset"}`; };
+  const said = mcpSaid.length ? mcpSaid.splice(0).join("\n") : /^standing$/m.test(text) ? standing() : /^pwd$/m.test(text) ? `Working in ${process.cwd()}.` : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
   const reply = `${first && resume ? `(resumed ${resume}) ` : ""}${said}`;
   first = false;
   say({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: reply }] } });

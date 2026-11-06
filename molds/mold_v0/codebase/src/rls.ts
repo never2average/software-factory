@@ -103,7 +103,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // A company's own email (mold_v0-192, 0034_company_email): its sender, mailboxes (sealed secrets) and intake ledger.
   "workspace_email_senders", "workspace_email_inboxes", "workspace_email_messages",
   // The workspace agent's platform settings' change history (mold_v0-243, 0044_harness_sessions): staff bookkeeping.
-  "platform_setting_changes"];
+  "platform_setting_changes",
+  // The workspace agent's tool tokens (mold_v0-250, 0047_harness_session_tokens): minted and checked by the shell's code only.
+  "harness_session_tokens"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

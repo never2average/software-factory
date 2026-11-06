@@ -22,7 +22,8 @@ const wrap = <A>(fn: (a: A) => Promise<{ content: { type: "text"; text: string }
 const brief = (s: H.SessionView) => `${s.title} (${s.id}): ${s.phase.replace("_", " ")}, $${s.spent_usd.toFixed(2)} of $${s.budget_usd.toFixed(2)}${s.pending_request ? `; waiting on ${s.pending_request.kind} ${s.pending_request.subject}` : ""}`;
 
 export function registerAgentTools(server: McpServer, org: Org) {
-  if (!agentHarnessOn() || org.staff) return;
+  // A session's own token (mold_v0-250) never reaches these: an agent does not start, steer or approve sessions.
+  if (!agentHarnessOn() || org.staff || org.agentSession) return;
   const id = z.string().describe("The session's id (hss_..., list_agent_sessions)");
   server.registerTool("list_agent_sessions", {
     title: "List agent sessions",
