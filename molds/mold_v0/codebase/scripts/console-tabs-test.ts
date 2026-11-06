@@ -765,7 +765,13 @@ export function Probe({ on }: { on: () => void }) {
     // the layout's type (web/src/features/records/detail-layout.ts) and the page draws it.
     const pagesWeb = path.join(buildCopy("pages", ["fixture_pages"], (packs) => writeFileSync(path.join(path.dirname(packs), "profile.json"), JSON.stringify({ features: { record_pages: true } }))), "web");
     assert.match(readFileSync(path.join(pagesWeb, "src", "config", "pack-nav.generated.ts"), "utf8"), /"detail":/, "the laid-out build's registry carries its layouts");
-    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"], [pagesWeb, "laid-out record pages (record_pages on)"]] as const) {
+    // mold_v0-259: teams and record visibility on (fixture_teams, teams and record_pages): the Teams tab's kind and each
+    // area's visibility reach the console's registry, and its pages draw them.
+    const teamsWeb = path.join(buildCopy("teams", ["fixture_teams"], (packs) => writeFileSync(path.join(path.dirname(packs), "profile.json"), JSON.stringify({ features: { record_pages: true, teams: true } }))), "web");
+    const teamsNav = readFileSync(path.join(teamsWeb, "src", "config", "pack-nav.generated.ts"), "utf8");
+    assert.match(teamsNav, /"visibility":/, "the teams build's registry carries each area's visibility");
+    assert.match(teamsNav, /'teams' \| 'area'/, "and the Teams tab's kind");
+    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"], [pagesWeb, "laid-out record pages (record_pages on)"], [teamsWeb, "teams and record visibility (teams on)"]] as const) {
       const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: w, encoding: "utf8" });
       assert.equal(r.status, 0, `the console typechecks with ${what}: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
       console.log(`✓ the build copy's console typechecks with ${what}`);

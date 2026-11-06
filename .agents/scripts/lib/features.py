@@ -142,7 +142,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 16 and len(set(ids(root))) == 16, "the registry names 16 flags, each once")
+    ok(len(flags) == 17 and len(set(ids(root))) == 17, "the registry names 17 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -161,6 +161,8 @@ def self_test(root):
     related_col = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "project"}]}],
                     "tabs": [{"id": "projects", "kind": "area", "area": "projects", "columns": ["owner", {"related": {"area": "builds"}, "show": "count"}]}]}]
     ok("pages" in words(effective({"features": {"record_pages": True}}, related_col, root)), "a tab column computed from related records asks for record pages (mold_v0-256)")
+    ok("teams" not in words(effective({}, [], root)) and "teams" in words(effective({"features": {"teams": True}}, [], root)),
+       "teams and record visibility: off by default, on when the profile says (mold_v0-259)")
     ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")

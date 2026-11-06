@@ -13,7 +13,7 @@
  */
 import type { AccountRole } from "./account-roles.js";
 import { PackError, type RecordInput, type RecordOperation, type RecordQuery } from "./pack-api.js";
-import { adminRecords, areaOrThrow, areaSummary, asWriterUnlessSet, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, workspaceRecords, type Actor } from "./record-areas.js";
+import { adminRecords, areaOrThrow, areaSummary, asWriterUnlessSet, detailFor, getPlatform, listFor, listPlatform, recordAreas, revealFor, shareFor, workspaceRecords, type Actor } from "./record-areas.js";
 
 /** Who a workspace call is for: the workspace (from the session or key, never from input), the person's role and id. */
 export interface DataCaller { orgId: number; role: AccountRole | null; userId: string | null }
@@ -28,7 +28,8 @@ const asPeople = <T>(c: DataCaller, fn: () => T): T => asWriterUnlessSet({ by: "
 const input = (v: unknown): RecordInput => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new PackError("give {title?, data}", 400);
   const o = v as Record<string, unknown>;
-  return { title: o.title as string | null | undefined, data: (o.data ?? {}) as Record<string, unknown> };
+  // mold_v0-259 (flag teams): who sees it, when the area declares visibility (the record store checks it).
+  return { title: o.title as string | null | undefined, data: (o.data ?? {}) as Record<string, unknown>, ...(o.visibility !== undefined ? { visibility: o.visibility as RecordInput["visibility"] } : {}) };
 };
 const platformArea = (name: string) => {
   const a = areaOrThrow(name);
@@ -57,6 +58,8 @@ export const dataApi = {
   delete: (c: DataCaller, area: string, key: string) => asPeople(c, () => recordsFor(c, area).delete(area, key)),
   /** The values of a record's encrypted fields (mold_v0-194), for the roles allowed to reveal them; recorded in the data trail. */
   reveal: (c: DataCaller, area: string, key: string, fields?: unknown) => revealFor(c.orgId, area, key, fields, actorOf(c)),
+  /** mold_v0-259 (flag teams): change who sees a record, nothing else of it (its owner, a lead of its team, an owner). */
+  share: async (c: DataCaller, area: string, key: string, visibility: unknown) => ({ record: await asPeople(c, () => shareFor(c.orgId, area, key, visibility, actorOf(c))) }),
   /** Several writes to one pack's workspace areas as one transaction: every one of them, or none. */
   batch: async (c: DataCaller, ops: unknown) => {
     if (!Array.isArray(ops) || !ops.length) throw new PackError("operations: a list of 1 or more {op, area, key, ...}", 400);

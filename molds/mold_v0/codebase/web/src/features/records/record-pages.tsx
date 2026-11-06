@@ -37,16 +37,21 @@ import { featureOn } from '@/config/features';
 import { LINKED_PARAM, layoutOf, parseLinked } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
 import { RowCreateActions } from './row-create';
+import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilityRule, type RecordVisibility } from '@/features/teams/visibility';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
   /** A shared row on the staff pages (mold_v0-221, src/record-areas.ts Provenance): staff's or its repository's, and what a staff override stands over. */
-  provenance?: Provenance };
+  provenance?: Provenance;
+  /** mold_v0-259 (flag teams): who sees it, on an area that declares visibility. */
+  visibility?: RecordVisibility };
 export type Provenance = { by: 'staff' | 'repository'; repository: string | null; overrides: { title: string | null; version: string | null } | null };
 export type Page = { records: RecordRow[]; next: string | null };
 type Detail = { record: RecordRow; links: { field: string; area: string; records: { key: string; title: string | null }[] }[]; clock_events?: ClockEvent[];
   /** A workspace record's writer (mold_v0-236, src/record-areas.ts RowProvenance): where it came from. */
-  provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null } };
+  provenance?: { by: 'staff' | 'people' | 'repository' | 'intake' | 'run' | null; written_by: string | null; updated_by: string | null };
+  /** mold_v0-259 (flag teams): whether this person may change who sees it (Share). */
+  can_share?: boolean };
 /** Where a workspace record came from, in words (mold_v0-236). */
 const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
@@ -236,8 +241,11 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // a rule of the Filter menu (its column added, hidden, when the list does not show it); removing it drops the address's.
   const [linkedParam, setLinkedParam] = useQueryState(LINKED_PARAM);
   const linked = featureOn('record_pages') && !source ? parseLinked(linkedParam, area) : null;
+  // mold_v0-259 (flag teams): an area that declares visibility lists who sees each record, a column the Filter menu filters.
+  const visible = base === 'app' && !source && !!visibilityOf(area);
   const cols = useMemo(() => {
-    const own = columnsOf(area, source, linked ? [linked.field] : []);
+    const plain = columnsOf(area, source, linked ? [linked.field] : []);
+    const own = visible ? [...plain, visibilityColumn<RecordRow>(data?.records ?? [])] : plain;
     if (!related) return own;
     // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
     const values = relatedValues.data ?? {};
@@ -258,7 +266,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       };
     });
     return placeColumns(own, extra);
-  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error]);
+  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error, visible, data]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
@@ -266,11 +274,15 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const clocked = !!area.clocks?.length;
   const overdueRule = (r: FilterRule) => r.key === OVERDUE_COL && r.op === 'true';
   const linkedList = linked ? !!(area.fields.find((f) => f.name === linked.field)?.multiple || area.fields.find((f) => f.name === linked.field)?.type === 'link') : false;
+  // mold_v0-259: ?visibility=workspace|private|team:<name> (a team's page links to its records' list) is a Filter rule.
+  const [visibilityParam, setVisibilityParam] = useQueryState('visibility');
+  const visRule = visible ? visibilityRule(visibilityParam) : null;
   const initialRules = useMemo(() => {
     const rules = [...(clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : []),
-      ...(linked ? [{ id: 'linked', key: linked.field, op: (linkedList ? 'contains' : 'is') as 'contains' | 'is', value: linked.key }] : [])];
+      ...(linked ? [{ id: 'linked', key: linked.field, op: (linkedList ? 'contains' : 'is') as 'contains' | 'is', value: linked.key }] : []),
+      ...(visRule ? [visRule] : [])];
     return rules.length ? rules : undefined;
-  }, [clocked, overdueParam, linked?.field, linked?.key, linkedList]);
+  }, [clocked, overdueParam, linked?.field, linked?.key, linkedList, visRule?.value]); // eslint-disable-line react-hooks/exhaustive-deps
   const shown = data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
@@ -281,6 +293,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       initialRules={initialRules} onRulesChange={(r) => {
         if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
         if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);
+        if (visibilityParam && !r.some((x) => x.id === 'visibility')) void setVisibilityParam(null);
       }}
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
@@ -307,6 +320,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       detail={(r) => (<>
         <dl>
           {detailNote?.(r)}
+          {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}
           {r.version && <Field label='Version'>{r.version}</Field>}
           {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name) && !isStoredFile(f, r.data[f.name])).map((f) => (
             <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} recordKey={r.key} /></Field>
@@ -369,7 +383,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
         <LaidOutRecord area={area} base={base} layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
-          provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} />
+          provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} canShare={!!data.can_share} />
       )}
     </PageContainer>
   );
@@ -386,6 +400,15 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
               <Field label='Key'><span className='font-mono text-xs break-all'>{data.record.key}</span></Field>
               {data.record.version && <Field label='Version'>{data.record.version}</Field>}
               {data.provenance?.by && <Field label='Added by'>{ADDED_BY[data.provenance.by] ?? data.provenance.by}</Field>}
+              {/* mold_v0-259 (flag teams): who sees it, and Share for the people who may change it. */}
+              {base === 'app' && data.record.visibility && visibilityOf(area) && (
+                <Field label='Who sees it'>
+                  <span className='flex flex-wrap items-center gap-2' data-record-visibility=''>
+                    <VisibilityBadge v={data.record.visibility} />
+                    <ShareButton area={area} recordKey={data.record.key} visibility={data.record.visibility} canShare={!!data.can_share} onShared={() => void reload()} />
+                  </span>
+                </Field>
+              )}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
                 <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} recordKey={data.record.key} /></span></Field>
               ))}

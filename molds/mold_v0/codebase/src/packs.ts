@@ -29,6 +29,7 @@ import { hostToolNames, memoryToolNames } from "./host.js";
 import { INTAKE_TOOL_NAMES } from "./shell-tools.js";
 import { intakeTools } from "./email-intake.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
+import { asViewerOf } from "./visibility.js";
 
 /** What gen-packs copies from a pack's pack.json into the registry. */
 export interface PackManifest {
@@ -250,7 +251,8 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
       runs: declaredRuns(pack, workspaceRuns(pack, org.orgId, org.userId ?? null, org), org.orgId, { role: org.role ?? null, userId: org.userId ?? null }) };
     // mold_v0-236: a pack's own tool writes as the pack's code (provenance run); the shell's tools (the generated ones
     // write through the data API) as the person they are called for.
-    const call = () => withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
+    // mold_v0-259 (flag teams): as the person reads (src/visibility.ts): every tool, the workspace agent's included.
+    const call = () => withTenant(org.orgId, () => asViewerOf({ role: org.role ?? null, userId: org.userId ?? null }, () => t.handler(ws, args ?? {}, ctx)));
     const own = !!packs().find((p) => p.id === pack)?.definition.tools?.includes(t as never);
     const value = await (own ? asWriter({ by: "run", id: `tool:${t.name}` }, call) : call());
     // The size cap and the call's record with its sizes (mold_v0-018, 008).

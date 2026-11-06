@@ -12,6 +12,8 @@ import { JourneyError, journeyRoutes, journeysLargeBody } from "./journeys.js";
 import { TipError, tipRoutes } from "./tips.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { withTenant } from "./tenant-scope.js";
+import { asViewerOf, teamsOn } from "./visibility.js";
+import { leaveAllTeams } from "./teams.js";
 import { workspaceCharges } from "./run-charges.js";
 import { z } from "zod";
 import * as admin from "./admin.js";
@@ -514,8 +516,9 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   res.locals.memberships = ms;
   // Pack routes (src/pack-routes.ts) ask cookie-authenticated changes for a CSRF header.
   res.locals.viaCookie = c.viaCookie;
-  // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only.
-  withTenant(org.orgId, () => next());
+  // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only; mold_v0-259
+  // (flag teams): and, for a person who is not one of its owners, only the records they may see (src/visibility.ts).
+  withTenant(org.orgId, () => asViewerOf({ role: s.accountRole ?? null, userId: s.user ?? null }, () => next()));
 }
 
 export function appRouter() {
@@ -608,7 +611,11 @@ export function appRouter() {
     need(res, "team");
     const t = await admin.team(S(res).slug, true);
     if (t.members.find((m) => m.id === req.params.id)?.user_id === S(res).user) throw new AppError("You cannot remove yourself");
-    res.json(await admin.removeMember(actor(res), S(res).slug, String(req.params.id)));
+    const gone = t.members.find((m) => m.id === req.params.id)?.user_id;
+    const out = await admin.removeMember(actor(res), S(res).slug, String(req.params.id));
+    // mold_v0-259 (flag teams): someone who leaves the workspace leaves its teams (each change kept).
+    if (gone && teamsOn()) await leaveAllTeams(S(res).org, S(res).user ?? null, gone).catch((e) => console.error(`teams: ${(e as Error).message}`));
+    res.json(out);
   });
   api.post("/team/members/:id/role", async (req, res) => {
     need(res, "team");

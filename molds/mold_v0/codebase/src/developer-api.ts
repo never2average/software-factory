@@ -41,7 +41,8 @@ import { PackError } from "./pack-api.js";
 import { hit, limitsFor, planOf } from "./rate-limits.js";
 import { areaOrThrow } from "./record-areas.js";
 import { cancelRun, getRun, jobKinds, runResults, startRun } from "./runs.js";
-import { asPlatform, withTenant } from "./tenant-scope.js";
+import { asPlatform, withTenant, withViewer } from "./tenant-scope.js";
+import { API_VIEWER, teamsOn } from "./visibility.js";
 
 const STATUS_CODE: Record<number, string> = { 400: "invalid_request", 401: "unauthenticated", 403: "forbidden", 404: "not_found", 405: "method_not_allowed", 409: "conflict",
   413: "too_large", 415: "unsupported_media_type", 422: "unprocessable", 429: "rate_limited", 503: "unavailable" };
@@ -83,7 +84,8 @@ type Answer = { status: number; body?: unknown };
 const h = (fn: (req: Request, res: Response) => Promise<Answer>) => async (req: Request, res: Response) => {
   try {
     const c = callerOf(res);
-    const run = () => withTenant(c.orgId, () => asApiActor(c.actor, () => fn(req, res)));
+    // mold_v0-259 (flag teams): a workspace's backend is no person of it: the records open to the whole workspace.
+    const run = () => withTenant(c.orgId, () => withViewer(teamsOn() ? API_VIEWER : null, () => asApiActor(c.actor, () => fn(req, res))));
     const a = await idempotent(req, res, c, run);
     if (a.status === 204) return void res.status(204).end();
     res.status(a.status).json(a.body);
