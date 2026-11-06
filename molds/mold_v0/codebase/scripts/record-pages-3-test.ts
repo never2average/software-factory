@@ -292,7 +292,7 @@ const note = (id: string, text: string) => { const p = document.createElement('p
 
 // ---------------------------------------------------------------- c. how it draws (source)
 {
-  const dp = strip(src("features/records/detail-page.tsx")), ta = strip(src("features/tabs/tab-action.tsx")), lv = strip(src("features/records/log-viewer.tsx"));
+  const dp = strip(src("features/records/detail-page.tsx")), ta = strip(src("features/tabs/tab-action.tsx")), sp = strip(src("features/tabs/side-panel.tsx")), lv = strip(src("features/records/log-viewer.tsx"));
   const rp = strip(src("features/runs/run-page.tsx")), cv = strip(src("features/records/code-view.tsx")), hs = strip(src("features/records/history-section.tsx")), fb = strip(src("features/records/file-browser.tsx"));
   assert.doesNotMatch(dp, /data-section-count|relatedCountWords|runsCountWords|First \$\{|Latest \$\{/, "no count beside a section's title");
   assert.match(dp, /const unit = f\.type === 'number' \? columnUnit\(target, f\.name\) : undefined;/, "a related list's number with its unit");
@@ -303,10 +303,11 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.match(dp, /const runHref = \(_pack: string, id: string\) => `\/app\/runs\/\$\{encodeURIComponent\(id\)\}`;/, "a record's runs link to the run's own page");
   assert.match(strip(src("features/tabs/runs.tsx")), /featureOn\('record_pages'\) && <Button variant='outline' size='sm' render=\{<Link href=\{`\/app\/runs\/\$\{encodeURIComponent\(r\.id\)\}`\} \/>\} data-open-run/, "a runs list's open run: Open run, only with the flag");
   // The side panel.
-  const host = /export function FormHost\b[\s\S]*?\n\}\n/.exec(ta)?.[0] ?? "";
+  const host = /export function FormHost\b[\s\S]*?\n\}\n/.exec(sp)?.[0] ?? "";
   assert.match(host, /const inPanel = open && panel && featureOn\('side_panel_forms'\) && !expanded;/, "a panel only with the flag, for a create or edit form, until expanded");
   assert.match(host, /\{card\}\s*\{!open \|\| inPanel \? children : null\}/, "the card first, always in one place (expanding keeps it mounted: the typed values stay); the list stays beneath the panel");
-  const panel = /function SidePanelForm\b[\s\S]*?\n\}\n/.exec(ta)?.[0] ?? "";
+  const panel = /function SidePanelForm\b[\s\S]*?\n\}\n/.exec(sp)?.[0] ?? "";
+  assert.doesNotMatch(ta, /fixed|<Sheet|Dialog|Popover/, "the list actions' module stays free of anything fixed or a dialog (mold_v0-217): the panel is its own module");
   assert.match(panel, /role='dialog' aria-modal='true' aria-labelledby='side-panel-title'/, "a modal dialog, named by its title");
   assert.match(panel, /if \(e\.key === 'Escape' && !asking\) \{[^}]*close\(\);/, "Esc closes it");
   assert.match(panel, /const close = \(\) => \(dirty \? setAsking\(true\) : c\.cancel\(\)\);/, "closing with unsaved changes asks first");
