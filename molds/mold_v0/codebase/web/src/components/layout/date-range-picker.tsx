@@ -57,10 +57,10 @@ export function DateRangePicker({ value, onChange, className }: { value: DateRan
           <ul className='flex shrink-0 flex-col gap-0.5 border-r p-2 max-sm:flex-row max-sm:flex-wrap max-sm:border-r-0 max-sm:border-b sm:w-40'>
             {PRESETS.map((p) => (
               <li key={p.id}>
-                <button type='button' onClick={() => apply(p.range())}
-                  className={cn('hover:bg-muted w-full rounded-md px-2.5 py-1.5 text-left text-sm leading-none', active === p.id && 'bg-primary/15 text-primary font-medium')}>
+                <Button variant='ghost' size='sm' onClick={() => apply(p.range())}
+                  className={cn('w-full justify-start font-normal', active === p.id && 'bg-primary/15 text-primary border-primary/40 font-medium')}>
                   {p.label}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

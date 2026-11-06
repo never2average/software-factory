@@ -17,6 +17,7 @@ OPTIONS
                          targets   responsiveness/responsive.mjs --only targets  (tap.targets)
                          viewports responsiveness/responsive.mjs (layout and targets)
                          shots     console/shots.mjs: a full-page screenshot per page at 390 and 1280 px (--shots-dir)
+                         outlines  console/outlines.mjs: every button and text box outlined, light and dark (mold_v0-251)
                          <path>    any harness exporting run(ctx); it gets the arguments after `--`
                        the exit code is the worst of them; each prints its own tables under a `== suite: <item>` heading
   --pages all          every page the build serves (the default; what the lanes run, and the end-of-train sweep)
@@ -65,6 +66,7 @@ SUITE = {
     "targets": (os.path.join(TESTING, "responsiveness", "responsive.mjs"), ["--only", "targets"]),
     "viewports": (os.path.join(TESTING, "responsiveness", "responsive.mjs"), []),
     "shots": (os.path.join(HERE, "shots.mjs"), []),
+    "outlines": (os.path.join(HERE, "outlines.mjs"), []),
 }
 
 

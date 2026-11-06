@@ -359,6 +359,6 @@ function TickPeek({ t, onOrch }: { t: Tick; onOrch: (row: number) => void }) {
 /** An orchestrator named in a tick: opens its row in the Orchestrators table when there is one. */
 function OrchRef({ row, onOrch, children }: { row: number | null; onOrch: (row: number) => void; children: ReactNode }) {
   return row
-    ? <button type='button' onClick={() => onOrch(row)} className='font-mono text-xs hover:underline' title='Show this orchestrator'>{children}</button>
+    ? <Button variant='ghost' size='xs' onClick={() => onOrch(row)} className='font-mono font-normal' title='Show this orchestrator'>{children}</Button>
     : <Mono>{children}</Mono>;
 }

@@ -23,7 +23,7 @@ function NavTree({ groups, onNavigate }: { groups: DocNavGroup[]; onNavigate?: (
       return n;
     });
   return (
-    <nav aria-label='Docs pages' className='flex flex-col gap-3'>
+    <nav aria-label='Docs pages' data-sidebar-nav='' className='flex flex-col gap-3'>
       {groups.map((g, gi) => {
         const open = !closed.has(g.title);
         return (

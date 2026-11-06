@@ -297,7 +297,7 @@ function JourneyMenu({ setup, journeys, selected, onSelect }: { setup: { done: n
     <Popover open={open} onOpenChange={openChange}>
       <PopoverTrigger data-journey-menu render={<button type='button' aria-haspopup='listbox' aria-expanded={open} aria-controls={open ? listId : undefined}
         onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openChange(true); } }}
-        className='hover:bg-muted/60 focus-visible:ring-ring -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-left outline-hidden focus-visible:ring-2' />}>
+        className='border-border hover:bg-muted/60 focus-visible:ring-ring -mx-2 inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left outline-hidden focus-visible:ring-2' />}>
         {/* A short name stays on one line (the heading sizes to it); a long one wraps at its spaces. */}
         <span className={current.name.length > 28 ? 'break-words' : 'whitespace-nowrap'}>{current.name}</span>
         <span className='text-muted-foreground shrink-0 text-xs font-normal tabular-nums'>{current.done}/{current.total}</span>
@@ -503,7 +503,7 @@ function TipsSection() {
               </div>
             )}
             <div className='flex items-center gap-2'>
-              {n.link && <Button variant='link' size='sm' className='px-0' render={<a href={safe(n.link)} />}>Open</Button>}
+              {n.link && <Button variant='outline' size='xs' render={<a href={safe(n.link)} />}>Open</Button>}
               <span className='flex-1' />
               <Button variant='ghost' size='sm' onClick={() => appApi('POST', `/nudges/${n.id}/dismiss`).then(load).catch(fail)}>Dismiss</Button>
             </div>

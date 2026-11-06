@@ -135,9 +135,9 @@ export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unkno
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel(); } }}>
         <CardHeader className='border-b py-4 [.border-b]:pb-4'>
           <CardDescription>
-            <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={cancel}>
+            <Button variant='outline' size='sm' onClick={cancel}>
               <Icons.chevronLeft className='size-3.5' />Back to the list
-            </button>
+            </Button>
           </CardDescription>
           <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{c?.title}</CardTitle>
           {c?.description && <p className='text-muted-foreground text-sm'>{c.description}</p>}

@@ -34,11 +34,17 @@
 //    done the same page, every step checked. Screenshots with CONSOLE_TABS_SNAPSHOT_DIR (home-*.png).
 // 5b. One checklist (mold_v0-146): the setup steps and the pack's steps merged into one ordered list (setup-steps.ts:
 //    the shell's first, a pack step that stands for a shell step takes its place, the shell steps after it follow it).
+// 6. Every button has a visible outline (mold_v0-251; scripts/console-outlines.ts): the shared Button's variants (ghost and
+//    link included) and the toggle's draw a coloured border on all four sides, no class handed to them drops it, no raw
+//    <button> or trigger goes without one, no <div>/<span> acts as a button; the sidebar's navigation is left as it is. And
+//    the scan catches each of those in a copy of the console with one put back (a ghost variant with no border, a raw
+//    <button>, a <span role='button'>, a Button handed border-0). In a browser: testing/console/outlines.mjs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { scanOutlines } from "./console-outlines.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TMP = mkdtempSync(path.join(tmpdir(), "console-tabs-"));
@@ -708,6 +714,47 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       `the build lists a Settings tab with none its area does not say: ${lastGen}`);
     assert.doesNotMatch(lastGen, /audit_notes|audit_extra|\(Settings › Owners\)/, "action: false with its reason is said; an area with its action is not listed");
     console.log("✓ an area's own lists (mold_v0-237): a Settings tab and a Records page add a record (Add <its singular>) where a workspace may; none for a shared area, a withheld create (listed as a warning on a Settings tab) or action: false with its action_reason; no reason in the console's registry");
+  }
+
+  // ---------- 6. every button has a visible outline (mold_v0-251) ----------
+  {
+    const found = scanOutlines(path.join(ROOT, "web", "src"));
+    assert.deepEqual(found, [], `every button in the console has an outline:\n${found.join("\n")}`);
+    // The top bar's controls are the shared outline variant, the workspace agent's icon too (the operator's call): its look
+    // comes from that variant alone (another app or workspace may swap its icon; nothing styles the icon itself).
+    for (const [f, name] of [["agent-button.tsx", "the workspace agent's"], ["docs-button.tsx", "Docs'"], ["theme-switcher.tsx", "the theme switcher's"]] as const) {
+      const t = readFileSync(path.join(ROOT, "web", "src", "components", "layout", f), "utf8");
+      assert.match(t, /<Button variant=(?:'outline'|\{active \? 'secondary' : 'outline'\})/, `${name} top-bar button is the shared Button's outline variant`);
+    }
+    assert.match(readFileSync(path.join(ROOT, "web", "src", "components", "layout", "agent-button.tsx"), "utf8"), /<Button variant='outline' className=\{cn\(TOP_BAR_CONTROL\)\}/,
+      "the workspace agent's button: the outline variant always (its open page shown by the variant's aria-current state), no colour of its own");
+    // The scan catches what it is for: a copy of the console's source with each kind of button put back without one.
+    const src = path.join(TMP, "outline-src");
+    cpSync(path.join(ROOT, "web", "src"), src, { recursive: true });
+    const button = path.join(src, "components", "ui", "button.tsx");
+    const b = readFileSync(button, "utf8");
+    const ghost = /ghost:\s*'border-border /;
+    assert.match(b, ghost, "the ghost variant draws the theme's border");
+    writeFileSync(button, b.replace(ghost, "ghost: '"));
+    const page = path.join(src, "features", "outline-probe.tsx");
+    writeFileSync(page, `import { Button } from '@/components/ui/button';
+export function Probe({ on }: { on: () => void }) {
+  return (<div>
+    <button type='button' className='text-muted-foreground hover:underline' onClick={on}>Clear</button>
+    <span role='button' tabIndex={0} onClick={on}>Filter</span>
+    <Button variant='outline' className='border-0' onClick={on}>Columns</Button>
+    <button type='button' role='tab' aria-selected onClick={on}>A tab</button>
+  </div>);
+}
+`);
+    const caught = scanOutlines(src).join("\n");
+    assert.match(caught, /components\/ui\/button\.tsx: variant 'ghost' draws no visible outline/, `a ghost variant without its border: ${caught}`);
+    assert.match(caught, /features\/outline-probe\.tsx:4: a raw <button> without an outline/, `a raw button: ${caught}`);
+    assert.match(caught, /features\/outline-probe\.tsx:5: <span role='button'> acts as a button/, `a span acting as a button: ${caught}`);
+    assert.match(caught, /features\/outline-probe\.tsx:6: <Button> handed `border-0`/, `a Button handed border-0: ${caught}`);
+    assert.doesNotMatch(caught, /outline-probe\.tsx:7/, "a tab is not a button: it keeps its own look");
+    assert.equal(caught.split("\n").length, 4, `exactly those four: ${caught}`);
+    console.log("✓ every button has a visible outline (mold_v0-251): the shared Button's and the toggle's variants draw a coloured border, no raw <button>, trigger or clickable <span>/<div> goes without one (the sidebar's navigation excepted); the top bar's buttons, the workspace agent's included, are the outline variant; the scan catches a ghost variant without its border, a raw button, a span acting as a button and a Button handed border-0, and leaves a tab alone");
   }
 
   // ---------- 4. the console typechecks with the tabs ----------
