@@ -39,10 +39,20 @@ offline, or to try a schema before it is on `main`, map files to the copy in you
 ```
 
 What the editor cannot see, the factory checks: a pack named by id or path is loaded and checked like an inline one, the
-logo file must be on this machine, each job kind's own budget must fit under the app's budgets, and the profile goes
+logo file (and an agent icon file) must be on this machine, each job kind's own budget must fit under the app's budgets, and the profile goes
 through the same check `factory.py validate` and the build use.
 
 ## Completeness rules (beyond required fields)
+
+- The brand (`product`): `name`, `colour` and `logo` are required; `tagline` and `domain` optional. mold_v0 also takes
+  `agent_icon` (mold_v0-252), the workspace agent's own icon on the console's top bar and the agent pages (shown while
+  `features.agent_harness` is on): a file from the factory's root (`brands/<name>/agent.svg`, or `.png`, `.jpg`, `.webp`;
+  at most 256 KB) or `icon:<name>`, one icon of the console's icon set (Tabler's outline icons, e.g. `icon:robot`), and
+  optionally `agent_icon_dark`, a file for the dark theme. An SVG is sanitised and, drawn in one colour, follows the
+  theme's text colour; a picture is fitted inside 64 px and shipped as a PNG, never wrapped in an SVG. Brief lines
+  `Agent icon: <file or icon:name>` and `Agent icon dark: <file>`; on an app, `branding.py <app> set --agent-icon <file>`
+  (or `--agent-icon-name <name>`, `--agent-icon-dark <file>`, `--agent-icon none`). Unset, the default icon stays. A
+  workspace owner may still upload the workspace's own in Settings › Workspace agent, over the app's for that workspace.
 
 - `kind` is `tool` (default) or `embedded`. **embedded** needs `developer_surface` (events it emits, SDK languages, client
   sessions, optional inbound receivers `webhooks_in` and `api_version`) and `audit.platform: true`. mold_v0 builds it

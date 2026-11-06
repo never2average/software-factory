@@ -133,3 +133,11 @@ Its three findings were fixed in mold_v0-246:
 - **Haiku priced.** `claude-haiku-5-5` and `claude-haiku-4-5` have rows (0045), and the gateway refuses a request for
   a model with no row (400, in words: nothing is sent) instead of metering it at $0.
 - **A stable working directory.** See "Working directory" above: the path is the session's, not the wake's.
+
+## The agent's icon (mold_v0-252)
+
+Everyone brings their own. The top bar's agent button (the shared outline button) and the agent pages' heading show, in
+order: the workspace's own (an owner uploads it in Settings › Workspace agent: an SVG, PNG, JPG or WebP of at most 256 KB;
+`src/agent-icon.ts` sanitises an SVG and resizes a picture, and keeps it sealed under the workspace's prefix), the app's
+(its brand: `branding.py <app> set --agent-icon <file>` or `--agent-icon-name <name>`, light and dark), else the default.
+An icon drawn in one colour follows the theme's text colour. Reset goes back to the app's. See MOLD.md "Workspace agent".

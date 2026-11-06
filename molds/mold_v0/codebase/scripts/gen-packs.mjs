@@ -1195,6 +1195,13 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         }
         continue;
       }
+      // The workspace agent's own icon (mold_v0-252): written by the factory's branding step (molds/mold_v0/branding/rules.json
+      // agent_icon) with its files under web/public/agent-icon/; into the console's profile module only (below).
+      if (k === "agent_icon") {
+        if (hostProfiles[0]?.host.profile?.agent_icon !== undefined) { fail(`packs/${hostProfiles[0].id}`, "host.profile may not set agent_icon: it is the app's brand (branding.py set --agent-icon)"); continue; }
+        const bad = agentIconProblem(v); if (bad) fail(rel(PROFILE_FILE), `agent_icon: ${bad}`); else profile[k] = v;
+        continue;
+      }
       // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
@@ -1216,7 +1223,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, agent_icon, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1669,6 +1676,28 @@ for (const [i, s] of (landingPage.landing?.sections ?? []).entries()) {
 const LOGO_DIR = path.join(OUT, "web", "public", "landing");
 const LOGO_MAX = 30 * 1024;
 const logoFiles = new Map();
+/**
+ * profile.json `agent_icon` (mold_v0-252): {light, dark, mask}, each address a file the branding step wrote under
+ * web/public/agent-icon/ (light|dark .svg|.png, ?v= the first 12 hex of its sha256); mask (painted in the text colour)
+ * only for two SVGs. An SVG there is a plain picture (svgProblem), a PNG at most 64 px a side.
+ */
+function agentIconProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).sort().join() !== "dark,light,mask" || typeof v.mask !== "boolean")
+    return "{light, dark, mask}, as the factory's branding step writes it (branding.py set --agent-icon)";
+  for (const theme of ["light", "dark"]) {
+    const m = /^\/agent-icon\/(light|dark)\.(svg|png)\?v=([0-9a-f]{12})$/.exec(String(v[theme]));
+    if (!m || m[1] !== theme) return `${theme}: an address /agent-icon/${theme}.svg|png?v=<hash>`;
+    if (v.mask && m[2] !== "svg") return "mask is for an icon drawn in currentColor, an SVG in both themes";
+    const file = path.join(ROOT, "web", "public", "agent-icon", `${theme}.${m[2]}`), st = lstatOr(file);
+    if (!st || !st.isFile()) return `${theme}: web/public/agent-icon/${theme}.${m[2]} is not in the build (run the factory's branding step)`;
+    const buf = readFileSync(file);
+    if (createHash("sha256").update(buf).digest("hex").slice(0, 12) !== m[3]) return `${theme}: web/public/agent-icon/${theme}.${m[2]} is not the file the profile names (run the branding step again)`;
+    if (buf.length > 64 * 1024) return `${theme}: the icon is over 64 KB`;
+    if (m[2] === "svg") { const bad = svgProblem(buf.toString("utf8")); if (bad) return `${theme}: ${bad}`; }
+    else if (!(buf.length > 24 && buf.subarray(1, 4).toString("latin1") === "PNG" && buf.readUInt32BE(16) <= 64 && buf.readUInt32BE(20) <= 64)) return `${theme}: not a PNG of at most 64 px a side`;
+  }
+  return null;
+}
 function svgProblem(text) {
   if (/<script\b|<foreignObject\b|<!ENTITY|<!DOCTYPE|<\?xml-stylesheet/i.test(text)) return "an SVG with a script, a foreign object, a doctype or an entity is not a picture: save it as a plain SVG";
   if (/\son[a-z]+\s*=/i.test(text)) return "an SVG with an event handler (on...=) is not a picture";
@@ -1956,6 +1985,8 @@ const SETTINGS_TABS = (() => {
     { id: "webhooks", label: "Webhooks", group: "connections", kind: "webhooks", on: !!developerFacts },
     { id: "integrations", label: "Integrations", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
     { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
+    // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
+    { id: "agent", label: "Workspace agent", group: "automation", kind: "agent", on: !!FEATURE_ON.agent_harness },
     { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },
   ].filter((t) => t.on).map(({ on: _o, ...t }) => t);
   const taken = new Set(shell.map((t) => t.id));
@@ -2390,7 +2421,7 @@ files.set(path.join(OUT, "web", "src", "lib", "shell-texts.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/shell-texts.ts (a copy, so the console has the shell's texts)") + readFileSync(path.join(HERE, "..", "src", "shell-texts.ts"), "utf8"));
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
-  `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
+  `export const GENERATED_PROFILE = ${json((({ agent_icon: _ai, ...p }) => p)(profile))} as const;\n`);
 // The emails' pitch (mold_v0-101): the landing block's hero subheadline, in a module of its own so the landing block
 // never reaches the profile modules (the MCP surface and the console's names).
 files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
@@ -2502,7 +2533,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const settingsPage = ${json({ credentials: SETTINGS_TABS.some((t) => t.id === "credentials"), email: SETTINGS_TABS.some((t) => t.id === "email") })};\n` +
   "\n/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */\n" +
   "export interface SettingsTabSpec {\n  id: string;\n  label: string;\n  group: 'access' | 'connections' | 'automation' | 'data_trust';\n" +
-  "  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | 'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n" +
+  // 'agent' (mold_v0-252) only while agent_harness is on: a quiet_off flag leaves the file as it was while off.
+  `  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | ${FEATURE_ON.agent_harness ? "'agent' | " : ""}'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n` +
   "/** Settings' tabs, in group order (Access, Connections, Automation, Data & trust), each group's shell tabs first. */\n" +
   `export const settingsTabs: SettingsTabSpec[] = ${json(SETTINGS_TABS)};\n` +
   "\n/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */\n" +
@@ -2565,6 +2597,7 @@ files.set(path.join(OUT, "web", "src", "config", "features.generated.ts"), HEADE
   `export const features: Readonly<Record<string, boolean>> = ${json(Object.fromEntries(Object.entries(FEATURE_ON).filter(([id, on]) => on || !FEATURE_REGISTRY.find((f) => f.id === id)?.quiet_off)))};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
+  // agent_icon (mold_v0-252), the brand's agent icon, is here only when the app has one: the console's default otherwise.
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
 
 /**
