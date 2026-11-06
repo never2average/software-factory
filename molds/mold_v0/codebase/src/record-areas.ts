@@ -29,6 +29,7 @@ import { getDb, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcrypto.js";
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
+import { conditionHolds, referenceWhereWords, type DetailCondition } from "./pack-api.js";
 import { areaLinks, DECLARABLE_ROLES, isFieldUrl, URL_MAX, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
@@ -337,6 +338,17 @@ export async function checkRecord(area: { name: string; fields: readonly Field[]
     const found = await existing(target, keys, target.scope === "platform" ? null : orgId);
     const missing = keys.filter((k) => !found.has(k));
     if (missing.length) problems.push(`field ${f.name} of ${what}: no ${target.name} record ${missing.slice(0, 5).join(", ")}${orgId !== null && target.scope === "workspace" ? " in this workspace" : ""}`);
+    // mold_v0-260 (flag record_rules): the records it may name are those its `where` keeps, as the writer reads them.
+    else if (f.where && featureSetting("record_rules")) {
+      const kept: string[] = [];
+      for (const k of keys) {
+        const row = await (target.scope === "platform" ? getPlatform(target, k) : orgId === null ? null : getWorkspace(orgId, target, k));
+        if (row && conditionHolds(f.where as DetailCondition, row.data ?? {})) kept.push(k);
+      }
+      const out_ = keys.filter((k) => !kept.includes(k));
+      const label = (n: string) => (target.fields.find((x) => x.name === n)?.label ?? n).toLowerCase();
+      if (out_.length) problems.push(`field ${f.name} of ${what}: ${out_.slice(0, 5).join(", ")} ${out_.length > 1 ? "are not" : "is not"} a ${target.label} record ${referenceWhereWords(f.where, label)}`);
+    }
   }
   if (problems.length) throw new PackError(problems.join("; "), 400);
   return out;
@@ -728,6 +740,28 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
 const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } | null, after: { title: string | null; data: Record<string, unknown> }, w: RecordWriter): RecordChange["history"] =>
   ({ before: prev ? { title: prev.record.title, data: prev.opened } : null, after, by: writerText(w) });
 
+/**
+ * mold_v0-260 (flag record_rules): an area's checks on save. Each names a declarative check (mold_v0-196), its inputs
+ * taken from the record being saved (`@field`, `$key`, `$title`, else the literal); a create or change for which it
+ * answers no is refused (409) with the declared message. Asked as the writer (the check reads what the writer may), in
+ * the writer's own workspace. A field that is empty leaves its input out (the check's own rules then decide).
+ */
+export async function onSaveChecks(orgId: number, area: RecordArea, key: string, title: string | null, data: Record<string, unknown>, op: "create" | "update", actor: Actor) {
+  const rules = (area as { on_save?: { check: string; inputs: Record<string, unknown>; message: string; on?: ("create" | "update")[] }[] }).on_save;
+  if (!rules?.length || !featureSetting("record_rules")) return;
+  const { answerCheck } = await import("./checks.js");
+  for (const r of rules) {
+    if (r.on && !r.on.includes(op)) continue;
+    const inputs: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(r.inputs)) {
+      const got = typeof v !== "string" ? v : v === "$key" ? key : v === "$title" ? title : v.startsWith("@") ? data[v.slice(1)] : v.startsWith("$$") ? v.slice(1) : v;
+      if (got !== undefined && got !== null && got !== "") inputs[k] = got;
+    }
+    const a = await answerCheck({ orgId, role: actor.role ?? null, userId: actor.userId ?? null, scopes: null }, r.check, inputs);
+    if (!a.allowed) throw new PackError(r.message, 409);
+  }
+}
+
 /** An append-only area's record (mold_v0-195): added once, never changed or deleted. */
 const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.label} records are append-only: ${key} is never changed or deleted once added`, 409);
 
@@ -754,6 +788,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const t = title(value?.title);
   if (!area.lifecycle) {
     const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
+    await onSaveChecks(orgId, area, key, t, data, prev ? "update" : "create", actor);
     const r = await writeRow(orgId, area, key, t, data, prev, w, meta);
     await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data }, w) });
     return r;
@@ -771,6 +806,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
   const after = { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, w = writerOf(actor, meta);
+  await onSaveChecks(orgId, area, key, t, { ...data, [field]: state }, prev ? "update" : "create", actor);
   const r = await writeRow(orgId, area, key, t, after, prev, w, meta);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
   return r;

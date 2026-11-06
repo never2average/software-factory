@@ -14,15 +14,19 @@ import { envWord } from '../../lib/value-words';
 
 /** A credential field as GET /api/credentials answers it (src/credentials.ts fieldSummary). */
 export interface CredField {
-  pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
+  pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment' | 'tenant';
   area: string | null; environments: string[] | null; deliver_as: { env: string } | { file: string; path_env?: string };
   github_app?: boolean; oauth?: string; optional?: boolean; adds?: string | null;
   purpose?: string | null; steps?: string[] | null; without?: string | null; group?: string; group_label?: string;
+  /** mold_v0-260 (flag credential_sets): several labelled values (what each label is, how many at most). */
+  entries?: { label: string; max: number };
 }
 /** A stored value's slot: never the value (an owner sees its last 4 characters). */
 export interface CredValue {
   pack: string; name: string; bound_to: string; asset: string | null; environment: string | null;
   last4: string | null; updated_at: string; updated_by: string | null; last_used_at?: string | null;
+  /** mold_v0-260: the label of one of a credential's several values. */
+  entry?: string | null;
 }
 
 /** One credential as a customer sees it: a field alone, or a group's fields. */
@@ -44,11 +48,14 @@ export interface Credential {
   /** A file (a key, a kubeconfig): pasted with its line breaks, or chosen from the computer. */
   file: (f: CredField) => boolean;
   github_app: boolean; oauth: string | null;
+  /** mold_v0-260: several labelled values (a host and its token, ...): what each label is and how many at most. */
+  entries: { label: string; max: number } | null;
 }
 
 /** Where a credential lives in the console. */
 export type Place = 'settings' | 'record' | 'record-environment';
-export const placeOf = (f: Pick<CredField, 'bound_to'>): Place => (f.bound_to === 'workspace' ? 'settings' : f.bound_to === 'asset' ? 'record' : 'record-environment');
+// mold_v0-260: a tenant's credential is its record's, as an asset's is (on the tenant's own page).
+export const placeOf = (f: Pick<CredField, 'bound_to'>): Place => (f.bound_to === 'workspace' ? 'settings' : f.bound_to === 'asset' || f.bound_to === 'tenant' ? 'record' : 'record-environment');
 
 const isFile = (f: CredField) => 'file' in f.deliver_as;
 
@@ -68,7 +75,7 @@ export function credentialsOf(fields: readonly CredField[]): Credential[] {
     const c: Credential = {
       id: gid ?? `${f.pack}/${f.name}`, pack: f.pack, group: f.group ?? null, label: f.group ? f.group_label ?? f.label : f.label,
       purpose: purposeOf(f), steps: f.steps ?? [], without: withoutOf(f, optional), optional, place: placeOf(f), area: f.area,
-      parts: [f], file: isFile, github_app: !!f.github_app, oauth: f.oauth ?? null
+      parts: [f], file: isFile, github_app: !!f.github_app, oauth: f.oauth ?? null, entries: f.entries ?? null
     };
     if (gid) seen.set(gid, c);
     out.push(c);
@@ -95,6 +102,10 @@ export interface SlotState {
   last4: Record<string, string | null>;
   values: CredValue[];
 }
+
+/** mold_v0-260: a credential's labelled values in one slot, in label order. */
+export const entriesIn = (c: Credential, values: readonly CredValue[], asset: string | null, environment: string | null) =>
+  valuesIn(c, values, asset, environment).filter((v) => !!v.entry).sort((a, b) => a.entry!.localeCompare(b.entry!));
 
 /** The values of a credential in one slot. */
 export const valuesIn = (c: Credential, values: readonly CredValue[], asset: string | null, environment: string | null) =>

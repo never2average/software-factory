@@ -65,7 +65,8 @@ export function Sparklines({ url, tag, count = 4, label = 'Key numbers' }: { url
   if (error || (data && !data.cards.length)) return null;
   return (
     <section aria-label={label} aria-busy={!data || undefined} data-sparklines={tag}>
-      <StatStrip quad items={items} />
+      {/* mold_v0-260 (flag overview_cards): a home tab's fifth number, five across on a wide screen (the odd one full width on a phone). */}
+      {count === 5 ? <StatStrip quad items={items} className='lg:grid-cols-5 max-lg:[&>*:last-child]:col-span-2' /> : <StatStrip quad items={items} />}
     </section>
   );
 }

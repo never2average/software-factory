@@ -52,6 +52,8 @@ import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { featureOn } from "./features.js";
+import { homeCardsRouter, runAnalyticsRouter } from "./gap-routes.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./server.js";
 import { hosts, hostToolNames, memoryToolNames } from "./host.js";
@@ -273,6 +275,9 @@ export function createApp() {
   // mold_v0-254: a laid-out record page's related lists, runs and actions (src/record-page-routes.ts), while record_pages
   // is on and an area declares a layout; else every request passes on to /api/records, as before.
   app.use("/api/records/_page", recordPageRouter());
+  // mold_v0-260: the home page's Recent runs and Needs attention cards (overview_cards), run analytics (run_analytics).
+  app.use("/api/home", homeCardsRouter());
+  app.use("/api/analytics", runAnalyticsRouter());
   app.use("/api/records", recordAppRouter());
   // ---------- the generic data API: /api/data (src/data-routes.ts, mold_v0-059); with no area nothing is mounted ----------
   app.use("/api/data", dataAppRouter());
@@ -842,6 +847,44 @@ export function createApp() {
   // The platform's GitHub App and every workspace's installation of it (mold_v0-014), beside the key vault, when a pack
   // declares a credential field that asks for one.
   githubAppAdminRoutes(ob, need, adminActor);
+  // mold_v0-260 (flag private_catalogs): a private catalog's deploy key or GitHub App installation, beside the key vault.
+  // mold_v0-260 (flag run_analytics): every workspace's runs broken down (?workspace=<slug or id> narrows to one).
+  ob.get("/run-analytics", async (req, res, next) => {
+    if (!featureOn("run_analytics")) return next();
+    try {
+      const { runAnalytics } = await import("./run-analytics.js");
+      const w = typeof req.query.workspace === "string" && req.query.workspace ? req.query.workspace : null;
+      let workspaceId: number | null = null;
+      if (w) {
+        const { asPlatform } = await import("./tenant-scope.js");
+        const { getDb } = await import("./db.js");
+        const [o] = await asPlatform(async () => (await getDb()).query<{ id: number }>("SELECT id FROM organizations WHERE slug = $1 OR id::text = $1", [w]));
+        if (!o) return void res.status(404).json({ error: "No such workspace" });
+        workspaceId = o.id;
+      }
+      res.json(await runAnalytics({ orgId: null, workspaceId }, req.query as Record<string, unknown>));
+    } catch (e) { const st = (e as { status?: number }).status ?? 500; res.status(st).json({ error: st < 500 ? (e as Error).message : "could not read" }); }
+  });
+  {
+    const ca = () => import("./catalog-access.js");
+    // Answered only while the flag is on (off: on to the 404, as if never mounted).
+    ob.use("/catalog-access", (_req, res, next) => (featureOn("private_catalogs") ? next() : void res.status(404).json({ error: "Not found" })));
+    const caWrap = (fn: (req: Request, res: Response) => Promise<unknown>) => async (req: Request, res: Response) => {
+      try { res.json(await fn(req, res)); }
+      catch (e) { const st = (e as { status?: number }).status ?? 500; res.status(st).json({ error: st < 500 || st === 502 || st === 503 ? (e as Error).message : "could not save" }); }
+    };
+    ob.get("/catalog-access", caWrap(async () => ({ catalogs: await (await ca()).catalogAccessSummary() })));
+    ob.put("/catalog-access/:pack/:name", need("keys"), caWrap(async (req, res) => {
+      const out = await (await ca()).setCatalogAccess(String(req.params.pack), String(req.params.name), (req.body ?? {}) as Record<string, unknown>);
+      onboarding.log(adminActor(req, res), "catalog_access.set", null, { pack: out.pack, repository: out.name, access: out.access });
+      return out;
+    }));
+    ob.delete("/catalog-access/:pack/:name", need("keys"), caWrap(async (req, res) => {
+      const removed = await (await ca()).deleteCatalogAccess(String(req.params.pack), String(req.params.name));
+      onboarding.log(adminActor(req, res), "catalog_access.remove", null, { pack: String(req.params.pack), repository: String(req.params.name) });
+      return { removed };
+    }));
+  }
   onPremAdminRoutes(ob, need, adminActor);
   agentAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);

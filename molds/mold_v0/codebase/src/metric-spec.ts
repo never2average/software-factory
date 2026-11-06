@@ -193,6 +193,9 @@ export interface BuildViews {
   kinds?: readonly { pack: string; name: string; label?: string; approval?: boolean; report?: boolean; args?: readonly string[] }[];
   /** The job kinds each pack schedules (its declared schedules): a schedules tab's default action (mold_v0-213). */
   scheduled?: readonly { pack: string; kind: string }[];
+  /** mold_v0-260: the build's declarative checks (names and inputs: an area's on_save names them) and the kinds' input_from_record. */
+  checks?: readonly { pack: string; name: string; inputs: Record<string, string> }[];
+  inputsFromRecord?: readonly { pack: string; kind: string; map: Record<string, string> }[];
 }
 
 /** Every problem with the build's metrics, charts and tabs, each naming its pack. Empty when they are sound. */
@@ -411,6 +414,47 @@ export function checkViews(b: BuildViews): string[] {
   }
   // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.
   problems.push(...detailBuildProblems(b.areas, b.kinds ?? []));
+  // mold_v0-260: a reference's where, an area's checks on save, a kind's arguments from a record: what each names.
+  problems.push(...gapBuildProblems(b));
+  return problems;
+}
+
+/**
+ * mold_v0-260: across the build, with the flags on or off (declared, then checked): a reference field's `where` tests
+ * fields its target area has (an enum's own values; never an encrypted or file field); an area's `on_save` names a
+ * check of the build and only inputs it takes, giving every one it requires; a kind's `input_from_record` names fields
+ * that one of its pack's workspace areas has together (never encrypted or a file).
+ */
+export function gapBuildProblems(b: Pick<BuildViews, "areas" | "checks" | "inputsFromRecord">): string[] {
+  const problems: string[] = [];
+  const area = (n: string) => b.areas.find((a) => a.name === n) ?? null;
+  for (const a of b.areas) {
+    for (const f of a.fields) {
+      if (!f.where) continue;
+      const t = f.to ? area(f.to) : null;
+      if (!t) continue;
+      for (const c of "all" in f.where ? f.where.all : [f.where]) {
+        const tf = t.fields.find((x) => x.name === c.field);
+        const at = `pack ${a.pack}: record area ${a.name}'s field ${f.name}: where`;
+        if (!tf) { problems.push(`${at}: ${c.field} is not a field of ${t.name}`); continue; }
+        if (tf.encrypted || tf.type === "file" || tf.type === "json") problems.push(`${at}: ${c.field} of ${t.name} is ${tf.encrypted ? "encrypted" : `a ${tf.type} field`}: a condition never reads it`);
+        if (tf.type === "enum") for (const v of [c.equals, ...(c.in ?? []), ...(c.not_in ?? [])]) if (v !== undefined && !optionValues(tf).includes(String(v))) problems.push(`${at}: ${String(v)} is not one of ${t.name}.${tf.name}'s options`);
+      }
+    }
+    for (const [i, r] of ((a as { on_save?: { check: string; inputs: Record<string, unknown> }[] }).on_save ?? []).entries()) {
+      const at = `pack ${a.pack}: record area ${a.name}: on_save[${i}]`;
+      const c = (b.checks ?? []).find((x) => x.name === r.check);
+      if (!c) { problems.push(`${at}: names check ${r.check}, which no pack of the build declares`); continue; }
+      for (const k of Object.keys(r.inputs)) if (!(k in c.inputs)) problems.push(`${at}: check ${c.name} takes no input ${k}`);
+      for (const [k, ty] of Object.entries(c.inputs)) if (!String(ty).endsWith("?") && !(k in r.inputs)) problems.push(`${at}: check ${c.name} needs its input ${k}`);
+      if (a.scope !== "workspace") problems.push(`${at}: checks on save are for a workspace's own records`);
+    }
+  }
+  for (const k of b.inputsFromRecord ?? []) {
+    const want = Object.values(k.map).filter((v) => !v.startsWith("$"));
+    if (!b.areas.some((a) => a.pack === k.pack && a.scope === "workspace" && want.every((f) => a.fields.some((x) => x.name === f && !x.encrypted && x.type !== "file"))))
+      problems.push(`pack ${k.pack}: job kind ${k.kind}: input_from_record names ${want.join(", ")}, which no workspace area of the pack has together (none encrypted or a file)`);
+  }
   return problems;
 }
 
@@ -592,7 +636,7 @@ export function areaListAction(a: SpecArea, creatable: (area: string) => boolean
 }
 
 /** A build's views from its installed packs' definitions (validated), for checkViews and the engine. */
-export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[]; onboarding?: unknown[]; schedules?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
+export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[]; onboarding?: unknown[]; schedules?: unknown[]; checks?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
   const flat = <T>(k: "recordAreas" | "metrics" | "charts" | "tabs", schema: z.ZodType<T>) =>
     packs.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ ...(schema.parse(x) as object), pack: p.id }) as T & { pack: string }));
   const areas = flat("recordAreas", RecordAreaSchema) as SpecArea[];
@@ -608,6 +652,11 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
       return { pack: p.id, name: x.name, label: x.label, approval: !!x.approval, report: !!x.report, args: (x.args ?? []).map((a) => a.name) };
     })),
     scheduled: packs.flatMap((p) => (p.definition.schedules ?? []).map((x) => ({ pack: p.id, kind: (x as { job_kind: string }).job_kind }))),
+    checks: packs.flatMap((p) => (p.definition.checks ?? []).map((c) => ({ pack: p.id, name: String((c as { name?: unknown }).name), inputs: ((c as { inputs?: Record<string, string> }).inputs ?? {}) }))),
+    inputsFromRecord: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].flatMap((k) => {
+      const x = k as { name: string; input_from_record?: Record<string, string> };
+      return x.input_from_record ? [{ pack: p.id, kind: x.name, map: x.input_from_record }] : [];
+    })),
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
     ...(pages ? { pages } : {}),
   };

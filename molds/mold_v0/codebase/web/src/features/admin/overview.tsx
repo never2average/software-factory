@@ -1,7 +1,8 @@
 'use client';
 // Overview: the onboarding funnel for accounts created in a period, and the accounts that need a person.
-import { useMemo, useState } from 'react';
-import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
+import { useMemo } from 'react';
+import { DateRangePicker, rangeQuery } from '@/components/layout/date-range-picker';
+import { useDashboardRange, useDashboardText } from '@/hooks/use-dashboard-filter';
 import { Input } from '@/components/ui/input';
 import PageContainer from '@/components/layout/page-container';
 import { Icons } from '@/components/icons';
@@ -25,8 +26,9 @@ interface Overview {
 }
 
 export function AdminOverview() {
-  const [range, setRange] = useState<DateRange>(last30);
-  const [q, setQ] = useState('');
+  // mold_v0-260 (flag filters_in_address): the period and the search kept in the address while it is on.
+  const [range, setRange] = useDashboardRange();
+  const [q, setQ] = useDashboardText('q');
   const { data: o, error, isLoading } = useAdmin<Overview>(`/overview?${rangeQuery(range)}`);
   const attention = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);

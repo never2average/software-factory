@@ -24,7 +24,9 @@ pack's areas as you type. `factory.py spec check` adds the completeness rules be
 | `role` | `source`, `check` or `asset`: what a run's results may name (src/runs.ts). An `asset` area is always sealed and always workspace scope. |
 | `scope` | `workspace` (each workspace's own rows, `workspace_records` under row-level security) or `platform`: **shared** by every workspace (`platform_records`; the tenant role may only read it). |
 | `fields` | 1 to 60 (section 2). |
-| `list_columns` | Up to 8 fields the list shows (default: the first four). |
+| `list_columns` | Up to 8 fields the list shows (default: the first four); up to 12 with the flag `wide_lists` (mold_v0-260: the table scrolls sideways inside its frame, its first column kept in view). |
+| `tenant` | `true`: the area's records are the workspace's tenants (customers, sites); a credential may be bound to one (`bound_to: "tenant"`, section 6; flag `credential_sets`, mold_v0-260). |
+| `on_save` | Checks run when a record is saved (flag `record_rules`, mold_v0-260): each a declarative check (`check`), its `inputs` from the record (`@field`, `$key`, `$title`, a literal), the `message` a refusal says, `on` create and/or update. A no is refused (409) through every door. |
 | `links` | `{field, area}`: a field whose value is another area's key (a `reference` field makes its own). |
 | `lifecycle` | States (one single-choice enum field), the initial state and the moves between them, each with the roles that may (workspace areas). |
 | `permissions` | `read`, `create`, `update`, `move`, `delete`: lists of roles (section 4). |
@@ -51,7 +53,7 @@ Every field has a `name` (lowercase, 2 to 63 characters), a `label`, a `type` (d
 | `json` | any JSON value | |
 | `enum` | one of `options` (values, or `{value, label}`) | `multiple`: a list of them |
 | `person` | a person of the workspace, by sign-in id | `multiple` |
-| `reference` | the key of a record of area `to`, checked on write as the writer sees it | `multiple`; a shared area refers only to shared areas |
+| `reference` | the key of a record of area `to`, checked on write as the writer sees it | `multiple`; a shared area refers only to shared areas; `where` (mold_v0-260, flag `record_rules`): a condition on the target's fields (one test `equals`, `in`, `not_in`, `empty`, or `all` of up to 6): every write refuses a record it does not keep and the picker lists only those it keeps |
 | `link` | the older form of a reference (a key or list of keys, through the area's `links`) | |
 | `file` | a file: a path in the workspace store, or a **stored file** `{object, name, size, content_type, sha256}` kept sealed for the record (mold_v0-220, `src/record-files.ts`); the console's create form uploads them (section 6) | `multiple`: **files** |
 | `url` | an absolute `http` or `https` address of up to 2048 characters, with a host and no user name or password (mold_v0-238, `src/pack-api.ts` `isFieldUrl`); the console takes it in an address input and shows it as a link | `preview: "document"` |
@@ -401,6 +403,13 @@ Where an area's list is drawn, and what it has:
   the list or page, which stays in view; Open full page expands the same form, its typed values kept, to the full
   in-page card. Focus stays in the panel, Esc closes it, closing it with unsaved changes asks first, and on a phone
   (640 px or narrower) it fills the screen. Off, every form is the full in-page card it always was.
+
+- **Credential sets and tenants** (mold_v0-260, flag `credential_sets`). A credential's `entries: {"label": "Host", "max": 10}`
+  holds several labelled values: the record's (or the workspace's) Credentials card lists each label with its last 4
+  characters (owners), Add <label>, and per value Replace and Remove; a run receives them as one JSON object
+  `{"<label>": "<value>", ...}`. `"bound_to": "tenant"` with `area` an area declared `tenant: true` binds a credential to
+  one of that area's records: shown and set on the tenant record's page, delivered to a run on that tenant (the start
+  tool's `target_tenant`, or a run started on the record). Neither is a field of the record.
 
 ## 7. Settings placement
 

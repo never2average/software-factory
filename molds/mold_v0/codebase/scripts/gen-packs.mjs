@@ -1292,7 +1292,8 @@ for (const [id, json, file] of entries) {
     if (offerProblems.length) throw new Error(offerProblems.join("; "));
     loaded.push({ id, name: json.name, words: json.words ?? {}, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
-      credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
+      // mold_v0-260: what asks for credential_sets (a tenant binding, labelled values), only when it is there.
+      credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label, ...(c.bound_to === "tenant" ? { bound_to: "tenant" } : {}), ...(c.entries ? { entries: true } : {}) })),
       onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
       metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
@@ -1347,7 +1348,9 @@ if (loaded.length === entries.length) {
   const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES, ...INTAKE_TOOL_NAMES];
   const own = new Map();
   // The audit trails' tools (mold_v0-197) are reserved whether a trail is on or not: turning one on never clashes.
-  const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [], AGENT_TOOL_NAMES = [], ADMIN_AGENT_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
+  const { AUDIT_TOOL_NAMES = [], ADMIN_AUDIT_TOOL_NAMES = [], AGENT_TOOL_NAMES = [], ADMIN_AGENT_TOOL_NAMES = [], USAGE_TOOL_NAMES = [] } = await import(pathToFileURL(shellToolsApi).href);
+  // mold_v0-260: get_usage (flag usage_tool) is reserved the same way: turning it on never clashes with a pack's tool.
+  shell.push(...USAGE_TOOL_NAMES);
   shell.push(...AUDIT_TOOL_NAMES);
   // The workspace agent's tools (mold_v0-243) are reserved the same way: turning it on never clashes with a pack's.
   shell.push(...AGENT_TOOL_NAMES);
@@ -1508,12 +1511,24 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
     layouts: () => areas.some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((x) => x.copyable === true))
       || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object"))),
+    // mold_v0-260 (src/features.ts gapAsks says the same for the server, lib/features.py for the factory).
+    record_inputs: () => kinds.some((k) => !!k.input_from_record),
+    private_catalogs: () => jsons.some((j) => Object.values(j.repositories ?? {}).some((r) => r?.kind === "upstream_catalog" && !!r.access && r.access !== "public")),
+    wide_lists: () => areas.some((a) => (a.list_columns?.length ?? 0) > 8) || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns?.length ?? 0) > 8)),
+    record_rules: () => areas.some((a) => (a.on_save?.length ?? 0) > 0 || (a.fields ?? []).some((x) => !!x.where)) || kinds.some((k) => (k.args ?? []).some((x) => !!x.where)),
+    credential_sets: () => creds.some((c) => !!c.entries || c.bound_to === "tenant"),
+    home_cards: () => jsons.some((j) => (j.tabs ?? []).some((t) => t.kind === "overview" && (t.include ?? []).includes("setup")
+      && ((t.sparklines?.length ?? 0) > 4 || (t.rail ?? []).some((x) => x === "recent_runs" || x === "attention")))),
   };
   for (const f of FEATURE_REGISTRY) {
     FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
     FEATURE_ON[f.id] = FEATURE_SETTING[f.id] && FEATURE_REQUESTED[f.id];
   }
   // What a flag may not do (the factory's lib/features.py says the same before a build).
+  // mold_v0-260: a list past 8 columns, a reference's where or a check on save, a credential's entries or a tenant
+  // binding need their flag: none of them is quietly dropped.
+  for (const [id, what] of [["wide_lists", "a list with more than 8 columns"], ["record_rules", "a reference field's where or an area's on_save"], ["credential_sets", "a credential with entries or bound to a tenant"]])
+    if (!FEATURE_SETTING[id] && FEATURE_REQUESTED[id]) fail(rel(PROFILE_FILE), `features.${id} is off but a pack declares ${what}: turn it on (features.${id} = true) or take the declaration out`);
   if (!FEATURE_SETTING.encrypted_fields && FEATURE_REQUESTED.encrypted_fields)
     fail(rel(PROFILE_FILE), "features.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear (take encrypted: true off the field first)");
   if (!FEATURE_SETTING.customer_key_vault) {
@@ -2395,7 +2410,8 @@ const profileSidebar = (() => {
   // A capability's own pages (mold_v0-243: the workspace agent's) are pages of the build only while its flag is on: off,
   // they are not in the list (so the proxy answers them not found) and the list is what the build wrote before them.
   // mold_v0-256: a run's own page, a page of the build only while record_pages is on.
-  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"] };
+  // mold_v0-260: run analytics, a workspace's and staff's, pages only while run_analytics is on.
+  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
   const off = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
   const routes = pages.filter((r) => !statusPages.includes(r) && !/\/\[\.\.\.missing\]$/.test(r) && !off.includes(r));
   if (existsSync(APP_DIR)) files.set(path.join(OUT, "web", "src", "config", "console-routes.generated.json"), JSON.stringify({
@@ -2512,7 +2528,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n" +
-  (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n" : "") + "}\n\n" +
+  (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n" : "") +
+  (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") + "}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
     // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
     scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,

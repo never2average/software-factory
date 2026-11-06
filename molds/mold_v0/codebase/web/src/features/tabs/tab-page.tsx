@@ -29,6 +29,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { packCharts, packTabs, type PackChartSpec, type PackTabSpec, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
 import { SetupPage } from '@/features/portal/setup';
+import { featureOn } from '@/config/features';
+import { AttentionCard, RecentRunsCard } from '@/features/portal/home-cards';
 import { GridCell } from '@/features/portal/grid-cell';
 import { DueSoonCard, DueSoonSection } from '@/features/schedules/notices-page';
 import { SchedulesBody } from '@/features/schedules/schedules-page';
@@ -130,16 +132,20 @@ function ChartCard({ chart, home }: { chart: PackChartSpec; home: PackTabSpec })
 function HomeTab({ tab }: { tab: PackTabSpec }) {
   // Its headline row (mold_v0-203: pack.json sparklines on the home tab), drawn as a list tab's four cards. A number its
   // cards show is not shown again in a rail's number card (one idea once per page); a card left with none is left out.
-  const top = tab.headline ?? [];
+  // mold_v0-260 (flag overview_cards): a fifth number and the Recent runs and Needs attention cards; off, as before.
+  const cardsOn = featureOn('overview_cards');
+  const top = (tab.headline ?? []).slice(0, cardsOn ? 5 : 4);
   const once = (c: PackChartSpec): PackChartSpec | null => {
     if (c.type !== 'number' || !top.length) return c;
     const metrics = c.metrics.filter((n) => !top.includes(n));
     return !metrics.length ? null : metrics.length === c.metrics.length ? c : { ...c, metrics };
   };
-  const rail = tab.rail;
+  const rail = cardsOn ? tab.rail : tab.rail?.filter((x) => x !== 'recent_runs' && x !== 'attention');
   const cards: Record<string, React.ReactNode> = {};
   for (const x of rail ?? []) {
     if (x === 'notices') cards[x] = <DueSoonCard />;
+    else if (x === 'recent_runs') cards[x] = <RecentRunsCard />;
+    else if (x === 'attention') cards[x] = <AttentionCard />;
     else if (x.startsWith('chart:')) {
       const found = packCharts.find((y) => y.pack === tab.pack && y.name === x.slice(6));
       const c = found && once(found);

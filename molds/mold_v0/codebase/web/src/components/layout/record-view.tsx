@@ -45,10 +45,18 @@ export function useStored<V>(key: string | null, init: V): [V, (v: V | ((prev: V
 interface Item<T> { row?: T; g?: Group<T> }
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 
+/** mold_v0-260: a wide list's table: its natural width (at least the frame's), the first column sticky with its own background and a line. */
+const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_td:first-child]:bg-background [&_tr[data-state=selected]>td:first-child]:bg-muted [&_th:first-child]:bg-background [&_tr>*:first-child]:shadow-[1px_0_0_var(--border)]';
+
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide
 }: {
+  /**
+   * mold_v0-260 (flag wide_lists): a list of more than 8 columns: the table keeps each column's width and scrolls sideways
+   * inside its own frame (never the page), its first column kept in view.
+   */
+  wide?: boolean;
   rows: readonly T[];
   rowKey: (row: T) => string;
   cols: RecordCol<T>[];
@@ -341,8 +349,8 @@ export function RecordView<T>({
 
       <div className='flex min-h-0 flex-1 gap-4'>
         <div className='flex min-h-0 w-full min-w-0 flex-col border'>
-          <div className='min-h-0 flex-1 overflow-auto'>
-            <Table>
+          <div className='min-h-0 flex-1 overflow-auto' {...(wide ? { 'data-wide-list': '' } : {})}>
+            <Table className={wide ? WIDE_TABLE : undefined}>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
                 <TableRow>
                   {bulk && (

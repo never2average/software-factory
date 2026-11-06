@@ -37,6 +37,7 @@ import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { asWriter, findArea, may, mayExport, mayReveal, workspaceRecords } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { featureOn } from "./features.js";
 
 export type { GeneratedTool } from "./mcp-catalog.js";
 
@@ -44,13 +45,16 @@ export type { GeneratedTool } from "./mcp-catalog.js";
 export const catalogPacks = (list: readonly InstalledPack[]): CatalogPack[] =>
   list.map((p) => ({ id: p.id, name: p.manifest.name, words: p.manifest.words, definition: p.definition }));
 
-let cache: { from: unknown; tools: GeneratedTool[] } | null = null;
+let cache: { from: unknown; key: string; tools: GeneratedTool[] } | null = null;
+/** mold_v0-260: the catalog's own options from the flags (a test turning one regenerates it). */
+const catalogOptions = () => ({ record_inputs: featureOn("record_run_inputs"), tenants: featureOn("credential_sets") });
 /** Every generated tool of the build (checked when the packs were installed: src/packs.ts installPacks). */
 export function generatedTools(): GeneratedTool[] {
   const list = packs();
-  if (cache?.from === list) return cache.tools;
-  const tools = generateCatalog(catalogPacks(list)).tools;
-  cache = { from: list, tools };
+  const opts = catalogOptions(), key = JSON.stringify(opts);
+  if (cache?.from === list && cache.key === key) return cache.tools;
+  const tools = generateCatalog(catalogPacks(list), opts).tools;
+  cache = { from: list, key, tools };
   return tools;
 }
 
@@ -137,8 +141,21 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       return { metrics: await computeMetrics(ws.id, names, { role: ws.role, userId: ws.userId }) };
     }
     case "start": {
-      const { target_asset, target_environment, approval, ...scope } = a;
+      const { target_asset, target_environment, target_tenant, approval, record, ...scope } = a;
       const targets: Record<string, unknown> = {};
+      // mold_v0-260 (flag record_run_inputs): a run on a record takes its mapped arguments from the record, read as the
+      // caller in the caller's workspace; one given beside it that disagrees is refused. The run carries the record.
+      const k0 = kindOf(t.pack, t.kind!);
+      const onRec = record ? await recordInputs(caller, t, k0, record, scope) : null;
+      for (const [arg, f] of Object.entries(t.input.record ? (k0.input_from_record ?? {}) : {}))
+        if (!record && scope[arg] === undefined && (k0.args ?? []).some((x) => x.name === arg && x.required)) throw new PackError(`${arg} is required: give it, or the record it comes from (record, its ${f === "$key" ? "key" : f === "$title" ? "title" : f})`, 400);
+      if (onRec?.asset && "target_asset" in t.input && !target_asset) targets.asset = onRec.asset;
+      if (onRec?.tenant && "target_tenant" in t.input && !target_tenant) targets.tenant = onRec.tenant;
+      if (target_tenant) {
+        if (!(await dataApi.get(caller, target_tenant.area, target_tenant.key)))
+          throw new PackError(`no ${target_tenant.area} record ${String(target_tenant.key).slice(0, 200)} in this ${wordOf(t.pack, "workspace")}`, 404);
+        targets.tenant = { area: target_tenant.area, key: target_tenant.key };
+      }
       if (target_asset) {
         // The target is a record of the caller's own workspace, as the caller sees it.
         if (!(await dataApi.get(caller, target_asset.area, target_asset.key)))
@@ -149,7 +166,9 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       const k = kindOf(t.pack, t.kind!);
       // A kind with no declared arguments takes none: its scope is never free text from a client.
       // mold_v0-079: the approval of the preview a gated write writes (checked by the run engine; none for any other kind).
-      const run = await ctx.runs.start(t.kind!, { scope: k.args ? scope : {}, targets, ...(approval !== undefined ? { approval } : {}) });
+      const go = () => ctx.runs.start(t.kind!, { scope: k.args ? scope : {}, targets, ...(approval !== undefined ? { approval } : {}) });
+      const { onRecord } = await import("./runs.js");
+      const run = onRec ? await onRecord(onRec.record, go) : await go();
       return { run };
     }
     case "run_status": {
@@ -180,6 +199,31 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
     case "get_started": return getStarted(t, ws);
     default: throw new PackError(`${t.name} is not a customer tool`, 400);
   }
+}
+
+/**
+ * mold_v0-260 (flag record_run_inputs): fill a run's arguments from the record it runs on (the kind's input_from_record:
+ * argument -> a field, $key or $title), the record read as the caller (its area's read permission, the caller's own
+ * workspace: another's is not found). `scope` is filled in place; an argument given that disagrees is refused. Also the
+ * target the record is (an asset area's record; a tenant area's record) and the record the run carries.
+ */
+export async function recordInputs(caller: DataCaller, t: GeneratedTool, k: { input_from_record?: Record<string, string> }, record: { area: string; key: string }, scope: Record<string, unknown>) {
+  const map = k.input_from_record ?? {};
+  const got = await dataApi.get(caller, record.area, record.key);
+  if (!got) throw new PackError(`no ${record.area} record ${String(record.key).slice(0, 200)} in this ${wordOf(t.pack, "workspace")}`, 404);
+  const r = got.record as { key: string; title: string | null; data: Record<string, unknown> };
+  for (const [arg, f] of Object.entries(map)) {
+    const v = f === "$key" ? r.key : f === "$title" ? r.title : r.data?.[f];
+    if (v === undefined || v === null || v === "") continue;
+    if (scope[arg] !== undefined && JSON.stringify(scope[arg]) !== JSON.stringify(v)) throw new PackError(`${arg} comes from the record (its ${f === "$key" ? "key" : f === "$title" ? "title" : f}): leave it out, or give the record's own value`, 400);
+    scope[arg] = v;
+  }
+  const area = findArea(record.area);
+  return {
+    record: { area: record.area, key: r.key },
+    asset: area?.role === "asset" ? { area: record.area, key: r.key } : null,
+    tenant: (area as { tenant?: boolean } | null)?.tenant === true ? { area: record.area, key: r.key } : null,
+  };
 }
 
 /** A succeeded run's report file, from the version of its workspace the run itself left (its workspace_written event). */

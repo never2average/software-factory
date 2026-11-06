@@ -89,6 +89,15 @@ through the same check `factory.py validate` and the build use.
   | `document_preview` | true | a `file` field, or `preview: "document"` | documents |
   | `record_pages` | false | an area's page layout (`detail`) or a `copyable` field | pages |
   | `side_panel_forms` | false | always (the profile alone) | panel |
+  | `record_run_inputs` | false | a kind's `input_from_record` | inputs |
+  | `private_catalogs` | false | an upstream catalog's `access` | private |
+  | `wide_lists` | false | a list past 8 columns (refused while off) | wide |
+  | `record_rules` | false | a reference's `where`, an area's `on_save` (refused while off) | rules |
+  | `credential_sets` | false | a credential's `entries`, a `tenant` binding (refused while off) | credsets |
+  | `overview_cards` | false | a home tab's fifth number, `recent_runs` or `attention` card | overview |
+  | `run_analytics` | false | always (the profile alone) | analytics |
+  | `filters_in_address` | false | always (the profile alone) | filters |
+  | `usage_tool` | false | always (the profile alone) | usage |
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the
@@ -113,6 +122,13 @@ through the same check `factory.py validate` and the build use.
   its fields filled in from the record), `key_from_title` on an area, a record picker for reference fields and a tab
   column `{related: {area, via}, show: "count" | "latest:<field>"}`. `features.side_panel_forms = true` (off by default)
   opens create and edit forms in a side panel first.
+- mold_v0-260 (molds/mold_v0/MOLD.md "Generic gaps"): a job kind's `input_from_record` (its start tool's `record`),
+  an upstream catalog's `access` (`deploy_key` over `ssh://git@...`, or `github_app`; the key or installation is set in
+  Admin › Key vault, never in the spec), a sections tab of up to 8 tabs, lists of up to 12 columns (past 8:
+  `features.wide_lists`), a reference's `where` and an area's `on_save` (`features.record_rules`), a credential's
+  `entries` and `bound_to: "tenant"` on an area declared `tenant: true` (`features.credential_sets`), a home tab's
+  fifth `sparklines` entry and its `recent_runs` and `attention` rail cards (`features.overview_cards`). The spec check
+  refuses a wide list, a record rule or a credential set while its flag is off.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

@@ -185,6 +185,114 @@
       "since": "mold_v0-256",
       "about": "Add and edit forms of records (an area's Add, a record's Edit, a staff record's New and Edit, a record page's Add <related record>) open first in a panel at the right of the list or the page, which stays in view: Open full page expands the same form, its typed values kept, to the full in-page card. Focus stays in the panel, Esc closes it, and closing it with unsaved changes asks first. On a phone (640 px or narrower) the panel fills the screen.",
       "off": "Every form is the full in-page card it always was; the generated files leave the flag out."
+    },
+    {
+      "id": "record_run_inputs",
+      "short": "inputs",
+      "label": "Run inputs from a record",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "record_inputs",
+      "requested_words": "a job kind takes arguments from the record it runs on (job_kinds[].input_from_record)",
+      "since": "mold_v0-260",
+      "about": "A run started on a record takes its arguments from that record's fields (input_from_record: argument -> field, $key or $title): a record page's start_run action fills them on the server, and the kind's start tool takes record {area, key}, read as the caller in the caller's workspace; the run carries the record (runs.record_area, record_key).",
+      "off": "The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked."
+    },
+    {
+      "id": "private_catalogs",
+      "short": "private",
+      "label": "Private catalogs",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "private_catalogs",
+      "requested_words": "an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access)",
+      "since": "mold_v0-260",
+      "about": "A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack.",
+      "off": "A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out."
+    },
+    {
+      "id": "wide_lists",
+      "short": "wide",
+      "label": "Wide lists",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "wide_lists",
+      "requested_words": "an area's list_columns or a tab's columns past 8",
+      "since": "mold_v0-260",
+      "about": "A list of up to 12 columns: its table scrolls sideways inside its card only (the page never does) with the first column kept in view.",
+      "off": "A list has at most 8 columns: more is refused at build; every table is as before."
+    },
+    {
+      "id": "record_rules",
+      "short": "rules",
+      "label": "Record rules",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "record_rules",
+      "requested_words": "a reference field limited by a condition on its target (where), or an area's checks on save (on_save)",
+      "since": "mold_v0-260",
+      "about": "A reference field's where: the record picker lists only the target's records it keeps, and every write refuses one it does not. An area's on_save: declarative checks (mold_v0-196) run on each create or change with inputs from the record, refusing with their message.",
+      "off": "Refused at build while a pack declares either (an unchecked rule would let records through that the pack says may not be saved)."
+    },
+    {
+      "id": "credential_sets",
+      "short": "credsets",
+      "label": "Credential sets and tenants",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "credential_sets",
+      "requested_words": "a credential with several labelled values (entries), or bound to a record of a tenant area (bound_to: tenant)",
+      "since": "mold_v0-260",
+      "about": "A credential holding several labelled values (a list of hosts, each with its token), each sealed on its own and delivered to a run as one JSON object; and a tenant scope beside workspace, asset and environment: a credential bound to a record of the build's tenant area, set on that record's page and delivered to a run that targets it.",
+      "off": "Refused at build while a pack declares either (no value of them could be set or delivered)."
+    },
+    {
+      "id": "overview_cards",
+      "short": "overview",
+      "label": "Overview cards",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "home_cards",
+      "requested_words": "a home tab naming a fifth headline number, or the recent_runs or attention card in its rail",
+      "since": "mold_v0-260",
+      "about": "The home page's headline row takes a fifth number; its rail takes a Recent runs card (the workspace's latest runs, as the person may read them) and a Needs attention card (the records whose page notices of tone warning or danger hold, from each area's detail.notices): GET /api/home/recent-runs and /api/home/attention.",
+      "off": "The home page is as before: four headline numbers at most and the cards it had; the routes answer not found; the generated files leave the flag out."
+    },
+    {
+      "id": "run_analytics",
+      "short": "analytics",
+      "label": "Run analytics",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "always (the profile alone)",
+      "since": "mold_v0-260",
+      "about": "Runs broken down by record, person, model, tool and failure reason, with tokens by model, from the runs' spend and their events: a workspace's own at /app/run-analytics (GET /api/analytics/runs, its billing managers and owners) and staff's across the workspaces at /admin/run-analytics (GET /api/admin/onboarding/run-analytics).",
+      "off": "No page, sidebar entry or route; the generated files leave the flag out."
+    },
+    {
+      "id": "filters_in_address",
+      "short": "filters",
+      "label": "Filters in the address",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "always (the profile alone)",
+      "since": "mold_v0-260",
+      "about": "The dashboards' filters are kept in the page's address (staff's Overview: its period and search; a workspace's Activity: its period; run analytics: period, kind, status and workspace), so a link reproduces the view and Back steps through the filters.",
+      "off": "The filters live in the page only, as before: a link opens the default view."
+    },
+    {
+      "id": "usage_tool",
+      "short": "usage",
+      "label": "Usage over MCP",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "always (the profile alone)",
+      "since": "mold_v0-260",
+      "about": "The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs).",
+      "off": "No get_usage tool is listed (the customer MCP's surface is as before)."
     }
   ]
 }

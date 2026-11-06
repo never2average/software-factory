@@ -282,7 +282,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
         if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
         if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);
       }}
-      rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
+      rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data} wide={featureOn('wide_lists') && cols.filter((c) => !c.hidden).length > 9}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
       filters={data?.more ? <span className='text-muted-foreground text-xs'>First {LIST_MAX.toLocaleString('en')} {source?.noun ?? 'records'}: search and sort cover these</span> : undefined}
@@ -362,9 +362,11 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
 export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin' }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
-  const credentials = useRecordCredentials(area, recordKey, base === 'app' && area.role === 'asset');
+  // mold_v0-260 (flag credential_sets): a tenant area's records have credentials too (the server says which: 404 otherwise).
+  const layout0 = featureOn('record_pages') ? layoutOf(area) : null;
+  const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), !!layout0);
   if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
-  const layout = featureOn('record_pages') ? layoutOf(area) : null;
+  const layout = layout0;
   if (layout) return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (

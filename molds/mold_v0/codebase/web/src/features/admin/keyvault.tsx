@@ -20,6 +20,7 @@ import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
 import { ErrorBox, FormRow, Mono, Notice, StatusBadge, When } from './ui';
 import { AdminGithubApp } from './github-app';
+import { AdminPrivateCatalogs } from './private-catalogs';
 import { AdminOAuthProviders } from './oauth-providers';
 
 // ---------- key vault ----------
@@ -150,6 +151,7 @@ export function AdminKeyVault() {
         </AlertDialogContent>
       </AlertDialog>
       <AdminGithubApp />
+      <AdminPrivateCatalogs />
       <AdminOAuthProviders />
     </PageContainer>
   );

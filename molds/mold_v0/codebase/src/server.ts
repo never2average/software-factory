@@ -8,6 +8,7 @@ import { registerPackTools } from "./packs.js";
 import { registerMemoryTools } from "./account-context-tools.js";
 import { registerAuditTools } from "./audit-trail.js";
 import { registerAgentTools } from "./agent-tools.js";
+import { registerUsageTools } from "./usage-tool.js";
 import { registerLedgerTools } from "./ledger.js";
 import { generatedInstructions, packInstructions } from "./mcp-tools.js";
 import { registerPackPrompts } from "./mcp-prompts.js";
@@ -134,6 +135,7 @@ export function createServer(org: Org, context = ""): McpServer {
   registerAuditTools(server, org);
   registerLedgerTools(server, org); // mold_v0-195: verify_audit_trail, with audit.sign on
   registerAgentTools(server, org); // mold_v0-243: the workspace agent's sessions, with agent_harness on
+  registerUsageTools(server, org); // mold_v0-260: get_usage, with usage_tool on (off by default)
   // Slash commands after every tool: the host packs' own, then the ones the packs declare (mold_v0-137, pack.json mcp.prompts).
   for (const h of hosts()) h.mcp?.registerPrompts?.(server, org);
   registerPackPrompts(server);

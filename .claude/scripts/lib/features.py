@@ -71,6 +71,15 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
     if by == "layouts": return (any(isinstance(a.get("detail"), dict) or a.get("key_from_title") is True or any(isinstance(f, dict) and f.get("copyable") is True for f in a.get("fields") or []) for a in _areas(docs))
                                 or any(isinstance(c, dict) for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict) for c in (t.get("columns") or [])))
+    # mold_v0-260 (the shell's src/features.ts gapAsks and gen-packs say the same)
+    tabs = [t for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict)]
+    if by == "record_inputs": return any(k.get("input_from_record") for k in _kinds(docs))
+    if by == "private_catalogs": return any(isinstance(r, dict) and r.get("kind") == "upstream_catalog" and r.get("access") not in (None, "public") for d in docs for r in (d.get("repositories") or {}).values())
+    if by == "wide_lists": return any(len(a.get("list_columns") or []) > 8 for a in _areas(docs)) or any(len(t.get("columns") or []) > 8 for t in tabs)
+    if by == "record_rules": return (any(a.get("on_save") or any(isinstance(f, dict) and f.get("where") for f in a.get("fields") or []) for a in _areas(docs))
+                                     or any(isinstance(f, dict) and f.get("where") for k in _kinds(docs) for f in k.get("args") or []))
+    if by == "credential_sets": return any(isinstance(c, dict) and (c.get("entries") or c.get("bound_to") == "tenant") for d in docs for c in d.get("credentials") or [])
+    if by == "home_cards": return any(t.get("kind") == "overview" and "setup" in (t.get("include") or []) and (len(t.get("sparklines") or []) > 4 or any(x in ("recent_runs", "attention") for x in t.get("rail") or [])) for t in tabs)
     if by == "no_engine":
         owned = {t for d in docs for t in (((d.get("host") or {}).get("schema") or {}).get("tables") or [])}
         return not all(t in owned for t in ENGINE_TABLES)
@@ -132,6 +141,11 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
         for d in docs:
             if re.search(r'"clock"\s*:', json.dumps([d.get("metrics") or [], d.get("charts") or [], d.get("tabs") or []])):
                 errs.append(f"{at}.record_clocks is false but pack {d.get('id', '?')} has a metric, chart or tab that counts by a clock: take it out, or leave the clocks on")
+    # mold_v0-260: what these flags check is never quietly dropped (gen-packs refuses the same)
+    for i, what in (("wide_lists", "a list with more than 8 columns"), ("record_rules", "a reference field's where or an area's on_save"), ("credential_sets", "a credential with entries or bound to a tenant")):
+        st = states.get(i)
+        if st and not st["setting"] and st["requested"]:
+            errs.append(f"{at}.{i} is off but a pack declares {what}: turn it on (features.{i} = true) or take the declaration out")
     if "customer_key_vault" in states and not states["customer_key_vault"]["setting"]:
         need = sorted({f"{d.get('id', '?')}.{c}" for d in docs for k in (d.get("job_kinds") or []) + (d.get("agent_job_kinds") or []) if isinstance(k, dict)
                        for c in (k.get("credentials") or []) if isinstance(c, str)
@@ -142,7 +156,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 16 and len(set(ids(root))) == 16, "the registry names 16 flags, each once")
+    ok(len(flags) == 25 and len(set(ids(root))) == 25, "the registry names 25 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -158,6 +172,19 @@ def self_test(root):
        "record page layouts: off by default; on when the profile says and an area declares a layout or a copyable field (mold_v0-253)")
     ok("panel" not in words(effective({}, [], root)) and "panel" in words(effective({"features": {"side_panel_forms": True}}, [], root)),
        "forms in a side panel: off by default, on when the profile says (mold_v0-256)")
+    # mold_v0-260
+    gaps = [{"id": "m", "job_kinds": [{"name": "k", "args": [{"name": "a"}], "input_from_record": {"a": "x"}}],
+             "repositories": {"cat": {"kind": "upstream_catalog", "access": "deploy_key"}},
+             "record_areas": [{"name": "w", "scope": "workspace", "list_columns": list("abcdefghi"), "on_save": [{"check": "c", "message": "no"}], "fields": [{"name": "r", "type": "reference", "to": "t", "where": {"field": "s", "equals": "on"}}]}],
+             "credentials": [{"name": "hosts", "bound_to": "tenant", "area": "t", "entries": {"label": "Host"}}],
+             "tabs": [{"id": "home", "kind": "overview", "include": ["setup"], "rail": ["recent_runs", "attention"], "sparklines": list("abcde")}]}]
+    all_on = {"features": {i: True for i in ("record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool")}}
+    ok(all(x not in words(effective({}, gaps, root)).split(", ") for x in ("inputs", "private", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage"))
+       and all(x in words(effective(all_on, gaps, root)).split(", ") for x in ("inputs", "private", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage")),
+       "mold_v0-260's nine flags: off by default; on when the profile says and (for six of them) a pack declares what asks for it")
+    ok(not any("wide" in w for w in words(effective(all_on, [], root)).split(", ")), "wide lists: on only when a list asks for it")
+    ok(len([e for e in problems({}, gaps, root) if "is off but a pack declares" in e]) == 3 and not [e for e in problems(all_on, gaps, root) if "is off but" in e],
+       "a wide list, a record rule and a credential set are refused while their flag is off (mold_v0-260)")
     related_col = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "project"}]}],
                     "tabs": [{"id": "projects", "kind": "area", "area": "projects", "columns": ["owner", {"related": {"area": "builds"}, "show": "count"}]}]}]
     ok("pages" in words(effective({"features": {"record_pages": True}}, related_col, root)), "a tab column computed from related records asks for record pages (mold_v0-256)")
