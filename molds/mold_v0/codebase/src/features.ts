@@ -9,7 +9,7 @@
  *              (profile.audit.data, .platform, .sign; profile.onprem_runners), else the registry's default (true where the
  *              capability was on whenever a pack declared it before this registry, false for the opt-in toggles)
  *   requested  what asks for it: a pack's declaration (credentials, email, due dates or clocks, private-network kinds,
- *              developer_surface, checks, encrypted fields), a build without the session engine (health_history), or
+ *              developer_surface, checks, encrypted fields, record page layouts), a build without the session engine (health_history), or
  *              always (the audit toggles: the profile alone decides)
  *   on         requested AND the setting is not false
  *
@@ -27,7 +27,7 @@ export type { FeatureId, FeatureSettings, FeatureSpec } from "./feature-flags.js
 // ---------------------------------------------------------------- what asks for each
 
 type Def = ReturnType<typeof packs>[number]["definition"];
-const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; fields?: { encrypted?: boolean; type?: string; preview?: string }[] }[];
+const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; detail?: unknown; fields?: { encrypted?: boolean; type?: string; preview?: string; copyable?: boolean }[] }[];
 const kindsOf = (d: Def) => [...(d.jobKinds ?? []), ...(d.agentJobKinds ?? [])] as { private_network?: boolean }[];
 
 /** Whether something in this build asks for the capability (the pack signal), whatever its flag says. */
@@ -45,6 +45,7 @@ export function featureRequested(id: FeatureId): boolean {
     case "encrypted": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.encrypted === true)));
     case "no_engine": return !sessionEngine();
     case "documents": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.type === "file" || f.preview === "document")));
+    case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || (a.fields ?? []).some((f) => f.copyable === true)));
   }
 }
 

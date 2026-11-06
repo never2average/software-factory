@@ -56,7 +56,7 @@ Every field has a `name` (lowercase, 2 to 63 characters), a `label`, a `type` (d
 | `file` | a file: a path in the workspace store, or a **stored file** `{object, name, size, content_type, sha256}` kept sealed for the record (mold_v0-220, `src/record-files.ts`); the console's create form uploads them (section 6) | `multiple`: **files** |
 | `url` | an absolute `http` or `https` address of up to 2048 characters, with a host and no user name or password (mold_v0-238, `src/pack-api.ts` `isFieldUrl`); the console takes it in an address input and shows it as a link | `preview: "document"` |
 
-Three markers on top of the type:
+Four markers on top of the type:
 
 - **URL with a document preview**: a `url` field (or a `text` field holding a URL, the form before mold_v0-238) with
   `"preview": "document"`; the record's card fetches the document (only from the pack's `documents.hosts`, over HTTPS,
@@ -69,6 +69,8 @@ Three markers on top of the type:
   number, date, boolean, json or a single enum; never a field the lifecycle, a due date, a link or a clock uses.
 - **Searchable**: `"searchable": "equality"` on an encrypted field keeps a keyed blind index beside it, so a filter
   `{field: value}` finds it. No other operator and no sort.
+- **Copyable** (mold_v0-253): `"copyable": true` puts a copy button beside the value on the record's laid-out page
+  (section 6, "The record's page"), in its sections and facts. Never on an encrypted, `file` or `json` field.
 
 ## 3. Scope and provenance
 
@@ -208,6 +210,52 @@ Where an area's list is drawn, and what it has:
   secret) are one credential. None of this changes an area's contract: a credential is not a field of the record and is
   never read, exported or imported with it.
 
+- **The record's page, laid out** (mold_v0-253, flag `record_pages`, off by default): an area's `detail` lays out its
+  records' page. Absent, or with the flag off, the page is the one details card it always was (every field, then
+  documents, deadlines, links and the Credentials card). With it:
+
+  ```json
+  "detail": {
+    "header": {
+      "title": "name", "subtitle": "summary",
+      "badges": [{"field": "status", "colors": {"passed": "success", "failed": "danger", "running": "info"}}],
+      "creator": true,
+      "facts": [{"field": "project"}, {"field": "started"}, {"field": "duration", "unit": "s"}, {"field": "artifact"}]
+    },
+    "notices": [{"when": {"field": "status", "equals": "failed"}, "tone": "danger", "title": "This build failed", "text": "..."}],
+    "tabs": [
+      {"label": "Overview", "sections": [
+        {"title": "Source", "columns": 3, "fields": ["project", "branch", "commit"]},
+        {"title": "Results", "columns": 3, "groups": [{"title": "Tests", "fields": ["passed", "failed"]}, {"title": "Timing", "fields": ["started"]}]},
+        {"title": "Approval", "fields": ["approver"], "empty": "No one has approved this build yet."}]},
+      {"label": "Logs", "sections": [{"title": "Log excerpt", "columns": 1, "fields": ["log"]}]}],
+    "unplaced": "show"
+  }
+  ```
+
+  - **header**: `title` (a field shown as the title; default the record's title), `subtitle` (a summary line),
+    `badges` (up to 3 single-choice enum fields; each value's colour a theme token, `neutral`, `info`, `success`,
+    `warning`, `danger` or a chart colour `viz-1` to `viz-8`; a value left out is neutral), `creator` (false hides
+    "Added by", the record's provenance), and up to **8 facts** (a field, an optional `label`, a number's `unit`), each
+    formatted by its type: a date relative ("in 3 days") with the exact date on hover, a number grouped with its unit, a
+    reference, link or address as a link, an enum as its badge. The header also carries **Copy ID** and **Copy link**
+    and a line with the record's id, version and when it changed.
+  - **notices**: banners above the tabs while their condition holds on the record: one test of one field, `equals`,
+    `in`, `not_in` or `empty` (true or false); tone `info`, `warning` or `danger`; an optional `title` and the `text`.
+  - **tabs**: each a `label` (its address `?tab=<label in lowercase, words joined by ->`; one tab draws no strip) and at
+    least one section. A **section** is a full-width card: its `title`, its `fields` (one group) or `groups` (several,
+    each with an optional `title`), laid out in `columns` 1, 2 (the default) or 3 on a desktop and one on a phone, and
+    its own `empty` words, shown when every field of it is empty on the record (default "Nothing here yet.").
+  - **unplaced**: the fields no part of the layout names are an "Other details" section at the end of the first tab
+    (`show`, the default; only those with a value) or left out (`hide`). The first tab also ends with the record's
+    documents, deadlines, linked records and Credentials card, as the page without a layout shows them.
+
+  The build refuses a layout that names a field the area lacks, more than 8 facts, a tab without sections, a section
+  without fields, a badge on anything but a single-choice enum field or with a colour outside the token set, an
+  option value the field does not have (a badge's colours, a notice's test), a unit on a field that is not a number,
+  a fact, title or badge on an encrypted or file field, and two tabs with one address (`src/pack-api.ts`
+  `RecordDetailSchema`, `detailProblems`).
+
 ## 7. Settings placement
 
 `"settings": {"group": "access" | "connections" | "automation" | "data_trust", "label": "..."}` (mold_v0-219) shows a
@@ -325,6 +373,8 @@ What the contract can name only as `none`, or cannot name, because the runtime d
 - **A different primary action per list.** The contract's `primary_action` is one value for every list of the area; an
   area whose tabs offer different actions cannot declare a contract until they agree (its derived contract prints
   each). An area's own lists (Settings, Records page) offer `create_record` or none, never a run or a link.
+- **The rest of the record's page** (mold_v0-253 is part 1): related lists, a record's runs and a run's own page, logs,
+  history, code views and page actions are later parts; until then a layout's sections show the record's own fields.
 - **Updating a record's files from the console.** The console creates records with their files; changing a record's
   files afterwards is the data API's (`PUT /api/data/<area>/<key>` with a reference an upload answered), not a form's,
   and the MCP tools take a workspace store path, not an upload.

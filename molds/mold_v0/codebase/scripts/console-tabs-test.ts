@@ -23,7 +23,8 @@
 //    browser its table (the source column, every area's fields, each row opening the record of its first area), its
 //    board (no moves), its timeline, its empty state and a narrow table the keyboard can scroll; a one-area tab's own
 //    columns.
-// 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
+// 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too, and mold_v0-253's laid-out
+//    record pages: fixture_pages with record_pages on).
 // 5. A home tab (mold_v0-134, mold_v0-172): fixture_vulns' overview, labelled Home, includes the Setup page's checklist and the
 //    notices (its Due soon tab dropped), with rail cards (its number chart, the notices) and its charts moved to a
 //    Dashboard tab but one: the sidebar loses the Due soon tab, the tab is at /app (mold_v0-175: its own address and
@@ -712,7 +713,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 
   // ---------- 4. the console typechecks with the tabs ----------
   if (process.env.CONSOLE_TABS_TYPECHECK !== "off" && existsSync(path.join(ROOT, "web", "node_modules"))) {
-    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"]] as const) {
+    // mold_v0-253: a build whose record pages are laid out (fixture_pages, record_pages on): the generated registry names
+    // the layout's type (web/src/features/records/detail-layout.ts) and the page draws it.
+    const pagesWeb = path.join(buildCopy("pages", ["fixture_pages"], (packs) => writeFileSync(path.join(path.dirname(packs), "profile.json"), JSON.stringify({ features: { record_pages: true } }))), "web");
+    assert.match(readFileSync(path.join(pagesWeb, "src", "config", "pack-nav.generated.ts"), "utf8"), /"detail":/, "the laid-out build's registry carries its layouts");
+    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"], [pagesWeb, "laid-out record pages (record_pages on)"]] as const) {
       const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: w, encoding: "utf8" });
       assert.equal(r.status, 0, `the console typechecks with ${what}: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
       console.log(`✓ the build copy's console typechecks with ${what}`);

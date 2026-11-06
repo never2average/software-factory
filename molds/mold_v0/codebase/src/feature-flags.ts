@@ -9,7 +9,7 @@ import { PROFILE } from "./profile.js";
 export type FeatureId =
   | "customer_key_vault" | "company_email" | "scheduled_alerts" | "record_clocks" | "audit.data" | "audit.platform"
   | "audit.sign" | "onprem_runners" | "developer_surface" | "declarative_checks" | "encrypted_fields" | "health_history" | "document_preview"
-  | "agent_harness";
+  | "agent_harness" | "record_pages";
 
 export interface FeatureSpec {
   id: FeatureId;
@@ -17,7 +17,7 @@ export interface FeatureSpec {
   label: string;
   default: boolean;
   legacy?: string;
-  requested_by: "credentials" | "email" | "alerts" | "clocks" | "always" | "private_network" | "developer_surface" | "checks" | "encrypted" | "no_engine" | "documents";
+  requested_by: "credentials" | "email" | "alerts" | "clocks" | "always" | "private_network" | "developer_surface" | "checks" | "encrypted" | "no_engine" | "documents" | "layouts";
   requested_words: string;
   requires?: FeatureId[];
   requires_any?: FeatureId[];

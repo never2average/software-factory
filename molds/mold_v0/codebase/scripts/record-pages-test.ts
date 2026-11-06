@@ -51,6 +51,11 @@
 //      and a value repeating the record's own key hidden, common short values in words (the credentials card's
 //      mapping); one line in a list's cell and a board's card; drawn by a record's page, an open row's card and a staff
 //      record's page, never as raw JSON.
+//  14. A record's page, laid out (mold_v0-253, flag record_pages): the area's `detail` declared and refused (a field the
+//      area lacks, a ninth fact, an empty tab, a badge colour outside the theme's tokens, ...), its badges, facts by
+//      type, notices, tabs and sections, copy (id, link, copyable fields; toasts), the build over the fixture
+//      scripts/fixtures/packs/fixture_pages (off: the generated files as before the flag; on: the layouts), and the page
+//      drawn in a headless browser.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -520,4 +525,270 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(jv, /jsonView\(v, recordKey\)/, "JsonValue draws jsonView");
   assert.doesNotMatch(jv, /JSON\.stringify/, "nor does JsonValue");
   ok("a record's json field in words (mold_v0-240): a list of objects one line per item (its name, its meaningful fields), an object one line per field, nested objects flattened, bookkeeping and the record's own key hidden, short values in the credentials card's words; one line in a list's cell and a board's card; drawn readable on a record's page, an open row's card and a staff record's page");
+}
+
+// 14. A record's page, laid out (mold_v0-253; flag record_pages, off by default): the area's `detail` declared and refused
+//     (src/pack-api.ts RecordDetailSchema, detailProblems), what the page decides (web/src/features/records/detail-layout.ts:
+//     badges, facts by type, notices, tabs, sections, copy), the build (gen-packs over scripts/fixtures/packs/fixture_pages:
+//     off, the generated files as before the flag; on, the layouts and copyable; a broken layout refused), and the page
+//     drawn in a headless browser (when the machine has one) for a failed and a running build and a one-tab project.
+{
+  const { RecordAreaSchema: Area, BADGE_COLORS: SERVER_COLORS, NOTICE_TONES, DETAIL_FACTS_MAX, detailTabId } = await import("../src/pack-api.js");
+  const L = await web("features/records/detail-layout.ts");
+  const { readFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } = await import("node:fs");
+  const { spawnSync } = await import("node:child_process");
+  const { tmpdir, homedir } = await import("node:os");
+  const ROOT = path.resolve(import.meta.dirname, "..");
+  const FIXTURE = JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_pages", "pack.json"), "utf8"));
+  const builds = FIXTURE.record_areas.find((a: { name: string }) => a.name === "builds");
+  const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+  const refusals = (a: unknown) => { const r = Area.safeParse(a); return r.success ? [] : r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`); };
+  const withDetail = (edit: (d: any, a: any) => void) => { const a = clone(builds); edit(a.detail, a); return refusals(a); };
+
+  // a. Declared: the fixture's three areas take; each broken layout is refused, said where and why.
+  for (const a of FIXTURE.record_areas) assert.deepEqual(refusals(a), [], `fixture area ${a.name}: a layout the build takes`);
+  const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) => re.test(x)), `${what}: ${JSON.stringify(got)}`);
+  has(withDetail((d) => { d.tabs[0].sections[0].fields.push("ghost"); }), /^detail\.tabs\.0\.sections\.0\.fields\.6: ghost is not one of the area's fields$/, "a section naming a field the area lacks");
+  has(withDetail((d) => { d.header.facts[0].field = "ghost"; }), /^detail\.header\.facts\.0\.field: ghost is not one of the area's fields$/, "a fact naming one");
+  has(withDetail((d) => { d.header.subtitle = "ghost"; }), /^detail\.header\.subtitle: ghost is not one/, "the subtitle naming one");
+  has(withDetail((d) => { d.notices[0].when.field = "ghost"; }), /^detail\.notices\.0\.when\.field: ghost is not one/, "a notice testing one");
+  has(withDetail((d) => { d.header.facts.push({ field: "tests_passed" }); }), new RegExp(`^detail\\.header\\.facts: at most ${DETAIL_FACTS_MAX} facts`), "a ninth fact");
+  has(withDetail((d) => { d.tabs[1].sections = []; }), /^detail\.tabs\.1\.sections: tab Logs is empty: a tab has at least one section$/, "an empty tab");
+  has(withDetail((d) => { d.tabs = []; }), /^detail\.tabs: a layout has at least one tab$/, "no tab at all");
+  has(withDetail((d) => { d.tabs[0].sections[0].fields = []; }), /^detail\.tabs\.0\.sections\.0: section Source lists no fields$/, "a section without fields");
+  has(withDetail((d) => { d.header.badges[0].colors.failed = "red"; }), /^detail\.header\.badges\.0\.colors\.failed: red is not a badge colour: one of the theme's tokens neutral, info, success/, "a badge colour outside the tokens");
+  has(withDetail((d) => { d.header.badges[0].colors.failed = "#ff0000"; }), /#ff0000 is not a badge colour/, "a raw colour");
+  has(withDetail((d) => { d.header.badges[0].colors.exploded = "danger"; }), /^detail\.header\.badges\.0\.colors\.exploded: exploded is not one of status's options$/, "a badge colour for a value the field lacks");
+  has(withDetail((d) => { d.header.badges.push({ field: "branch" }); }), /branch is not a single-choice enum field/, "a badge on a text field");
+  has(withDetail((d) => { d.header.facts[2].unit = "chars"; }), /^detail\.header\.facts\.2\.unit: a unit is for a number field \(branch is text\)$/, "a unit on a text field");
+  has(withDetail((d) => { d.notices[0].when = { field: "status", equals: "failed", empty: true }; }), /a notice's condition is one test: equals, in, not_in or empty \(it has equals and empty\)/, "a notice with two tests");
+  has(withDetail((d) => { d.notices[0].when.equals = "exploded"; }), /exploded is not one of status's options/, "a notice testing a value the field lacks");
+  has(withDetail((d) => { d.notices[0].tone = "success"; }), /a notice's tone is one of info, warning, danger/, "a notice's tone outside its three");
+  has(withDetail((d) => { d.tabs[2].label = "logs"; }), /tab logs has the same address as another \(\?tab=logs\)/, "two tabs with one address");
+  has(withDetail((d) => { d.tabs[0].sections[1].fields = ["branch"]; }), /section Results gives fields or groups, not both/, "fields and groups together");
+  has(withDetail((d) => { d.tabs[0].sections[0].fields.push("branch"); }), /branch is in section Source twice/, "a field twice in one section");
+  has(withDetail((d, a) => { a.fields.find((f: any) => f.name === "notes").encrypted = true; d.header.facts[0].field = "notes"; }), /notes is encrypted: a fact shows a value/, "a fact on an encrypted field");
+  has(withDetail((d) => { d.tabs[0].sections[0].columns = 4; }), /^detail\.tabs\.0\.sections\.0\.columns/, "four columns");
+  has(withDetail((_d, a) => { a.fields.find((f: any) => f.name === "config").copyable = true; }), /^fields\.18\.copyable: copyable is for a value the page shows in full/, "copyable on a json field");
+  assert.deepEqual([...NOTICE_TONES], ["info", "warning", "danger"]);
+  ok("a record page's layout (mold_v0-253): the fixture's projects, environments and builds take; refused: a field the area lacks (a section, a fact, the subtitle, a notice), a ninth fact, an empty tab or none, a section without fields, a badge colour outside the theme's tokens or for a value the field lacks, a badge on a text field, a unit on a text field, a notice with two tests or an unknown value or tone, two tabs with one address, fields with groups, a field twice, a fact on an encrypted field, four columns, copyable on a json field");
+
+  // b. Badges: the console's tokens are the schema's, each a class of theme variables (no raw colour).
+  assert.deepEqual([...L.BADGE_COLORS], [...SERVER_COLORS], "one list of badge tokens, server and console");
+  for (const c of L.BADGE_COLORS) {
+    assert.ok(L.BADGE_CLASS[c], `${c}: drawn`);
+    assert.doesNotMatch(L.BADGE_CLASS[c], /#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i, `${c}: theme tokens only`);
+    if (c.startsWith("viz-")) assert.match(L.BADGE_CLASS[c], new RegExp(`var\\(--${c}\\)[\\s\\S]*var\\(--foreground\\)`), `${c}: the chart colour, its text mixed toward the foreground (legible in light and dark)`);
+  }
+  const layout = builds.detail;
+  assert.equal(L.badgeColor(layout, "status", "failed"), "danger");
+  assert.equal(L.badgeColor(layout, "tier", "production"), "viz-7");
+  assert.equal(L.badgeColor(layout, "branch", "main"), "neutral", "a field without a badge: neutral");
+  assert.equal(L.badgeColor({ ...layout, header: { badges: [{ field: "status" }] } }, "status", "failed"), "neutral", "a value its badge leaves out: neutral");
+  const statusField = builds.fields.find((f: { name: string }) => f.name === "status");
+  assert.equal(L.optionWords(statusField, "failed"), "Failed", "an enum's badge reads its option's label");
+  ok(`badges: ${L.BADGE_COLORS.length} theme tokens (the five tones and the eight chart colours), the same list on both sides, each drawn from theme variables; a value without a colour neutral; the option's label`);
+
+  // c. Facts by type: a date relative (the exact date beside it), a number with its unit.
+  const NOW = Date.parse("2026-11-06T12:00:00Z");
+  assert.deepEqual(L.dateWords("2026-11-06", NOW), { relative: "today", absolute: "6 Nov 2026", iso: "2026-11-06" });
+  assert.equal(L.dateWords("2026-11-07", NOW).relative, "tomorrow");
+  assert.equal(L.dateWords("2026-11-05", NOW).relative, "yesterday");
+  assert.equal(L.dateWords("2026-11-09", NOW).relative, "in 3 days");
+  assert.equal(L.dateWords("2026-10-23", NOW).relative, "2 weeks ago");
+  assert.equal(L.dateWords("2026-08-01", NOW).relative, "3 months ago");
+  assert.equal(L.dateWords("2023-11-01", NOW).relative, "3 years ago");
+  assert.deepEqual(L.dateWords("2026-11-06T11:15:00Z", NOW), { relative: "45 minutes ago", absolute: "6 Nov 2026, 11:15 UTC", iso: "2026-11-06T11:15:00.000Z" });
+  assert.equal(L.dateWords("2026-11-06T09:00:00Z", NOW).relative, "3 hours ago");
+  assert.equal(L.dateWords("not a date", NOW), null);
+  assert.deepEqual([L.numberWords(1234.5, "s"), L.numberWords(87.25, "%"), L.numberWords(12), L.numberWords("3", "GB"), L.numberWords(1, "×")], ["1,234.5 s", "87.25%", "12", "3 GB", "1×"]);
+  ok("facts by type: dates relative (today, tomorrow, in 3 days, 2 weeks ago, 45 minutes ago) with the exact date on hover, numbers grouped with their unit (a % or × closed up)");
+
+  // d. Notices: their condition on the record's fields, in declared order.
+  const failed = { status: "failed", approver: "", tier: "production" }, running = { status: "running", approver: "R. Lee" }, passed = { status: "passed", approver: "R. Lee" };
+  assert.deepEqual(L.shownNotices(layout, failed).map((n: { tone: string }) => n.tone), ["danger", "warning"], "a failed build not approved: danger, then warning");
+  assert.deepEqual(L.shownNotices(layout, running).map((n: { tone: string }) => n.tone), ["info"], "a running build: info");
+  assert.deepEqual(L.shownNotices(layout, passed), [], "a passed and approved build: none");
+  assert.equal(L.conditionHolds({ field: "tags", equals: "x" }, { tags: ["y", "x"] }), true, "a list: any of its values");
+  assert.equal(L.conditionHolds({ field: "status", not_in: ["passed"] }, { status: "failed" }), true);
+  assert.equal(L.conditionHolds({ field: "status", not_in: ["passed"] }, {}), false, "not_in never holds on an empty field");
+  assert.equal(L.conditionHolds({ field: "n", equals: 3 }, { n: "3" }), true, "a number compared as written");
+  assert.equal(L.conditionHolds({ field: "approver", empty: false }, passed), true);
+  ok("notices: shown while their condition holds (equals, in, not_in, empty; a list field by any value), in declared order");
+
+  // e. Tabs and sections.
+  assert.deepEqual(layout.tabs.map((t: { label: string }) => L.tabId(t.label)), ["overview", "logs", "configuration"]);
+  for (const l of ["Overview", "Run & logs", "  Spaced  out ", "Ünïcode"]) assert.equal(L.tabId(l), detailTabId(l), `${l}: one address on both sides`);
+  assert.equal(L.openTab(layout, "logs").label, "Logs");
+  assert.equal(L.openTab(layout, "nope").label, "Overview", "an unknown ?tab: the first");
+  assert.equal(L.openTab(layout, null).label, "Overview");
+  const approval = layout.tabs[0].sections[2];
+  assert.equal(L.sectionEmpty(approval, failed), true, "every field empty: the section's empty state");
+  assert.equal(L.sectionEmpty(approval, passed), false);
+  assert.deepEqual(L.sectionFields(layout.tabs[0].sections[1]), ["tests_passed", "tests_failed", "coverage", "started", "duration"], "a section's groups, in order");
+  assert.deepEqual([L.columnsClass(1), L.columnsClass(2), L.columnsClass(3), L.columnsClass(undefined)],
+    ["grid-cols-1", "grid-cols-1 sm:grid-cols-2", "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3", "grid-cols-1 sm:grid-cols-2"], "one column on a phone, up to the section's on wider screens");
+  assert.deepEqual(L.unplacedFields(builds, layout).map((f: { name: string }) => f.name), [], "the fixture places every field");
+  assert.deepEqual(L.unplacedFields(builds, { tabs: [{ label: "A", sections: [{ title: "S", fields: ["status"] }] }] }).length, builds.fields.length - 1, "the rest: Other details");
+  assert.deepEqual(L.unplacedFields(builds, { tabs: [{ label: "A", sections: [{ title: "S", fields: ["status"] }] }], unplaced: "hide" }), [], "or hidden");
+  assert.equal(L.isEmptyValue([]), true); assert.equal(L.isEmptyValue({}), true); assert.equal(L.isEmptyValue(0), false); assert.equal(L.isEmptyValue(false), false);
+  ok("tabs and sections: each tab's address (?tab=, the same on both sides; an unknown one opens the first), a section's groups in order, its empty state when every field is empty, 1, 2 or 3 columns (one on a phone), the fields no part names as Other details or hidden");
+
+  // f. Copy, and how the page draws (outlined buttons, full-width cards, no dialog; the page without a layout unchanged).
+  assert.deepEqual([L.copyText("a1b2c3"), L.copyText(["x", "y"]), L.copyText(42), L.copyText(null)], ["a1b2c3", "x, y", "42", ""]);
+  const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const dp = strip(src("features/records/detail-page.tsx")), rp = strip(src("features/records/record-pages.tsx"));
+  assert.match(dp, /navigator\.clipboard && window\.isSecureContext\) await navigator\.clipboard\.writeText\(text\)/, "the clipboard where the browser has it");
+  assert.match(dp, /document\.execCommand\('copy'\)/, "else a selection copied (an older phone)");
+  assert.match(dp, /toast\.success\(done\)/, "a toast once copied");
+  assert.match(dp, /toast\.error\('Could not copy/, "and one when the browser refuses");
+  assert.match(dp, /copyWithToast\(record\.key, 'Record ID copied'\)[\s\S]*?Copy ID/, "Copy ID");
+  assert.match(dp, /copyWithToast\(window\.location\.href, 'Link copied'\)[\s\S]*?Copy link/, "Copy link: the page's address, its tab with it");
+  assert.match(dp, /aria-label=\{`Copy \$\{what\}`\}[\s\S]*?copyWithToast\(text, `\$\{what\} copied`\)/, "a copyable field's button: named, its toast names the field");
+  const buttons = [...dp.matchAll(/<Button\b[^>]*>/g)].map((m) => m[0]);
+  assert.ok(buttons.length >= 3 && buttons.every((b) => /variant='outline'/.test(b)), `every button outlined (the shared variant): ${buttons.join(" ")}`);
+  assert.doesNotMatch(dp, /<(?:Dialog|Sheet|AlertDialog|Drawer)\b|max-w-4xl|max-w-3xl/, "full-width cards, no dialog or side sheet");
+  assert.ok(((dp.match(/<Card className='w-full /g) ?? []).length) >= 4, "each part a full-width card");
+  assert.match(rp, /const layout = featureOn\('record_pages'\) \? layoutOf\(area\) : null;\s*if \(layout\) return \(/, "the layout only with the flag on and a layout declared");
+  const detail = /export function RecordDetailPage\b[\s\S]*?\n\}\n/.exec(rp)?.[0] ?? "";
+  assert.match(detail.slice(detail.indexOf("if (layout) return")), /\);\s*return \(\s*<PageContainer>\s*\{error \? <ErrorState error=\{error\} \/> : !data \? <LoadingCards count=\{2\} \/> : \(<div className='flex w-full flex-col gap-6'>\s*<Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>/,
+    "else the one details card, as before");
+  ok("copy: the record's id, the page's link and each copyable field, each confirmed by a toast (the clipboard, else a selection: phones); outlined buttons, full-width cards, no dialog; the details card as before without a layout or the flag");
+
+  // g. The build: off, the generated files as before the flag; on, the layouts reach the console; a broken one refused.
+  const TMP = mkdtempSync(path.join(tmpdir(), "record-pages-"));
+  const copyOf = (name: string, edit?: (j: any) => void, features?: Record<string, boolean> | null, withFixture = true) => {
+    const copy = path.join(TMP, name);
+    const skip = new Set(["node_modules", ".pglite", ".git", ".next"]);
+    cpSync(ROOT, copy, { recursive: true, filter: (s) => !skip.has(path.basename(s)) && s !== path.join(ROOT, "packs") });
+    for (const nm of ["node_modules", "web/node_modules"]) if (existsSync(path.join(ROOT, nm))) symlinkSync(path.join(ROOT, nm), path.join(copy, nm), "dir");
+    mkdirSync(path.join(copy, "packs"), { recursive: true });
+    cpSync(path.join(ROOT, "packs", "pack.schema.json"), path.join(copy, "packs", "pack.schema.json"));
+    if (withFixture) {
+      const j = clone(FIXTURE); edit?.(j);
+      mkdirSync(path.join(copy, "packs", "fixture_pages"), { recursive: true });
+      writeFileSync(path.join(copy, "packs", "fixture_pages", "pack.json"), JSON.stringify(j, null, 2));
+    }
+    if (features) writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ features }, null, 2));
+    const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
+    const read = (rel: string) => (existsSync(path.join(copy, rel)) ? readFileSync(path.join(copy, rel), "utf8") : "");
+    return { copy, status: g.status, out: `${g.stdout}\n${g.stderr}`, nav: read("web/src/config/pack-nav.generated.ts"), features: read("web/src/config/features.generated.ts") };
+  };
+  try {
+    const off = copyOf("off");
+    assert.equal(off.status, 0, off.out.slice(-1500));
+    assert.doesNotMatch(off.nav, /"detail"|"copyable"|detail\?:|copyable\?:|detail-layout/, "off: no layout, no copyable, no type for them in the console's registry");
+    assert.doesNotMatch(off.features, /record_pages/, "off: the flag left out of the console's flags (quiet_off)");
+    // The same pack with its layouts and copyable taken out: the generated files are byte for byte the same (as before the flag).
+    const bare = copyOf("bare", (j) => { for (const a of j.record_areas) { delete a.detail; for (const f of a.fields) delete f.copyable; } });
+    assert.equal(bare.status, 0, bare.out.slice(-1500));
+    const genFiles = (copy: string) => { const dir = path.join(copy, "web", "src", "config"); return readdirSync(dir).filter((f) => f.includes(".generated.")).sort().map((f) => `${f}\n${readFileSync(path.join(dir, f), "utf8")}`).join("\n"); };
+    assert.equal(genFiles(off.copy), genFiles(bare.copy), "off: the console's generated files are those of the same pack without its layouts");
+    const on = copyOf("on", undefined, { record_pages: true });
+    assert.equal(on.status, 0, on.out.slice(-1500));
+    const areas = JSON.parse(/export const recordAreas: RecordAreaSpec\[\] = ([\s\S]*?);\n/.exec(on.nav)![1]!) as { name: string; detail?: { tabs: unknown[] }; fields: { name: string; copyable?: boolean }[] }[];
+    const byName = Object.fromEntries(areas.map((a) => [a.name, a]));
+    assert.equal(byName.builds!.detail!.tabs.length, 3, "on: the builds' layout in the console's registry");
+    assert.equal(byName.projects!.detail!.tabs.length, 1, "and the projects'");
+    assert.ok(!("detail" in byName.environments!), "an area without a layout: none (its page as before)");
+    assert.deepEqual(byName.builds!.fields.filter((f) => f.copyable).map((f) => f.name), ["branch", "commit", "artifact"], "copyable fields");
+    assert.match(on.nav, /detail\?: import\('@\/features\/records\/detail-layout'\)\.DetailLayout;/, "the type names the layout only while on");
+    assert.match(on.features, /"record_pages": true/);
+    const flagOnNoLayout = copyOf("on-zero", undefined, { record_pages: true }, false);
+    assert.equal(flagOnNoLayout.status, 0);
+    assert.doesNotMatch(flagOnNoLayout.features, /record_pages/, "the flag on with nothing asking for it: off (no area declares a layout)");
+    for (const [name, edit, re] of [
+      ["ghost", (j: any) => { j.record_areas[2].detail.tabs[0].sections[0].fields.push("ghost"); }, /packs\/fixture_pages\/pack\.json: record_areas\[2\]\.detail\.tabs\[0\]\.sections\[0\]\.fields\[6\]: ghost is not one of the area's fields/],
+      ["facts", (j: any) => { j.record_areas[2].detail.header.facts.push({ field: "tests_passed" }); }, /at most 8 facts/],
+      ["empty-tab", (j: any) => { j.record_areas[2].detail.tabs[1].sections = []; }, /tab Logs is empty/],
+      ["colour", (j: any) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; }, /crimson is not a badge colour/],
+    ] as const) {
+      const b = copyOf(`refused-${name}`, edit, { record_pages: true });
+      assert.notEqual(b.status, 0, `${name}: refused at build`);
+      assert.match(b.out, re, `${name}: said why (${b.out.slice(-600)})`);
+    }
+    const offBroken = copyOf("refused-off", (j) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; });
+    assert.notEqual(offBroken.status, 0, "a broken layout is refused with the flag off too (declared and checked either way)");
+    ok("the build: off, no layout, copyable or flag in the console's files, which are those of the same pack without its layouts; on, the layouts and copyable fields reach the registry (an area without one has none); refused at build, on or off: a field the area lacks, a ninth fact, an empty tab, a colour outside the tokens");
+
+    // h. Drawn in a headless browser (the console's own components, bundled): a failed build, a running one on its Logs tab, a project.
+    const findChrome = () => {
+      if (process.env.CHROME_BIN) return existsSync(process.env.CHROME_BIN) ? process.env.CHROME_BIN : null;
+      const cache = path.join(homedir(), ".cache", "ms-playwright");
+      if (!existsSync(cache)) return null;
+      for (const d of readdirSync(cache).filter((x) => x.startsWith("chromium_headless_shell-")).sort().reverse())
+        for (const sub of existsSync(path.join(cache, d)) ? readdirSync(path.join(cache, d)) : []) { const bin = path.join(cache, d, sub, "chrome-headless-shell"); if (existsSync(bin)) return bin; }
+      return null;
+    };
+    const chrome = findChrome();
+    if (!chrome) console.log("✓ (no headless browser on this machine: the page's rendered check skipped)");
+    else {
+      const w = path.join(on.copy, "web");
+      const { build } = await import("esbuild");
+      writeFileSync(path.join(w, "render-entry.tsx"), `import { createRoot } from 'react-dom/client';
+import { NuqsAdapter } from 'nuqs/adapters/react';
+import { recordAreas } from '@/config/pack-nav.generated';
+import { featureOn } from '@/config/features';
+import { layoutOf } from '@/features/records/detail-layout';
+import { LaidOutRecord } from '@/features/records/detail-page';
+const I = (window as unknown as { __INPUT__: any }).__INPUT__;
+const area = recordAreas.find((a) => a.name === I.area)!;
+const layout = featureOn('record_pages') ? layoutOf(area) : null;
+createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1200 }}>{layout
+  ? <LaidOutRecord area={area} base='app' layout={layout} record={I.record} links={I.links} provenance={I.provenance} where="This workspace's own" credentials={null} />
+  : <p data-no-layout=''>no layout</p>}</div></NuqsAdapter>);
+setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
+`);
+      writeFileSync(path.join(w, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
+      writeFileSync(path.join(w, "render-auth.ts"), "export * from './src/lib/auth/builtin-client';\nexport const CLERK = false;\nexport const AUTH_PROVIDER = 'builtin';\n");
+      const dir = path.join(TMP, "render"); mkdirSync(dir, { recursive: true });
+      try {
+        await build({ entryPoints: [path.join(w, "render-entry.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: w,
+          tsconfig: path.join(w, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_AUTH_PROVIDER": '"builtin"' },
+          alias: { "next/link": path.join(w, "render-link.tsx") }, logLevel: "error",
+          plugins: [{ name: "auth", setup(b) { b.onResolve({ filter: /^@\/lib\/auth$/ }, () => ({ path: path.join(w, "render-auth.ts") })); } }] });
+      } finally { for (const f of ["render-entry.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(w, f), { force: true }); }
+      const draw = (name: string, input: unknown, query = "") => {
+        const f = path.join(dir, `${name}.html`);
+        writeFileSync(f, `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script>window.__INPUT__ = ${JSON.stringify(input).replace(/</g, "\\u003c")};</script><script src="bundle.js"></script></body></html>`);
+        const r = spawnSync(chrome, ["--no-sandbox", "--disable-gpu", "--virtual-time-budget=6000", "--window-size=1280,2400", "--dump-dom", `file://${f}${query}`], { encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+        assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 600)}`);
+        assert.match(r.stdout, /data-ready="1"/, `${name}: drawn (${r.stdout.slice(0, 300)})`);
+        return r.stdout;
+      };
+      const record = (key: string, title: string, data: Record<string, unknown>) => ({ key, title, data, version: null, updated_at: "2026-11-06T09:30:00.000Z" });
+      const failedBuild = record("build-1042", "Build 1042", { status: "failed", summary: "Nightly build of the main branch", project: "checkout", environment: "staging-eu", tier: "production", branch: "main",
+        commit: "9f4c2e1a7b3d", triggered_by: "Schedule", started: "2026-11-05", duration: 1312, tests_passed: 1180, tests_failed: 4, coverage: 87.4, artifact: "https://artifacts.example.com/builds/1042.tar.gz",
+        failure: "4 tests failed in the payments suite.", log_excerpt: "step 7/9: test\nFAIL payments/refund.spec\n", config: { runner: "large", cache: true } });
+      const dom = draw("failed", { area: "builds", record: failedBuild, links: [], provenance: { by: "run" } });
+      const count = (re: RegExp) => (dom.match(re) ?? []).length;
+      assert.match(dom, /<h1[^>]*>Build 1042<\/h1>/, "the title");
+      assert.match(dom, /data-record-subtitle="">Nightly build of the main branch</, "the summary under it");
+      assert.match(dom, /data-badge-color="danger"[\s\S]*?Failed[\s\S]*?data-badge-color="viz-7"[\s\S]*?Production/, "its status and tier badges in their colours");
+      assert.equal(count(/data-detail-field=""/g) >= 8, true);
+      const facts = /data-record-facts="">([\s\S]*?)<\/dl>/.exec(dom)?.[1] ?? "";
+      assert.equal((facts.match(/data-detail-field=""/g) ?? []).length, 8, "eight facts");
+      assert.match(facts, /1,312 s/, "a number with its unit"); assert.match(facts, /87\.4%/, "a percentage closed up");
+      assert.match(facts, /<time datetime="2026-11-05"[^>]*>[^<]*(ago|yesterday|today)<\/time>/, "a date in relative words, its exact date on hover");
+      assert.match(facts, /href="https:\/\/artifacts\.example\.com\/builds\/1042\.tar\.gz"/, "an address as a link");
+      assert.match(facts, /aria-label="Copy Commit"/, "a copyable fact: its copy button");
+      assert.match(dom, /data-record-creator="">Added by <span[^>]*>The app's own automation<\/span>/, "who added it");
+      assert.match(dom, /data-copy-id=""[^>]*>[\s\S]*?Copy ID/); assert.match(dom, /data-copy-link=""[^>]*>[\s\S]*?Copy link/);
+      assert.match(dom, /data-record-notice="danger"[\s\S]*?This build failed[\s\S]*?data-record-notice="warning"[\s\S]*?Not approved yet/, "the danger notice, then the warning");
+      assert.doesNotMatch(dom, /data-record-notice="info"/, "the running notice does not hold");
+      assert.match(dom, /data-record-tabs=""[\s\S]*?>Overview<[\s\S]*?>Logs<[\s\S]*?>Configuration</, "the tab strip");
+      assert.match(dom, /data-detail-section="detail-overview-0"[\s\S]*?>Source</, "the open tab's sections");
+      assert.match(dom, /data-detail-section="detail-overview-2"[\s\S]*?data-section-empty=""[\s\S]*?No one has approved this build yet\./, "an empty section: its own words");
+      assert.doesNotMatch(dom, /data-detail-section="detail-logs-/, "another tab's sections not drawn");
+      const logs = draw("running-logs", { area: "builds", record: record("build-1043", "Build 1043", { status: "running", approver: "R. Lee", branch: "main" }), links: [], provenance: { by: "people" } }, "?tab=logs");
+      assert.match(logs, /data-record-notice="info"/); assert.doesNotMatch(logs, /data-record-notice="(danger|warning)"/, "a running, approved build: the info notice alone");
+      assert.match(logs, /data-detail-section="detail-logs-0"[\s\S]*?Nothing failed in this build\.[\s\S]*?data-detail-section="detail-logs-1"[\s\S]*?No log lines were kept for this build\./, "?tab=logs: its sections, both empty");
+      const project = draw("project", { area: "projects", record: record("checkout", "Checkout", { health: "blocked", summary: "The payment pages", owner: "Payments team", started: "2026-01-12", repository: "https://git.example.com/checkout" }), links: [], provenance: { by: "people" } });
+      assert.doesNotMatch(project, /data-record-tabs=""/, "one tab: no strip");
+      assert.match(project, /data-badge-color="danger"[\s\S]*?Blocked/); assert.match(project, /data-record-notice="danger"/);
+      const env = draw("environment", { area: "environments", record: record("staging-eu", "Staging EU", { tier: "staging" }), links: [], provenance: null });
+      assert.match(env, /data-no-layout=""/, "an area without a layout: none (the page as before)");
+      ok("drawn in a headless browser: a failed build (title, summary, its status and tier badges in their colours, eight facts by type with a copy button, Added by, Copy ID and Copy link, the danger then the warning notice, the tab strip, an empty section in its own words), a running one on ?tab=logs (the info notice, its empty sections), a one-tab project (no strip), an area without a layout (none)");
+    }
+  } finally { rmSync(TMP, { recursive: true, force: true }); }
 }

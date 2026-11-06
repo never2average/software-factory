@@ -64,15 +64,15 @@ try {
   {
     const reg = JSON.parse(readFileSync(path.join(ROOT, "src", "features.json"), "utf8"));
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
-      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness"]);
-    assert.equal(reg.flags.length, 14);
+      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages"]);
+    assert.equal(reg.flags.length, 15);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
     }
     // defaults: on for what a pack declared before the registry, off for the opt-in toggles
     const off = F.FEATURES.filter((f) => !f.default).map((f) => f.id);
-    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness"]);
+    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages"]);
     // the profile's features over the legacy key over the default
     assert.equal(F.featureSetting("audit.data", {}), false);
     assert.equal(F.featureSetting("audit.data", { audit: { data: true } }), true);
@@ -80,7 +80,7 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 14 flags, each documented with a default; profile.features over the legacy key over the default");
+    console.log("✓ the registry: 15 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------
@@ -102,6 +102,8 @@ try {
     j.checks = [{ name: "has_ticket", label: "Is there such a ticket?", inputs: { summary: "string" }, rule: { area: "tickets", match: { summary: "$summary" }, latest_by: "updated_at", require: [{ field: "state", ne: "closed" }] } }];
     j.job_kinds[0].private_network = true;
     j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "evidence", label: "Evidence", type: "file" });
+    // mold_v0-253: a record page layout asks for record_pages.
+    j.record_areas.find((a: any) => a.name === "findings").detail = { tabs: [{ label: "Overview", sections: [{ title: "Finding", fields: ["severity", "scanner"] }] }] };
   });
   const org = (await createOrg(`Features ${STAMP}`)).org;
   const tools = async () => { const c = await connect(org); try { return (await c.client.listTools()).tools.map((t) => t.name); } finally { await c.close(); } };
@@ -126,13 +128,15 @@ try {
       // The workspace agent (mold_v0-243): its routes, its MCP tools, its claimable kind, its settings and its sweep.
       agent_harness: stack(agentAppRouter()) > 0 && t.includes("start_agent_session") && runnableKinds().some((k) => k.pack === "_agent")
         && settingGroups().some((g) => g.id === "agent") && jobs().includes("harness_sessions"),
+      // Record page layouts (mold_v0-253): the console's alone (the server serves the same record); the flag as the build reads it.
+      record_pages: F.featureOn("record_pages"),
     } as Record<string, boolean>;
   };
 
   F.setFeaturesForTest(null);
   const defaults = await probe();
   assert.deepEqual(defaults, { customer_key_vault: true, company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
-    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true, agent_harness: false }, "with the defaults: every pack-asked capability on, the toggles off");
+    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true, agent_harness: false, record_pages: false }, "with the defaults: every pack-asked capability on, the toggles off");
   assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health, documents");
   assert.equal(deliveriesOn(), true);
   console.log(`✓ defaults: on ${F.featuresOnWords()}; audit and runners off (their routes, tools and jobs absent)`);
@@ -151,6 +155,7 @@ try {
     ["health_history", false, "health_history"],
     ["document_preview", false, "document_preview"],
     ["agent_harness", true, "agent_harness"],
+    ["record_pages", true, "record_pages"],
   ];
   for (const [id, value, key] of turns) {
     F.setFeaturesForTest({ [id]: value });
@@ -205,6 +210,7 @@ try {
       j.checks = [{ name: "has_ticket", label: "Is there such a ticket?", inputs: { summary: "string" }, rule: { area: "tickets", match: { summary: "$summary" }, latest_by: "updated_at", require: [{ field: "state", ne: "closed" }] } }];
       j.job_kinds[0].private_network = true;
     j.record_areas.find((a: any) => a.name === "findings").fields.push({ name: "evidence", label: "Evidence", type: "file" });
+      j.record_areas.find((a: any) => a.name === "findings").detail = { tabs: [{ label: "Overview", sections: [{ title: "Finding", fields: ["severity", "scanner"] }] }] };
     };
     const build = (name: string, features?: Record<string, boolean>) => {
       const copy = path.join(TMPC, name);
@@ -230,6 +236,7 @@ try {
         developer: (constant(nav, "developerConsole") ?? {}).on === true,
         onprem: constant(nav, "onPremRunners") === true,
         alerts: ((constant(nav, "alertRules") ?? []) as unknown[]).length,
+        layouts: ((constant(nav, "recordAreas") ?? []) as { detail?: unknown }[]).filter((a) => !!a.detail).length,
       };
     };
     try {
@@ -247,6 +254,7 @@ try {
         ["declarative_checks", { declarative_checks: false }, (b) => b.features.declarative_checks === false, "off in the console's registry"],
         ["health_history", { health_history: false }, (b) => b.features.health_history === false, "off in the console's registry"],
         ["document_preview", { document_preview: false }, (b) => b.features.document_preview === false, "no document card (the console's registry off)"],
+        ["record_pages", { record_pages: true }, (b) => b.features.record_pages === true && b.layouts === 1 && base.layouts === 0 && !("record_pages" in base.features), "the findings' page laid out (off: no layout and no flag in the console's files)"],
         ["onprem_runners", { onprem_runners: true }, (b) => b.onprem && b.tabs.includes("credentials"), "the runners section on Credentials"],
         ["audit.sign", { "audit.data": true, "audit.sign": true }, (b) => b.tabs.includes("signing") && b.features["audit.data"], "the Signing tab (with the data trail)"],
       ];
@@ -254,7 +262,8 @@ try {
         const b = build(id.replace(".", "-"), features);
         assert.equal(b.status, 0, `${id}: ${b.out.slice(-1500)}`);
         assert.ok(check(b), `${id}: ${words} (${JSON.stringify({ tabs: b.tabs, features: b.features })})`);
-        const changed = Object.keys(base.features).filter((k) => b.features[k] !== base.features[k]);
+        // A quiet_off flag (mold_v0-243, mold_v0-253) is in the console's flags only while on: compare over both builds' keys.
+        const changed = [...new Set([...Object.keys(base.features), ...Object.keys(b.features)])].filter((k) => b.features[k] !== base.features[k]);
         assert.deepEqual(changed, Object.keys(features).filter((k) => b.features[k] !== base.features[k]), `${id}: only its own flags change in the console's registry`);
         console.log(`✓ console, ${Object.entries(features).map(([k, v]) => `${k} = ${v}`).join(", ")}: ${words}`);
       }

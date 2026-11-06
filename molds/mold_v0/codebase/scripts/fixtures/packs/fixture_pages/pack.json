@@ -1,0 +1,488 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_pages",
+  "name": "Fixture pages",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-253; scripts/record-pages-test.ts): record areas whose pages are laid out (detail): a header with badges and facts, notices, tabs of sections, copyable fields. Never shipped.",
+  "record_areas": [
+    {
+      "name": "projects",
+      "label": "Projects",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "max_length": 500
+        },
+        {
+          "name": "repository",
+          "label": "Repository",
+          "type": "url",
+          "copyable": true
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "text"
+        },
+        {
+          "name": "health",
+          "label": "Health",
+          "type": "enum",
+          "options": [
+            {
+              "value": "healthy",
+              "label": "Healthy"
+            },
+            {
+              "value": "at_risk",
+              "label": "At risk"
+            },
+            {
+              "value": "blocked",
+              "label": "Blocked"
+            }
+          ]
+        },
+        {
+          "name": "started",
+          "label": "Started",
+          "type": "date"
+        }
+      ],
+      "detail": {
+        "header": {
+          "subtitle": "summary",
+          "badges": [
+            {
+              "field": "health",
+              "colors": {
+                "healthy": "success",
+                "at_risk": "warning",
+                "blocked": "danger"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "owner"
+            },
+            {
+              "field": "started"
+            },
+            {
+              "field": "repository"
+            }
+          ]
+        },
+        "notices": [
+          {
+            "when": {
+              "field": "health",
+              "equals": "blocked"
+            },
+            "tone": "danger",
+            "title": "Blocked",
+            "text": "Something stops this project: read its builds for the failing one."
+          }
+        ],
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "About",
+                "columns": 1,
+                "fields": [
+                  "summary",
+                  "repository",
+                  "owner"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "environments",
+      "label": "Environments",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "tier",
+          "label": "Tier",
+          "type": "enum",
+          "options": [
+            {
+              "value": "production",
+              "label": "Production"
+            },
+            {
+              "value": "staging",
+              "label": "Staging"
+            },
+            {
+              "value": "preview",
+              "label": "Preview"
+            }
+          ]
+        },
+        {
+          "name": "region",
+          "label": "Region",
+          "type": "text"
+        },
+        {
+          "name": "address",
+          "label": "Address",
+          "type": "url"
+        }
+      ]
+    },
+    {
+      "name": "builds",
+      "label": "Builds",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": [
+        "status",
+        "project",
+        "branch",
+        "started"
+      ],
+      "fields": [
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "required": true,
+          "options": [
+            {
+              "value": "queued",
+              "label": "Queued"
+            },
+            {
+              "value": "running",
+              "label": "Running"
+            },
+            {
+              "value": "passed",
+              "label": "Passed"
+            },
+            {
+              "value": "failed",
+              "label": "Failed"
+            },
+            {
+              "value": "cancelled",
+              "label": "Cancelled"
+            }
+          ]
+        },
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "max_length": 500
+        },
+        {
+          "name": "project",
+          "label": "Project",
+          "type": "reference",
+          "to": "projects"
+        },
+        {
+          "name": "environment",
+          "label": "Environment",
+          "type": "reference",
+          "to": "environments"
+        },
+        {
+          "name": "tier",
+          "label": "Tier",
+          "type": "enum",
+          "options": [
+            {
+              "value": "production",
+              "label": "Production"
+            },
+            {
+              "value": "staging",
+              "label": "Staging"
+            },
+            {
+              "value": "preview",
+              "label": "Preview"
+            }
+          ]
+        },
+        {
+          "name": "branch",
+          "label": "Branch",
+          "type": "text",
+          "copyable": true
+        },
+        {
+          "name": "commit",
+          "label": "Commit",
+          "type": "text",
+          "copyable": true
+        },
+        {
+          "name": "triggered_by",
+          "label": "Triggered by",
+          "type": "text"
+        },
+        {
+          "name": "started",
+          "label": "Started",
+          "type": "date"
+        },
+        {
+          "name": "duration",
+          "label": "Duration",
+          "type": "number",
+          "min": 0
+        },
+        {
+          "name": "tests_passed",
+          "label": "Tests passed",
+          "type": "number",
+          "min": 0
+        },
+        {
+          "name": "tests_failed",
+          "label": "Tests failed",
+          "type": "number",
+          "min": 0
+        },
+        {
+          "name": "coverage",
+          "label": "Coverage",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "name": "artifact",
+          "label": "Artifact",
+          "type": "url",
+          "copyable": true
+        },
+        {
+          "name": "approver",
+          "label": "Approved by",
+          "type": "text"
+        },
+        {
+          "name": "approved_on",
+          "label": "Approved on",
+          "type": "date"
+        },
+        {
+          "name": "failure",
+          "label": "Failure",
+          "type": "text",
+          "max_length": 2000
+        },
+        {
+          "name": "log_excerpt",
+          "label": "Log excerpt",
+          "type": "text",
+          "max_length": 20000
+        },
+        {
+          "name": "config",
+          "label": "Configuration",
+          "type": "json"
+        },
+        {
+          "name": "notes",
+          "label": "Notes",
+          "type": "text"
+        }
+      ],
+      "detail": {
+        "header": {
+          "subtitle": "summary",
+          "badges": [
+            {
+              "field": "status",
+              "colors": {
+                "queued": "neutral",
+                "running": "info",
+                "passed": "success",
+                "failed": "danger",
+                "cancelled": "warning"
+              }
+            },
+            {
+              "field": "tier",
+              "colors": {
+                "production": "viz-7",
+                "staging": "viz-1",
+                "preview": "viz-5"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "project"
+            },
+            {
+              "field": "environment"
+            },
+            {
+              "field": "branch"
+            },
+            {
+              "field": "commit"
+            },
+            {
+              "field": "started"
+            },
+            {
+              "field": "duration",
+              "unit": "s"
+            },
+            {
+              "field": "coverage",
+              "unit": "%"
+            },
+            {
+              "field": "artifact"
+            }
+          ]
+        },
+        "notices": [
+          {
+            "when": {
+              "field": "status",
+              "equals": "failed"
+            },
+            "tone": "danger",
+            "title": "This build failed",
+            "text": "Its failure and log excerpt are on the Logs tab; a new commit to the branch starts another build."
+          },
+          {
+            "when": {
+              "field": "status",
+              "in": [
+                "queued",
+                "running"
+              ]
+            },
+            "tone": "info",
+            "text": "This build is still going: its results fill in when it ends."
+          },
+          {
+            "when": {
+              "field": "approver",
+              "empty": true
+            },
+            "tone": "warning",
+            "title": "Not approved yet",
+            "text": "A build is released only once someone approves it."
+          }
+        ],
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "Source",
+                "columns": 3,
+                "fields": [
+                  "project",
+                  "branch",
+                  "commit",
+                  "environment",
+                  "tier",
+                  "triggered_by"
+                ]
+              },
+              {
+                "title": "Results",
+                "columns": 3,
+                "groups": [
+                  {
+                    "title": "Tests",
+                    "fields": [
+                      "tests_passed",
+                      "tests_failed",
+                      "coverage"
+                    ]
+                  },
+                  {
+                    "title": "Timing",
+                    "fields": [
+                      "started",
+                      "duration"
+                    ]
+                  }
+                ]
+              },
+              {
+                "title": "Approval",
+                "columns": 2,
+                "fields": [
+                  "approver",
+                  "approved_on"
+                ],
+                "empty": "No one has approved this build yet. An owner approves it from the list's actions."
+              }
+            ]
+          },
+          {
+            "label": "Logs",
+            "sections": [
+              {
+                "title": "Failure",
+                "columns": 1,
+                "fields": [
+                  "failure"
+                ],
+                "empty": "Nothing failed in this build."
+              },
+              {
+                "title": "Log excerpt",
+                "columns": 1,
+                "fields": [
+                  "log_excerpt"
+                ],
+                "empty": "No log lines were kept for this build."
+              }
+            ]
+          },
+          {
+            "label": "Configuration",
+            "sections": [
+              {
+                "title": "Build configuration",
+                "columns": 1,
+                "fields": [
+                  "config",
+                  "artifact"
+                ]
+              },
+              {
+                "title": "Notes",
+                "columns": 1,
+                "fields": [
+                  "notes"
+                ],
+                "empty": "No notes on this build."
+              }
+            ]
+          }
+        ],
+        "unplaced": "show"
+      }
+    }
+  ]
+}

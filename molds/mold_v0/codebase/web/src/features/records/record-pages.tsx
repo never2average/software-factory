@@ -32,6 +32,9 @@ import { isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
 import { useRecordCredentials } from '@/features/credentials/record-credentials';
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
+import { featureOn } from '@/config/features';
+import { layoutOf } from './detail-layout';
+import { LaidOutRecord } from './detail-page';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -299,13 +302,23 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
 /**
  * A record's own page (mold_v0-217): one details card, as a staff record page's (./staff-records.tsx) and an open row's.
  * In a workspace, its Credentials card below it when credentials belong to its records (mold_v0-239,
- * features/credentials/record-credentials.tsx); setting one opens a full card in the page's place.
+ * features/credentials/record-credentials.tsx); setting one opens a full card in the page's place. With the flag
+ * record_pages on and a layout declared for the area (mold_v0-253), the page is laid out instead (./detail-page.tsx).
  */
 export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin' }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error } = useOrgLoad(() => getJson<Detail>(url), [url]);
   const credentials = useRecordCredentials(area, recordKey, base === 'app' && area.role === 'asset');
   if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
+  const layout = featureOn('record_pages') ? layoutOf(area) : null;
+  if (layout) return (
+    <PageContainer>
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
+        <LaidOutRecord area={area} base={base} layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
+          provenance={data.provenance} where={where(area)} credentials={credentials.section} />
+      )}
+    </PageContainer>
+  );
   return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (<div className='flex w-full flex-col gap-6'>

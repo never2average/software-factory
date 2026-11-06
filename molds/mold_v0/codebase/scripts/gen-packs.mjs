@@ -1495,6 +1495,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     encrypted: () => areas.some((a) => (a.fields ?? []).some((x) => x.encrypted === true)),
     no_engine: () => !["products", "scenarios", "simulations", "agent_sessions"].every((t) => owned.has(t)),
     documents: () => areas.some((a) => (a.fields ?? []).some((x) => x.type === "file" || x.preview === "document")),
+    layouts: () => areas.some((a) => !!a.detail || (a.fields ?? []).some((x) => x.copyable === true)),
   };
   for (const f of FEATURE_REGISTRY) {
     FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
@@ -2466,16 +2467,22 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  /** Who may export it, when its contract says (mold_v0-235; else every role that may read it). */\n  export_roles?: string[];\n" +
   "  /** Who may import a file into it, when its contract grants import (mold_v0-234; else nobody). */\n  import_roles?: string[];\n" +
   "  /** Its own lists' primary action (mold_v0-237: its Settings tab, its Records page; src/metric-spec.ts areaListAction). */\n" +
-  "  action?: { kind: 'create_record'; label: string | null; area: string };\n}\n\n" +
+  "  action?: { kind: 'create_record'; label: string | null; area: string };\n" +
+  // mold_v0-253: a record page's layout, only while record_pages is on (off, this file is what it was before the flag).
+  (FEATURE_ON.record_pages ? "  /** Its record page's layout (mold_v0-253, flag record_pages; web/src/features/records/detail-layout.ts). */\n  detail?: import('@/features/records/detail-layout').DetailLayout;\n" : "") +
+  "}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
-  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n}\n\n" +
+  "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n" +
+  (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n" : "") + "}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
-    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
+    // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
+    scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
-    ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a) })))};\n\n` +
+    ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a),
+    ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
