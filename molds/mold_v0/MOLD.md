@@ -2929,9 +2929,30 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   composer, the request's card (Approve / Decline, or Raise budget), Pause, Resume and Stop (stop asks once more in place).
   While a session waits for a decision its state line shows no reason of its own: the request's card says what it
   asked for (mold_v0-245).
+- **The agent's icon** (mold_v0-252). The top-bar button is the shared outline button (no styling of its own) with an
+  18 px icon, centred, named "Workspace agent"; the agent pages' heading (the top bar's trail, its last crumb: the
+  console's list pages have no title above their cards) shows the same icon. In order: the workspace's own, the app's, the default (`web/src/components/layout/agent-icon.tsx`).
+  - *The app's*: its brand (`branding.py <app> set --agent-icon <file>` or `--agent-icon-name <name>` from the console's
+    icon set, Tabler's outline icons; `--agent-icon-dark <file>`; the app spec's `product.agent_icon`). `prepare` writes
+    `web/public/agent-icon/{light,dark}.{svg,png}` and `profile.json` `agent_icon` `{light, dark, mask}`
+    ([branding/rules.json](branding/rules.json) `agent_icon`); `scripts/gen-packs.mjs` checks the files and writes the
+    field into the console's profile module only, so an app without one builds exactly what it built before. An SVG is
+    sanitised and, drawn in one colour, redrawn in currentColor (painted as a mask in the text colour, light and dark); a
+    picture is fitted inside 64 px and shipped as a PNG, never wrapped in an SVG.
+  - *A workspace's own*: Settings › Workspace agent (a Settings tab of group Automation, only with the flag on): the two
+    icons in play as the standard full-area table, Upload icon (an owner's) and Reset to the app's icon. `GET /api/agent/icon`
+    (any person of the workspace), `PUT` (an owner; the bytes as `application/octet-stream`, at most 256 KB) and `DELETE`
+    (an owner) in `src/agent-routes.ts`; `src/agent-icon.ts` checks the bytes by what they are: an SVG through the same
+    allowlist as the factory's (no script, handler, foreignObject, style sheet, picture, outside link, DOCTYPE or entity),
+    a PNG decoded, trimmed, fitted inside 64 px and re-encoded (nothing of the file but its pixels kept), a JPG or WebP
+    only at most 64 px a side (the console resizes every picture to a 64 px PNG before it sends it). Kept sealed with the
+    workspace's data key at `workspaces/org-<id>/.agent-icon/icon.wse`, bound to the workspace (a copy under another
+    workspace's prefix does not open), gone with the workspace. Staff consoles show the app's.
 
 Proof: `npm run test:agent-harness` (offline, with a stand-in CLI that speaks the harness's stream-json,
-`scripts/fixtures/agent-cli/cli.mjs`), `npm run test:features`, `npm run test:zero-pack`. One real session was measured
+`scripts/fixtures/agent-cli/cli.mjs`), `npm run test:agent-icon` (mold_v0-252: the upload's checks, a malicious SVG
+sanitised, an oversized file refused, owners only, workspace B never seeing A's), `npm run test:features`,
+`npm run test:zero-pack`, `python3 .claude/scripts/branding.py --self-test` (the brand's agent icon). One real session was measured
 once on the example app's lane copy (mold_v0-245, [docs/agent-harness.md](docs/agent-harness.md) "A real session"): the
 pinned Claude Code, steered mid-turn, parked, restored from its checkpoint, coherent, and its spend against the
 provider's usage.

@@ -4,7 +4,7 @@ import { useConsolePathname } from '@/lib/console-path';
 import { Button } from '@/components/ui/button';
 import { featureOn } from '@/config/features';
 import { cn } from '@/lib/utils';
-import { Icons } from '../icons';
+import { AgentIcon } from './agent-icon';
 import { useNav } from './nav-context';
 import { TOP_BAR_CONTROL } from './top-bar';
 
@@ -12,7 +12,8 @@ import { TOP_BAR_CONTROL } from './top-bar';
  * The workspace agent (mold_v0-243): the top bar's last item, after Search, Docs and the theme switcher, one icon button
  * that opens the agent as a full page of the console (/app/agent; staff: /admin/agent), never a dialog or a side sheet.
  * Not drawn at all while the app's profile leaves `agent_harness` off. Its look is the shared outline variant's
- * (mold_v0-251), its page open shown by that variant's aria-current state: nothing here styles the icon itself.
+ * (mold_v0-251), its page open shown by that variant's aria-current state. Its icon is the workspace's own, else the
+ * app's, else the default (agent-icon.tsx, mold_v0-252), 18 px, centred.
  */
 export function AgentButton() {
   const pathname = useConsolePathname();
@@ -23,7 +24,7 @@ export function AgentButton() {
   return (
     <Button variant='outline' className={cn(TOP_BAR_CONTROL)} aria-current={active ? 'page' : undefined}
       data-agent-button='' title='Workspace agent' render={<Link href={href} aria-label='Workspace agent' />}>
-      <Icons.agent />
+      <AgentIcon area={area === 'admin' ? 'admin' : 'app'} className='size-4.5' />
     </Button>
   );
 }

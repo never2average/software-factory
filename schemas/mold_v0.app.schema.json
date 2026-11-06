@@ -110,8 +110,37 @@
           "$ref": "#/$defs/domain",
           "description": "The app's own web address (optional; a server of its own needs one).",
           "markdownDescription": "The app's own web address, e.g. `app.example.com`. Optional on Vercel; **required on a server of its own**."
+        },
+        "agent_icon": {
+          "type": "string",
+          "pattern": "^(?:(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+\\.(png|svg|jpg|jpeg|webp)|icon:[a-z0-9]+(?:-[a-z0-9]+)*)$",
+          "x-hint": "brands/acme/agent.svg, or icon:robot (a name from the console's icon set)",
+          "description": "The workspace agent's own icon (optional): an SVG, PNG, JPG or WebP of at most 256 KB, a path from the factory's root, or icon:<name> from the console's icon set (Tabler's outline icons). Unset: the default icon.",
+          "markdownDescription": "The workspace agent's own icon on the top bar and the agent pages (optional; shown while `features.agent_harness` is on): a file from the factory's root (`brands/<name>/agent.svg`, or a `.png`, `.jpg`, `.webp`; at most 256 KB), or `icon:<name>` from the console's icon set (Tabler's outline icons, e.g. `icon:robot`). An SVG is sanitised and, drawn in one colour, follows the theme's text colour; a picture is fitted inside 64 px. `branding.py <app> set --agent-icon`. A workspace owner may still bring their own in Settings."
+        },
+        "agent_icon_dark": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+\\.(png|svg|jpg|jpeg|webp)$",
+          "x-hint": "brands/acme/agent-dark.svg",
+          "description": "The agent icon's dark-theme variant (optional; needs agent_icon): a file as agent_icon. Unset: agent_icon in both themes.",
+          "markdownDescription": "The agent icon's variant for the dark theme (optional; needs `agent_icon`), a file as `agent_icon`. Unset: `agent_icon` serves both themes (an icon in the text colour needs none)."
         }
-      }
+      },
+      "allOf": [
+        {
+          "x-rule": "agent_icon_dark is the dark variant of an agent_icon: give agent_icon too",
+          "if": {
+            "required": [
+              "agent_icon_dark"
+            ]
+          },
+          "then": {
+            "required": [
+              "agent_icon"
+            ]
+          }
+        }
+      ]
     },
     "deploy": {
       "type": "object",
@@ -15326,8 +15355,8 @@
           "type": "boolean",
           "default": false,
           "title": "Workspace agent (mold_v0-243)",
-          "description": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings). Asked for when the app's profile (no pack declares it). Default false. Off: No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out.",
-          "markdownDescription": "**Workspace agent** (mold_v0-243; board name `agent`). A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings).\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out.\n\nBrief line: `features.agent_harness = true` in `## Profile`."
+          "description": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings). Asked for when the app's profile (no pack declares it). Default false. Off: No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out.",
+          "markdownDescription": "**Workspace agent** (mold_v0-243; board name `agent`). A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings).\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out.\n\nBrief line: `features.agent_harness = true` in `## Profile`."
         },
         "record_pages": {
           "type": "boolean",

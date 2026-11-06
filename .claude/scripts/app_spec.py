@@ -318,6 +318,23 @@ def schema_v0(root):
     groups = app_profile.email_groups(cb) or []
     maxes = {k: v for k, v in (R.get("app_limits_max") or {}).items() if not k.startswith("$")}
     defs, product = _common("mold_v0", root)
+    # mold_v0-252: the workspace agent's own icon, in the brand (branding/rules.json agent_icon), optional
+    if load(os.path.join(root, "molds", "mold_v0", "branding", "rules.json")).get("agent_icon"):
+        ICON_FILE = "(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+\\.(png|svg|jpg|jpeg|webp)"
+        product["properties"]["agent_icon"] = {
+            "type": "string", "pattern": f"^(?:{ICON_FILE}|icon:[a-z0-9]+(?:-[a-z0-9]+)*)$", "x-hint": "brands/acme/agent.svg, or icon:robot (a name from the console's icon set)",
+            **D("The workspace agent's own icon (optional): an SVG, PNG, JPG or WebP of at most 256 KB, a path from the factory's root, or icon:<name> from the console's icon set (Tabler's outline icons). Unset: the default icon.",
+                "The workspace agent's own icon on the top bar and the agent pages (optional; shown while `features.agent_harness` is on): a file from the factory's root "
+                "(`brands/<name>/agent.svg`, or a `.png`, `.jpg`, `.webp`; at most 256 KB), or `icon:<name>` from the console's icon set (Tabler's outline icons, e.g. `icon:robot`). "
+                "An SVG is sanitised and, drawn in one colour, follows the theme's text colour; a picture is fitted inside 64 px. `branding.py <app> set --agent-icon`. "
+                "A workspace owner may still bring their own in Settings.")}
+        product["properties"]["agent_icon_dark"] = {
+            "type": "string", "pattern": f"^{ICON_FILE}$", "x-hint": "brands/acme/agent-dark.svg",
+            **D("The agent icon's dark-theme variant (optional; needs agent_icon): a file as agent_icon. Unset: agent_icon in both themes.",
+                "The agent icon's variant for the dark theme (optional; needs `agent_icon`), a file as `agent_icon`. Unset: `agent_icon` serves both themes "
+                "(an icon in the text colour needs none).")}
+        product["allOf"] = [{"x-rule": "agent_icon_dark is the dark variant of an agent_icon: give agent_icon too",
+                             "if": {"required": ["agent_icon_dark"]}, "then": {"required": ["agent_icon"]}}]
     pack, pdefs = _embed_pack(P)
     defs["pack"] = pack; defs.update(pdefs)
     pid = M["packs"]["pack_id"]; nn = M.get("not_needed") or {}
@@ -592,6 +609,10 @@ def problems(spec, root=ROOT, schema=None):
     logo = (spec.get("product") or {}).get("logo")
     if isinstance(logo, str) and not os.path.isfile(os.path.join(root, logo)):
         out.append(("missing", "product.logo", f"product.logo: the file {logo} is not on this machine (put the logo there, or name the file that is)"))
+    for k in ("agent_icon", "agent_icon_dark"):     # mold_v0-252
+        f = (spec.get("product") or {}).get(k)
+        if isinstance(f, str) and not f.startswith("icon:") and not os.path.isfile(os.path.join(root, f)):
+            out.append(("missing", f"product.{k}", f"product.{k}: the file {f} is not on this machine (put the icon there, or name the file that is)"))
     packs = [p for p in full.get("packs") or [] if isinstance(p, dict) and isinstance(p.get("pack"), dict)]
     ids = [p if isinstance(p, str) else (p or {}).get("id") for p in spec.get("packs") or []] if isinstance(spec.get("packs"), list) else []
     if mold == "mold_v0":
@@ -823,6 +844,8 @@ def to_brief(spec, app_id):
     if (spec.get("deploy") or {}).get("server"): L.append(f"Server address: {spec['deploy']['server']}")
     L += [f"Product name: {p['name']}", f"Brand: {p['name']}", f"Brand colour: {p['colour']}", f"Logo: {p['logo']}"]
     if p.get("tagline"): L.append(f"Tagline: {p['tagline']}")
+    if p.get("agent_icon"): L.append(f"Agent icon: {p['agent_icon']}")              # mold_v0-252
+    if p.get("agent_icon_dark"): L.append(f"Agent icon dark: {p['agent_icon_dark']}")
     if p.get("domain"): L.append(f"Domain: {p['domain']}")
     if ids: L.append(f"Packs: {', '.join(ids)}")
     if w.get("name"): L.append(f"Workspace: {w['name']}")
@@ -854,7 +877,8 @@ def _read_back(spec, text, ids):
     h = intake.parse_brief(brief_pack.prose(text) if brief_pack.has_sections(text) else text)
     p, w = spec.get("product") or {}, spec.get("workspace") or {}
     want = {"mold_id": spec["mold_id"], "product_name": p.get("name"), "brand_name": p.get("name"), "brand_color": p.get("colour"),
-            "brand_logo": p.get("logo"), "brand_tagline": p.get("tagline"), "custom_domain": p.get("domain"), "packs": ids or None,
+            "brand_logo": p.get("logo"), "brand_tagline": p.get("tagline"), "brand_agent_icon": p.get("agent_icon"), "brand_agent_icon_dark": p.get("agent_icon_dark"),
+            "custom_domain": p.get("domain"), "packs": ids or None,
             "workspace_name": w.get("name"), "operator_email": (w.get("owner") or "").lower() or None, "members": [m.lower() for m in w.get("members") or []] or None,
             "platform_admins": w.get("platform_admins") or None,
             "deploy_target": {"compose_remote": "vm_remote"}.get(spec["deploy"]["target"], spec["deploy"]["target"]),
@@ -996,6 +1020,9 @@ def spec_from_state(app_id, root):
     a, i = rd("application.json"), rd("infrastructure.json")
     mold = a.get("mold_id"); b = (a.get("surface") or {}).get("branding") or {}
     prod = {k: v for k, v in (("name", b.get("product_name")), ("colour", b.get("brand_color")), ("logo", b.get("logo")), ("tagline", b.get("tagline"))) if v}
+    ai = b.get("agent_icon") if isinstance(b.get("agent_icon"), dict) else {}     # mold_v0-252: "file:<path>" | "icon:<name>"
+    if isinstance(ai.get("source"), str): prod["agent_icon"] = ai["source"][5:] if ai["source"].startswith("file:") else ai["source"]
+    if isinstance(ai.get("dark_source"), str): prod["agent_icon_dark"] = ai["dark_source"][5:]
     dom = (i.get("vercel") or {}).get("custom_domain") or (i.get("compose_remote") or {}).get("domain") or (i.get("vm_remote") or {}).get("domain")
     if dom: prod["domain"] = dom
     spec = {"app_id": app_id, "mold_id": mold, "product": prod, "deploy": {"target": i.get("target")}, "packs": list(a.get("packs") or [])}
@@ -1071,6 +1098,14 @@ def self_test():
         e["audit"] = {"data": False, "platform": True}
         ok(problems(e) == [], f"{m}: kind embedded with the developer surface and audit.platform true is complete")
         if m == "mold_v0":
+            # mold_v0-252: the agent icon, a file or icon:<name>, and its dark variant, read back through the brief
+            x = copy.deepcopy(spec); x["product"]["agent_icon"] = "icon:robot"; x["product"]["agent_icon_dark"] = spec["product"]["logo"]
+            b2, bp2 = to_brief(x, x["app_id"])
+            ok(problems(x) == [] and bp2 == [] and "Agent icon: icon:robot" in b2, f"mold_v0: product.agent_icon (icon:<name>) and agent_icon_dark read back through the brief ({problems(x)[:2]} {bp2[:2]})")
+            x["product"]["agent_icon"] = "brands/nowhere/agent.svg"; msgs = [y[2] for y in problems(x)]
+            ok(any("product.agent_icon: the file brands/nowhere/agent.svg is not on this machine" in y for y in msgs), "mold_v0: an agent icon file that is not on this machine is said")
+            del x["product"]["agent_icon"]
+            ok(any("give agent_icon too" in y[2] for y in problems(x)), "mold_v0: agent_icon_dark without agent_icon is refused")
             x = copy.deepcopy(e); x["developer_surface"]["events"] = [{"name": "record.exploded", "description": "x"}]; x["developer_surface"]["sdk_languages"] = ["go"]
             msgs = [y[2] for y in problems(x)]
             ok(any("record.exploded" in y for y in msgs) and any("not go" in y for y in msgs), "mold_v0: an event it does not emit and an SDK it does not generate are refused")

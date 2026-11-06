@@ -159,8 +159,8 @@
       "requested_by": "always",
       "requested_words": "the app's profile (no pack declares it)",
       "since": "mold_v0-243",
-      "about": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon and /app/agent (staff: /admin/agent and the Workspace agent settings).",
-      "off": "No route answers, no tool is listed, no icon, page or setting shows, and no agent session can start; the generated files leave its flag out."
+      "about": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings).",
+      "off": "No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out."
     },
     {
       "id": "record_pages",
