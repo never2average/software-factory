@@ -58,7 +58,7 @@
       "ceiling_usd": 12,
       "max_turns": 80,
       "wake_max_minutes": 45,
-      "tools": { "base": "reads", "free": ["create_applications"], "ask": ["update_applications"], "hidden": ["delete_applications"] },
+      "tools": { "base": "reads", "free": ["fixture_agent_create_applications"], "ask": ["fixture_agent_update_applications"], "hidden": ["fixture_agent_export_applications"] },
       "web": { "tools": "fetch", "hosts": ["docs.example.com", "*.example.org"] },
       "files": [
         { "path": ".claude/skills/build/SKILL.md", "content": "---\nname: build\ndescription: How to build an application for this workspace.\n---\n\n# Build\n\n1. Read the application's record (its summary and brief).\n2. Write PLAN.md: the steps, each one line.\n3. Build step by step; after each, say what changed.\n4. When done, update the record's status to live (ask first).\n" },
