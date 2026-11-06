@@ -15,6 +15,9 @@
  *              approve grants exactly that and wakes it; decline records the refusal and parks it with that said
  *   raise      a billing manager, an owner or staff, with a reason: up to the ceiling, never while a wake runs
  *   beat       the wake's heartbeat (src/run-routes.ts /agent/beat): the lease, the spend, the steer, pause and end
+ *   reach      what it may use of its workspace (src/harness-reach.ts, mold_v0-250): the app's own customer MCP tools as
+ *              the person who started it (a token per wake, revoked when the wake ends, a pause or stop is asked, at its
+ *              budget), reads without asking and the rest as requests, and the workspace's context as standing instructions
  *   reconcile  after a wake's run ends (src/runs.ts completeRun, sweepRuns, and the sweep below): parked, paused,
  *              awaiting a decision, stopped, or crashed (parked with its checkpoint; resumed by the next message, or by
  *              itself with AGENT_AUTO_RESUME, within AGENT_CRASH_RESUMES and half its budget)
@@ -30,7 +33,8 @@ import { getDb, type Queryable } from "./db.js";
 import { PackError } from "./pack-api.js";
 import { asPlatform } from "./tenant-scope.js";
 import { canAccount, type AccountRole } from "./account-roles.js";
-import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, hostAllowed, validHost, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
+import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, freeWorkspaceTools, hostAllowed, validHost, workspaceToolName, workspaceToolOf, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
+import { mintToolToken, revokeToolTokens, sweepToolTokens, workspaceReach } from "./harness-reach.js";
 import { settingNumber } from "./settings.js";
 
 // ---------------------------------------------------------------- types
@@ -72,6 +76,21 @@ export interface SessionDetail extends SessionView {
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
   hooks: { event: HookEvent; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number };
+  /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
+  reach: ReachView | null;
+}
+export interface ReachView {
+  acts_as: { kind: "person" | "key"; name: string | null; role: string | null };
+  free: string; named: string[];
+  tools: { name: string; title: string | null; read: boolean; asks: boolean }[];
+  context: { max_chars: number; parts: { part: string; label: string; chars: number; kept: number }[] };
+}
+function reachView(p: AgentPolicy | null): ReachView | null {
+  const w = p?.workspace;
+  if (!w) return null;
+  return { acts_as: w.acts_as, free: w.free, named: w.named ?? [],
+    tools: (w.tools ?? []).map((t) => ({ name: t.name, title: t.title, read: t.read, asks: !(p!.tools ?? []).includes(workspaceToolName(t.name)) })),
+    context: { max_chars: w.context?.max_chars ?? 0, parts: (w.context?.parts ?? []).map((x) => ({ part: x.part, label: x.label, chars: x.chars, kept: x.kept })) } };
 }
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -213,7 +232,15 @@ async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): P
 
 // ---------------------------------------------------------------- the workspace's side
 
-export interface StartInput { message: unknown; title?: unknown; mode?: unknown }
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown }
+
+/** The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a key up to the ceiling. */
+export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
+  const ceiling = Math.min(settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
+  const def = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+  const raises = actor.kind === "key" || canAccount(actor.role, "budget");
+  return { default_usd: def, max_usd: raises ? money(ceiling) : def, ceiling_usd: money(ceiling) };
+}
 
 /** Start a session with its first message (the person's words are its on_start). */
 export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org): Promise<SessionDetail> {
@@ -224,8 +251,24 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   const mode = input.mode === "task" ? "task" : "conversation";
   const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
   const policy = currentPolicy(mode);
-  const ceiling = Math.min(policy.budget_ceiling_usd, await loadPlatformCeiling(orgId));
-  const budget = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+  const limits = await startBudgetMax(orgId, actor);
+  let budget = limits.default_usd;
+  if (input.budget_usd !== undefined && input.budget_usd !== null && input.budget_usd !== "") {
+    const b = Number(input.budget_usd);
+    if (!Number.isFinite(b) || b < 0.1) throw new PackError("budget_usd: at least $0.10", 400);
+    if (b > limits.max_usd + 1e-9) throw new PackError(limits.max_usd < limits.ceiling_usd
+      ? `budget_usd: at most $${limits.max_usd.toFixed(2)} (a billing manager or an owner can give a session up to $${limits.ceiling_usd.toFixed(2)})`
+      : `budget_usd: at most $${limits.max_usd.toFixed(2)}`, 400);
+    budget = money(b);
+  }
+  // What it reaches of the workspace (mold_v0-250): the app's own tools as this person, and the workspace's context.
+  try {
+    const reach = await workspaceReach(orgId, actor);
+    policy.workspace = reach;
+    for (const t of freeWorkspaceTools(reach.tools, reach.free, reach.named)) policy.tools.push(workspaceToolName(t));
+  } catch (e) {
+    console.error(`agent session: the workspace's tools could not be listed (${(e as Error).message}): it starts without them`);
+  }
   const id = newId("hss");
   await tx(async (q) => {
     await q.query(
@@ -338,7 +381,9 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
       wakes_list: wakes.map((w) => ({ run_id: w.id, status: w.status, started_at: iso(w.started_at), ended_at: iso(w.ended_at), cost_usd: money(num(w.cost)), end_reason: w.end_reason, error: w.error })),
       hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
       policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
-        web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: p?.tools ?? [], auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0 },
+        web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
+        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0 },
+      reach: reachView(p),
     };
   });
 }
@@ -382,6 +427,7 @@ export async function pauseSession(orgId: number | null, id: string, actor: Acto
       return null;
     }
     await q.query("UPDATE harness_sessions SET pause_requested_at = coalesce(pause_requested_at, now()), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+    await revokeToolTokens(q, x.org_id, x.id, "paused");
     await systemMessage(q, x, `Pause asked by ${actor.name ?? "someone"}.`, x.current_run_id);
     if (x.current_run_id) await runEvent(q, x.current_run_id, x.org_id, "pause_requested", { by: actor.name });
     const [run] = x.current_run_id ? await q.query<{ status: string }>("SELECT status FROM runs WHERE id = $1 AND org_id = $2", [x.current_run_id, x.org_id]) : [];
@@ -420,6 +466,7 @@ export async function stopSession(orgId: number | null, id: string, actor: Actor
       return null;
     }
     await q.query("UPDATE harness_sessions SET stop_requested_at = coalesce(stop_requested_at, now()), updated_at = now() WHERE id = $1 AND org_id = $2", [x.id, x.org_id]);
+    await revokeToolTokens(q, x.org_id, x.id, "stopped");
     await runEvent(q, x.current_run_id, x.org_id, "stop_requested", { by: actor.name });
     const [run] = await q.query<{ status: string }>("SELECT status FROM runs WHERE id = $1 AND org_id = $2", [x.current_run_id, x.org_id]);
     return run?.status === "queued" ? x.current_run_id : null;
@@ -435,6 +482,7 @@ async function endSession(q: Queryable, x: { id: string; org_id: number }, state
             retention_until = coalesce(retention_until, now() + make_interval(days => $5)), pause_requested_at = NULL, stop_requested_at = NULL, updated_at = now()
       WHERE id = $1 AND org_id = $2`, [x.id, x.org_id, state, reason.slice(0, 500), days]);
   await q.query("UPDATE harness_session_requests SET status = 'expired', decided_at = now(), reason = 'the session ended' WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [x.org_id, x.id]);
+  await revokeToolTokens(q, x.org_id, x.id, `the session ${state === "failed" ? "failed" : "ended"}`);
 }
 
 function denied(r: SessionRow, a: Actor, what: string) {
@@ -483,7 +531,7 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
   if (wake) await queueWake(r.org_id, sessionId, "approval", actor, org);
   return readSession(orgId, sessionId, actor);
 }
-const requestWords = (kind: RequestKind, subject: string) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${subject}` : `more budget (at ${subject})`;
+const requestWords = (kind: RequestKind, subject: string) => kind === "web" ? `reaching ${subject}` : kind === "tool" ? `using ${workspaceToolOf(subject) ? `the workspace tool ${workspaceToolOf(subject)}` : subject}` : `more budget (at ${subject})`;
 
 /**
  * Raise a session's budget, with a reason: up to its ceiling (never above the platform's own ceiling for one run), never
@@ -544,6 +592,8 @@ export interface WakeStart {
   charged_usd: number; budget_usd: number;
   /** The wake's first turn: the person's messages waiting (each with the uuid the harness echoes), or the on_resume text. */
   first: { id: number; uuid: string; text: string }[]; preface: string | null; web_calls: number;
+  /** The workspace's own tools for this wake (mold_v0-250): the MCP server's name and this wake's token; null when it reaches none. */
+  workspace: { server: string; token: string; expires_at: string } | null;
 }
 
 /** The wake started: what it is told (its policy, the session to resume, the first turn), its messages marked delivered. */
@@ -564,11 +614,18 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     const resumeHook = s.policy.hooks?.find((h) => h.event === "on_resume")?.text ?? null;
     const preface = s.wakes > 1 ? [why, first.length ? null : resumeHook].filter(Boolean).join(" ") || null : null;
     const [charged] = await q.query<{ c: string }>("SELECT coalesce(sum(charged_usd), 0) AS c FROM harness_wake_spend WHERE org_id = $1 AND session_id = $2 AND run_id <> $3", [s.org_id, s.id, w.id]);
-    const [run] = await q.query<{ budget_usd: string }>("SELECT budget_usd FROM runs WHERE id = $1 AND org_id = $2", [w.id, s.org_id]);
+    const [run] = await q.query<{ budget_usd: string; deadline_at: Date | null }>("SELECT budget_usd, deadline_at FROM runs WHERE id = $1 AND org_id = $2", [w.id, s.org_id]);
+    // This wake's token for the workspace's tools: good until its run's deadline, revoked when the wake ends.
+    let workspace: WakeStart["workspace"] = null;
+    if (s.policy.workspace) {
+      const until = run?.deadline_at ? new Date(run.deadline_at) : new Date(Date.now() + (s.policy.wake_max_seconds + 900) * 1000);
+      await revokeToolTokens(q, s.org_id, s.id, "a newer wake started");
+      workspace = { server: s.policy.workspace.server, token: await mintToolToken(q, s, w.id, until), expires_at: until.toISOString() };
+    }
     await q.query("UPDATE harness_sessions SET state = 'live', in_turn = true, last_activity_at = now(), updated_at = now() WHERE id = $1 AND org_id = $2", [s.id, s.org_id]);
     await runEvent(q, w.id, s.org_id, "agent_wake", { session: s.id, resume: !!s.harness_session, messages: first.length, checkpoint: s.checkpoint?.seq ?? null });
     return { session_id: s.id, title: s.title, policy: s.policy, resume: s.harness_session, checkpoint: s.checkpoint ? { seq: s.checkpoint.seq, sha256: s.checkpoint.sha256, bytes: s.checkpoint.bytes } : null,
-      charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls };
+      charged_usd: money(num(charged?.c)), budget_usd: num(run?.budget_usd), first, preface, web_calls: s.web_calls, workspace };
   });
 }
 
@@ -621,6 +678,7 @@ export async function wakeBeat(runId: string, leaseToken: string, b: BeatInput):
       if (steer.length) await runEvent(q, w.id, s.org_id, "steer_delivered", { count: steer.length });
     }
     const pending = await q.query("SELECT 1 FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status = 'pending' LIMIT 1", [s.org_id, s.id]);
+    if (spent >= num(s.budget_usd) - 1e-9) await revokeToolTokens(q, s.org_id, s.id, "budget", w.id);
     return { cancel: hb.cancel, reason: hb.reason, steer, pause: !!s.pause_requested_at, end: !!s.stop_requested_at, budget: spent >= num(s.budget_usd) - 1e-9,
       // Quicker while a person is talking to it, so a message arrives in seconds.
       interval_seconds: pending.length || b.in_turn ? 3 : 10 };
@@ -661,7 +719,7 @@ export async function wakeRequest(runId: string, leaseToken: string, r: { kind?:
     const id = newId("hsr");
     await q.query("INSERT INTO harness_session_requests (id, session_id, org_id, run_id, kind, subject, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)",
       [id, s.id, s.org_id, w.id, kind, kind === "tool" ? String(r.subject).trim() : subject, JSON.stringify(detail)]);
-    await systemMessage(q, s, `The agent asks to ${kind === "web" ? `reach ${subject}` : `use ${String(r.subject).trim()}`}.`, w.id);
+    await systemMessage(q, s, `The agent asks to ${kind === "web" ? `reach ${subject}` : `use ${workspaceToolOf(String(r.subject).trim()) ? `the workspace tool ${workspaceToolOf(String(r.subject).trim())}` : String(r.subject).trim()}`}.`, w.id);
     await runEvent(q, w.id, s.org_id, "agent_request", { kind, subject: kind === "tool" ? String(r.subject).trim() : subject });
     return { id };
   });
@@ -676,6 +734,7 @@ export async function wakeEnd(runId: string, leaseToken: string, e: { reason?: u
     const w = await wakeOf(q, runId, leaseToken, true);
     const s = w.session;
     await q.query("UPDATE harness_wake_spend SET end_reason = $3, updated_at = now() WHERE run_id = $1 AND org_id = $2", [w.id, s.org_id, detail ? `${reason}: ${detail}` : reason]);
+    await revokeToolTokens(q, s.org_id, s.id, reason === "awaiting" ? "awaiting a decision" : reason, w.id);
     await runEvent(q, w.id, s.org_id, "agent_end", { reason, detail });
     let state: HarnessState = s.state;
     if (reason === "budget") { await ensureBudgetRequest(q, s, "the session reached its budget", w.id); state = "awaiting"; }
@@ -754,6 +813,7 @@ export async function reconcileWake(runId: string): Promise<void> {
       "/* tenant: the ended run, by id */ SELECT id, org_id, status, error_kind, error, harness_session_id, started_at, heartbeat_at, ended_at FROM runs WHERE id = $1", [runId]);
     if (!run?.harness_session_id || !["succeeded", "failed", "cancelled"].includes(run.status)) return null;
     const s = await rowOf(q, run.org_id, run.harness_session_id, true);
+    await revokeToolTokens(q, s.org_id, s.id, "the wake ended", run.id);
     const spent = await recomputeSpend(q, s.id, s.org_id);
     if (s.current_run_id !== run.id) return null;
     const [w] = await q.query<{ end_reason: string | null; charged_usd: string }>("SELECT end_reason, charged_usd FROM harness_wake_spend WHERE run_id = $1 AND org_id = $2", [run.id, s.org_id]);
@@ -869,6 +929,8 @@ export async function sweepHarnessSessions(now = new Date()): Promise<HarnessSwe
     });
     if (keys.length) await (await import("./storage.js")).objectStore().then((st) => st.remove(keys)).catch((e) => console.error(`agent sessions: checkpoints not removed: ${(e as Error).message}`));
   }
+  // 5. Tool tokens a day past their expiry, and those of pruned sessions (mold_v0-250).
+  await tx((q) => sweepToolTokens(q, now));
   return out;
 }
 

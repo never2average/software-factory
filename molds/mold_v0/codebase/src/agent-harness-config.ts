@@ -104,6 +104,39 @@ export interface AgentPolicy {
   hooks: ResolvedHook[];
   /** "conversation": parks when idle and wakes on the next message; "task": ends when its work is answered. */
   mode: "conversation" | "task";
+  /**
+   * What the session reaches of its workspace (mold_v0-250), frozen at its start: the app's own customer MCP server as the
+   * person who started it (its tools, each a read or not, and which the setting lets it use without asking: those are in
+   * `tools` as mcp__app__<name>), and the workspace's context as standing instructions. Absent on sessions started
+   * before it (they reach nothing of the workspace).
+   */
+  workspace?: WorkspaceReach;
+}
+
+/**
+ * The MCP server name the harness gets the workspace's tools under: Claude Code calls them mcp__app__<tool>. Not
+ * "workspace": the pinned Claude Code reserves that name and drops a server called so (it says so only in its init event).
+ */
+export const WORKSPACE_SERVER = "app";
+export const workspaceToolName = (tool: string) => `mcp__${WORKSPACE_SERVER}__${tool}`;
+/** The workspace tool a harness tool name is (mcp__app__<tool>), or null. */
+export const workspaceToolOf = (name: string): string | null => (name.startsWith(`mcp__${WORKSPACE_SERVER}__`) ? name.slice(`mcp__${WORKSPACE_SERVER}__`.length) || null : null);
+export type WorkspaceToolsFree = "reads" | "reads_and_named" | "all";
+export interface WorkspaceReach {
+  server: string;
+  /** Who the tools act as: the person (their role at the start; re-read on every call) or the account's key. */
+  acts_as: { kind: "person" | "key"; name: string | null; role: string | null };
+  free: WorkspaceToolsFree;
+  named: string[];
+  /** The tools the person may call, as the server listed them to them at the start. */
+  tools: { name: string; title: string | null; read: boolean }[];
+  /** The standing instructions added for the workspace (capped), and its parts' sizes for the session card. */
+  context: { text: string; max_chars: number; parts: { part: "instructions" | "context"; label: string; chars: number; kept: number }[] };
+}
+
+/** Which of the workspace's tools a session may use without asking, under the setting: reads, plus the named, or all. */
+export function freeWorkspaceTools(tools: { name: string; read: boolean }[], free: WorkspaceToolsFree, named: string[]): string[] {
+  return tools.filter((t) => free === "all" || t.read || (free === "reads_and_named" && named.includes(t.name))).map((t) => t.name);
 }
 
 /** The harness's own tools a session may use without asking: the workspace's files and its shell. */

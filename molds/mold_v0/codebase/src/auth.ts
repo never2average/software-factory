@@ -26,6 +26,12 @@ export interface Org {
    * pass the account's own launch rules (src/limits.ts checkAccountRun). Absent for every customer call.
    */
   staff?: string;
+  /**
+   * A workspace agent session's tool token (mold_v0-250, src/harness-reach.ts): the call is the session's, acting as the
+   * person who started it (userId, role). `allowed`: the tools it may call without asking (src/http.ts refuses the rest).
+   * The agent's own session tools are not offered to it (src/agent-tools.ts).
+   */
+  agentSession?: { session: string; allowed: string[] };
 }
 
 const KEY_PREFIX = "oct_";

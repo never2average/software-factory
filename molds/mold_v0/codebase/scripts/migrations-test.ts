@@ -1059,6 +1059,21 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} a run's record (area and key, both or neither; earlier runs none); its rollback keeps the runs and leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // The workspace agent's tool tokens (mold_v0-250, harness_session_tokens): closed to tenant work; the rollback drops it,
+  // and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "harness_session_tokens")!.version;
+    const d = await shellAt(kind);
+    const [t] = await d.query<{ rls: boolean }>("SELECT relrowsecurity AS rls FROM pg_class WHERE relname = 'harness_session_tokens'");
+    assert.equal(t?.rls, true, "row-level security on");
+    const grants = await d.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'harness_session_tokens' AND grantee LIKE 'app_tenant_%'");
+    assert.equal(grants.length, 0, "the tenant role has no grant on it");
+    await rollBackAfter(d, v);
+    await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_harness_session_tokens.sql`), "utf8"));
+    assert.equal((await d.query("SELECT 1 FROM pg_class WHERE relname = 'harness_session_tokens'")).length, 0, "dropped by its rollback");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_harness_session_tokens")).length, 1, "and it applies again");
+    await d.drop();
+    log(`  ✓ ${kind}: ${v} the workspace agent's tool tokens: row-level security on, no tenant grant; its rollback drops the table, and it applies again`);
   // A record's change history (mold_v0-256, record_changes, found by name): an append-only table under row-level
   // security (the tenant role reads and adds its workspace's lines, never changes or removes one); its rollback drops it,
   // the records staying, leaves exactly what the migration before left, and it applies again.

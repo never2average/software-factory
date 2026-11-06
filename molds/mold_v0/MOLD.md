@@ -2921,7 +2921,7 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
 - **Platform settings** (group "Workspace agent" in `src/settings.ts`, listed only with the flag on): harness, provider,
   model, budget per session, raise ceiling, month budget per workspace, sessions at once, turns per wake, longest wake, park
   after, task idle close, checkpoint interval, request window, crash resumes, automatic resume, retention, archive, web tools,
-  web hosts, web calls. Each has plain words; the staff Agent configuration page, `list_settings` and `update_setting` show
+  web hosts, web calls, workspace tools used without asking, the named ones, workspace context size (mold_v0-250). Each has plain words; the staff Agent configuration page, `list_settings` and `update_setting` show
   and change them; every change is kept in `platform_setting_changes` (key, before, after, who, when) beside the staff
   log's `settings.save` line.
 - **The console.** The top bar's last item, after Search, Docs and the theme switcher, is one icon button
@@ -2929,7 +2929,21 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   with Start a session, the table; a session opens as the list's full card (`?session=<id>`) with its transcript, the
   composer, the request's card (Approve / Decline, or Raise budget), Pause, Resume and Stop (stop asks once more in place).
   While a session waits for a decision its state line shows no reason of its own: the request's card says what it
-  asked for (mold_v0-245).
+  asked for (mold_v0-245). **Start a session opens as a modal dialog** (mold_v0-249, the operator's one exception to the
+  console's full-card rule): the first message, the model (shown; staff set it), the budget (the setting's, lower if the
+  person likes, up to the ceiling for a billing manager or owner: `budget_usd` on `POST /api/agent`), the kind, an
+  optional title, Start; focus held inside, Esc closes it, its title names it; on Start the session's full card opens.
+- **What a session reaches** (mold_v0-250, `src/harness-reach.ts`; [docs/agent-harness.md](docs/agent-harness.md) "What a
+  session reaches"): the app's own customer MCP server as the MCP server `app` (tools `mcp__app__<tool>`), opened by a token per wake
+  (`hst_...`, hashed in `harness_session_tokens`, migration 0048) that acts as the person who started the session with
+  their role (re-read on every call), for that workspace only, and works only while its wake runs: revoked when the wake
+  ends, at a pause or stop, at budget, when the session ends, and refused once the person leaves the workspace. Reads
+  (`readOnlyHint`) are used without asking; the rest become `tool` approval requests (what the call wanted to send shown
+  with it), and `/mcp` refuses them too. Setting `AGENT_WORKSPACE_TOOLS` (reads, reads and named
+  `AGENT_WORKSPACE_TOOLS_NAMED`, all) is frozen at the start. The server's instructions and the company's and person's
+  context and memory join the standing instructions, cut to `AGENT_CONTEXT_MAX_CHARS`. The session card's "How this
+  session runs" lists who it acts as, the tools it uses freely, those that ask first, and the context's parts with
+  their sizes; no internal id.
 - **The agent's icon** (mold_v0-252). The top-bar button is the shared outline button (no styling of its own) with an
   18 px icon, centred, named "Workspace agent"; the agent pages' heading (the top bar's trail, its last crumb: the
   console's list pages have no title above their cards) shows the same icon. In order: the workspace's own, the app's, the default (`web/src/components/layout/agent-icon.tsx`).
