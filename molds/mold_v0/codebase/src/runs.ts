@@ -125,8 +125,8 @@ export async function recordRuns(orgId: number, record: RunRecord, opts: { kinds
   const db = await getDb();
   const [rows, [{ n }]] = await Promise.all([
     db.query<{ id: string; pack: string; kind: string; status: RunView["status"]; error: string | null; cost_usd: number; created_at: Date; started_at: Date | null; ended_at: Date | null; requested_by: string | null }>(
-      `SELECT id, pack, kind, status, error, cost_usd, created_at, started_at, ended_at, requested_by FROM runs WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit}`, args),
-    db.query<{ n: number }>(`SELECT count(*)::int AS n FROM runs WHERE ${where}`, args),
+      `/* tenant: org_id = $1 is the first condition of where */ SELECT id, pack, kind, status, error, cost_usd, created_at, started_at, ended_at, requested_by FROM runs WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit}`, args),
+    db.query<{ n: number }>(`/* tenant: org_id = $1 is the first condition of where */ SELECT count(*)::int AS n FROM runs WHERE ${where}`, args),
   ]);
   return { total: n, runs: rows.map((r) => ({ id: r.id, pack: r.pack, kind: r.kind, status: r.status, error: r.error, cost_usd: Number(r.cost_usd),
     created_at: iso(r.created_at)!, started_at: iso(r.started_at), ended_at: iso(r.ended_at), requested_by: r.requested_by })) };

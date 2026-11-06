@@ -37,6 +37,70 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const areaOf = (j: any, n: string) => j.record_areas.find((a: { name: string }) => a.name === n);
 const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) => re.test(x)), `${what}: ${JSON.stringify(got)}`);
 
+/** The headless browser's page: a record, a log, a form or a run, from the input; then the input's steps; then ready. */
+const RENDER_ENTRY = `import { createRoot } from 'react-dom/client';
+import { NuqsAdapter } from 'nuqs/adapters/react';
+import { recordAreas } from '@/config/pack-nav.generated';
+import { layoutOf } from '@/features/records/detail-layout';
+import { LaidOutRecord } from '@/features/records/detail-page';
+import { LogViewer } from '@/features/records/log-viewer';
+import { linesOf } from '@/features/records/log-lines';
+import { ActionCard, CreateRecordForm, FormHost } from '@/features/tabs/tab-action';
+import { RunPage } from '@/features/runs/run-page';
+const I = (window as unknown as { __INPUT__: any }).__INPUT__;
+const json = (x: unknown) => new Response(JSON.stringify(x), { status: 200, headers: { 'content-type': 'application/json' } });
+const realFetch = window.fetch.bind(window);
+window.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
+  const u = String(url);
+  if (u.includes('/api/records/_page/_pick/')) return json({ records: [{ key: 'checkout', title: 'Checkout' }, { key: 'search', title: 'Search' }].filter((r) => { const q = new URL(u, location.href).searchParams.get('q') ?? ''; return !q || r.key.includes(q) || r.title.toLowerCase().includes(q); }), more: false });
+  if (u.includes('/api/records/_page/')) return json(I.page ?? { actions: [], sections: {}, facts: {} });
+  if (/\\/files$/.test(u)) return json({ files: I.files ?? [] });
+  if (u.includes('/events?after=')) return json(I.since ?? { run: I.run.run, events: [], tools: [], more: false, last: I.run.timeline.last });
+  if (u.includes('/api/runs/')) return json(I.run);
+  return realFetch(url, init);
+};
+function View() {
+  if (I.view === 'log') return <LogViewer lines={linesOf(I.lines)} live={!!I.live} name={['big']} label='A long log' />;
+  if (I.view === 'run') return <RunPage id={I.run.run.id} />;
+  if (I.view === 'form') {
+    history.replaceState(null, '', location.pathname + '?new=1&project=checkout');
+    const fields = [{ name: 'project', label: 'Project', type: 'reference', to: 'projects', help: null, required: true, options: null, multiple: false, min: null, max: null, max_length: null },
+      { name: 'branch', label: 'Branch', type: 'text', help: null, required: false, options: null, multiple: false, min: null, max: null, max_length: 200 }];
+    return <FormHost panel card={<ActionCard open onOpenChange={() => {}} title='Add build' description='A new record in Builds.'>
+      <CreateRecordForm area={{ name: 'builds', label: 'Builds', fields: fields as never, key_from_title: true }} onDone={() => {}} initial={{ project: 'checkout' }} /></ActionCard>}>
+      <p data-list=''>the list</p></FormHost>;
+  }
+  const area = recordAreas.find((a) => a.name === I.area)!;
+  const declared = layoutOf(area);
+  const layout = declared && I.noActions ? { ...declared, actions: undefined } : declared;
+  return layout ? <LaidOutRecord area={area} base='app' layout={layout} record={I.record} links={I.links} provenance={I.provenance} where="This workspace's own" credentials={null} /> : <p data-no-layout=''>no layout</p>;
+}
+createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1200 }}><View /></div></NuqsAdapter>);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const q = (s: string) => document.querySelector(s) as HTMLElement | null;
+const note = (id: string, text: string) => { const p = document.createElement('pre'); p.id = id; p.textContent = text; document.body.appendChild(p); };
+(async () => {
+  try {
+    await sleep(1500);
+    for (const s of I.steps ?? []) {
+      if (s.type) { const el = q(s.type[0]) as HTMLInputElement; const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, s.type[1]); el.dispatchEvent(new Event('input', { bubbles: true })); }
+      // The test page has no stylesheet: a box that scrolls in the console is given its overflow here.
+      if (s.style) q(s.style[0])!.setAttribute('style', (q(s.style[0])!.getAttribute('style') ?? '') + ';' + s.style[1]);
+      if (s.click) q(s.click)!.click();
+      if (s.focus) q(s.focus)!.focus();
+      if (s.key) (s.key[0] ? q(s.key[0]) : document.activeElement as HTMLElement)!.dispatchEvent(new KeyboardEvent('keydown', { key: s.key[1], bubbles: true, cancelable: true }));
+      if (s.scroll) { const el = q(s.scroll[0])!; el.scrollTop = s.scroll[1] === 'bottom' ? el.scrollHeight : Number(s.scroll[1]); el.dispatchEvent(new Event('scroll')); }
+      if (s.values) note('values-' + s.values, JSON.stringify(Object.fromEntries([...document.querySelectorAll('input, textarea')].filter((i) => i.id).map((i) => [i.id, (i as HTMLInputElement).value]))));
+      if (s.active) note('active-' + s.active, (document.activeElement as HTMLElement | null)?.outerHTML.slice(0, 300) ?? '');
+      if (s.html) note('html-' + s.html[0], q(s.html[1])?.outerHTML ?? 'none');
+      await sleep(s.wait ?? 350);
+    }
+  } catch (e) { document.body.setAttribute('data-render-error', String(e).slice(0, 200)); }
+  document.body.setAttribute('data-ready', '1');
+})();
+`;
+
 // ---------------------------------------------------------------- a. declared and refused
 {
   const api = await import("../src/pack-api.js");
@@ -306,9 +370,19 @@ const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) 
         writeFileSync(f, `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script>window.__INPUT__ = ${JSON.stringify(input).replace(/</g, "\\u003c")};</script><script src="bundle.js"></script></body></html>`);
         const r = spawnSync(chrome, ["--no-sandbox", "--disable-gpu", "--virtual-time-budget=15000", "--window-size=1280,2400", "--dump-dom", `file://${f}${query}`], { encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024 });
         assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 600)}`);
+        if (process.env.DRAW_DUMP) writeFileSync(path.join(process.env.DRAW_DUMP, `${name}.html`), r.stdout);
         assert.match(r.stdout, /data-ready="1"/, `${name}: drawn (${r.stdout.slice(0, 600)})`);
         assert.doesNotMatch(r.stdout, /data-render-error/, `${name}: no error (${/data-render-error="([^"]*)"/.exec(r.stdout)?.[1]})`);
         return r.stdout;
+      };
+      // Every drawn check is gathered, then all said at once (one browser run shows every problem).
+      const failures: string[] = [];
+      const softly = (f: () => void) => { try { f(); } catch (e) { failures.push((e as Error).message.split("\n")[0]!.slice(0, 300)); } };
+      const soft = {
+        match: (s: string, re: RegExp, m?: string) => softly(() => assert.match(s, re, m)),
+        doesNotMatch: (s: string, re: RegExp, m?: string) => softly(() => assert.doesNotMatch(s, re, m)),
+        ok: (v: unknown, m?: string) => softly(() => assert.ok(v, m)),
+        equal: (x: unknown, y: unknown, m?: string) => softly(() => assert.equal(x, y, m)),
       };
       const record = (key: string, title: string, data: Record<string, unknown>) => ({ key, title, data, version: null, updated_at: "2026-11-06T09:30:00.000Z" });
       const logText = ["2026-11-06T09:30:00Z [checkout] INFO cloning main at 9f4c2e1a", "2026-11-06T09:30:04Z [install] WARN 3 packages are deprecated",
@@ -318,40 +392,40 @@ const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) 
         test_suites: [{ suite: "payments", passed: 412, failed: 3, seconds: 81.2 }, { suite: "search", passed: 220, failed: 0, seconds: 40 }] });
       // A live log: following, a search filtering it, its matches marked.
       const logs = draw("log-live", { view: "record", area: "builds", record: running, links: [], provenance: { by: "run" }, noActions: true,
-        steps: [{ type: ["[data-log-search]", "failed 500"] }] }, "?tab=logs");
+        steps: [{ type: ["[data-log-search]", "refund 500"] }] }, "?tab=logs");
       const lv = /data-section-kind="log"[\s\S]*?<\/section>|data-section-kind="log"[\s\S]*$/.exec(logs)?.[0] ?? "";
-      assert.match(lv, /data-log-follow="on"/, "a running build's log: Follow on");
-      assert.match(lv, /1 of 5 lines match “failed 500”/, "search keeps the lines with every word, says how many");
-      assert.match(lv, /data-log-line="3" data-level="error"[\s\S]*?\[test\][\s\S]*?<mark[^>]*>FAIL<\/mark>|data-log-line="3" data-level="error"[\s\S]*?<mark/, "the line kept, its level and source, its matches marked");
-      assert.doesNotMatch(lv, /data-log-line="1"/, "the others not drawn");
-      assert.match(lv, /aria-label="Copy line 3"/, "Copy line");
+      soft.match(lv, /data-log-follow="on"/, "a running build's log: Follow on");
+      soft.match(lv, /1 of 5 lines match “refund 500”/, "search keeps the lines with every word, says how many");
+      soft.match(lv, /data-log-line="3" data-level="error"[\s\S]*?\[test\][\s\S]*?<mark[^>]*>refund<\/mark>[\s\S]*?<mark[^>]*>500<\/mark>/, "the line kept, its level and source, its matches marked");
+      soft.doesNotMatch(lv, /data-log-line="1"/, "the others not drawn");
+      soft.match(lv, /aria-label="Copy line 3"/, "Copy line");
       // A hundred thousand lines: only the window drawn; scrolled to the end, the last ones.
       const big = Array.from({ length: 100_000 }, (_, i) => `[step${i % 7}] ${i % 50 === 0 ? "ERROR" : "INFO"} line ${i + 1} of the run`).join("\n");
-      const bigDom = draw("log-big", { view: "log", lines: big, live: false, steps: [{ scroll: ["[data-log-lines]", "bottom"] }, { wait: 600 }] });
+      const bigDom = draw("log-big", { view: "log", lines: big, live: false, steps: [{ style: ["[data-log-lines]", "overflow: auto"] }, { scroll: ["[data-log-lines]", "bottom"] }, { wait: 600 }] });
       const drawn = (bigDom.match(/data-log-line="/g) ?? []).length;
-      assert.ok(drawn > 10 && drawn < 200, `virtualised: ${drawn} of 100,000 lines drawn`);
-      assert.match(bigDom, /data-log-line="100000"/, "scrolled to the end, the last line drawn");
+      soft.ok(drawn > 10 && drawn < 200, `virtualised: ${drawn} of 100,000 lines drawn`);
+      soft.match(bigDom, /data-log-line="100000"/, "scrolled to the end, the last line drawn");
       // Code and table.
       const conf = draw("config", { view: "record", area: "builds", record: running, links: [], provenance: { by: "run" }, noActions: true }, "?tab=configuration");
-      assert.match(conf, /data-code-view="json"[\s\S]*?data-code-line="1"[\s\S]*?data-token="key">"runner"<[\s\S]*?data-token="string">"large"</, "JSON highlighted, each line numbered");
-      assert.match(conf, /data-code-view="yaml"[\s\S]*?data-token="key">kind<[\s\S]*?data-token="comment"># the big one</, "a manifest as YAML, its comment marked");
-      assert.match(conf, /data-code-download="config\.json"/); assert.match(conf, /data-code-download="manifest\.yaml"/);
-      assert.match(conf, /data-json-table=""[\s\S]*?<th[^>]*>Suite<\/th><th[^>]*>Passed<\/th><th[^>]*>Failed<\/th><th[^>]*>Seconds<\/th>[\s\S]*?payments[\s\S]*?412/, "a json list as a table, its declared columns in words");
+      soft.match(conf, /data-code-view="json"[\s\S]*?data-code-line="1"[\s\S]*?data-token="key">"runner"<[\s\S]*?data-token="string">"large"</, "JSON highlighted, each line numbered");
+      soft.match(conf, /data-code-view="yaml"[\s\S]*?data-token="key">kind<[\s\S]*?data-token="comment"># the big one</, "a manifest as YAML, its comment marked");
+      soft.match(conf, /data-code-download="config\.json"/); soft.match(conf, /data-code-download="manifest\.yaml"/);
+      soft.match(conf, /data-json-table=""[\s\S]*?<th[^>]*>Suite<\/th><th[^>]*>Passed<\/th><th[^>]*>Failed<\/th><th[^>]*>Seconds<\/th>[\s\S]*?payments[\s\S]*?412/, "a json list as a table, its declared columns in words");
       // History with a diff, and a release's encrypted field redacted.
       const hist = (changes: unknown[], more = false) => ({ actions: [], sections: { "4-0": { changes, more } }, facts: {} });
       const change = (id: number, action: string, by: string, changes: unknown[], title: unknown = null) => ({ id, at: "2026-11-06T08:00:00.000Z", action, by, title, changes });
       const historyDom = draw("history", { view: "record", area: "builds", record: running, links: [], provenance: { by: "run" },
         page: hist([change(3, "updated", "r.lee@example.com", [{ field: "log", before: "a\nb\nc", after: "a\nB\nc\nd" }, { field: "duration", before: 1200, after: 1312 }]),
           change(2, "moved", "Run run_abc", [{ field: "status", before: "queued", after: "running" }]), change(1, "created", "You", [{ field: "branch", after: "main" }])], true) }, "?tab=history");
-      assert.match(historyDom, /data-history-change="updated"[\s\S]*?r\.lee@example\.com[\s\S]*?changed 2 fields/, "who, and what");
-      assert.match(historyDom, /data-history-diff=""[\s\S]*?\+2[\s\S]*?−1[\s\S]*?data-diff="removed"[\s\S]*?b[\s\S]*?data-diff="added"[\s\S]*?B/, "a long text as a line diff");
-      assert.match(historyDom, /data-history-field="duration"[\s\S]*?data-history-before=""[\s\S]*?20m 0s|data-history-field="duration"[\s\S]*?1,200[\s\S]*?1,312|data-history-field="duration"[\s\S]*?1200[\s\S]*?1312/, "a short value before and after");
-      assert.match(historyDom, /data-history-change="moved"[\s\S]*?Queued[\s\S]*?Running/, "a move: its states in words");
-      assert.match(historyDom, /data-history-more=""/, "Show older changes");
-      assert.doesNotMatch(historyDom, /data-section-count/);
+      soft.match(historyDom, /data-history-change="updated"[\s\S]*?r\.lee@example\.com[\s\S]*?changed 2 fields/, "who, and what");
+      soft.match(historyDom, /data-history-diff=""[\s\S]*?\+2[\s\S]*?−1[\s\S]*?data-diff="removed"[\s\S]*?b[\s\S]*?data-diff="added"[\s\S]*?B/, "a long text as a line diff");
+      soft.match(historyDom, /data-history-field="duration"[\s\S]*?data-history-before=""[\s\S]*?20m 0s|data-history-field="duration"[\s\S]*?1,200[\s\S]*?1,312|data-history-field="duration"[\s\S]*?1200[\s\S]*?1312/, "a short value before and after");
+      soft.match(historyDom, /data-history-change="moved"[\s\S]*?Queued[\s\S]*?Running/, "a move: its states in words");
+      soft.match(historyDom, /data-history-more=""/, "Show older changes");
+      soft.doesNotMatch(historyDom, /data-section-count/);
       const rel = draw("history-redacted", { view: "record", area: "releases", record: record("rel-4-13", "Release 4.13", { project: "checkout", version: "4.13.0", stage: "candidate", signing_secret: "[encrypted]" }), links: [], provenance: { by: "people" },
         page: { actions: [], sections: { "1-0": { changes: [change(5, "updated", "You", [{ field: "signing_secret", redacted: true }, { field: "stage", before: "draft", after: "candidate" }])], more: false } }, facts: {} } }, "?tab=history");
-      assert.match(rel, /data-history-field="signing_secret" data-redacted=""[\s\S]*?Changed · encrypted, so its values are not shown/, "an encrypted field: that it changed, never a value");
+      soft.match(rel, /data-history-field="signing_secret" data-redacted=""[\s\S]*?Changed · encrypted, so its values are not shown/, "an encrypted field: that it changed, never a value");
       // A project's computed facts (and a fact the person may not read: not drawn), and polish: its address wraps.
       const projDom = draw("computed", { view: "record", area: "projects", record: record("checkout", "Checkout", { health: "at_risk", summary: "The payment pages", owner: "Payments team", started: "2026-01-12",
         repository: "https://git.example.com/acme/checkout-service-with-a-long-name/tree/main" }), links: [], provenance: { by: "people" },
@@ -359,34 +433,34 @@ const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) 
           facts: { 3: { op: "latest", value: "failed", area: "builds", field: "status", record: { key: "build-1042", title: "Build 1042" } }, 4: { op: "count", value: 7, capped: false, area: "builds", via: "project" },
             5: { hidden: true }, 6: { op: "latest", value: 87.4, area: "builds", field: "coverage", record: { key: "build-1041", title: "Build 1041" } } } } });
       const facts = /data-record-facts="">([\s\S]*?)<\/dl>/.exec(projDom)?.[1] ?? "";
-      assert.match(facts, /Last build[\s\S]*?data-computed-fact="3"[\s\S]*?data-badge-color="danger"[\s\S]*?Failed[\s\S]*?data-computed-from="build-1042"/, "the last build's status as its badge, linked to it");
-      assert.match(facts, /Builds[\s\S]*?href="\/app\/records\/builds\?linked=project%3Acheckout"[^>]*data-computed-count="7">7</, "a count, linked to that list narrowed to this project");
-      assert.doesNotMatch(facts, /Failed builds/, "a fact this person may not read: not drawn");
-      assert.match(facts, /Last coverage[\s\S]*?87\.4%/, "the latest value with its unit");
-      assert.match(facts, /data-link-text=""[^>]*>(<span class="inline-block max-w-full truncate align-bottom">[^<]*<\/span>){4,}/, "the repository's address in whole pieces (it wraps at its slashes)");
+      soft.match(facts, /Last build[\s\S]*?data-computed-fact="3"[\s\S]*?data-badge-color="danger"[\s\S]*?Failed[\s\S]*?data-computed-from="build-1042"/, "the last build's status as its badge, linked to it");
+      soft.match(facts, /Builds[\s\S]*?href="\/app\/records\/builds\?linked=project%3Acheckout"[^>]*data-computed-count="7">7</, "a count, linked to that list narrowed to this project");
+      soft.doesNotMatch(facts, /Failed builds/, "a fact this person may not read: not drawn");
+      soft.match(facts, /Last coverage[\s\S]*?87\.4%/, "the latest value with its unit");
+      soft.match(facts, /data-link-text=""[^>]*>(<span class="inline-block max-w-full truncate align-bottom">[^<]*<\/span>){4,}/, "the repository's address in whole pieces (it wraps at its slashes)");
       // The file browser (its cards from the record's files route).
       const card = (id: string, name: string, field: string, label: string, preview: string | null, type: string, size: number) => ({ id, field, label, n: 0, source: "file", name, size, content_type: type, preview, preview_url: preview ? `/x/${id}` : null, download_url: `/x/${id}?download=1` });
       const filesDom = draw("files", { view: "record", area: "builds", record: running, links: [], provenance: { by: "run" }, noActions: true,
         files: [card("f1", "report.pdf", "attachments", "Attachments", "pdf", "application/pdf", 248000), card("f2", "logs/test.log", "attachments", "Attachments", "text", "text/plain", 3100)],
         steps: [{ click: '[data-path="logs"]' }, { click: '[data-path="report.pdf"]' }] }, "?tab=files");
-      assert.match(filesDom, /role="tree"[\s\S]*?data-file-node="folder"[^>]*data-path="logs"[\s\S]*?data-file-node="file"[^>]*data-path="report\.pdf"/, "the files as a tree, folders first");
-      assert.match(filesDom, /aria-expanded="false"[^>]*data-file-node="folder"|data-file-node="folder"[^>]*aria-expanded="false"|aria-expanded="false"/, "a folder closed by a click");
-      assert.match(filesDom, /aria-selected="true"[^>]*data-file-node="file"[^>]*data-path="report\.pdf"/, "the open file");
-      assert.match(filesDom, /data-file-preview="f1"[\s\S]*?data-document-card="pdf"[\s\S]*?report\.pdf[\s\S]*?Download/, "previewed with its document card");
+      soft.match(filesDom, /role="tree"[\s\S]*?data-file-node="folder"[^>]*data-path="logs"[\s\S]*?data-file-node="file"[^>]*data-path="report\.pdf"/, "the files as a tree, folders first");
+      soft.match(filesDom, /aria-expanded="false"[^>]*data-file-node="folder"|data-file-node="folder"[^>]*aria-expanded="false"|aria-expanded="false"/, "a folder closed by a click");
+      soft.match(filesDom, /aria-selected="true"[^>]*data-file-node="file"[^>]*data-path="report\.pdf"/, "the open file");
+      soft.match(filesDom, /data-file-preview="f1"[\s\S]*?data-document-card="pdf"[\s\S]*?report\.pdf[\s\S]*?Download/, "previewed with its document card");
       // The side panel: typed values kept when it expands; Esc with unsaved changes asks; Tab wraps; the record picker.
       const panelDom = draw("panel", { view: "form", steps: [
         { type: ["#action-title", "Nightly build"] }, { values: "panel" }, { focus: "[data-side-panel] [data-card-footer] button:last-child" }, { key: ["[data-side-panel]", "Tab"] }, { active: "trap" },
         { key: ["[data-side-panel]", "Escape"] }, { wait: 400 }, { html: ["confirm", "[role=alertdialog]"] }, { click: "[role=alertdialog] button" }, { wait: 300 },
         { click: "[data-panel-expand]" }, { wait: 300 }, { values: "expanded" }] });
-      assert.match(panelDom, /id="values-panel">[^<]*"action-title":"Nightly build"[^<]*"action-key":"nightly-build"/, "the panel: the Key follows the Title");
-      assert.match(panelDom, /id="values-panel">[^<]*"action-field-project":"checkout"/, "the project filled in from the address");
-      assert.match(panelDom, /id="active-trap">[^<]*side-panel-title|id="active-trap">[^<]*data-panel-expand/, "Tab from the last control wraps to the first");
-      assert.match(panelDom, /id="html-confirm">[\s\S]*?Discard your changes\?/, "Esc with unsaved changes asks first");
-      assert.match(panelDom, /id="values-expanded">[^<]*"action-title":"Nightly build"/, "Open full page: the same form, its typed values kept");
-      assert.match(panelDom, /data-action-card=""/, "now the full card");
-      assert.doesNotMatch(panelDom, /data-list=""/, "the list gives way to the full card");
+      soft.ok(/id="values-panel">[^<]*"action-title":"Nightly build"/.test(panelDom) && /id="values-panel">[^<]*"action-key":"nightly-build"/.test(panelDom), "the panel: the Key follows the Title");
+      soft.match(panelDom, /id="values-panel">[^<]*"action-field-project":"checkout"/, "the project filled in from the address");
+      soft.match(panelDom, /id="active-trap">[^<]*side-panel-title|id="active-trap">[^<]*data-panel-expand/, "Tab from the last control wraps to the first");
+      soft.match(panelDom, /id="html-confirm">[\s\S]*?Discard your changes\?/, "Esc with unsaved changes asks first");
+      soft.match(panelDom, /id="values-expanded">[^<]*"action-title":"Nightly build"/, "Open full page: the same form, its typed values kept");
+      soft.match(panelDom, /data-action-card=""/, "now the full card");
+      soft.doesNotMatch(panelDom, /data-list=""/, "the list gives way to the full card");
       const pickDom = draw("picker", { view: "form", steps: [{ focus: "#action-field-project" }, { type: ["#action-field-project", "sea"] }, { wait: 600 }, { html: ["list", "[data-picker-list]"] }] });
-      assert.match(pickDom, /id="html-list">[\s\S]*?role="option"[\s\S]*?Search[\s\S]*?search/, "the picker: the records matching what was typed, title and key");
+      soft.match(pickDom, /id="html-list">[\s\S]*?role="option"[\s\S]*?Search[\s\S]*?search/, "the picker: the records matching what was typed, title and key");
       // A run's page, live and finished, on each tab.
       const ev = (id: number, level: string, source: string, message: string) => ({ id, at: `2026-11-06T10:0${Math.min(9, id)}:00.000Z`, attempt: 1, type: "step_log", level, source, message });
       const runData = (status: string) => ({
@@ -403,87 +477,27 @@ const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) 
       });
       const live = draw("run-live", { view: "run", run: runData("running"), since: { run: { status: "running", ended_at: null, started_at: "2026-11-06T10:00:05.000Z", cost_usd: 0.5, cancel_requested: false, error: null },
         events: [ev(6, "info", "report", "wrote coverage.xml")], tools: [], more: false, last: 6 }, steps: [{ wait: 4500 }] });
-      assert.match(live, /data-run-page="running"/); assert.match(live, /data-run-live=""/, "live: it says it is updating");
-      assert.match(live, /data-run-action="rerun"[\s\S]*?data-run-action="stop"[\s\S]*?data-run-action="copy-link"/, "Re-run, Stop while it runs, Copy link");
-      assert.match(live, /data-run-tab="timeline"[\s\S]*?data-run-tab="agent"[\s\S]*?data-run-tab="tools"[\s\S]*?data-run-tab="results"[\s\S]*?data-run-tab="files"[\s\S]*?data-run-tab="related"/, "its tabs, in order");
-      assert.match(live, /data-run-record="build-1042"/, "the record it ran on");
-      assert.match(live, /data-log-follow="on"/, "its timeline follows");
-      assert.match(live, /data-log-line="4"[\s\S]*?wrote coverage\.xml/, "new events read while it runs (polled)");
-      assert.match(live, /data-run-cost="">\$0\.50 of \$2\.00/, "its cost as it spends");
+      soft.match(live, /data-run-page="running"/); soft.match(live, /data-run-live=""/, "live: it says it is updating");
+      soft.match(live, /data-run-action="rerun"[\s\S]*?data-run-action="stop"[\s\S]*?data-run-action="copy-link"/, "Re-run, Stop while it runs, Copy link");
+      soft.match(live, /data-run-tab="timeline"[\s\S]*?data-run-tab="agent"[\s\S]*?data-run-tab="tools"[\s\S]*?data-run-tab="results"[\s\S]*?data-run-tab="files"[\s\S]*?data-run-tab="related"/, "its tabs, in order");
+      soft.match(live, /data-run-record="build-1042"/, "the record it ran on");
+      soft.match(live, /data-log-follow="on"/, "its timeline follows");
+      soft.match(live, /data-log-line="4"[\s\S]*?wrote coverage\.xml/, "new events read while it runs (polled)");
+      soft.match(live, /data-run-cost="">\$0\.50 of \$2\.00/, "its cost as it spends");
       const done = (tab: string) => draw(`run-done-${tab}`, { view: "run", run: runData("failed") }, tab === "timeline" ? "" : `?tab=${tab}`);
       const t0 = done("timeline");
-      assert.doesNotMatch(t0, /data-run-action="stop"/, "finished: no Stop"); assert.doesNotMatch(t0, /data-log-follow/, "nor Follow");
-      assert.match(t0, /data-run-error=""[\s\S]*?4 tests failed/, "its error");
-      assert.match(t0, /data-run-duration="">21m 52s</, "how long it took");
-      assert.match(done("agent"), /node rebuild\.mjs[\s\S]*?model-large[\s\S]*?14[\s\S]*?data-usage-model="model-large"[\s\S]*?182,000[\s\S]*?\$0\.39[\s\S]*?Total/, "the agent: harness, model, turns, tokens and cost by model");
+      soft.doesNotMatch(t0, /data-run-action="stop"/, "finished: no Stop"); soft.doesNotMatch(t0, /data-log-follow/, "nor Follow");
+      soft.match(t0, /data-run-error=""[\s\S]*?4 tests failed/, "its error");
+      soft.match(t0, /data-run-duration="">21m 52s</, "how long it took");
+      soft.match(done("agent"), /node rebuild\.mjs[\s\S]*?model-large[\s\S]*?14[\s\S]*?data-usage-model="model-large"[\s\S]*?182,000[\s\S]*?\$0\.39[\s\S]*?Total/, "the agent: harness, model, turns, tokens and cost by model");
       const tools = done("tools");
-      assert.match(tools, /data-tool-call="read_file" data-open="false"[\s\S]*?data-tool-call="run_tests" data-open="false"[\s\S]*?Failed/, "each tool call, collapsed, a failed one marked");
-      assert.match(done("results"), /data-output="written"[\s\S]*?results\/report\.json[\s\S]*?data-run-check-counts[\s\S]*?1 pass[\s\S]*?1 fail/, "its required outputs and the checks");
-      assert.match(done("files"), /data-run-version="12"[\s\S]*?data-run-file="results"[\s\S]*?data-run-file="results\/report\.json"[\s\S]*?"failed"/, "the files it wrote, as a tree, with a preview");
-      assert.match(done("related"), /data-related-record="build-1042"[\s\S]*?Ran on[\s\S]*?Checked/, "the records it touched");
+      soft.match(tools, /data-tool-call="read_file" data-open="false"[\s\S]*?data-tool-call="run_tests" data-open="false"[\s\S]*?Failed/, "each tool call, collapsed, a failed one marked");
+      soft.match(done("results"), /data-output="written"[\s\S]*?results\/report\.json[\s\S]*?data-run-check-counts[\s\S]*?1 pass[\s\S]*?1 fail/, "its required outputs and the checks");
+      soft.match(done("files"), /data-run-version="12"[\s\S]*?data-run-file="results"[\s\S]*?data-run-file="results\/report\.json"[\s\S]*?"failed"/, "the files it wrote, as a tree, with a preview");
+      soft.match(done("related"), /data-related-record="build-1042"[\s\S]*?Ran on[\s\S]*?Checked/, "the records it touched");
+      assert.deepEqual(failures, [], `drawn: ${failures.length} problem(s):\n${failures.join("\n")}`);
       ok("drawn in a headless browser (mold_v0-256): a running build's log following, filtered by search with its matches marked and Copy line; a hundred thousand lines virtualised (the end drawn when scrolled there); JSON and YAML highlighted with line numbers and their downloads; a json list as a table; history with a line diff, a move in words and Show older; a release's encrypted field redacted; a project's computed facts (a badge, a count linked to its list, a value with its unit; a hidden one not drawn) and its address in whole pieces; a build's file browser; the side panel (the Key from the Title, a field from the address, Tab wrapping, Esc asking before unsaved changes go, Open full page keeping the values) and the record picker; a run's page live (polled, following, Stop) and finished on each tab");
     }
   } finally { rmSync(TMP, { recursive: true, force: true }); }
 }
 
-/** The headless browser's page: a record, a log, a form or a run, from the input; then the input's steps; then ready. */
-const RENDER_ENTRY = `import { createRoot } from 'react-dom/client';
-import { NuqsAdapter } from 'nuqs/adapters/react';
-import { recordAreas } from '@/config/pack-nav.generated';
-import { layoutOf } from '@/features/records/detail-layout';
-import { LaidOutRecord } from '@/features/records/detail-page';
-import { LogViewer } from '@/features/records/log-viewer';
-import { linesOf } from '@/features/records/log-lines';
-import { ActionCard, CreateRecordForm, FormHost } from '@/features/tabs/tab-action';
-import { RunPage } from '@/features/runs/run-page';
-const I = (window as unknown as { __INPUT__: any }).__INPUT__;
-const json = (x: unknown) => new Response(JSON.stringify(x), { status: 200, headers: { 'content-type': 'application/json' } });
-const realFetch = window.fetch.bind(window);
-window.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
-  const u = String(url);
-  if (u.includes('/api/records/_page/_pick/')) return json({ records: [{ key: 'checkout', title: 'Checkout' }, { key: 'search', title: 'Search' }].filter((r) => { const q = new URL(u, location.href).searchParams.get('q') ?? ''; return !q || r.key.includes(q) || r.title.toLowerCase().includes(q); }), more: false });
-  if (u.includes('/api/records/_page/')) return json(I.page ?? { actions: [], sections: {}, facts: {} });
-  if (/\\/files$/.test(u)) return json({ files: I.files ?? [] });
-  if (u.includes('/events?after=')) return json(I.since ?? { run: I.run.run, events: [], tools: [], more: false, last: I.run.timeline.last });
-  if (u.includes('/api/runs/')) return json(I.run);
-  return realFetch(url, init);
-};
-function View() {
-  if (I.view === 'log') return <LogViewer lines={linesOf(I.lines)} live={!!I.live} name={['big']} label='A long log' />;
-  if (I.view === 'run') return <RunPage id={I.run.run.id} />;
-  if (I.view === 'form') {
-    history.replaceState(null, '', location.pathname + '?new=1&project=checkout');
-    const fields = [{ name: 'project', label: 'Project', type: 'reference', to: 'projects', help: null, required: true, options: null, multiple: false, min: null, max: null, max_length: null },
-      { name: 'branch', label: 'Branch', type: 'text', help: null, required: false, options: null, multiple: false, min: null, max: null, max_length: 200 }];
-    return <FormHost panel card={<ActionCard open onOpenChange={() => {}} title='Add build' description='A new record in Builds.'>
-      <CreateRecordForm area={{ name: 'builds', label: 'Builds', fields: fields as never, key_from_title: true }} onDone={() => {}} initial={{ project: 'checkout' }} /></ActionCard>}>
-      <p data-list=''>the list</p></FormHost>;
-  }
-  const area = recordAreas.find((a) => a.name === I.area)!;
-  const declared = layoutOf(area);
-  const layout = declared && I.noActions ? { ...declared, actions: undefined } : declared;
-  return layout ? <LaidOutRecord area={area} base='app' layout={layout} record={I.record} links={I.links} provenance={I.provenance} where="This workspace's own" credentials={null} /> : <p data-no-layout=''>no layout</p>;
-}
-createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1200 }}><View /></div></NuqsAdapter>);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const q = (s: string) => document.querySelector(s) as HTMLElement | null;
-const note = (id: string, text: string) => { const p = document.createElement('pre'); p.id = id; p.textContent = text; document.body.appendChild(p); };
-(async () => {
-  try {
-    await sleep(1500);
-    for (const s of I.steps ?? []) {
-      if (s.type) { const el = q(s.type[0]) as HTMLInputElement; const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, s.type[1]); el.dispatchEvent(new Event('input', { bubbles: true })); }
-      if (s.click) q(s.click)!.click();
-      if (s.focus) q(s.focus)!.focus();
-      if (s.key) (s.key[0] ? q(s.key[0]) : document.activeElement as HTMLElement)!.dispatchEvent(new KeyboardEvent('keydown', { key: s.key[1], bubbles: true, cancelable: true }));
-      if (s.scroll) { const el = q(s.scroll[0])!; el.scrollTop = s.scroll[1] === 'bottom' ? el.scrollHeight : Number(s.scroll[1]); el.dispatchEvent(new Event('scroll')); }
-      if (s.values) note('values-' + s.values, JSON.stringify(Object.fromEntries([...document.querySelectorAll('input, textarea')].filter((i) => i.id).map((i) => [i.id, (i as HTMLInputElement).value]))));
-      if (s.active) note('active-' + s.active, (document.activeElement as HTMLElement | null)?.outerHTML.slice(0, 300) ?? '');
-      if (s.html) note('html-' + s.html[0], q(s.html[1])?.outerHTML ?? 'none');
-      await sleep(s.wait ?? 350);
-    }
-  } catch (e) { document.body.setAttribute('data-render-error', String(e).slice(0, 200)); }
-  document.body.setAttribute('data-ready', '1');
-})();
-`;

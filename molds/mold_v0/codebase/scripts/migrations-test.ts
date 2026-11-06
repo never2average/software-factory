@@ -1074,6 +1074,8 @@ async function suite(kind: "pglite" | "postgres") {
     assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_harness_session_tokens")).length, 1, "and it applies again");
     await d.drop();
     log(`  ✓ ${kind}: ${v} the workspace agent's tool tokens: row-level security on, no tenant grant; its rollback drops the table, and it applies again`);
+  }
+
   // A record's change history (mold_v0-256, record_changes, found by name): an append-only table under row-level
   // security (the tenant role reads and adds its workspace's lines, never changes or removes one); its rollback drops it,
   // the records staying, leaves exactly what the migration before left, and it applies again.

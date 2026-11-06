@@ -120,7 +120,7 @@ async function events(orgId: number, id: string, after: number, limit: number) {
 }
 /** The run's live cost: what it recorded, or the gateway's total while it runs, whichever is larger (src/run-spend.ts). */
 async function liveCost(orgId: number, r: RunRow) {
-  const [u] = await withTenant(orgId, async () => (await getDb()).query<{ usd: number }>("SELECT coalesce(sum(cost_usd), 0)::float AS usd FROM gateway_usage WHERE run_id = $1", [r.id]));
+  const [u] = await withTenant(orgId, async () => (await getDb()).query<{ usd: number }>("/* tenant: by run id, a run of the caller's workspace (read above by org_id), under its row-level security */ SELECT coalesce(sum(cost_usd), 0)::float AS usd FROM gateway_usage WHERE run_id = $1", [r.id]));
   return Math.max(Number(r.cost_usd), Number(u?.usd ?? 0));
 }
 
@@ -167,7 +167,7 @@ export async function runPage(c: PageCaller, id: string) {
   }
   const reported = modelsFromEvents(rows);
   const metered = await withTenant(c.orgId, async () => (await getDb()).query<{ provider: string; requests: number; input_tokens: number; output_tokens: number; cost_usd: number }>(
-    `SELECT provider, sum(requests)::int AS requests, sum(input_tokens)::float AS input_tokens, sum(output_tokens)::float AS output_tokens, sum(cost_usd)::float AS cost_usd
+    `/* tenant: by run id, a run of the caller's workspace (read above by org_id), under its row-level security */ SELECT provider, sum(requests)::int AS requests, sum(input_tokens)::float AS input_tokens, sum(output_tokens)::float AS output_tokens, sum(cost_usd)::float AS cost_usd
        FROM gateway_usage WHERE run_id = $1 GROUP BY provider ORDER BY 5 DESC`, [r.id]));
   const eventModels = [...new Set(rows.map((e) => (e.data as { model?: unknown } | null)?.model).filter((m): m is string => typeof m === "string"))];
   const envModels = Object.entries(agentSpec?.env ?? {}).filter(([k, v]) => /MODEL/i.test(k) && typeof v === "string" && !/\{/.test(v)).map(([, v]) => v);

@@ -203,9 +203,11 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
 type PageLoad = { data: PageData | null; error: Error | null };
 
 /** A section of the open tab: its fields, a related list or the record's runs (mold_v0-254). */
-function AnySection({ s, id, area, base, layout, record, page, data, changed }: {
+function AnySection({ s, id, pageKey, area, base, layout, record, page, data, changed }: {
   s: DetailSection; id: string; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; page: PageLoad;
-  data: RelatedData | RunsData | undefined; changed: () => void;
+  /** Its key in the page's answer (<tab>-<section>): a history section's Show older asks for it. */
+  pageKey: string;
+  data: RelatedData | RunsData | HistoryData | undefined; changed: () => void;
 }) {
   // Staff pages read no workspace's lists or runs: those sections are a workspace's.
   if ((s.related || s.runs) && base !== 'app') return null;
@@ -230,7 +232,7 @@ function AnySection({ s, id, area, base, layout, record, page, data, changed }: 
       <ListCard id={id} kind='history' title={s.title}>
         {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div> : !data ? <ListLoading />
           : <HistoryList area={area} data={data as unknown as HistoryData} empty={s.empty ?? 'No changes recorded yet.'}
-              url={`/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/history?section=${id.replace(/^.*?(\d+-\d+)$/, '$1')}`} />}
+              url={`/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/history?section=${pageKey}`} />}
       </ListCard>
     );
   }
@@ -611,13 +613,13 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             </TabsList>
           </div>
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>
-            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
             {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
           </TabsContent>
         </Tabs>
       ) : (
         <div className='flex w-full flex-col gap-4 md:gap-6'>
-          {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+          {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
           <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />
         </div>
       )}

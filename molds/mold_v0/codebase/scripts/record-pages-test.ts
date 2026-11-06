@@ -416,7 +416,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const pages = strip(src("features/records/record-pages.tsx")), settings = strip(src("features/settings/settings-page.tsx")), ta = strip(src("features/tabs/tab-action.tsx"));
   const list = /export function AreaRecordList\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
   assert.match(list, /useAreaAction\(area, /, "AreaRecordList: the area's own action");
-  assert.match(list, /if \(card\) return card;/, "its form a full card in the list's place");
+  // mold_v0-256: through FormHost (the full card in the list's place; with side_panel_forms on, a panel beside the list).
+  assert.match(list, /<FormHost card=\{card\} panel=\{panel\}>\s*<RecordTableView /, "its form a full card in the list's place");
   assert.match(list, /<RecordTableView [\s\S]*summary=\{<Sparklines url=\{`\$\{recordsApi\('app'\)\}\/_console\/\$\{encodeURIComponent\(area\.name\)\}\/sparklines`\}[\s\S]*toolbarAction=\{button \?\? undefined\}/,
     "its cards above the search row, the action the search row's last control (Export beside it, RecordTableView)");
   assert.match(pages, /export function RecordListPage[\s\S]*?base === 'app' \? <AreaRecordList area=\{area\} /, "the Records page is that list");
@@ -608,7 +609,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.deepEqual(L.dateWords("2026-11-06T11:15:00Z", NOW), { relative: "45 minutes ago", absolute: "6 Nov 2026, 11:15 UTC", iso: "2026-11-06T11:15:00.000Z" });
   assert.equal(L.dateWords("2026-11-06T09:00:00Z", NOW).relative, "3 hours ago");
   assert.equal(L.dateWords("not a date", NOW), null);
-  assert.deepEqual([L.numberWords(1234.5, "s"), L.numberWords(87.25, "%"), L.numberWords(12), L.numberWords("3", "GB"), L.numberWords(1, "×")], ["1,234.5 s", "87.25%", "12", "3 GB", "1×"]);
+  assert.deepEqual([L.numberWords(1234.5, "s"), L.numberWords(87.25, "%"), L.numberWords(12), L.numberWords("3", "GB"), L.numberWords(1, "×")], ["20m 35s", "87.25%", "12", "3 GB", "1×"], "mold_v0-256: seconds read as a duration");
   ok("facts by type: dates relative (today, tomorrow, in 3 days, 2 weeks ago, 45 minutes ago) with the exact date on hover, numbers grouped with their unit (a % or × closed up)");
 
   // d. Notices: their condition on the record's fields, in declared order.
@@ -624,7 +625,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   ok("notices: shown while their condition holds (equals, in, not_in, empty; a list field by any value), in declared order");
 
   // e. Tabs and sections.
-  assert.deepEqual(layout.tabs.map((t: { label: string }) => L.tabId(t.label)), ["overview", "logs", "configuration"]);
+  assert.deepEqual(layout.tabs.map((t: { label: string }) => L.tabId(t.label)), ["overview", "logs", "configuration", "files", "history"], "mold_v0-256: the fixture's builds also have Files and History");
   for (const l of ["Overview", "Run & logs", "  Spaced  out ", "Ünïcode"]) assert.equal(L.tabId(l), detailTabId(l), `${l}: one address on both sides`);
   assert.equal(L.openTab(layout, "logs").label, "Logs");
   assert.equal(L.openTab(layout, "nope").label, "Overview", "an unknown ?tab: the first");
