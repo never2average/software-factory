@@ -12,7 +12,7 @@ import { fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { cn } from '@/lib/utils';
 import { diffCounts, foldDiff, isLongText, lineDiff } from './code-text';
-import { CHANGE_WORDS, dateWords, type FieldChange, type HistoryData, type RecordChangeView } from './detail-layout';
+import { CHANGE_WORDS, columnUnit, dateWords, numberWords, type FieldChange, type HistoryData, type RecordChangeView } from './detail-layout';
 import { fieldText } from './record-pages';
 
 const ACTION_ICON: Record<RecordChangeView['action'], keyof typeof import('@/components/icons').Icons> = { created: 'add', updated: 'edit', moved: 'arrowRight', deleted: 'trash' };
@@ -22,6 +22,8 @@ function ValueText({ area, field, v }: { area: RecordAreaSpec; field: string; v:
   const f = area.fields.find((x) => x.name === field);
   if (v == null || v === '' || (Array.isArray(v) && !v.length)) return <span className='text-muted-foreground italic'>empty</span>;
   if (v && typeof v === 'object' && '$truncated' in (v as object)) return <span className='text-muted-foreground italic'>a long value (not kept in full)</span>;
+  // A number with the unit its page gives it (a duration in seconds in words), as the record's own facts read.
+  if (f?.type === 'number') { const unit = columnUnit(area, field); if (unit) return <>{numberWords(v, unit)}</>; }
   return <>{fieldText(f, v) || String(v)}</>;
 }
 
@@ -62,7 +64,8 @@ function FieldRow({ area, c, action }: { area: RecordAreaSpec; c: FieldChange; a
     <div className='grid gap-1 sm:grid-cols-[minmax(8rem,12rem)_1fr] sm:gap-4' data-history-field={c.field}>
       <dt className='text-muted-foreground text-xs font-medium sm:pt-0.5'>{label}</dt>
       <dd className='min-w-0 text-sm'>
-        {action === 'created' ? <span className='break-words'><ValueText area={area} field={c.field} v={c.after} /></span>
+        {/* A new record's values: each at most three lines (a long log or manifest is the record's own to read). */}
+        {action === 'created' ? <span className='line-clamp-3 break-words' title={typeof c.after === 'string' && c.after.length > 200 ? `${c.after.slice(0, 200)}…` : undefined}><ValueText area={area} field={c.field} v={c.after} /></span>
           : long ? <TextDiff before={String(c.before ?? '')} after={String(c.after ?? '')} />
           : (
             <span className='flex flex-wrap items-baseline gap-x-2 gap-y-1 break-words'>
