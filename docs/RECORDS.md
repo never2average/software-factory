@@ -256,6 +256,57 @@ Where an area's list is drawn, and what it has:
   a fact, title or badge on an encrypted or file field, and two tabs with one address (`src/pack-api.ts`
   `RecordDetailSchema`, `detailProblems`).
 
+- **Related lists, a record's runs and the page's actions** (mold_v0-254, part 2; same flag). A section may list, in
+  place of fields, **another area's records that point back here** (`related`) or **the runs that ran on the record**
+  (`runs`); the layout's `actions` put buttons in the header. In a workspace only (a staff page draws none of them):
+
+  ```json
+  "tabs": [{"label": "Overview", "sections": [
+    {"title": "Builds", "related": {"area": "builds", "via": "project", "columns": ["status", "branch", "started"],
+      "sort": {"field": "started", "direction": "desc"}, "limit": 5}, "empty": "No builds of this project yet."},
+    {"title": "Runs", "runs": {"kinds": ["build", "rebuild"], "limit": 5}, "empty": "Nothing has run on it yet."}]}],
+  "actions": [
+    {"kind": "start_run", "place": "primary", "label": "Re-run", "job_kind": "rebuild",
+      "input": {"build": "$key", "branch": "branch", "commit": "commit"},
+      "unavailable": [{"when": {"field": "status", "in": ["queued", "running"]}, "reason": "A build still going can't be re-run."}]},
+    {"kind": "link", "place": "secondary", "field": "project", "label": "Open project"},
+    {"kind": "edit", "place": "secondary"},
+    {"kind": "move"}, {"kind": "copy_link"}, {"kind": "delete"}]
+  ```
+
+  - **related**: the records of `area` whose link or reference field to this area (`via`; needed only when it has
+    several) holds this record's key. Its `columns` (up to 8 of its fields, formatted as its list's cells; default its
+    list's columns), its `sort` (a field, or `updated_at`; default the newest change first), at most `limit` rows (5,
+    at most 50), then **Show all**: the area's list narrowed to this record (`/app/records/<area>?linked=<via>:<key>`, a
+    rule of its Filter menu). Each row opens its record and has a menu of **that area's own page actions** this person
+    may take on it. The section's `empty` is its empty state. A role that may not read the area does not see the
+    section at all, and the list is only ever the workspace's own records.
+  - **runs**: the runs started on this record from its page, and those that targeted it (an asset area's record:
+    `targets.asset`), of `kinds` (the area's pack's; default all), newest first, at most `limit`: each run's kind
+    (linked to its pack's runs tab, the run open: `?run=<id>`), status, when it started, how long it took, its cost and
+    who started it. A run started on a record carries it: `runs.record_area` and `runs.record_key`
+    (sql/migrations/0047; null for a run started anywhere else).
+  - **actions**: each `kind` one of `start_run` (a run of the pack's `job_kind` on this record: its form, a full card
+    in the page's place, takes the kind's arguments pre-filled from the record through `input`, an argument to a field,
+    `$key` or `$title`), `move` (along the lifecycle: to `to`, or a menu of the states it may move to), `edit` (the
+    record's edit form, a full card), `delete` (after the console's confirm question), `link` (open the record its
+    link or reference `field` names) and `copy_link`. `place` is `primary` (one at most, filled), `secondary` (up to
+    three, outlined) or `more` (the default: the **More** menu, which also holds Copy ID and Copy link). `roles`
+    narrows who may; `unavailable` disables it, with its reason, while a condition on the record holds; `confirm` asks
+    first. An action is shown only to a role that may take it (the kind's start tool for a run; the area's move and the
+    transition's roles for a move; update for an edit; delete for a delete; the target area's read for a link), and
+    `POST /api/records/_page/<area>/<key>/actions/<id>` refuses every other (403), a disabled one with its reason
+    (409). A disabled action keeps its place and says why on hover and focus.
+
+  The area's schema refuses: more than one primary action, more than three secondary, a move on an area without a
+  lifecycle or to a state no transition reaches, a start_run without its kind, an input from a field the area lacks
+  (or an encrypted or file one), a link on a field that is not a link or reference, a write on a shared area, an
+  append-only one or (an edit) one with an encrypted field, a viewer's write, two actions with one id, a section with
+  fields and a related list or runs. Across the build (`detailBuildProblems`, run by `src/metric-spec.ts` `checkViews`,
+  so gen-packs and the server's install alike): a related list whose area does not exist or **has no link back here**
+  (or whose `via` points elsewhere, or that points here two ways without `via`), a column or sort field it lacks, a
+  runs section or a start_run naming **a job kind the pack does not have**, an input argument the kind does not take.
+
 ## 7. Settings placement
 
 `"settings": {"group": "access" | "connections" | "automation" | "data_trust", "label": "..."}` (mold_v0-219) shows a
@@ -373,8 +424,8 @@ What the contract can name only as `none`, or cannot name, because the runtime d
 - **A different primary action per list.** The contract's `primary_action` is one value for every list of the area; an
   area whose tabs offer different actions cannot declare a contract until they agree (its derived contract prints
   each). An area's own lists (Settings, Records page) offer `create_record` or none, never a run or a link.
-- **The rest of the record's page** (mold_v0-253 is part 1): related lists, a record's runs and a run's own page, logs,
-  history, code views and page actions are later parts; until then a layout's sections show the record's own fields.
+- **The rest of the record's page** (mold_v0-253 and mold_v0-254 are parts 1 and 2): a run's own page, logs, history,
+  code views and a side panel for forms are later parts; a run links to its pack's runs tab, and forms are full cards.
 - **Updating a record's files from the console.** The console creates records with their files; changing a record's
   files afterwards is the data API's (`PUT /api/data/<area>/<key>` with a reference an upload answered), not a form's,
   and the MCP tools take a workspace store path, not an upload.

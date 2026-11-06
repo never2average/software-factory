@@ -1849,6 +1849,77 @@
                             "minLength": 1,
                             "maxLength": 200,
                             "pattern": "^[^\\n\\r{}<>]*$"
+                          },
+                          "related": {
+                            "type": "object",
+                            "properties": {
+                              "area": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "via": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "columns": {
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                }
+                              },
+                              "sort": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "direction": {
+                                    "type": "string",
+                                    "enum": [
+                                      "asc",
+                                      "desc"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50
+                              }
+                            },
+                            "required": [
+                              "area"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "runs": {
+                            "type": "object",
+                            "properties": {
+                              "kinds": {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                }
+                              },
+                              "limit": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -1871,6 +1942,189 @@
                   "show",
                   "hide"
                 ]
+              },
+              "actions": {
+                "maxItems": 12,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "start_run",
+                        "move",
+                        "edit",
+                        "delete",
+                        "link",
+                        "copy_link"
+                      ]
+                    },
+                    "place": {
+                      "type": "string",
+                      "enum": [
+                        "primary",
+                        "secondary",
+                        "more"
+                      ]
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40,
+                      "pattern": "^[^\\n\\r{}<>]*$"
+                    },
+                    "job_kind": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "input": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "$key",
+                              "$title"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "to": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                    },
+                    "field": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "roles": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "member",
+                          "billing",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "unavailable": {
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "when": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "equals": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              },
+                              "in": {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                }
+                              },
+                              "not_in": {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                }
+                              },
+                              "empty": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "field"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "^[^\\n\\r{}<>]*$"
+                          }
+                        },
+                        "required": [
+                          "when",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "confirm": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300,
+                      "pattern": "^[^\\n\\r{}<>]*$"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [

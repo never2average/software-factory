@@ -56,6 +56,13 @@
 //      type, notices, tabs and sections, copy (id, link, copyable fields; toasts), the build over the fixture
 //      scripts/fixtures/packs/fixture_pages (off: the generated files as before the flag; on: the layouts), and the page
 //      drawn in a headless browser.
+//  15. A record's page, part 2 (mold_v0-254, flag record_pages): related lists, a record's runs and the header's actions
+//      declared and refused (in the area and across the build: a related list whose area has no link back here, an action
+//      naming a job kind or a transition that does not exist, two primary actions, ...), what the console decides (the
+//      actions by place, Show all's address, the counts), how it draws them (the shared Button's variants, the console's
+//      confirm, forms as full cards, a disabled action's reason on hover and focus), gen-packs refusing the same, and the
+//      page drawn in a headless browser (the header's actions, a related list, the runs). The API, by role and workspace:
+//      scripts/record-page-actions-test.ts, run after this one.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -699,6 +706,12 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     assert.doesNotMatch(flagOnNoLayout.features, /record_pages/, "the flag on with nothing asking for it: off (no area declares a layout)");
     for (const [name, edit, re] of [
       ["ghost", (j: any) => { j.record_areas[2].detail.tabs[0].sections[0].fields.push("ghost"); }, /packs\/fixture_pages\/pack\.json: record_areas\[2\]\.detail\.tabs\[0\]\.sections\[0\]\.fields\[6\]: ghost is not one of the area's fields/],
+      // mold_v0-254: a related list whose area has no link back here, an action naming a job kind or a transition that
+      // does not exist, two primary actions.
+      ["no-link-back", (j: any) => { j.record_areas[0].detail.tabs[0].sections[1].related.area = "environments"; }, /pack fixture_pages: record area projects's page: section Builds: environments has no link back to projects/],
+      ["no-kind", (j: any) => { j.record_areas[2].detail.actions[0].job_kind = "deploy"; }, /record area builds's page: action start_run\.deploy: deploy is not a job kind of pack fixture_pages/],
+      ["no-transition", (j: any) => { j.record_areas[2].detail.actions.push({ kind: "move", to: "archived" }); }, /detail\.actions\[6\]\.to: no transition of the lifecycle goes to archived/],
+      ["two-primaries", (j: any) => { j.record_areas[2].detail.actions[1].place = "primary"; }, /detail\.actions\[1\]\.place: 2 actions are primary: a record's page has one primary action/],
       ["facts", (j: any) => { j.record_areas[2].detail.header.facts.push({ field: "tests_passed" }); }, /at most 8 facts/],
       ["empty-tab", (j: any) => { j.record_areas[2].detail.tabs[1].sections = []; }, /tab Logs is empty/],
       ["colour", (j: any) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; }, /crimson is not a badge colour/],
@@ -709,7 +722,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     }
     const offBroken = copyOf("refused-off", (j) => { j.record_areas[2].detail.header.badges[0].colors.failed = "crimson"; });
     assert.notEqual(offBroken.status, 0, "a broken layout is refused with the flag off too (declared and checked either way)");
-    ok("the build: off, no layout, copyable or flag in the console's files, which are those of the same pack without its layouts; on, the layouts and copyable fields reach the registry (an area without one has none); refused at build, on or off: a field the area lacks, a ninth fact, an empty tab, a colour outside the tokens");
+    ok("the build: off, no layout, copyable or flag in the console's files, which are those of the same pack without its layouts; on, the layouts and copyable fields reach the registry (an area without one has none); refused at build, on or off: a field the area lacks, a ninth fact, an empty tab, a colour outside the tokens; mold_v0-254: a related list whose area has no link back, an action naming a job kind or a transition that does not exist, two primary actions");
 
     // h. Drawn in a headless browser (the console's own components, bundled): a failed build, a running one on its Logs tab, a project.
     const findChrome = () => {
@@ -733,21 +746,29 @@ import { layoutOf } from '@/features/records/detail-layout';
 import { LaidOutRecord } from '@/features/records/detail-page';
 const I = (window as unknown as { __INPUT__: any }).__INPUT__;
 const area = recordAreas.find((a) => a.name === I.area)!;
-const layout = featureOn('record_pages') ? layoutOf(area) : null;
+const declared = featureOn('record_pages') ? layoutOf(area) : null;
+// mold_v0-254: part 1's draws leave the actions out (the header's Copy ID and Copy link); part 2's answer the page's own
+// route (/api/records/_page) with the input's page data.
+const layout = declared && I.noActions ? { ...declared, actions: undefined } : declared;
+const realFetch = window.fetch.bind(window);
+window.fetch = async (url: RequestInfo | URL, init?: RequestInit) => (String(url).includes('/api/records/_page/')
+  ? new Response(JSON.stringify(I.page ?? { actions: [], sections: {} }), { status: 200, headers: { 'content-type': 'application/json' } }) : realFetch(url, init));
 createRoot(document.getElementById('root')!).render(<NuqsAdapter><div style={{ width: 1200 }}>{layout
   ? <LaidOutRecord area={area} base='app' layout={layout} record={I.record} links={I.links} provenance={I.provenance} where="This workspace's own" credentials={null} />
   : <p data-no-layout=''>no layout</p>}</div></NuqsAdapter>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 `);
       writeFileSync(path.join(w, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
+      // mold_v0-254: the page's actions use the router (outside Next's app router here: a stand-in that records where it went).
+      writeFileSync(path.join(w, "render-nav.ts"), "const r = { push: (h: string) => { (window as any).__PUSHED__ = h; }, replace: () => {}, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => {} };\nexport const useRouter = () => r;\nexport const usePathname = () => location.pathname;\nexport const useSearchParams = () => new URLSearchParams(location.search);\nexport const notFound = () => { throw new Error('not found'); };\nexport const redirect = (h: string) => { throw new Error(h); };\n");
       writeFileSync(path.join(w, "render-auth.ts"), "export * from './src/lib/auth/builtin-client';\nexport const CLERK = false;\nexport const AUTH_PROVIDER = 'builtin';\n");
       const dir = path.join(TMP, "render"); mkdirSync(dir, { recursive: true });
       try {
         await build({ entryPoints: [path.join(w, "render-entry.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: w,
           tsconfig: path.join(w, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "process.env.NEXT_PUBLIC_AUTH_PROVIDER": '"builtin"' },
-          alias: { "next/link": path.join(w, "render-link.tsx") }, logLevel: "error",
+          alias: { "next/link": path.join(w, "render-link.tsx"), "next/navigation": path.join(w, "render-nav.ts") }, logLevel: "error",
           plugins: [{ name: "auth", setup(b) { b.onResolve({ filter: /^@\/lib\/auth$/ }, () => ({ path: path.join(w, "render-auth.ts") })); } }] });
-      } finally { for (const f of ["render-entry.tsx", "render-link.tsx", "render-auth.ts"]) rmSync(path.join(w, f), { force: true }); }
+      } finally { for (const f of ["render-entry.tsx", "render-link.tsx", "render-auth.ts", "render-nav.ts"]) rmSync(path.join(w, f), { force: true }); }
       const draw = (name: string, input: unknown, query = "") => {
         const f = path.join(dir, `${name}.html`);
         writeFileSync(f, `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script>window.__INPUT__ = ${JSON.stringify(input).replace(/</g, "\\u003c")};</script><script src="bundle.js"></script></body></html>`);
@@ -760,7 +781,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       const failedBuild = record("build-1042", "Build 1042", { status: "failed", summary: "Nightly build of the main branch", project: "checkout", environment: "staging-eu", tier: "production", branch: "main",
         commit: "9f4c2e1a7b3d", triggered_by: "Schedule", started: "2026-11-05", duration: 1312, tests_passed: 1180, tests_failed: 4, coverage: 87.4, artifact: "https://artifacts.example.com/builds/1042.tar.gz",
         failure: "4 tests failed in the payments suite.", log_excerpt: "step 7/9: test\nFAIL payments/refund.spec\n", config: { runner: "large", cache: true } });
-      const dom = draw("failed", { area: "builds", record: failedBuild, links: [], provenance: { by: "run" } });
+      const dom = draw("failed", { area: "builds", record: failedBuild, links: [], provenance: { by: "run" }, noActions: true });
       const count = (re: RegExp) => (dom.match(re) ?? []).length;
       assert.match(dom, /<h1[^>]*>Build 1042<\/h1>/, "the title");
       assert.match(dom, /data-record-subtitle="">Nightly build of the main branch</, "the summary under it");
@@ -780,15 +801,160 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(dom, /data-detail-section="detail-overview-0"[\s\S]*?>Source</, "the open tab's sections");
       assert.match(dom, /data-detail-section="detail-overview-2"[\s\S]*?data-section-empty=""[\s\S]*?No one has approved this build yet\./, "an empty section: its own words");
       assert.doesNotMatch(dom, /data-detail-section="detail-logs-/, "another tab's sections not drawn");
-      const logs = draw("running-logs", { area: "builds", record: record("build-1043", "Build 1043", { status: "running", approver: "R. Lee", branch: "main" }), links: [], provenance: { by: "people" } }, "?tab=logs");
+      const logs = draw("running-logs", { area: "builds", record: record("build-1043", "Build 1043", { status: "running", approver: "R. Lee", branch: "main" }), links: [], provenance: { by: "people" }, noActions: true }, "?tab=logs");
       assert.match(logs, /data-record-notice="info"/); assert.doesNotMatch(logs, /data-record-notice="(danger|warning)"/, "a running, approved build: the info notice alone");
       assert.match(logs, /data-detail-section="detail-logs-0"[\s\S]*?Nothing failed in this build\.[\s\S]*?data-detail-section="detail-logs-1"[\s\S]*?No log lines were kept for this build\./, "?tab=logs: its sections, both empty");
-      const project = draw("project", { area: "projects", record: record("checkout", "Checkout", { health: "blocked", summary: "The payment pages", owner: "Payments team", started: "2026-01-12", repository: "https://git.example.com/checkout" }), links: [], provenance: { by: "people" } });
+      const project = draw("project", { area: "projects", record: record("checkout", "Checkout", { health: "blocked", summary: "The payment pages", owner: "Payments team", started: "2026-01-12", repository: "https://git.example.com/checkout" }), links: [], provenance: { by: "people" }, noActions: true });
       assert.doesNotMatch(project, /data-record-tabs=""/, "one tab: no strip");
       assert.match(project, /data-badge-color="danger"[\s\S]*?Blocked/); assert.match(project, /data-record-notice="danger"/);
       const env = draw("environment", { area: "environments", record: record("staging-eu", "Staging EU", { tier: "staging" }), links: [], provenance: null });
       assert.match(env, /data-no-layout=""/, "an area without a layout: none (the page as before)");
       ok("drawn in a headless browser: a failed build (title, summary, its status and tier badges in their colours, eight facts by type with a copy button, Added by, Copy ID and Copy link, the danger then the warning notice, the tab strip, an empty section in its own words), a running one on ?tab=logs (the info notice, its empty sections), a one-tab project (no strip), an area without a layout (none)");
+      // mold_v0-254: the header's actions, a related list and the runs, from the page's own answer (as the API gives it).
+      const act = (id: string, kind: string, place: string, label: string, extra: Record<string, unknown> = {}) => ({ id, kind, place, label, disabled: null, confirm: null, ...extra });
+      const memberActions = (going: boolean) => [
+        act("start_run.rebuild", "start_run", "primary", "Re-run", { disabled: going ? "A build that is still going can't be re-run: cancel it first, or wait for it to end." : null,
+          run: { kind: "rebuild", label: "Re-run a build", description: null, args: [], values: {}, environments: null } }),
+        act("link.project", "link", "secondary", "Open project", { target: { area: "projects", key: "checkout" } }), act("edit", "edit", "secondary", "Edit", { fields: [] }),
+        act("move", "move", "more", "Move", { moves: [{ to: "passed", label: "Mark passed", disabled: null }] }), act("copy_link", "copy_link", "more", "Copy link")];
+      const run = (id: string, status: string, by: string, cost: number) => ({ id, pack: "fixture_pages", kind: "rebuild", status, error: status === "failed" ? "4 tests failed" : null, cost_usd: cost,
+        created_at: "2026-11-05T10:00:00.000Z", started_at: "2026-11-05T10:00:05.000Z", ended_at: status === "running" ? null : "2026-11-05T10:21:57.000Z", by });
+      const withActions = draw("actions", { area: "builds", record: failedBuild, links: [], provenance: { by: "run" },
+        page: { actions: memberActions(false), sections: { "0-3": { total: 3, runs: [run("run_b", "failed", "You", 0.42), run("run_a", "succeeded", "r.lee@example.com", 0.39)] } } } });
+      const header = /data-record-header=""[\s\S]*?data-record-facts=""/.exec(withActions)?.[0] ?? "";
+      assert.match(header, /data-page-action="start_run\.rebuild"[^>]*data-primary=""[^>]*>[\s\S]*?Re-run</, "the primary action: Re-run, first");
+      assert.match(header, /data-page-action="link\.project"[^>]*>[\s\S]*?Open project<[\s\S]*?data-page-action="edit"[^>]*>[\s\S]*?Edit</, "the secondary actions, in order");
+      assert.match(header, /data-page-more=""[^>]*aria-label="More actions"[^>]*>[\s\S]*?More</, "More, for the rest");
+      assert.doesNotMatch(header, /data-copy-id=""|data-page-action="move"/, "Copy ID and Move are in More, not the header");
+      const runs = /data-section-kind="runs"[\s\S]*?<\/table>/.exec(withActions)?.[0] ?? "";
+      assert.match(runs, /Latest 2 of 3 runs/, "the runs' count: the latest of how many");
+      assert.match(runs, /href="\/app\/build-runs\?run=run_b"[^>]*>Re-run a build</, "each run links to it (its pack's runs tab, the run open)");
+      assert.match(runs, /data-badge-color="danger"[\s\S]*?Failed[\s\S]*?data-badge-color="success"[\s\S]*?Succeeded/, "its status as a badge");
+      assert.match(runs, /21m 52s[\s\S]*?\$0\.42[\s\S]*?You[\s\S]*?r\.lee@example\.com/, "how long it took, its cost, who started it");
+      assert.match(runs, /href="\/app\/build-runs"[^>]*>All runs/, "All runs, when there are more");
+      const going = draw("going", { area: "builds", record: record("build-1043", "Build 1043", { status: "running", project: "checkout", branch: "main" }), links: [], provenance: { by: "run" },
+        page: { actions: memberActions(true), sections: { "0-3": { total: 0, runs: [] } } } });
+      assert.match(going, /data-page-action="start_run\.rebuild"[^>]*aria-disabled="true"[^>]*aria-describedby="why-start_run\.rebuild"/, "a disabled action keeps its place and focus (aria-disabled), described by its reason");
+      assert.match(going, /id="why-start_run\.rebuild"[^>]*>A build that is still going can't be re-run/, "its reason, read with it (and shown on hover and focus)");
+      assert.match(going, /data-section-kind="runs"[\s\S]*?data-section-empty=""[\s\S]*?This build has not been re-run\./, "no runs: the section's own empty words");
+      const relRow = (key: string, status: string, started: string) => ({ key, title: key.replace("build-", "Build "), data: { status, branch: "main", environment: "staging-eu", started, duration: 1312 }, updated_at: "2026-11-05T09:00:00.000Z",
+        actions: [act("start_run.rebuild", "start_run", "primary", "Re-run"), act("copy_link", "copy_link", "more", "Copy link")] });
+      const proj = draw("project-related", { area: "projects", record: record("checkout", "Checkout", { health: "healthy", summary: "The payment pages" }), links: [], provenance: { by: "people" },
+        page: { actions: [act("start_run.build", "start_run", "primary", "Start a build", { run: { kind: "build", label: "Build a project", description: null, args: [], values: {}, environments: null } })],
+          sections: { "0-1": { area: "builds", via: "project", more: true, records: [relRow("build-1044", "failed", "2026-11-05"), relRow("build-1043", "running", "2026-11-04")] }, "0-2": { total: 0, runs: [] } } } });
+      const rel = /data-section-kind="related"[\s\S]*?<\/table>/.exec(proj)?.[0] ?? "";
+      assert.match(rel, />Builds<[\s\S]*?First 2 shown/, "the related list: its title and count");
+      assert.match(rel, /href="\/app\/records\/builds\?linked=project%3Acheckout"[^>]*>Show all/, "Show all: the builds' list narrowed to this project");
+      assert.match(rel, /<th[^>]*>Build<\/th><th[^>]*>Status<\/th><th[^>]*>Branch<\/th><th[^>]*>Environment<\/th><th[^>]*>Started<\/th><th[^>]*>Duration<\/th>/, "its declared columns, in order, after the record");
+      assert.match(rel, /href="\/app\/records\/builds\/build-1044"[^>]*>Build 1044<[\s\S]*?data-badge-color="danger"[\s\S]*?Failed[\s\S]*?main[\s\S]*?staging-eu[\s\S]*?2026-11-05[\s\S]*?1312/, "each row as the builds' list shows it (its status coloured as its own page's badge)");
+      assert.equal((rel.match(/data-row-actions=""/g) ?? []).length, 2, "each row its own actions' menu");
+      assert.match(proj, /data-section-kind="runs"[\s\S]*?No runs on this project yet\./);
+      const hidden = draw("project-hidden", { area: "projects", record: record("checkout", "Checkout", { health: "healthy" }), links: [], provenance: null, page: { actions: [], sections: { "0-1": { hidden: true }, "0-2": { total: 0, runs: [] } } } });
+      assert.doesNotMatch(hidden, /data-section-kind="related"/, "a related list the role may not read: not drawn at all");
+      ok("drawn with actions (mold_v0-254): Re-run first and filled, Open project and Edit outlined, More with the rest (Copy ID and Move there); a disabled Re-run keeps its place with its reason read with it; the runs (each linked, its status a badge, how long, its cost, who), All runs past the limit, the empty words; a project's builds (its columns, each row as the builds' list shows it with its own actions' menu, Show all narrowed to the project); a list the role may not read not drawn");
     }
   } finally { rmSync(TMP, { recursive: true, force: true }); }
+}
+
+// 15. A record's page, part 2 (mold_v0-254; flag record_pages): related lists, a record's runs and the header's actions,
+//     declared and refused in the area (src/pack-api.ts detailProblems) and across the build (detailBuildProblems, run by
+//     src/metric-spec.ts checkViews: gen-packs and the server's install), what the console decides (./detail-layout.ts)
+//     and how it draws them (./page-actions.tsx, ./detail-page.tsx). The API by role and workspace:
+//     scripts/record-page-actions-test.ts.
+{
+  const api = await import("../src/pack-api.js");
+  const { viewsOf, checkViews } = await import("../src/metric-spec.js");
+  const { compileDeclarations } = await import("../src/pack-manifest.js");
+  const L = await web("features/records/detail-layout.ts");
+  const { readFileSync } = await import("node:fs");
+  const ROOT = path.resolve(import.meta.dirname, "..");
+  const FIXTURE = JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_pages", "pack.json"), "utf8"));
+  const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+  const areaOf = (j: any, n: string) => j.record_areas.find((a: { name: string }) => a.name === n);
+  const refusals = (a: unknown) => { const r = api.RecordAreaSchema.safeParse(a); return r.success ? [] : r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`); };
+  const has = (got: string[], re: RegExp, what: string) => assert.ok(got.some((x) => re.test(x)), `${what}: ${JSON.stringify(got)}`);
+  const edited = (n: string, edit: (d: any, a: any) => void) => { const a = clone(areaOf(FIXTURE, n)); edit(a.detail, a); return refusals(a); };
+
+  // a. In the area: each part 2 mistake refused, said where and why.
+  for (const a of FIXTURE.record_areas) assert.deepEqual(refusals(a), [], `fixture area ${a.name}: its related lists, runs and actions take`);
+  has(edited("builds", (d) => { d.actions[1].place = "primary"; }), /^detail\.actions\.1\.place: 2 actions are primary: a record's page has one primary action/, "two primary actions");
+  has(edited("builds", (d) => { for (const x of d.actions) x.place = x.place === "primary" ? "primary" : "secondary"; }), /actions are secondary: at most 3 sit beside the primary/, "four secondary actions");
+  has(edited("builds", (d) => { d.actions.push({ kind: "move", to: "archived" }); }), /^detail\.actions\.6\.to: no transition of the lifecycle goes to archived: a move action names a state a transition reaches \(running, passed, failed, cancelled, queued\)$/, "a move to a state no transition reaches");
+  has(edited("projects", (d) => { d.actions.push({ kind: "move" }); }), /a move action is for an area with a lifecycle/, "a move on an area without a lifecycle");
+  has(edited("builds", (d) => { d.actions[0].job_kind = undefined; }), /a start_run action names its job_kind/, "a start_run without its kind");
+  has(edited("builds", (d) => { d.actions[3].job_kind = "rebuild"; }), /^detail\.actions\.3\.job_kind: job_kind is for a start_run action, not move$/, "a job kind on a move");
+  has(edited("builds", (d) => { d.actions[1].field = "branch"; }), /branch is not a link or reference field of the area/, "a link on a text field");
+  has(edited("builds", (d) => { d.actions[0].input.commit = "ghost"; }), /ghost is not one of the area's fields \(input commit takes a field, \$key or \$title\)/, "an input from a field the area lacks");
+  has(edited("builds", (d) => { d.actions[5].roles = ["viewer"]; }), /viewer is read-only in the platform: a delete action cannot be a viewer's/, "a viewer's delete");
+  has(edited("builds", (d) => { d.actions[3].roles = ["member"]; d.actions[3].to = "queued"; }), /member makes none of the moves this action offers/, "roles that make none of the move's transitions");
+  has(edited("builds", (d) => { d.actions[0].unavailable[0].when.in = ["exploded"]; }), /exploded is not one of status's options/, "an unavailable condition on a value the field lacks");
+  has(edited("builds", (d) => { d.actions.push({ kind: "edit", label: "Edit again" }); }), /two actions are edit/, "two actions with one id");
+  has(edited("builds", (d) => { d.actions.push({ kind: "archive" }); }), /an action's kind is one of start_run, move, edit, delete, link, copy_link/, "an unknown kind");
+  has(edited("builds", (d) => { d.actions[0].confirm = "Sure?"; }), /^detail\.actions\.0\.confirm: confirm is for a move or a delete \(a start_run opens its form first\)$/, "a confirm on a run (its form is the question)");
+  has(edited("projects", (d) => { d.tabs[0].sections[1].fields = ["owner"]; }), /section Builds lists related records: it has no fields/, "a related list with fields");
+  has(edited("projects", (d) => { d.tabs[0].sections[1].runs = {}; }), /section Builds is a related list or the record's runs, not both/, "a related list and runs");
+  has(edited("projects", (d) => { d.tabs[0].sections[1].related.columns = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"]; }), /at most 8 columns/, "nine columns");
+  has(edited("projects", (d) => { d.tabs[0].sections[1].related.limit = 51; }), /tabs\.0\.sections\.1\.related\.limit/, "a limit past 50");
+  const shared = { name: "library", label: "Library", role: "source", scope: "platform", fields: [{ name: "code", label: "Code" }], detail: { tabs: [{ label: "A", sections: [{ title: "S", fields: ["code"] }] }], actions: [{ kind: "edit" }] } };
+  has(refusals(shared), /a shared \(platform\) area's records are written by platform staff, never from a workspace's page: no edit action/, "an edit on a shared area");
+  const secret = clone(areaOf(FIXTURE, "builds")); secret.fields.find((f: any) => f.name === "notes").encrypted = true;
+  has(refusals(secret), /an area with an encrypted field has no edit action/, "an edit on an area with an encrypted field");
+  ok("in the area (mold_v0-254): the fixture's related lists, runs and actions take; refused: two primary actions, four secondary, a move to a state no transition reaches or on an area without a lifecycle, a start_run without its kind, a kind's or a state's or a field's word on another kind of action, a link on a text field, an input from a field the area lacks, a viewer's write, roles that make none of a move's transitions, an unavailable test on a value the field lacks, two actions with one id, an unknown kind, a confirm on a run, a related list with fields or with runs, nine columns, a limit past 50, an edit on a shared area or one with an encrypted field");
+
+  // b. Across the build: what a related list, a runs section and a start_run name elsewhere.
+  const build = (edit?: (j: any) => void) => { const j = clone(FIXTURE); edit?.(j); return checkViews(viewsOf([{ id: "fixture_pages", definition: compileDeclarations(j) as never }])); };
+  assert.deepEqual(build(), [], "the fixture's build: no problem");
+  const across: [string, (j: any) => void, RegExp][] = [
+    ["no link back", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.area = "environments"; }, /record area projects's page: section Builds: environments has no link back to projects: a related list shows the records that point here/],
+    ["no such area", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.area = "deployments"; }, /deployments is not a record area of this build/],
+    ["via elsewhere", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.via = "environment"; }, /builds.s field environment does not point at projects: .*its fields that do: project/],
+    ["via not a field", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.via = "ghost"; }, /via ghost is not one of builds's fields/],
+    ["two ways back", (j) => { areaOf(j, "builds").fields.push({ name: "parent", label: "Parent", type: "reference", to: "projects" }); }, /builds points at projects through project and parent: say which with via/],
+    ["a column it lacks", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.columns.push("ghost"); }, /column ghost is not one of builds's fields/],
+    ["a json sort", (j) => { areaOf(j, "projects").detail.tabs[0].sections[1].related.sort.field = "config"; }, /sort config is a json field: sort by a field with one plain value/],
+    ["a runs kind", (j) => { areaOf(j, "projects").detail.tabs[0].sections[2].runs.kinds.push("deploy"); }, /section Runs: deploy is not a job kind of pack fixture_pages/],
+    ["a start kind", (j) => { areaOf(j, "builds").detail.actions[0].job_kind = "deploy"; }, /action start_run\.deploy: deploy is not a job kind of pack fixture_pages/],
+    ["an input arg", (j) => { areaOf(j, "builds").detail.actions[0].input.target = "branch"; }, /input target is not an argument of rebuild \(build, branch, commit\)/],
+  ];
+  for (const [what, edit, re] of across) has(build(edit), re, what);
+  ok(`across the build (mold_v0-254, gen-packs and the server's install alike): ${across.map((x) => x[0]).join(", ")}`);
+
+  // c. What the console decides: the actions by place, Show all's address, the counts.
+  const A = (id: string, place: string, kind = "edit") => ({ id, kind, place, label: id, disabled: null, confirm: null });
+  const p = L.placed([A("a", "more"), A("b", "secondary"), A("c", "primary"), A("d", "secondary"), A("e", "more")]);
+  assert.deepEqual([p.primary.id, p.secondary.map((x: { id: string }) => x.id), p.more.map((x: { id: string }) => x.id)], ["c", ["b", "d"], ["a", "e"]], "one primary, the secondary in order, the rest in More");
+  assert.equal(L.placed([A("x", "more")]).primary, null, "no primary: none drawn");
+  assert.equal(L.showAllHref("app", "builds", "project", "check out/1"), "/app/records/builds?linked=project%3Acheck%20out%2F1");
+  const buildsSpec = { fields: [{ name: "project" }, { name: "status" }], list_columns: ["status", "project"] };
+  assert.deepEqual(L.parseLinked("project:check out/1", buildsSpec), { field: "project", key: "check out/1" }, "read back");
+  assert.equal(L.parseLinked("ghost:x", buildsSpec), null, "a field the area lacks: no filter");
+  assert.equal(L.parseLinked("project:", buildsSpec), null);
+  assert.deepEqual(L.relatedColumns(buildsSpec, {}), ["status", "project"], "no columns of its own: the area's list columns");
+  assert.deepEqual(L.relatedColumns(buildsSpec, { columns: ["project", "ghost"] }), ["project"]);
+  assert.deepEqual([L.runsCountWords(1, 1), L.runsCountWords(3, 3), L.runsCountWords(5, 12)], ["1 run", "3 runs", "Latest 5 of 12 runs"]);
+  assert.deepEqual([L.relatedCountWords(1, false, "Builds"), L.relatedCountWords(3, false, "Builds"), L.relatedCountWords(5, true, "Builds")], ["1 build", "3 builds", "First 5 shown"]);
+  assert.deepEqual([api.pageActionId({ kind: "start_run", job_kind: "rebuild" }), api.pageActionId({ kind: "move", to: "In review" }), api.pageActionId({ kind: "delete" })], ["start_run.rebuild", "move.In-review", "delete"]);
+  assert.equal(L.RUN_STATUS_COLOR.failed, "danger"); assert.equal(L.RUN_STATUS_COLOR.succeeded, "success");
+  ok("the console's part 2 (mold_v0-254): one primary, the secondary in order, the rest in More; Show all's address and its filter read back (an unknown field none); a related list's columns; the counts' words; an action's id; a run's status colour");
+
+  // d. How it draws: the shared Button (each variant outlined), the console's confirm, forms as full cards, a disabled
+  //    action's reason on hover and focus; Show all and a run's link only with the flag (the lists as before without it).
+  const strip = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const pa = strip(src("features/records/page-actions.tsx")), dp = strip(src("features/records/detail-page.tsx"));
+  assert.doesNotMatch(pa, /<button\b|<(?:Dialog|Sheet|Drawer|AlertDialog)\b/, "no raw button, no dialog, sheet or drawer of its own");
+  assert.match(pa, /<ConfirmDialog\b/, "confirmations are the console's ConfirmDialog (ConfirmButton's question)");
+  assert.match(src("features/admin/ui.tsx"), /export function ConfirmButton[\s\S]*?<ConfirmDialog /, "the same one ConfirmButton asks");
+  assert.match(pa, /<ActionCard\b[\s\S]*?<EditRecordForm\b/, "edit: the existing edit form, a full card");
+  assert.match(pa, /<ActionCard\b[\s\S]*?<RecordRunForm\b/, "a run: a full card");
+  const variants = [...pa.matchAll(/<Button\b[^>]*?variant=\{?['"]?(primary \? 'default' : 'outline'|[a-z]+)/g)].map((m) => m[1]);
+  assert.ok(variants.length >= 5 && variants.every((v) => ["outline", "ghost", "default", "primary ? 'default' : 'outline'"].includes(v!)), `the shared Button's variants: ${variants.join(", ")}`);
+  assert.match(pa, /aria-disabled=\{a\.disabled \|\| busy \? true : undefined\} aria-describedby=\{a\.disabled \? why : undefined\}/, "a disabled button keeps focus, described by its reason");
+  assert.match(pa, /<TooltipTrigger render=\{button\} \/>\s*<TooltipContent[^>]*>\{a\.disabled\}<\/TooltipContent>/, "its reason on hover and focus");
+  assert.match(pa, /<ItemWhy reason=\{a\.disabled\} \/>/, "a disabled menu item: its reason under its label");
+  assert.match(dp, /\{withActions \? bar : \(/, "declared actions replace part 1's Copy ID and Copy link (which move into More)");
+  assert.match(dp, /if \(\(s\.related \|\| s\.runs\) && base !== 'app'\) return null;/, "staff pages draw no workspace's lists or runs");
+  const rp = strip(src("features/records/record-pages.tsx")), runsTsx = strip(src("features/tabs/runs.tsx"));
+  assert.match(rp, /const linked = featureOn\('record_pages'\) && !source \? parseLinked\(linkedParam, area\) : null;/, "?linked= only with the flag");
+  assert.match(runsTsx, /const deep = featureOn\('record_pages'\) \? \{ openKey: runParam/, "?run= only with the flag");
+  ok("drawn with the shared Button (filled primary, outlined secondary, More and a row's menu), the console's confirm (ConfirmButton's), the edit and run forms as full cards, a disabled action focusable with its reason on hover and focus (a menu item: under its label); Show all's filter and a run's link only with the flag; staff pages draw no workspace's lists or runs");
 }

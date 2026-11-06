@@ -33,7 +33,7 @@ import { useRecordCredentials } from '@/features/credentials/record-credentials'
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
-import { layoutOf } from './detail-layout';
+import { LINKED_PARAM, layoutOf, parseLinked } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
@@ -124,7 +124,7 @@ export interface RecordSource {
 }
 
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
-function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<RecordRow>[] {
+function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] = []): RecordCol<RecordRow>[] {
   const record: RecordCol<RecordRow> = {
     key: '_record', label: source?.title?.label ?? 'Record', title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
     value: source?.title?.value ?? ((r) => r.title || r.key),
@@ -135,7 +135,7 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource): RecordCol<Recor
       </span>
     )
   };
-  const hidden = new Set(source?.hidden ?? []);
+  const hidden = new Set([...(source?.hidden ?? []), ...extra.filter((n) => !area.list_columns.includes(n))]);
   const fields = [...area.list_columns, ...hidden].map((name): RecordCol<RecordRow> => {
     const f = area.fields.find((x) => x.name === name);
     const type = (f && !f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
@@ -217,14 +217,23 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   exportName?: string; exportAreas?: string[];
 }) {
   const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
-  const cols = useMemo(() => columnsOf(area, source), [area, source]);
+  // mold_v0-254 (flag record_pages): a related list's Show all, ?linked=<field>:<key>: the records pointing at one record,
+  // a rule of the Filter menu (its column added, hidden, when the list does not show it); removing it drops the address's.
+  const [linkedParam, setLinkedParam] = useQueryState(LINKED_PARAM);
+  const linked = featureOn('record_pages') && !source ? parseLinked(linkedParam, area) : null;
+  const cols = useMemo(() => columnsOf(area, source, linked ? [linked.field] : []), [area, source, linked?.field]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
   const [overdueParam, setOverdueParam] = useQueryState('overdue', parseAsFlag.withDefault(false));
   const clocked = !!area.clocks?.length;
   const overdueRule = (r: FilterRule) => r.key === OVERDUE_COL && r.op === 'true';
-  const initialRules = useMemo(() => (clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : undefined), [clocked, overdueParam]);
+  const linkedList = linked ? !!(area.fields.find((f) => f.name === linked.field)?.multiple || area.fields.find((f) => f.name === linked.field)?.type === 'link') : false;
+  const initialRules = useMemo(() => {
+    const rules = [...(clocked && overdueParam ? [{ id: 'overdue', key: OVERDUE_COL, op: 'true' as const }] : []),
+      ...(linked ? [{ id: 'linked', key: linked.field, op: (linkedList ? 'contains' : 'is') as 'contains' | 'is', value: linked.key }] : [])];
+    return rules.length ? rules : undefined;
+  }, [clocked, overdueParam, linked?.field, linked?.key, linkedList]);
   const shown = data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
@@ -232,7 +241,10 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   return (
     <RecordView<RecordRow>
       id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
-      initialRules={initialRules} onRulesChange={(r) => { if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null); }}
+      initialRules={initialRules} onRulesChange={(r) => {
+        if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
+        if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);
+      }}
       rows={shown} rowKey={(r) => r.key} cols={cols} loading={!data}
       searchText={(r) => `${r.key} ${r.title ?? ''} ${area.list_columns.map((c) => fieldText(area.fields.find((f) => f.name === c), r.data[c], r.key)).join(' ')}`}
       searchPlaceholder={`Search ${area.label.toLowerCase()}`}
@@ -307,7 +319,7 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
  */
 export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin' }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
-  const { data, error } = useOrgLoad(() => getJson<Detail>(url), [url]);
+  const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
   const credentials = useRecordCredentials(area, recordKey, base === 'app' && area.role === 'asset');
   if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
   const layout = featureOn('record_pages') ? layoutOf(area) : null;
@@ -315,7 +327,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
         <LaidOutRecord area={area} base={base} layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
-          provenance={data.provenance} where={where(area)} credentials={credentials.section} />
+          provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} />
       )}
     </PageContainer>
   );
