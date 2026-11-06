@@ -33,8 +33,10 @@ export function registerAgentTools(server: McpServer, org: Org) {
   server.registerTool("start_agent_session", {
     title: "Start an agent session",
     description: "Start a long-lived agent in its own workspace with a first message. conversation (the default) waits for more messages and parks when quiet (the next message wakes it); task ends once its work is answered. It spends from its own budget.",
-    inputSchema: { message: z.string().describe("What the agent should do"), title: z.string().optional(), mode: z.enum(["conversation", "task"]).optional() },
-  }, wrap(async (a: { message: string; title?: string; mode?: string }) => { const s = await H.startSession(org.orgId, actorFor(org), a, org); return out(`Started: ${brief(s)}.`, { session: s }); }));
+    inputSchema: { message: z.string().describe("What the agent should do"), title: z.string().optional(), mode: z.enum(["conversation", "task"]).optional(),
+      // mold_v0-261: the agent profile it runs with (its instructions, model, budget, tools); the Default when none is named.
+      profile: z.string().optional().describe("The agent profile it runs with, by id (the platform's staff set them up); default: the Default profile") },
+  }, wrap(async (a: { message: string; title?: string; mode?: string; profile?: string }) => { const s = await H.startSession(org.orgId, actorFor(org), a, org); return out(`Started: ${brief(s)}.`, { session: s }); }));
   server.registerTool("read_agent_session", {
     title: "Read an agent session",
     description: "One agent session: its transcript, what it asked for and the decisions, budget raises, wakes and spend.",

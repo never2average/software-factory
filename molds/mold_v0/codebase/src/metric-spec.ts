@@ -543,7 +543,7 @@ export function tabAction(t: SpecTab, b: Pick<BuildViews, "areas" | "kinds" | "s
   // The pack's own, labelled with the shell's words for its kind when it gives none.
   if (t.action) {
     const a = t.action, area = a.area ? b.areas.find((x) => x.name === a.area) : undefined;
-    const label = a.label ?? (a.kind === "create_record" ? `Add ${singularOf(area?.label ?? a.area ?? "record")}` : a.kind === "new_schedule" ? "New schedule"
+    const label = a.label ?? (a.kind === "create_record" ? `Add ${singularOf(area?.label ?? a.area ?? "record")}` : a.kind === "new_schedule" ? "New schedule" : a.kind === "start_agent" ? "Start a session"
       : t.kind === "reports" ? `Generate ${singularOf(tabLabel(t, b))}` : o.fill("Start {run}"));
     return { action: { ...a, label }, reason: null, declared: true };
   }

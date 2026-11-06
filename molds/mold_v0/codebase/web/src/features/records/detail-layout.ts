@@ -44,7 +44,7 @@ export interface DetailRelated {
 }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
@@ -54,6 +54,8 @@ export interface DetailActionSpec {
   area?: string;
   /** mold_v0-256: a start_run on the record a link field names. */
   target?: { via: string };
+  /** mold_v0-261: a start_agent action's agent profile and first message (a template filled from the record). */
+  profile?: string; first_message?: string;
 }
 export interface DetailTab { label: string; sections: DetailSection[] }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
@@ -259,6 +261,8 @@ export interface PageAction {
   target?: { area: string; key: string } | null;
   /** create_record (mold_v0-256): the area, its fields filled from this record, its form (on the record's own page). */
   create?: { area: string; label: string; values: Record<string, unknown>; fields?: PageFormField[]; upload_max?: number | null; key_from_title?: boolean };
+  /** start_agent (mold_v0-261, flag agent_harness): the profile it starts, and the first message filled from this record. */
+  agent?: { profile: string; name: string; version: number; message: string };
 }
 /** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
 export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;
@@ -267,7 +271,10 @@ export type RelatedData = { hidden: true } | { hidden?: false; area: string; via
   records: { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; actions: PageAction[] }[] };
 /** A record's runs: the newest, and how many in all. */
 export interface RecordRun { id: string; pack: string; kind: string; status: string; error: string | null; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string }
-export type RunsData = { total: number; runs: RecordRun[] };
+export type RunsData = { total: number; runs: RecordRun[];
+  /** mold_v0-261 (flag agent_harness): the workspace agent sessions started from the record. */
+  sessions?: { total: number; rows: { id: string; title: string; phase: string; profile: { id: string; name: string; version: number } | null; started_by: string | null;
+    spent_usd: number; budget_usd: number; created_at: string; last_activity_at: string }[] } };
 export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | HistoryData | undefined>;
   /** mold_v0-256: the header's computed facts, by their place among the facts. */
   facts?: Record<string, ComputedFact> }

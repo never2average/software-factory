@@ -91,6 +91,13 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const catalog = generateCatalog(out.map((p) => ({ id: p.id, name: p.manifest.name, words: p.manifest.words, definition: p.definition })),
     { customer: [...reservedTools, ...RECORD_TOOL_NAMES, ...CLOCK_TOOL_NAMES, ...INTAKE_TOOL_NAMES], admin: reservedAdmin });
   problems.push(...catalog.problems);
+  // The workspace agent's profiles the packs bring (mold_v0-261, pack.json agent_profiles): one id, one pack.
+  const profileOwner = new Map<string, string>();
+  for (const p of out) for (const pr of p.definition.agentProfiles ?? []) {
+    const owner = profileOwner.get(pr.id);
+    if (owner) problems.push(`pack ${p.id}: agent profile ${pr.id} is already pack ${owner}'s (profile ids are unique in a build)`);
+    else profileOwner.set(pr.id, p.id);
+  }
   // The packs' declared slash commands (mold_v0-137, pack.json mcp.prompts): one name, one pack.
   const promptOwner = new Map<string, string>();
   for (const p of out) for (const pr of p.definition.mcp?.prompts ?? []) {

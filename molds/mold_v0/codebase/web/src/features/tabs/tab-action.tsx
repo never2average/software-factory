@@ -12,6 +12,8 @@
 //   create_record  a new record's key, title and fields, through the data API (POST /api/data/<area>)
 //   new_schedule   the schedules page's Add a schedule form (features/schedules/schedules-page.tsx draws its button)
 //   link           (mold_v0-213) a page or an address, e.g. Settings › Email for a list a connected mailbox fills
+//   start_agent    (mold_v0-261, flag agent_harness) the workspace agent's Start a session dialog with the action's
+//                  profile and first message (/app/agent?start=<profile>&message=...), for a role that may start it
 // Every list tab has one unless its pack says none (mold_v0-213: the build resolves the shell's default, labelled).
 // mold_v0-237: an area's own lists (its Settings tab, its Records page) have theirs too (useAreaAction: the registry's
 // `action`, the server's /api/tab-actions/_areas/<area>). mold_v0-238: a create form uploads its file fields' files
@@ -52,7 +54,8 @@ type ActionSpec =
   | { kind: 'new_schedule'; label: string | null; allowed: boolean; job_kind: string | null }
   | { kind: 'create_record'; label: string | null; allowed: boolean; area: { name: string; label: string; fields: FormField[]; key_from_title?: boolean } | null;
       /** The most bytes a file of its file fields may have when the form uploads them (mold_v0-238); null: no upload. */
-      upload_max?: number | null };
+      upload_max?: number | null }
+  | { kind: 'start_agent'; label: string | null; allowed: boolean; profile: { id: string; name: string } | null; message: string | null };
 
 async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -193,6 +196,12 @@ function useListAction(a: NonNullable<PackTabSpec['action']> | null, specUrl: st
   if (!specUrl || !a) return { button: null, card: null, panel: false };
   if (a.kind === 'link') return { button: <LinkAction action={a} />, card: null, panel: false };
   if (!data || !data.allowed) return { button: null, card: null, panel: false };
+  // mold_v0-261: a start_agent action opens the agent's Start a session dialog with its profile and first message.
+  if (data.kind === 'start_agent') {
+    if (!data.profile) return { button: null, card: null, panel: false };
+    const href = `/app/agent?start=${encodeURIComponent(data.profile.id)}${data.message ? `&message=${encodeURIComponent(data.message)}` : ''}`;
+    return { button: <ToolbarAction label={actionLabel(a)} icon={<Icons.agent />} href={href} />, card: null, panel: false };
+  }
   const label = actionLabel(a);
   const done = () => { setOpen(false); void onDone?.(); };
   return {

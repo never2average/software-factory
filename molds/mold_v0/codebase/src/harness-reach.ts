@@ -78,10 +78,18 @@ export function composeContext(i: { workspace: string; who: string; role: string
 }
 
 /**
- * The reach a session started by `actor` in workspace `orgId` gets: the customer MCP server's tools and instructions as
- * that person (asked over an in-memory client, as the client skill asks: src/client-skill.ts), and the context.
+ * How a session's agent profile (mold_v0-261, src/agent-profiles.ts) has it use the app's own tools: the base (reads,
+ * reads and the named, every tool, or none but the named), the named ones it uses freely, those that ask first whatever
+ * the base says, and those it never sees.
  */
-export async function workspaceReach(orgId: number, actor: ReachActor): Promise<WorkspaceReach> {
+export interface ReachRules { base: WorkspaceToolsFree; free: string[]; ask: string[]; hidden: string[] }
+
+/**
+ * The reach a session started by `actor` in workspace `orgId` gets: the customer MCP server's tools and instructions as
+ * that person (asked over an in-memory client, as the client skill asks: src/client-skill.ts), and the context. With a
+ * profile's `rules` (mold_v0-261) its hidden tools are left out and its free and ask lists decide; without, the settings.
+ */
+export async function workspaceReach(orgId: number, actor: ReachActor, rules: ReachRules | null = null): Promise<WorkspaceReach> {
   const [o] = await read((q) => q.query<{ slug: string; name: string }>("SELECT slug, name FROM organizations WHERE id = $1", [orgId]));
   const person = actor.kind === "person" && !!actor.user;
   const org: Org = { orgId, slug: o?.slug ?? "", name: o?.name ?? "", ...(person ? { userId: actor.user!, ...(actor.role ? { role: actor.role as Org["role"] } : {}) } : {}),
@@ -98,14 +106,23 @@ export async function workspaceReach(orgId: number, actor: ReachActor): Promise<
     instructions = client.getInstructions() ?? "";
   } finally { await client.close(); }
   const context = (await connectContext(org).catch(() => "")).trim();
-  const free = settingText("AGENT_WORKSPACE_TOOLS") as WorkspaceToolsFree;
-  const mode: WorkspaceToolsFree = free === "all" || free === "reads_and_named" ? free : "reads";
-  const named = mode === "reads_and_named" ? settingText("AGENT_WORKSPACE_TOOLS_NAMED").split(",").map((x) => x.trim()).filter(Boolean) : [];
-  const freeNames = freeWorkspaceTools(tools, mode, named);
+  let mode: WorkspaceToolsFree, named: string[], ask: string[] = [], hidden: string[] = [];
+  if (rules) {
+    hidden = [...new Set(rules.hidden)];
+    tools = tools.filter((t) => !hidden.includes(t.name));
+    named = rules.free.filter((n) => !hidden.includes(n));
+    ask = rules.ask;
+    mode = rules.base === "reads" && named.length ? "reads_and_named" : rules.base;
+  } else {
+    const free = settingText("AGENT_WORKSPACE_TOOLS") as WorkspaceToolsFree;
+    mode = free === "all" || free === "reads_and_named" ? free : "reads";
+    named = mode === "reads_and_named" ? settingText("AGENT_WORKSPACE_TOOLS_NAMED").split(",").map((x) => x.trim()).filter(Boolean) : [];
+  }
+  const freeNames = freeWorkspaceTools(tools, mode, named, ask);
   return {
     server: WORKSPACE_SERVER,
     acts_as: { kind: person ? "person" : "key", name: actor.name, role: person ? actor.role : null },
-    free: mode, named, tools,
+    free: mode, named, tools, ...(hidden.length ? { hidden } : {}),
     context: composeContext({ workspace: org.name || org.slug, who: person ? (actor.name ?? "the person who started it") : "the workspace's account (an account key started it)",
       role: person ? actor.role : null, tools, free: freeNames, instructions, context, max: settingNumber("AGENT_CONTEXT_MAX_CHARS") }),
   };
@@ -175,7 +192,7 @@ export async function resolveToolToken(token: string, now = new Date()): Promise
   }
   void read((q) => q.query("/* tenant: the token just resolved, by its hash */ UPDATE harness_session_tokens SET last_used_at = now(), calls = calls + 1 WHERE token_hash = $1", [sha256(token)])).catch(() => {});
   return { org: { orgId: t.org_id, slug: t.slug, name: t.name, ...(t.acts_as ? { userId: t.acts_as } : {}), ...(role ? { role } : {}),
-    client: { name: "workspace-agent", version: null }, agentSession: { session: t.session_id, allowed: allowedWorkspaceTools(t.policy) } } };
+    client: { name: "workspace-agent", version: null }, agentSession: { session: t.session_id, allowed: allowedWorkspaceTools(t.policy), ...(t.policy?.workspace?.hidden?.length ? { hidden: t.policy.workspace.hidden } : {}) } } };
 }
 
 /**
@@ -188,6 +205,8 @@ export function toolCallRefusal(org: Org, body: unknown): string | null {
     const x = m as { method?: unknown; params?: { name?: unknown } } | null;
     if (x?.method !== "tools/call") continue;
     const name = String(x.params?.name ?? "");
+    // mold_v0-261: a tool its agent profile hides is not this session's to use at all, asked or not.
+    if (org.agentSession.hidden?.includes(name)) return `This session's agent profile does not give it ${name.slice(0, 100)}`;
     if (!org.agentSession.allowed.includes(name))
       return `This session must ask the person before it uses ${name.slice(0, 100)}: call it through the session so the person can approve it`;
   }

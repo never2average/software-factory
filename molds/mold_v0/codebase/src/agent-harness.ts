@@ -161,7 +161,11 @@ export class SteerLedger {
 }
 
 /** What a tool call needs under the session's policy: allowed, a request (a host or a tool), or the web calls are used up. */
-export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number): { ok: true; web: boolean } | { ok: false; request: { kind: "web" | "tool"; subject: string } } | { ok: false; limit: true } {
+export function checkToolUse(t: ToolUse, policy: AgentPolicy, webCalls: number): { ok: true; web: boolean } | { ok: false; request: { kind: "web" | "tool"; subject: string } } | { ok: false; limit: true } | { ok: false; hidden: true } {
+  // mold_v0-261: a workspace tool its agent profile hides is not the session's: never asked for (the CLI's own rules and
+  // the server refuse the call).
+  const own = t.name.startsWith(`mcp__${WORKSPACE}__`) ? t.name.slice(`mcp__${WORKSPACE}__`.length) : null;
+  if (own && (policy.workspace?.hidden ?? []).includes(own)) return { ok: false, hidden: true };
   if (t.name === "WebFetch" || t.name === "WebSearch") {
     if (policy.web.tools === "off" || (t.name === "WebSearch" && policy.web.tools !== "search")) return { ok: false, request: { kind: "tool", subject: t.name } };
     if (webCalls + 1 > policy.web.calls_max) return { ok: false, limit: true };
@@ -279,6 +283,15 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       if (body && createHash("sha256").update(body).digest("hex") === w.checkpoint.sha256) unpackBundle(body, state);
     }
     mkdirSync(work, { recursive: true, mode: 0o700 }); mkdirSync(home, { recursive: true, mode: 0o700 });
+    // mold_v0-261: the files its agent profile gives its workspace (skills, guides, templates), written into the working
+    // directory at its start; a later wake finds them in its checkpoint as the agent left them. A path that would leave
+    // the working directory is never written.
+    if (!w.checkpoint) for (const f of policy.files ?? []) {
+      const dest = path.resolve(work, f.path);
+      if (!dest.startsWith(work + path.sep) || existsSync(dest)) continue;
+      mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+      writeFileSync(dest, f.content, { mode: 0o600 });
+    }
     // The hooks as resolved at the session's start, written beside the agent: which text it got, from where.
     for (const h of policy.hooks ?? []) {
       mkdirSync(path.join(hooksDir, h.event), { recursive: true });
@@ -378,6 +391,7 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
           if (e.parent_tool_use_id) continue;
           const c = checkToolUse(u, policy, s.webCalls);
           if (c.ok) { if (c.web) s.webCalls++; continue; }
+          if ("hidden" in c) continue;
           if ("limit" in c) { await say(`the session used its ${policy.web.calls_max} web calls`); stop({ reason: "web_limit" }); return; }
           // Outside its policy: asked, and the wake stops for the decision (the egress proxy refuses the host meanwhile).
           // A workspace tool (mold_v0-250): what it wanted to send, so the person sees the change before approving it.

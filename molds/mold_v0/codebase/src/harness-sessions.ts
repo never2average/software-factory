@@ -18,6 +18,10 @@
  *   reach      what it may use of its workspace (src/harness-reach.ts, mold_v0-250): the app's own customer MCP tools as
  *              the person who started it (a token per wake, revoked when the wake ends, a pause or stop is asked, at its
  *              budget), reads without asking and the rest as requests, and the workspace's context as standing instructions
+ *   profile    (mold_v0-261) a session starts with an agent profile (src/agent-profiles.ts; the Default one unless another
+ *              is chosen): who may start it, its instructions, model, budget and ceiling, turns, tools, web and files,
+ *              resolved for the workspace (its override) and frozen with the profile's version; a record page's
+ *              start_agent action links the session to its record
  *   reconcile  after a wake's run ends (src/runs.ts completeRun, sweepRuns, and the sweep below): parked, paused,
  *              awaiting a decision, stopped, or crashed (parked with its checkpoint; resumed by the next message, or by
  *              itself with AGENT_AUTO_RESUME, within AGENT_CRASH_RESUMES and half its budget)
@@ -33,8 +37,10 @@ import { getDb, type Queryable } from "./db.js";
 import { PackError } from "./pack-api.js";
 import { asPlatform } from "./tenant-scope.js";
 import { canAccount, type AccountRole } from "./account-roles.js";
-import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, freeWorkspaceTools, hostAllowed, validHost, workspaceToolName, workspaceToolOf, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
+import { AGENT_KIND, AGENT_PACK, agentHarnessOn, agentKind, currentPolicy, flavourOf, freeWorkspaceTools, hostAllowed, resolveHooks, validHost, workspaceToolName, workspaceToolOf, type AgentPolicy, type HookEvent } from "./agent-harness-config.js";
 import { mintToolToken, revokeToolTokens, sweepToolTokens, workspaceReach } from "./harness-reach.js";
+import { applyOnStart } from "./agent-profile-spec.js";
+import type { Effective } from "./agent-profiles.js";
 import { settingNumber } from "./settings.js";
 
 // ---------------------------------------------------------------- types
@@ -54,11 +60,12 @@ interface SessionRow {
   spent_usd: string | number; reserve_usd: string | number; crash_spent_usd: string | number; wakes: number; crashes: number; web_calls: number;
   current_run_id: string | null; last_activity_at: Date; created_at: Date; updated_at: Date; ended_at: Date | null; archived_at: Date | null;
   retention_until: Date | null; pruned_at: Date | null;
+  profile_id: string | null; profile_version: number | null; record_area: string | null; record_key: string | null;
 }
 export interface Checkpoint { seq: number; key: string; sha256: string; bytes: number; at: string; run_id: string }
 const COLS = `id, org_id, title, started_by, started_by_name, state, in_turn, state_reason, pause_requested_at, stop_requested_at, flavour, model, provider,
   policy, harness_session, checkpoint, checkpoint_seq, budget_usd, spent_usd, reserve_usd, crash_spent_usd, wakes, crashes, web_calls, current_run_id,
-  last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at`;
+  last_activity_at, created_at, updated_at, ended_at, archived_at, retention_until, pruned_at, profile_id, profile_version, record_area, record_key`;
 
 export interface RequestView { id: string; kind: RequestKind; subject: string; detail: Record<string, unknown>; status: string; decided_by: string | null; decided_at: string | null; reason: string | null; created_at: string; expires_at: string | null }
 export interface MessageView { id: number; role: "person" | "agent" | "system"; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }
@@ -70,12 +77,18 @@ export interface SessionView {
   wakes: number; crashes: number; web_calls: number; pause_requested: boolean; stop_requested: boolean;
   pending_request: RequestView | null; created_at: string; last_activity_at: string; ended_at: string | null; archived_at: string | null; pruned: boolean;
   can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
+  /** mold_v0-261: the agent profile it started with, its name and the version it froze; null for a session from before. */
+  profile: { id: string; name: string; version: number } | null;
+  /** mold_v0-261: the record it was started from (a record page's start_agent action), or null. */
+  record: { area: string; key: string } | null;
 }
 export interface SessionDetail extends SessionView {
   messages: MessageView[]; requests: RequestView[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
   hooks: { event: HookEvent; source: string; text: string | null }[];
-  policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number };
+  policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
+    /** mold_v0-261: the files its profile gave its workspace (their paths), and the tools its profile hides. */
+    files: string[]; hidden_tools: string[] };
   /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
   reach: ReachView | null;
 }
@@ -172,6 +185,8 @@ function view(r: SessionRow, a: Actor, pending: RequestView | null, slug?: strin
     wakes: r.wakes, crashes: r.crashes, web_calls: r.web_calls, pause_requested: !!r.pause_requested_at, stop_requested: !!r.stop_requested_at,
     pending_request: pending, created_at: iso(r.created_at)!, last_activity_at: iso(r.last_activity_at)!, ended_at: iso(r.ended_at), archived_at: iso(r.archived_at),
     pruned: !!r.pruned_at, can: permissions(r, a),
+    profile: r.profile_id && r.profile_version ? { id: r.profile_id, name: r.policy?.profile?.name ?? r.profile_id, version: r.profile_version } : null,
+    record: r.record_area && r.record_key ? { area: r.record_area, key: r.record_key } : null,
   };
 }
 
@@ -232,26 +247,46 @@ async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): P
 
 // ---------------------------------------------------------------- the workspace's side
 
-export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown }
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown; profile?: unknown }
 
-/** The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a key up to the ceiling. */
-export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
-  const ceiling = Math.min(settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
-  const def = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+/**
+ * The most a person may give a session they start (mold_v0-249): the budget (its agent profile's, mold_v0-261, else the
+ * setting's); a billing manager, an owner or a key up to the ceiling (the profile's, else the setting's).
+ */
+export async function startBudgetMax(orgId: number, actor: Actor, eff?: Pick<Effective, "budget_usd" | "ceiling_usd">): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
+  const ceiling = Math.min(eff?.ceiling_usd ?? settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
+  const def = money(Math.min(eff?.budget_usd ?? settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
   const raises = actor.kind === "key" || canAccount(actor.role, "budget");
   return { default_usd: def, max_usd: raises ? money(ceiling) : def, ceiling_usd: money(ceiling) };
 }
 
-/** Start a session with its first message (the person's words are its on_start). */
-export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org): Promise<SessionDetail> {
+/**
+ * Start a session with its first message (the person's words, inside its profile's on_start template). Its agent profile
+ * (mold_v0-261: `input.profile`, else the Default) is resolved for this workspace and frozen with its version: who may
+ * start it, its instructions, model, budget, ceiling, turns, web, tools and files. `opts.record` (the server's own, from a
+ * record page's start_agent action; never from a request's body) links it to that record.
+ */
+export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org, opts: { record?: { area: string; key: string } } = {}): Promise<SessionDetail> {
   needOn();
   if (actor.kind === "staff" || actor.kind === "system") throw new PackError("A session acts for the person who starts it: staff cannot start one for a workspace", 403);
   if (actor.kind === "person" && !canAccount(actor.role, "launch")) throw new PackError("Your role cannot start agent sessions. Ask an account owner to change it on the Team page.", 403);
   const message = text(input.message, "message");
   const mode = input.mode === "task" ? "task" : "conversation";
   const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
+  // Its agent profile, for this workspace (its override): refused when unknown, archived, not this role's, or unpriced.
+  const { profileForStart } = await import("./agent-profiles.js");
+  const [ws] = await read((q) => q.query<{ slug: string }>("SELECT slug FROM organizations WHERE id = $1", [orgId]));
+  const { row: prof, eff } = await profileForStart(typeof input.profile === "string" ? input.profile : null, ws?.slug ?? null, actor);
   const policy = currentPolicy(mode);
-  const limits = await startBudgetMax(orgId, actor);
+  const flavour = flavourOf(policy.flavour)!;
+  Object.assign(policy, {
+    model: eff.model, provider: eff.provider, max_turns: eff.max_turns, wake_max_seconds: eff.wake_max_minutes * 60, budget_ceiling_usd: eff.ceiling_usd,
+    web: { tools: eff.web.tools, hosts: [...eff.web.hosts], calls_max: policy.web.calls_max },
+    hooks: resolveHooks(flavour, {}, eff.instructions),
+    profile: { id: prof.id, name: prof.name, version: prof.version },
+    ...(eff.files.length ? { files: eff.files } : {}),
+  });
+  const limits = await startBudgetMax(orgId, actor, eff);
   let budget = limits.default_usd;
   if (input.budget_usd !== undefined && input.budget_usd !== null && input.budget_usd !== "") {
     const b = Number(input.budget_usd);
@@ -263,18 +298,19 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   }
   // What it reaches of the workspace (mold_v0-250): the app's own tools as this person, and the workspace's context.
   try {
-    const reach = await workspaceReach(orgId, actor);
+    const reach = await workspaceReach(orgId, actor, eff.tools);
     policy.workspace = reach;
-    for (const t of freeWorkspaceTools(reach.tools, reach.free, reach.named)) policy.tools.push(workspaceToolName(t));
+    for (const t of freeWorkspaceTools(reach.tools, reach.free, reach.named, eff.tools.ask)) policy.tools.push(workspaceToolName(t));
   } catch (e) {
     console.error(`agent session: the workspace's tools could not be listed (${(e as Error).message}): it starts without them`);
   }
   const id = newId("hss");
   await tx(async (q) => {
     await q.query(
-      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd)
-       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10)`,
-      [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget]);
+      `INSERT INTO harness_sessions (id, org_id, title, started_by, started_by_name, state, flavour, model, provider, policy, budget_usd, profile_id, profile_version, record_area, record_key)
+       VALUES ($1, $2, $3, $4, $5, 'starting', $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [id, orgId, title, startedByOf(actor), actor.name, policy.flavour, policy.model, policy.provider, JSON.stringify(policy), budget, prof.id, prof.version,
+        opts.record?.area ?? null, opts.record?.key ?? null]);
     await q.query("INSERT INTO harness_session_messages (session_id, org_id, role, body, status, by_user, by_name) VALUES ($1, $2, 'person', $3, 'pending', $4, $5)",
       [id, orgId, message, actor.user, actor.name]);
   });
@@ -355,6 +391,20 @@ export async function listSessions(orgId: number | null, actor: Actor, opts: { l
   });
 }
 
+/**
+ * The sessions started from a record (mold_v0-261: a record page's start_agent action), newest first, in the record's
+ * workspace: what its page's runs section lists beside its runs. Nothing while the flag is off.
+ */
+export async function recordSessions(orgId: number, record: { area: string; key: string }, actor: Actor, limit = 5): Promise<{ total: number; sessions: SessionView[] }> {
+  if (!agentHarnessOn()) return { total: 0, sessions: [] };
+  return read(async (q) => {
+    const rows = await q.query<SessionRow>(`SELECT ${COLS} FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3 ORDER BY created_at DESC, id DESC LIMIT $4`,
+      [orgId, record.area, record.key, Math.min(Math.max(Math.trunc(limit) || 5, 1), 50)]);
+    const [n] = await q.query<{ n: number }>("SELECT count(*)::int AS n FROM harness_sessions WHERE org_id = $1 AND record_area = $2 AND record_key = $3", [orgId, record.area, record.key]);
+    return { total: n?.n ?? rows.length, sessions: rows.map((r) => view(r, actor, null)) };
+  });
+}
+
 export async function readSession(orgId: number | null, id: string, actor: Actor): Promise<SessionDetail> {
   needOn();
   return read(async (q) => {
@@ -382,7 +432,7 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
       hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
       policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
         web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
-        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0 },
+        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: (p?.files ?? []).map((f) => f.path), hidden_tools: p?.workspace?.hidden ?? [] },
       reach: reachView(p),
     };
   });
@@ -520,6 +570,8 @@ export async function decideRequest(orgId: number | null, sessionId: string, req
         [x.id, x.org_id, `declined: ${requestWords(req.kind, req.subject)}`]);
       return false;
     }
+    const hiddenTool = req.kind === "tool" ? workspaceToolOf(req.subject) : null;
+    if (hiddenTool && (x.policy.workspace?.hidden ?? []).includes(hiddenTool)) throw new PackError(`This session's agent profile does not give it ${hiddenTool}: it cannot be approved`, 403);
     const p = { ...x.policy, web: { ...x.policy.web, hosts: [...(x.policy.web?.hosts ?? [])] }, tools: [...(x.policy.tools ?? [])] };
     if (req.kind === "web" && !hostAllowed(req.subject, p.web.hosts)) p.web.hosts.push(req.subject);
     if (req.kind === "tool" && !p.tools.includes(req.subject)) p.tools.push(req.subject);
@@ -603,11 +655,14 @@ export async function wakeStart(runId: string, leaseToken: string): Promise<Wake
     const s = w.session;
     const msgs = await q.query<{ id: string; body: string }>(
       "SELECT id, body FROM harness_session_messages WHERE org_id = $1 AND session_id = $2 AND role = 'person' AND status IN ('pending', 'discarded') ORDER BY id LIMIT 50", [s.org_id, s.id]);
+    // mold_v0-261: a new session's first message is its profile's on_start template around the person's words (the
+    // transcript keeps their own words; what the harness was told is in its hooks directory).
+    const onStart = !s.harness_session && s.wakes <= 1 ? s.policy.hooks?.find((h) => h.event === "on_start" && h.source !== "unset")?.text ?? null : null;
     const first = [];
-    for (const m of msgs) {
+    for (const [i, m] of msgs.entries()) {
       const uuid = randomUUID();
       await q.query("UPDATE harness_session_messages SET status = 'delivered', uuid = $3, run_id = $4, delivered_at = now() WHERE org_id = $1 AND id = $2", [s.org_id, m.id, uuid, w.id]);
-      first.push({ id: Number(m.id), uuid, text: m.body });
+      first.push({ id: Number(m.id), uuid, text: i === 0 && onStart ? applyOnStart(onStart, m.body) : m.body });
     }
     // Why it talks again, when the person did not say (a resume, an approval, a crash): the on_resume hook and the reason.
     const why = s.state_reason && /^(approved|declined|expired|budget raised|crashed)/.test(s.state_reason) ? `(${s.state_reason})` : null;
@@ -714,6 +769,9 @@ export async function wakeRequest(runId: string, leaseToken: string, r: { kind?:
   return tx(async (q) => {
     const w = await wakeOf(q, runId, leaseToken, true);
     const s = w.session;
+    // mold_v0-261: a tool its profile hides is never asked for (the harness does not; a request for one is refused).
+    const own = kind === "tool" ? workspaceToolOf(String(r.subject).trim()) : null;
+    if (own && (s.policy.workspace?.hidden ?? []).includes(own)) throw new PackError(`This session's agent profile does not give it ${own}: it cannot be asked for`, 400);
     const [p] = await q.query<{ id: string }>("SELECT id FROM harness_session_requests WHERE org_id = $1 AND session_id = $2 AND status = 'pending'", [s.org_id, s.id]);
     if (p) return { id: p.id };
     const id = newId("hsr");

@@ -151,7 +151,10 @@ Where an area's list is drawn, and what it has:
 - **The primary action** (mold_v0-208, mold_v0-213): one button at the right end of the search row. A tab's `action`
   (`create_record` of its area, `start_run` of a job kind or a picker of several, `link`), else the shell's default
   (`src/metric-spec.ts` `tabAction`: `create_record` for a workspace area of the shell's tables a workspace may add to),
-  else none. **No action is said with its reason**: `"action": false, "reason": "..."` (shown nowhere; the build lists
+  else none. mold_v0-261 (flag `agent_harness`): `start_agent` with `profile` (an agent profile the pack declares in
+  `agent_profiles`, or `default`) and an optional `first_message` (plain words: a list has no record to fill it from)
+  opens the workspace agent's Start a session dialog with that profile and message, for a role that may start it.
+  **No action is said with its reason**: `"action": false, "reason": "..."` (shown nowhere; the build lists
   an undeclared none as a warning). Its form opens as a full card in the list's place (`?new=1`, `?start=1`), never a
   dialog or a side sheet.
 - **Export CSV** sits just left of it on every list (mold_v0-217), the narrowed rows when filtered; on a workspace's
@@ -290,7 +293,11 @@ Where an area's list is drawn, and what it has:
     in the page's place, takes the kind's arguments pre-filled from the record through `input`, an argument to a field,
     `$key` or `$title`), `move` (along the lifecycle: to `to`, or a menu of the states it may move to), `edit` (the
     record's edit form, a full card), `delete` (after the console's confirm question), `link` (open the record its
-    link or reference `field` names) and `copy_link`. `place` is `primary` (one at most, filled), `secondary` (up to
+    link or reference `field` names), `copy_link` and (mold_v0-261, flag `agent_harness`) `start_agent`: a workspace
+    agent session with the agent profile `profile` (the pack's own `agent_profiles`, or `default`) and the first message
+    `first_message`, a template filled from the record on the server (`{{key}}`, `{{title}}`, `{{<field>}}`; never an
+    encrypted or file field), linked back to the record and listed in its runs section; shown to the roles its profile
+    lets start a session, disabled with why while the profile is archived. `place` is `primary` (one at most, filled), `secondary` (up to
     three, outlined) or `more` (the default: the **More** menu, which also holds Copy ID and Copy link). `roles`
     narrows who may; `unavailable` disables it, with its reason, while a condition on the record holds; `confirm` asks
     first. An action is shown only to a role that may take it (the kind's start tool for a run; the area's move and the
@@ -300,7 +307,8 @@ Where an area's list is drawn, and what it has:
 
   The area's schema refuses: more than one primary action, more than three secondary, a move on an area without a
   lifecycle or to a state no transition reaches, a start_run without its kind, an input from a field the area lacks
-  (or an encrypted or file one), a link on a field that is not a link or reference, a write on a shared area, an
+  (or an encrypted or file one), a start_agent without its profile or first message or naming a field the area lacks
+  (or an encrypted or file one) or a profile its pack does not declare, a link on a field that is not a link or reference, a write on a shared area, an
   append-only one or (an edit) one with an encrypted field, a viewer's write, two actions with one id, a section with
   fields and a related list or runs. Across the build (`detailBuildProblems`, run by `src/metric-spec.ts` `checkViews`,
   so gen-packs and the server's install alike): a related list whose area does not exist or **has no link back here**

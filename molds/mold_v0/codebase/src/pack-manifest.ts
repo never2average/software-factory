@@ -32,6 +32,7 @@ import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { CheckSchema } from "./check-spec.js";
 import { EmailPackSchema } from "./company-email-config.js";
 import { DocumentsSchema } from "./record-files-config.js";
+import { PackAgentProfileSchema } from "./agent-profile-spec.js";
 import { API_VERSIONS, EVENT_NAMES, SDK_LANGUAGES, SESSION_SCOPE_PATTERN } from "./developer-config.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OAuthProviderSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, TAB_ICONS, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -410,6 +411,12 @@ export const PackJsonSchema = z.object({
   /** Document previews: the hosts a field's URL documents may be fetched from (mold_v0-220; src/record-files-config.ts). */
   documents: DocumentsSchema.optional(),
   /**
+   * The workspace agent's profiles the pack brings (mold_v0-261; src/agent-profile-spec.ts, src/agent-profiles.ts): each
+   * an id, a name, a description and what it sets (its instructions, model, budget, tools, web, files, who may start it),
+   * written once into the platform's profiles, then staff's to edit. Used only while the app's `agent_harness` is on.
+   */
+  agent_profiles: z.array(PackAgentProfileSchema).max(20).optional(),
+  /**
    * The app's public landing page at / (mold_v0-091, mold_v0-122; src/landing.ts): the sections it picks from the shell's
    * library, in its order (`sections: [{type, ...}]`: hero, problem, concept, how_it_works, proof, where_you_work, faq,
    * cta), a footer and SEO, all plain text; an old-style block (hero, coverage, value_points ...) is converted. The app's
@@ -516,8 +523,8 @@ export const PackJsonSchema = z.object({
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks"] as const;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "oauthProviders" | "operatorCredentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore" | "email" | "documents" | "checks" | "agentProfiles">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "oauthProviders", "operatorCredentials", "schedules", "onboarding", "metrics", "charts", "tabs", "checks", "agentProfiles"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -581,6 +588,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.workspace_store) out.workspaceStore = p.workspace_store;
   if (p.email) out.email = p.email;
   if (p.documents) out.documents = p.documents;
+  if (p.agent_profiles?.length) out.agentProfiles = p.agent_profiles;
   return out;
 }
 
