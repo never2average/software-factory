@@ -269,7 +269,8 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.equal(L.NOTICE_CLASS.success.includes("emerald"), true, "a success notice is green");
   assert.deepEqual(L.relatedColumns({ fields: [{ name: "status" }, { name: "started" }], list_columns: [] }, { columns: [{ field: "status", label: "Build status" }, "started", "ghost"] }),
     [{ field: "status", label: "Build status" }, { field: "started", label: null }], "a related list's columns, each with its own heading when it has one");
-  const seed = await import("../../testing/console/seed.mts");
+  // The lane tooling lives beside the codebase (its own typecheck): loaded by its path.
+  const seed = await import(pathToFileURL(path.join(ROOT, "..", "testing", "console", "seed.mts")).href);
   assert.equal(seed.valueOf({ name: "endpoint", type: "url", required: true }, 2, 0, () => [], () => null, "services"), "https://example.com/services/3", "the lane's seed: a required url field filled");
   assert.equal(seed.valueOf({ name: "homepage", type: "url" }, 2, 0, () => [], () => null, "services"), undefined, "an optional one left empty");
   const F = await web("features/tabs/form-prefill.ts");
@@ -426,10 +427,10 @@ const note = (id: string, text: string) => { const p = document.createElement('p
       const failures: string[] = [];
       const softly = (f: () => void) => { try { f(); } catch (e) { failures.push((e as Error).message.split("\n")[0]!.slice(0, 300)); } };
       const soft = {
-        match: (s: string, re: RegExp, m?: string) => softly(() => assert.match(s, re, m)),
-        doesNotMatch: (s: string, re: RegExp, m?: string) => softly(() => assert.doesNotMatch(s, re, m)),
-        ok: (v: unknown, m?: string) => softly(() => assert.ok(v, m)),
-        equal: (x: unknown, y: unknown, m?: string) => softly(() => assert.equal(x, y, m)),
+        match: (s: string, re: RegExp, m?: string) => softly(() => { assert.match(s, re, m ?? ""); }),
+        doesNotMatch: (s: string, re: RegExp, m?: string) => softly(() => { assert.doesNotMatch(s, re, m ?? ""); }),
+        ok: (v: unknown, m?: string) => softly(() => { assert.ok(v, m ?? ""); }),
+        equal: (x: unknown, y: unknown, m?: string) => softly(() => { assert.equal(x, y, m ?? ""); }),
       };
       const record = (key: string, title: string, data: Record<string, unknown>) => ({ key, title, data, version: null, updated_at: "2026-11-06T09:30:00.000Z" });
       const logText = ["2026-11-06T09:30:00Z [checkout] INFO cloning main at 9f4c2e1a", "2026-11-06T09:30:04Z [install] WARN 3 packages are deprecated",
