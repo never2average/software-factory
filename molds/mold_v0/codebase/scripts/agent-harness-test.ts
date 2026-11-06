@@ -557,7 +557,7 @@ try {
     assert.ok(!reach.tools.some((t) => /agent_session/.test(t.name)), "no agent session tool: an agent does not start or steer sessions");
     assert.ok(!d0.policy.tools.some((t) => t.startsWith("mcp__")), "the card's own tools list stays the harness's");
     const [pol] = await db.query<{ policy: import("../src/agent-harness-config.js").AgentPolicy }>("SELECT policy FROM harness_sessions WHERE id = $1", [sid]);
-    assert.ok(pol!.policy.tools.includes("mcp__workspace__list_records") && !pol!.policy.tools.includes("mcp__workspace__fx_put_item"), "frozen: reads in its allowed tools, writes not");
+    assert.ok(pol!.policy.tools.includes("mcp__app__list_records") && !pol!.policy.tools.includes("mcp__app__fx_put_item"), "frozen: reads in its allowed tools, writes not");
     const text = pol!.policy.workspace!.context.text;
     assert.ok(text.includes(`The reach marker is ${STAMP}`) && text.includes("A keeps items") && !text.includes("B's own memory"), "its own workspace's context and memory, no other's");
     assert.ok(reach.context.parts.every((x) => x.chars > 0 && x.kept === x.chars), JSON.stringify(reach.context.parts));
@@ -585,7 +585,7 @@ try {
     // c. a wake, end to end with the stand-in CLI
     {
       const w = await wake(sid);
-      await until("standing", () => said(sid, /^Standing: \d+ characters; workspace: yes; servers: workspace; token: set$/), 20_000);
+      await until("standing", () => said(sid, /^Standing: \d+ characters; workspace: yes; servers: app; token: set$/), 20_000);
       const cfg = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM harness_session_tokens WHERE session_id = $1 AND revoked_at IS NULL", [sid]);
       assert.equal(cfg[0]!.n, 1, "one live token: this wake's");
       await H.messageSession(A.orgId, sid, person, 'mcp list_records {"area":"fx_items"}');
@@ -604,7 +604,7 @@ try {
       let d = await rd(sid);
       assert.equal(d.phase, "awaiting_approval");
       assert.equal(d.pending_request?.kind, "tool");
-      assert.equal(d.pending_request?.subject, "mcp__workspace__fx_put_item");
+      assert.equal(d.pending_request?.subject, "mcp__app__fx_put_item");
       assert.equal(d.pending_request?.detail.workspace_tool, "fx_put_item");
       assert.match(String(d.pending_request?.detail.input), /a-new/, "what it wanted to send is shown with the request");
       assert.ok(d.messages.some((m) => m.role === "system" && m.body === "The agent asks to use the workspace tool fx_put_item."));

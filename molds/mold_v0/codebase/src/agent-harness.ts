@@ -10,7 +10,7 @@
  *               person sends while it works is one more line (steer), echoed back by the CLI as it takes it in
  *   beat        every few seconds: the lease, the cumulative spend (once per session: from the baseline a resumed
  *               session re-reports), the person's messages, pause, end and budget
- *   workspace   the app's own customer MCP server (mold_v0-250): an --mcp-config naming it "workspace" at the API's /mcp,
+ *   workspace   the app's own customer MCP server (mold_v0-250): an --mcp-config naming it "app" at the API's /mcp,
  *               its Authorization a ${RUN_WORKSPACE_TOKEN} reference to this wake's token (never written to a file), and
  *               the workspace's context appended to the standing instructions
  *   policy      each tool call is checked against the session's policy: a web host not granted or a tool not allowed
@@ -40,7 +40,7 @@ import { killUser, leaseRunUser, sweepUserFiles, type RunUser } from "./run-user
 import { runIsolation, startRunProxy, type HarnessOptions, type RunnerClient, type RunProxy } from "./run-harness.js";
 
 /** The workspace's MCP server name the CLI gets (src/agent-harness-config.ts WORKSPACE_SERVER: the same word). */
-const WORKSPACE = "workspace";
+const WORKSPACE = "app";
 /** The wake's environment variable holding its workspace token, referenced from its MCP config. */
 export const WORKSPACE_TOKEN_ENV = "RUN_WORKSPACE_TOKEN";
 

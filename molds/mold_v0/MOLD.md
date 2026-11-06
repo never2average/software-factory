@@ -2932,7 +2932,7 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   person likes, up to the ceiling for a billing manager or owner: `budget_usd` on `POST /api/agent`), the kind, an
   optional title, Start; focus held inside, Esc closes it, its title names it; on Start the session's full card opens.
 - **What a session reaches** (mold_v0-250, `src/harness-reach.ts`; [docs/agent-harness.md](docs/agent-harness.md) "What a
-  session reaches"): the app's own customer MCP server as the MCP server `workspace`, opened by a token per wake
+  session reaches"): the app's own customer MCP server as the MCP server `app` (tools `mcp__app__<tool>`), opened by a token per wake
   (`hst_...`, hashed in `harness_session_tokens`, migration 0047) that acts as the person who started the session with
   their role (re-read on every call), for that workspace only, and works only while its wake runs: revoked when the wake
   ends, at a pause or stop, at budget, when the session ends, and refused once the person leaves the workspace. Reads

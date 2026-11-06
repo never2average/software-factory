@@ -16,7 +16,7 @@
 //   pwd             the answer is "Working in <its working directory>." (what a model would see of the path)
 //   standing        the answer says what it was given (mold_v0-250): "Standing: <n> characters; workspace: yes|no; servers:
 //                   <names>; token: set|unset" (the --append-system-prompt, the --mcp-config file, the token's variable)
-//   mcp <tool> <json>  a call of the workspace's tool (mold_v0-250): a tool_use of mcp__workspace__<tool> (the harness checks
+//   mcp <tool> <json>  a call of the workspace's tool (mold_v0-250): a tool_use of mcp__app__<tool> (the harness checks
 //                   it against the policy, as with any tool), then the call itself over HTTP to the server --mcp-config
 //                   names, its ${...} header expanded from the environment as the real CLI does; the answer is
 //                   "MCP <tool>: <the result's text>" or "MCP <tool> refused: <why>"
@@ -29,7 +29,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 function workspaceServer() {
   const f = arg("--mcp-config");
   if (!f || !existsSync(f)) return null;
-  const s = JSON.parse(readFileSync(f, "utf8")).mcpServers?.workspace;
+  const s = JSON.parse(readFileSync(f, "utf8")).mcpServers?.app;
   if (!s) return null;
   const headers = Object.fromEntries(Object.entries(s.headers ?? {}).map(([k, v]) => [k, String(v).replace(/\$\{([A-Z0-9_]+)\}/g, (_, n) => process.env[n] ?? "")]));
   return { url: s.url, headers };
@@ -111,7 +111,7 @@ async function turn(m) {
     }
     const mc = /^mcp (\S+)(?: (.+))?$/.exec(w);
     if (mc) {
-      say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `m${turns}`, name: `mcp__workspace__${mc[1]}`, input: mc[2] ? JSON.parse(mc[2]) : {} }] } });
+      say({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `m${turns}`, name: `mcp__app__${mc[1]}`, input: mc[2] ? JSON.parse(mc[2]) : {} }] } });
       await new Promise((r) => setTimeout(r, 300));
       const got = await callWorkspace(mc[1], mc[2] ? JSON.parse(mc[2]) : {}).catch((e) => `failed: ${e.message}`);
       mcpSaid.push(got.startsWith("refused: ") ? `MCP ${mc[1]} refused: ${got.slice(9)}` : `MCP ${mc[1]}: ${got.slice(0, 4000)}`);
@@ -122,7 +122,7 @@ async function turn(m) {
   turns++;
   total = Math.round((total + cost) * 1e6) / 1e6;
   const standing = () => { const sys = arg("--append-system-prompt") ?? ""; const srv = workspaceServer();
-    return `Standing: ${sys.length} characters; workspace: ${/## This workspace/.test(sys) ? "yes" : "no"}; servers: ${srv ? "workspace" : "none"}; token: ${process.env.RUN_WORKSPACE_TOKEN ? "set" : "unset"}`; };
+    return `Standing: ${sys.length} characters; workspace: ${/## This workspace/.test(sys) ? "yes" : "no"}; servers: ${srv ? "app" : "none"}; token: ${process.env.RUN_WORKSPACE_TOKEN ? "set" : "unset"}`; };
   const said = mcpSaid.length ? mcpSaid.splice(0).join("\n") : /^standing$/m.test(text) ? standing() : /^pwd$/m.test(text) ? `Working in ${process.cwd()}.` : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
   const reply = `${first && resume ? `(resumed ${resume}) ` : ""}${said}`;
   first = false;

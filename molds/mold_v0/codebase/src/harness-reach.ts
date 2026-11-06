@@ -111,7 +111,7 @@ export async function workspaceReach(orgId: number, actor: ReachActor): Promise<
   };
 }
 
-/** The workspace tools a session's policy lets it use without asking (its tools, mcp__workspace__ ones, by their own names). */
+/** The workspace tools a session's policy lets it use without asking (its tools, mcp__app__ ones, by their own names). */
 export const allowedWorkspaceTools = (p: Pick<AgentPolicy, "tools"> | null | undefined): string[] =>
   (p?.tools ?? []).map(workspaceToolOf).filter((x): x is string => !!x);
 

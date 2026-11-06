@@ -107,16 +107,19 @@ export interface AgentPolicy {
   /**
    * What the session reaches of its workspace (mold_v0-250), frozen at its start: the app's own customer MCP server as the
    * person who started it (its tools, each a read or not, and which the setting lets it use without asking: those are in
-   * `tools` as mcp__workspace__<name>), and the workspace's context as standing instructions. Absent on sessions started
+   * `tools` as mcp__app__<name>), and the workspace's context as standing instructions. Absent on sessions started
    * before it (they reach nothing of the workspace).
    */
   workspace?: WorkspaceReach;
 }
 
-/** The MCP server name the harness gets the workspace's tools under: Claude Code calls them mcp__workspace__<tool>. */
-export const WORKSPACE_SERVER = "workspace";
+/**
+ * The MCP server name the harness gets the workspace's tools under: Claude Code calls them mcp__app__<tool>. Not
+ * "workspace": the pinned Claude Code reserves that name and drops a server called so (it says so only in its init event).
+ */
+export const WORKSPACE_SERVER = "app";
 export const workspaceToolName = (tool: string) => `mcp__${WORKSPACE_SERVER}__${tool}`;
-/** The workspace tool a harness tool name is (mcp__workspace__<tool>), or null. */
+/** The workspace tool a harness tool name is (mcp__app__<tool>), or null. */
 export const workspaceToolOf = (name: string): string | null => (name.startsWith(`mcp__${WORKSPACE_SERVER}__`) ? name.slice(`mcp__${WORKSPACE_SERVER}__`.length) || null : null);
 export type WorkspaceToolsFree = "reads" | "reads_and_named" | "all";
 export interface WorkspaceReach {

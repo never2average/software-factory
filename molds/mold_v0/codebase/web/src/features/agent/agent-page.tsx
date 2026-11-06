@@ -80,8 +80,8 @@ const LIVE: Phase[] = ['starting', 'working', 'waiting', 'waking'];
 const usd = (n: number) => `$${n.toFixed(2)}`;
 /** What a workspace tool call wanted to send, as indented JSON when it is JSON. */
 const prettyInput = (s: string) => { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; } };
-/** A workspace tool's own name (mcp__workspace__<tool>), or null. */
-const toolOf = (subject: string) => (subject.startsWith('mcp__workspace__') ? subject.slice('mcp__workspace__'.length) : null);
+/** A workspace tool's own name (mcp__app__<tool>), or null. */
+const toolOf = (subject: string) => (subject.startsWith('mcp__app__') ? subject.slice('mcp__app__'.length) : null);
 const askWords = (r: Request) => r.kind === 'web' ? `Reach ${r.subject}` : r.kind === 'tool' ? `Use ${toolOf(r.subject) ?? r.subject}` : `More budget (at ${r.subject})`;
 
 function PhaseBadge({ s }: { s: Pick<Session, 'phase' | 'pause_requested' | 'stop_requested'> }) {

@@ -59,7 +59,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Process guards | The shell's run user per run already keeps the runner's environment unreadable (`/proc`), and the CLI gets only the gateway token and `RUN_*`; the harness redacts the token from every line it posts |
 | Console | The top bar's last item, after Search, Docs and the theme switcher: one icon button (`aria-label="Workspace agent"`) that opens `/app/agent` (staff: `/admin/agent`). The agent opens as a **full in-page view**: the sessions list in the standard layout (four cards, the search row with Start a session, the table), a row opening the session's full card: the transcript, the composer, approval cards, Pause / Resume / Stop, the budget and Raise budget, and "How this session runs" (what it reaches of the workspace, its limits, its wakes). **One exception to the console's full-card rule, the operator's (mold_v0-249): Start a session opens as a modal dialog** (the first message; the model, shown, set by staff; the budget, the setting's unless the person lowers it, or up to the ceiling for a billing manager or owner; the kind and an optional title; Start), with its focus held inside, Esc closing it and its title naming it; on Start the new session opens as its full card. Nothing else on the page is a dialog. Staff see every workspace's sessions and may pause, stop and raise, never message (a session acts for the person who started it) |
 | Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
-| Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `workspace`: `src/harness-reach.ts`. See "What a session reaches" below |
+| Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `app`: `src/harness-reach.ts`. See "What a session reaches" below |
 | Context (mold_v0-250) | The workspace's context and memory and the server's own instructions, appended to the standing instructions: see below |
 | API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
 
@@ -73,7 +73,7 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
   lists to that person (an in-memory client, as the client skill does): the host packs' and packs' tools, the record
   tools, the memory tools; never the agent's own session tools (an agent does not start or steer sessions). Each wake gets
   one token (`hst_...`, only its sha256 kept, `harness_session_tokens`, migration 0047) and its CLI an MCP config naming
-  the server `workspace` at the API's `/mcp` (the gateway's own address, so the run's egress already allows it), its
+  the server `app` at the API's `/mcp` (not `workspace`: the pinned Claude Code reserves that name and silently drops a server called so) (the gateway's own address, so the run's egress already allows it), its
   `Authorization` a `${RUN_WORKSPACE_TOKEN}` reference to the wake's environment; the runner redacts the token from every
   line it posts. `/mcp` resolves the token on every call: the workspace is the session's (no argument names another),
   the person's membership and role are read again (gone or suspended: refused), and it works only while its wake is the
@@ -82,7 +82,7 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
   when the session ends, and expires with its wake's deadline.
 - **Reads free, writes asked.** A tool is a read when it says so (`readOnlyHint`). The platform setting
   `AGENT_WORKSPACE_TOOLS` ("Workspace tools used without asking": reads (default), reads and the tools named in
-  `AGENT_WORKSPACE_TOOLS_NAMED`, or all) decides which go into the session's allowed tools (`mcp__workspace__<tool>`),
+  `AGENT_WORKSPACE_TOOLS_NAMED`, or all) decides which go into the session's allowed tools (`mcp__app__<tool>`),
   frozen at its start like the other settings. Calling any other is an approval request of kind `tool` (the existing
   `harness_session_requests` flow): the wake stops, the request carries what the call wanted to send, Approve lets that
   session use the tool from now on and wakes it, Decline parks it. The server refuses such a call too (403), so a token
