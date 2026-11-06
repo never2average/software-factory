@@ -524,7 +524,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
 }
 
 /** The laid-out page itself: the header, the notices, the tabs and their sections. */
-function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar, setAsked, canShare }: {
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
   page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
@@ -532,6 +532,8 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   // mold_v0-259 (flag teams): who sees it, in the header, with Share for the people who may change it.
   const visibility = base === 'app' && visibilityOf(area) ? record.visibility ?? null : null;
   const share = visibility ? <ShareButton area={area} recordKey={record.key} visibility={visibility} canShare={canShare} onShared={changed} /> : null;
+  // Share sits beside the declared actions, ahead of them.
+  const bar = share && canShare ? <div className='flex shrink-0 flex-wrap items-start gap-2'>{share}{actionsBar}</div> : actionsBar;
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
@@ -567,7 +569,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
                 </div>
               )}
             </div>
-            {withActions ? (share ? <div className='flex shrink-0 flex-wrap items-start gap-2'>{share}{bar}</div> : bar) : (
+            {withActions ? bar : (
               <div className='flex shrink-0 flex-wrap gap-2'>
                 {share}
                 <Button type='button' variant='outline' size='sm' data-copy-id='' onClick={() => void copyWithToast(record.key, 'Record ID copied')}>
