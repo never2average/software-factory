@@ -14,20 +14,36 @@ type Scalar = string | number | boolean;
 export interface DetailCondition { field: string; equals?: Scalar; in?: Scalar[]; not_in?: Scalar[]; empty?: boolean }
 export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string }
 export interface DetailGroup { title?: string; fields: string[] }
-export interface DetailSection { title: string; columns?: 1 | 2 | 3; fields?: string[]; groups?: DetailGroup[]; empty?: string; related?: DetailRelated; runs?: DetailRuns }
+export interface DetailSection {
+  title: string; columns?: 1 | 2 | 3; fields?: string[]; groups?: DetailGroup[]; empty?: string; related?: DetailRelated; runs?: DetailRuns;
+  /** mold_v0-256: a field's lines in the log viewer. */
+  log?: { field: string; live_when?: DetailCondition };
+  /** mold_v0-256: the record's change history. */
+  history?: { fields?: string[]; limit?: number };
+  /** mold_v0-256: a field as highlighted JSON, YAML or text. */
+  code?: { field: string; language?: 'json' | 'yaml' | 'text' };
+  /** mold_v0-256: a json list field as a table. */
+  table?: { field: string; columns?: string[] };
+  /** mold_v0-256: the record's documents and files as a tree with a preview. */
+  files?: { fields?: string[] };
+}
 /** A related list (mold_v0-254): another area's records that point back here, through `via`. */
 export interface DetailRelated { area: string; via?: string; columns?: string[]; sort?: { field: string; direction?: 'asc' | 'desc' }; limit?: number }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
   kind: PageActionKind; place?: PageActionPlace; label?: string; job_kind?: string; input?: Record<string, string>; to?: string; field?: string;
   roles?: string[]; unavailable?: { when: DetailCondition; reason: string }[]; confirm?: string;
+  /** mold_v0-256: a create_record action's area. */
+  area?: string;
 }
 export interface DetailTab { label: string; sections: DetailSection[] }
-export interface DetailFact { field: string; label?: string; unit?: string }
+/** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
+export interface DetailComputed { area: string; via?: string; op: 'count' | 'latest'; field?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; where?: DetailCondition }
+export interface DetailFact { field?: string; label?: string; unit?: string; computed?: DetailComputed }
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
 /** An area's page layout as the build passes it on (pack.json record_areas[].detail). */
 export interface DetailLayout {
@@ -81,8 +97,10 @@ export function unplacedFields(area: RecordAreaSpec, layout: DetailLayout): Reco
   if (layout.unplaced === 'hide') return [];
   const h = layout.header ?? {};
   const placed = new Set([h.title, h.subtitle, ...(h.badges ?? []).map((b) => b.field), ...(h.facts ?? []).map((f) => f.field),
-    ...layout.tabs.flatMap((t) => t.sections.flatMap(sectionFields))].filter(Boolean) as string[]);
-  return area.fields.filter((f) => !placed.has(f.name));
+    ...layout.tabs.flatMap((t) => t.sections.flatMap((s) => [...sectionFields(s), s.log?.field, s.code?.field, s.table?.field, ...(s.files?.fields ?? [])]))].filter(Boolean) as string[]);
+  // mold_v0-256: a file browser with no fields of its own lists every file and document field.
+  const allFiles = layout.tabs.some((t) => t.sections.some((s) => s.files && !s.files.fields?.length));
+  return area.fields.filter((f) => !placed.has(f.name) && !(allFiles && (f.type === 'file' || f.preview === 'document')));
 }
 
 // ---------------------------------------------------------------- values
@@ -124,10 +142,28 @@ export function dateWords(v: unknown, now = Date.now()): { relative: string; abs
   return { relative, absolute, iso: dayOnly ? (v as string) : d.toISOString() };
 }
 
-/** A number with its unit: grouped digits, a unit after a space ("%" and "×" close up). */
+/** The units of time a number may carry (mold_v0-256): such a number reads as a duration ("21m 52s"), not a count. */
+const TIME_UNITS: Record<string, number> = { ms: 0.001, s: 1, sec: 1, secs: 1, second: 1, seconds: 1, min: 60, mins: 60, minute: 60, minutes: 60, h: 3600, hr: 3600, hrs: 3600, hour: 3600, hours: 3600 };
+/** Whether a unit is one of time (its number reads as a duration). */
+export const isTimeUnit = (unit?: string) => !!unit && unit.trim().toLowerCase() in TIME_UNITS;
+/** A duration in seconds in words: "45s", "21m 52s", "3h 4m", "2d 5h" (under a second: "0.4s"). */
+export function durationWords(seconds: number): string {
+  const s = Math.abs(seconds), sign = seconds < 0 ? '-' : '';
+  if (s < 1) return `${sign}${Math.round(s * 10) / 10}s`;
+  const t = Math.round(s);
+  if (t < 60) return `${sign}${t}s`;
+  if (t < 3600) return `${sign}${Math.floor(t / 60)}m ${t % 60}s`;
+  if (t < 86400) return `${sign}${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m`;
+  return `${sign}${Math.floor(t / 86400)}d ${Math.floor((t % 86400) / 3600)}h`;
+}
+/**
+ * A number with its unit: grouped digits, a unit after a space ("%" and "×" close up); a unit of time (s, min, h, ms)
+ * as a duration in words (mold_v0-256: "21m 52s", never 1312).
+ */
 export function numberWords(v: unknown, unit?: string): string {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   if (!Number.isFinite(n)) return v == null ? '' : String(v);
+  if (unit && isTimeUnit(unit)) return durationWords(n * TIME_UNITS[unit.trim().toLowerCase()]!);
   const text = n.toLocaleString('en', { maximumFractionDigits: 2 });
   if (!unit) return text;
   return /^[%×‰°]/.test(unit) ? `${text}${unit}` : `${text} ${unit}`;
@@ -189,6 +225,8 @@ export interface PageAction {
   moves?: { to: string; label: string; disabled: string | null }[];
   fields?: PageFormField[];
   target?: { area: string; key: string } | null;
+  /** create_record (mold_v0-256): the area, its fields filled from this record, its form (on the record's own page). */
+  create?: { area: string; label: string; values: Record<string, unknown>; fields?: PageFormField[]; upload_max?: number | null; key_from_title?: boolean };
 }
 /** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
 export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;
@@ -196,7 +234,9 @@ export type RelatedData = { hidden: true } | { hidden?: false; area: string; via
 /** A record's runs: the newest, and how many in all. */
 export interface RecordRun { id: string; pack: string; kind: string; status: string; error: string | null; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string }
 export type RunsData = { total: number; runs: RecordRun[] };
-export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | undefined> }
+export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | HistoryData | undefined>;
+  /** mold_v0-256: the header's computed facts, by their place among the facts. */
+  facts?: Record<string, ComputedFact> }
 
 /** A section's key in the page's data: its tab's and its own place. */
 export const sectionKey = (tab: number, section: number) => `${tab}-${section}`;
@@ -226,9 +266,58 @@ export function parseLinked(v: string | null | undefined, area: Pick<RecordAreaS
 
 /** A run's state as a badge's colour (the console's status tones). */
 export const RUN_STATUS_COLOR: Record<string, BadgeColor> = { queued: 'neutral', running: 'info', succeeded: 'success', failed: 'danger', cancelled: 'warning' };
-/** The words of a list of runs' count: "1 run", "12 runs", the latest shown of them when not all are. */
-export const runsCountWords = (shown: number, total: number) => (total <= shown ? `${total} ${total === 1 ? 'run' : 'runs'}` : `Latest ${shown} of ${total} runs`);
-/** A related list's count words: "3 builds", or "Newest 5" when there are more. */
-export const relatedCountWords = (n: number, more: boolean, label: string) => (more ? `First ${n} shown` : `${n} ${n === 1 ? singularOf(label).toLowerCase() : label.toLowerCase()}`);
-const singularOf = (label: string) =>
-  /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');
+
+/**
+ * A number column's unit in a related list (mold_v0-256): the unit its own area's page gives the field (a fact's unit),
+ * so a duration in seconds reads "21m 52s" and a coverage "87.4%", as on that record's page.
+ */
+export const columnUnit = (target: RecordAreaSpec, field: string) => ((target as LaidOutArea).detail?.header?.facts ?? []).find((f) => f.field === field)?.unit;
+
+/**
+ * A link's address cut where it may wrap (mold_v0-256): after each "/" (and "?", "&", "="), never inside a word. Each
+ * piece is drawn whole, a piece longer than its box truncated with the whole address on hover.
+ */
+export function linkPieces(address: string): string[] {
+  const out: string[] = [];
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)?(.*)$/i.exec(address)!;
+  let rest = m[2] ?? '';
+  let first = m[1] ?? '';
+  for (const piece of rest.split(/(?<=[/?&=])/)) { out.push(first + piece); first = ''; }
+  if (first) out.push(first);
+  return out.filter(Boolean);
+}
+
+// ---------------------------------------------------------------- part 3 (mold_v0-256): logs, history, code, files, computed facts
+
+/** Whether a layout reads a section kind that needs the page's own route (history, computed facts). */
+export const readsHistory = (layout: DetailLayout) => layout.tabs.some((t) => t.sections.some((s) => !!s.history));
+export const readsComputed = (layout: DetailLayout) => (layout.header?.facts ?? []).some((f) => !!f.computed);
+/** A computed fact's value as the server answers it: a count, the latest record's value (and that record), or hidden. */
+export type ComputedFact = { hidden: true } | { hidden?: false; op: 'count'; value: number; capped: boolean; area: string; via?: string }
+  | { hidden?: false; op: 'latest'; value: unknown; area: string; field: string; record: { key: string; title: string | null } | null };
+/** One field's change: before and after (an encrypted field: neither, only that it changed). */
+export interface FieldChange { field: string; label?: string; before?: unknown; after?: unknown; redacted?: boolean }
+/** One change of a record (src/record-history.ts): what, who, when, each field's before and after. */
+export interface RecordChangeView { id: number; at: string; action: 'created' | 'updated' | 'moved' | 'deleted'; by: string; title: { before: string | null; after: string | null } | null; changes: FieldChange[] }
+export type HistoryData = { changes: RecordChangeView[]; more: boolean; since: string | null };
+/** A computed fact's value in words: a count grouped ("1,000+" when it stopped counting), a latest value as its field reads. */
+export const countWords = (n: number, capped: boolean, unit?: string) => `${n.toLocaleString('en')}${capped ? '+' : ''}${unit ? ` ${unit}` : ''}`;
+/** The words of a change's action. */
+export const CHANGE_WORDS: Record<RecordChangeView['action'], string> = { created: 'Added', updated: 'Changed', moved: 'Moved', deleted: 'Deleted' };
+/** Whether a log section follows its record (reads it again every few seconds) now: its live_when holds. */
+export const logLive = (s: DetailSection, data: Record<string, unknown>) => !!s.log?.live_when && conditionHolds(s.log.live_when, data);
+/** How often a live log section reads its record again. */
+export const LOG_POLL_MS = 4000;
+
+/**
+ * Where a create_record action (mold_v0-256) opens away from its record's page (a row's menu, an open row): that area's
+ * list with its Add form open and the fields filled in (?new=1&<field>=<value>; a list field's values comma-separated).
+ */
+export function createHref(a: Pick<PageAction, 'create'>): string | null {
+  if (!a.create) return null;
+  const q = new URLSearchParams({ new: '1' });
+  for (const [k, v] of Object.entries(a.create.values)) q.set(k, Array.isArray(v) ? v.join(',') : String(v));
+  return `/app/records/${encodeURIComponent(a.create.area)}?${q.toString()}`;
+}
+/** Whether a layout declares Add <related record> actions (the list's open row offers them: ./row-create.tsx). */
+export const declaresCreate = (layout: DetailLayout | null) => (layout?.actions ?? []).some((a) => a.kind === 'create_record');

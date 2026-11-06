@@ -17,6 +17,9 @@
 // `action`, the server's /api/tab-actions/_areas/<area>). mold_v0-238: a create form uploads its file fields' files
 // (FileUploads: each file's progress, then Uploaded) before it writes the record, and takes a url field as an address.
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { featureOn } from '@/config/features';
+import { ConfirmDialog } from '@/features/admin/ui';
 import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
 import Link from 'next/link';
@@ -33,6 +36,8 @@ import type { PackTabSpec, RecordAreaSpec } from '@/config/pack-nav.generated';
 import { fail, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { fill } from '@/lib/vocabulary';
+import { cn } from '@/lib/utils';
+import { keyFromTitle, prefill } from './form-prefill';
 
 /** A field as the server's form spec gives it (src/tab-actions.ts FormField). */
 export interface FormField {
@@ -45,7 +50,7 @@ interface StartKind { name: string; label: string; description: string | null; a
 type ActionSpec =
   | { kind: 'start_run'; label: string | null; allowed: boolean; kinds: StartKind[] }
   | { kind: 'new_schedule'; label: string | null; allowed: boolean; job_kind: string | null }
-  | { kind: 'create_record'; label: string | null; allowed: boolean; area: { name: string; label: string; fields: FormField[] } | null;
+  | { kind: 'create_record'; label: string | null; allowed: boolean; area: { name: string; label: string; fields: FormField[]; key_from_title?: boolean } | null;
       /** The most bytes a file of its file fields may have when the form uploads them (mold_v0-238); null: no upload. */
       upload_max?: number | null };
 
@@ -107,7 +112,102 @@ export function useActionOpen(name: 'start' | 'new' | 'import'): [boolean, (open
   }];
 }
 
-const CardCtx = createContext<{ title: string; description?: string; cancel: () => void; back?: string } | null>(null);
+const CardCtx = createContext<{ title: string; description?: string; cancel: () => void; back?: string; panel?: { expand: () => void } | null } | null>(null);
+
+// ---------- the side panel (mold_v0-256, flag side_panel_forms) ----------
+
+/** Where the open form is: the FormHost around a list or a page says whether its card opens in the side panel. */
+const PanelCtx = createContext<{ inPanel: boolean; expand: () => void } | null>(null);
+
+/**
+ * The place of a create or edit form (mold_v0-256): `card` (the open ActionCard, or null) and what it stands in for
+ * (`children`: a list, a record's page). With the flag side_panel_forms on and `panel` (a create or edit form), the card
+ * opens first in a panel at the right, the list or page staying in view beneath; its Open full page expands the same card,
+ * its typed values kept (the form stays mounted in the same place), to the full in-page card in the list's place. Off,
+ * or for any other form, the card is the full in-page card it always was.
+ */
+export function FormHost({ card, panel = false, children }: { card: ReactNode; panel?: boolean; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const open = !!card;
+  useEffect(() => { if (!open) setExpanded(false); }, [open]);
+  const inPanel = open && panel && featureOn('side_panel_forms') && !expanded;
+  return (
+    <PanelCtx.Provider value={{ inPanel, expand: () => setExpanded(true) }}>
+      {card}
+      {!open || inPanel ? children : null}
+    </PanelCtx.Provider>
+  );
+}
+
+/** The tabbable elements inside `root`, in order (the panel's focus trap). */
+const tabbables = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  .filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' && el.offsetParent !== null);
+
+/**
+ * The form in the side panel: a dialog at the right (the full screen on a phone, 640 px or narrower) over a dimmed page;
+ * its title, what will happen, Open full page and Close, the fields (scrolling), then the submit and Cancel. Focus moves
+ * to its title, stays inside it (Tab and Shift+Tab wrap) and returns where it was when it closes; Esc, Close, Cancel or a
+ * click on the dimmed page close it, asking first when something was typed.
+ */
+function SidePanelForm({ c, form, onSubmit, submit, children }: {
+  c: NonNullable<React.ContextType<typeof CardCtx>>; form: React.RefObject<HTMLFormElement | null>; onSubmit: () => unknown; submit: ReactNode; children: ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  const [dirty, setDirty] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    const before = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = overflow; if (before && document.contains(before)) before.focus(); };
+  }, []);
+  useEffect(() => { if (mounted) title.current?.focus(); }, [mounted]);
+  const close = () => (dirty ? setAsking(true) : c.cancel());
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape' && !asking) { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key !== 'Tab' || !box.current) return;
+    const els = tabbables(box.current);
+    if (!els.length) return;
+    const first = els[0]!, last = els[els.length - 1]!;
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === title.current)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  if (!mounted) return null;
+  return createPortal(
+    <div className='fixed inset-0 z-50' data-side-panel-root=''>
+      <div aria-hidden className='bg-foreground/25 dark:bg-background/70 absolute inset-0 backdrop-blur-[1px]' onClick={close} data-side-panel-backdrop='' />
+      <div ref={box} role='dialog' aria-modal='true' aria-labelledby='side-panel-title' onKeyDown={onKey} data-side-panel=''
+        className='bg-background absolute inset-y-0 right-0 flex w-full flex-col shadow-2xl min-[641px]:w-[min(42rem,calc(100vw-3rem))] min-[641px]:border-l'>
+        <form ref={form} className='flex min-h-0 flex-1 flex-col' onSubmit={(e) => { e.preventDefault(); void onSubmit(); }}
+          onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
+          <div className='flex items-start gap-3 border-b px-5 py-4'>
+            <div className='flex min-w-0 flex-1 flex-col gap-1'>
+              <h2 id='side-panel-title' ref={title} tabIndex={-1} className='text-lg leading-snug font-semibold break-words outline-none'>{c.title}</h2>
+              {c.description && <p className='text-muted-foreground text-sm'>{c.description}</p>}
+            </div>
+            <div className='flex shrink-0 items-center gap-2'>
+              <Button type='button' variant='outline' size='sm' onClick={() => c.panel?.expand()} data-panel-expand='' title='Open the form as a full page'>
+                <Icons.maximize aria-hidden data-icon='inline-start' />Open full page
+              </Button>
+              <Button type='button' variant='outline' size='icon-sm' onClick={close} aria-label='Close' title='Close' data-panel-close=''><Icons.close aria-hidden /></Button>
+            </div>
+          </div>
+          <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5' data-side-panel-body=''>{children}</div>
+          <div data-card-footer='' className='bg-background flex flex-wrap gap-2 border-t px-5 py-4'>
+            {submit}
+            <Button type='button' variant='outline' onClick={close}>Cancel</Button>
+          </div>
+        </form>
+      </div>
+      <ConfirmDialog open={asking} onOpenChange={setAsking} title='Discard your changes?' destructive confirmLabel='Discard'
+        description='What you typed in this form is not saved. Close it anyway?' onConfirm={() => c.cancel()} />
+    </div>,
+    document.body
+  );
+}
 
 /**
  * An action's form as a full card in the list's place (mold_v0-217; the record details card's style): drawn while
@@ -118,8 +218,10 @@ export function ActionCard({ open, onOpenChange, title, description, back, child
   /** The way back's words (default "Back to the list"; mold_v0-254, a record page's form: "Back to the record"). */
   back?: string; children: ReactNode;
 }) {
+  const place = useContext(PanelCtx);
   if (!open) return null;
-  return <CardCtx.Provider value={{ title, description, cancel: () => onOpenChange(false), back }}>{children}</CardCtx.Provider>;
+  // mold_v0-256: inside a FormHost whose card opens in the side panel, CardForm draws the panel (place.inPanel).
+  return <CardCtx.Provider value={{ title, description, cancel: () => onOpenChange(false), back, panel: place?.inPanel ? { expand: place.expand } : null }}>{children}</CardCtx.Provider>;
 }
 
 /**
@@ -129,8 +231,12 @@ export function ActionCard({ open, onOpenChange, title, description, back, child
 export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unknown; submit: ReactNode; children: ReactNode }) {
   const c = useContext(CardCtx);
   const title = useRef<HTMLDivElement>(null);
-  useEffect(() => { title.current?.focus(); }, []);
+  const form = useRef<HTMLFormElement>(null);
+  const inPanel = !!c?.panel;
+  // Focus to the title when it opens, and again when the panel's form opens as the full card (mold_v0-256).
+  useEffect(() => { if (!inPanel) title.current?.focus(); }, [inPanel]);
   const cancel = () => c?.cancel();
+  if (c && inPanel) return <SidePanelForm c={c} form={form} onSubmit={onSubmit} submit={submit}>{children}</SidePanelForm>;
   return (
     <Card className='w-full max-w-4xl gap-0 py-0' data-action-card=''>
       <form className='flex flex-col' onSubmit={(e) => { e.preventDefault(); void onSubmit(); }}
@@ -159,7 +265,7 @@ export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unkno
  * its card (start_run, create_record) for the list's place. `onDone` reloads the list after a run started or a record
  * was added. Called on every render of the list (a hook), with null when the tab has no action.
  */
-export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode; panel: boolean } {
   return useListAction(tab?.action ?? null, tab ? `/api/tab-actions/${encodeURIComponent(tab.pack)}/${encodeURIComponent(tab.id)}` : null, tab, onDone);
 }
 
@@ -168,18 +274,18 @@ export function useTabAction(tab: TabRef | null, onDone?: () => unknown): { butt
  * build resolved into the registry (RecordAreaSpec `action`: Add <its singular>, a new record) and the server says who
  * may use (/api/tab-actions/_areas/<area>). Null, or an area with none (its `no_action` says why): no button.
  */
-export function useAreaAction(area: Pick<RecordAreaSpec, 'name' | 'action'> | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+export function useAreaAction(area: Pick<RecordAreaSpec, 'name' | 'action'> | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode; panel: boolean } {
   return useListAction(area?.action ?? null, area?.action ? `/api/tab-actions/_areas/${encodeURIComponent(area.name)}` : null, null, onDone);
 }
 
-function useListAction(a: NonNullable<PackTabSpec['action']> | null, specUrl: string | null, tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode } {
+function useListAction(a: NonNullable<PackTabSpec['action']> | null, specUrl: string | null, tab: TabRef | null, onDone?: () => unknown): { button: ReactNode; card: ReactNode; panel: boolean } {
   const { data } = useOrgLoad(() => (specUrl && a && a.kind !== 'new_schedule' && a.kind !== 'link'
     ? send<ActionSpec>('GET', specUrl).catch(() => null)
     : Promise.resolve(null)), [specUrl]);
   const [open, setOpen] = useActionOpen(a?.kind === 'start_run' ? 'start' : 'new');
-  if (!specUrl || !a) return { button: null, card: null };
-  if (a.kind === 'link') return { button: <LinkAction action={a} />, card: null };
-  if (!data || !data.allowed) return { button: null, card: null };
+  if (!specUrl || !a) return { button: null, card: null, panel: false };
+  if (a.kind === 'link') return { button: <LinkAction action={a} />, card: null, panel: false };
+  if (!data || !data.allowed) return { button: null, card: null, panel: false };
   const label = actionLabel(a);
   const done = () => { setOpen(false); void onDone?.(); };
   return {
@@ -190,13 +296,97 @@ function useListAction(a: NonNullable<PackTabSpec['action']> | null, specUrl: st
         description={data.kind === 'start_run' ? fill('The {run} is queued and runs on its own; it shows in the list at once.')
           : data.kind === 'create_record' && data.area ? `A new record in ${data.area.label}, added to the list at once.` : undefined}>
         {data.kind === 'start_run' && tab ? <StartRunForm tab={tab} kinds={data.kinds} onDone={done} />
-          : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} uploadMax={data.upload_max ?? null} /> : null}
+          : data.kind === 'create_record' && data.area ? <CreateRecordForm area={data.area} onDone={done} uploadMax={data.upload_max ?? null} initial={prefill(data.area.fields)} /> : null}
       </ActionCard>
-    )
+    ),
+    // mold_v0-256: a new record's form opens in the side panel (flag side_panel_forms; FormHost decides).
+    panel: data.kind === 'create_record'
   };
 }
 
 // ---------- the forms ----------
+
+/** A record the picker offers: its key and title. */
+type PickItem = { key: string; title: string | null };
+/**
+ * A reference field's input (mold_v0-256, flag record_pages): a searchable list of the target area's records (its title
+ * and key; GET /api/records/_page/_pick/<area>?q=, read as the person, the workspace's own), in place of a box for a
+ * record key. Arrow keys move, Enter picks, Esc closes the list; a list field gathers its picks as removable chips. When
+ * the list cannot be read (another build, a role that may not read the area) what is typed is the key, as before.
+ */
+function RecordPicker({ id, f, value, set }: { id: string; f: FormField; value: unknown; set: (v: unknown) => void }) {
+  const multiple = f.multiple;
+  const keys = multiple ? (Array.isArray(value) ? (value as string[]) : keysOf(String(value ?? ''))) : [];
+  const [q, setQ] = useState(multiple ? '' : String(value ?? ''));
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [items, setItems] = useState<PickItem[] | null>(null);
+  const [titles, setTitles] = useState<Record<string, string | null>>({});
+  const [off, setOff] = useState(false);
+  const [typed, setTyped] = useState(false);
+  const list = `${id}-list`;
+  // Open: the records matching what was typed (all, newest first, before anything is typed). Closed: the chosen record's
+  // title, once (a value filled in from the address shows its record's name).
+  const asked = open ? (typed ? q : '') : !multiple && value && !(String(value) in titles) ? String(value) : null;
+  useEffect(() => {
+    if (off || !f.to || asked === null) return;
+    let live = true;
+    const t = setTimeout(() => {
+      send<{ records: PickItem[] }>('GET', `/api/records/_page/_pick/${encodeURIComponent(f.to!)}?q=${encodeURIComponent(asked)}`)
+        .then((r) => { if (!live) return; setItems(r.records); setActive(0); setTitles((m) => ({ ...m, ...Object.fromEntries(r.records.map((x) => [x.key, x.title])) })); })
+        .catch(() => { if (live) setOff(true); });
+    }, open ? 180 : 0);
+    return () => { live = false; clearTimeout(t); };
+  }, [asked, off, f.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = (items ?? []).filter((x) => !keys.includes(x.key));
+  const choose = (x: PickItem) => {
+    if (multiple) { set([...keys, x.key]); setQ(''); } else { set(x.key); setQ(x.key); setOpen(false); }
+    setTyped(false);
+    setTitles((m) => ({ ...m, [x.key]: x.title }));
+  };
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (off) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((i) => Math.min(i + 1, Math.max(0, shown.length - 1))); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); }
+    else if (e.key === 'Enter' && open && shown[active]) { e.preventDefault(); choose(shown[active]!); }
+    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+    else if (e.key === 'Backspace' && multiple && !q && keys.length) set(keys.slice(0, -1));
+  };
+  const chosen = !multiple && value ? titles[String(value)] : null;
+  return (
+    <div className='relative flex flex-col gap-1.5' data-record-picker={f.to ?? ''}>
+      {multiple && keys.length > 0 && (
+        <ul className='flex flex-wrap gap-1.5' aria-label={`${f.label}: chosen`}>
+          {keys.map((k) => (
+            <li key={k} className='bg-muted/60 flex items-center gap-1 rounded-md border py-0.5 pr-0.5 pl-2 text-xs' data-picked={k}>
+              <span className='max-w-56 truncate' title={k}>{titles[k] ?? k}</span>
+              <Button type='button' variant='ghost' size='icon-xs' aria-label={`Remove ${titles[k] ?? k}`} onClick={() => set(keys.filter((x) => x !== k))}><Icons.close aria-hidden /></Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Input id={id} value={q} autoComplete='off' role={off ? undefined : 'combobox'} aria-expanded={off ? undefined : open} aria-controls={off ? undefined : list}
+        aria-autocomplete={off ? undefined : 'list'} aria-activedescendant={open && shown[active] ? `${list}-${active}` : undefined}
+        placeholder={off ? (multiple ? 'record keys, comma-separated' : 'a record key') : `Search ${f.label.toLowerCase()} by name or key`}
+        onFocus={() => !off && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onKeyDown={onKey}
+        onChange={(e) => { setQ(e.target.value); setTyped(true); setOpen(true); if (!multiple) set(e.target.value); else if (off) set(keysOf(e.target.value)); }} />
+      {chosen && <p className='text-muted-foreground text-xs' data-picked-title=''>{chosen}</p>}
+      {open && !off && items && (
+        <ul id={list} role='listbox' aria-label={f.label} data-picker-list=''
+          className='bg-popover text-popover-foreground absolute top-full z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border p-1 shadow-md'>
+          {shown.length ? shown.map((x, i) => (
+            <li key={x.key} id={`${list}-${i}`} role='option' aria-selected={i === active} data-pick={x.key}
+              onMouseDown={(e) => e.preventDefault()} onClick={() => choose(x)} onMouseEnter={() => setActive(i)}
+              className={cn('flex cursor-pointer flex-col rounded-md px-2 py-1.5 text-sm', i === active && 'bg-accent text-accent-foreground')}>
+              <span className='truncate font-medium'>{x.title || x.key}</span>
+              {x.title && <span className='text-muted-foreground truncate font-mono text-xs'>{x.key}</span>}
+            </li>
+          )) : <li className='text-muted-foreground px-2 py-1.5 text-sm' role='presentation'>No {f.label.toLowerCase()} matches “{q}”.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const keysOf = (text: string) => text.split(/[\s,]+/).map((k) => k.trim()).filter(Boolean);
 
@@ -269,6 +459,8 @@ export function FieldsForm({ fields, values, set, idPrefix }: {
               <NativeSelectOption value=''>{f.required ? 'Choose one' : 'None'}</NativeSelectOption>
               {f.options.map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
             </NativeSelect>
+          ) : (f.type === 'reference' || (f.type === 'link' && f.to)) && f.to && featureOn('record_pages') ? (
+            <RecordPicker id={id} f={f} value={v} set={(x) => set(f.name, x)} />
           ) : f.type === 'json' || (f.type === 'text' && (f.max_length === null || f.max_length > 200)) ? (
             <Textarea id={id} rows={f.type === 'json' ? 5 : 3} className={f.type === 'json' ? 'font-mono text-xs' : undefined} value={String(v ?? '')}
               maxLength={f.max_length ?? undefined} onChange={(e) => set(f.name, e.target.value)} required={f.required} placeholder={f.type === 'json' ? '{ }' : undefined} />
@@ -475,13 +667,17 @@ export function FileUploads({ field, items, setItems, max, disabled, id }: {
  * earlier key is uploaded again), then the record is written with their references. A refused write keeps them for the
  * next try; Cancel, or a file removed, discards the ones kept but never written.
  */
-export function CreateRecordForm({ area, onDone, post, uploadMax = null }: {
-  area: { name: string; label: string; fields: FormField[] }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
+export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial }: {
+  area: { name: string; label: string; fields: FormField[]; key_from_title?: boolean }; onDone: () => void; post?: (body: { key: string; title?: string; data: Record<string, unknown> }) => Promise<unknown>;
   uploadMax?: number | null;
+  /** mold_v0-256: fields filled in (an Add <related record> action: the reference to the record it was taken on). */
+  initial?: Record<string, unknown>;
 }) {
   const [key, setKey] = useState('');
   const [title, setTitle] = useState('');
-  const [values, setValues] = useState<Record<string, unknown>>({});
+  // mold_v0-256: an area with key_from_title fills the Key from the Title until the person types a key of their own.
+  const [keyTyped, setKeyTyped] = useState(false);
+  const [values, setValues] = useState<Record<string, unknown>>(() => ({ ...(initial ?? {}) }));
   const [busy, setBusy] = useState(false);
   const [uploads, setUploads] = useState<Record<string, UploadItem[]>>({});
   const fileFields = uploadMax ? area.fields.filter((f) => f.type === 'file') : [];
@@ -540,11 +736,12 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null }: {
     <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy || !key.trim()}><Icons.add /> {uploading ? 'Uploading…' : busy ? 'Adding…' : 'Add'}</Button>}>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='action-key'>Key<span className='text-destructive' aria-hidden> *</span></Label>
-        <Input id='action-key' value={key} onChange={(e) => setKey(e.target.value)} required placeholder='a short id, unique in this list' />
+        <Input id='action-key' value={key} onChange={(e) => { setKey(e.target.value); setKeyTyped(e.target.value !== ''); }} required placeholder='a short id, unique in this list' />
+        {area.key_from_title && !keyTyped && <p className='text-muted-foreground text-xs' data-key-from-title=''>Filled from the title as you type it; change it to set your own.</p>}
       </div>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='action-title'>Title</Label>
-        <Input id='action-title' value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Input id='action-title' value={title} onChange={(e) => { setTitle(e.target.value); if (area.key_from_title && !keyTyped) setKey(keyFromTitle(e.target.value)); }} />
       </div>
       <FieldsForm fields={plain} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='action-field' />
       {fileFields.map((f) => (

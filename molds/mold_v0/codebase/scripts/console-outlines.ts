@@ -39,6 +39,7 @@ export const ALLOW: [string, string, string][] = [
   ["components/ui/table/data-table-filter-clear.tsx", "role='button'", "the clear mark inside a filter's trigger, which is the shared outlined Button (a button inside a button is invalid HTML)"],
   ["components/ui/calendar.tsx", "data-day=", "a date picker's day cells: a grid of dates (the grid is the control, framed by its popover); its month arrows are outlined Buttons"],
   ["components/ui/infobar.tsx", "data-infobar='rail'", "the info panel's edge, a pointer-only handle out of the tab order, like the sidebar's rail"],
+  ["features/tabs/tab-action.tsx", "data-side-panel-backdrop=''", "the dimmed page behind a form's side panel (mold_v0-256): a click outside the panel closes it (pointer only, aria-hidden); Esc and the panel's outlined Close and Cancel buttons are its controls"],
 ];
 
 /** Roles that are not a button to a person: each has its own look (tabs, switches, boxes, menu items). */

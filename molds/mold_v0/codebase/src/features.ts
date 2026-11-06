@@ -27,7 +27,7 @@ export type { FeatureId, FeatureSettings, FeatureSpec } from "./feature-flags.js
 // ---------------------------------------------------------------- what asks for each
 
 type Def = ReturnType<typeof packs>[number]["definition"];
-const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; detail?: unknown; fields?: { encrypted?: boolean; type?: string; preview?: string; copyable?: boolean }[] }[];
+const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; detail?: unknown; key_from_title?: boolean; fields?: { encrypted?: boolean; type?: string; preview?: string; copyable?: boolean }[] }[];
 const kindsOf = (d: Def) => [...(d.jobKinds ?? []), ...(d.agentJobKinds ?? [])] as { private_network?: boolean }[];
 
 /** Whether something in this build asks for the capability (the pack signal), whatever its flag says. */
@@ -45,7 +45,9 @@ export function featureRequested(id: FeatureId): boolean {
     case "encrypted": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.encrypted === true)));
     case "no_engine": return !sessionEngine();
     case "documents": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.type === "file" || f.preview === "document")));
-    case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || (a.fields ?? []).some((f) => f.copyable === true)));
+    // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
+    case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true))
+      || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
   }
 }
 

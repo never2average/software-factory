@@ -15,6 +15,12 @@
 //      the builds.
 //   6. The server's install refuses what gen-packs refuses (a related list whose area has no link back here, an action
 //      naming a job kind or a transition that does not exist, two primary actions).
+//   7. mold_v0-256: a record's change history (who, when, each field before and after; an encrypted field redacted, in the
+//      answer and the table; none for an area without a history section, none written off or for a write that changes
+//      nothing; never another workspace's).
+//   8. Facts computed from related records, as the person reading (hidden from a role that may not read their area).
+//   9. Add <related record> (create_record), the record picker, a tab's columns computed from related records, a Key from
+//      a Title: each as the person may, the workspace's own only; off, none of them.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -61,6 +67,8 @@ try {
       for (const to of path_) await rec.move("builds", key, to);
     }
   };
+  // mold_v0-256: the flag on while seeding, so the seeded builds' changes are in their history.
+  F.setFeaturesForTest({ record_pages: true });
   await seed(a, [
     ["build-01", "checkout", "2026-10-01", ["running", "failed"]], ["build-02", "checkout", "2026-10-02", ["running", "passed"]],
     ["build-03", "checkout", "2026-10-03", ["running", "passed"]], ["build-04", "checkout", "2026-10-04", []], ["build-05", "checkout", "2026-10-05", ["running", "failed"]],
@@ -207,6 +215,116 @@ try {
     refuse((j) => { buildsOf(j).detail.actions[1].place = "primary"; }, /2 actions are primary/, "two primary actions");
     install(FIXTURE);
     ok("the server's install refuses what gen-packs refuses: a related list whose area has no link back, an action naming a job kind or a transition that does not exist, two primary actions");
+  }
+  // ---------- 7. a record's change history (mold_v0-256) ----------
+  {
+    const hist = async (tok: string, area: string, key: string, sec: string) => (await page(tok, area, key, "history")).body.sections[sec];
+    const hb = await hist(member, "builds", "build-02", "4-0");
+    assert.deepEqual(hb.changes.map((c: any) => c.action), ["updated", "moved", "moved", "created"], "build-02's changes, newest first: the edit, its two moves, its creation");
+    const edit = hb.changes[0];
+    assert.equal(edit.by, "You", "the edit: by you (the member reading)");
+    assert.deepEqual(edit.title, { before: "Build 02", after: "Build 02 (renamed)" }, "its title before and after");
+    assert.deepEqual(edit.changes.find((c: any) => c.field === "summary"), { field: "summary", before: null, after: "Rebuilt after the cache fix" }, "a field before and after");
+    assert.deepEqual(hb.changes[1].changes, [{ field: "status", before: "running", after: "passed" }], "a move: the state before and after");
+    assert.equal(hb.changes[3].by, "The app's own automation", "the seed's run");
+    assert.notEqual((await hist(owner, "builds", "build-02", "4-0")).changes[0].by, "You", "someone else sees who changed it");
+    assert.equal((await hist(viewer, "builds", "build-02", "4-0")).changes.length, 4, "a viewer reads it (the area's read)");
+    assert.equal((await page(ownerB, "builds", "build-02", "history")).status, 404, "another workspace: not found");
+    const older = await get(member, `/api/records/_page/builds/build-02/history?section=4-0&before=${hb.changes[1].id}`);
+    assert.deepEqual(older.body.changes.map((c: any) => c.action), ["moved", "created"], "Show older: the lines before one");
+    assert.equal((await get(member, "/api/records/_page/builds/build-02/history?section=0-0")).status, 400, "a section that is not a history");
+    // An encrypted field: that it changed, never a value, in the answer or the table.
+    const SECRET = "s3cret-signing-value", SECRET2 = "an0ther-signing-value";
+    const made = await post(owner, "/api/data/releases", { key: "rel-4-13", title: "Release 4.13", data: { project: "checkout", version: "4.13.0", stage: "draft", signing_secret: SECRET, changelog: "Fixes:\n- refunds\n- receipts" } });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    const upd = await http.req("PUT", "/api/data/releases/rel-4-13", h(owner), { title: "Release 4.13", data: { project: "checkout", version: "4.13.0", stage: "candidate", signing_secret: SECRET2, changelog: "Fixes:\n- refunds\n- receipts\n- search ranking" } });
+    assert.equal(upd.status, 200, await upd.text());
+    const rel = await page(owner, "releases", "rel-4-13", "history");
+    const raw = JSON.stringify(rel.body);
+    const latest = rel.body.sections["1-0"].changes[0];
+    assert.deepEqual(latest.changes.find((c: any) => c.field === "signing_secret"), { field: "signing_secret", redacted: true }, "the encrypted field: redacted");
+    assert.deepEqual(latest.changes.find((c: any) => c.field === "changelog"), { field: "changelog", before: "Fixes:\n- refunds\n- receipts", after: "Fixes:\n- refunds\n- receipts\n- search ranking" }, "a long text: before and after whole (the page diffs it)");
+    assert.ok(!raw.includes(SECRET) && !raw.includes(SECRET2), "no value of it anywhere in the answer");
+    const stored = await db.query<{ changes: unknown }>("SELECT changes FROM record_changes WHERE area = 'releases'");
+    assert.ok(stored.length === 2 && !JSON.stringify(stored).includes(SECRET) && !JSON.stringify(stored).includes(SECRET2) && !JSON.stringify(stored).includes("sealed"), "nor in the table: neither the value nor its sealed envelope");
+    assert.equal((await db.query("SELECT 1 FROM record_changes WHERE area = 'environments'")).length, 0, "an area without a history section: nothing kept");
+    // Off: nothing written.
+    const before = (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM record_changes"))[0]!.n;
+    F.setFeaturesForTest({ record_pages: false });
+    await ra.asWriter({ by: "people", id: "seed" }, () => ra.workspaceRecords("fixture_pages", a).put("builds", "build-09", { title: "Build 09", data: { status: "queued", project: "checkout", started: "2026-10-10", summary: "off" } }));
+    assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM record_changes"))[0]!.n, before, "off: no line written");
+    F.setFeaturesForTest({ record_pages: true });
+    // A write that changes nothing writes nothing; a delete writes its line.
+    await ra.asWriter({ by: "people", id: "seed" }, () => ra.workspaceRecords("fixture_pages", a).put("builds", "build-09", { title: "Build 09", data: { status: "queued", project: "checkout", started: "2026-10-10", summary: "off" } }));
+    assert.equal((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM record_changes"))[0]!.n, before, "a write that changes nothing: no line");
+    ok("a record's change history (mold_v0-256): newest first, who (you, someone else's address, the app's automation), the title and each field before and after, a move's states, Show older; a viewer reads it, another workspace never; an encrypted field only redacted (no value, nor its envelope, in the answer or the table); an area without a history section keeps none; off, or a write that changes nothing, writes no line");
+  }
+
+  // ---------- 8. facts computed from related records ----------
+  {
+    await act(member, "builds", "build-06", "edit", { title: "Build 06", data: { project: "checkout", environment: "staging-eu", branch: "main", commit: "c0ffee06", started: "2026-10-06", coverage: 91.5 } });
+    const f = (await page(member, "projects", "checkout")).body.facts;
+    assert.deepEqual(f["3"], { op: "latest", value: "queued", area: "builds", field: "status", record: { key: "build-09", title: "Build 09" } }, "the last build (by started): its status, and which");
+    assert.deepEqual(f["4"], { op: "count", value: 6, capped: false, area: "builds", via: "project" }, "how many builds point here");
+    assert.equal(f["5"].value, 1, "how many of them failed (where)");
+    assert.deepEqual([f["6"].value, f["6"].record.key], [91.5, "build-06"], "the newest passed build's coverage");
+    assert.deepEqual(Object.keys(f), ["3", "4", "5", "6"], "only the computed facts");
+    assert.equal((await page(ownerB, "projects", "checkout")).body.facts["4"].value, 1, "B's project counts B's builds only");
+    const closed = clone(FIXTURE);
+    closed.record_areas.find((x: any) => x.name === "builds").permissions = { read: ["member", "billing", "owner"] };
+    install(closed);
+    assert.deepEqual(Object.values((await page(viewer, "projects", "checkout")).body.facts), [{ hidden: true }, { hidden: true }, { hidden: true }, { hidden: true }], "a role that may not read the builds: every fact over them hidden");
+    assert.equal((await page(member, "projects", "checkout")).body.facts["4"].value, 6, "a member still reads them");
+    install(FIXTURE);
+    ok("facts computed from related records, on the server as the person reading: the last build's status (and which), a count, a count where, the newest passed build's coverage; another workspace's own only; hidden from a role that may not read the builds");
+  }
+
+  // ---------- 9. Add <related record>, the record picker, list columns from related records, a Key from a Title ----------
+  {
+    const byIdOf = (body: any) => Object.fromEntries(body.actions.map((x: any) => [x.id, x]));
+    const p = byIdOf((await page(member, "projects", "checkout")).body);
+    const addBuild = p["create_record.builds"];
+    assert.deepEqual([addBuild.place, addBuild.label, addBuild.create.area, addBuild.create.values], ["secondary", "Add build", "builds", { project: "checkout", summary: "The payment pages" }],
+      "Add build: the project and its summary filled in ($key, $field:summary)");
+    assert.ok(addBuild.create.fields.some((x: any) => x.name === "project" && x.type === "reference" && x.to === "projects"), "with the builds' form");
+    assert.ok(!byIdOf((await page(viewer, "projects", "checkout")).body)["create_record.builds"], "a viewer: no Add");
+    const closedCreate = clone(FIXTURE);
+    closedCreate.record_areas.find((x: any) => x.name === "builds").permissions = { create: ["owner"] };
+    install(closedCreate);
+    assert.ok(!byIdOf((await page(member, "projects", "checkout")).body)["create_record.builds"], "a role that may not create builds: no Add");
+    install(FIXTURE);
+    // The picker: the records this person reads, the workspace's own, by name or key.
+    const pick = await get(member, "/api/records/_page/_pick/projects?q=chec");
+    assert.deepEqual(pick.body.records, [{ key: "checkout", title: "Checkout" }], "the picker: what matches");
+    assert.deepEqual((await get(member, "/api/records/_page/_pick/projects")).body.records.map((r: any) => r.key).sort(), ["checkout", "search"], "everything before anything is typed (the newest change first)");
+    await ra.asWriter({ by: "people", id: "seed" }, () => ra.workspaceRecords("fixture_pages", a).put("projects", "atlas", { title: "Atlas", data: { summary: "A's own" } }));
+    assert.deepEqual((await get(member, "/api/records/_page/_pick/projects?q=atl")).body.records, [{ key: "atlas", title: "Atlas" }]);
+    assert.deepEqual((await get(ownerB, "/api/records/_page/_pick/projects?q=atl")).body.records, [], "never another workspace's");
+    assert.equal((await get(member, "/api/records/_page/_pick/ghosts")).status, 404);
+    const closedRead = clone(FIXTURE);
+    closedRead.record_areas.find((x: any) => x.name === "projects").permissions = { read: ["owner"] };
+    install(closedRead);
+    assert.equal((await get(member, "/api/records/_page/_pick/projects")).status, 403, "a role that may not read the area: refused");
+    install(FIXTURE);
+    // List columns computed from the builds that point at each project.
+    const cols = (await get(member, "/api/records/_page/_columns/fixture_pages/projects?keys=checkout,search,nope")).body.columns;
+    assert.deepEqual(cols.rel_builds_count, { checkout: 6, search: 1, nope: 0 }, "how many builds each project has");
+    assert.deepEqual(cols.rel_builds_latest_status, { checkout: "passed", search: "passed", nope: null }, "its latest build's status (the newest change)");
+    assert.deepEqual((await get(ownerB, "/api/records/_page/_columns/fixture_pages/projects?keys=checkout")).body.columns.rel_builds_count, { checkout: 1 }, "B's own builds");
+    const closedBuilds = clone(FIXTURE);
+    closedBuilds.record_areas.find((x: any) => x.name === "builds").permissions = { read: ["member", "billing", "owner"] };
+    install(closedBuilds);
+    assert.deepEqual((await get(viewer, "/api/records/_page/_columns/fixture_pages/projects?keys=checkout")).body.columns, { rel_builds_count: { hidden: true }, rel_builds_latest_status: { hidden: true } }, "a role that may not read the builds: hidden");
+    install(FIXTURE);
+    assert.deepEqual((await get(member, "/api/records/_page/_columns/fixture_pages/builds?keys=x")).body.columns, {}, "a tab without computed columns: none");
+    const spec = await get(member, "/api/tab-actions/_areas/projects");
+    assert.equal(spec.body.area?.key_from_title, true, "the projects' create form: the Key from the Title");
+    F.setFeaturesForTest({ record_pages: false });
+    assert.equal((await get(member, "/api/records/_page/_pick/projects")).status, 404, "off: no picker");
+    assert.equal((await get(member, "/api/records/_page/_columns/fixture_pages/projects?keys=checkout")).status, 404, "off: no computed columns");
+    assert.equal((await get(member, "/api/tab-actions/_areas/projects")).body.area?.key_from_title, undefined, "off: the Key typed");
+    F.setFeaturesForTest({ record_pages: true });
+    ok("Add build on a project's page (its fields filled in from the project; not for a viewer or a role that may not create builds); the record picker (what matches, the workspace's own, refused to a role that may not read the area); a tab's columns computed from the builds of each project (a count, the latest status; B's own; hidden from a role that may not read them); the Key from the Title; off, none of them");
   }
   F.setFeaturesForTest(null);
   await http.close();

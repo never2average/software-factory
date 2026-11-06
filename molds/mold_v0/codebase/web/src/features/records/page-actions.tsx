@@ -28,9 +28,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ConfirmDialog } from '@/features/admin/ui';
 import { fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { ActionCard, CardForm, FieldsForm, fieldValues, type FormField } from '@/features/tabs/tab-action';
+import { ActionCard, CardForm, CreateRecordForm, FieldsForm, fieldValues, type FormField } from '@/features/tabs/tab-action';
 import { cn } from '@/lib/utils';
-import { placed, type PageAction } from './detail-layout';
+import { createHref, placed, type PageAction } from './detail-layout';
 import type { RecordRow } from './record-pages';
 import { EditRecordForm } from './staff-records';
 
@@ -46,8 +46,12 @@ export async function takeAction<T = unknown>(area: string, key: string, id: str
 
 const ICON: Record<PageAction['kind'], ReactNode> = {
   start_run: <Icons.play aria-hidden data-icon='inline-start' />, move: <Icons.arrowRight aria-hidden data-icon='inline-start' />, edit: <Icons.edit aria-hidden data-icon='inline-start' />,
-  delete: <Icons.trash aria-hidden data-icon='inline-start' />, link: <Icons.externalLink aria-hidden data-icon='inline-start' />, copy_link: <Icons.link aria-hidden data-icon='inline-start' />
+  delete: <Icons.trash aria-hidden data-icon='inline-start' />, link: <Icons.externalLink aria-hidden data-icon='inline-start' />, copy_link: <Icons.link aria-hidden data-icon='inline-start' />,
+  create_record: <Icons.add aria-hidden data-icon='inline-start' />
 };
+
+/** Whether an action's form is a create or an edit (it opens in the side panel: mold_v0-256, flag side_panel_forms). */
+export const panelForm = (a: PageAction | null) => !!a && (a.kind === 'edit' || a.kind === 'create_record');
 
 /** A form's value as its input holds it: a list joined, the rest as text (fieldValues types it back). */
 const asInput = (v: unknown) => (v == null ? '' : Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? v : String(v));
@@ -95,21 +99,22 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
   /** Take an action as its kind says: a card, a question, a copy, or at once. */
   const take = (a: PageAction, to?: string) => {
     if (a.disabled) return;
-    if (a.kind === 'start_run' || a.kind === 'edit') return open(a);
+    if (a.kind === 'start_run' || a.kind === 'edit' || a.kind === 'create_record') return open(a);
     if (a.kind === 'copy_link') return host.copy(window.location.href.replace(/([?&])act=[^&]*&?/, '$1').replace(/[?&]$/, ''), 'Link copied');
     if (a.kind === 'link') return a.target && router.push(`/${host.base}/records/${a.target.area}/${encodeURIComponent(a.target.key)}`);
     if (a.kind === 'delete' || a.confirm) return setConfirming({ a, to });
     void run(a, to);
   };
-  const opened = act ? actions.find((a) => a.id === act && (a.kind === 'start_run' || a.kind === 'edit') && !a.disabled) ?? null : null;
+  const opened = act ? actions.find((a) => a.id === act && (a.kind === 'start_run' || a.kind === 'edit' || (a.kind === 'create_record' && !!a.create?.fields)) && !a.disabled) ?? null : null;
   const card = opened ? <ActionFormCard host={host} a={opened} onClose={close} /> : null;
+  const panel = panelForm(opened);
   const dialog = confirming && (
     <ConfirmDialog open onOpenChange={(o) => { if (!o) setConfirming(null); }} destructive={confirming.a.kind === 'delete'}
       title={confirming.a.kind === 'delete' ? `Delete ${host.record.title || host.record.key}?` : `${confirming.a.label}?`}
       description={confirming.a.confirm ?? ''} confirmLabel={confirming.a.kind === 'delete' ? 'Delete' : confirming.a.label}
       onConfirm={() => void run(confirming.a, confirming.to)} />
   );
-  return { take, busy, card, dialog };
+  return { take, busy, card, dialog, panel };
 }
 
 /** A disabled action's reason, read with it: the tooltip's words, also in the accessible description. */
@@ -194,12 +199,12 @@ function ActionItem({ a, take }: { a: PageAction; take: (a: PageAction, to?: str
  * The header's actions: the primary (filled), the secondary (outlined), and More (outlined: the rest, then Copy ID and,
  * unless declared, Copy link). Until the server answers, More alone (with the two copies).
  */
-export function usePageActionsBar(host: ActionHost, actions: readonly PageAction[], loading: boolean, copyLinkDeclared: boolean): { card: ReactNode; bar: ReactNode } {
-  const { take, busy, card, dialog } = usePageActions(host, actions);
+export function usePageActionsBar(host: ActionHost, actions: readonly PageAction[], loading: boolean, copyLinkDeclared: boolean): { card: ReactNode; bar: ReactNode; panel: boolean } {
+  const { take, busy, card, dialog, panel } = usePageActions(host, actions);
   const { primary, secondary, more } = placed(actions);
   const destructive = more.filter((a) => a.kind === 'delete'), rest = more.filter((a) => a.kind !== 'delete');
   return {
-    card,
+    card, panel,
     bar: (
       <div className='flex shrink-0 flex-wrap items-center gap-2' data-page-actions='' aria-busy={loading || undefined}>
         {primary && <ActionButton a={primary} primary busy={busy === primary.id} take={take} />}
@@ -229,7 +234,8 @@ export function RowActions({ host, actions, href }: { host: ActionHost; actions:
   const { take, dialog } = usePageActions(host, actions);
   const router = useRouter();
   // A row's form opens on its own page (its card needs the page's place).
-  const row = (a: PageAction, to?: string) => (a.kind === 'start_run' || a.kind === 'edit' ? router.push(`${href}?act=${encodeURIComponent(a.id)}`)
+  const row = (a: PageAction, to?: string) => (a.kind === 'create_record' ? createHref(a) && router.push(createHref(a)!)
+    : a.kind === 'start_run' || a.kind === 'edit' ? router.push(`${href}?act=${encodeURIComponent(a.id)}`)
     : a.kind === 'copy_link' ? host.copy(new URL(href, window.location.origin).toString(), 'Link copied') : take(a, to));
   const shown = actions.filter((a) => a.kind !== 'link' || a.target);
   return (
@@ -255,6 +261,18 @@ export function RowActions({ host, actions, href }: { host: ActionHost; actions:
 /** The form of a start_run or an edit action: a full card in the page's place. */
 function ActionFormCard({ host, a, onClose }: { host: ActionHost; a: PageAction; onClose: () => void }) {
   const done = () => { onClose(); host.changed(); };
+  // mold_v0-256: a new record of another area, its fields filled from this record (the reference to it, say).
+  if (a.kind === 'create_record' && a.create) {
+    const c = a.create;
+    const set = Object.keys(c.values).map((k) => c.fields?.find((f) => f.name === k)?.label ?? k);
+    return (
+      <ActionCard open onOpenChange={(o) => { if (!o) onClose(); }} title={`${a.label} · ${host.record.title || host.record.key}`} back='Back to the record'
+        description={`A new record in ${c.label}${set.length ? `, its ${set.join(' and ').toLowerCase()} set from ${host.record.title || host.record.key}` : ''}. It shows on this page at once.`}>
+        <CreateRecordForm area={{ name: c.area, label: c.label, fields: (c.fields ?? []) as FormField[], key_from_title: c.key_from_title }} uploadMax={c.upload_max ?? null}
+          initial={Object.fromEntries(Object.entries(c.values).map(([k, v]) => [k, Array.isArray(v) ? v : asInput(v)]))} onDone={done} />
+      </ActionCard>
+    );
+  }
   if (a.kind === 'edit') return (
     <ActionCard open onOpenChange={(o) => { if (!o) onClose(); }} title={`${a.label} · ${host.record.title || host.record.key}`} back='Back to the record'
       description={`Changes ${host.record.title || host.record.key} in ${host.areaLabel}. Its state and its files stay as they are.`}>

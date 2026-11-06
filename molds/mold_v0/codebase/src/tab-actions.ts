@@ -22,6 +22,7 @@
  * A schedule is added through /api/schedules and a record through /api/data/<area>, their own routes and checks: this
  * module never writes either. The tab itself is refused to a role the sidebar does not show it to (403).
  */
+import { featureOn } from "./features.js";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { z } from "zod";
 import { canAccount } from "./account-roles.js";
@@ -138,7 +139,9 @@ export function tabActionAppRouter(): Router {
     const area = findArea(a.area!), role = roleOf(res);
     const actor = { role, userId: session(res).user ?? null };
     const allowed = !!area && !areaOpWithheld(area.name, "create") && (role === null || canAccount(role, "edit")) && may(area, "read", actor) && may(area, "create", actor);
-    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.map(formField) } : null, upload_max: area ? uploadMax(area) : null };
+    return { kind: a.kind, label: a.label ?? null, allowed, area: area ? { name: area.name, label: area.label, fields: area.fields.map(formField),
+      // mold_v0-256 (flag record_pages): the Key filled from the Title, where the area says so.
+      ...((area as { key_from_title?: boolean }).key_from_title && featureOn("record_pages") ? { key_from_title: true } : {}) } : null, upload_max: area ? uploadMax(area) : null };
   };
   // An area's own lists (mold_v0-237): its Settings tab and its Records page, for the people who may read the area.
   r.get("/_areas/:area", answer(async (req, res) => {

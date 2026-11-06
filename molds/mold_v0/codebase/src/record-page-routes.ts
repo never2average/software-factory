@@ -26,8 +26,9 @@ import { dataApi, type DataCaller } from "./data-api.js";
 import { featureOn } from "./features.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { detailTabId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
-import { findArea, getFor, listFor, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
+import { COMPUTED_COUNT_MAX, detailTabId, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
+import { changedByWords, recordHistory } from "./record-history.js";
+import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { withTenant } from "./tenant-scope.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
@@ -83,6 +84,11 @@ export interface ActionView {
   fields?: FormField[];
   /** link: the record it opens. */
   target?: { area: string; key: string } | null;
+  /**
+   * create_record (mold_v0-256): a new record of `area`, its fields filled from this record (`values`); with forms, the
+   * area's create form (its fields, whether its files upload, whether its Key follows its Title).
+   */
+  create?: { area: string; label: string; values: Record<string, unknown>; fields?: FormField[]; upload_max?: number | null; key_from_title?: boolean };
 }
 
 /** The moves of `area`'s lifecycle `role` may make to `to` (any state when undefined), from any state. */
@@ -172,6 +178,23 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       case "copy_link":
         out.push({ ...base, label: x.label ?? "Copy link", disabled: unavailable });
         break;
+      case "create_record": {
+        // A new record of another workspace area: that area's create permission (its read too), never a withheld create.
+        const target = findArea(x.area!);
+        if (!target || target.scope !== "workspace" || isReadOnlyArea(target) || !may(target, "read", actor) || !may(target, "create", actor) || areaOpWithheld(target.name, "create")) continue;
+        const values: Record<string, unknown> = {};
+        for (const [f, raw] of Object.entries(x.input ?? {})) {
+          const from = inputField(raw);
+          const v = from === null ? (raw === "$key" ? record.key : record.title) : record.data[from];
+          if (v !== undefined && v !== null && v !== "") values[f] = v;
+        }
+        const singular = target.label.replace(/ies$/i, "y").replace(/(?<!s)s$/i, "");
+        const { uploadMax } = await import("./record-files.js");
+        out.push({ ...base, label: x.label ?? `Add ${singular.charAt(0).toLowerCase()}${singular.slice(1)}`, disabled: unavailable,
+          create: { area: target.name, label: target.label, values, ...(opts.withForms === false ? {} : { fields: target.fields.map(formField), upload_max: uploadMax(target),
+            ...((target as { key_from_title?: boolean }).key_from_title ? { key_from_title: true } : {}) }) } });
+        break;
+      }
     }
   }
   return out;
@@ -185,12 +208,94 @@ const pointingAt = (target: RecordArea, field: string, key: string) => {
 /** The field a related list points back through: its `via`, else the target's one field pointing at `area`. */
 export const viaOf = (area: string, target: RecordArea, related: { via?: string }) => related.via ?? linksBack(target, area)[0] ?? null;
 
+type Fact = NonNullable<NonNullable<Layout["header"]>["facts"]>[number];
+/** A computed fact's answer (mold_v0-256): a count, the latest related record's value, or hidden from this person. */
+export type ComputedAnswer = { hidden: true } | { op: "count"; value: number; capped: boolean; area: string; via: string }
+  | { op: "latest"; value: unknown; area: string; field: string; record: { key: string; title: string | null } | null };
+/**
+ * A fact computed from the records of another area that point back to `record` (mold_v0-256), read as the person (the
+ * area's read permission, its list not withheld; else hidden), in the workspace's own scope, a page at a time: `count`
+ * those its `where` keeps (at most COMPUTED_COUNT_MAX, then "capped"), or `latest`: its `field` on the first of them by
+ * `sort` (default the newest change). An encrypted field is never read (the build refuses one).
+ */
+export async function computedFact(org: number, area: RecordArea, record: RecordRow, fact: Fact, actor: Actor): Promise<ComputedAnswer> {
+  const c = fact.computed!;
+  const target = findArea(c.area);
+  const via = target ? viaOf(area.name, target, c) : null;
+  if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
+  const filter = pointingAt(target, via, record.key);
+  const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data);
+  if (c.op === "count") {
+    let n = 0, after: string | undefined;
+    for (;;) {
+      const page = await listFor(org, target.name, { filter, limit: 200, ...(after ? { after } : {}) }, actor);
+      n += page.records.filter(keeps).length;
+      if (n >= COMPUTED_COUNT_MAX) return { op: "count", value: COMPUTED_COUNT_MAX, capped: true, area: target.name, via };
+      if (!page.next) return { op: "count", value: n, capped: false, area: target.name, via };
+      after = page.next;
+    }
+  }
+  const sortField = c.sort?.field ?? "updated_at";
+  const sort = `${(c.sort?.direction ?? "desc") === "desc" ? "-" : ""}${sortField}`;
+  let after: string | undefined;
+  for (let read = 0; read < COMPUTED_COUNT_MAX;) {
+    const page = await listFor(org, target.name, { filter, sort, limit: c.where ? 100 : 1, ...(after ? { after } : {}) }, actor);
+    read += page.records.length;
+    const row = page.records.find(keeps);
+    if (row) return { op: "latest", value: row.data[c.field!] ?? null, area: target.name, field: c.field!, record: { key: row.key, title: row.title } };
+    if (!page.next) break;
+    after = page.next;
+  }
+  return { op: "latest", value: null, area: target.name, field: c.field!, record: null };
+}
+
+/** The record picker's page: at most PICK_MAX choices, from the PICK_SCAN newest records. */
+const PICK_MAX = 20, PICK_SCAN = 2000;
+/**
+ * A tab column computed from related records (mold_v0-256), for the rows `keys` of `area`: the records of the column's
+ * area pointing at them (read as the person, the workspace's own scope, at most COMPUTED_COUNT_MAX), counted per row or
+ * the newest one's field. A role that may not read that area: {hidden: true}.
+ */
+async function relatedColumn(org: number, area: RecordArea, c: import("./pack-api.js").TabRelatedColumn, keys: string[], actor: Actor): Promise<Record<string, unknown> | { hidden: true }> {
+  const target = findArea(c.related.area);
+  const via = target ? viaOf(area.name, target, c.related) : null;
+  if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
+  const out: Record<string, unknown> = {};
+  const latest = c.show.startsWith("latest:") ? c.show.slice(7) : null;
+  for (const k of keys) out[k] = latest ? null : 0;
+  if (!keys.length) return out;
+  const f = target.fields.find((x) => x.name === via);
+  const many = !!(f?.multiple || f?.type === "link");
+  let after: string | undefined, read = 0;
+  while (read < COMPUTED_COUNT_MAX) {
+    // Newest change first: the first row seen for a key is its latest.
+    const page = await listFor(org, target.name, { filter: many ? {} : { [via]: { in: keys } }, sort: "-updated_at", limit: 200, ...(after ? { after } : {}) }, actor);
+    read += page.records.length;
+    for (const row of page.records) {
+      const v = row.data[via];
+      for (const k of (Array.isArray(v) ? v : [v]).filter((x): x is string => typeof x === "string" && x in out)) {
+        if (latest) { if (out[k] === null) out[k] = row.data[latest] ?? null; } else out[k] = (out[k] as number) + 1;
+      }
+    }
+    if (!page.next) break;
+    after = page.next;
+  }
+  return out;
+}
+
 /** Who started a run, in words (as Usage's runs: src/app.ts): you, a member's address, a schedule, staff, a connector key. */
-async function byWords(s: Session) {
+export async function byWords(s: Session) {
   let members: { user_id: string; email?: string | null }[] = [];
   try { members = (await (await import("./admin.js")).team(s.slug)).members as typeof members; } catch { /* the directory unreachable: no addresses */ }
   return (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id
     ? (id === s.user ? "You" : members.find((m) => m.user_id === id)?.email ?? "A member") : "Connector key");
+}
+
+/** A history section's lines as the page shows them: who in words, each field's before and after (encrypted: redacted). */
+async function historyOf(org: number, area: RecordArea, key: string, h: { fields?: string[]; limit?: number }, before: number | null, by: (id: string | null) => string) {
+  const got = await recordHistory(org, area, key, { limit: h.limit ?? 20, before, fields: h.fields ?? null });
+  const person = (id: string) => by(id);
+  return { more: got.more, changes: got.lines.map((l) => ({ id: l.id, at: l.at, action: l.action, by: changedByWords(l.by, person), title: l.title, changes: l.changes })) };
 }
 
 export function recordPageRouter(): Router {
@@ -216,9 +321,46 @@ export function recordPageRouter(): Router {
     return { area, layout: layoutOf(area)!, record };
   };
 
+  // mold_v0-256: a reference field's choices (the console's record picker): the records of `area` this person may read,
+  // the workspace's own (and shared ones), those whose title or key holds every word of ?q, newest change first, at most 20.
+  r.get("/_pick/:area", answer(async (req, res) => {
+    const area = findArea(String(req.params.area));
+    if (!area || areaOpWithheld(area.name, "list")) throw new PackError("Not found", 404);
+    const actor = actorOf(res);
+    if (!may(area, "read", actor)) throw new PackError(`Your role can't read ${area.label}.`, 403);
+    const words = String(req.query.q ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+    const out: { key: string; title: string | null }[] = [];
+    let after: string | undefined, read = 0, more = false;
+    while (read < PICK_SCAN) {
+      const page = await listFor(session(res).org, area.name, { sort: "-updated_at", limit: 200, ...(after ? { after } : {}) }, actor);
+      read += page.records.length;
+      for (const x of page.records) if (words.every((w) => x.key.toLowerCase().includes(w) || (x.title ?? "").toLowerCase().includes(w))) out.push({ key: x.key, title: x.title });
+      if (out.length > PICK_MAX || !page.next) { more = out.length > PICK_MAX || (!!page.next && read >= PICK_SCAN); break; }
+      after = page.next;
+    }
+    return { records: out.slice(0, PICK_MAX), more };
+  }));
+
+  // mold_v0-256: a tab's columns computed from related records, for the rows of ?keys= (comma-separated, at most 200).
+  r.get("/_columns/:pack/:tab", answer(async (req, res) => {
+    const { buildViews } = await import("./metrics.js");
+    const tab = buildViews().tabs.find((t) => t.pack === String(req.params.pack) && t.id === String(req.params.tab) && t.kind === "area" && !t.areas);
+    const area = tab?.area ? findArea(tab.area) : null;
+    if (!tab || !area || areaOpWithheld(area.name, "list")) throw new PackError("Not found", 404);
+    const actor = actorOf(res);
+    if (!may(area, "read", actor)) throw new PackError(`Your role can't read ${area.label}.`, 403);
+    const keys = [...new Set(String(req.query.keys ?? "").split(",").map((k) => k.trim()).filter(Boolean))].slice(0, 200);
+    const columns: Record<string, Record<string, unknown> | { hidden: true }> = {};
+    for (const c of (tab.columns ?? []).filter(isRelatedColumn)) columns[relatedColumnId(c)] = await relatedColumn(session(res).org, area, c, keys, actor);
+    return { columns };
+  }));
+
   r.get("/:area/:key", answer(async (req, res) => {
     const { area, layout, record } = await recordOf(req, res);
     const actor = actorOf(res), org = session(res).org;
+    // mold_v0-256: the header's computed facts, each as this person may read it (index -> answer).
+    const facts: Record<string, ComputedAnswer> = {};
+    for (const [i, f] of (layout.header?.facts ?? []).entries()) if (f.computed) facts[String(i)] = await computedFact(org, area, record, f, actor);
     const asked = typeof req.query.tab === "string" ? req.query.tab : null;
     const tab = layout.tabs.find((t) => detailTabId(t.label) === asked) ?? layout.tabs[0]!;
     const ti = layout.tabs.indexOf(tab);
@@ -249,9 +391,24 @@ export function recordPageRouter(): Router {
         // A pack whose runs list its MCP settings withhold lists none here either (mold_v0-067).
         const shown = got.runs.filter((x) => !packOpWithheld(x.pack, "list_runs"));
         sections[id] = { total: got.total - (got.runs.length - shown.length), runs: shown.map(({ requested_by, ...x }) => ({ ...x, by: by!(requested_by) })) };
+      } else if (s.history) {
+        // mold_v0-256: the record's changes, read as the person (the record's own read: it read the record above).
+        by ??= await byWords(session(res));
+        sections[id] = await historyOf(org, area, record.key, s.history, null, by);
       }
     }
-    return { actions: await pageActions(area, record, actor), sections };
+    return { actions: await pageActions(area, record, actor), sections, facts };
+  }));
+
+  // mold_v0-256: a history section's older lines (Show more): ?section=<tab>-<section>&before=<line id>.
+  r.get("/:area/:key/history", answer(async (req, res) => {
+    const { area, layout, record } = await recordOf(req, res);
+    const m = /^(\d{1,2})-(\d{1,2})$/.exec(String(req.query.section ?? ""));
+    const s = m ? layout.tabs[Number(m[1])]?.sections[Number(m[2])] : undefined;
+    if (!s?.history) throw new PackError("section: a history section of this page (<tab>-<section>)", 400);
+    const before = req.query.before === undefined ? null : Number(req.query.before);
+    if (before !== null && (!Number.isInteger(before) || before < 1)) throw new PackError("before: a line's id", 400);
+    return historyOf(session(res).org, area, record.key, s.history, before, await byWords(session(res)));
   }));
 
   r.post("/:area/:key/actions/:id", answer(async (req, res) => {

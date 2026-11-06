@@ -13,7 +13,8 @@ import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
+import { recordAreas, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
+import { keyChunks, latestField, placeColumns, type RelatedColumns } from './related-columns';
 import { Field, RecordView, type PropType, type RecordCol, type SortRule } from '@/components/layout/record-view';
 import type { FilterRule, RawValue } from '@/components/layout/record-filters';
 import { useRepositories } from '@/features/admin/repositories';
@@ -28,13 +29,14 @@ import { httpError } from '@/features/status/from-error';
 import { ClockSection, clockColumns, isOverdue, type ClockEvent, type ClockView } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import { Sparklines } from '@/features/tabs/sparklines';
-import { isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
+import { FormHost, isWebAddress, useAreaAction } from '@/features/tabs/tab-action';
 import { useRecordCredentials } from '@/features/credentials/record-credentials';
 import { isDocument, jsonLine } from './json-text';
 import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
 import { LINKED_PARAM, layoutOf, parseLinked } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
+import { RowCreateActions } from './row-create';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
@@ -197,7 +199,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowAction, detailNote }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowAction, detailNote, related }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -215,13 +217,48 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   compact?: boolean;
   /** The CSV file's name (default the area's) and the areas whose export the packs may withhold (default the area). */
   exportName?: string; exportAreas?: string[];
+  /** mold_v0-256 (flag record_pages): columns computed from the records that point back to each row (./related-columns.ts). */
+  related?: RelatedColumns;
 }) {
   const { data, error } = useOrgLoad(() => (source ? source.load() : loadAll(url, rows)), [source?.key ?? url, rows]);
+  // mold_v0-256: the computed columns' values for the rows read, as the person reading (an area they may not read: empty).
+  const rowKeys = useMemo(() => (data?.records ?? []).map((r) => r.key), [data]);
+  const relatedValues = useOrgLoad(async () => {
+    if (!related || !rowKeys.length) return {} as Record<string, Record<string, unknown> | { hidden: true }>;
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const keys of keyChunks(rowKeys)) {
+      const got = await getJson<{ columns: Record<string, Record<string, unknown> | { hidden: true }> }>(`${related.url}?keys=${encodeURIComponent(keys.join(','))}`);
+      for (const [c, v] of Object.entries(got.columns)) out[c] = { ...(out[c] ?? {}), ...((v as { hidden?: boolean }).hidden ? {} : v) };
+    }
+    return out;
+  }, [related?.url, rowKeys]);
   // mold_v0-254 (flag record_pages): a related list's Show all, ?linked=<field>:<key>: the records pointing at one record,
   // a rule of the Filter menu (its column added, hidden, when the list does not show it); removing it drops the address's.
   const [linkedParam, setLinkedParam] = useQueryState(LINKED_PARAM);
   const linked = featureOn('record_pages') && !source ? parseLinked(linkedParam, area) : null;
-  const cols = useMemo(() => columnsOf(area, source, linked ? [linked.field] : []), [area, source, linked?.field]);
+  const cols = useMemo(() => {
+    const own = columnsOf(area, source, linked ? [linked.field] : []);
+    if (!related) return own;
+    // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
+    const values = relatedValues.data ?? {};
+    const extra = related.columns.map((c): RecordCol<RecordRow> & { at: number } => {
+      const f = latestField(c, recordAreas, c.area);
+      const type: PropType = !f ? 'number' : (!f.multiple && !f.encrypted && COL_TYPE[f.type]) || 'text';
+      const raw = (r: RecordRow) => (values[c.id] as Record<string, unknown> | undefined)?.[r.key];
+      return {
+        key: c.id, label: c.label, type, keep: false, at: c.at, className: !f ? 'text-right' : undefined,
+        ...(type === 'select' && f?.options ? { options: f.options.map((o) => (typeof o === 'string' ? { value: o } : { value: o.value, label: o.label })) } : {}),
+        value: (r) => { const v = raw(r); return v == null ? null : !f ? Number(v) : type === 'select' || type === 'date' ? String(v) : type === 'number' ? Number(v) : fieldText(f, v); },
+        render: (r) => {
+          const v = raw(r);
+          if (!relatedValues.data && !relatedValues.error) return <span className='bg-muted inline-block h-3 w-8 animate-pulse rounded' aria-busy='true' />;
+          if (v == null || v === '') return dash;
+          return <span className={cn('line-clamp-2', (!f || f.type === 'number') && 'tabular-nums')} data-related-cell={c.id}>{!f ? Number(v).toLocaleString('en') : fieldText(f, v, r.key)}</span>;
+        }
+      };
+    });
+    return placeColumns(own, extra);
+  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
@@ -263,7 +300,10 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       ))}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
-      detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}{href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
+      detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}
+        {/* mold_v0-256: the Add <related record> actions its page declares (flag record_pages). */}
+        {base === 'app' && !source && recordArea(r) === area.name && <RowCreateActions area={area} recordKey={r.key} />}
+        {href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
       detail={(r) => (<>
         <dl>
           {detailNote?.(r)}
@@ -289,15 +329,17 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
 export function AreaRecordList({ area, id }: { area: RecordAreaSpec; id: string }) {
   // A record added from the primary action: the list is read again.
   const [round, setRound] = useState(0);
-  const { button, card } = useAreaAction(area, () => setRound((n) => n + 1));
+  const { button, card, panel } = useAreaAction(area, () => setRound((n) => n + 1));
   // mold_v0-234: Import, where the area's contract grants it to this person: its button beside Export, its card in the list's place.
   const imp = useImportAction(area, () => setRound((n) => n + 1));
-  if (card) return card;
-  if (imp.card) return imp.card;
+  if (imp.card && !card) return imp.card;
+  // The Add form: the full card in the list's place, or (mold_v0-256, flag side_panel_forms) a panel beside the list.
   return (
-    <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
-      summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
-      toolbarAction={button ?? undefined} importAction={imp.button} />
+    <FormHost card={card} panel={panel}>
+      <RecordTableView key={round} area={area} base='app' url={`${recordsApi('app')}/${area.name}`} id={id} empty={<RecordEmpty area={area} base='app' />}
+        summary={<Sparklines url={`${recordsApi('app')}/_console/${encodeURIComponent(area.name)}/sparklines`} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
+        toolbarAction={button ?? undefined} importAction={imp.button} />
+    </FormHost>
   );
 }
 

@@ -1059,6 +1059,33 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} a run's record (area and key, both or neither; earlier runs none); its rollback keeps the runs and leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // A record's change history (mold_v0-256, record_changes, found by name): an append-only table under row-level
+  // security (the tenant role reads and adds its workspace's lines, never changes or removes one); its rollback drops it,
+  // the records staying, leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "record_changes")!.version;
+    const d = await shellAt(kind, v);
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('History', 'history-record-changes') RETURNING id");
+    await d.query("INSERT INTO record_changes (org_id, pack, area, key, action, by, changes) VALUES ($1, 'p', 'builds', 'b-1', 'updated', 'people:u1', $2)", [org, JSON.stringify([{ field: "summary", before: "a", after: "b" }])]);
+    await assert.rejects(d.query("INSERT INTO record_changes (org_id, pack, area, key, action) VALUES ($1, 'p', 'builds', 'b-1', 'renamed')", [org]), /check constraint|record_changes_action_check/, "an unknown action refused");
+    await assert.rejects(d.query("INSERT INTO record_changes (org_id, pack, area, key, action, changes) VALUES ($1, 'p', 'builds', 'b-1', 'updated', '{}')", [org]), /check constraint/, "changes is a list");
+    const [pol] = await d.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_policies WHERE tablename = 'record_changes' AND policyname = 'tenant_isolation'");
+    assert.equal(pol!.n, 1, "row-level security: the tenant's own lines");
+    const grants = (await d.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = 'record_changes' AND grantee = app_tenant_role() ORDER BY 1")).map((g) => g.privilege_type);
+    assert.deepEqual(grants, ["INSERT", "SELECT"], "the tenant role adds and reads lines, never changes or removes one");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_record_changes.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_record_changes")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} a record's change history (append-only to the tenant, its own lines; actions and lists checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

@@ -21,6 +21,8 @@ import { buildViews, computeMetrics, MAX_METRICS_PER_REQUEST } from "./metrics.j
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { tabAreas, tabRoles, type SpecTab } from "./metric-spec.js";
 import { packs } from "./packs.js";
+import { featureOn } from "./features.js";
+import type { Org } from "./auth.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -118,6 +120,30 @@ export function runAppRouter(): Router {
       log(who, "run.approve", s.slug, { run: id, approval: a.id, kind: a.write_kind, sha256: a.output_sha256 });
       return { approval: a };
     }));
+  }
+  // mold_v0-256 (flag record_pages): a run's own page (src/run-page.ts): its tabs, its new events while it runs, Re-run, Stop.
+  {
+    // Checked per request (off: these paths answer 404, as before the flag).
+    const on = (_req: Request, _res: Response, next: NextFunction) => (featureOn("record_pages") ? next() : next("route"));
+    const caller = async (res: Response) => {
+      const s = session(res);
+      const { byWords } = await import("./record-page-routes.js");
+      return { orgId: s.org, slug: s.slug, userId: s.user ?? null, role: s.accountRole ?? null, by: await byWords(s) };
+    };
+    const changes = (req: Request, res: Response, next: NextFunction) =>
+      (res.locals.viaCookie && req.get("x-pack-request") !== "1" ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next());
+    r.get("/:id/page", on, answer(async (req, res) => (await import("./run-page.js")).runPage(await caller(res), String(req.params.id))));
+    r.get("/:id/events", on, answer(async (req, res) => {
+      const after = req.query.after === undefined ? 0 : Number(req.query.after);
+      if (!Number.isInteger(after) || after < 0) throw new PackError("after: an event's id", 400);
+      return (await import("./run-page.js")).runEventsSince(await caller(res), String(req.params.id), after);
+    }));
+    r.post("/:id/rerun", on, changes, answer(async (req, res) => {
+      const s = session(res), c = await caller(res);
+      const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
+      return (await import("./run-page.js")).rerun({ ...c, org }, String(req.params.id));
+    }));
+    r.post("/:id/stop", on, changes, answer(async (req, res) => (await import("./run-page.js")).stop(await caller(res), String(req.params.id))));
   }
   r.get("/:id", answer(async (req, res) => {
     const { getRun, runResults } = await import("./runs.js");
