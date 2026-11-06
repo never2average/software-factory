@@ -26,7 +26,7 @@ import { dataApi, type DataCaller } from "./data-api.js";
 import { featureOn } from "./features.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { COMPUTED_COUNT_MAX, detailTabId, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
+import { COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
 import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { withTenant } from "./tenant-scope.js";
@@ -55,18 +55,9 @@ const stateWords = (area: RecordArea, v: unknown) => {
   return o && typeof o !== "string" ? o.label ?? o.value : String(v ?? "none");
 };
 const roleWords = (roles: readonly string[]) => roles.map((r) => (ACCOUNT_ROLE_LABELS[r as AccountRole] ?? r).toLowerCase()).join(", ");
+/** A condition on the record (src/pack-api.ts conditionHolds, mold_v0-256: dates, a clock's state, all and any too). */
+const holds = (when: DetailCondition, data: Record<string, unknown>, clocks?: unknown) => conditionHolds(when, data, (clocks ?? null) as never);
 const same = (a: unknown, b: unknown) => a === b || (typeof a !== "object" && a != null && String(a) === String(b));
-/** A condition on the record's data (as the console's ./detail-layout.ts conditionHolds: a list field by any value). */
-function holds(when: NonNullable<DetailAction["unavailable"]>[number]["when"], data: Record<string, unknown>): boolean {
-  const v = data[when.field];
-  const empty = v == null || v === "" || (Array.isArray(v) && !v.length);
-  const values = Array.isArray(v) ? v : [v];
-  if (when.empty !== undefined) return empty === when.empty;
-  if (when.equals !== undefined) return values.some((x) => same(x, when.equals));
-  if (when.in) return values.some((x) => when.in!.some((y) => same(x, y)));
-  if (when.not_in) return !empty && !values.some((x) => when.not_in!.some((y) => same(x, y)));
-  return false;
-}
 
 /** A page action as this person may take it on this record. */
 export interface ActionView {
@@ -76,7 +67,9 @@ export interface ActionView {
   /** What it asks before it acts (a delete always asks), or null. */
   confirm: string | null;
   /** start_run: the kind, its arguments pre-filled from the record, its environments. */
-  run?: { kind: string; label: string; description: string | null; args: FormField[]; values: Record<string, unknown>; environments: string[] | null };
+  run?: { kind: string; label: string; description: string | null; args: FormField[]; values: Record<string, unknown>; environments: string[] | null;
+    /** mold_v0-256: the linked record the run targets (target: {via}), in place of this one. */
+    target?: { area: string; key: string; title: string | null } | null };
   /** move: the states it moves to, each with why it is disabled, if it is. */
   moves?: { to: string; label: string; disabled: string | null }[];
   /** edit: the form's fields (the lifecycle's and file fields left out: they are kept as they are; an area with an
@@ -100,7 +93,7 @@ const movesFor = (area: RecordArea, role: AccountRole | null, to?: string) =>
  * labelled, with why it is disabled when it is. `withForms: false` (a related list's rows) leaves the edit form's fields
  * out: a row's edit opens the record's own page.
  */
-export async function pageActions(area: RecordArea, record: RecordRow, actor: Actor, opts: { withForms?: boolean } = {}): Promise<ActionView[]> {
+export async function pageActions(area: RecordArea, record: RecordRow, actor: Actor, opts: { withForms?: boolean; org?: number } = {}): Promise<ActionView[]> {
   const layout = layoutOf(area);
   if (!layout?.actions?.length) return [];
   const role = actor.role;
@@ -109,7 +102,7 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
   for (const x of layout.actions) {
     if (role !== null && x.roles && !x.roles.includes(role)) continue;
     const base = { id: pageActionId(x), kind: x.kind, place: x.place ?? "more", confirm: x.confirm ?? (x.kind === "delete" ? `${record.title || record.key} is removed from ${area.label}, for everyone in this workspace. This can't be undone.` : null) } as const;
-    const unavailable = (x.unavailable ?? []).find((u) => holds(u.when, record.data))?.reason ?? null;
+    const unavailable = (x.unavailable ?? []).find((u) => holds(u.when, record.data, (record as { clocks?: unknown }).clocks))?.reason ?? null;
     const writes = area.scope === "workspace";
     switch (x.kind) {
       case "start_run": {
@@ -125,9 +118,17 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
           if (v !== undefined && v !== null && v !== "") values[arg] = v;
         }
         const { environmentsOf } = await import("./tab-actions.js");
-        out.push({ ...base, label: x.label ?? `Start ${label.charAt(0).toLowerCase()}${label.slice(1)}`, disabled: unavailable,
+        // mold_v0-256: a run on the record a link field names (the finding's application), found in the area it belongs to.
+        let target: { area: string; key: string; title: string | null } | null | undefined;
+        let noTarget: string | null = null;
+        if (x.target) {
+          target = await linkedRecord(opts.org ?? null, area, x.target.via, record, actor);
+          const f = area.fields.find((y) => y.name === x.target!.via);
+          if (!target) noTarget = `No ${(f?.label ?? x.target.via).toLowerCase()} is set on this record, so there is nothing to run on.`;
+        }
+        out.push({ ...base, label: x.label ?? `Start ${label.charAt(0).toLowerCase()}${label.slice(1)}`, disabled: unavailable ?? noTarget,
           run: { kind: k.name, label, description: (k as { description?: string }).description ?? null, args: ((k as { args?: unknown[] }).args ?? []).map(formField), values,
-            environments: environmentsOf(tool.input) } });
+            environments: environmentsOf(tool.input), ...(x.target ? { target: target ?? null } : {}) } });
         break;
       }
       case "move": {
@@ -165,14 +166,13 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         break;
       }
       case "link": {
-        const l = areaLinks(area).find((y) => y.field === x.field);
-        const target = l ? findArea(l.area) : null;
-        if (!l || !target || !may(target, "read", actor)) continue;
-        const v = record.data[l.field];
-        const key = (Array.isArray(v) ? v : [v]).find((k): k is string => typeof k === "string" && k !== "") ?? null;
-        const f = area.fields.find((y) => y.name === l.field);
-        out.push({ ...base, label: x.label ?? `Open ${(f?.label ?? l.field).toLowerCase()}`, disabled: unavailable ?? (key ? null : `No ${(f?.label ?? l.field).toLowerCase()} is set on this record.`),
-          target: key ? { area: target.name, key } : null });
+        // mold_v0-256: a field linking to several areas opens the area its value belongs to, not the first declared.
+        const ls = areaLinks(area).filter((y) => y.field === x.field).filter((y) => { const t = findArea(y.area); return !!t && may(t, "read", actor); });
+        if (!ls.length) continue;
+        const found = await linkedRecord(opts.org ?? null, area, x.field!, record, actor);
+        const f = area.fields.find((y) => y.name === x.field);
+        out.push({ ...base, label: x.label ?? `Open ${(f?.label ?? x.field!).toLowerCase()}`, disabled: unavailable ?? (found ? null : `No ${(f?.label ?? x.field!).toLowerCase()} is set on this record.`),
+          target: found ? { area: found.area, key: found.key } : null });
         break;
       }
       case "copy_link":
@@ -200,6 +200,26 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
   return out;
 }
 
+/**
+ * The record `area`'s link or reference field `field` names on `record` (mold_v0-256): its first key, in the area it
+ * belongs to. One area: that one (as before). Several: the first of them, in declared order, where this person reads a
+ * record of that key (in workspace `org`, read with its title); none found, the first readable one's. Null when the field
+ * is empty.
+ */
+export async function linkedRecord(org: number | null, area: RecordArea, field: string, record: RecordRow, actor: Actor): Promise<{ area: string; key: string; title: string | null } | null> {
+  const v = record.data[field];
+  const key = (Array.isArray(v) ? v : [v]).find((k): k is string => typeof k === "string" && k !== "") ?? null;
+  if (!key) return null;
+  const ls = areaLinks(area).filter((y) => y.field === field).map((y) => findArea(y.area)).filter((t): t is RecordArea => !!t && may(t, "read", actor));
+  if (!ls.length) return null;
+  if (org === null) return { area: ls[0]!.name, key, title: null };
+  for (const t of ls) {
+    const got = await getFor(org, t.name, key, actor).catch(() => null);
+    if (got) return { area: t.name, key, title: got.title };
+  }
+  return { area: ls[0]!.name, key, title: null };
+}
+
 /** The filter that finds `target`'s records pointing at `key` through `field` (a list field: holding it). */
 const pointingAt = (target: RecordArea, field: string, key: string) => {
   const f = target.fields.find((x) => x.name === field);
@@ -224,7 +244,7 @@ export async function computedFact(org: number, area: RecordArea, record: Record
   const via = target ? viaOf(area.name, target, c) : null;
   if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
   const filter = pointingAt(target, via, record.key);
-  const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data);
+  const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data, (row as { clocks?: unknown }).clocks);
   if (c.op === "count") {
     let n = 0, after: string | undefined;
     for (;;) {
@@ -371,17 +391,20 @@ export function recordPageRouter(): Router {
       if (s.related) {
         const target = findArea(s.related.area);
         const via = target ? viaOf(area.name, target, s.related) : null;
+        // mold_v0-256: matched on a field: their via holds this record's match_field value (nothing to match: none listed).
+        const matchOn = s.related.match_field !== undefined ? record.data[s.related.match_field] : record.key;
         // The target area's read permission, and its list not withheld: else the section is not drawn at all.
         if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) { sections[id] = { hidden: true }; continue; }
         const limit = s.related.limit ?? 5;
         const sortField = s.related.sort?.field ?? "updated_at";
         const sort = `${(s.related.sort?.direction ?? (s.related.sort ? "asc" : "desc")) === "desc" ? "-" : ""}${sortField}`;
-        const page = await listFor(org, target.name, { filter: pointingAt(target, via, record.key), sort, limit: limit + 1 }, actor);
+        if (matchOn == null || matchOn === "" || typeof matchOn === "object") { sections[id] = { area: target.name, via, match: null, more: false, records: [] }; continue; }
+        const page = await listFor(org, target.name, { filter: s.related.match_field !== undefined ? { [via]: matchOn } : pointingAt(target, via, record.key), sort, limit: limit + 1 }, actor);
         const rows = page.records.slice(0, limit);
         sections[id] = {
-          area: target.name, via, more: page.records.length > limit,
+          area: target.name, via, match: String(matchOn), more: page.records.length > limit,
           records: await Promise.all(rows.map(async (row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at,
-            actions: await pageActions(target, row, actor, { withForms: false }) }))),
+            actions: await pageActions(target, row, actor, { withForms: false, org }) }))),
         };
       } else if (s.runs) {
         const { recordRuns } = await import("./runs.js");
@@ -397,7 +420,7 @@ export function recordPageRouter(): Router {
         sections[id] = await historyOf(org, area, record.key, s.history, null, by);
       }
     }
-    return { actions: await pageActions(area, record, actor), sections, facts };
+    return { actions: await pageActions(area, record, actor, { org }), sections, facts };
   }));
 
   // mold_v0-256: a history section's older lines (Show more): ?section=<tab>-<section>&before=<line id>.
@@ -417,7 +440,7 @@ export function recordPageRouter(): Router {
     const id = String(req.params.id);
     const declared = (layoutOf(area)!.actions ?? []).find((x) => pageActionId(x) === id);
     if (!declared) throw new PackError("This page has no such action", 404);
-    const a = (await pageActions(area, record, actor)).find((x) => x.id === id);
+    const a = (await pageActions(area, record, actor, { org: session(res).org })).find((x) => x.id === id);
     const role = actor.role ? ACCOUNT_ROLE_LABELS[actor.role] : null;
     if (!a) throw new PackError(`${declared.label ?? id} is not open to the ${role ?? "caller's"} role on ${area.label} records.`, 403);
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -427,8 +450,13 @@ export function recordPageRouter(): Router {
         const s = session(res);
         const tool = startToolOf(area.pack, declared.job_kind!)!;
         const input = body.input && typeof body.input === "object" && !Array.isArray(body.input) ? { ...(body.input as Record<string, unknown>) } : {};
-        // An asset area's record is also the run's target, as the start tool's target_asset names one.
+        // An asset area's record is also the run's target, as the start tool's target_asset names one; mold_v0-256: or the
+        // record its target's link field names (never one sent from the browser).
         if ("target_asset" in tool.input && area.role === "asset") input.target_asset = { area: area.name, key: record.key };
+        if (declared.target) {
+          if (!a.run?.target || !("target_asset" in tool.input)) throw new PackError(`${a.label} has no record to run on.`, 409);
+          input.target_asset = { area: a.run.target.area, key: a.run.target.key };
+        }
         const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
         const { onRecord } = await import("./runs.js");
         return onRecord({ area: area.name, key: record.key }, () => startFromConsole(org, tool, input));

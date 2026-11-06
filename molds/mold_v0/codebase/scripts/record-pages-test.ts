@@ -569,16 +569,16 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   has(withDetail((d) => { d.header.badges[0].colors.exploded = "danger"; }), /^detail\.header\.badges\.0\.colors\.exploded: exploded is not one of status's options$/, "a badge colour for a value the field lacks");
   has(withDetail((d) => { d.header.badges.push({ field: "branch" }); }), /branch is not a single-choice enum field/, "a badge on a text field");
   has(withDetail((d) => { d.header.facts[2].unit = "chars"; }), /^detail\.header\.facts\.2\.unit: a unit is for a number field \(branch is text\)$/, "a unit on a text field");
-  has(withDetail((d) => { d.notices[0].when = { field: "status", equals: "failed", empty: true }; }), /a notice's condition is one test: equals, in, not_in or empty \(it has equals and empty\)/, "a notice with two tests");
+  has(withDetail((d) => { d.notices[0].when = { field: "status", equals: "failed", empty: true }; }), /a condition is one test: equals, in, not_in, empty, before, after, within_days, or a clock's state \(it has equals and empty\)/, "a notice with two tests");
   has(withDetail((d) => { d.notices[0].when.equals = "exploded"; }), /exploded is not one of status's options/, "a notice testing a value the field lacks");
-  has(withDetail((d) => { d.notices[0].tone = "success"; }), /a notice's tone is one of info, warning, danger/, "a notice's tone outside its three");
+  has(withDetail((d) => { d.notices[0].tone = "crimson"; }), /a notice's tone is one of info, success, warning, danger/, "a notice's tone outside its four (mold_v0-256: success)");
   has(withDetail((d) => { d.tabs[2].label = "logs"; }), /tab logs has the same address as another \(\?tab=logs\)/, "two tabs with one address");
   has(withDetail((d) => { d.tabs[0].sections[1].fields = ["branch"]; }), /section Results gives fields or groups, not both/, "fields and groups together");
   has(withDetail((d) => { d.tabs[0].sections[0].fields.push("branch"); }), /branch is in section Source twice/, "a field twice in one section");
   has(withDetail((d, a) => { a.fields.find((f: any) => f.name === "notes").encrypted = true; d.header.facts[0].field = "notes"; }), /notes is encrypted: a fact shows a value/, "a fact on an encrypted field");
   has(withDetail((d) => { d.tabs[0].sections[0].columns = 4; }), /^detail\.tabs\.0\.sections\.0\.columns/, "four columns");
   has(withDetail((_d, a) => { a.fields.find((f: any) => f.name === "config").copyable = true; }), /^fields\.18\.copyable: copyable is for a value the page shows in full/, "copyable on a json field");
-  assert.deepEqual([...NOTICE_TONES], ["info", "warning", "danger"]);
+  assert.deepEqual([...NOTICE_TONES], ["info", "success", "warning", "danger"]);
   ok("a record page's layout (mold_v0-253): the fixture's projects, environments and builds take; refused: a field the area lacks (a section, a fact, the subtitle, a notice), a ninth fact, an empty tab or none, a section without fields, a badge colour outside the theme's tokens or for a value the field lacks, a badge on a text field, a unit on a text field, a notice with two tests or an unknown value or tone, two tabs with one address, fields with groups, a field twice, a fact on an encrypted field, four columns, copyable on a json field");
 
   // b. Badges: the console's tokens are the schema's, each a class of theme variables (no raw colour).
@@ -933,8 +933,9 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.deepEqual(L.parseLinked("project:check out/1", buildsSpec), { field: "project", key: "check out/1" }, "read back");
   assert.equal(L.parseLinked("ghost:x", buildsSpec), null, "a field the area lacks: no filter");
   assert.equal(L.parseLinked("project:", buildsSpec), null);
-  assert.deepEqual(L.relatedColumns(buildsSpec, {}), ["status", "project"], "no columns of its own: the area's list columns");
-  assert.deepEqual(L.relatedColumns(buildsSpec, { columns: ["project", "ghost"] }), ["project"]);
+  // mold_v0-256: each column with its own heading, when it has one (null: its field's label).
+  assert.deepEqual(L.relatedColumns(buildsSpec, {}).map((c: { field: string }) => c.field), ["status", "project"], "no columns of its own: the area's list columns");
+  assert.deepEqual(L.relatedColumns(buildsSpec, { columns: ["project", "ghost"] }), [{ field: "project", label: null }]);
   // mold_v0-256: no counts beside a list section's title (the operator's call): their words are gone.
   assert.equal(L.runsCountWords, undefined); assert.equal(L.relatedCountWords, undefined);
   assert.deepEqual([api.pageActionId({ kind: "start_run", job_kind: "rebuild" }), api.pageActionId({ kind: "move", to: "In review" }), api.pageActionId({ kind: "delete" })], ["start_run.rebuild", "move.In-review", "delete"]);

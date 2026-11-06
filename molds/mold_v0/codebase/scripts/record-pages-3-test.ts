@@ -129,7 +129,6 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(edited("projects", (d) => { delete facts(d)[4].label; }), /a computed fact names itself \(label\)/, "a computed fact without its label");
   has(edited("projects", (d) => { delete facts(d)[3].computed.field; }), /a latest fact names the field it shows/, "a latest fact without its field");
   has(edited("projects", (d) => { facts(d)[4].computed.field = "status"; }), /a count fact counts records: it names no field/, "a count with a field");
-  has(edited("projects", (d) => { facts(d)[4].computed.where = { field: "status", equals: "failed", in: ["passed"] }; }), /a condition is one test/, "a where with two tests");
   has(edited("projects", (d) => { facts(d).push({ label: "Odd" }); }), /a fact names a field of the record, or is computed from related records/, "a fact with neither");
   has(edited("projects", (d) => { facts(d).push({ label: "A" }, { label: "B" }); }), /at most 8 facts/, "a ninth fact (computed ones count)");
   const add = (d: any) => d.actions.find((x: any) => x.kind === "create_record");
@@ -143,6 +142,20 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   has(tab((t) => { t.columns[2].show = "sum"; }), /show is "count" or "latest:<a field of the related area>"/, "a related column showing a sum");
   has(tab((t) => { t.columns.push(clone(t.columns[2])); }), /a column is listed twice/, "a related column twice");
   has(tab((t) => { t.areas = [{ area: "projects" }, { area: "releases" }]; delete t.area; }), /a merged tab's columns are fields/, "a related column on a merged tab");
+  // The second batch: notice conditions (dates, a clock, all and any, a success tone), a run on a linked record, a
+  // related list matched on a field with its own column headings.
+  const rel = (d: any) => d;
+  has(edited("releases", (d) => { d.notices[2].when.all[1].field = "owner"; }), /within_days is for a date field \(owner is text\)/, "a date test on a text field");
+  has(edited("releases", (d) => { d.notices[1].when.all[1] = { field: "release_on", before: "today", after: "today" }; }), /a condition is one test[^(]*\(it has before and after\)/, "two date tests");
+  has(edited("releases", (d) => { d.notices[3].when.clock = "approval"; }), /approval is not one of the area's clocks \(signoff\)/, "a clock the area lacks");
+  has(edited("releases", (d) => { d.notices[3].when.field = "stage"; }), /a clock's test is alone: it has no field/, "a clock's test with a field");
+  has(edited("releases", (d) => { d.notices[0].when.all = [{ field: "owner", empty: true }]; }), /a condition with all has its tests inside it: no field or equals beside it/, "all beside a test");
+  has(edited("releases", (d) => { d.notices[1].when.any = [{ field: "owner", empty: true }]; }), /a condition is all of its tests or any of them, not both/, "all and any");
+  has(edited("releases", (d) => { d.notices[0].tone = "crimson"; }), /a notice's tone is one of info, success, warning, danger/, "a tone outside the four");
+  has(edited("releases", (d) => { d.actions[1].target = { via: "subject" }; }), /target is for a start_run action, not link/, "a target on a link");
+  has(edited("releases", (d) => { d.actions[0].target.via = "owner"; }), /owner is not a link or reference field of the area: a run's target is the record one names/, "a target through a text field");
+  void rel;
+  ok("the second batch, in the area (mold_v0-256): refused: a date test on a text field, two date tests, a clock the area lacks, a clock's test with a field, all beside a test, all and any together, a tone outside info, success, warning and danger, a target on a link action, a target through a text field");
   ok("in the area and the tab (mold_v0-256): the fixture takes; refused: a log of a number or file field or with fields, two kinds in one section, a code view of a file field or in another language, a table of a text field or of nine columns, history of a field the area lacks or past 100, a file browser of a text field or on an area without files, a computed fact with a field or without its label, a latest without its field, a count with one, a where of two tests, a fact with neither, a ninth fact, Add without its area, an area on a run, an input from a field the record lacks or not a field, a viewer's Add, a related column showing a sum, twice or on a merged tab");
 
   const build = (edit?: (j: any) => void) => { const j = clone(FIXTURE); edit?.(j); return checkViews(viewsOf([{ id: "fixture_pages", definition: compileDeclarations(j) as never }])); };
@@ -155,13 +168,19 @@ const note = (id: string, text: string) => { const p = document.createElement('p
     ["a field it lacks", (j) => { pf(j)[3].computed.field = "ghost"; }, /field ghost is not one of builds's fields/],
     ["a json field", (j) => { pf(j)[3].computed.field = "config"; }, /field config is a json field: a computed fact shows one plain value/],
     ["a unit on text", (j) => { pf(j)[3].unit = "pts"; }, /a unit is for a count or a number field \(status is enum\)/],
-    ["a where value", (j) => { pf(j)[5].computed.where.equals = "exploded"; }, /exploded is not one of builds\.status's options/],
+    ["a where with two tests", (j) => { pf(j)[5].computed.where = { field: "status", equals: "failed", in: ["passed"] }; }, /where: a condition is one test/],
+    ["a where value", (j) => { pf(j)[5].computed.where.equals = "exploded"; }, /where: exploded is not one of status's options/],
     ["Add's area", (j) => { areaOf(j, "projects").detail.actions[1].area = "deployments"; }, /action create_record\.deployments: deployments is not a record area of this build/],
     ["Add's input", (j) => { areaOf(j, "projects").detail.actions[1].input.ghost = "$key"; }, /input ghost is not one of builds's fields/],
     ["Add a file", (j) => { areaOf(j, "projects").detail.actions[1].input.attachments = "$key"; }, /input attachments is a file field/],
     ["a column's area", (j) => { j.tabs.find((t: any) => t.id === "projects").columns[2].related.area = "environments"; }, /column rel_environments_count: environments has no link back to projects/],
     ["a column's field", (j) => { j.tabs.find((t: any) => t.id === "projects").columns[3].show = "latest:ghost"; }, /column rel_builds_latest_ghost: ghost is not one of builds's fields/],
     ["a column's json", (j) => { j.tabs.find((t: any) => t.id === "projects").columns[3].show = "latest:config"; }, /config is a json field: a cell shows one plain value/],
+    ["a run on a record that is not an asset", (j) => { const r = areaOf(j, "releases"); r.detail.actions[0].target.via = "project"; }, /target via project: projects is not an asset area/],
+    ["a match without via", (j) => { delete areaOf(j, "releases").detail.tabs[0].sections[2].related.via; }, /a related list matched on a field names the field of theirs it matches \(via\)/],
+    ["a match on an encrypted field", (j) => { areaOf(j, "releases").detail.tabs[0].sections[2].related.match_field = "signing_secret"; }, /match_field signing_secret is encrypted/],
+    ["a match on a field they lack", (j) => { areaOf(j, "releases").detail.tabs[0].sections[2].related.via = "ghost"; }, /via ghost is not one of builds's fields/],
+    ["a column twice (one with a heading)", (j) => { areaOf(j, "releases").detail.tabs[0].sections[2].related.columns.push("status"); }, /a column is listed twice/],
   ];
   for (const [what, edit, re] of across) has(build(edit), re, what);
   ok(`across the build (mold_v0-256, gen-packs and the server's install alike): ${across.map((x) => x[0]).join(", ")}`);
@@ -229,6 +248,30 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.equal(L.logLive({ log: { field: "log", live_when: { field: "status", in: ["running"] } } }, { status: "passed" }), false);
   assert.equal(L.durationWords(3725), "1h 2m");
 
+  // mold_v0-256: conditions on dates, clocks, all and any, the same on both sides.
+  const api = await import("../src/pack-api.js");
+  const NOW = Date.parse("2026-11-06T12:00:00Z");
+  const cases: [string, Record<string, unknown>, Record<string, unknown>, Record<string, { status: string }> | null, boolean][] = [
+    ["before today", { field: "d", before: "today" }, { d: "2026-11-05" }, null, true], ["not before today", { field: "d", before: "today" }, { d: "2026-11-06" }, null, false],
+    ["after today", { field: "d", after: "today" }, { d: "2026-11-07" }, null, true], ["within 7 days", { field: "d", within_days: 7 }, { d: "2026-11-13" }, null, true],
+    ["past 7 days", { field: "d", within_days: 7 }, { d: "2026-11-14" }, null, false], ["within: not the past", { field: "d", within_days: 7 }, { d: "2026-11-01" }, null, false],
+    ["a time today is today", { field: "d", before: "today" }, { d: "2026-11-06T01:00:00Z" }, null, false], ["no date", { field: "d", before: "today" }, {}, null, false],
+    ["a clock overdue", { clock: "c", is: "overdue" }, {}, { c: { status: "overdue" } }, true], ["a clock on track", { clock: "c", is: "overdue" }, {}, { c: { status: "on_track" } }, false],
+    ["a clock due soon", { clock: "c", is: "due_soon" }, {}, { c: { status: "due_soon" } }, true], ["no clocks", { clock: "c", is: "due_soon" }, {}, null, false],
+    ["all", { all: [{ field: "s", equals: "critical" }, { field: "t", not_in: ["resolved"] }] }, { s: "critical", t: "open" }, null, true],
+    ["all, one fails", { all: [{ field: "s", equals: "critical" }, { field: "t", not_in: ["resolved"] }] }, { s: "critical", t: "resolved" }, null, false],
+    ["any", { any: [{ field: "s", equals: "critical" }, { clock: "c", is: "overdue" }] }, { s: "low" }, { c: { status: "overdue" } }, true],
+  ];
+  for (const [what, when, data, clocks, want] of cases) {
+    assert.equal(L.conditionHolds(when, data, clocks, NOW), want, `the console: ${what}`);
+    assert.equal(api.conditionHolds(when as never, data, clocks, NOW), want, `the server: ${what}`);
+  }
+  assert.equal(L.NOTICE_CLASS.success.includes("emerald"), true, "a success notice is green");
+  assert.deepEqual(L.relatedColumns({ fields: [{ name: "status" }, { name: "started" }], list_columns: [] }, { columns: [{ field: "status", label: "Build status" }, "started", "ghost"] }),
+    [{ field: "status", label: "Build status" }, { field: "started", label: null }], "a related list's columns, each with its own heading when it has one");
+  const seed = await import("../../testing/console/seed.mts");
+  assert.equal(seed.valueOf({ name: "endpoint", type: "url", required: true }, 2, 0, () => [], () => null, "services"), "https://example.com/services/3", "the lane's seed: a required url field filled");
+  assert.equal(seed.valueOf({ name: "homepage", type: "url" }, 2, 0, () => [], () => null, "services"), undefined, "an optional one left empty");
   const F = await web("features/tabs/form-prefill.ts");
   // The flag decides (the console's generated flags, off in the mold itself): off, nothing is filled.
   assert.deepEqual(F.prefill([{ name: "project", type: "reference", multiple: false }], "?new=1&project=checkout"), {}, "off: the address fills nothing");
@@ -294,6 +337,10 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.match(lv, /aria-pressed=\{wrap\}/); assert.match(lv, /aria-pressed=\{follow\}/); assert.match(lv, /data-log-copy=\{l\.n\}/);
   assert.match(fb, /role='tree'/); assert.match(fb, /role='treeitem'/);
   assert.match(hs, /Changed · encrypted, so its values are not shown/, "an encrypted field's change: never its values");
+  const routes = strip(readFileSync(path.join(ROOT, "src", "record-page-routes.ts"), "utf8"));
+  assert.match(routes, /const found = await linkedRecord\(opts\.org \?\? null, area, x\.field!, record, actor\);/, "a link action opens the area its value belongs to");
+  assert.match(routes, /if \(declared\.target\) \{[\s\S]*?input\.target_asset = \{ area: a\.run\.target\.area, key: a\.run\.target\.key \};/, "a run on a linked record: its target from the record, never from the browser");
+  assert.match(dp, /role=\{n\.tone === 'info' \|\| n\.tone === 'success' \? 'status' : 'alert'\}/, "a success notice is a status, not an alert");
   const { scanOutlines } = await import("./console-outlines.js");
   const found = scanOutlines(WEB);
   assert.deepEqual(found, [], `every button has an outline:\n${found.join("\n")}`);
@@ -426,6 +473,22 @@ const note = (id: string, text: string) => { const p = document.createElement('p
       const rel = draw("history-redacted", { view: "record", area: "releases", record: record("rel-4-13", "Release 4.13", { project: "checkout", version: "4.13.0", stage: "candidate", signing_secret: "[encrypted]" }), links: [], provenance: { by: "people" },
         page: { actions: [], sections: { "1-0": { changes: [change(5, "updated", "You", [{ field: "signing_secret", redacted: true }, { field: "stage", before: "draft", after: "candidate" }])], more: false } }, facts: {} } }, "?tab=history");
       soft.match(rel, /data-history-field="signing_secret" data-redacted=""[\s\S]*?Changed · encrypted, so its values are not shown/, "an encrypted field: that it changed, never a value");
+      // A release: its notices (a success, a date within a week with all, a clock), its builds matched on its project, with headings.
+      const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+      const relRec = { ...record("rel-4-14", "Release 4.14", { project: "checkout", version: "4.14.0", stage: "candidate", owner: "Payments team", release_on: soon, service: "svc-pay", subject: "staging-eu" }),
+        clocks: { signoff: { name: "signoff", label: "Sign-off", status: "overdue", overdue: true, started_at: null, due_at: null, due_on: null, overdue_days: 1, paused_ms: 0, stopped_at: null } } };
+      const relRow = (key: string, status: string) => ({ key, title: key.replace("build-", "Build "), data: { status, branch: "main", started: "2026-11-05", duration: 1312 }, updated_at: "2026-11-05T09:00:00.000Z", actions: [] });
+      const relDom = draw("release", { view: "record", area: "releases", record: relRec, links: [], provenance: { by: "people" },
+        page: { actions: [], facts: {}, sections: { "0-2": { area: "builds", via: "project", match: "checkout", more: true, records: [relRow("build-1042", "failed"), relRow("build-1041", "passed")] } } } });
+      soft.match(relDom, /data-record-notice="warning"[\s\S]*?Ships within a week/, "all of: a candidate due within a week");
+      soft.match(relDom, /data-record-notice="danger"[\s\S]*?Sign-off overdue/, "a clock's state: overdue");
+      soft.doesNotMatch(relDom, /Past its release date|data-record-notice="success"/, "the others do not hold");
+      soft.match(relDom, /<th[^>]*>Build<\/th><th[^>]*>Build status<\/th><th[^>]*>Branch<\/th><th[^>]*>Built on<\/th><th[^>]*>Took<\/th>/, "the related list's own headings");
+      soft.match(relDom, /href="\/app\/records\/builds\?linked=project%3Acheckout"[^>]*>Show all/, "Show all: matched on the project");
+      const released = draw("release-released", { view: "record", area: "releases", record: { ...relRec, data: { ...relRec.data, stage: "released", release_on: "2026-01-01" }, clocks: {} }, links: [], provenance: { by: "people" },
+        page: { actions: [], facts: {}, sections: { "0-2": { area: "builds", via: "project", match: "checkout", more: false, records: [] } } } });
+      soft.match(released, /data-record-notice="success"[^>]*role="status"|role="status"[^>]*data-record-notice="success"/, "released: the success notice, green, a status");
+      soft.doesNotMatch(released, /Past its release date/, "released: not past its date, whatever the date");
       // A project's computed facts (and a fact the person may not read: not drawn), and polish: its address wraps.
       const projDom = draw("computed", { view: "record", area: "projects", record: record("checkout", "Checkout", { health: "at_risk", summary: "The payment pages", owner: "Payments team", started: "2026-01-12",
         repository: "https://git.example.com/acme/checkout-service-with-a-long-name/tree/main" }), links: [], provenance: { by: "people" },

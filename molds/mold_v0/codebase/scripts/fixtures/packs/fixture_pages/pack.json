@@ -825,6 +825,23 @@
           ]
         },
         {
+          "name": "service",
+          "label": "Service",
+          "type": "reference",
+          "to": "services"
+        },
+        {
+          "name": "subject",
+          "label": "Subject",
+          "type": "text",
+          "max_length": 120
+        },
+        {
+          "name": "release_on",
+          "label": "Release on",
+          "type": "date"
+        },
+        {
           "name": "owner",
           "label": "Owner",
           "type": "text"
@@ -864,6 +881,13 @@
             },
             {
               "field": "owner"
+            },
+            {
+              "field": "service"
+            },
+            {
+              "field": "release_on",
+              "label": "Ships"
             }
           ]
         },
@@ -878,7 +902,10 @@
                   "project",
                   "version",
                   "stage",
-                  "owner"
+                  "owner",
+                  "service",
+                  "subject",
+                  "release_on"
                 ]
               },
               {
@@ -888,6 +915,35 @@
                   "changelog"
                 ],
                 "empty": "No changelog yet."
+              },
+              {
+                "title": "Builds of this project",
+                "related": {
+                  "area": "builds",
+                  "via": "project",
+                  "match_field": "project",
+                  "columns": [
+                    {
+                      "field": "status",
+                      "label": "Build status"
+                    },
+                    "branch",
+                    {
+                      "field": "started",
+                      "label": "Built on"
+                    },
+                    {
+                      "field": "duration",
+                      "label": "Took"
+                    }
+                  ],
+                  "sort": {
+                    "field": "started",
+                    "direction": "desc"
+                  },
+                  "limit": 5
+                },
+                "empty": "No builds of this release's project yet."
               }
             ]
           },
@@ -902,8 +958,149 @@
             ]
           }
         ],
-        "unplaced": "hide"
-      }
+        "unplaced": "hide",
+        "notices": [
+          {
+            "when": {
+              "field": "stage",
+              "equals": "released"
+            },
+            "tone": "success",
+            "title": "Released",
+            "text": "This release is out: its builds and changelog are final."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "stage",
+                  "not_in": [
+                    "released"
+                  ]
+                },
+                {
+                  "field": "release_on",
+                  "before": "today"
+                }
+              ]
+            },
+            "tone": "danger",
+            "title": "Past its release date",
+            "text": "It was due to ship before today and has not been released."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "stage",
+                  "equals": "candidate"
+                },
+                {
+                  "field": "release_on",
+                  "within_days": 7
+                }
+              ]
+            },
+            "tone": "warning",
+            "title": "Ships within a week",
+            "text": "A candidate due within seven days: finish its sign-off."
+          },
+          {
+            "when": {
+              "clock": "signoff",
+              "is": "overdue"
+            },
+            "tone": "danger",
+            "title": "Sign-off overdue",
+            "text": "No one has signed this release off within five days."
+          },
+          {
+            "when": {
+              "any": [
+                {
+                  "clock": "signoff",
+                  "is": "due_soon"
+                },
+                {
+                  "field": "owner",
+                  "empty": true
+                }
+              ]
+            },
+            "tone": "info",
+            "text": "Sign-off is due soon, or nobody owns this release yet."
+          }
+        ],
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Scan service",
+            "job_kind": "scan",
+            "target": {
+              "via": "service"
+            }
+          },
+          {
+            "kind": "link",
+            "place": "secondary",
+            "field": "subject",
+            "label": "Open subject"
+          },
+          {
+            "kind": "link",
+            "field": "project",
+            "label": "Open project"
+          },
+          {
+            "kind": "copy_link"
+          }
+        ]
+      },
+      "links": [
+        {
+          "field": "subject",
+          "area": "builds"
+        },
+        {
+          "field": "subject",
+          "area": "environments"
+        }
+      ],
+      "clocks": [
+        {
+          "name": "signoff",
+          "label": "Sign-off",
+          "starts": {
+            "event": "created"
+          },
+          "after": "5d",
+          "soon": "2d"
+        }
+      ]
+    },
+    {
+      "name": "services",
+      "label": "Services",
+      "role": "asset",
+      "scope": "workspace",
+      "list_columns": [
+        "endpoint",
+        "owner"
+      ],
+      "fields": [
+        {
+          "name": "endpoint",
+          "label": "Endpoint",
+          "type": "url",
+          "required": true
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "text"
+        }
+      ]
     }
   ],
   "job_kinds": [
@@ -1013,6 +1210,34 @@
           "results/report.json"
         ]
       }
+    },
+    {
+      "name": "scan",
+      "label": "Scan a service",
+      "description": "Scans a service for known problems.",
+      "runner": "agent-workspace",
+      "args": [],
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-builder.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "scan.mjs"
+        ],
+        "args": {},
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "timeout_seconds": 1200,
+        "write_back": [
+          "results"
+        ]
+      }
     }
   ],
   "tabs": [
@@ -1072,6 +1297,17 @@
       "kind": "area",
       "area": "releases",
       "icon": "rocket",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "services",
+      "kind": "area",
+      "area": "services",
+      "icon": "plug",
       "group": "Delivery",
       "charts": [],
       "views": [

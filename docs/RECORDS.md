@@ -368,6 +368,25 @@ Where an area's list is drawn, and what it has:
   across the build: a computed fact's or a column's area that has no link back here, a field of it that is encrypted,
   a file or json, a unit on a latest that is not a number, a create_record's area that is shared or an input it lacks.
 
+- **Conditions, links, run targets, matched lists** (mold_v0-256, the same flag), found laying out a real app's pages:
+  - A condition (a notice's `when`, an action's `unavailable`, a log's `live_when`, a computed fact's `where`) may test a
+    date field against today (`{"field": "due", "before": "today"}`, `"after": "today"`, `"within_days": 7`: today up
+    to 7 days ahead), a clock's state (`{"clock": "response", "is": "overdue" | "due_soon"}`) and several tests at
+    once: `{"all": [{"field": "severity", "equals": "critical"}, {"field": "status", "not_in": ["resolved"]}]}` or
+    `"any"`. A notice's tone may be `success` (green, read as a status). Evaluated alike on the server and the page
+    (src/pack-api.ts `conditionHolds`, web/src/features/records/detail-layout.ts).
+  - A **link action on a field that links to several areas** (two `links` entries for one field) opens the area its
+    value is a record of, in declared order (src/record-page-routes.ts `linkedRecord`), not the first declared.
+  - A **start_run on a linked record**: `"target": {"via": "application"}` runs the kind on the record the field names
+    (an asset area's: the finding's application), its title shown in the run's form; the run still carries this record.
+    Disabled, with why, while the field is empty; the target is the server's, never one sent from the browser.
+  - A **related list matched on a field**: `"related": {"area": "findings", "via": "control", "match_field": "control"}`
+    lists the findings whose `control` equals this record's `control` (not its key); Show all narrows the list to that
+    value.
+  - A **related list's column with its own heading**: `"columns": [{"field": "pr", "label": "Fix PR"}, "status"]`.
+  - The lane world's seed (testing/console/seed.mts) fills a required url field with `https://example.com/<area>/<n>`,
+    so an area with one is seeded too.
+
 - **A run's own page** (mold_v0-256, the same flag): `/app/runs/<id>`, linked from a record's runs and every runs list
   (an open run's Open run). Its header: the kind, its status (a pulse while it runs), the record it ran on, who started
   it, when, how long, its cost against its budget; Re-run, Stop while it runs (asked first) and Copy link. Its tabs, each

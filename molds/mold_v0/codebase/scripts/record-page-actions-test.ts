@@ -19,6 +19,7 @@
 //      answer and the table; none for an area without a history section, none written off or for a write that changes
 //      nothing; never another workspace's).
 //   8. Facts computed from related records, as the person reading (hidden from a role that may not read their area).
+//  10. A link to several areas, a run on a linked record, a related list matched on a field.
 //   9. Add <related record> (create_record), the record picker, a tab's columns computed from related records, a Key from
 //      a Title: each as the person may, the workspace's own only; off, none of them.
 import assert from "node:assert/strict";
@@ -325,6 +326,36 @@ try {
     assert.equal((await get(member, "/api/tab-actions/_areas/projects")).body.area?.key_from_title, undefined, "off: the Key typed");
     F.setFeaturesForTest({ record_pages: true });
     ok("Add build on a project's page (its fields filled in from the project; not for a viewer or a role that may not create builds); the record picker (what matches, the workspace's own, refused to a role that may not read the area); a tab's columns computed from the builds of each project (a count, the latest status; B's own; hidden from a role that may not read them); the Key from the Title; off, none of them");
+  }
+  // ---------- 10. a link to several areas, a run on a linked record, a related list matched on a field ----------
+  {
+    const rec = ra.workspaceRecords("fixture_pages", a);
+    await ra.asWriter({ by: "people", id: "seed" }, async () => {
+      await rec.put("services", "svc-pay", { title: "Payments API", data: { endpoint: "https://pay.example.com", owner: "Payments team" } });
+      await rec.put("releases", "rel-1", { title: "Release 1", data: { project: "checkout", version: "1.0.0", stage: "candidate", service: "svc-pay", subject: "staging-eu" } });
+      await rec.put("releases", "rel-2", { title: "Release 2", data: { project: "checkout", version: "2.0.0", stage: "draft", subject: "build-02" } });
+      await rec.put("releases", "rel-3", { title: "Release 3", data: { project: "search", version: "3.0.0", stage: "draft" } });
+    });
+    const byId = (body: any) => Object.fromEntries(body.actions.map((x: any) => [x.id, x]));
+    const r1 = await page(member, "releases", "rel-1");
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    const a1 = byId(r1.body);
+    assert.deepEqual(a1["link.subject"].target, { area: "environments", key: "staging-eu" }, "a subject that is an environment: its environment");
+    assert.deepEqual(byId((await page(member, "releases", "rel-2")).body)["link.subject"].target, { area: "builds", key: "build-02" }, "one that is a build: its build (not the first area declared)");
+    assert.deepEqual([a1["start_run.scan"].disabled, a1["start_run.scan"].run.target], [null, { area: "services", key: "svc-pay", title: "Payments API" }], "Scan service: the release's service");
+    assert.match(byId((await page(member, "releases", "rel-3")).body)["start_run.scan"].disabled, /No service is set on this record/, "no service: disabled, with why");
+    const scanned = await act(member, "releases", "rel-1", "start_run.scan", { input: { target_asset: { area: "services", key: "svc-other" } } });
+    assert.equal(scanned.status, 200, JSON.stringify(scanned.body));
+    const [run] = await db.query<{ targets: any; record_area: string; record_key: string }>("SELECT targets, record_area, record_key FROM runs WHERE id = $1", [scanned.body.run.id]);
+    assert.deepEqual([run!.targets.asset, run!.record_area, run!.record_key], [{ area: "services", key: "svc-pay" }, "releases", "rel-1"], "the run targets the service (never one sent from the browser) and carries the release");
+    assert.equal((await act(member, "releases", "rel-3", "start_run.scan")).status, 409, "no service: refused");
+    const builds = r1.body.sections["0-2"];
+    assert.deepEqual([builds.area, builds.via, builds.match], ["builds", "project", "checkout"], "the release's builds: matched on its project");
+    assert.ok(builds.records.length === 5 && builds.records.every((x: any) => x.data.project === "checkout"), "builds whose project is the release's");
+    const r3 = (await page(member, "releases", "rel-3")).body.sections["0-2"];
+    assert.deepEqual([r3.match, r3.records.map((x: any) => x.key)], ["search", ["build-07"]], "another project's release: that project's builds");
+    assert.equal((await page(ownerB, "releases", "rel-1")).status, 404, "another workspace's release: not found");
+    ok("a link to several areas opens the one its value is in (an environment, a build); Scan service runs on the release's service (disabled and refused without one; the target never taken from the browser) and carries the release; a related list matched on the release's project");
   }
   F.setFeaturesForTest(null);
   await http.close();

@@ -313,11 +313,12 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
   const target = findRecordArea(base, s.related!.area);
   // Hidden from this role (it may not read that area), or nothing for it in the page's answer: no card at all.
   if (!target || data?.hidden || (page.data && !data)) return null;
-  const cols = relatedColumns(target, s.related!).map((n) => target.fields.find((f) => f.name === n)!).filter(Boolean);
+  // mold_v0-256: each column its field and its own heading, when it has one.
+  const cols = relatedColumns(target, s.related!).map((c) => ({ ...target.fields.find((f) => f.name === c.field)!, label: c.label ?? target.fields.find((f) => f.name === c.field)?.label ?? c.field })).filter((f) => !!f.name);
   const href = (k: string) => `/${base}/records/${target.name}/${encodeURIComponent(k)}`;
   const rows = data && !data.hidden ? data.records : [];
   const more = !!(data && !data.hidden && data.more);
-  const all = data && !data.hidden ? showAllHref(base, target.name, data.via, record.key) : null;
+  const all = data && !data.hidden && data.match !== null ? showAllHref(base, target.name, data.via, data.match ?? record.key) : null;
   const hostOf = (r: (typeof rows)[number]): ActionHost => ({ area: target.name, areaLabel: target.label, base, record: { key: r.key, title: r.title, data: r.data, updated_at: r.updated_at },
     copy: (t, done) => void copyWithToast(t, done), changed, deleted: changed });
   return (
@@ -433,7 +434,7 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   );
 }
 
-const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', warning: 'warning', danger: 'alertCircle' };
+const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', success: 'circleCheck', warning: 'warning', danger: 'alertCircle' };
 /**
  * A fact computed from related records (mold_v0-256), as the server answered it for this person: a count (linked to that
  * area's list narrowed to this record), or the newest related record's value formatted as its own page shows it (an
@@ -503,7 +504,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   const withActions = base === 'app' && declaresActions(layout);
   const { bar, card, panel } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
   // mold_v0-256: a log section that is live (its live_when holds) reads the record again every few seconds.
-  const live = tab.sections.some((s) => logLive(s, record.data));
+  const live = tab.sections.some((s) => logLive(s, record.data, record.clocks));
   useEffect(() => {
     if (!live || !onChanged) return;
     const t = setInterval(() => onChanged(), LOG_POLL_MS);
@@ -533,7 +534,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
   const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
     .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden && (base === 'app') : !!x.f));
-  const notices = shownNotices(layout, record.data);
+  const notices = shownNotices(layout, record.data, record.clocks);
   const added = h.creator !== false && provenance?.by ? ADDED_BY[provenance.by] ?? provenance.by : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
@@ -596,7 +597,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
       {notices.map((n, i) => {
         const Icon = Icons[NOTICE_ICON[n.tone]];
         return (
-          <div key={i} role={n.tone === 'info' ? 'status' : 'alert'} data-record-notice={n.tone}
+          <div key={i} role={n.tone === 'info' || n.tone === 'success' ? 'status' : 'alert'} data-record-notice={n.tone}
             className={cn('grid w-full grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-xl border px-4 py-3 text-sm', NOTICE_CLASS[n.tone])}>
             <Icon aria-hidden className='row-span-2 mt-0.5 size-4' />
             {n.title && <p className='font-medium'>{n.title}</p>}

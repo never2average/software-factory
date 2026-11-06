@@ -3497,6 +3497,13 @@ panel (`side_panel_forms`, off). docs/RECORDS.md section 6 has the shapes.
 - **Polish of part 2**: no count beside a section's title (Show all stays a button); a related list's number with the
   unit its area's page gives it (a duration in seconds in words: "21m 52s"); an address in a header fact wraps at its
   slashes and truncates a long piece with the whole on hover, never inside a word; a record's runs link to the run's page.
+- **Conditions, links, run targets, matched lists**: a condition (`DetailConditionSchema`, checked by
+  `conditionIssues`, evaluated by `conditionHolds` on both sides) also tests a date against today (`before`, `after`,
+  `within_days`), a clock's state (`clock`, `is`) and `all` or `any` of several tests; a notice may be `success`. A link
+  action on a field linking to several areas opens the area its value is in (`linkedRecord`); a `start_run` with
+  `target: {via}` runs on the linked asset record (the build refuses a field linking to an area that is not an asset);
+  a related list's `match_field` matches their `via` against this record's field; a related column may be
+  `{field, label}`. The lane seed fills a required url field (`https://example.com/<area>/<n>`).
 - **The side panel** (`web/src/features/tabs/tab-action.tsx` `FormHost`, `SidePanelForm`): with `side_panel_forms` on, a
   create or edit card opens in a modal panel at the right (the full screen at 640 px or narrower) over the list or page;
   Open full page expands the same card (kept mounted in one place, so its typed values stay) to the full in-page card.

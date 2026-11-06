@@ -282,7 +282,7 @@ function ActionFormCard({ host, a, onClose }: { host: ActionHost; a: PageAction;
   );
   return (
     <ActionCard open onOpenChange={(o) => { if (!o) onClose(); }} title={`${a.label} · ${host.record.title || host.record.key}`} back='Back to the record'
-      description={a.run?.description ? `${a.run.description} The run is queued and shows in this record's runs at once.` : 'The run is queued and shows in this record\'s runs at once.'}>
+      description={`${a.run?.description ? `${a.run.description} ` : ''}${a.run?.target ? `It runs on ${a.run.target.title || a.run.target.key}. ` : ''}The run is queued and shows in this record's runs at once.`}>
       <RecordRunForm host={host} a={a} onDone={done} />
     </ActionCard>
   );

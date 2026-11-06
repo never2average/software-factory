@@ -8,10 +8,17 @@ import type { RecordAreaSpec, RecordFieldSpec } from '../../config/pack-nav.gene
 /** The theme tokens a badge may take (src/pack-api.ts BADGE_COLORS, the same list). */
 export const BADGE_COLORS = ['neutral', 'info', 'success', 'warning', 'danger', 'viz-1', 'viz-2', 'viz-3', 'viz-4', 'viz-5', 'viz-6', 'viz-7', 'viz-8'] as const;
 export type BadgeColor = (typeof BADGE_COLORS)[number];
-export type NoticeTone = 'info' | 'warning' | 'danger';
+export type NoticeTone = 'info' | 'success' | 'warning' | 'danger';
 type Scalar = string | number | boolean;
 
-export interface DetailCondition { field: string; equals?: Scalar; in?: Scalar[]; not_in?: Scalar[]; empty?: boolean }
+/** One test (mold_v0-253), or (mold_v0-256) a date against today, a clock's state, all or any of several. */
+export interface DetailLeafCondition {
+  field?: string; equals?: Scalar; in?: Scalar[]; not_in?: Scalar[]; empty?: boolean;
+  before?: 'today'; after?: 'today'; within_days?: number; clock?: string; is?: 'overdue' | 'due_soon';
+}
+export interface DetailCondition extends DetailLeafCondition { all?: DetailLeafCondition[]; any?: DetailLeafCondition[] }
+/** A record's clocks as the page has them (./clocks.tsx ClockView): each one's state. */
+export type ClockStates = Record<string, { status?: string; overdue?: boolean }> | null | undefined;
 export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string }
 export interface DetailGroup { title?: string; fields: string[] }
 export interface DetailSection {
@@ -28,7 +35,13 @@ export interface DetailSection {
   files?: { fields?: string[] };
 }
 /** A related list (mold_v0-254): another area's records that point back here, through `via`. */
-export interface DetailRelated { area: string; via?: string; columns?: string[]; sort?: { field: string; direction?: 'asc' | 'desc' }; limit?: number }
+export interface DetailRelated {
+  area: string; via?: string; sort?: { field: string; direction?: 'asc' | 'desc' }; limit?: number;
+  /** mold_v0-256: a column is a field's name or {field, label} (its own heading). */
+  columns?: (string | { field: string; label: string })[];
+  /** mold_v0-256: their via holds this record's match_field value (not its key). */
+  match_field?: string;
+}
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
 export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record';
@@ -39,6 +52,8 @@ export interface DetailActionSpec {
   roles?: string[]; unavailable?: { when: DetailCondition; reason: string }[]; confirm?: string;
   /** mold_v0-256: a create_record action's area. */
   area?: string;
+  /** mold_v0-256: a start_run on the record a link field names. */
+  target?: { via: string };
 }
 export interface DetailTab { label: string; sections: DetailSection[] }
 /** A fact computed from related records (mold_v0-256): the server evaluates it as the person reading. */
@@ -65,18 +80,31 @@ export const isEmptyValue = (v: unknown) =>
   v == null || v === '' || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0);
 
 const same = (a: unknown, b: Scalar) => a === b || (typeof a !== 'object' && a != null && String(a) === String(b));
-/** Whether a notice's condition holds on the record's data (a list field: any of its values). */
-export function conditionHolds(when: DetailCondition, data: Record<string, unknown>): boolean {
-  const v = data[when.field];
+/**
+ * Whether a condition holds on the record (the server's src/pack-api.ts conditionHolds is the same): a list field by any
+ * of its values; mold_v0-256: a date by its UTC day against today's (before, after, within N days), a clock's state
+ * (overdue, due soon), all or any of several tests.
+ */
+export function conditionHolds(when: DetailCondition, data: Record<string, unknown>, clocks: ClockStates = null, now = Date.now()): boolean {
+  if (when.all) return when.all.every((c) => conditionHolds(c, data, clocks, now));
+  if (when.any) return when.any.some((c) => conditionHolds(c, data, clocks, now));
+  if (when.clock) { const c = clocks?.[when.clock]; return !!c && (when.is === 'overdue' ? c.status === 'overdue' || c.overdue === true : c.status === 'due_soon'); }
+  const v = when.field ? data[when.field] : undefined;
   const values = Array.isArray(v) ? v : [v];
   if (when.empty !== undefined) return isEmptyValue(v) === when.empty;
   if (when.equals !== undefined) return values.some((x) => same(x, when.equals!));
   if (when.in) return values.some((x) => when.in!.some((y) => same(x, y)));
   if (when.not_in) return !isEmptyValue(v) && !values.some((x) => when.not_in!.some((y) => same(x, y)));
+  if (when.before || when.after || when.within_days !== undefined) {
+    const t = asTime(v);
+    if (t == null) return false;
+    const day = Math.floor(t / DAY), today = Math.floor(now / DAY);
+    return when.before ? day < today : when.after ? day > today : day >= today && day <= today + when.within_days!;
+  }
   return false;
 }
 /** The notices to show, in their declared order. */
-export const shownNotices = (layout: DetailLayout, data: Record<string, unknown>) => (layout.notices ?? []).filter((n) => conditionHolds(n.when, data));
+export const shownNotices = (layout: DetailLayout, data: Record<string, unknown>, clocks: ClockStates = null) => (layout.notices ?? []).filter((n) => conditionHolds(n.when, data, clocks));
 
 /** A tab's address (?tab=<id>): the same as the build's (src/pack-api.ts detailTabId). */
 export const tabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'tab';
@@ -202,7 +230,9 @@ export const BADGE_CLASS: Record<BadgeColor, string> = {
 export const NOTICE_CLASS: Record<NoticeTone, string> = {
   info: 'border-primary/40 bg-primary/5 *:[svg]:text-primary',
   warning: 'border-amber-500/50 bg-amber-500/5 *:[svg]:text-amber-600 dark:*:[svg]:text-amber-400',
-  danger: 'border-destructive/60 bg-destructive/5 *:[svg]:text-destructive'
+  danger: 'border-destructive/60 bg-destructive/5 *:[svg]:text-destructive',
+  // mold_v0-256: a success notice, green (the console's status green, legible in both themes).
+  success: 'border-emerald-600/45 bg-emerald-500/5 *:[svg]:text-emerald-600 dark:border-emerald-400/40 dark:*:[svg]:text-emerald-400'
 };
 
 /** A value as one line to copy: a list joined with ", ", an enum's stored value, a number as written. */
@@ -221,7 +251,9 @@ export interface PageAction {
   /** Why it cannot be taken now (on hover and focus), or null. */
   disabled: string | null;
   confirm: string | null;
-  run?: { kind: string; label: string; description: string | null; args: PageFormField[]; values: Record<string, unknown>; environments: string[] | null };
+  run?: { kind: string; label: string; description: string | null; args: PageFormField[]; values: Record<string, unknown>; environments: string[] | null;
+    /** mold_v0-256: the linked record it runs on. */
+    target?: { area: string; key: string; title: string | null } | null };
   moves?: { to: string; label: string; disabled: string | null }[];
   fields?: PageFormField[];
   target?: { area: string; key: string } | null;
@@ -230,6 +262,8 @@ export interface PageAction {
 }
 /** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
 export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;
+  /** mold_v0-256: the value matched (this record's key, or its match_field's value); null: nothing to match. */
+  match?: string | null;
   records: { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; actions: PageAction[] }[] };
 /** A record's runs: the newest, and how many in all. */
 export interface RecordRun { id: string; pack: string; kind: string; status: string; error: string | null; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string }
@@ -250,7 +284,9 @@ export const declaresActions = (layout: DetailLayout) => (layout.actions?.length
 /** Whether the copy-link action is among the declared (then More does not add its own). */
 export const declaresCopyLink = (layout: DetailLayout) => (layout.actions ?? []).some((a) => a.kind === 'copy_link');
 /** A related list's columns: its own, else the target area's list columns (at most 8). */
-export const relatedColumns = (target: RecordAreaSpec, related: DetailRelated) => (related.columns ?? target.list_columns).filter((c) => target.fields.some((f) => f.name === c)).slice(0, 8);
+export const relatedColumns = (target: RecordAreaSpec, related: DetailRelated): { field: string; label: string | null }[] =>
+  (related.columns ?? target.list_columns).map((c) => (typeof c === 'string' ? { field: c, label: null } : { field: c.field, label: c.label }))
+    .filter((c) => target.fields.some((f) => f.name === c.field)).slice(0, 8);
 
 /** The address param of a list narrowed to the records pointing at one (Show all): `?linked=<field>:<key>`. */
 export const LINKED_PARAM = 'linked';
@@ -305,7 +341,7 @@ export const countWords = (n: number, capped: boolean, unit?: string) => `${n.to
 /** The words of a change's action. */
 export const CHANGE_WORDS: Record<RecordChangeView['action'], string> = { created: 'Added', updated: 'Changed', moved: 'Moved', deleted: 'Deleted' };
 /** Whether a log section follows its record (reads it again every few seconds) now: its live_when holds. */
-export const logLive = (s: DetailSection, data: Record<string, unknown>) => !!s.log?.live_when && conditionHolds(s.log.live_when, data);
+export const logLive = (s: DetailSection, data: Record<string, unknown>, clocks: ClockStates = null) => !!s.log?.live_when && conditionHolds(s.log.live_when, data, clocks);
 /** How often a live log section reads its record again. */
 export const LOG_POLL_MS = 4000;
 
