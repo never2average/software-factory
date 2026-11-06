@@ -57,6 +57,13 @@
     "height": 630,
     "max_bytes": 1048576
   },
+  "agent_icon": {
+    "$comment": "mold_v0-252: the workspace agent's own icon (the top bar's agent button and the agent pages' heading, while the profile turns agent_harness on), optional. Without one the console draws its default. With one (branding.py <app_id> set --agent-icon <file> | --agent-icon-name <name> [--agent-icon-dark <file>]; .claude/scripts/lib/agent_icon.py keeps it in the brand, a sanitised SVG or a PNG fitted inside 64 px, per theme), `prepare` writes light and dark files to `dir` and their addresses under `url` into the profile file's `profile_field` ({light, dark, mask}: mask when both are drawn in currentColor, painted in the text colour) before the mold's generator runs; scripts/gen-packs.mjs checks them and writes the field into the console's profile module only. A workspace owner may bring their own over it (Settings › Workspace agent, src/agent-icon.ts).",
+    "dir": "web/public/agent-icon",
+    "url": "/agent-icon",
+    "profile_file": "profile.json",
+    "profile_field": "agent_icon"
+  },
   "favicon": {
     "app": "web/src/app",
     "public": "web/public"

@@ -61,14 +61,16 @@ export function TagsField({
           {values.map((tag, idx) => (
             <Badge key={tag} variant='secondary' className='gap-1'>
               {tag}
-              <button
+              <Button
                 type='button'
+                variant='ghost'
+                size='icon-xs'
                 onClick={() => field.removeValue(idx)}
                 aria-label={`Remove ${tag}`}
-                className='hover:text-destructive ml-0.5'
+                className='hover:text-destructive ml-0.5 size-4 rounded-sm'
               >
                 <Icons.close className='h-3 w-3' />
-              </button>
+              </Button>
             </Badge>
           ))}
         </div>

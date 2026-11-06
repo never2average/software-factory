@@ -140,7 +140,7 @@ export const FilePreview: FC<FilePreviewProps> = ({
                 type='button'
                 onClick={() => onRemove(file.id)}
                 className={cn(
-                  'absolute -top-1 -right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full',
+                  'border-background absolute -top-1 -right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border',
                   'scale-75 opacity-0 transition-all duration-150 group-hover/file:scale-100 group-hover/file:opacity-100',
                   'bg-muted-foreground/60 hover:bg-muted-foreground/80 cursor-pointer'
                 )}

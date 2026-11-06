@@ -240,7 +240,7 @@ export function RecordView<T>({
       {primaryEl || (exportName && <Button variant='outline' onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV</Button>)}
       <DropdownMenu>
         <DropdownMenuTrigger render={primaryEl
-          ? <Button size='icon' aria-label='More actions' className='border-primary-foreground/20 border-l' />
+          ? <Button size='icon' aria-label='More actions' className='border-l-primary-foreground/20 border-l' />
           : <Button size='icon' variant='outline' aria-label='More export options' />}>
           <Icons.chevronDown />
         </DropdownMenuTrigger>
@@ -278,9 +278,9 @@ export function RecordView<T>({
           {/* The way back and the record's actions on one line; the title below them, the card's whole width. */}
           <div className='flex flex-wrap items-center justify-between gap-2'>
             <CardDescription>
-              <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={close}>
+              <Button variant='outline' size='sm' onClick={close}>
                 <Icons.chevronLeft className='size-3.5' />Back to the list
-              </button>
+              </Button>
             </CardDescription>
             <div className='flex flex-wrap items-center justify-end gap-1'>
               {detailActions?.(current, close)}
@@ -356,9 +356,9 @@ export function RecordView<T>({
                     return (
                       <TableHead key={c.key} className={cn('px-3', c.className)} aria-sort={d === 'asc' ? 'ascending' : d === 'desc' ? 'descending' : undefined}>
                         {typed(c) ? (
-                          <button type='button' onClick={() => cycle(c.key)} className='hover:text-foreground inline-flex min-h-6 items-center gap-1 leading-none'>
+                          <Button variant='ghost' size='xs' onClick={() => cycle(c.key)} className='text-muted-foreground hover:text-foreground -ml-2 font-medium'>
                             {c.label}{d === 'asc' ? <IconArrowUp className='size-3' /> : d === 'desc' ? <IconArrowDown className='size-3' /> : null}
-                          </button>
+                          </Button>
                         ) : c.label}
                       </TableHead>
                     );
@@ -373,7 +373,7 @@ export function RecordView<T>({
                   <TableRow>
                     <TableCell colSpan={span} className='text-muted-foreground py-12 text-center whitespace-normal'>
                       {narrowed ? (
-                        <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='link' size='sm' className='h-auto p-0' onClick={clearAll}>Clear filters</Button>}</span>
+                        <span className='inline-flex items-center gap-2 leading-none'>Nothing matches.{(searching || views) && <Button variant='outline' size='xs' onClick={clearAll}>Clear filters</Button>}</span>
                       ) : empty}
                     </TableCell>
                   </TableRow>
@@ -385,11 +385,11 @@ export function RecordView<T>({
                       {head && it.g && (
                         <TableRow className='bg-muted/30 hover:bg-muted/30'>
                           <TableCell colSpan={span} className='py-0.5'>
-                            <button type='button' className='flex min-h-6 items-center gap-1.5 text-xs font-medium leading-none'
+                            <Button variant='ghost' size='xs' className='-ml-1 gap-1.5'
                               onClick={() => setCollapsed((s) => { const n = new Set(s); if (!n.delete(it.g!.value)) n.add(it.g!.value); return n; })}>
                               <Icons.chevronRight className={cn('size-3.5 transition-transform', !collapsed.has(it.g.value) && 'rotate-90')} />
                               {it.g.label}<span className='text-muted-foreground tabular-nums'>{it.g.rows.length}</span>
-                            </button>
+                            </Button>
                           </TableCell>
                         </TableRow>
                       )}

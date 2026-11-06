@@ -163,7 +163,7 @@ function DirView({ dir, onOpen, openPath }: { dir: Dir; onOpen: (f: FileEntry) =
       ))}
       {dir.files.map((f) => (
         <li key={f.path} className='flex items-center justify-between gap-4'>
-          <button type='button' className={cn('truncate text-left font-mono text-sm hover:underline', openPath === f.path && 'font-semibold underline')} onClick={() => onOpen(f)}>
+          <button type='button' className={cn('border-border hover:bg-muted/50 truncate rounded-md border px-2 py-1 text-left font-mono text-sm hover:underline', openPath === f.path && 'font-semibold underline')} onClick={() => onOpen(f)}>
             <Visible text={f.path.split('/').pop()!} />
           </button>
           <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{size(f.size)}</span>
@@ -221,7 +221,7 @@ function Compare({ store, from, to }: { store: string; from: number; to: number 
   const none = !data.added.length && !data.removed.length && !data.changed.length;
   const row = (path: string, kind: 'added' | 'removed' | 'changed', detail: string) => (
     <li key={`${kind}/${path}`} className='flex items-center justify-between gap-4'>
-      <button type='button' className={cn('truncate text-left font-mono text-sm hover:underline', open === path && 'font-semibold underline')} onClick={() => setOpen(open === path ? null : path)}>
+      <button type='button' className={cn('border-border hover:bg-muted/50 truncate rounded-md border px-2 py-1 text-left font-mono text-sm hover:underline', open === path && 'font-semibold underline')} onClick={() => setOpen(open === path ? null : path)}>
         <Badge variant={kind === 'removed' ? 'destructive' : 'secondary'} className='mr-2'>{kind}</Badge><Visible text={path} />
       </button>
       <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>{detail}</span>

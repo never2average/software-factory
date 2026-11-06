@@ -272,7 +272,7 @@ function JobPeek({ id, onSessions, onOrch }: { id: string; onSessions: () => voi
           <ul className='divide-y border-y'>
             {data.orchestrators.map((o) => (
               <li key={o.id}>
-                <button type='button' onClick={() => onOrch(o.id)} className='hover:bg-muted/50 grid w-full grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 px-2 py-1.5 text-left text-xs'>
+                <button type='button' onClick={() => onOrch(o.id)} className='border-border hover:bg-muted/50 my-1 grid w-full grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 rounded-md border px-2 py-1.5 text-left text-xs'>
                   <span className='flex items-center gap-1.5'><Mono>{o.orchestrator_id ?? `row ${o.id}`}</Mono><StatusBadge tone={ORCH_TONE[o.state]}>{o.state === 'deleted' ? 'ended' : o.state}</StatusBadge></span>
                   <span className='text-muted-foreground tabular-nums'>boot {o.boot_ms == null ? '—' : dur(o.boot_ms / 1000)} · lived {dur(o.lifetime_s)}</span>
                   {o.end_reason && <span className={cn('col-span-2 line-clamp-1', o.end_reason.key.startsWith('launch:') ? 'text-destructive' : 'text-muted-foreground')} title={o.end_reason.message}>

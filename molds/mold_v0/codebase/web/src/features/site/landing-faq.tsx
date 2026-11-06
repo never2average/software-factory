@@ -7,8 +7,8 @@ export function LandingFaq({ items }: { items: { question: string; answer: strin
     <Accordion className='divide-y border-y'>
       {items.map((q, i) => (
         <AccordionItem key={i} value={String(i)} className='px-0'>
-          <AccordionTrigger className='py-4 text-left text-base font-medium'>{q.question}</AccordionTrigger>
-          <AccordionContent className='text-muted-foreground pb-4'>{q.answer}</AccordionContent>
+          <AccordionTrigger className='my-2 py-3 text-left text-base font-medium'>{q.question}</AccordionTrigger>
+          <AccordionContent className='text-muted-foreground px-3 pb-4'>{q.answer}</AccordionContent>
         </AccordionItem>
       ))}
     </Accordion>

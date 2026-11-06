@@ -11,6 +11,11 @@
  *     POST   /:id/pause | /resume | /stop
  *     POST   /:id/requests/:rid     {decision: approve | decline, reason?}
  *     POST   /:id/budget            {to_usd | by_usd, reason} a billing manager or owner; never while it works
+ *     GET    /icon                  the workspace's own agent icon (mold_v0-252; src/agent-icon.ts) or null, and whether
+ *                                    this person may change it (an owner)
+ *     PUT    /icon                  an owner: the icon's bytes (application/octet-stream, at most 256 KB; its declared
+ *                                    type in X-File-Type), checked by what they are, sealed with the workspace's key
+ *     DELETE /icon                  an owner: back to the app's icon
  *
  *   staff (/api/admin/agent, agentAdminRoutes): GET / (every workspace's), GET /:id, POST /:id/pause, /:id/stop,
  *   /:id/budget ("accounts"), /:id/requests/:rid (decline only). Staff never message a session: it acts for the
@@ -24,6 +29,7 @@ import { agentHarnessOn, flavourOf } from "./agent-harness-config.js";
 import { canAccount } from "./account-roles.js";
 import { settingNumber, settingText } from "./settings.js";
 import * as H from "./harness-sessions.js";
+import { AGENT_ICON_MAX_BYTES, readAgentIcon, resetAgentIcon, saveAgentIcon } from "./agent-icon.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { const v = await fn(req, res); if (!res.headersSent) res.json(v); }
@@ -58,6 +64,19 @@ export function agentAppRouter(): Router {
   // The offer carries this person's own budget range for the start dialog (mold_v0-249): the default, and how far they may go.
   r.get("/", answer(async (_req, res) => ({ sessions: await H.listSessions(S(res).org, actor(res)), can_start: canAccount(S(res).accountRole, "launch"),
     offer: { ...agentOffer(), budget: await H.startBudgetMax(S(res).org, actor(res)) } })));
+  // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it; its owners change it.
+  const owner = (_req: Request, res: Response, next: NextFunction) =>
+    (canAccount(S(res).accountRole, "manage") ? next() : void res.status(403).json({ error: "Only the workspace's owners change its agent icon." }));
+  r.get("/icon", answer(async (_req, res) => ({ icon: await readAgentIcon(S(res).org), can_change: canAccount(S(res).accountRole, "manage"), max_bytes: AGENT_ICON_MAX_BYTES })));
+  r.put("/icon", owner, (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the icon's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: AGENT_ICON_MAX_BYTES }),
+    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
+      (err ? void res.status(err.type === "entity.too.large" ? 413 : err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? `An icon is at most ${AGENT_ICON_MAX_BYTES / 1024} KB` : "The request body could not be read" }) : next()),
+    answer(async (req, res) => {
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      return { icon: await saveAgentIcon(S(res).org, S(res).email ?? S(res).user, data, String(req.get("x-file-type") ?? "")) };
+    }));
+  r.delete("/icon", owner, answer(async (_req, res) => { await resetAgentIcon(S(res).org); return { icon: null }; }));
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
   r.post("/:id/messages", answer(async (req, res) => H.messageSession(S(res).org, id(req), actor(res), (req.body ?? {}).message, org(res))));

@@ -247,7 +247,7 @@ export function FilterChips<T>({ cols, rows, rules, setRules, editing, setEditin
         if (!c) return null;
         return (
           <Popover key={r.id} open={editing === r.id} onOpenChange={(o) => setEditing(o ? r.id : null)}>
-            <span className={cn('flex h-7 items-center rounded-full border text-xs leading-none', ruleActive(r) ? 'border-primary/40 bg-primary/10 text-primary' : 'text-muted-foreground')}>
+            <span data-outline='group' className={cn('flex h-7 items-center rounded-full border text-xs leading-none', ruleActive(r) ? 'border-primary/40 bg-primary/10 text-primary' : 'text-muted-foreground')}>
               <PopoverTrigger render={<button type='button' className='max-w-72 truncate py-1 pr-1 pl-2.5' />}>
                 <span className='font-medium'>{colName(c)}:</span> {ruleText(c, r, rows)}
               </PopoverTrigger>
@@ -377,7 +377,7 @@ export function ViewMenu<T>({ cols, sort, setSort, group, setGroup, hidden, setH
           <div className='flex flex-col gap-2'>
             <div className='flex items-center justify-between'>
               <span className={label}>Columns</span>
-              {nHidden > 0 && <button type='button' className='text-primary text-xs leading-none hover:underline' onClick={() => setHidden([])}>Show all</button>}
+              {nHidden > 0 && <Button variant='ghost' size='xs' className='text-primary' onClick={() => setHidden([])}>Show all</Button>}
             </div>
             <ul className='flex max-h-56 flex-col gap-0.5 overflow-y-auto'>
               {cols.map((c) => (

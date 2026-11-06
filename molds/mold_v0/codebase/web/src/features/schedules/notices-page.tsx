@@ -72,7 +72,7 @@ function NoticesList({ limit, label }: { limit?: number; label?: string }) {
         </TableBody>
       </Table>
       {limit && data.notices.length > limit && (
-        <Button variant='link' size='sm' className='self-start px-0' aria-expanded={all} onClick={() => setAll(!all)}>
+        <Button variant='outline' size='sm' className='self-start' aria-expanded={all} onClick={() => setAll(!all)}>
           {all ? 'Show fewer' : `Show all ${data.notices.length}`}
         </Button>
       )}
@@ -169,9 +169,9 @@ export function DueSoonCard() {
             ))}
           </ul>
           {data.notices.length > 5 && (
-            <button type='button' aria-expanded={all} onClick={() => setAll(!all)} className='text-primary self-start px-3 text-xs font-medium hover:underline'>
+            <Button variant='outline' size='xs' aria-expanded={all} onClick={() => setAll(!all)} className='text-primary mx-3 self-start'>
               {all ? 'Show fewer' : `Show all ${data.notices.length}`}
-            </button>
+            </Button>
           )}
         </>
       )}

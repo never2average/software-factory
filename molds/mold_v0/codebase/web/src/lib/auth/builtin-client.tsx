@@ -5,6 +5,7 @@
  * or Clerk's own). The session itself is an httpOnly cookie the API server sets; nothing here can read or keep it.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { buttonVariants } from '@/components/ui/button';
 
 export interface BuiltinMembership { organization: { id: string; name: string; slug: string | null }; role: string; account_role: string | null; suspended: boolean }
 export interface BuiltinSession {
@@ -119,5 +120,5 @@ export function SignOutButton({ redirectUrl, children }: { redirectUrl?: string;
   if (children && typeof children === 'object' && 'props' in (children as object)) {
     return <span role='presentation' onClick={go}>{children}</span>;
   }
-  return <button type='button' onClick={go}>{children ?? 'Sign out'}</button>;
+  return <button type='button' className={buttonVariants({ variant: 'outline' })} onClick={go}>{children ?? 'Sign out'}</button>;
 }
