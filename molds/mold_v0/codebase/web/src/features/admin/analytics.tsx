@@ -185,7 +185,7 @@ function FacetList({ label, options, value, onChange }: { label: string; options
     <div className='flex flex-col gap-1.5'>
       <div className='flex items-center justify-between text-xs leading-none font-medium'>
         {label}
-        {value.length > 0 && <button type='button' className='text-muted-foreground hover:text-foreground font-normal' onClick={() => onChange([])}>Clear</button>}
+        {value.length > 0 && <Button variant='ghost' size='xs' className='text-muted-foreground font-normal' onClick={() => onChange([])}>Clear</Button>}
       </div>
       {all.length > 8 && <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${label.toLowerCase()}`} aria-label={`Search ${label.toLowerCase()}`} className='h-7 text-xs' />}
       <ul className='flex max-h-40 flex-col gap-0.5 overflow-y-auto'>
@@ -223,9 +223,9 @@ function UsersPicker({ p, facets }: { p: ReturnType<typeof useReportParams>; fac
       </PopoverTrigger>
       <PopoverContent align='end' className='flex w-80 flex-col gap-2'>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${opts.length} people`} aria-label='Search people' className='h-8 text-sm' />
-        <div className='flex items-center gap-3 text-xs leading-none'>
-          <button type='button' className='text-primary hover:underline' onClick={() => p.setList('user', [...new Set([...value, ...shown.map((o) => o.value)])])}>Select {q ? 'matches' : 'all'}</button>
-          {value.length > 0 && <button type='button' className='text-muted-foreground hover:text-foreground' onClick={() => p.setList('user', [])}>Clear ({value.length})</button>}
+        <div className='flex items-center gap-2'>
+          <Button variant='ghost' size='xs' className='text-primary' onClick={() => p.setList('user', [...new Set([...value, ...shown.map((o) => o.value)])])}>Select {q ? 'matches' : 'all'}</Button>
+          {value.length > 0 && <Button variant='ghost' size='xs' className='text-muted-foreground' onClick={() => p.setList('user', [])}>Clear ({value.length})</Button>}
         </div>
         <ul className='flex max-h-72 flex-col gap-0.5 overflow-y-auto'>
           {!shown.length && <li className='text-muted-foreground py-2 text-xs leading-none'>{opts.length ? 'No match.' : 'Nobody was active in this period.'}</li>}
@@ -275,7 +275,7 @@ function FilterChipRow({ p, facets }: { p: ReturnType<typeof useReportParams>; f
   if (!p.active) return null;
   const opts = facetOptions(facets);
   const chip = (key: string, text: ReactNode, remove: () => void) => (
-    <span key={key} className='border-primary/40 bg-primary/10 text-primary flex h-7 items-center rounded-full border text-xs leading-none'>
+    <span key={key} data-outline='group' className='border-primary/40 bg-primary/10 text-primary flex h-7 items-center rounded-full border text-xs leading-none'>
       <span className='max-w-72 truncate py-1 pr-1 pl-2.5'>{text}</span>
       <button type='button' aria-label={`Remove ${key}`} className='hover:text-foreground pr-2 pl-0.5' onClick={remove}><Icons.close className='size-3' /></button>
     </span>

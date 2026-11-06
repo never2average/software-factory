@@ -270,7 +270,7 @@ function OrchPeek({ id, onJob }: { id: number; onJob: (job: string) => void }) {
           : data.workers.length ? (
             <MiniTable head={['Agent', 'Session', 'Status', 'Heartbeat', 'boat']} rows={data.workers.map((w) => [
               w.agent_id ?? '—',
-              w.session_id ? <button key='s' type='button' className='hover:underline' onClick={() => openSession(w.session_id!)}><Mono>{w.session_id}</Mono></button> : <span key='s' className='text-muted-foreground'>idle</span>,
+              w.session_id ? <Button key='s' variant='ghost' size='xs' className='font-normal' onClick={() => openSession(w.session_id!)}><Mono>{w.session_id}</Mono></Button> : <span key='s' className='text-muted-foreground'>idle</span>,
               w.status ?? '—', w.heartbeat_age_s == null ? '—' : `${dur(w.heartbeat_age_s)} ago`, w.boat_state])} />
           ) : <p className='text-muted-foreground text-sm'>No worker sandboxes on boat for it.</p>}
       </PeekSection>
@@ -278,7 +278,7 @@ function OrchPeek({ id, onJob }: { id: number; onJob: (job: string) => void }) {
       <PeekSection title='Recent sessions on it'>
         {data.sessions.length ? (
           <MiniTable head={['Session', 'Agent', 'Status', 'Started', 'Error']} rows={data.sessions.map((s) => [
-            <button key='s' type='button' className='hover:underline' onClick={() => openSession(s.id)}><Mono>{s.id}</Mono></button>,
+            <Button key='s' variant='ghost' size='xs' className='font-normal' onClick={() => openSession(s.id)}><Mono>{s.id}</Mono></Button>,
             s.agent_id ?? '—', s.status, <When key='t' d={s.started_at} />, <span key='e' className='text-muted-foreground line-clamp-1' title={s.error_message ?? undefined}>{s.error_message ?? ''}</span>])} />
         ) : <p className='text-muted-foreground text-sm'>No sessions.</p>}
       </PeekSection>

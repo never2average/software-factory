@@ -50,7 +50,7 @@ function ClerkProfileViewPage() {
     <PageContainer pageTitle='Profile'>
       <div className='flex max-w-xl flex-col gap-6'>
         <div className='flex items-center gap-4'>
-          <button type='button' onClick={() => file.current?.click()} className='group relative rounded-full' aria-label='Change photo' title='Change photo'>
+          <button type='button' onClick={() => file.current?.click()} className='group border-border relative rounded-full border p-0.5' aria-label='Change photo' title='Change photo'>
             <Avatar className='size-16'><AvatarImage src={user.imageUrl} alt='' /><AvatarFallback>{initials}</AvatarFallback></Avatar>
             <span className='bg-background/70 absolute inset-0 hidden items-center justify-center rounded-full text-xs group-hover:flex'>Change</span>
           </button>

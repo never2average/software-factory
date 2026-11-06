@@ -67,7 +67,7 @@ export function StatusPage({ kind, area: areaProp, frame = 'inline', level, role
   const H = (level ?? (frame === 'full' ? 1 : 2)) === 1 ? 'h1' : 'h2';
   const button = (a: Action) => {
     const cls = cn(buttonVariants({ variant: a.primary ? 'default' : 'outline' }), 'h-10 px-4');
-    if (a.signOut) return <SignOutButton redirectUrl='/auth/sign-in'><button type='button' className={cls}>{a.icon}{a.label}</button></SignOutButton>;
+    if (a.signOut) return <SignOutButton redirectUrl='/auth/sign-in'><Button type='button' variant={a.primary ? 'default' : 'outline'} className='h-10 px-4'>{a.icon}{a.label}</Button></SignOutButton>;
     if (a.href) return <Link href={a.href} className={cls} prefetch={false}>{a.label}{a.icon}</Link>;
     return <Button type='button' variant={a.primary ? 'default' : 'outline'} className='h-10 px-4' onClick={a.onClick}>{a.icon}{a.label}</Button>;
   };
