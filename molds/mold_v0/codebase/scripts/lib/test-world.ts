@@ -57,7 +57,9 @@ export async function startHttp() {
   const mockPost = async (p: string, body: unknown) => (await fetch(`${mock.url}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
   /** A signed-in member of `org` (a Clerk organization linked to it on first use): a session token. */
   const linked = new Map<number, string>();
-  const signIn = async (org: Org, role: "member" | "viewer" | "owner" = "member") => {
+  const signIn = async (org: Org, role: "member" | "viewer" | "owner" = "member") => (await signInAs(org, role)).token;
+  /** The same, with who signed in: the session token, the person's id and the workspace's directory id. */
+  const signInAs = async (org: Org, role: "member" | "viewer" | "owner" = "member") => {
     let corg = linked.get(org.orgId);
     if (!corg) {
       corg = (await clerk("/v1/organizations", { name: org.name })).id as string;
@@ -66,7 +68,7 @@ export async function startHttp() {
     }
     const user = await mockPost("/_mock/clerk/users", { email: `${role}+${org.orgId}-${randomBytes(3).toString("hex")}@example.org` });
     await mockPost("/_mock/clerk/memberships", { org_id: corg, user_id: user.id, role: role === "owner" ? "org:admin" : "org:member", ...(role === "viewer" ? { public_metadata: { [NS_KEYS.role]: "viewer" } } : {}) });
-    return (await mockPost("/_mock/session", { user_id: user.id, org_id: corg })).token as string;
+    return { token: (await mockPost("/_mock/session", { user_id: user.id, org_id: corg })).token as string, userId: user.id as string, clerkOrg: corg };
   };
   const { createAdminToken } = await import("../../src/admin-tokens.js");
   const adminToken = async (role: "viewer" | "support" | "operator" | "owner") =>
@@ -74,5 +76,5 @@ export async function startHttp() {
   const req = (method: string, p: string, h: Record<string, string> = {}, body?: unknown) =>
     fetch(`${base}${p}`, { method, headers: { ...h, ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body as BodyInit : JSON.stringify(body) });
   const close = async () => { server.close(); await mock.close(); };
-  return { base, signIn, adminToken, req, close, mock };
+  return { base, signIn, signInAs, adminToken, req, close, mock };
 }

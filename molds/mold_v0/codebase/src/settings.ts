@@ -35,9 +35,10 @@ export interface SettingDef {
   options?: string[]; min?: number; max?: number;
   /**
    * What a text setting holds (default: a model id). sender = "Name <address>" or an address; emails = addresses,
-   * comma-separated, or empty; hosts = host names (`*.suffix` allowed), comma-separated, or empty (mold_v0-243).
+   * comma-separated, or empty; hosts = host names (`*.suffix` allowed), comma-separated, or empty (mold_v0-243); tools =
+   * MCP tool names, comma-separated, or empty (mold_v0-250).
    */
-  format?: "model" | "sender" | "emails" | "hosts";
+  format?: "model" | "sender" | "emails" | "hosts" | "tools";
   /**
    * A shell setting only some builds read (mold_v0-169; listSettings lists it only there): "engine" the session engine's
    * (its orchestrators, sessions and capacity: a build whose host pack owns its tables, src/host-tables.ts); "vertex" Claude
@@ -135,6 +136,13 @@ export const AGENT_SETTINGS: SettingDef[] = [
     help: "Host names the agent may read without asking, separated by commas; *.example.com allows a domain and everything under it. Empty: it asks for each." },
   { key: "AGENT_WEB_CALLS_MAX", group: "agent", label: "Web calls per session", kind: "int", default: 20, min: 0, max: 500,
     help: "The most web reads and searches one session makes. Past it, the session stops and says so." },
+  // mold_v0-250: the workspace's own tools (its customer MCP server, as the person who started the session) and its context.
+  { key: "AGENT_WORKSPACE_TOOLS", group: "agent", label: "Workspace tools used without asking", kind: "choice", default: "reads", options: ["reads", "reads_and_named", "all"],
+    help: "A session reaches this app's own tools as the person who started it, with their role. Reads: it reads records and memory without asking, and asks the person before any tool that changes something. Reads and named: also the tools named below. All: every tool the person may use, without asking. Fixed when a session starts." },
+  { key: "AGENT_WORKSPACE_TOOLS_NAMED", group: "agent", label: "Workspace tools allowed without asking", kind: "text", format: "tools", default: "",
+    help: "Tool names, separated by commas, that a session may use without asking when the choice above is Reads and named (as the app's connect page lists them). Empty: none besides reads." },
+  { key: "AGENT_CONTEXT_MAX_CHARS", group: "agent", label: "Workspace context in a session (characters)", kind: "int", default: 12000, min: 0, max: 60000,
+    help: "The most of the workspace's context a session is given as standing instructions when it starts: the app's own instructions for its tools, then the company's and the person's context and memory, each shortened to its share. 0 gives none (the session can still search memory with its tools)." },
 ];
 
 /**
@@ -238,6 +246,11 @@ function clean(d: SettingDef, v: unknown): { value: string | number } | { error:
     const list = s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
     const host = /^(\*\.)?(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/;
     if (list.length > 100 || list.some((x) => !host.test(x) || /^(\*\.)?\d+(\.\d+)+$/.test(x))) return { error: `${d.label} must be host names (example.com, *.example.com), comma-separated` };
+    return { value: list.join(", ") };
+  }
+  if (d.format === "tools") {
+    const list = [...new Set(s.split(",").map((x) => x.trim()).filter(Boolean))];
+    if (list.length > 100 || list.some((x) => !/^[A-Za-z][A-Za-z0-9_.-]{0,99}$/.test(x))) return { error: `${d.label} must be tool names (letters, digits, _ . -), comma-separated` };
     return { value: list.join(", ") };
   }
   if (d.format === "sender") {
