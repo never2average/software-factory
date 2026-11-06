@@ -140,7 +140,9 @@ export async function runAnalytics(r: AnalyticsReader, q: AnalyticsQuery) {
   const total = runs.reduce((n, x) => n + x.cost, 0);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, runs.filter((x) => x.status === s).length]));
   const tokens = [...models.values()].reduce((a, m) => ({ input: a.input + m.input_tokens, output: a.output + m.output_tokens }), { input: 0, output: 0 });
-  const label = (k: string) => k.split("/")[1] ?? k;
+  // A kind in the pack's words (its declared label), else its name.
+  const { findKind } = await import("./runs.js");
+  const label = (k: string) => { const [p, n] = k.split("/"); return (findKind(p!, n!) as { label?: string } | null)?.label ?? n ?? k; };
   const who = r.orgId !== null ? r.who : (id: string | null) => (id ? (id.startsWith("schedule:") ? "Schedule" : id.startsWith("staff:") ? "Staff" : `Person ${id.slice(-6)}`) : "Connector key");
   // Each day of the period, zero-filled.
   const days: { day: string; runs: number; failed: number; cost_usd: number }[] = [];

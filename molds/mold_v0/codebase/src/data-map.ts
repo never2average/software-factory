@@ -136,7 +136,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
       const d = c.deliver_as as { env?: string; file?: string };
       const by = kinds.filter((k) => k.pack === p && k.credentials.includes(c.name)).map((k) => code(k.name));
       const repos = Object.entries(p.definition.repositories ?? {}).filter(([, r]) => (r as { credential?: string }).credential === c.name).map(([n]) => code(n));
-      rows.push({ item: `${c.label} (${code(c.name)}, ${p.manifest.name})`, detail: `given by each workspace, one per ${c.bound_to === "workspace" ? "workspace" : c.bound_to === "asset" ? `${c.area} record` : `${c.area} record and environment`}; ${by.length ? `delivered only to runs of ${by.join(", ")} that target it, as ${d.env ? `the environment variable ${code(d.env)}` : `the file ${code(d.file ?? "")}`}` : "delivered to no job kind"}${repos.length ? `; sent by this server to the API of ${repos.join(", ")}` : ""}` });
+      rows.push({ item: `${c.label} (${code(c.name)}, ${p.manifest.name})`, detail: `given by each workspace, one per ${c.bound_to === "workspace" ? "workspace" : c.bound_to === "asset" || c.bound_to === "tenant" ? `${c.area} record` : `${c.area} record and environment`}${c.entries ? ` (several labelled values: ${c.entries.label.toLowerCase()}s)` : ""}; ${by.length ? `delivered only to runs of ${by.join(", ")} that target it, as ${d.env ? `the environment variable ${code(d.env)}` : `the file ${code(d.file ?? "")}`}` : "delivered to no job kind"}${repos.length ? `; sent by this server to the API of ${repos.join(", ")}` : ""}` });
     }
     sections.push({ id: "credentials", title: "Credentials (names only)", rows });
   }

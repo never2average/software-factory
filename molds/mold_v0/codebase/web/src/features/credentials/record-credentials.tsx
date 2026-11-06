@@ -138,7 +138,7 @@ function Item({ c, state, canManage, open }: { c: Credential; state: SlotState; 
           {entries.map((v) => (
             <li key={v.entry} className='flex items-center justify-between gap-3 px-3 py-2 text-sm' data-credential-entry={v.entry}>
               <span className='flex min-w-0 flex-1 flex-col'>
-                <span className='truncate font-medium' title={v.entry!}>{v.entry}</span>
+                <span className='font-medium break-all'>{v.entry}</span>
                 <span className='text-muted-foreground text-xs'>{v.last4 ? <span className='font-mono'>ends in ••••{v.last4} · </span> : null}set <When d={v.updated_at} />{v.last_used_at ? <>, last used <When d={v.last_used_at} /></> : ', not used yet'}</span>
               </span>
               {canManage && (

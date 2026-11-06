@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { WIDE_LIST_MAX, ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -55,7 +55,9 @@ export function tabColumns(t: Pick<Tab, "kind" | "area" | "areas" | "columns">, 
   const list = tabAreas(t);
   const cols: string[] = list.length > 1 && list.some((a) => a.source) ? [TAB_SOURCE_COLUMN] : [];
   for (const a of list) for (const c of areas.find((x) => x.name === a.area)?.list_columns ?? []) if (!cols.includes(c)) cols.push(c);
-  return cols.slice(0, 8);
+  // mold_v0-260: a tab of one area shows its whole list (past 8 only with wide_lists: the build refuses more while it is
+  // off); a merged tab keeps its first 8, as before.
+  return cols.slice(0, list.length > 1 ? 8 : WIDE_LIST_MAX);
 }
 
 /** What a metric may be over besides a record area: the workspace's run results and its runs. */

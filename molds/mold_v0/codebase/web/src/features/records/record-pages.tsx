@@ -363,10 +363,9 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
   // mold_v0-260 (flag credential_sets): a tenant area's records have credentials too (the server says which: 404 otherwise).
-  const layout0 = featureOn('record_pages') ? layoutOf(area) : null;
-  const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), !!layout0);
+  const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), featureOn('record_pages') && !!layoutOf(area));
   if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
-  const layout = layout0;
+  const layout = featureOn('record_pages') ? layoutOf(area) : null;
   if (layout) return (
     <PageContainer>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (

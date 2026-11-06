@@ -287,11 +287,20 @@ function SectionsTab({ tab, role }: { tab: PackTabSpec; role: string | null }) {
   const current = subs.find((t) => t.id === selected) ?? subs[0];
   if (!current) return null;
   return (
-    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className='gap-6'>
-      <TabsList variant='line' className='gap-6 p-0'>
-        {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
-      </TabsList>
-      <TabsContent value={current.id}>
+    <Tabs value={current.id} onValueChange={(v) => void setSelected(String(v))} className={subs.length > 6 ? 'w-full min-w-0 gap-6' : 'gap-6'}>
+      {subs.length > 6 ? (
+        // mold_v0-260: 7 or 8 in-page tabs: the strip scrolls sideways on its own when it is wider than the page (a phone).
+        <div className='-mx-1 w-full min-w-0 max-w-full overflow-x-auto px-1 pb-1' data-wide-strip=''>
+          <TabsList variant='line' className='w-max gap-6 p-0'>
+            {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
+          </TabsList>
+        </div>
+      ) : (
+        <TabsList variant='line' className='gap-6 p-0'>
+          {subs.map((t) => <TabsTrigger key={t.id} value={t.id} className='flex-none px-0'>{t.label}</TabsTrigger>)}
+        </TabsList>
+      )}
+      <TabsContent value={current.id} className={subs.length > 6 ? 'min-w-0' : undefined}>
         {current.kind === 'area' ? <AreaTab key={current.id} tab={current} />
           : current.kind === 'runs' || current.kind === 'reports' ? <RunsTable key={current.id} tab={current} reports={current.kind === 'reports'} summary={<TabSparklines tab={current} />} />
           : current.kind === 'schedules' ? <SchedulesBody key={current.id} summary={<TabSparklines tab={current} />} action={current.action} /> : null}
