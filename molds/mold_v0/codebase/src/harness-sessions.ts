@@ -213,7 +213,15 @@ async function recomputeSpend(q: Queryable, sessionId: string, orgId: number): P
 
 // ---------------------------------------------------------------- the workspace's side
 
-export interface StartInput { message: unknown; title?: unknown; mode?: unknown }
+export interface StartInput { message: unknown; title?: unknown; mode?: unknown; budget_usd?: unknown }
+
+/** The most a person may give a session they start (mold_v0-249): the setting's budget; a billing manager, an owner or a key up to the ceiling. */
+export async function startBudgetMax(orgId: number, actor: Actor): Promise<{ default_usd: number; max_usd: number; ceiling_usd: number }> {
+  const ceiling = Math.min(settingNumber("AGENT_BUDGET_CEILING_USD"), await loadPlatformCeiling(orgId));
+  const def = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+  const raises = actor.kind === "key" || canAccount(actor.role, "budget");
+  return { default_usd: def, max_usd: raises ? money(ceiling) : def, ceiling_usd: money(ceiling) };
+}
 
 /** Start a session with its first message (the person's words are its on_start). */
 export async function startSession(orgId: number, actor: Actor, input: StartInput, org?: import("./auth.js").Org): Promise<SessionDetail> {
@@ -224,8 +232,16 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
   const mode = input.mode === "task" ? "task" : "conversation";
   const title = (typeof input.title === "string" && input.title.trim() ? input.title.trim() : message.replace(/\s+/g, " ")).slice(0, 80);
   const policy = currentPolicy(mode);
-  const ceiling = Math.min(policy.budget_ceiling_usd, await loadPlatformCeiling(orgId));
-  const budget = money(Math.min(settingNumber("AGENT_SESSION_BUDGET_USD"), ceiling));
+  const limits = await startBudgetMax(orgId, actor);
+  let budget = limits.default_usd;
+  if (input.budget_usd !== undefined && input.budget_usd !== null && input.budget_usd !== "") {
+    const b = Number(input.budget_usd);
+    if (!Number.isFinite(b) || b < 0.1) throw new PackError("budget_usd: at least $0.10", 400);
+    if (b > limits.max_usd + 1e-9) throw new PackError(limits.max_usd < limits.ceiling_usd
+      ? `budget_usd: at most $${limits.max_usd.toFixed(2)} (a billing manager or an owner can give a session up to $${limits.ceiling_usd.toFixed(2)})`
+      : `budget_usd: at most $${limits.max_usd.toFixed(2)}`, 400);
+    budget = money(b);
+  }
   const id = newId("hss");
   await tx(async (q) => {
     await q.query(

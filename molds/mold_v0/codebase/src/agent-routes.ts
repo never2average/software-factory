@@ -4,7 +4,8 @@
  *
  *   the workspace (/api/agent; the console's session, X-Pack-Request: 1 on a change made with the cookie)
  *     GET    /                      its sessions (newest activity first), and whether this person may start one
- *     POST   /                      {message, title?, mode?: conversation | task} start one (a member or more)
+ *     POST   /                      {message, title?, mode?: conversation | task, budget_usd?} start one (a member or more;
+ *                                    a budget up to the setting's, or the ceiling for a billing manager or owner)
  *     GET    /:id                   one session: its transcript, requests, budget raises and wakes
  *     POST   /:id/messages          {message} the person who started it: guidance mid-run, or a wake
  *     POST   /:id/pause | /resume | /stop
@@ -58,7 +59,9 @@ export function agentAppRouter(): Router {
   const actor = (res: Response) => H.actorOf(S(res));
   const org = (res: Response) => { const s = S(res); return { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole }; };
   const id = (req: Request) => String(req.params.id);
-  r.get("/", answer(async (_req, res) => ({ sessions: await H.listSessions(S(res).org, actor(res)), can_start: canAccount(S(res).accountRole, "launch"), offer: agentOffer() })));
+  // The offer carries this person's own budget range for the start dialog (mold_v0-249): the default, and how far they may go.
+  r.get("/", answer(async (_req, res) => ({ sessions: await H.listSessions(S(res).org, actor(res)), can_start: canAccount(S(res).accountRole, "launch"),
+    offer: { ...agentOffer(), budget: await H.startBudgetMax(S(res).org, actor(res)) } })));
   // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it; its owners change it.
   const owner = (_req: Request, res: Response, next: NextFunction) =>
     (canAccount(S(res).accountRole, "manage") ? next() : void res.status(403).json({ error: "Only the workspace's owners change its agent icon." }));

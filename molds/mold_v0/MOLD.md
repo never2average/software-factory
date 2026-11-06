@@ -2928,7 +2928,11 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   with Start a session, the table; a session opens as the list's full card (`?session=<id>`) with its transcript, the
   composer, the request's card (Approve / Decline, or Raise budget), Pause, Resume and Stop (stop asks once more in place).
   While a session waits for a decision its state line shows no reason of its own: the request's card says what it
-  asked for (mold_v0-245).
+  asked for (mold_v0-245). **Start a session opens as a modal dialog** (mold_v0-249, the operator's one exception to the
+  console's full-card rule): the first message, the model (shown; staff set it), the budget (the setting's, lower if the
+  person likes, up to the ceiling for a billing manager or owner: `budget_usd` on `POST /api/agent`), the kind, an
+  optional title, Start; focus held inside (the dialog wraps Tab itself), Esc closes it and gives focus back to Start a
+  session, its title names it; on Start the session's full card opens.
 - **The agent's icon** (mold_v0-252). The top-bar button is the shared outline button (no styling of its own) with an
   18 px icon, centred, named "Workspace agent"; the agent pages' heading (the top bar's trail, its last crumb: the
   console's list pages have no title above their cards) shows the same icon. In order: the workspace's own, the app's, the default (`web/src/components/layout/agent-icon.tsx`).

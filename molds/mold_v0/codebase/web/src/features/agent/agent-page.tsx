@@ -2,9 +2,11 @@
 // The workspace agent (mold_v0-243; src/agent-routes.ts at /api/agent, staff /api/admin/onboarding/agent): its sessions
 // as the standard list, full page (four cards, the search row with Start a session, the table), and a session opened as
 // the list's full card in the same place: what the agent said and did, the composer to guide it mid-run (or wake it),
-// what it asks for (Approve or Decline, and Raise budget), Pause, Resume and Stop. No dialog and no side sheet: the
-// top bar's agent icon opens this page, and a session is ?session=<id> on it.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+// what it asks for (Approve or Decline, and Raise budget), Pause, Resume and Stop. The top bar's agent icon opens this
+// page, and a session is ?session=<id> on it. One exception to the console's full-card rule, the operator's (mold_v0-249):
+// Start a session opens as a modal dialog (the first message, the model, the budget, Start), then the new session's
+// full card. Nothing else here is a dialog or a side sheet.
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -13,6 +15,7 @@ import { StatStrip } from '@/components/layout/section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,7 +25,7 @@ import { adminApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { ErrorState, FormRow, LoadingCards, When, fail } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
-import { ActionCard, CardForm, ToolbarAction } from '@/features/tabs/tab-action';
+import { ToolbarAction } from '@/features/tabs/tab-action';
 
 export type Area = 'app' | 'admin';
 type Phase = 'starting' | 'working' | 'waiting' | 'parked' | 'waking' | 'paused' | 'awaiting_approval' | 'stopped' | 'failed' | 'archived';
@@ -42,7 +45,10 @@ interface Detail extends Session {
   hooks: { event: string; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number };
 }
-interface Offer { harness: string; model: string; steerable: boolean; budget_usd: number; ceiling_usd: number; web_tools: string; park_after_minutes: number }
+interface Offer {
+  harness: string; model: string; steerable: boolean; budget_usd: number; ceiling_usd: number; web_tools: string; park_after_minutes: number;
+  budget?: { default_usd: number; max_usd: number; ceiling_usd: number };
+}
 interface ListAnswer { sessions: Session[]; can_start?: boolean; offer: Offer }
 
 function api(area: Area) {
@@ -99,14 +105,6 @@ function AgentList({ area }: { area: Area }) {
     window.history.replaceState(null, '', u.toString());
   };
   if (error) return <PageContainer><ErrorState error={error} /></PageContainer>;
-  if (starting && data) return (
-    <PageContainer>
-      <ActionCard open onOpenChange={(o) => { if (!o) setStarting(false); }} title='Start a session'
-        description={`${data.offer.harness} (${data.offer.model}) works in its own workspace from a ${usd(data.offer.budget_usd)} budget${data.offer.web_tools === 'off' ? ', without the web' : ''}. ${data.offer.steerable ? 'You can guide it while it works.' : ''}`}>
-        <StartForm call={call} onStarted={(id) => { setStarting(false); void load().then(() => setOpen(id)); }} />
-      </ActionCard>
-    </PageContainer>
-  );
   const rows = data?.sessions ?? [];
   const cols: RecordCol<Session>[] = [
     { key: 'title', label: 'Session', title: true, keep: true, type: 'text', className: 'min-w-56', value: (s) => s.title,
@@ -142,40 +140,90 @@ function AgentList({ area }: { area: Area }) {
         detailActions={(s) => <Controls area={area} s={s} call={call} onChange={load} />}
         detail={(s) => <SessionCard key={s.id} area={area} id={s.id} call={call} onChange={load} />}
       />
+      {area === 'app' && data && <StartDialog open={starting} offer={data.offer} call={call} onOpenChange={setStarting}
+        onStarted={(id) => { setStarting(false); void load().then(() => setOpen(id)); }} />}
     </PageContainer>
   );
 }
 
 type Call = ReturnType<typeof api>;
 
-function StartForm({ call, onStarted }: { call: Call; onStarted: (id: string) => void }) {
+/**
+ * Start a session: the console's one modal dialog (mold_v0-249, the operator's exception to the full-card rule). The
+ * first message, the model (shown; staff choose it), the budget (this person's range), then Start; the new session then
+ * opens as its full card. Focus stays inside while it is open, Esc closes it, and its title names it.
+ */
+function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boolean; offer: Offer; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void }) {
+  const range = offer.budget ?? { default_usd: offer.budget_usd, max_usd: offer.budget_usd, ceiling_usd: offer.ceiling_usd };
   const [message, setMessage] = useState('');
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<'conversation' | 'task'>('conversation');
+  const [budget, setBudget] = useState(String(range.default_usd));
   const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setMessage(''); setTitle(''); setMode('conversation'); setBudget(String(range.default_usd)); } }, [open, range.default_usd]);
+  const b = Number(budget);
+  const budgetWrong = !Number.isFinite(b) || b < 0.1 || b > range.max_usd + 1e-9;
   const submit = async () => {
     if (!message.trim()) { toast.error('Say what the agent should do'); return; }
+    if (budgetWrong) { toast.error(`The budget is between $0.10 and ${usd(range.max_usd)}`); return; }
     setBusy(true);
-    try { const r = await call<{ session: Session }>('POST', '', { message, title: title || undefined, mode }); toast.success('Started'); onStarted(r.session.id); }
-    catch (e) { fail(e); } finally { setBusy(false); }
+    try {
+      const r = await call<{ session: Session }>('POST', '', { message, title: title || undefined, mode, ...(b !== range.default_usd ? { budget_usd: b } : {}) });
+      toast.success('Started'); onStarted(r.session.id);
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  // Tab wraps from the last control to the first (Shift+Tab the other way): focus never leaves the dialog for the page
+  // behind it, whatever the library's own focus guards do (measured on the lane: they let it out after the last one).
+  const keepTabInside = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+      .filter((x) => x.getClientRects().length > 0);
+    if (!items.length) return;
+    const first = items[0]!, last = items[items.length - 1]!, at = document.activeElement;
+    if (e.shiftKey ? at === first || !e.currentTarget.contains(at) : at === last) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
   };
   return (
-    <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy}>Start</Button>}>
-      <div className='grid max-w-2xl gap-3'>
-        <FormRow label='What should the agent do?' htmlFor='agent-start-message' hint='Its first message. You can guide it while it works.'>
-          <Textarea id='agent-start-message' rows={5} value={message} onChange={(e) => setMessage(e.target.value)} placeholder='Look through the workspace and write a short summary of what changed this week.' />
-        </FormRow>
-        <FormRow label='Title' htmlFor='agent-start-title' hint='Optional: how the list names it (else its first words)'>
-          <Input id='agent-start-title' value={title} onChange={(e) => setTitle(e.target.value)} />
-        </FormRow>
-        <FormRow label='Kind' htmlFor='agent-start-mode'>
-          <NativeSelect id='agent-start-mode' value={mode} onChange={(e) => setMode(e.target.value as 'conversation' | 'task')}>
-            <NativeSelectOption value='conversation'>Conversation: waits for your next message, parks when quiet</NativeSelectOption>
-            <NativeSelectOption value='task'>Task: ends once its work is answered</NativeSelectOption>
-          </NativeSelect>
-        </FormRow>
-      </div>
-    </CardForm>
+    <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-start-dialog='' onKeyDown={keepTabInside}
+        finalFocus={() => document.querySelector<HTMLElement>("[data-toolbar-action][aria-label='Start a session']")}>
+        <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+          <DialogHeader>
+            <DialogTitle>Start a session</DialogTitle>
+            <DialogDescription>
+              {offer.harness} works in its own workspace{offer.web_tools === 'off' ? ', without the web' : ''}.{offer.steerable ? ' You can guide it while it works.' : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <FormRow label='What should the agent do?' htmlFor='agent-start-message' hint='Its first message.'>
+            <Textarea id='agent-start-message' rows={5} autoFocus value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Summarise this workspace's records and say what needs attention first." />
+          </FormRow>
+          <dl className='grid gap-x-4 gap-y-3 rounded-lg border p-3 text-sm sm:grid-cols-[auto_1fr]' data-agent-start-terms=''>
+            <dt className='text-muted-foreground'>Model</dt>
+            <dd><span className='font-mono text-xs'>{offer.model}</span><span className='text-muted-foreground block text-xs'>Set by the platform&apos;s staff for every new session.</span></dd>
+            <dt className='text-muted-foreground'><label htmlFor='agent-start-budget'>Budget (USD)</label></dt>
+            <dd className='grid gap-1'>
+              <Input id='agent-start-budget' className='w-32' type='number' inputMode='decimal' min={0.1} max={range.max_usd} step='0.01' value={budget}
+                aria-invalid={budgetWrong || undefined} aria-describedby='agent-start-budget-hint' onChange={(e) => setBudget(e.target.value)} />
+              <span id='agent-start-budget-hint' className='text-muted-foreground text-xs'>
+                {range.max_usd > range.default_usd ? `${usd(range.default_usd)} unless you change it; you can give it up to ${usd(range.max_usd)}.` : `At most ${usd(range.max_usd)}; lower it if you like.`} When it is spent the session stops and asks{range.max_usd > range.default_usd ? '' : ' a billing manager or an owner'} to raise it, up to {usd(range.ceiling_usd)}.
+              </span>
+            </dd>
+            <dt className='text-muted-foreground'><label htmlFor='agent-start-mode'>Kind</label></dt>
+            <dd>
+              <NativeSelect id='agent-start-mode' value={mode} onChange={(e) => setMode(e.target.value as 'conversation' | 'task')}>
+                <NativeSelectOption value='conversation'>Conversation: waits for your next message, parks when quiet</NativeSelectOption>
+                <NativeSelectOption value='task'>Task: ends once its work is answered</NativeSelectOption>
+              </NativeSelect>
+            </dd>
+            <dt className='text-muted-foreground'><label htmlFor='agent-start-title'>Title</label></dt>
+            <dd><Input id='agent-start-title' value={title} placeholder='Optional: else its first words' onChange={(e) => setTitle(e.target.value)} /></dd>
+          </dl>
+          <DialogFooter>
+            <Button type='button' variant='outline' disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type='submit' disabled={busy || !message.trim() || budgetWrong}>{busy ? 'Starting…' : 'Start'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
