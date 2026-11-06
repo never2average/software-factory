@@ -36,6 +36,7 @@ import { PROFILE } from "./profile.js";
 import { hosts } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { asWriter, findArea, may, mayExport, mayReveal, workspaceRecords } from "./record-areas.js";
+import { visibilityShown } from "./visibility.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
 export type { GeneratedTool } from "./mcp-catalog.js";
@@ -126,8 +127,9 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
     }
     // mold_v0-194: the values of a record's encrypted fields, for the roles allowed (src/record-areas.ts revealFor).
     case "reveal": operation("workspace", "reveal"); return dataApi.reveal(caller, area, a.key, a.fields);
-    case "create": operation("workspace", "create"); return dataApi.create(caller, area, a.key, { title: a.title, data: a.data ?? {} });
-    case "update": operation("workspace", "update"); return dataApi.update(caller, area, a.key, { title: a.title, data: a.data ?? {} });
+    // mold_v0-259 (flag teams): who sees it, where the area declares visibility (withVisibilityInput).
+    case "create": operation("workspace", "create"); return dataApi.create(caller, area, a.key, { title: a.title, data: a.data ?? {}, ...(a.visibility !== undefined ? { visibility: a.visibility } : {}) });
+    case "update": operation("workspace", "update"); return dataApi.update(caller, area, a.key, { title: a.title, data: a.data ?? {}, ...(a.visibility !== undefined ? { visibility: a.visibility } : {}) });
     case "move": operation("workspace", "move"); return dataApi.move(caller, area, a.key, a.to);
     case "metrics": {
       const { computeMetrics } = await import("./metrics.js");
@@ -306,10 +308,28 @@ export async function startFromConsole(org: Org, t: GeneratedTool, input: unknow
   return (await withTenant(org.orgId, () => handle(t, ws, parsed.data as Record<string, unknown>, ctx))) as { run: unknown };
 }
 
+/**
+ * mold_v0-259 (flag teams): an area that declares visibility takes `visibility` on its create and update tools (who sees
+ * the record: the workspace, a team, or its owner; its collaborators). Otherwise the tool's input as generated.
+ */
+function withVisibilityInput(t: GeneratedTool): GeneratedTool["input"] {
+  const a = t.area && (t.op === "create" || t.op === "update") ? findArea(t.area) : null;
+  if (!a || !visibilityShown(a)) return t.input;
+  const v = a.visibility!;
+  return {
+    ...t.input,
+    visibility: z.strictObject({
+      mode: z.enum(v.modes as [string, ...string[]]).describe("workspace: everyone in the workspace; team: one team's people; private: only its owner (the workspace's owners always see every record)"),
+      team: z.union([z.number().int().positive(), z.string().min(1).max(80)]).optional().describe("For mode team: the team's id or name (one you are in)"),
+      ...(v.collaborators ? { collaborators: z.array(z.string().min(1).max(200)).max(50).optional().describe("People's ids who also see it, whatever its mode") } : {}),
+    }).optional().describe(t.op === "create" ? `Who sees the new record (default: ${v.default})` : "Who sees it (left out: kept). Only its owner, a lead of its team or a workspace owner may change it"),
+  };
+}
+
 /** A generated customer tool as a pack tool (src/packs.ts runPackTool runs it). */
 function packToolOf(t: GeneratedTool): PackTool {
   return {
-    name: t.name, title: t.title, description: t.description, inputSchema: t.input,
+    name: t.name, title: t.title, description: t.description, inputSchema: withVisibilityInput(t),
     annotations: { title: t.title, ...t.annotations },
     // Reads need nothing beyond the area's own read roles (checked in handle); writes "edit", runs "launch".
     needs: t.needs === "read" ? undefined : t.needs,
@@ -327,7 +347,7 @@ export function registerGeneratedTools(server: McpServer, org: Org, only: (t: Ge
   for (const t of generatedTools()) {
     if (t.door !== "workspace" || t.admin_only || !permitted(t, role) || !only(t)) continue;
     const pt = packToolOf(t);
-    server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.input, annotations: pt.annotations },
+    server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: pt.inputSchema ?? t.input, annotations: pt.annotations },
       (args: Record<string, unknown>) => runPackTool(org, t.pack, pt, args));
   }
 }

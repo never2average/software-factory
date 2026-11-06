@@ -89,6 +89,7 @@ through the same check `factory.py validate` and the build use.
   | `document_preview` | true | a `file` field, or `preview: "document"` | documents |
   | `record_pages` | false | an area's page layout (`detail`) or a `copyable` field | pages |
   | `side_panel_forms` | false | always (the profile alone) | panel |
+  | `teams` | false | always (the profile alone); an area's `visibility` takes effect only with it on | teams |
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the
@@ -113,6 +114,14 @@ through the same check `factory.py validate` and the build use.
   its fields filled in from the record), `key_from_title` on an area, a record picker for reference fields and a tab
   column `{related: {area, via}, show: "count" | "latest:<field>"}`. `features.side_panel_forms = true` (off by default)
   opens create and edit forms in a side panel first.
+- A record area may give each record its own visibility (mold_v0-259, flag `teams`, off by default: turn it on with
+  `features.teams = true`): `visibility: {modes, default, collaborators?}` with modes from `workspace`, `team` and
+  `private`. With the flag on, a workspace has teams (Settings › Access › Teams, each with its people, members and
+  leads, managed by its owners); a record is open to the workspace, shared with one team, or private to its owner, with
+  named collaborators where the area allows them; the workspace's owners see every record. The database enforces it on
+  every read and write (docs/RECORDS.md section 4a has the rule and every path). A workspace area of the shell's tables
+  only; the pack schema refuses a default outside the modes, a shared area and a repository's area. Off, every record
+  is open to its workspace, as before.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

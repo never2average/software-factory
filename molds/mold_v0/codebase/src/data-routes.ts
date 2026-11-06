@@ -106,6 +106,8 @@ export function dataAppRouter(): Router {
   r.put("/:area/:key", open("update"), answer(async (req, res) => dataApi.update(caller(res), String(req.params.area), keyOf(req), body(req))));
   r.post("/:area/:key/move", open("move"), answer(async (req, res) => dataApi.move(caller(res), String(req.params.area), keyOf(req), body(req).to)));
   r.post("/:area/:key/reveal", open("reveal"), answer(async (req, res) => dataApi.reveal(caller(res), String(req.params.area), keyOf(req), body(req).fields)));
+  // mold_v0-259 (flag teams): who sees a record (the record page's Share); open while its update is.
+  r.post("/:area/:key/visibility", open("update"), answer(async (req, res) => dataApi.share(caller(res), String(req.params.area), keyOf(req), body(req).visibility ?? body(req))));
   // A file uploaded from the console's create form (mold_v0-238): kept for the record, answered as its reference. Open
   // while the area's create or update is (a pack withholding both withholds this).
   const writable = (req: Request, res: Response, next: NextFunction) =>

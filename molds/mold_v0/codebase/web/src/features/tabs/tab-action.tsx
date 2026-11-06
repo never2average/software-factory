@@ -37,6 +37,8 @@ import { fill } from '@/lib/vocabulary';
 import { cn } from '@/lib/utils';
 import { keyFromTitle, prefill } from './form-prefill';
 import { PanelCtx, SidePanelForm } from './side-panel';
+import { findRecordArea } from '@/features/records/registry';
+import { useVisibilityInput } from '@/features/teams/visibility';
 export { FormHost } from './side-panel';
 
 /** A field as the server's form spec gives it (src/tab-actions.ts FormField). */
@@ -606,9 +608,12 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
     latest.current = { ...latest.current, [field]: after };
     setUploads(latest.current);
   };
+  // mold_v0-259 (flag teams): who sees the new record, where its workspace area declares visibility (never a staff page's).
+  const vis = useVisibilityInput(post ? null : findRecordArea('app', area.name));
   const submit = async () => {
     const { values: data, problem } = fieldValues(plain, values);
     if (problem) return void toast.error(problem);
+    if (vis.problem) return void toast.error(vis.problem);
     const k = key.trim();
     for (const f of fileFields) if (f.required && !(uploads[f.name] ?? []).length) return void toast.error(`${f.label} is required`);
     setBusy(true);
@@ -631,7 +636,7 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
         }
         if (refs.length) data[f.name] = f.multiple ? refs : refs[0];
       }
-      const body = { key: k, ...(title.trim() ? { title: title.trim() } : {}), data };
+      const body = { key: k, ...(title.trim() ? { title: title.trim() } : {}), data, ...vis.body };
       await (post ? post(body) : send('POST', `/api/data/${encodeURIComponent(area.name)}`, body));
       written.current = true;
       toast.success('Added');
@@ -654,6 +659,7 @@ export function CreateRecordForm({ area, onDone, post, uploadMax = null, initial
       {fileFields.map((f) => (
         <FileUploads key={f.name} field={f} items={uploads[f.name] ?? []} setItems={setItems(f.name)} max={uploadMax!} disabled={busy} id={`action-file-${f.name}`} />
       ))}
+      {vis.field?.('action-visibility')}
     </CardForm>
   );
 }

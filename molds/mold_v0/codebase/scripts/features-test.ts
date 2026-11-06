@@ -58,6 +58,7 @@ try {
   const rec = await import("../src/record-areas.js");
   const { agentAppRouter } = await import("../src/agent-routes.js");
   const { pageRoutesOn } = await import("../src/record-page-routes.js");
+  const { teamsOn } = await import("../src/visibility.js");
   const { runnableKinds } = await import("../src/runs.js");
   const { settingGroups } = await import("../src/settings.js");
 
@@ -65,15 +66,15 @@ try {
   {
     const reg = JSON.parse(readFileSync(path.join(ROOT, "src", "features.json"), "utf8"));
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
-      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages", "side_panel_forms"]);
-    assert.equal(reg.flags.length, 16);
+      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages", "side_panel_forms", "teams"]);
+    assert.equal(reg.flags.length, 17);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
     }
     // defaults: on for what a pack declared before the registry, off for the opt-in toggles
     const off = F.FEATURES.filter((f) => !f.default).map((f) => f.id);
-    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages", "side_panel_forms"]);
+    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages", "side_panel_forms", "teams"]);
     // the profile's features over the legacy key over the default
     assert.equal(F.featureSetting("audit.data", {}), false);
     assert.equal(F.featureSetting("audit.data", { audit: { data: true } }), true);
@@ -81,13 +82,13 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 16 flags, each documented with a default; profile.features over the legacy key over the default");
+    console.log("✓ the registry: 17 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------
   {
     await installEmbedded(null);
-    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history", "agent_harness", "side_panel_forms"]);
+    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history", "agent_harness", "side_panel_forms", "teams"]);
     assert.equal(F.featuresOnWords(), "health");
     console.log("✓ zero packs: nothing asked for but the audit toggles (profile only) and health history; on: health");
   }
@@ -133,13 +134,15 @@ try {
       record_pages: F.featureOn("record_pages") && pageRoutesOn(),
       // Forms in a side panel (mold_v0-256): the console's alone (the profile turns it on).
       side_panel_forms: F.featureOn("side_panel_forms"),
+      // Teams and record visibility (mold_v0-259): /api/teams answers (its router passes every request on while off).
+      teams: F.featureOn("teams") && teamsOn(),
     } as Record<string, boolean>;
   };
 
   F.setFeaturesForTest(null);
   const defaults = await probe();
   assert.deepEqual(defaults, { customer_key_vault: true, company_email: true, scheduled_alerts: true, record_clocks: true, "audit.data": false, "audit.sign": false, onprem_runners: false,
-    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true, agent_harness: false, record_pages: false, side_panel_forms: false }, "with the defaults: every pack-asked capability on, the toggles off");
+    developer_surface: true, declarative_checks: true, encrypted_fields: true, health_history: true, document_preview: true, agent_harness: false, record_pages: false, side_panel_forms: false, teams: false }, "with the defaults: every pack-asked capability on, the toggles off");
   assert.equal(F.featuresOnWords(), "vault, email, alerts, clocks, developer, checks, encrypted, health, documents");
   assert.equal(deliveriesOn(), true);
   console.log(`✓ defaults: on ${F.featuresOnWords()}; audit and runners off (their routes, tools and jobs absent)`);
@@ -160,6 +163,7 @@ try {
     ["agent_harness", true, "agent_harness"],
     ["record_pages", true, "record_pages"],
     ["side_panel_forms", true, "side_panel_forms"],
+    ["teams", true, "teams"],
   ];
   for (const [id, value, key] of turns) {
     F.setFeaturesForTest({ [id]: value });
@@ -260,6 +264,7 @@ try {
         ["document_preview", { document_preview: false }, (b) => b.features.document_preview === false, "no document card (the console's registry off)"],
         ["record_pages", { record_pages: true }, (b) => b.features.record_pages === true && b.layouts === 1 && base.layouts === 0 && !("record_pages" in base.features), "the findings' page laid out (off: no layout and no flag in the console's files)"],
         ["side_panel_forms", { side_panel_forms: true }, (b) => b.features.side_panel_forms === true && !("side_panel_forms" in base.features), "forms open in a side panel (off: no flag in the console's files)"],
+        ["teams", { teams: true }, (b) => b.features.teams === true && b.tabs.includes("teams") && !base.tabs.includes("teams") && !("teams" in base.features), "the Teams tab in Settings › Access (off: no tab and no flag in the console's files)"],
         ["onprem_runners", { onprem_runners: true }, (b) => b.onprem && b.tabs.includes("credentials"), "the runners section on Credentials"],
         ["audit.sign", { "audit.data": true, "audit.sign": true }, (b) => b.tabs.includes("signing") && b.features["audit.data"], "the Signing tab (with the data trail)"],
       ];

@@ -1,0 +1,275 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_teams",
+  "name": "Fixture teams",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-259; scripts/teams-test.ts): record areas whose records carry their own visibility (flag teams). Projects are shared with a team by default, notes are private to their owner by default and name collaborators; a project's page lists its notes and counts them, its tab counts them per row, and a metric counts notes. Never shipped.",
+  "record_areas": [
+    {
+      "name": "projects",
+      "label": "Projects",
+      "role": "source",
+      "scope": "workspace",
+      "key_from_title": true,
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "max_length": 500
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "options": [
+            {
+              "value": "planned",
+              "label": "Planned"
+            },
+            {
+              "value": "active",
+              "label": "Active"
+            },
+            {
+              "value": "done",
+              "label": "Done"
+            }
+          ]
+        },
+        {
+          "name": "started",
+          "label": "Started",
+          "type": "date"
+        }
+      ],
+      "list_columns": [
+        "status",
+        "started"
+      ],
+      "visibility": {
+        "modes": [
+          "workspace",
+          "team",
+          "private"
+        ],
+        "default": "team",
+        "collaborators": true
+      },
+      "detail": {
+        "header": {
+          "subtitle": "summary",
+          "badges": [
+            {
+              "field": "status",
+              "colors": {
+                "planned": "neutral",
+                "active": "info",
+                "done": "success"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "started"
+            },
+            {
+              "label": "Notes",
+              "computed": {
+                "area": "notes",
+                "op": "count"
+              }
+            },
+            {
+              "label": "Last note",
+              "computed": {
+                "area": "notes",
+                "op": "latest",
+                "field": "topic",
+                "sort": {
+                  "field": "updated_at",
+                  "direction": "desc"
+                }
+              }
+            }
+          ]
+        },
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "About",
+                "columns": 2,
+                "fields": [
+                  "summary",
+                  "status",
+                  "started"
+                ]
+              },
+              {
+                "title": "Notes",
+                "related": {
+                  "area": "notes",
+                  "columns": [
+                    "topic",
+                    "written"
+                  ],
+                  "limit": 5
+                },
+                "empty": "No notes on this project that you can see."
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "create_record",
+            "place": "primary",
+            "label": "Add note",
+            "area": "notes",
+            "input": {
+              "project": "$key"
+            }
+          },
+          {
+            "kind": "edit",
+            "place": "secondary"
+          },
+          {
+            "kind": "copy_link"
+          },
+          {
+            "kind": "delete"
+          }
+        ]
+      }
+    },
+    {
+      "name": "notes",
+      "label": "Notes",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "project",
+          "label": "Project",
+          "type": "reference",
+          "to": "projects"
+        },
+        {
+          "name": "topic",
+          "label": "Topic",
+          "type": "enum",
+          "options": [
+            {
+              "value": "plan",
+              "label": "Plan"
+            },
+            {
+              "value": "risk",
+              "label": "Risk"
+            },
+            {
+              "value": "decision",
+              "label": "Decision"
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "label": "Note",
+          "type": "text",
+          "max_length": 4000
+        },
+        {
+          "name": "written",
+          "label": "Written",
+          "type": "date"
+        }
+      ],
+      "list_columns": [
+        "project",
+        "topic",
+        "written"
+      ],
+      "links": [
+        {
+          "field": "project",
+          "area": "projects"
+        }
+      ],
+      "visibility": {
+        "modes": [
+          "private",
+          "team",
+          "workspace"
+        ],
+        "default": "private",
+        "collaborators": true
+      }
+    },
+    {
+      "name": "places",
+      "label": "Places",
+      "role": "source",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "city",
+          "label": "City",
+          "type": "text"
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "notes_by_topic",
+      "label": "Notes by topic",
+      "over": "notes",
+      "group_by": "topic"
+    },
+    {
+      "name": "projects_by_status",
+      "label": "Projects by status",
+      "over": "projects",
+      "group_by": "status"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "projects",
+      "kind": "area",
+      "area": "projects",
+      "icon": "building",
+      "group": "Work",
+      "charts": [],
+      "views": [
+        "table"
+      ],
+      "columns": [
+        "status",
+        "started",
+        {
+          "related": {
+            "area": "notes"
+          },
+          "show": "count",
+          "label": "Notes"
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "kind": "area",
+      "area": "notes",
+      "icon": "post",
+      "group": "Work",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    }
+  ]
+}

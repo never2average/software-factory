@@ -9,7 +9,7 @@ import { PROFILE } from "./profile.js";
 export type FeatureId =
   | "customer_key_vault" | "company_email" | "scheduled_alerts" | "record_clocks" | "audit.data" | "audit.platform"
   | "audit.sign" | "onprem_runners" | "developer_surface" | "declarative_checks" | "encrypted_fields" | "health_history" | "document_preview"
-  | "agent_harness" | "record_pages" | "side_panel_forms";
+  | "agent_harness" | "record_pages" | "side_panel_forms" | "teams";
 
 export interface FeatureSpec {
   id: FeatureId;
