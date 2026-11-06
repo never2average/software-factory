@@ -78,7 +78,8 @@ export interface ActionView {
   run?: { kind: string; label: string; description: string | null; args: FormField[]; values: Record<string, unknown>; environments: string[] | null };
   /** move: the states it moves to, each with why it is disabled, if it is. */
   moves?: { to: string; label: string; disabled: string | null }[];
-  /** edit: the form's fields (the lifecycle's, file and encrypted fields left out: they are kept as they are). */
+  /** edit: the form's fields (the lifecycle's and file fields left out: they are kept as they are; an area with an
+   *  encrypted field has no edit). */
   fields?: FormField[];
   /** link: the record it opens. */
   target?: { area: string; key: string } | null;
@@ -90,7 +91,8 @@ const movesFor = (area: RecordArea, role: AccountRole | null, to?: string) =>
 
 /**
  * Each action of `area`'s page that `actor` may take on `record`, in declared order (one it may not take is left out):
- * labelled, with why it is disabled when it is. `org` names the workspace (a run's kind label needs nothing more).
+ * labelled, with why it is disabled when it is. `withForms: false` (a related list's rows) leaves the edit form's fields
+ * out: a row's edit opens the record's own page.
  */
 export async function pageActions(area: RecordArea, record: RecordRow, actor: Actor, opts: { withForms?: boolean } = {}): Promise<ActionView[]> {
   const layout = layoutOf(area);

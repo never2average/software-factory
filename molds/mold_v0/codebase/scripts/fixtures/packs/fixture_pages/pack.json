@@ -485,7 +485,7 @@
                   "approver",
                   "approved_on"
                 ],
-                "empty": "No one has approved this build yet. An owner approves it from the list's actions."
+                "empty": "No one has approved this build yet."
               },
               {
                 "title": "Runs",
@@ -653,7 +653,8 @@
           "name": "branch",
           "label": "Branch",
           "type": "text",
-          "required": true
+          "required": true,
+          "max_length": 200
         }
       ],
       "budget_usd": 2,
@@ -701,12 +702,14 @@
           "name": "branch",
           "label": "Branch",
           "type": "text",
-          "required": true
+          "required": true,
+          "max_length": 200
         },
         {
           "name": "commit",
           "label": "Commit",
-          "type": "text"
+          "type": "text",
+          "max_length": 200
         }
       ],
       "budget_usd": 2,

@@ -157,6 +157,8 @@ function MoveButton({ a, primary, take }: { a: PageAction; primary?: boolean; ta
   );
 }
 
+/** A disabled item stays at full strength (its label muted), so its reason reads as clearly as any text in the menu. */
+const DISABLED_ITEM = 'data-disabled:opacity-100';
 /** A disabled menu item's reason, on its own line under its label (a menu item has no hover of its own on a phone). */
 function ItemWhy({ reason }: { reason: string }) {
   return <span className='text-muted-foreground block text-xs leading-snug font-normal whitespace-normal' data-item-why=''>{reason}</span>;
@@ -164,8 +166,8 @@ function ItemWhy({ reason }: { reason: string }) {
 function MoveItems({ a, take }: { a: PageAction; take: (a: PageAction, to?: string) => void }) {
   return (<>
     {(a.moves ?? []).map((m) => (
-      <DropdownMenuItem key={m.to} disabled={!!m.disabled} title={m.disabled ?? undefined} onClick={() => take(a, m.to)} data-move-to={m.to} className='items-start'>
-        <span className='flex min-w-0 flex-col gap-0.5'>{m.label}{m.disabled && <ItemWhy reason={m.disabled} />}</span>
+      <DropdownMenuItem key={m.to} disabled={!!m.disabled} title={m.disabled ?? undefined} onClick={() => take(a, m.to)} data-move-to={m.to} className={cn('items-start', DISABLED_ITEM)}>
+        <span className='flex min-w-0 flex-col gap-0.5'><span className={cn(m.disabled && 'text-muted-foreground')}>{m.label}</span>{m.disabled && <ItemWhy reason={m.disabled} />}</span>
       </DropdownMenuItem>
     ))}
   </>);
@@ -181,9 +183,9 @@ function ActionItem({ a, take }: { a: PageAction; take: (a: PageAction, to?: str
   );
   return (
     <DropdownMenuItem disabled={!!a.disabled} title={a.disabled ?? undefined} onClick={() => take(a)} data-page-action={a.id}
-      className={cn('items-start', a.kind === 'delete' && 'text-destructive focus:text-destructive *:[svg]:text-destructive')}>
+      variant={a.kind === 'delete' ? 'destructive' : 'default'} className={cn('items-start', DISABLED_ITEM)}>
       {ICON[a.kind]}
-      <span className='flex min-w-0 flex-col gap-0.5'>{a.label}{a.disabled && <ItemWhy reason={a.disabled} />}</span>
+      <span className='flex min-w-0 flex-col gap-0.5'><span className={cn(a.disabled && 'text-muted-foreground')}>{a.label}</span>{a.disabled && <ItemWhy reason={a.disabled} />}</span>
     </DropdownMenuItem>
   );
 }
