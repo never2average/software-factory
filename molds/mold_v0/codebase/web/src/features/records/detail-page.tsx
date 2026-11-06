@@ -5,7 +5,8 @@
 //                Copy link; up to 8 facts (each formatted by its type); who added the record, its id and when it changed
 //   notices      a banner per notice whose condition holds on the record (info, warning, danger)
 //   tabs         the strip (?tab=<id>; one tab: no strip), then the open tab's sections: a card each, its fields in
-//                groups of 1, 2 or 3 columns (one on a phone), its own empty state when every field of it is empty
+//                groups of 1, 2 or 3 columns (one on a phone; a number with the unit its fact gives), its own empty state
+//                when every field of it is empty
 //   first tab    after its sections: "Other details" (fields the layout does not place, unless it hides them), the
 //                record's documents, deadlines and links, and its Credentials card, as on the page without a layout
 // Every copy (the id, the page's link, a copyable field) confirms with a toast and works on a phone (the clipboard,
@@ -108,7 +109,7 @@ function FieldCell({ label, children, copy, className }: { label: ReactNode; chi
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)} data-detail-field=''>
       <dt className='text-muted-foreground text-xs font-medium'>{label}</dt>
       <dd className='flex min-w-0 items-start gap-2 text-sm leading-relaxed break-words'>
-        <span className='min-w-0 flex-1'>{children}</span>
+        <span className='min-w-0'>{children}</span>
         {copy && <CopyButton text={copy.text} what={copy.what} />}
       </dd>
     </div>
@@ -142,7 +143,7 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
                     const v = record.data[n];
                     return (
                       <FieldCell key={n} label={f.label} copy={copyOf(f, v)} className={f.type === 'json' && s.columns !== 1 ? 'sm:col-span-full' : undefined}>
-                        <LaidOutValue area={area} base={base} layout={layout} f={f} v={v} recordKey={record.key} />
+                        <LaidOutValue area={area} base={base} layout={layout} f={f} v={v} recordKey={record.key} unit={layout.header?.facts?.find((x) => x.field === n)?.unit} />
                       </FieldCell>
                     );
                   })}
