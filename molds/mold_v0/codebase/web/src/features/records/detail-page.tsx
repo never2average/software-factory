@@ -35,15 +35,25 @@ import { ErrorState, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
 import { formatValue } from '@/features/tabs/charts';
 import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
+import { recordAreas } from '@/config/pack-nav.generated';
 import { cn } from '@/lib/utils';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
-  BADGE_CLASS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnsClass, copyText, dateWords, declaresActions, declaresCopyLink, isEmptyValue, numberWords, openTab,
-  optionWords, relatedColumns, relatedCountWords, runsCountWords, sectionEmpty, sectionGroups, sectionKey, showAllHref, shownNotices, tabId, unplacedFields,
-  type BadgeColor, type DetailLayout, type DetailSection, type LaidOutField, type NoticeTone, type PageData, type RelatedData, type RunsData
+  BADGE_CLASS, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
+  isTimeUnit, linkPieces, logLive, numberWords, openTab, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
+  shownNotices, tabId, unplacedFields,
+  type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
+  type RelatedData, type RunsData
 } from './detail-layout';
 import { RowActions, usePageActionsBar, type ActionHost } from './page-actions';
+import { CodeView, JsonTable } from './code-view';
+import { languageOf } from './code-text';
+import { FileBrowser } from './file-browser';
+import { HistoryList } from './history-section';
+import { linesOf } from './log-lines';
+import { LogViewer } from './log-viewer';
+import { FormHost } from '@/features/tabs/tab-action';
 import { areaFieldLabel, findRecordArea } from './registry';
 import { FieldValue, fieldText, type RecordRow } from './record-pages';
 
@@ -88,7 +98,7 @@ function CopyButton({ text, what }: { text: string; what: string }) {
 }
 
 /** A date: relative words, the exact date on hover and focus (and to a screen reader, through <time>). */
-function DateText({ v, relative }: { v: unknown; relative: boolean }) {
+export function DateText({ v, relative }: { v: unknown; relative: boolean }) {
   const w = dateWords(v);
   if (!w) return <>{String(v)}</>;
   return (
@@ -113,8 +123,27 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, u
     </span>
   );
   if (f.type === 'date') return <DateText v={v} relative={relative} />;
-  if (f.type === 'number') return <span className='tabular-nums'>{numberWords(v, unit)}</span>;
+  if (f.type === 'number') return isTimeUnit(unit)
+    ? <span className='tabular-nums' title={`${numberWords(v)} ${unit}`}>{numberWords(v, unit)}</span>
+    : <span className='tabular-nums'>{numberWords(v, unit)}</span>;
+  // mold_v0-256: an address in a fact wraps at its slashes (never inside a word), a piece too long for its box truncated.
+  if (relative && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
   return <span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} /></span>;
+}
+
+/**
+ * A web address in a header fact (mold_v0-256): its pieces (after each /, ?, & and =) each kept whole, so it wraps only
+ * between them; a piece longer than the fact's box is cut with an ellipsis, the whole address on hover and focus.
+ */
+export function LinkText({ href }: { href: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<a href={href} target='_blank' rel='noopener noreferrer nofollow' className='inline max-w-full underline-offset-4 hover:underline [overflow-wrap:normal] [word-break:normal]' data-link-text='' />}>
+        {linkPieces(href).map((p, i) => <span key={i} className='inline-block max-w-full truncate align-bottom'>{p}</span>)}
+      </TooltipTrigger>
+      <TooltipContent className='max-w-96 break-all'>{href}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** One label and value of a section or the facts, with its copy button when the field is copyable and has a value. */
@@ -174,26 +203,70 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
 type PageLoad = { data: PageData | null; error: Error | null };
 
 /** A section of the open tab: its fields, a related list or the record's runs (mold_v0-254). */
-function AnySection({ s, id, area, base, layout, record, page, data, changed }: {
+function AnySection({ s, id, pageKey, area, base, layout, record, page, data, changed }: {
   s: DetailSection; id: string; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; page: PageLoad;
-  data: RelatedData | RunsData | undefined; changed: () => void;
+  /** Its key in the page's answer (<tab>-<section>): a history section's Show older asks for it. */
+  pageKey: string;
+  data: RelatedData | RunsData | HistoryData | undefined; changed: () => void;
 }) {
   // Staff pages read no workspace's lists or runs: those sections are a workspace's.
   if ((s.related || s.runs) && base !== 'app') return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
+  // mold_v0-256: a log, the change history, a code view, a table, a file browser.
+  const copy = (t: string, done: string) => void copyWithToast(t, done);
+  const fieldLabel = (n: string) => area.fields.find((f) => f.name === n)?.label ?? n;
+  if (s.log) {
+    const v = record.data[s.log.field];
+    return (
+      <ListCard id={id} kind='log' title={s.title}>
+        <LogViewer lines={linesOf(v)} live={logLive(s, record.data)} name={[record.key, s.log.field]} label={`${record.title || record.key}: ${fieldLabel(s.log.field)}`}
+          empty={s.empty ?? 'No log lines yet.'} copied={(ok) => (ok ? toast.success('Line copied') : toast.error('Could not copy: select the line and copy it yourself.'))} />
+      </ListCard>
+    );
+  }
+  if (s.history) {
+    if (base !== 'app') return null;
+    if (page.data && !data) return null;
+    return (
+      <ListCard id={id} kind='history' title={s.title}>
+        {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div> : !data ? <ListLoading />
+          : <HistoryList area={area} data={data as unknown as HistoryData} empty={s.empty ?? 'No changes recorded yet.'}
+              url={`/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}/history?section=${pageKey}`} />}
+      </ListCard>
+    );
+  }
+  if (s.code) {
+    const v = record.data[s.code.field], f = area.fields.find((x) => x.name === s.code!.field);
+    return (
+      <ListCard id={id} kind='code' title={s.title}>
+        {isEmptyValue(v) ? <ListEmpty text={s.empty ?? 'Nothing here yet.'} />
+          : <CodeView value={v} language={languageOf(v, s.code.language, f?.type)} name={s.code.field} label={fieldLabel(s.code.field)} copy={copy} />}
+      </ListCard>
+    );
+  }
+  if (s.table) return (
+    <ListCard id={id} kind='table' title={s.title}>
+      <JsonTable value={record.data[s.table.field]} columns={s.table.columns} label={fieldLabel(s.table.field)} copy={copy} empty={s.empty ?? 'Nothing here yet.'} />
+    </ListCard>
+  );
+  if (s.files) return (
+    <ListCard id={id} kind='files' title={s.title}>
+      <FileBrowser area={area} base={base} recordKey={record.key} fields={s.files.fields} empty={s.empty ?? 'No files on this record yet.'} />
+    </ListCard>
+  );
   return <SectionCard s={s} id={id} area={area} base={base} layout={layout} record={record} />;
 }
 
-/** A list section's card: its title, a count, an optional link at the right, then its body. */
-function ListCard({ id, title, count, link, children, kind }: { id: string; title: string; count?: ReactNode; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' }) {
+/**
+ * A list section's card: its title, an optional link at the right (Show all), then its body. mold_v0-256: no count
+ * beside the title (the list says what it holds; Show all stays a button).
+ */
+function ListCard({ id, title, link, children, kind }: { id: string; title: string; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' | 'log' | 'history' | 'code' | 'table' | 'files' }) {
   return (
     <Card className='w-full gap-0 py-0' data-detail-section={id} data-section-kind={kind} aria-labelledby={`${id}-title`} role='region'>
       <CardHeader className='flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-3 [.border-b]:pb-3'>
-        <div className='flex min-w-0 items-baseline gap-2'>
-          <CardTitle id={`${id}-title`} className='text-sm font-semibold'>{title}</CardTitle>
-          {count && <span className='text-muted-foreground text-xs tabular-nums' data-section-count=''>{count}</span>}
-        </div>
+        <CardTitle id={`${id}-title`} className='text-sm font-semibold'>{title}</CardTitle>
         {link}
       </CardHeader>
       <CardContent className='px-0 py-0'>{children}</CardContent>
@@ -222,6 +295,9 @@ function RelatedCell({ target, f, v, recordKey }: { target: RecordAreaSpec; f: R
   if (f.type === 'enum' && !f.encrypted) return (
     <span className='flex flex-wrap gap-1'>{(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(tl, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}</span>
   );
+  // mold_v0-256: a number with the unit its own page gives it (a duration in seconds reads "21m 52s", a share "87.4%").
+  const unit = f.type === 'number' ? columnUnit(target, f.name) : undefined;
+  if (unit) return <span className='tabular-nums' title={isTimeUnit(unit) ? `${numberWords(v)} ${unit}` : undefined} data-unit={unit}>{numberWords(v, unit)}</span>;
   const t = fieldText(f, v, recordKey);
   return <span className={cn('line-clamp-2', f.type === 'number' && 'tabular-nums')}>{t}</span>;
 }
@@ -237,15 +313,16 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
   const target = findRecordArea(base, s.related!.area);
   // Hidden from this role (it may not read that area), or nothing for it in the page's answer: no card at all.
   if (!target || data?.hidden || (page.data && !data)) return null;
-  const cols = relatedColumns(target, s.related!).map((n) => target.fields.find((f) => f.name === n)!).filter(Boolean);
+  // mold_v0-256: each column its field and its own heading, when it has one.
+  const cols = relatedColumns(target, s.related!).map((c) => ({ ...target.fields.find((f) => f.name === c.field)!, label: c.label ?? target.fields.find((f) => f.name === c.field)?.label ?? c.field })).filter((f) => !!f.name);
   const href = (k: string) => `/${base}/records/${target.name}/${encodeURIComponent(k)}`;
   const rows = data && !data.hidden ? data.records : [];
   const more = !!(data && !data.hidden && data.more);
-  const all = data && !data.hidden ? showAllHref(base, target.name, data.via, record.key) : null;
+  const all = data && !data.hidden && data.match !== null ? showAllHref(base, target.name, data.via, data.match ?? record.key) : null;
   const hostOf = (r: (typeof rows)[number]): ActionHost => ({ area: target.name, areaLabel: target.label, base, record: { key: r.key, title: r.title, data: r.data, updated_at: r.updated_at },
     copy: (t, done) => void copyWithToast(t, done), changed, deleted: changed });
   return (
-    <ListCard id={id} kind='related' title={s.title} count={data && !data.hidden && rows.length ? relatedCountWords(rows.length, more, target.label) : undefined}
+    <ListCard id={id} kind='related' title={s.title}
       link={all && more ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={all} />} data-show-all=''>Show all<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
@@ -300,8 +377,8 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
 const singularLabel = (label: string) =>
   /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');
 
-/** A run's link: its pack's runs tab, the run open (?run=<id>); none when the pack has no runs tab. */
-const runHref = (pack: string, id: string) => { const t = packTabs.find((x) => x.pack === pack && x.kind === 'runs'); return t ? `${t.url}?run=${encodeURIComponent(id)}` : null; };
+/** A run's link (mold_v0-256): its own page, /app/runs/<id> (with the flag on, which this page needs). */
+const runHref = (_pack: string, id: string) => `/app/runs/${encodeURIComponent(id)}`;
 
 /** The record's runs (mold_v0-254): newest first, at most its limit, each with its state, timing, cost and who started it. */
 function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: RunsData | undefined }) {
@@ -316,7 +393,7 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   const started = (r: (typeof runs)[number]) => (r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} relative /> : <span className='text-muted-foreground'>—</span>);
   const took = (r: (typeof runs)[number]) => duration(runSeconds(r)) || '—';
   return (
-    <ListCard id={id} kind='runs' title={s.title} count={data && runs.length ? runsCountWords(runs.length, data.total) : undefined}
+    <ListCard id={id} kind='runs' title={s.title}
       link={tab && data && data.total > runs.length ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
@@ -357,12 +434,46 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
   );
 }
 
-const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', warning: 'warning', danger: 'alertCircle' };
+const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', success: 'circleCheck', warning: 'warning', danger: 'alertCircle' };
+/**
+ * A fact computed from related records (mold_v0-256), as the server answered it for this person: a count (linked to that
+ * area's list narrowed to this record), or the newest related record's value formatted as its own page shows it (an
+ * enum as its badge, a number with its unit, a date in words), linked to that record.
+ */
+function ComputedValue({ fact, answer, loading, base, recordKey }: { fact: DetailFact; answer: ComputedFact | undefined; loading: boolean; base: 'app' | 'admin'; recordKey: string }) {
+  if (loading) return <span className='bg-muted inline-block h-4 w-12 animate-pulse rounded align-middle' aria-busy='true' />;
+  if (!answer || answer.hidden) return <span className='text-muted-foreground'>—</span>;
+  if (answer.op === 'count') {
+    const words = countWords(answer.value, answer.capped, fact.unit);
+    return answer.via
+      ? <Link href={showAllHref(base, answer.area, answer.via, recordKey)} className='tabular-nums underline-offset-4 hover:underline' data-computed-count={answer.value}>{words}</Link>
+      : <span className='tabular-nums'>{words}</span>;
+  }
+  const target = recordAreas.find((a) => a.name === answer.area);
+  const f = target?.fields.find((x) => x.name === answer.field);
+  if (isEmptyValue(answer.value) || !target || !f) return <span className='text-muted-foreground'>—</span>;
+  const tl = (target as RecordAreaSpec & { detail?: DetailLayout }).detail ?? null;
+  const v = answer.value;
+  const shown = f.type === 'enum' ? <ToneBadge color={badgeColor(tl, f.name, v)}>{optionWords(f, v)}</ToneBadge>
+    : f.type === 'number' ? <span className='tabular-nums'>{numberWords(v, fact.unit ?? columnUnit(target, f.name))}</span>
+    : f.type === 'date' ? <DateText v={v} relative />
+    : <span className='break-words'>{fieldText(f, v)}</span>;
+  if (!answer.record) return shown;
+  return (
+    <span className='inline-flex flex-wrap items-center gap-x-2 gap-y-1'>
+      {shown}
+      <Link href={`/${base}/records/${answer.area}/${encodeURIComponent(answer.record.key)}`} className='text-muted-foreground text-xs font-normal underline-offset-4 hover:underline' data-computed-from={answer.record.key}>
+        {answer.record.title || answer.record.key}
+      </Link>
+    </span>
+  );
+}
+
 /** Where a workspace record came from, in words (mold_v0-236; the same words as the page without a layout). */
 const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
 /** Whether a layout reads anything from the page's own route (mold_v0-254): actions, a related list, the record's runs. */
-const readsPage = (layout: DetailLayout) => declaresActions(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
+const readsPage = (layout: DetailLayout) => declaresActions(layout) || readsHistory(layout) || readsComputed(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
 
 async function getPage(url: string): Promise<PageData> {
   const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -391,16 +502,39 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   const changed = () => { void page.reload(); onChanged?.(); };
   const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed };
   const withActions = base === 'app' && declaresActions(layout);
-  const { bar, card } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
-  // An action's form (a run, an edit): a full card in the page's place.
-  if (withActions && card) return <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div>;
+  const { bar, card, panel } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
+  // mold_v0-256: a log section that is live (its live_when holds) reads the record again every few seconds.
+  const live = tab.sections.some((s) => logLive(s, record.data, record.clocks));
+  useEffect(() => {
+    if (!live || !onChanged) return;
+    const t = setInterval(() => onChanged(), LOG_POLL_MS);
+    return () => clearInterval(t);
+  }, [live, onChanged]);
+  // An action's form (a run, an edit, a new related record): a full card in the page's place; with side_panel_forms on,
+  // an edit's or a new record's opens first in a panel over the page (FormHost, mold_v0-256).
+  return (
+    <FormHost card={withActions && card ? <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div> : null} panel={panel}>
+      <LaidOutBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} provenance={provenance} where={where}
+        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} />
+    </FormHost>
+  );
+}
+
+/** The laid-out page itself: the header, the notices, the tabs and their sections. */
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar, setAsked }: {
+  area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
+  provenance?: { by: string | null } | null; where: string; credentials: ReactNode; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
+  page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown;
+}) {
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
   const title = titleField && !isEmptyValue(record.data[titleField.name]) ? String(record.data[titleField.name]) : record.title || record.key;
   const subtitle = field(h.subtitle);
-  const facts = (h.facts ?? []).map((x) => ({ ...x, f: field(x.field) })).filter((x): x is typeof x & { f: RecordFieldSpec } => !!x.f);
-  const notices = shownNotices(layout, record.data);
+  // mold_v0-256: a computed fact is shown once the server answered it for this person (hidden from one who may not read its area).
+  const facts = (h.facts ?? []).map((x, i) => ({ ...x, i, f: field(x.field) }))
+    .filter((x) => (x.computed ? !(page.data?.facts?.[String(x.i)] as { hidden?: boolean } | undefined)?.hidden && (base === 'app') : !!x.f));
+  const notices = shownNotices(layout, record.data, record.clocks);
   const added = h.creator !== false && provenance?.by ? ADDED_BY[provenance.by] ?? provenance.by : null;
   const rest = unplacedFields(area, layout).filter((f) => !isStoredFile(f, record.data[f.name]) && !isEmptyValue(record.data[f.name]));
   const updated = dateWords(record.updated_at);
@@ -439,9 +573,13 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
           </div>
           {!!facts.length && (
             <dl className='grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-4' data-record-facts=''>
-              {facts.map((x) => (
-                <FieldCell key={x.field} label={x.label ?? x.f.label} copy={copyOf(x.f, record.data[x.field])}>
-                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f} v={record.data[x.field]} recordKey={record.key} relative unit={x.unit} /></span>
+              {facts.map((x) => x.computed ? (
+                <FieldCell key={`computed-${x.i}`} label={x.label ?? ''}>
+                  <span className='font-medium' data-computed-fact={x.i}><ComputedValue fact={x} answer={page.data?.facts?.[String(x.i)]} loading={!page.data && !page.error} base={base} recordKey={record.key} /></span>
+                </FieldCell>
+              ) : (
+                <FieldCell key={x.field} label={x.label ?? x.f!.label} copy={copyOf(x.f!, record.data[x.field!])}>
+                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} relative unit={x.unit} /></span>
                 </FieldCell>
               ))}
             </dl>
@@ -459,7 +597,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
       {notices.map((n, i) => {
         const Icon = Icons[NOTICE_ICON[n.tone]];
         return (
-          <div key={i} role={n.tone === 'info' ? 'status' : 'alert'} data-record-notice={n.tone}
+          <div key={i} role={n.tone === 'info' || n.tone === 'success' ? 'status' : 'alert'} data-record-notice={n.tone}
             className={cn('grid w-full grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-xl border px-4 py-3 text-sm', NOTICE_CLASS[n.tone])}>
             <Icon aria-hidden className='row-span-2 mt-0.5 size-4' />
             {n.title && <p className='font-medium'>{n.title}</p>}
@@ -476,13 +614,13 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
             </TabsList>
           </div>
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>
-            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
             {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
           </TabsContent>
         </Tabs>
       ) : (
         <div className='flex w-full flex-col gap-4 md:gap-6'>
-          {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
+          {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} pageKey={sectionKey(ti, i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
           <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />
         </div>
       )}
@@ -503,7 +641,8 @@ function FirstTabRest({ area, base, layout, record, rest, links, clockEvents, cr
       {/* The record's documents and deadlines, drawn as on every record page; the card shows only when one of them does. */}
       <Card className='w-full gap-0 py-0 [&:not(:has(section))]:hidden' data-record-extras=''>
         <CardContent className='flex flex-col gap-6 py-5'>
-          <RecordDocuments area={area} base={base} recordKey={record.key} />
+          {/* mold_v0-256: a layout with a file browser shows the documents there, not again here. */}
+          {!layout.tabs.some((t) => t.sections.some((x) => x.files)) && <RecordDocuments area={area} base={base} recordKey={record.key} count={false} />}
           <ClockSection record={record} events={clockEvents} />
         </CardContent>
       </Card>

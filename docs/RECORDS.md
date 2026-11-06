@@ -307,6 +307,101 @@ Where an area's list is drawn, and what it has:
   (or whose `via` points elsewhere, or that points here two ways without `via`), a column or sort field it lacks, a
   runs section or a start_run naming **a job kind the pack does not have**, an input argument the kind does not take.
 
+- **Logs, history, code, tables, files, computed facts and Add <related record>** (mold_v0-256, part 3; same flag). Five
+  more kinds of section, each in place of fields, facts computed from related records, a create_record action, an area
+  whose Key follows its Title and a tab's columns computed from related records:
+
+  ```json
+  "facts": [{"field": "owner"}, {"label": "Last build", "computed": {"area": "builds", "op": "latest", "field": "status", "sort": {"field": "started"}}},
+            {"label": "Builds", "computed": {"area": "builds", "op": "count"}},
+            {"label": "Failed builds", "computed": {"area": "builds", "op": "count", "where": {"field": "status", "equals": "failed"}}}],
+  "tabs": [{"label": "Logs", "sections": [{"title": "Build log", "log": {"field": "log", "live_when": {"field": "status", "in": ["queued", "running"]}}}]},
+           {"label": "Configuration", "sections": [{"title": "Manifest", "code": {"field": "manifest", "language": "yaml"}},
+             {"title": "Test suites", "table": {"field": "test_suites", "columns": ["suite", "passed", "failed"]}}]},
+           {"label": "Files", "sections": [{"title": "Files", "files": {}}]},
+           {"label": "History", "sections": [{"title": "Changes", "history": {"limit": 20}}]}],
+  "actions": [{"kind": "create_record", "place": "secondary", "label": "Add build", "area": "builds", "input": {"project": "$key", "summary": "$field:summary"}}]
+  ```
+
+  - **log**: a text field's lines (or a json field's list of `{at, level, source, message}`) in the event/log viewer:
+    level and source filters, search (every word, highlighted, how many lines match), wrap or no-wrap, Copy line,
+    Download (the lines shown, a .log file), virtualised (a hundred thousand lines scroll as a hundred). A line's level
+    is read from its words, its source from a leading `[source]`, its time from a leading ISO time. While `live_when`
+    holds on the record the page reads it again every few seconds and the viewer follows the newest line (Follow; Jump to
+    latest once you scroll up). A run's own page uses the same viewer for its timeline.
+  - **history**: the record's changes, newest first: who (a person, staff, a run, the intake, a data source), when,
+    added, changed, moved or deleted, and each field before and after (a long text as a line diff; `fields` keeps some,
+    `limit` 20 then Show older, at most 100). An **encrypted field only says that it changed**, never a value, in the
+    answer or the table. Kept in `record_changes` (sql/migrations/0049, with its rollback; src/record-history.ts) in the
+    change's own transaction, only while the flag is on and only for a workspace area whose layout has a history
+    section: history starts when the section is declared. The data trail (section 5's audit) never holds a value and is
+    unchanged.
+  - **code**: a text or json field as highlighted JSON, YAML (a json value written as YAML: a manifest) or text, each
+    line numbered, Wrap, Copy and Download (`<field>.json|yaml|txt`). **table**: a json field holding a list of objects
+    as a table (its columns its items' keys in the order they first show, or `columns`, up to 8; a list of cards on a
+    phone; Copy as JSON). **files**: the record's documents (its file fields' stored files and its documents by
+    address: `fields` keeps some) as a tree, a folder per field when several, the open one previewed with its document
+    card (section 2's preview); an area with a files section shows its documents there, not again at the first tab's end.
+  - **computed facts**: a header fact over the records of `area` that point back here (through `via`, as a related
+    list) and that `where` keeps: `count` ("Builds 7", linked to that list narrowed to the record; "1,000+" past 1,000)
+    or `latest` (`field` on the newest of them by `sort`, default the newest change, linked to it: the last build's
+    status as its badge). A computed fact names itself (`label`) and counts among the 8. Evaluated on the server as the
+    person reading: a role that may not read that area does not see the fact.
+  - **create_record**: Add <a record of `area`> with its fields filled in from this record (`input`: a field of the new
+    record -> `$key`, `$title`, a field of this record or `"$field:<name>"`). On the record's page it opens that area's
+    form in the page's place (in the side panel with `side_panel_forms` on); on a related list's row and an area list's
+    open row it opens that area's list with its Add form open (`?new=1&<field>=<value>`). Offered to the roles that may
+    create in that area.
+  - **key_from_title** (on the area, `true`): its create form fills the Key from the Title as it is typed (lowercase
+    words joined by -) until the person types one of their own.
+  - **A reference field's input** is a searchable list of the target area's records (title and key, read as the
+    person, the workspace's own; `GET /api/records/_page/_pick/<area>?q=`) in place of a box for a key.
+  - **A tab's column computed from related records**: in `tabs[].columns`, `{"related": {"area": "builds", "via":
+    "project"}, "show": "count" | "latest:<field>", "label": "Builds"}` beside the fields (a tab of one area): computed
+    on the server as the person reading (`GET /api/records/_page/_columns/<pack>/<tab>?keys=`), formatted as that area's
+    cells, sorted and filtered like the others; empty for a role that may not read it.
+
+  Refused, in the area: a log of a field that is not text or json, a code view of a file or list field, a table of a
+  field that is not json, history of a field the area lacks or past 100, a file browser on an area without a file field
+  or a `preview: "document"` field, two kinds in one section, a computed fact with a field of its own or without its
+  label, a latest without its field, a count with one or with a sort, a create_record without its area or a viewer's;
+  across the build: a computed fact's or a column's area that has no link back here, a field of it that is encrypted,
+  a file or json, a unit on a latest that is not a number, a create_record's area that is shared or an input it lacks.
+
+- **Conditions, links, run targets, matched lists** (mold_v0-256, the same flag), found laying out a real app's pages:
+  - A condition (a notice's `when`, an action's `unavailable`, a log's `live_when`, a computed fact's `where`) may test a
+    date field against today (`{"field": "due", "before": "today"}`, `"after": "today"`, `"within_days": 7`: today up
+    to 7 days ahead), a clock's state (`{"clock": "response", "is": "overdue" | "due_soon"}`) and several tests at
+    once: `{"all": [{"field": "severity", "equals": "critical"}, {"field": "status", "not_in": ["resolved"]}]}` or
+    `"any"`. A notice's tone may be `success` (green, read as a status). Evaluated alike on the server and the page
+    (src/pack-api.ts `conditionHolds`, web/src/features/records/detail-layout.ts).
+  - A **link action on a field that links to several areas** (two `links` entries for one field) opens the area its
+    value is a record of, in declared order (src/record-page-routes.ts `linkedRecord`), not the first declared.
+  - A **start_run on a linked record**: `"target": {"via": "application"}` runs the kind on the record the field names
+    (an asset area's: the finding's application), its title shown in the run's form; the run still carries this record.
+    Disabled, with why, while the field is empty; the target is the server's, never one sent from the browser.
+  - A **related list matched on a field**: `"related": {"area": "findings", "via": "control", "match_field": "control"}`
+    lists the findings whose `control` equals this record's `control` (not its key); Show all narrows the list to that
+    value.
+  - A **related list's column with its own heading**: `"columns": [{"field": "pr", "label": "Fix PR"}, "status"]`.
+  - The lane world's seed (testing/console/seed.mts) fills a required url field with `https://example.com/<area>/<n>`,
+    so an area with one is seeded too.
+
+- **A run's own page** (mold_v0-256, the same flag): `/app/runs/<id>`, linked from a record's runs and every runs list
+  (an open run's Open run). Its header: the kind, its status (a pulse while it runs), the record it ran on, who started
+  it, when, how long, its cost against its budget; Re-run, Stop while it runs (asked first) and Copy link. Its tabs, each
+  only when it has something: Timeline (its events in the log viewer), Agent (harness, model, turns, tokens and cost by
+  model), Tools (each call, its input and output collapsed), Results (required outputs, the checks), Files (what it
+  wrote, as a tree) and Related (the records it ran on, checked, created or changed). While it runs the page reads its
+  new events every two seconds and stops when it ends. Served by `GET /api/runs/<id>/page` and `/events?after=`,
+  `POST /api/runs/<id>/rerun` (its start tool's permission) and `/stop` (its pack's cancel tool's); src/run-page.ts.
+
+- **Forms in a side panel** (mold_v0-256, flag `side_panel_forms`, off by default, the profile alone turns it on): an
+  area's Add, a record page's Edit and Add <related record>, staff's New and Edit open first in a panel at the right of
+  the list or page, which stays in view; Open full page expands the same form, its typed values kept, to the full
+  in-page card. Focus stays in the panel, Esc closes it, closing it with unsaved changes asks first, and on a phone
+  (640 px or narrower) it fills the screen. Off, every form is the full in-page card it always was.
+
 ## 7. Settings placement
 
 `"settings": {"group": "access" | "connections" | "automation" | "data_trust", "label": "..."}` (mold_v0-219) shows a
@@ -424,8 +519,8 @@ What the contract can name only as `none`, or cannot name, because the runtime d
 - **A different primary action per list.** The contract's `primary_action` is one value for every list of the area; an
   area whose tabs offer different actions cannot declare a contract until they agree (its derived contract prints
   each). An area's own lists (Settings, Records page) offer `create_record` or none, never a run or a link.
-- **The rest of the record's page** (mold_v0-253 and mold_v0-254 are parts 1 and 2): a run's own page, logs, history,
-  code views and a side panel for forms are later parts; a run links to its pack's runs tab, and forms are full cards.
+- **History before the section.** A record's change history (mold_v0-256) is kept only while a history section is
+  declared and the flag is on: changes made before then are in the data trail's who-and-when alone, never with values.
 - **Updating a record's files from the console.** The console creates records with their files; changing a record's
   files afterwards is the data API's (`PUT /api/data/<area>/<key>` with a reference an upload answered), not a form's,
   and the MCP tools take a workspace store path, not an upload.

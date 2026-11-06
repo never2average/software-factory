@@ -2849,7 +2849,8 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
 | `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
 | `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
-| `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
+| `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`; mold_v0-256: a run's own page (`/app/runs/<id>`, `/api/runs/<id>/page`), log, history, code, table and file sections, computed facts and list columns, Add <related record>, the record picker, a Key from the Title, and `record_changes`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
+| `side_panel_forms` | off | always (the profile alone) | create and edit forms open first in a side panel (mold_v0-256, below): an area's Add, a record page's Edit and Add <related record>, staff's New and Edit. `quiet_off`: while off the generated files leave it out |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3402,7 +3403,7 @@ area, its page is also as before.
   documents and deadlines, its linked records and its Credentials card. Every copy confirms with a toast and works on a
   phone (the clipboard API, else a selection copied). Badge and notice colours are the console's status tones and the
   theme's chart colours mixed toward the foreground, legible in light and dark.
-- **Later parts**: a run's own page, logs, history, code views and a side panel for forms (part 2 is below).
+- **Later parts**: part 2 (related lists, runs, actions) and part 3 (a run's page, logs, history, code, files, computed facts, the side panel) are below.
 
 Proof: `npm run test:record-pages` (14: the schema's refusals and the build's, on and off; the badges' tokens; facts by
 type; a notice's conditions; tabs and sections; copy; off, the console's generated files those of the same pack without
@@ -3455,6 +3456,69 @@ off, no route; each action by role, the API refusing the same, a run carrying it
 workspace), `npm run test:migrations` (0047 and its rollback), `npm run test:features`, `npm run test:console-tabs`,
 `npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_pages` (a project's builds and runs; a build's
 Re-run, Open project, Edit, Move, Copy link and Delete).
+
+## Record pages, part 3: runs, logs, history, code, files, computed facts, side panel (mold_v0-256)
+
+Under the same flag (`record_pages`, off by default; off, every route below answers nothing, `/app/runs/<id>` is a 404,
+nothing is written to `record_changes` and the generated files are as before), and a flag of its own for the side
+panel (`side_panel_forms`, off). docs/RECORDS.md section 6 has the shapes.
+
+- **A run's own page** (`web/src/app/app/runs/[id]`, `web/src/features/runs/run-page.tsx`; pure in `run-view.ts`;
+  served by `src/run-page.ts` through `src/view-routes.ts`): `GET /api/runs/<id>/page` (the run as the person reads it:
+  its kind in words, the record it ran on, who started it, its live cost, the actions they may take; its timeline from
+  `run_events` with each event's level, source and words; the agent from its kind, its harness session and its events,
+  tokens and cost by model from a harness's own report else `gateway_usage` by provider; tool calls from `tool_call` and
+  `tool.<name>` events; required outputs and `run_results` (each named record the person may read); `agent_output` and
+  `agent_file` events and `workspace_written`; the records it ran on, targeted, checked, created or changed
+  (`workspace_records.written_by`/`updated_by` = `run:<id>`)), `GET .../events?after=<id>` (polled every 2 s while it
+  is queued or running), `POST .../rerun` (the kind's start tool, its permission, the same input and record; never a
+  kind that writes after an approval) and `POST .../stop` (the pack's cancel tool's permission). Event data is masked
+  for shapes of secrets on the way out (src/run-events.ts maskSecrets), on top of the redaction at write.
+- **The event/log viewer** (`web/src/features/records/log-viewer.tsx`; pure in `log-lines.ts`): levels and a source,
+  search with highlights, wrap, follow-tail with Jump to latest, Copy line, Download; rows virtualised by measured
+  height (`visibleRange`, `offsetsOf`). A record page's `log` section and a run's timeline.
+- **History** (`src/record-history.ts`, `sql/migrations/0049_record_changes.sql` with its rollback): a transaction
+  listener of the record store (`src/record-areas.ts` `onRecordChangeInTransaction`, given each change's data before and
+  after and its writer) writes a line per change of an area whose layout has a history section; an encrypted field is
+  `{field, redacted: true}` only, and is redacted again on read. Append-only to the tenant role (SELECT and INSERT under
+  row-level security). Read on `GET /api/records/_page/<area>/<key>` (the open tab's history sections) and
+  `/history?section=&before=` (Show older); drawn by `history-section.tsx` (a line diff for a long text, `code-text.ts`).
+- **Code, table, files** (`code-view.tsx`, `file-browser.tsx`; pure in `code-text.ts`): JSON and YAML tokens with line
+  numbers, Copy and Download; a json list's table; the record's document cards (`documents.tsx` `useRecordFiles`,
+  `DocumentCard`) as an ARIA tree with the open one previewed.
+- **Computed facts and columns** (`src/record-page-routes.ts` `computedFact`, `relatedColumn`): read through `listFor`
+  as the person, a page at a time (counts stop at 1,000), hidden from a role that may not read the related area. A tab
+  column `{related, show}` reaches the console as `related_columns` (gen-packs, only while on) and its values from
+  `GET /api/records/_page/_columns/<pack>/<tab>?keys=` (`web/src/features/records/related-columns.ts`).
+- **Add <related record>, the picker, the Key from the Title**: a `create_record` page action (offered for the target
+  area's create permission) opens that area's create form with its fields filled in (`CreateRecordForm initial`, or
+  `?new=1&<field>=` through `form-prefill.ts`); an open list row offers it too (`row-create.tsx`). A reference field's
+  input is `RecordPicker` (`GET /api/records/_page/_pick/<area>?q=`, a combobox); `key_from_title` on an area fills the Key.
+- **Polish of part 2**: no count beside a section's title (Show all stays a button); a related list's number with the
+  unit its area's page gives it (a duration in seconds in words: "21m 52s"); an address in a header fact wraps at its
+  slashes and truncates a long piece with the whole on hover, never inside a word; a record's runs link to the run's page.
+- **Conditions, links, run targets, matched lists**: a condition (`DetailConditionSchema`, checked by
+  `conditionIssues`, evaluated by `conditionHolds` on both sides) also tests a date against today (`before`, `after`,
+  `within_days`), a clock's state (`clock`, `is`) and `all` or `any` of several tests; a notice may be `success`. A link
+  action on a field linking to several areas opens the area its value is in (`linkedRecord`); a `start_run` with
+  `target: {via}` runs on the linked asset record (the build refuses a field linking to an area that is not an asset);
+  a related list's `match_field` matches their `via` against this record's field; a related column may be
+  `{field, label}`. The lane seed fills a required url field (`https://example.com/<area>/<n>`).
+- **The side panel** (`web/src/features/tabs/tab-action.tsx` `FormHost`, `SidePanelForm`): with `side_panel_forms` on, a
+  create or edit card opens in a modal panel at the right (the full screen at 640 px or narrower) over the list or page;
+  Open full page expands the same card (kept mounted in one place, so its typed values stay) to the full in-page card.
+  Focus moves to its title and is trapped inside, Esc closes it, closing with unsaved changes asks first, focus returns
+  where it was. Off, every card is as before.
+
+Proof: `npm run test:record-pages` (parts 1 and 2, then `scripts/record-pages-3-test.ts`: the refusals in the area and
+across the build, what the console decides, how it draws, gen-packs on and off, and in a headless browser a live log
+filtered, a hundred thousand lines virtualised, code and table views, history with a diff and a redacted field, computed
+facts, the file browser, the side panel and the picker, a run's page live and finished on each tab; then
+`scripts/record-page-actions-test.ts` 7 to 9: history by role and workspace with the encrypted field redacted in the
+answer and the table, computed facts by role, Add <related record>, the picker, computed columns, the Key from the Title,
+each off), `npm run test:run-page` (the run's page by role and workspace, polling, Stop and Re-run, off),
+`npm run test:migrations` (0049 and its rollback), `npm run test:features` (side_panel_forms), `npm run test:console-tabs`,
+`npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_pages` (projects, environments, builds, releases).
 
 ## How the factory runs it
 

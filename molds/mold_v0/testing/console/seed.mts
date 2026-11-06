@@ -6,7 +6,8 @@
 //            filled by its type (an enum through its options, a date around today, a number within its bounds, yes/no
 //            in turn); a reference or link field names a record the world has (the shared areas' samples, a workspace
 //            area seeded before it), and a text field named like an area (application -> applications) names one of
-//            its records; json, person, file and url fields are left empty. Written as a repository's rows are
+//            its records; json, person, file and optional url fields are left empty (mold_v0-256: a required url field
+//            gets https://example.com/<area>/<n>, so an area with one is seeded too). Written as a repository's rows are
 //            (src/record-areas.ts writeFromRepository, source "lane:samples"), so read-only and sealed areas take them.
 //   runs     a few runs of the build's job kinds, finished, failed and running, each over a workspace asset record
 //            when the kind reads one (targets.asset), with results against the shared check samples; written straight
@@ -28,7 +29,8 @@ const day = (offset: number) => new Date(Date.now() + offset * DAY).toISOString(
 const singular = (label: string) => label.replace(/ies$/i, "y").replace(/(?<!s)s$/i, "");
 
 /** The value of field `f` for the n-th sample (0-based), or undefined to leave it empty. */
-function valueOf(f: Field, n: number, i: number, keysOf: (area: string) => string[], areaNamed: (field: string) => string | null): unknown {
+/** (Exported for scripts/record-pages-3-test.ts.) */
+export function valueOf(f: Field, n: number, i: number, keysOf: (area: string) => string[], areaNamed: (field: string) => string | null, area = "records"): unknown {
   switch (f.type) {
     case "enum": { const o = optionValues(f); if (!o.length) return undefined; const v = o[(n + i) % o.length]; return f.multiple ? [v] : v; }
     case "boolean": return n % 3 === 0;
@@ -49,7 +51,10 @@ function valueOf(f: Field, n: number, i: number, keysOf: (area: string) => strin
       const t = keys.length ? keys[n % keys.length]! : `Sample ${(f.label ?? f.name).toLowerCase()} ${n + 1}`;
       return t.slice(0, f.max_length ?? 20_000);
     }
-    default: return undefined; // json, person, file, url (mold_v0-238: an address a card would try to fetch): left empty
+    // mold_v0-256: a required url field gets an address of the example domain (else its area could not be seeded at all);
+    // an optional one stays empty (mold_v0-238: an address a card would try to fetch).
+    case "url": return f.required ? `https://example.com/${area}/${n + 1}` : undefined;
+    default: return undefined; // json, person, file, an optional url: left empty
   }
 }
 
@@ -71,7 +76,7 @@ export async function seedWorkspace(orgId: number, lane: string): Promise<{ reco
   for (const a of order) {
     const ops = Array.from({ length: SAMPLES }, (_, n) => {
       const data: Record<string, unknown> = {};
-      a.fields.forEach((f, i) => { const v = valueOf(f, n, i, keysOf, areaNamed); if (v !== undefined) data[f.name] = v; });
+      a.fields.forEach((f, i) => { const v = valueOf(f, n, i, keysOf, areaNamed, a.name); if (v !== undefined) data[f.name] = v; });
       return { op: "put", area: a.name, key: `${a.name.replace(/_/g, "-")}-${n + 1}`, title: `${singular(a.label)} ${n + 1}`, data };
     });
     try {

@@ -3,7 +3,7 @@
   "id": "fixture_pages",
   "name": "Fixture pages",
   "version": "0.1.0",
-  "description": "A declarative test fixture (mold_v0-253, mold_v0-254; scripts/record-pages-test.ts): record areas whose pages are laid out (detail): a header with badges, facts and actions, notices, tabs of sections, copyable fields, related lists and a record's runs. Never shipped.",
+  "description": "A declarative test fixture (mold_v0-253, mold_v0-254, mold_v0-256; scripts/record-pages-test.ts): record areas whose pages are laid out (detail): a header with badges, facts (some computed from related records) and actions, notices, tabs of sections, copyable fields, related lists, a record's runs, a log, the change history, code and table views and a file browser; a tab with columns computed from related records. Never shipped.",
   "record_areas": [
     {
       "name": "projects",
@@ -75,6 +75,53 @@
             },
             {
               "field": "repository"
+            },
+            {
+              "label": "Last build",
+              "computed": {
+                "area": "builds",
+                "op": "latest",
+                "field": "status",
+                "sort": {
+                  "field": "started",
+                  "direction": "desc"
+                }
+              }
+            },
+            {
+              "label": "Builds",
+              "computed": {
+                "area": "builds",
+                "op": "count"
+              }
+            },
+            {
+              "label": "Failed builds",
+              "computed": {
+                "area": "builds",
+                "op": "count",
+                "where": {
+                  "field": "status",
+                  "equals": "failed"
+                }
+              }
+            },
+            {
+              "label": "Last coverage",
+              "unit": "%",
+              "computed": {
+                "area": "builds",
+                "op": "latest",
+                "field": "coverage",
+                "sort": {
+                  "field": "started",
+                  "direction": "desc"
+                },
+                "where": {
+                  "field": "status",
+                  "equals": "passed"
+                }
+              }
             }
           ]
         },
@@ -146,6 +193,16 @@
             }
           },
           {
+            "kind": "create_record",
+            "place": "secondary",
+            "label": "Add build",
+            "area": "builds",
+            "input": {
+              "project": "$key",
+              "summary": "$field:summary"
+            }
+          },
+          {
             "kind": "edit",
             "place": "secondary"
           },
@@ -156,7 +213,8 @@
             "kind": "delete"
           }
         ]
-      }
+      },
+      "key_from_title": true
     },
     {
       "name": "environments",
@@ -356,6 +414,29 @@
           "name": "notes",
           "label": "Notes",
           "type": "text"
+        },
+        {
+          "name": "log",
+          "label": "Build log",
+          "type": "text",
+          "max_length": 20000
+        },
+        {
+          "name": "manifest",
+          "label": "Manifest",
+          "type": "text",
+          "max_length": 20000
+        },
+        {
+          "name": "test_suites",
+          "label": "Test suites",
+          "type": "json"
+        },
+        {
+          "name": "attachments",
+          "label": "Attachments",
+          "type": "file",
+          "multiple": true
         }
       ],
       "detail": {
@@ -514,6 +595,20 @@
                   "log_excerpt"
                 ],
                 "empty": "No log lines were kept for this build."
+              },
+              {
+                "title": "Build log",
+                "log": {
+                  "field": "log",
+                  "live_when": {
+                    "field": "status",
+                    "in": [
+                      "queued",
+                      "running"
+                    ]
+                  }
+                },
+                "empty": "No log lines yet: they show here as the build writes them."
               }
             ]
           },
@@ -535,6 +630,57 @@
                   "notes"
                 ],
                 "empty": "No notes on this build."
+              },
+              {
+                "title": "Configuration file",
+                "code": {
+                  "field": "config",
+                  "language": "json"
+                },
+                "empty": "No configuration was recorded for this build."
+              },
+              {
+                "title": "Manifest",
+                "code": {
+                  "field": "manifest",
+                  "language": "yaml"
+                },
+                "empty": "No manifest was recorded for this build."
+              },
+              {
+                "title": "Test suites",
+                "table": {
+                  "field": "test_suites",
+                  "columns": [
+                    "suite",
+                    "passed",
+                    "failed",
+                    "seconds"
+                  ]
+                },
+                "empty": "No test suites were recorded for this build."
+              }
+            ]
+          },
+          {
+            "label": "Files",
+            "sections": [
+              {
+                "title": "Files",
+                "files": {},
+                "empty": "No files were kept for this build."
+              }
+            ]
+          },
+          {
+            "label": "History",
+            "sections": [
+              {
+                "title": "Changes",
+                "history": {
+                  "limit": 20
+                },
+                "empty": "No changes recorded yet."
               }
             ]
           }
@@ -633,6 +779,328 @@
           }
         ]
       }
+    },
+    {
+      "name": "releases",
+      "label": "Releases",
+      "role": "source",
+      "scope": "workspace",
+      "list_columns": [
+        "project",
+        "version",
+        "stage"
+      ],
+      "fields": [
+        {
+          "name": "project",
+          "label": "Project",
+          "type": "reference",
+          "to": "projects",
+          "required": true
+        },
+        {
+          "name": "version",
+          "label": "Version",
+          "type": "text",
+          "max_length": 40,
+          "copyable": true
+        },
+        {
+          "name": "stage",
+          "label": "Stage",
+          "type": "enum",
+          "options": [
+            {
+              "value": "draft",
+              "label": "Draft"
+            },
+            {
+              "value": "candidate",
+              "label": "Candidate"
+            },
+            {
+              "value": "released",
+              "label": "Released"
+            }
+          ]
+        },
+        {
+          "name": "service",
+          "label": "Service",
+          "type": "reference",
+          "to": "services"
+        },
+        {
+          "name": "subject",
+          "label": "Subject",
+          "type": "text",
+          "max_length": 120
+        },
+        {
+          "name": "release_on",
+          "label": "Release on",
+          "type": "date"
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "text"
+        },
+        {
+          "name": "changelog",
+          "label": "Changelog",
+          "type": "text",
+          "max_length": 20000
+        },
+        {
+          "name": "signing_secret",
+          "label": "Signing secret",
+          "type": "text",
+          "encrypted": true
+        }
+      ],
+      "detail": {
+        "header": {
+          "subtitle": "owner",
+          "badges": [
+            {
+              "field": "stage",
+              "colors": {
+                "draft": "neutral",
+                "candidate": "info",
+                "released": "success"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "project"
+            },
+            {
+              "field": "version"
+            },
+            {
+              "field": "owner"
+            },
+            {
+              "field": "service"
+            },
+            {
+              "field": "release_on",
+              "label": "Ships"
+            }
+          ]
+        },
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "Release",
+                "columns": 2,
+                "fields": [
+                  "project",
+                  "version",
+                  "stage",
+                  "owner",
+                  "service",
+                  "subject",
+                  "release_on"
+                ]
+              },
+              {
+                "title": "Changelog",
+                "columns": 1,
+                "fields": [
+                  "changelog"
+                ],
+                "empty": "No changelog yet."
+              },
+              {
+                "title": "Builds of this project",
+                "related": {
+                  "area": "builds",
+                  "via": "project",
+                  "match_field": "project",
+                  "columns": [
+                    {
+                      "field": "status",
+                      "label": "Build status"
+                    },
+                    "branch",
+                    {
+                      "field": "started",
+                      "label": "Built on"
+                    },
+                    {
+                      "field": "duration",
+                      "label": "Took"
+                    }
+                  ],
+                  "sort": {
+                    "field": "started",
+                    "direction": "desc"
+                  },
+                  "limit": 5
+                },
+                "empty": "No builds of this release's project yet."
+              }
+            ]
+          },
+          {
+            "label": "History",
+            "sections": [
+              {
+                "title": "Changes",
+                "history": {},
+                "empty": "No changes recorded yet."
+              }
+            ]
+          }
+        ],
+        "unplaced": "hide",
+        "notices": [
+          {
+            "when": {
+              "field": "stage",
+              "equals": "released"
+            },
+            "tone": "success",
+            "title": "Released",
+            "text": "This release is out: its builds and changelog are final."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "stage",
+                  "not_in": [
+                    "released"
+                  ]
+                },
+                {
+                  "field": "release_on",
+                  "before": "today"
+                }
+              ]
+            },
+            "tone": "danger",
+            "title": "Past its release date",
+            "text": "It was due to ship before today and has not been released."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "stage",
+                  "equals": "candidate"
+                },
+                {
+                  "field": "release_on",
+                  "within_days": 7
+                }
+              ]
+            },
+            "tone": "warning",
+            "title": "Ships within a week",
+            "text": "A candidate due within seven days: finish its sign-off."
+          },
+          {
+            "when": {
+              "clock": "signoff",
+              "is": "overdue"
+            },
+            "tone": "danger",
+            "title": "Sign-off overdue",
+            "text": "No one has signed this release off within five days."
+          },
+          {
+            "when": {
+              "any": [
+                {
+                  "clock": "signoff",
+                  "is": "due_soon"
+                },
+                {
+                  "field": "owner",
+                  "empty": true
+                }
+              ]
+            },
+            "tone": "info",
+            "text": "Sign-off is due soon, or nobody owns this release yet."
+          }
+        ],
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Scan service",
+            "job_kind": "scan",
+            "target": {
+              "via": "service"
+            }
+          },
+          {
+            "kind": "link",
+            "place": "secondary",
+            "field": "subject",
+            "label": "Open subject"
+          },
+          {
+            "kind": "link",
+            "field": "project",
+            "label": "Open project"
+          },
+          {
+            "kind": "copy_link"
+          }
+        ]
+      },
+      "links": [
+        {
+          "field": "subject",
+          "area": "builds"
+        },
+        {
+          "field": "subject",
+          "area": "environments"
+        }
+      ],
+      "clocks": [
+        {
+          "name": "signoff",
+          "label": "Sign-off",
+          "starts": {
+            "event": "created"
+          },
+          "after": "5d",
+          "soon": "2d"
+        }
+      ]
+    },
+    {
+      "name": "services",
+      "label": "Services",
+      "role": "asset",
+      "scope": "workspace",
+      "list_columns": [
+        "endpoint",
+        "owner"
+      ],
+      "fields": [
+        {
+          "name": "endpoint",
+          "label": "Endpoint",
+          "type": "url",
+          "required": true
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "text"
+        }
+      ]
     }
   ],
   "job_kinds": [
@@ -737,6 +1205,37 @@
         "timeout_seconds": 1200,
         "write_back": [
           "results"
+        ],
+        "required_outputs": [
+          "results/report.json"
+        ]
+      }
+    },
+    {
+      "name": "scan",
+      "label": "Scan a service",
+      "description": "Scans a service for known problems.",
+      "runner": "agent-workspace",
+      "args": [],
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-builder.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "scan.mjs"
+        ],
+        "args": {},
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "timeout_seconds": 1200,
+        "write_back": [
+          "results"
         ]
       }
     }
@@ -751,6 +1250,24 @@
       "charts": [],
       "views": [
         "table"
+      ],
+      "columns": [
+        "health",
+        "owner",
+        {
+          "related": {
+            "area": "builds"
+          },
+          "show": "count",
+          "label": "Builds"
+        },
+        {
+          "related": {
+            "area": "builds"
+          },
+          "show": "latest:status",
+          "label": "Last build"
+        }
       ]
     },
     {
@@ -769,6 +1286,28 @@
       "kind": "area",
       "area": "environments",
       "icon": "book",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "releases",
+      "kind": "area",
+      "area": "releases",
+      "icon": "rocket",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "services",
+      "kind": "area",
+      "area": "services",
+      "icon": "plug",
       "group": "Delivery",
       "charts": [],
       "views": [

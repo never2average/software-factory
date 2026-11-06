@@ -416,7 +416,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   const pages = strip(src("features/records/record-pages.tsx")), settings = strip(src("features/settings/settings-page.tsx")), ta = strip(src("features/tabs/tab-action.tsx"));
   const list = /export function AreaRecordList\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
   assert.match(list, /useAreaAction\(area, /, "AreaRecordList: the area's own action");
-  assert.match(list, /if \(card\) return card;/, "its form a full card in the list's place");
+  // mold_v0-256: through FormHost (the full card in the list's place; with side_panel_forms on, a panel beside the list).
+  assert.match(list, /<FormHost card=\{card\} panel=\{panel\}>\s*<RecordTableView /, "its form a full card in the list's place");
   assert.match(list, /<RecordTableView [\s\S]*summary=\{<Sparklines url=\{`\$\{recordsApi\('app'\)\}\/_console\/\$\{encodeURIComponent\(area\.name\)\}\/sparklines`\}[\s\S]*toolbarAction=\{button \?\? undefined\}/,
     "its cards above the search row, the action the search row's last control (Export beside it, RecordTableView)");
   assert.match(pages, /export function RecordListPage[\s\S]*?base === 'app' \? <AreaRecordList area=\{area\} /, "the Records page is that list");
@@ -568,16 +569,16 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   has(withDetail((d) => { d.header.badges[0].colors.exploded = "danger"; }), /^detail\.header\.badges\.0\.colors\.exploded: exploded is not one of status's options$/, "a badge colour for a value the field lacks");
   has(withDetail((d) => { d.header.badges.push({ field: "branch" }); }), /branch is not a single-choice enum field/, "a badge on a text field");
   has(withDetail((d) => { d.header.facts[2].unit = "chars"; }), /^detail\.header\.facts\.2\.unit: a unit is for a number field \(branch is text\)$/, "a unit on a text field");
-  has(withDetail((d) => { d.notices[0].when = { field: "status", equals: "failed", empty: true }; }), /a notice's condition is one test: equals, in, not_in or empty \(it has equals and empty\)/, "a notice with two tests");
+  has(withDetail((d) => { d.notices[0].when = { field: "status", equals: "failed", empty: true }; }), /a condition is one test: equals, in, not_in, empty, before, after, within_days, or a clock's state \(it has equals and empty\)/, "a notice with two tests");
   has(withDetail((d) => { d.notices[0].when.equals = "exploded"; }), /exploded is not one of status's options/, "a notice testing a value the field lacks");
-  has(withDetail((d) => { d.notices[0].tone = "success"; }), /a notice's tone is one of info, warning, danger/, "a notice's tone outside its three");
+  has(withDetail((d) => { d.notices[0].tone = "crimson"; }), /a notice's tone is one of info, success, warning, danger/, "a notice's tone outside its four (mold_v0-256: success)");
   has(withDetail((d) => { d.tabs[2].label = "logs"; }), /tab logs has the same address as another \(\?tab=logs\)/, "two tabs with one address");
   has(withDetail((d) => { d.tabs[0].sections[1].fields = ["branch"]; }), /section Results gives fields or groups, not both/, "fields and groups together");
   has(withDetail((d) => { d.tabs[0].sections[0].fields.push("branch"); }), /branch is in section Source twice/, "a field twice in one section");
   has(withDetail((d, a) => { a.fields.find((f: any) => f.name === "notes").encrypted = true; d.header.facts[0].field = "notes"; }), /notes is encrypted: a fact shows a value/, "a fact on an encrypted field");
   has(withDetail((d) => { d.tabs[0].sections[0].columns = 4; }), /^detail\.tabs\.0\.sections\.0\.columns/, "four columns");
   has(withDetail((_d, a) => { a.fields.find((f: any) => f.name === "config").copyable = true; }), /^fields\.18\.copyable: copyable is for a value the page shows in full/, "copyable on a json field");
-  assert.deepEqual([...NOTICE_TONES], ["info", "warning", "danger"]);
+  assert.deepEqual([...NOTICE_TONES], ["info", "success", "warning", "danger"]);
   ok("a record page's layout (mold_v0-253): the fixture's projects, environments and builds take; refused: a field the area lacks (a section, a fact, the subtitle, a notice), a ninth fact, an empty tab or none, a section without fields, a badge colour outside the theme's tokens or for a value the field lacks, a badge on a text field, a unit on a text field, a notice with two tests or an unknown value or tone, two tabs with one address, fields with groups, a field twice, a fact on an encrypted field, four columns, copyable on a json field");
 
   // b. Badges: the console's tokens are the schema's, each a class of theme variables (no raw colour).
@@ -608,7 +609,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.deepEqual(L.dateWords("2026-11-06T11:15:00Z", NOW), { relative: "45 minutes ago", absolute: "6 Nov 2026, 11:15 UTC", iso: "2026-11-06T11:15:00.000Z" });
   assert.equal(L.dateWords("2026-11-06T09:00:00Z", NOW).relative, "3 hours ago");
   assert.equal(L.dateWords("not a date", NOW), null);
-  assert.deepEqual([L.numberWords(1234.5, "s"), L.numberWords(87.25, "%"), L.numberWords(12), L.numberWords("3", "GB"), L.numberWords(1, "×")], ["1,234.5 s", "87.25%", "12", "3 GB", "1×"]);
+  assert.deepEqual([L.numberWords(1234.5, "s"), L.numberWords(87.25, "%"), L.numberWords(12), L.numberWords("3", "GB"), L.numberWords(1, "×")], ["20m 35s", "87.25%", "12", "3 GB", "1×"], "mold_v0-256: seconds read as a duration");
   ok("facts by type: dates relative (today, tomorrow, in 3 days, 2 weeks ago, 45 minutes ago) with the exact date on hover, numbers grouped with their unit (a % or × closed up)");
 
   // d. Notices: their condition on the record's fields, in declared order.
@@ -624,7 +625,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   ok("notices: shown while their condition holds (equals, in, not_in, empty; a list field by any value), in declared order");
 
   // e. Tabs and sections.
-  assert.deepEqual(layout.tabs.map((t: { label: string }) => L.tabId(t.label)), ["overview", "logs", "configuration"]);
+  assert.deepEqual(layout.tabs.map((t: { label: string }) => L.tabId(t.label)), ["overview", "logs", "configuration", "files", "history"], "mold_v0-256: the fixture's builds also have Files and History");
   for (const l of ["Overview", "Run & logs", "  Spaced  out ", "Ünïcode"]) assert.equal(L.tabId(l), detailTabId(l), `${l}: one address on both sides`);
   assert.equal(L.openTab(layout, "logs").label, "Logs");
   assert.equal(L.openTab(layout, "nope").label, "Overview", "an unknown ?tab: the first");
@@ -687,7 +688,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     assert.doesNotMatch(off.nav, /"detail"|"copyable"|detail\?:|copyable\?:|detail-layout/, "off: no layout, no copyable, no type for them in the console's registry");
     assert.doesNotMatch(off.features, /record_pages/, "off: the flag left out of the console's flags (quiet_off)");
     // The same pack with its layouts and copyable taken out: the generated files are byte for byte the same (as before the flag).
-    const bare = copyOf("bare", (j) => { for (const a of j.record_areas) { delete a.detail; for (const f of a.fields) delete f.copyable; } });
+    const bare = copyOf("bare", (j) => { for (const a of j.record_areas) { delete a.detail; delete a.key_from_title; for (const f of a.fields) delete f.copyable; }
+      // mold_v0-256: a tab's columns computed from related records are left out too.
+      for (const t of j.tabs) if (t.columns) t.columns = t.columns.filter((c: unknown) => typeof c === "string"); });
     assert.equal(bare.status, 0, bare.out.slice(-1500));
     const genFiles = (copy: string) => { const dir = path.join(copy, "web", "src", "config"); return readdirSync(dir).filter((f) => f.includes(".generated.")).sort().map((f) => `${f}\n${readFileSync(path.join(dir, f), "utf8")}`).join("\n"); };
     assert.equal(genFiles(off.copy), genFiles(bare.copy), "off: the console's generated files are those of the same pack without its layouts");
@@ -695,7 +698,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     assert.equal(on.status, 0, on.out.slice(-1500));
     const areas = JSON.parse(/export const recordAreas: RecordAreaSpec\[\] = ([\s\S]*?);\n/.exec(on.nav)![1]!) as { name: string; detail?: { tabs: unknown[] }; fields: { name: string; copyable?: boolean }[] }[];
     const byName = Object.fromEntries(areas.map((a) => [a.name, a]));
-    assert.equal(byName.builds!.detail!.tabs.length, 3, "on: the builds' layout in the console's registry");
+    assert.equal(byName.builds!.detail!.tabs.length, 5, "on: the builds' layout in the console's registry (mold_v0-256: with its Files and History tabs)");
     assert.equal(byName.projects!.detail!.tabs.length, 1, "and the projects'");
     assert.ok(!("detail" in byName.environments!), "an area without a layout: none (its page as before)");
     assert.deepEqual(byName.builds!.fields.filter((f) => f.copyable).map((f) => f.name), ["branch", "commit", "artifact"], "copyable fields");
@@ -789,7 +792,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.equal(count(/data-detail-field=""/g) >= 8, true);
       const facts = /data-record-facts="">([\s\S]*?)<\/dl>/.exec(dom)?.[1] ?? "";
       assert.equal((facts.match(/data-detail-field=""/g) ?? []).length, 8, "eight facts");
-      assert.match(facts, /1,312 s/, "a number with its unit"); assert.match(facts, /87\.4%/, "a percentage closed up");
+      assert.match(facts, /title="1,312 s"[^>]*>21m 52s</, "a number with its unit (mold_v0-256: seconds as a duration in words, the exact number on hover)"); assert.match(facts, /87\.4%/, "a percentage closed up");
       assert.match(facts, /<time datetime="2026-11-05"[^>]*>[^<]*(ago|yesterday|today)<\/time>/, "a date in relative words, its exact date on hover");
       assert.match(facts, /href="https:\/\/artifacts\.example\.com\/builds\/1042\.tar\.gz"/, "an address as a link");
       assert.match(facts, /aria-label="Copy Commit"/, "a copyable fact: its copy button");
@@ -827,8 +830,8 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       assert.match(header, /data-page-more=""[^>]*aria-label="More actions"[^>]*>[\s\S]*?More</, "More, for the rest");
       assert.doesNotMatch(header, /data-copy-id=""|data-page-action="move"/, "Copy ID and Move are in More, not the header");
       const runs = /data-section-kind="runs"[\s\S]*?<\/table>/.exec(withActions)?.[0] ?? "";
-      assert.match(runs, /Latest 2 of 3 runs/, "the runs' count: the latest of how many");
-      assert.match(runs, /href="\/app\/build-runs\?run=run_b"[^>]*>Re-run a build</, "each run links to it (its pack's runs tab, the run open)");
+      assert.doesNotMatch(runs, /data-section-count|Latest 2 of 3 runs|\b\d+ runs?\b</, "mold_v0-256: no count beside the section's title");
+      assert.match(runs, /href="\/app\/runs\/run_b"[^>]*>Re-run a build</, "each run links to it (mold_v0-256: the run's own page)");
       assert.match(runs, /data-badge-color="danger"[\s\S]*?Failed[\s\S]*?data-badge-color="success"[\s\S]*?Succeeded/, "its status as a badge");
       assert.match(runs, /21m 52s[\s\S]*?\$0\.42[\s\S]*?You[\s\S]*?r\.lee@example\.com/, "how long it took, its cost, who started it");
       assert.match(runs, /href="\/app\/build-runs"[^>]*>All runs/, "All runs, when there are more");
@@ -843,10 +846,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
         page: { actions: [act("start_run.build", "start_run", "primary", "Start a build", { run: { kind: "build", label: "Build a project", description: null, args: [], values: {}, environments: null } })],
           sections: { "0-1": { area: "builds", via: "project", more: true, records: [relRow("build-1044", "failed", "2026-11-05"), relRow("build-1043", "running", "2026-11-04")] }, "0-2": { total: 0, runs: [] } } } });
       const rel = /data-section-kind="related"[\s\S]*?<\/table>/.exec(proj)?.[0] ?? "";
-      assert.match(rel, />Builds<[\s\S]*?First 2 shown/, "the related list: its title and count");
+      assert.match(rel, />Builds<\/div>/, "the related list: its title");
+      assert.doesNotMatch(rel, /First 2 shown|data-section-count/, "mold_v0-256: no count beside it (Show all stays a button)");
       assert.match(rel, /href="\/app\/records\/builds\?linked=project%3Acheckout"[^>]*>Show all/, "Show all: the builds' list narrowed to this project");
       assert.match(rel, /<th[^>]*>Build<\/th><th[^>]*>Status<\/th><th[^>]*>Branch<\/th><th[^>]*>Environment<\/th><th[^>]*>Started<\/th><th[^>]*>Duration<\/th>/, "its declared columns, in order, after the record");
-      assert.match(rel, /href="\/app\/records\/builds\/build-1044"[^>]*>Build 1044<[\s\S]*?data-badge-color="danger"[\s\S]*?Failed[\s\S]*?main[\s\S]*?staging-eu[\s\S]*?2026-11-05[\s\S]*?1312/, "each row as the builds' list shows it (its status coloured as its own page's badge)");
+      assert.match(rel, /href="\/app\/records\/builds\/build-1044"[^>]*>Build 1044<[\s\S]*?data-badge-color="danger"[\s\S]*?Failed[\s\S]*?main[\s\S]*?staging-eu[\s\S]*?2026-11-05[\s\S]*?data-unit="s">21m 52s</, "each row as the builds' list shows it (its status coloured as its own page's badge; mold_v0-256: a duration with its unit, in words)");
       assert.equal((rel.match(/data-row-actions=""/g) ?? []).length, 2, "each row its own actions' menu");
       assert.match(proj, /data-section-kind="runs"[\s\S]*?No runs on this project yet\./);
       const hidden = draw("project-hidden", { area: "projects", record: record("checkout", "Checkout", { health: "healthy" }), links: [], provenance: null, page: { actions: [], sections: { "0-1": { hidden: true }, "0-2": { total: 0, runs: [] } } } });
@@ -929,10 +933,11 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.deepEqual(L.parseLinked("project:check out/1", buildsSpec), { field: "project", key: "check out/1" }, "read back");
   assert.equal(L.parseLinked("ghost:x", buildsSpec), null, "a field the area lacks: no filter");
   assert.equal(L.parseLinked("project:", buildsSpec), null);
-  assert.deepEqual(L.relatedColumns(buildsSpec, {}), ["status", "project"], "no columns of its own: the area's list columns");
-  assert.deepEqual(L.relatedColumns(buildsSpec, { columns: ["project", "ghost"] }), ["project"]);
-  assert.deepEqual([L.runsCountWords(1, 1), L.runsCountWords(3, 3), L.runsCountWords(5, 12)], ["1 run", "3 runs", "Latest 5 of 12 runs"]);
-  assert.deepEqual([L.relatedCountWords(1, false, "Builds"), L.relatedCountWords(3, false, "Builds"), L.relatedCountWords(5, true, "Builds")], ["1 build", "3 builds", "First 5 shown"]);
+  // mold_v0-256: each column with its own heading, when it has one (null: its field's label).
+  assert.deepEqual(L.relatedColumns(buildsSpec, {}).map((c: { field: string }) => c.field), ["status", "project"], "no columns of its own: the area's list columns");
+  assert.deepEqual(L.relatedColumns(buildsSpec, { columns: ["project", "ghost"] }), [{ field: "project", label: null }]);
+  // mold_v0-256: no counts beside a list section's title (the operator's call): their words are gone.
+  assert.equal(L.runsCountWords, undefined); assert.equal(L.relatedCountWords, undefined);
   assert.deepEqual([api.pageActionId({ kind: "start_run", job_kind: "rebuild" }), api.pageActionId({ kind: "move", to: "In review" }), api.pageActionId({ kind: "delete" })], ["start_run.rebuild", "move.In-review", "delete"]);
   assert.equal(L.RUN_STATUS_COLOR.failed, "danger"); assert.equal(L.RUN_STATUS_COLOR.succeeded, "success");
   ok("the console's part 2 (mold_v0-254): one primary, the secondary in order, the rest in More; Show all's address and its filter read back (an unknown field none); a related list's columns; the counts' words; an action's id; a run's status colour");

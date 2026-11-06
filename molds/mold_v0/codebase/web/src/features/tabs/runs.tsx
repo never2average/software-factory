@@ -135,9 +135,13 @@ export function RunsTable({ tab, reports, summary }: {
       detailTitle={(r) => runKindLabel(r.pack, r.kind)}
       detailActions={(r) => {
         const t = runTarget(r);
-        return t && findRecordArea('app', t.area)
-          ? <Button variant='outline' size='sm' render={<Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} />}>Open {lowerFirst(targetLabel([r]))}</Button>
-          : null;
+        return (<>
+          {t && findRecordArea('app', t.area)
+            ? <Button variant='outline' size='sm' render={<Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} />}>Open {lowerFirst(targetLabel([r]))}</Button>
+            : null}
+          {/* mold_v0-256 (flag record_pages): the run's own page (its timeline, agent, tools, results, files, records). */}
+          {featureOn('record_pages') && <Button variant='outline' size='sm' render={<Link href={`/app/runs/${encodeURIComponent(r.id)}`} />} data-open-run={r.id}>Open run</Button>}
+        </>);
       }}
       detail={(r) => (
         <div className='flex flex-col gap-4'>

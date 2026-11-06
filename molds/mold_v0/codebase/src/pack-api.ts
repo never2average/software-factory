@@ -897,7 +897,7 @@ export function contractProblems(a: {
  */
 export const BADGE_COLORS = ["neutral", "info", "success", "warning", "danger", "viz-1", "viz-2", "viz-3", "viz-4", "viz-5", "viz-6", "viz-7", "viz-8"] as const;
 /** A notice's tones (mold_v0-253): a banner's colour and icon. */
-export const NOTICE_TONES = ["info", "warning", "danger"] as const;
+export const NOTICE_TONES = ["info", "success", "warning", "danger"] as const;
 /** The most facts a record's header shows (mold_v0-253): two rows of four on a desktop. */
 export const DETAIL_FACTS_MAX = 8;
 const plainWords = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets");
@@ -921,7 +921,14 @@ export const RELATED_LIMIT_MAX = 50;
 export const DetailRelatedSchema = z.object({
   area: name,
   via: name.optional(),
-  columns: z.array(name).min(1).max(RELATED_COLUMNS_MAX, `at most ${RELATED_COLUMNS_MAX} columns: a related list's row is one line on a desktop`).optional(),
+  /**
+   * mold_v0-256: match on a field rather than the record's key: the records of `area` whose `via` holds this record's
+   * `match_field` value (findings whose control is this status record's control). `via` then names any plain field of
+   * that area, not a link back.
+   */
+  match_field: name.optional(),
+  // mold_v0-256: a column may carry its own heading ({field, label}), so two columns never read alike.
+  columns: z.array(z.union([name, z.object({ field: name, label: plainWords(40) }).strict()])).min(1).max(RELATED_COLUMNS_MAX, `at most ${RELATED_COLUMNS_MAX} columns: a related list's row is one line on a desktop`).optional(),
   sort: z.object({ field: name, direction: z.enum(["asc", "desc"]).optional() }).strict().optional(),
   limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
 }).strict();
@@ -935,6 +942,142 @@ export const DetailRunsSchema = z.object({
   kinds: z.array(name).min(1).max(20).optional(),
   limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
 }).strict();
+
+/**
+ * When a notice shows (mold_v0-253): one test of one of the record's fields. `equals` a value, `in` one of a list,
+ * `not_in` none of a list, or `empty` (true: the field has no value; false: it has one). An enum field's values are its
+ * options' values. mold_v0-256: a date field `before` or `after` "today", or `within_days` N (today up to N days ahead);
+ * a clock's state (`clock`, `is` "overdue" or "due_soon"); and several tests at once, `all` of them or `any` of them.
+ */
+/**
+ * Whether a condition holds on a record (mold_v0-256; the console's web/src/features/records/detail-layout.ts
+ * conditionHolds is the same): a list field by any of its values; a date compared by its UTC day with today's; a clock by
+ * its state (`clocks`, the record's clock views); all or any of several tests.
+ */
+export function conditionHolds(when: DetailCondition, data: Record<string, unknown>, clocks: Record<string, { status?: string; overdue?: boolean }> | null = null, now = Date.now()): boolean {
+  if (when.all) return when.all.every((c) => conditionHolds(c, data, clocks, now));
+  if (when.any) return when.any.some((c) => conditionHolds(c, data, clocks, now));
+  if (when.clock) { const c = clocks?.[when.clock]; return !!c && (when.is === "overdue" ? c.status === "overdue" || c.overdue === true : c.status === "due_soon"); }
+  const v = when.field ? data[when.field] : undefined;
+  const empty = v == null || v === "" || (Array.isArray(v) && !v.length);
+  const values = Array.isArray(v) ? v : [v];
+  const same = (a: unknown, b: unknown) => a === b || (typeof a !== "object" && a != null && String(a) === String(b));
+  if (when.empty !== undefined) return empty === when.empty;
+  if (when.equals !== undefined) return values.some((x) => same(x, when.equals));
+  if (when.in) return values.some((x) => when.in!.some((y) => same(x, y)));
+  if (when.not_in) return !empty && !values.some((x) => when.not_in!.some((y) => same(x, y)));
+  if (when.before || when.after || when.within_days !== undefined) {
+    const t = typeof v === "string" ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00Z` : v) : NaN;
+    if (!Number.isFinite(t)) return false;
+    const DAY = 86_400_000, day = Math.floor(t / DAY), today = Math.floor(now / DAY);
+    if (when.before) return day < today;
+    if (when.after) return day > today;
+    return day >= today && day <= today + when.within_days!;
+  }
+  return false;
+}
+/** The tests a condition may make (one each), and what a clock's state may be tested for. */
+export const CONDITION_TESTS = ["equals", "in", "not_in", "empty", "before", "after", "within_days"] as const;
+export const CLOCK_TESTS = ["overdue", "due_soon"] as const;
+const DetailLeafConditionSchema = z.object({
+  field: name.optional(),
+  equals: scalar.optional(),
+  in: z.array(scalar).min(1).max(20).optional(),
+  not_in: z.array(scalar).min(1).max(20).optional(),
+  empty: z.boolean().optional(),
+  before: z.literal("today").optional(),
+  after: z.literal("today").optional(),
+  within_days: z.number().int().min(0).max(3650).optional(),
+  clock: name.optional(),
+  is: z.enum(CLOCK_TESTS).optional(),
+}).strict();
+export const DetailConditionSchema = DetailLeafConditionSchema.extend({
+  all: z.array(DetailLeafConditionSchema).min(1).max(6).optional(),
+  any: z.array(DetailLeafConditionSchema).min(1).max(6).optional(),
+}).strict();
+export type DetailCondition = z.output<typeof DetailConditionSchema>;
+type LeafCondition = z.output<typeof DetailLeafConditionSchema>;
+/**
+ * What is wrong with a condition over an area's fields and clocks (mold_v0-256; notices, an action's unavailable, a log's
+ * live_when, a computed fact's where): each test names a field the area has (never an encrypted one; a date test a date
+ * field; an enum's values its options) or one of its clocks, and makes one test; all or any lists such tests, alone.
+ */
+export function conditionIssues(fields: readonly { name: string; type?: string; encrypted?: boolean; options?: unknown }[], clocks: readonly { name: string }[], w: DetailCondition, of = "the area"): string[] {
+  const out: string[] = [];
+  const leaf = (c: LeafCondition) => {
+    if (c.clock !== undefined || c.is !== undefined) {
+      const extra = (["field", ...CONDITION_TESTS] as const).filter((k) => c[k] !== undefined);
+      if (c.clock === undefined || c.is === undefined) out.push("a clock's test names the clock and what it is (is: overdue or due_soon)");
+      else if (!clocks.some((k) => k.name === c.clock)) out.push(`${c.clock} is not one of ${of}'s clocks${clocks.length ? ` (${clocks.map((k) => k.name).join(", ")})` : ""}`);
+      if (extra.length) out.push(`a clock's test is alone: it has no ${extra.join(" or ")}`);
+      return;
+    }
+    const ops = CONDITION_TESTS.filter((k) => c[k] !== undefined);
+    if (ops.length !== 1) out.push(`a condition is one test: equals, in, not_in, empty, before, after, within_days, or a clock's state (it has ${ops.length ? ops.join(" and ") : "none"})`);
+    if (c.field === undefined) { out.push("a condition names the field it tests"); return; }
+    const f = fields.find((x) => x.name === c.field);
+    if (!f) { out.push(`${c.field} is not one of ${of === "the area" ? "the area's" : `${of}'s`} fields`); return; }
+    if (f.encrypted) out.push(`${c.field} is encrypted: the page never reads its value, so no condition can test it`);
+    const dated = ops.filter((k) => k === "before" || k === "after" || k === "within_days");
+    if (dated.length && f.type !== "date") out.push(`${dated[0]} is for a date field (${c.field} is ${f.type ?? "text"})`);
+    if (f.type === "enum") for (const v of [c.equals, ...(c.in ?? []), ...(c.not_in ?? [])]) if (v !== undefined && !optionValues(f as never).includes(String(v))) out.push(`${String(v)} is not one of ${f.name}'s options`);
+  };
+  const lists = (["all", "any"] as const).filter((k) => w[k] !== undefined);
+  if (lists.length) {
+    const rest = (["field", "clock", "is", ...CONDITION_TESTS] as const).filter((k) => w[k] !== undefined);
+    if (lists.length > 1) out.push("a condition is all of its tests or any of them, not both");
+    if (rest.length) out.push(`a condition with ${lists[0]} has its tests inside it: no ${rest.join(" or ")} beside it`);
+    for (const k of lists) for (const c of w[k]!) leaf(c);
+  } else leaf(w);
+  return out;
+}
+// ---------- a record's page, part 3: logs, history, code, tables, files, computed facts (mold_v0-256; flag record_pages) ----------
+
+/** The most lines of change history a section lists before Show more, and the most it lists at all. */
+export const HISTORY_LIMIT_MAX = 100;
+/** How a computed fact counts at most (more reads "1,000+"): it reads the related records as the person, a page at a time. */
+export const COMPUTED_COUNT_MAX = 1000;
+/** The languages a code section highlights. */
+export const CODE_LANGUAGES = ["json", "yaml", "text"] as const;
+/**
+ * A log section (mold_v0-256): a text field's lines (or a json field's list of {at, level, source, message} entries) in
+ * the event/log viewer: level and source filters, search, follow-tail while `live_when` holds on the record (the page
+ * reads it again every few seconds meanwhile), wrap or no-wrap, copy a line, download, virtualised for long logs. A
+ * line's level is read from its words (error, warning, info, debug), its source from a leading [source], and its time
+ * from a leading ISO time.
+ */
+export const DetailLogSchema = z.object({ field: name, live_when: DetailConditionSchema.optional() }).strict();
+/**
+ * A record's change history (mold_v0-256): each change of its fields, newest first: who, when, what (added, changed,
+ * moved, deleted) and each field's value before and after (a long text as a line diff); an encrypted field says only
+ * that it changed, never a value. `fields` keeps the changes to those (default every field); at most `limit` (20; at
+ * most 100), then Show more. Kept while the flag is on, for an area whose layout has a history section
+ * (record_changes: sql/migrations/0049): history starts when the section is declared.
+ */
+export const DetailHistorySchema = z.object({ fields: z.array(name).min(1).max(60).optional(), limit: z.number().int().min(1).max(HISTORY_LIMIT_MAX).optional() }).strict();
+/** A code view (mold_v0-256): a field as syntax-highlighted JSON, YAML or text, with line numbers, copy and download. */
+export const DetailCodeSchema = z.object({ field: name, language: z.enum(CODE_LANGUAGES).optional() }).strict();
+/** A table view (mold_v0-256): a json field holding a list of objects as a table, its columns its items' keys (or `columns`). */
+export const DetailTableSchema = z.object({ field: name, columns: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,62}$/, "a key of the list's items")).min(1).max(RELATED_COLUMNS_MAX).optional() }).strict();
+/** A file browser (mold_v0-256): the record's documents and files as a tree, the open one previewed (the document cards). */
+export const DetailFilesSchema = z.object({ fields: z.array(name).min(1).max(20).optional() }).strict();
+/**
+ * A fact computed from related records (mold_v0-256), in the header beside the record's own: over the records of `area`
+ * that point back here (through `via`, as a related list), those `where` keeps: `count` (how many; "Used by" N) or
+ * `latest` (`field`'s value on the newest of them by `sort`, default the newest change: the last build's status).
+ * Evaluated on the server as the person reading (the area's read permission: a role that may not read it does not see
+ * the fact), in the workspace's own scope.
+ */
+export const DetailComputedSchema = z.object({
+  area: name,
+  via: name.optional(),
+  op: z.enum(["count", "latest"]),
+  field: name.optional(),
+  sort: z.object({ field: name, direction: z.enum(["asc", "desc"]).optional() }).strict().optional(),
+  where: DetailConditionSchema.optional(),
+}).strict();
+/** The kinds of a section (each in place of fields): mold_v0-254's related and runs, mold_v0-256's log, history, code, table and files. */
+export const DETAIL_SECTION_KINDS = ["related", "runs", "log", "history", "code", "table", "files"] as const;
 
 /**
  * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
@@ -951,21 +1094,19 @@ export const DetailSectionSchema = z.object({
   related: DetailRelatedSchema.optional(),
   /** mold_v0-254: the runs that ran on this record, in place of fields (DetailRunsSchema). */
   runs: DetailRunsSchema.optional(),
+  /** mold_v0-256: a field's lines in the log viewer (DetailLogSchema). */
+  log: DetailLogSchema.optional(),
+  /** mold_v0-256: the record's change history (DetailHistorySchema). */
+  history: DetailHistorySchema.optional(),
+  /** mold_v0-256: a field as highlighted JSON, YAML or text (DetailCodeSchema). */
+  code: DetailCodeSchema.optional(),
+  /** mold_v0-256: a json list field as a table (DetailTableSchema). */
+  table: DetailTableSchema.optional(),
+  /** mold_v0-256: the record's documents and files as a tree with a preview (DetailFilesSchema). */
+  files: DetailFilesSchema.optional(),
 }).strict();
 /** A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. */
 export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12) }).strict();
-/**
- * When a notice shows (mold_v0-253): one test of one of the record's fields. `equals` a value, `in` one of a list,
- * `not_in` none of a list, or `empty` (true: the field has no value; false: it has one). An enum field's values are its
- * options' values.
- */
-export const DetailConditionSchema = z.object({
-  field: name,
-  equals: scalar.optional(),
-  in: z.array(scalar).min(1).max(20).optional(),
-  not_in: z.array(scalar).min(1).max(20).optional(),
-  empty: z.boolean().optional(),
-}).strict();
 /** A banner above the tabs while its condition holds on the record: its tone, an optional title and its words. */
 export const DetailNoticeSchema = z.object({
   when: DetailConditionSchema,
@@ -974,13 +1115,19 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record"] as const;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
 export const PAGE_ACTION_PLACES = ["primary", "secondary", "more"] as const;
 export const PAGE_ACTIONS_MAX = 12;
 export const PAGE_SECONDARY_MAX = 3;
 /** What a start_run action's input may take from the record besides its fields: its key and its title. */
 export const RECORD_INPUT_SPECIAL = ["$key", "$title"] as const;
+/** A related list's column: its field (a column is a field's name, or {field, label}: mold_v0-256). */
+export const columnField = (c: string | { field: string }) => (typeof c === "string" ? c : c.field);
+/** An input's source (mold_v0-256): a field of the record (its name, or "$field:<name>"), its key or its title. */
+const inputSource = z.union([name, z.enum(RECORD_INPUT_SPECIAL), z.string().regex(/^\$field:[a-z][a-z0-9_]{1,62}$/, 'a field of the record, "$field:<name>", $key or $title')]);
+/** The record field an input's source names, or null for $key and $title. */
+export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly string[]).includes(from) ? null : from.startsWith("$field:") ? from.slice(7) : from);
 /**
  * An action of a record's page (mold_v0-254), in its header (`place`: the primary, a secondary button, or the More
  * menu, the default):
@@ -1003,7 +1150,14 @@ export const DetailActionSchema = z.object({
   place: z.enum(PAGE_ACTION_PLACES).optional(),
   label: plainWords(40).optional(),
   job_kind: name.optional(),
-  input: z.record(name, z.union([name, z.enum(RECORD_INPUT_SPECIAL)])).optional(),
+  input: z.record(name, inputSource).optional(),
+  /** mold_v0-256: a create_record action's area (a new record of it, its fields filled from `input`). */
+  area: name.optional(),
+  /**
+   * mold_v0-256: a start_run's target: the record this record's link or reference field `via` names (an asset area's:
+   * a finding's Re-audit runs on the finding's application), in place of this record. The run still carries this record.
+   */
+  target: z.object({ via: name }).strict().optional(),
   to: choiceValue.optional(),
   field: name.optional(),
   roles: z.array(role).min(1).max(4).optional(),
@@ -1033,7 +1187,8 @@ export const RecordDetailSchema = z.object({
       colors: z.record(z.string(), z.enum(BADGE_COLORS, { error: (i) => `${String(i.input)} is not a badge colour: one of the theme's tokens ${BADGE_COLORS.join(", ")}` })).optional(),
     }).strict()).max(3).optional(),
     creator: z.boolean().optional(),
-    facts: z.array(z.object({ field: name, label: plainWords(40).optional(), unit: plainWords(12).optional() }).strict())
+    // mold_v0-256: a fact may be computed from related records (DetailComputedSchema) in place of a field of the record.
+    facts: z.array(z.object({ field: name.optional(), label: plainWords(40).optional(), unit: plainWords(12).optional(), computed: DetailComputedSchema.optional() }).strict())
       .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows two rows of four`).optional(),
   }).strict().optional(),
   notices: z.array(DetailNoticeSchema).max(6).optional(),
@@ -1045,8 +1200,8 @@ export const RecordDetailSchema = z.object({
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
 
 /** An action's id on its page and in the API (POST /api/records/_page/<area>/<key>/actions/<id>): its kind, then what it names. */
-export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field">) =>
-  [a.kind, a.job_kind ?? a.to ?? a.field].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
+export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field"> & { area?: string }) =>
+  [a.kind, a.job_kind ?? a.to ?? a.field ?? a.area].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
 
 /** A layout's id for each tab (its label, lowercased, words joined by -): the page's ?tab= value. */
 export const detailTabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "tab";
@@ -1065,6 +1220,11 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if (f && (f.encrypted || f.type === "file")) bad(`${n} is ${f.encrypted ? "encrypted" : "a file field"}: ${what} shows a value, so it names a field the page reads`, ...path);
     return f;
   };
+  /** A condition on this area's fields and clocks (mold_v0-256: conditionIssues), each problem with its path. */
+  const clocksOf = (a as { clocks?: { name: string }[] }).clocks ?? [];
+  const condition = (w: DetailCondition, ...path: (string | number)[]) => {
+    for (const m of conditionIssues(a.fields, clocksOf, w)) bad(m, ...path, ...(/^\S+ is (not one of the area's fields|encrypted)/.test(m) && !w.all && !w.any ? ["field"] : []));
+  };
   const h = d.header;
   if (h?.title) shown(h.title, "the title", "header", "title");
   if (h?.subtitle) shown(h.subtitle, "the subtitle", "header", "subtitle");
@@ -1075,28 +1235,61 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if ((h?.badges ?? []).findIndex((x) => x.field === b.field) !== i) bad(`${b.field} has two badges`, "header", "badges", i, "field");
   }
   for (const [i, x] of (h?.facts ?? []).entries()) {
+    // mold_v0-256: a fact computed from related records (its area's fields are checked across the build).
+    if (x.computed) {
+      const c = x.computed;
+      if (x.field !== undefined) bad("a computed fact has no field of its own: it reads the related records' (computed.field)", "header", "facts", i, "field");
+      if (x.label === undefined) bad("a computed fact names itself (label): the page cannot take it from a field", "header", "facts", i, "label");
+      if (c.op === "latest" && !c.field) bad("a latest fact names the field it shows of the newest related record (computed.field)", "header", "facts", i, "computed", "field");
+      if (c.op === "count" && c.field !== undefined) bad("a count fact counts records: it names no field", "header", "facts", i, "computed", "field");
+      if (c.op === "count" && c.sort !== undefined) bad("a count fact counts records: it has no sort", "header", "facts", i, "computed", "sort");
+      // Its where's fields are the related area's: checked across the build (detailBuildProblems).
+      continue;
+    }
+    if (x.field === undefined) { bad("a fact names a field of the record, or is computed from related records (computed)", "header", "facts", i, "field"); continue; }
     const f = shown(x.field, "a fact", "header", "facts", i, "field");
     if (f?.type === "json") bad(`${x.field} is a json field: a fact is one short value`, "header", "facts", i, "field");
     if (x.unit !== undefined && f && f.type !== "number") bad(`a unit is for a number field (${x.field} is ${f.type})`, "header", "facts", i, "unit");
     if ((h?.facts ?? []).findIndex((y) => y.field === x.field) !== i) bad(`${x.field} is a fact twice`, "header", "facts", i, "field");
   }
-  for (const [i, n] of (d.notices ?? []).entries()) {
-    const w = n.when;
-    const ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => w[k] !== undefined);
-    if (ops.length !== 1) bad(`a notice's condition is one test: equals, in, not_in or empty (it has ${ops.length ? ops.join(" and ") : "none"})`, "notices", i, "when");
-    const f = known(w.field, "notices", i, "when", "field");
-    if (f?.encrypted) bad(`${w.field} is encrypted: the page never reads its value, so no notice can test it`, "notices", i, "when", "field");
-    if (f?.type === "enum") for (const v of [w.equals, ...(w.in ?? []), ...(w.not_in ?? [])]) if (v !== undefined && !optionValues(f).includes(String(v))) bad(`${String(v)} is not one of ${f.name}'s options`, "notices", i, "when");
-  }
+  for (const [i, n] of (d.notices ?? []).entries()) condition(n.when, "notices", i, "when");
   const ids = d.tabs.map((t) => detailTabId(t.label));
   for (const [ti, t] of d.tabs.entries()) {
     if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
     if (!t.sections.length) bad(`tab ${t.label} is empty: a tab has at least one section`, "tabs", ti, "sections");
     for (const [si, s] of t.sections.entries()) {
-      // mold_v0-254: a related list or the record's runs, in place of fields (checked across the build: detailBuildProblems).
-      if (s.related || s.runs) {
-        if (s.related && s.runs) bad(`section ${s.title} is a related list or the record's runs, not both`, "tabs", ti, "sections", si);
-        for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} lists ${s.related ? "related records" : "runs"}: it has no ${k}`, "tabs", ti, "sections", si, k);
+      // mold_v0-254: a related list or the record's runs, in place of fields (checked across the build: detailBuildProblems);
+      // mold_v0-256: a log, the change history, a code view, a table or a file browser, likewise.
+      const kinds = DETAIL_SECTION_KINDS.filter((k) => s[k] !== undefined);
+      if (kinds.length) {
+        if (kinds.length > 1) bad(kinds.length === 2 && kinds.includes("related") && kinds.includes("runs") ? `section ${s.title} is a related list or the record's runs, not both`
+          : `section ${s.title} is one kind of section: ${kinds.join(" or ")}, not ${kinds.length === 2 ? "both" : "several"}`, "tabs", ti, "sections", si);
+        const what: Record<(typeof DETAIL_SECTION_KINDS)[number], string> = { related: "lists related records", runs: "lists runs", log: "shows a log", history: "lists the record's changes",
+          code: "shows a field as code", table: "shows a list as a table", files: "lists the record's files" };
+        for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} ${what[kinds[0]!]}: it has no ${k}`, "tabs", ti, "sections", si, k);
+        const at = (...p: (string | number)[]) => ["tabs", ti, "sections", si, ...p];
+        const valueOf = (n: string, kind: string, types: readonly string[], ...p: (string | number)[]) => {
+          const f = known(n, ...at(...p));
+          if (f && (f.encrypted || f.type === "file")) bad(`${n} is ${f.encrypted ? "encrypted" : "a file field"}: ${kind} shows its value, so it names a field the page reads`, ...at(...p));
+          else if (f && !types.includes(f.type ?? "text")) bad(`${n} is a ${f.type ?? "text"} field: ${kind} shows a ${types.join(" or ")} field`, ...at(...p));
+          return f;
+        };
+        if (s.log) {
+          valueOf(s.log.field, "a log", ["text", "json"], "log", "field");
+          if (s.log.live_when) condition(s.log.live_when, ...at("log", "live_when"));
+        }
+        if (s.code) {
+          const f = valueOf(s.code.field, "a code view", ["text", "json"], "code", "field");
+          if (f?.multiple) bad(`${s.code.field} is a list of values: a code view shows one`, ...at("code", "field"));
+        }
+        if (s.table) valueOf(s.table.field, "a table view", ["json"], "table", "field");
+        if (s.history) for (const [k, n] of (s.history.fields ?? []).entries()) known(n, ...at("history", "fields", k));
+        if (s.files) {
+          const docs = a.fields.filter((f) => f.type === "file" || f.preview === "document").map((f) => f.name);
+          if (!docs.length) bad(`section ${s.title} lists the record's files: the area has no file field and no field with preview "document"`, ...at("files"));
+          for (const [k, n] of (s.files.fields ?? []).entries()) if (known(n, ...at("files", "fields", k)) && !docs.includes(n))
+            bad(`${n} is not a file field or a field with preview "document": a file browser lists the record's documents`, ...at("files", "fields", k));
+        }
         continue;
       }
       if (s.fields && s.groups) bad(`section ${s.title} gives fields or groups, not both`, "tabs", ti, "sections", si);
@@ -1129,7 +1322,12 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
   const ids = actions.map(pageActionId);
   for (const [i, x] of actions.entries()) {
     const only = (k: "job_kind" | "input" | "to" | "field", kinds: readonly string[]) => { if (x[k] !== undefined && !kinds.includes(x.kind)) bad(`${k} is for a ${kinds.join(" or ")} action, not ${x.kind}`, i, k); };
-    only("job_kind", ["start_run"]); only("input", ["start_run"]); only("to", ["move"]); only("field", ["link"]);
+    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record"]); only("to", ["move"]); only("field", ["link"]);
+    if (x.area !== undefined && x.kind !== "create_record") bad(`area is for a create_record action, not ${x.kind}`, i, "area");
+    if (x.kind === "create_record" && !x.area) bad("a create_record action names the area it adds a record to", i, "area");
+    if (x.target !== undefined && x.kind !== "start_run") bad(`target is for a start_run action, not ${x.kind}`, i, "target");
+    if (x.target && !areaLinks({ fields: a.fields, links: a.links }).some((l) => l.field === x.target!.via)) bad(`${x.target.via} is not a link or reference field of the area: a run's target is the record one names`, i, "target", "via");
+    if (x.kind === "create_record" && (x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a create_record action cannot be a viewer's", i, "roles");
     // A run's and an edit's form is the question; a link or a copy changes nothing: only a move or a delete asks first.
     if (x.confirm !== undefined && x.kind !== "move" && x.kind !== "delete") bad(`confirm is for a move or a delete (a ${x.kind} ${x.kind === "start_run" || x.kind === "edit" ? "opens its form first" : "changes nothing"})`, i, "confirm");
     if (ids.indexOf(ids[i]!) !== i) bad(`two actions are ${ids[i]}: give each its own kind, job kind, state or field`, i);
@@ -1138,11 +1336,12 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     if (writes && !shared && readOnly && x.kind !== "delete") bad(`${a.name ?? "the area"}'s records come from its repository: no ${x.kind} action`, i, "kind");
     if (writes && a.append_only) bad(`an append-only area's records are never changed: no ${x.kind} action`, i, "kind");
     if (x.kind === "start_run" && !x.job_kind) bad("a start_run action names its job_kind", i, "job_kind");
-    for (const [arg, from] of Object.entries(x.input ?? {})) {
-      if ((RECORD_INPUT_SPECIAL as readonly string[]).includes(from)) continue;
+    for (const [arg, raw] of Object.entries(x.input ?? {})) {
+      const from = inputField(raw);
+      if (from === null) continue;
       const f = fieldOf(from);
       if (!f) bad(`${from} is not one of the area's fields (input ${arg} takes a field, $key or $title)`, i, "input", arg);
-      else if (f.encrypted || f.type === "file") bad(`${from} is ${f.encrypted ? "encrypted" : "a file field"}: a run's input never takes it from the page`, i, "input", arg);
+      else if (f.encrypted || f.type === "file") bad(`${from} is ${f.encrypted ? "encrypted" : "a file field"}: ${x.kind === "create_record" ? "a new record's" : "a run's"} input never takes it from the page`, i, "input", arg);
     }
     if (x.kind === "move") {
       const lc = a.lifecycle;
@@ -1158,14 +1357,8 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     }
     if (x.kind === "edit" && a.fields.some((f) => f.encrypted)) bad("the edit form never holds an encrypted value: an area with an encrypted field has no edit action", i, "kind");
     if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
-    for (const [j, u] of (x.unavailable ?? []).entries()) {
-      const w = u.when, ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => w[k] !== undefined);
-      if (ops.length !== 1) bad(`a condition is one test: equals, in, not_in or empty (it has ${ops.length ? ops.join(" and ") : "none"})`, i, "unavailable", j, "when");
-      const f = fieldOf(w.field);
-      if (!f) bad(`${w.field} is not one of the area's fields`, i, "unavailable", j, "when", "field");
-      else if (f.encrypted) bad(`${w.field} is encrypted: the page never reads its value, so no condition can test it`, i, "unavailable", j, "when", "field");
-      else if (f.type === "enum") for (const v of [w.equals, ...(w.in ?? []), ...(w.not_in ?? [])]) if (v !== undefined && !optionValues(f).includes(String(v))) bad(`${String(v)} is not one of ${f.name}'s options`, i, "unavailable", j, "when");
-    }
+    for (const [j, u] of (x.unavailable ?? []).entries())
+      for (const m of conditionIssues(a.fields, (a as { clocks?: { name: string }[] }).clocks ?? [], u.when)) bad(m, i, "unavailable", j, "when", ...(/^\S+ is not one of the area's fields/.test(m) && !u.when.all && !u.when.any ? ["field"] : []));
   }
   return out;
 }
@@ -1196,17 +1389,25 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
         const r = s.related, target = areas.find((x) => x.name === r.area);
         if (!target) { at(where, `${r.area} is not a record area of this build`); continue; }
         const back = linksBack(target, a.name);
-        if (r.via !== undefined) {
+        if (r.match_field !== undefined) {
+          // mold_v0-256: matched on a field: via is a plain field of that area, match_field one of this area's.
+          const mine = a.fields.find((f) => f.name === r.match_field), theirs = r.via ? target.fields.find((f) => f.name === r.via) : undefined;
+          if (!r.via) at(where, "a related list matched on a field names the field of theirs it matches (via)");
+          else if (!theirs) at(where, `via ${r.via} is not one of ${r.area}'s fields`);
+          else if (theirs.encrypted || theirs.type === "json" || theirs.type === "file") at(where, `via ${r.via} is ${theirs.encrypted ? "encrypted" : `a ${theirs.type} field`}: a match is on one plain value`);
+          if (!mine) at(where, `match_field ${r.match_field} is not one of ${a.name}'s fields`);
+          else if (mine.encrypted || mine.type === "json" || mine.type === "file") at(where, `match_field ${r.match_field} is ${mine.encrypted ? "encrypted" : `a ${mine.type} field`}: a match is on one plain value`);
+        } else if (r.via !== undefined) {
           if (!target.fields.some((f) => f.name === r.via)) at(where, `via ${r.via} is not one of ${r.area}'s fields`);
           else if (!back.includes(r.via)) at(where, `${r.area}'s field ${r.via} does not point at ${a.name}: a related list shows the records that point back here (${back.length ? `its fields that do: ${back.join(", ")}` : `${r.area} has no reference or link field to ${a.name}`})`);
         } else if (!back.length) at(where, `${r.area} has no link back to ${a.name}: a related list shows the records that point here, through a reference or link field of theirs to ${a.name}`);
         else if (back.length > 1) at(where, `${r.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
-        for (const c of r.columns ?? []) {
+        for (const c of (r.columns ?? []).map(columnField)) {
           const f = target.fields.find((x) => x.name === c);
           if (!f) at(where, `column ${c} is not one of ${r.area}'s fields`);
           else if (f.encrypted || f.type === "file") at(where, `column ${c} is ${f.encrypted ? "encrypted" : "a file field"}: a related list's cell shows a value`);
         }
-        if ((r.columns ?? []).length !== new Set(r.columns ?? []).size) at(where, "a column is listed twice");
+        if ((r.columns ?? []).length !== new Set((r.columns ?? []).map(columnField)).size) at(where, "a column is listed twice");
         if (r.sort) {
           const f = target.fields.find((x) => x.name === r.sort!.field);
           if (!f && !["updated_at", "title", "key"].includes(r.sort.field)) at(where, `sort ${r.sort.field} is not one of ${r.area}'s fields (or updated_at, title, key)`);
@@ -1215,11 +1416,52 @@ export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: re
       }
       if (s.runs) for (const k of s.runs.kinds ?? []) if (!kindOf(k)) at(where, `${k} is not a job kind of pack ${a.pack}`);
     }
+    // mold_v0-256: a computed fact's related records: their area, the field pointing back here, what it reads of them.
+    for (const [i, x] of (d.header?.facts ?? []).entries()) {
+      const c = x.computed;
+      if (!c) continue;
+      const where = `fact ${i + 1} (${x.label ?? c.op})`;
+      const target = areas.find((y) => y.name === c.area);
+      if (!target) { at(where, `${c.area} is not a record area of this build`); continue; }
+      const back = linksBack(target, a.name);
+      if (c.via !== undefined) {
+        if (!target.fields.some((f) => f.name === c.via)) at(where, `via ${c.via} is not one of ${c.area}'s fields`);
+        else if (!back.includes(c.via)) at(where, `${c.area}'s field ${c.via} does not point at ${a.name}: a computed fact reads the records that point back here (${back.length ? `its fields that do: ${back.join(", ")}` : `${c.area} has no reference or link field to ${a.name}`})`);
+      } else if (!back.length) at(where, `${c.area} has no link back to ${a.name}: a computed fact reads the records that point here, through a reference or link field of theirs to ${a.name}`);
+      else if (back.length > 1) at(where, `${c.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
+      const plainField = (n: string, what: string) => {
+        const f = target.fields.find((y) => y.name === n);
+        if (!f) { if (!["updated_at", "title", "key"].includes(n) || what !== "sort") at(where, `${what} ${n} is not one of ${c.area}'s fields`); return null; }
+        if (f.encrypted || f.type === "file" || f.type === "json") at(where, `${what} ${n} is ${f.encrypted ? "encrypted" : `a ${f.type} field`}: a computed fact ${what === "sort" ? "sorts by" : "shows"} one plain value`);
+        return f;
+      };
+      const f = c.field ? plainField(c.field, "field") : null;
+      if (c.sort) plainField(c.sort.field, "sort");
+      if (x.unit !== undefined && c.op === "latest" && f && f.type !== "number") at(where, `a unit is for a count or a number field (${c.field} is ${f.type ?? "text"})`);
+      if (c.where) for (const m of conditionIssues(target.fields, (target as { clocks?: { name: string }[] }).clocks ?? [], c.where, c.area)) at(where, `where: ${m}`);
+    }
+    // mold_v0-256: a create_record action's area: a workspace area of the build, each input a field it has.
+    for (const x of d.actions ?? []) {
+      if (x.kind !== "create_record" || !x.area) continue;
+      const where = `action ${pageActionId(x)}`, target = areas.find((y) => y.name === x.area);
+      if (!target) { at(where, `${x.area} is not a record area of this build`); continue; }
+      if (target.scope !== "workspace") at(where, `${x.area} is shared (platform): a workspace's page adds none of its records`);
+      for (const k of Object.keys(x.input ?? {})) {
+        const f = target.fields.find((y) => y.name === k);
+        if (!f) at(where, `input ${k} is not one of ${x.area}'s fields`);
+        else if (f.encrypted || f.type === "file") at(where, `input ${k} is ${f.encrypted ? "encrypted" : "a file field"}: a new record's form never takes it from a page`);
+      }
+    }
     for (const x of d.actions ?? []) {
       if (x.kind !== "start_run" || !x.job_kind) continue;
       const where = `action ${pageActionId(x)}`, k = kindOf(x.job_kind);
       if (!k) { at(where, `${x.job_kind} is not a job kind of pack ${a.pack}`); continue; }
       if (k.approval) at(where, `${x.job_kind} writes only after its preview is approved: start it from its own list, not a record's page`);
+      // mold_v0-256: a run on a linked record: each area the field may name is an asset area (a run's target is an asset).
+      if (x.target) for (const l of areaLinks(a).filter((y) => y.field === x.target!.via)) {
+        const t = areas.find((y) => y.name === l.area);
+        if (t && (t as { role?: string }).role !== "asset") at(where, `target via ${x.target.via}: ${l.area} is not an asset area: a run targets an asset area's record`);
+      }
       for (const arg of Object.keys(x.input ?? {})) if (!(k.args ?? []).includes(arg)) at(where, `input ${arg} is not an argument of ${x.job_kind}${k.args?.length ? ` (${k.args.join(", ")})` : " (it takes none)"}`);
     }
   }
@@ -1258,6 +1500,11 @@ export const RecordAreaSchema = z.object({
   list_columns: z.array(name).max(8).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
   lifecycle: LifecycleSchema.optional(),
+  /**
+   * mold_v0-256 (flag record_pages): the console's create form fills a new record's Key from its Title as it is typed
+   * (lowercase words joined by -, until the person types a key of their own). Off (the default) the Key is typed.
+   */
+  key_from_title: z.boolean().optional(),
   permissions: PermissionsSchema.optional(),
   /**
    * Where the area's rows come from (mold_v0-059; src/data-repositories.ts): one of the pack's `repositories`. Absent,
@@ -1887,6 +2134,25 @@ export const TabActionSchema = z.object({
   if (a.kind !== "create_record" && a.area !== undefined) bad("area is for a create_record action", "area");
 });
 export type TabAction = z.output<typeof TabActionSchema>;
+/**
+ * A list column computed from the records that point back to each row (mold_v0-256, flag record_pages): of `related.area`
+ * (through `related.via`, its link or reference field to the tab's area; needed only when it has several), `show`
+ * "count" (how many) or "latest:<field>" (that field on the newest of them, by its last change), headed `label`
+ * (default the area's label, or "Latest <field>"). Computed on the server as the person reading (the related area's read
+ * permission: a role that may not read it sees an empty column), in the workspace's own scope; formatted as the
+ * related area's cells. Off, the column is left out.
+ */
+export const TabRelatedColumnSchema = z.object({
+  related: z.object({ area: name, via: name.optional() }).strict(),
+  show: z.string().regex(/^(count|latest:[a-z][a-z0-9_]{1,62})$/, 'show is "count" or "latest:<a field of the related area>"'),
+  label: plainWords(40).optional(),
+}).strict();
+export type TabRelatedColumn = z.output<typeof TabRelatedColumnSchema>;
+/** Whether a tab column is computed from related records (else it is a field's name). */
+export const isRelatedColumn = (c: unknown): c is TabRelatedColumn => !!c && typeof c === "object" && "related" in (c as object);
+/** A related column's id in the console's table and the API: rel_<area>_<count|latest_field>. */
+export const relatedColumnId = (c: TabRelatedColumn) => `rel_${c.related.area}_${c.show.replace(":", "_")}`;
+
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -1896,7 +2162,8 @@ export const TabSchema = z.object({
   group: z.string().trim().min(1).max(40).optional(),
   area: name.optional(),
   areas: z.array(TabAreaSchema).min(2).max(4).optional(),
-  columns: z.array(name).min(1).max(8).optional(),
+  // mold_v0-256 (flag record_pages): a column may be computed from the records that point back to each row (TabRelatedColumnSchema).
+  columns: z.array(z.union([name, TabRelatedColumnSchema])).min(1).max(8).optional(),
   views: z.array(z.enum(TAB_VIEWS)).min(1).max(4).optional(),
   board_by: name.optional(),
   timeline_by: point.optional(),
@@ -1934,7 +2201,9 @@ export const TabSchema = z.object({
     if (new Set(names).size !== names.length) bad("an area is listed twice", "areas");
     if (t.areas[0]!.rows === "matched") bad("the first area brings the rows (rows: all): a matched area only adds fields to them", "areas", "0", "rows");
   }
-  if (t.columns && new Set(t.columns).size !== t.columns.length) bad("a column is listed twice", "columns");
+  const colIds = (t.columns ?? []).map((c) => (typeof c === "string" ? c : relatedColumnId(c)));
+  if (new Set(colIds).size !== colIds.length) bad("a column is listed twice", "columns");
+  if (t.areas && (t.columns ?? []).some((c) => typeof c !== "string")) bad("a merged tab's columns are fields: a column computed from related records is for a tab of one area", "columns");
   if (t.kind === "overview" && !t.charts?.length && !t.include?.length) bad("an overview tab lists its charts (or includes a section of the shell's)", "charts");
   if (t.include && t.kind !== "overview") bad("include is for an overview tab", "include");
   if (t.include && new Set(t.include).size !== t.include.length) bad("a section is included twice", "include");

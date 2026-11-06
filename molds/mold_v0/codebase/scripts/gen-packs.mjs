@@ -1331,7 +1331,10 @@ if (loaded.length === entries.length) {
     // An area tab's columns, resolved; a merged tab (mold_v0-135) also by its own area (the first) and its areas, each
     // with its rows and source word.
     tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b),
-      ...(t.kind === "area" ? { columns: tabColumns(t, b.areas) } : {}), ...(t.areas ? { area: tabAreas(t)[0].area, areas: tabAreas(t) } : {}) })) };
+      ...(t.kind === "area" ? { columns: tabColumns(t, b.areas) } : {}), ...(t.areas ? { area: tabAreas(t)[0].area, areas: tabAreas(t) } : {}),
+      // mold_v0-256: columns computed from related records (their place among the tab's columns), read by the console's table.
+      ...(t.kind === "area" && (t.columns ?? []).some((c) => typeof c !== "string")
+        ? { related_columns: t.columns.map((c, at) => (typeof c === "string" ? null : { ...c, at })).filter(Boolean) } : {}) })) };
 }
 // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
 // pack's mcp settings name real tools, names fit, no two take one name, and none takes a name of the shell's own tools
@@ -1502,7 +1505,9 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     encrypted: () => areas.some((a) => (a.fields ?? []).some((x) => x.encrypted === true)),
     no_engine: () => !["products", "scenarios", "simulations", "agent_sessions"].every((t) => owned.has(t)),
     documents: () => areas.some((a) => (a.fields ?? []).some((x) => x.type === "file" || x.preview === "document")),
-    layouts: () => areas.some((a) => !!a.detail || (a.fields ?? []).some((x) => x.copyable === true)),
+    // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
+    layouts: () => areas.some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((x) => x.copyable === true))
+      || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object"))),
   };
   for (const f of FEATURE_REGISTRY) {
     FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
@@ -2389,7 +2394,8 @@ const profileSidebar = (() => {
   const statusPages = pages.filter((r) => r.split("/").includes("console-status"));
   // A capability's own pages (mold_v0-243: the workspace agent's) are pages of the build only while its flag is on: off,
   // they are not in the list (so the proxy answers them not found) and the list is what the build wrote before them.
-  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"] };
+  // mold_v0-256: a run's own page, a page of the build only while record_pages is on.
+  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"] };
   const off = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
   const routes = pages.filter((r) => !statusPages.includes(r) && !/\/\[\.\.\.missing\]$/.test(r) && !off.includes(r));
   if (existsSync(APP_DIR)) files.set(path.join(OUT, "web", "src", "config", "console-routes.generated.json"), JSON.stringify({
@@ -2713,7 +2719,14 @@ function viewsModule() {
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : sectionParent(t) ? tabUrl(t) : SHELL_PAGES[t.kind] ?? (t.kind === "page" ? appPageUrl(t.page) : tabUrl(t)), roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? (t.areas ? null : recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null), timeline_by: t.timeline_by ?? "updated",
-      columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}) } : {}),
+      columns: t.columns, ...(t.areas ? { areas: t.areas.map((a) => ({ area: a.area, rows: a.rows, source: a.source ?? null })) } : {}),
+      // mold_v0-256 (flag record_pages): a column computed from related records: its id, heading, area and what it shows.
+      ...(FEATURE_ON.record_pages && t.related_columns?.length ? { related_columns: t.related_columns.map((c) => {
+        const r = recordAreas.find((a) => a.name === c.related.area), fn = c.show.startsWith("latest:") ? c.show.slice(7) : null;
+        const fl = fn ? r?.fields.find((f) => f.name === fn)?.label ?? fn : null;
+        return { id: `rel_${c.related.area}_${c.show.replace(":", "_")}`, at: c.at, area: c.related.area, show: c.show,
+          label: c.label ?? (fl ? `Latest ${fl.charAt(0).toLowerCase()}${fl.slice(1)}` : r?.label ?? c.related.area) };
+      }) } : {}) } : {}),
     // mold_v0-208: a list tab is its four cards, the search row and the table: an area tab's charts are not drawn.
     charts: t.kind === "area" ? [] : t.charts ?? [],
     ...(t.include?.length ? { include: t.include } : {}),
@@ -2756,6 +2769,7 @@ function viewsModule() {
     "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  /** An area tab's table columns: fields of its areas (a merged tab: also source). */\n  columns?: string[];\n" +
+    (FEATURE_ON.record_pages ? "  /** Columns computed from related records (mold_v0-256): each one's place among the columns, heading, area and what it shows. */\n  related_columns?: { id: string; at: number; area: string; show: string; label: string }[];\n" : "") +
     "  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */\n" +
     "  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +

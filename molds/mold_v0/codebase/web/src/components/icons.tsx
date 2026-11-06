@@ -1,4 +1,12 @@
 import {
+  IconArrowsMaximize,
+  IconArrowBarToDown,
+  IconTextWrap,
+  IconFolderOpen,
+  IconHistory,
+  IconTerminal2,
+  IconTable,
+  IconCpu,
   IconRobot,
   IconPlayerPause,
   IconPlayerStop,
@@ -268,5 +276,16 @@ export const Icons = {
   slash: IconSlash,
   calendar: IconCalendar,
   galleryVerticalEnd: IconStack2,
-  moreHorizontal: IconDots
+  moreHorizontal: IconDots,
+  // mold_v0-256: a record page's side panel, log viewer, history, code, table and file sections, a run's page.
+  maximize: IconArrowsMaximize,
+  followTail: IconArrowBarToDown,
+  wrap: IconTextWrap,
+  folder: IconFolder,
+  folderOpen: IconFolderOpen,
+  file: IconFile,
+  history: IconHistory,
+  terminal: IconTerminal2,
+  table: IconTable,
+  cpu: IconCpu
 };

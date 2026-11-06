@@ -93,7 +93,8 @@ function Preview({ c }: { c: FileCard }) {
   );
 }
 
-function DocumentCard({ c }: { c: FileCard }) {
+/** One document's card: its name, type and size, Download (and Source), its preview (mold_v0-256: the file browser reuses it). */
+export function DocumentCard({ c }: { c: FileCard }) {
   const meta = [typeWords(c), size(c.size), c.label].filter(Boolean).join(' · ');
   return (
     <li className='bg-card overflow-hidden rounded-lg border' data-document-card={c.preview ?? 'none'}>
@@ -121,8 +122,8 @@ function DocumentCard({ c }: { c: FileCard }) {
   );
 }
 
-/** The record's documents, under its fields in the details card; nothing when it has none. */
-export function RecordDocuments({ area, base, recordKey }: { area: RecordAreaSpec; base: 'app' | 'admin'; recordKey: string }) {
+/** A record's document cards (GET /api/records/<area>/<key>/files): null while they load, the error's words if they fail. */
+export function useRecordFiles(area: RecordAreaSpec, base: 'app' | 'admin', recordKey: string) {
   const [cards, setCards] = useState<FileCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}/files`;
@@ -141,13 +142,21 @@ export function RecordDocuments({ area, base, recordKey }: { area: RecordAreaSpe
       .catch(() => live && setError('The documents could not be loaded.'));
     return () => { live = false; };
   }, [url, wanted]);
+  return { wanted, cards, error };
+}
+
+/** The record's documents, under its fields in the details card; nothing when it has none. */
+export function RecordDocuments({ area, base, recordKey, count = true }: { area: RecordAreaSpec; base: 'app' | 'admin'; recordKey: string;
+  /** mold_v0-256: false on a laid-out record page (no count beside a section's title). */
+  count?: boolean }) {
+  const { wanted, cards, error } = useRecordFiles(area, base, recordKey);
   if (!wanted) return null;
   if (error) return <p className='text-muted-foreground text-sm'>{error}</p>;
   if (!cards) return <p className='text-muted-foreground text-sm' aria-busy='true'>Loading documents…</p>;
   if (!cards.length) return null;
   return (
     <section className='flex flex-col gap-2' aria-label='Documents'>
-      <h2 className='text-sm font-medium'>Documents <span className='text-muted-foreground font-normal'>· {cards.length}</span></h2>
+      <h2 className='text-sm font-medium'>Documents{count && <span className='text-muted-foreground font-normal'> · {cards.length}</span>}</h2>
       <ul className='flex flex-col gap-3'>{cards.map((c) => <DocumentCard key={c.id} c={c} />)}</ul>
     </section>
   );

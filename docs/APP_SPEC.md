@@ -88,6 +88,7 @@ through the same check `factory.py validate` and the build use.
   | `health_history` | true | a build without the session engine | health |
   | `document_preview` | true | a `file` field, or `preview: "document"` | documents |
   | `record_pages` | false | an area's page layout (`detail`) or a `copyable` field | pages |
+  | `side_panel_forms` | false | always (the profile alone) | panel |
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the
@@ -107,6 +108,11 @@ through the same check `factory.py validate` and the build use.
   on the record with its input taken from its fields, move, edit, delete, open a linked record, copy the link). The
   build refuses a related list whose area has no link back, an action naming a job kind or a transition that does not
   exist, and two primary actions.
+  mold_v0-256 adds, under the same flag: a run's own page (`/app/runs/<id>`), sections of kind `log`, `history`, `code`,
+  `table` and `files`, header facts `computed` from related records, a `create_record` action (Add <related record>,
+  its fields filled in from the record), `key_from_title` on an area, a record picker for reference fields and a tab
+  column `{related: {area, via}, show: "count" | "latest:<field>"}`. `features.side_panel_forms = true` (off by default)
+  opens create and edit forms in a side panel first.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

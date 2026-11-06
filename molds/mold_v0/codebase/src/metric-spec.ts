@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, detailBuildProblems, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, detailBuildProblems, linksBack, relatedColumnId, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -50,7 +50,8 @@ export function tabField(t: Pick<Tab, "kind" | "area" | "areas">, areas: readonl
  * source word, then each area's list columns in order, without repeats, at most 8).
  */
 export function tabColumns(t: Pick<Tab, "kind" | "area" | "areas" | "columns">, areas: readonly SpecArea[]): string[] {
-  if (t.columns) return [...t.columns];
+  // mold_v0-256: a column computed from related records is not a field: tabRelatedColumns lists those.
+  if (t.columns) return t.columns.filter((c): c is string => typeof c === "string");
   const list = tabAreas(t);
   const cols: string[] = list.length > 1 && list.some((a) => a.source) ? [TAB_SOURCE_COLUMN] : [];
   for (const a of list) for (const c of areas.find((x) => x.name === a.area)?.list_columns ?? []) if (!cols.includes(c)) cols.push(c);
@@ -317,7 +318,21 @@ export function checkViews(b: BuildViews): string[] {
         if (typeof c === "string") at(p, `${w}: timeline_by: ${c}`);
         else if (!("data" in c.at) && (t.timeline_by ?? "updated") !== "updated") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
       }
-      for (const c of t.columns ?? []) if (!a.fields.some((f) => f.name === c)) at(p, `${w}: column ${c} is not a field of area ${a.name}`);
+      for (const c of t.columns ?? []) {
+        if (typeof c === "string") { if (!a.fields.some((f) => f.name === c)) at(p, `${w}: column ${c} is not a field of area ${a.name}`); continue; }
+        // mold_v0-256: a column computed from related records: their area points back here; latest:<field> one of its fields.
+        const r = area(c.related.area), cw = `${w}: column ${relatedColumnId(c)}`;
+        if (!r) { at(p, `${cw}: ${c.related.area} is not a record area of this build`); continue; }
+        const back = linksBack(r, a.name);
+        if (c.related.via !== undefined) { if (!back.includes(c.related.via)) at(p, `${cw}: ${c.related.area}'s field ${c.related.via} does not point at ${a.name}${back.length ? ` (its fields that do: ${back.join(", ")})` : ""}`); }
+        else if (!back.length) at(p, `${cw}: ${c.related.area} has no link back to ${a.name}: a related column counts or reads the records that point at each row`);
+        else if (back.length > 1) at(p, `${cw}: ${c.related.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
+        if (c.show.startsWith("latest:")) {
+          const fn = c.show.slice(7), f = r.fields.find((x) => x.name === fn);
+          if (!f) at(p, `${cw}: ${fn} is not one of ${c.related.area}'s fields`);
+          else if (f.encrypted || f.type === "file" || f.type === "json") at(p, `${cw}: ${fn} is ${f.encrypted ? "encrypted" : `a ${f.type} field`}: a cell shows one plain value`);
+        }
+      }
       // Its filter (mold_v0-175): the area's fields (or key, title, updated_at); the server checks each value as a list's.
       for (const n of Object.keys(t.filter ?? {})) if (!["key", "title", "updated_at"].includes(n) && !a.fields.some((f) => f.name === n)) at(p, `${w}: filter ${n} is not a field of area ${a.name}`);
     }
@@ -350,7 +365,7 @@ export function checkViews(b: BuildViews): string[] {
         const f = shown(t.timeline_by!, "timeline_by");
         if (f && f.type !== "date") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
       }
-      for (const c of t.columns ?? []) shown(c, "column");
+      for (const c of t.columns ?? []) if (typeof c === "string") shown(c, "column");
     }
     if (t.kind === "runs" || t.kind === "reports") { if (!b.jobKinds) at(p, `${w}: the build has no job kind, so there are no runs to show`); }
     if (t.kind === "schedules" && !b.jobKinds) at(p, `${w}: the build has no job kind to schedule, so it has no Schedules page`);

@@ -2050,6 +2050,9 @@
                 ],
                 "additionalProperties": false
               },
+              "key_from_title": {
+                "type": "boolean"
+              },
               "permissions": {
                 "type": "object",
                 "properties": {
@@ -3080,11 +3083,343 @@
                               "minLength": 1,
                               "maxLength": 12,
                               "pattern": "^[^\\n\\r{}<>]*$"
+                            },
+                            "computed": {
+                              "type": "object",
+                              "properties": {
+                                "area": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                },
+                                "via": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                },
+                                "op": {
+                                  "type": "string",
+                                  "enum": [
+                                    "count",
+                                    "latest"
+                                  ]
+                                },
+                                "field": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                },
+                                "sort": {
+                                  "type": "object",
+                                  "properties": {
+                                    "field": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "direction": {
+                                      "type": "string",
+                                      "enum": [
+                                        "asc",
+                                        "desc"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "field"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "where": {
+                                  "type": "object",
+                                  "properties": {
+                                    "field": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "equals": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    },
+                                    "in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "not_in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "empty": {
+                                      "type": "boolean"
+                                    },
+                                    "before": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "after": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "within_days": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 3650
+                                    },
+                                    "clock": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "is": {
+                                      "type": "string",
+                                      "enum": [
+                                        "overdue",
+                                        "due_soon"
+                                      ]
+                                    },
+                                    "all": {
+                                      "minItems": 1,
+                                      "maxItems": 6,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "field": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "equals": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          },
+                                          "in": {
+                                            "minItems": 1,
+                                            "maxItems": 20,
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "not_in": {
+                                            "minItems": 1,
+                                            "maxItems": 20,
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "empty": {
+                                            "type": "boolean"
+                                          },
+                                          "before": {
+                                            "type": "string",
+                                            "const": "today"
+                                          },
+                                          "after": {
+                                            "type": "string",
+                                            "const": "today"
+                                          },
+                                          "within_days": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 3650
+                                          },
+                                          "clock": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "is": {
+                                            "type": "string",
+                                            "enum": [
+                                              "overdue",
+                                              "due_soon"
+                                            ]
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "any": {
+                                      "minItems": 1,
+                                      "maxItems": 6,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "field": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "equals": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          },
+                                          "in": {
+                                            "minItems": 1,
+                                            "maxItems": 20,
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "not_in": {
+                                            "minItems": 1,
+                                            "maxItems": 20,
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "empty": {
+                                            "type": "boolean"
+                                          },
+                                          "before": {
+                                            "type": "string",
+                                            "const": "today"
+                                          },
+                                          "after": {
+                                            "type": "string",
+                                            "const": "today"
+                                          },
+                                          "within_days": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 3650
+                                          },
+                                          "clock": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                          },
+                                          "is": {
+                                            "type": "string",
+                                            "enum": [
+                                              "overdue",
+                                              "due_soon"
+                                            ]
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "area",
+                                "op"
+                              ],
+                              "additionalProperties": false
                             }
                           },
-                          "required": [
-                            "field"
-                          ],
                           "additionalProperties": false
                         }
                       }
@@ -3161,17 +3496,233 @@
                             },
                             "empty": {
                               "type": "boolean"
+                            },
+                            "before": {
+                              "type": "string",
+                              "const": "today"
+                            },
+                            "after": {
+                              "type": "string",
+                              "const": "today"
+                            },
+                            "within_days": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 3650
+                            },
+                            "clock": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "is": {
+                              "type": "string",
+                              "enum": [
+                                "overdue",
+                                "due_soon"
+                              ]
+                            },
+                            "all": {
+                              "minItems": 1,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "any": {
+                              "minItems": 1,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
                             }
                           },
-                          "required": [
-                            "field"
-                          ],
                           "additionalProperties": false
                         },
                         "tone": {
                           "type": "string",
                           "enum": [
                             "info",
+                            "success",
                             "warning",
                             "danger"
                           ]
@@ -3290,13 +3841,41 @@
                                     "type": "string",
                                     "pattern": "^[a-z][a-z0-9_]{1,62}$"
                                   },
+                                  "match_field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
                                   "columns": {
                                     "minItems": 1,
                                     "maxItems": 8,
                                     "type": "array",
                                     "items": {
-                                      "type": "string",
-                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "field": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                            },
+                                            "label": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 40,
+                                              "pattern": "^[^\\n\\r{}<>]*$"
+                                            }
+                                          },
+                                          "required": [
+                                            "field",
+                                            "label"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      ]
                                     }
                                   },
                                   "sort": {
@@ -3349,6 +3928,383 @@
                                   }
                                 },
                                 "additionalProperties": false
+                              },
+                              "log": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "live_when": {
+                                    "type": "object",
+                                    "properties": {
+                                      "field": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      },
+                                      "equals": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      },
+                                      "in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "not_in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "empty": {
+                                        "type": "boolean"
+                                      },
+                                      "before": {
+                                        "type": "string",
+                                        "const": "today"
+                                      },
+                                      "after": {
+                                        "type": "string",
+                                        "const": "today"
+                                      },
+                                      "within_days": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 3650
+                                      },
+                                      "clock": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      },
+                                      "is": {
+                                        "type": "string",
+                                        "enum": [
+                                          "overdue",
+                                          "due_soon"
+                                        ]
+                                      },
+                                      "all": {
+                                        "minItems": 1,
+                                        "maxItems": 6,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "field": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                            },
+                                            "equals": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            },
+                                            "in": {
+                                              "minItems": 1,
+                                              "maxItems": 20,
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "boolean"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "not_in": {
+                                              "minItems": 1,
+                                              "maxItems": 20,
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "boolean"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "empty": {
+                                              "type": "boolean"
+                                            },
+                                            "before": {
+                                              "type": "string",
+                                              "const": "today"
+                                            },
+                                            "after": {
+                                              "type": "string",
+                                              "const": "today"
+                                            },
+                                            "within_days": {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 3650
+                                            },
+                                            "clock": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                            },
+                                            "is": {
+                                              "type": "string",
+                                              "enum": [
+                                                "overdue",
+                                                "due_soon"
+                                              ]
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "any": {
+                                        "minItems": 1,
+                                        "maxItems": 6,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "field": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                            },
+                                            "equals": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 200
+                                                },
+                                                {
+                                                  "type": "number"
+                                                },
+                                                {
+                                                  "type": "boolean"
+                                                }
+                                              ]
+                                            },
+                                            "in": {
+                                              "minItems": 1,
+                                              "maxItems": 20,
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "boolean"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "not_in": {
+                                              "minItems": 1,
+                                              "maxItems": 20,
+                                              "type": "array",
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 200
+                                                  },
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "boolean"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "empty": {
+                                              "type": "boolean"
+                                            },
+                                            "before": {
+                                              "type": "string",
+                                              "const": "today"
+                                            },
+                                            "after": {
+                                              "type": "string",
+                                              "const": "today"
+                                            },
+                                            "within_days": {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 3650
+                                            },
+                                            "clock": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                            },
+                                            "is": {
+                                              "type": "string",
+                                              "enum": [
+                                                "overdue",
+                                                "due_soon"
+                                              ]
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "history": {
+                                "type": "object",
+                                "properties": {
+                                  "fields": {
+                                    "minItems": 1,
+                                    "maxItems": 60,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    }
+                                  },
+                                  "limit": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 100
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "code": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "language": {
+                                    "type": "string",
+                                    "enum": [
+                                      "json",
+                                      "yaml",
+                                      "text"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "table": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "columns": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,62}$"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "files": {
+                                "type": "object",
+                                "properties": {
+                                  "fields": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    }
+                                  }
+                                },
+                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -3386,7 +4342,8 @@
                             "edit",
                             "delete",
                             "link",
-                            "copy_link"
+                            "copy_link",
+                            "create_record"
                           ]
                         },
                         "place": {
@@ -3425,9 +4382,30 @@
                                   "$key",
                                   "$title"
                                 ]
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^\\$field:[a-z][a-z0-9_]{1,62}$"
                               }
                             ]
                           }
+                        },
+                        "area": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "via": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            }
+                          },
+                          "required": [
+                            "via"
+                          ],
+                          "additionalProperties": false
                         },
                         "to": {
                           "type": "string",
@@ -3521,11 +4499,226 @@
                                   },
                                   "empty": {
                                     "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  },
+                                  "all": {
+                                    "minItems": 1,
+                                    "maxItems": 6,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "field": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "equals": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        },
+                                        "in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "not_in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "empty": {
+                                          "type": "boolean"
+                                        },
+                                        "before": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "after": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "within_days": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 3650
+                                        },
+                                        "clock": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "is": {
+                                          "type": "string",
+                                          "enum": [
+                                            "overdue",
+                                            "due_soon"
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "any": {
+                                    "minItems": 1,
+                                    "maxItems": 6,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "field": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "equals": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        },
+                                        "in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "not_in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "empty": {
+                                          "type": "boolean"
+                                        },
+                                        "before": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "after": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "within_days": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 3650
+                                        },
+                                        "clock": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "is": {
+                                          "type": "string",
+                                          "enum": [
+                                            "overdue",
+                                            "due_soon"
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
                                   }
                                 },
-                                "required": [
-                                  "field"
-                                ],
                                 "additionalProperties": false
                               },
                               "reason": {
@@ -6085,8 +7278,49 @@
                 "maxItems": 8,
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "related": {
+                          "type": "object",
+                          "properties": {
+                            "area": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "via": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            }
+                          },
+                          "required": [
+                            "area"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "show": {
+                          "type": "string",
+                          "pattern": "^(count|latest:[a-z][a-z0-9_]{1,62})$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        }
+                      },
+                      "required": [
+                        "related",
+                        "show"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "views": {
@@ -15616,8 +16850,15 @@
           "type": "boolean",
           "default": false,
           "title": "Record page layouts (mold_v0-253)",
-          "description": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Part 2 (mold_v0-254): sections listing another area's records that point back here (their columns, sort, limit, Show all, each row's own actions) or the runs that ran on the record; the header's actions (a primary, secondaries, a More menu: start a run on the record, move it, edit, delete, open a linked record, copy the link), each offered to and enforced for the roles that may, through /api/records/_page. Asked for when a record area's page layout (detail) or a field marked copyable. Default false. Off: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); /api/records/_page answers nothing; the layouts stay declared and checked, and the generated files leave them and the flag out.",
-          "markdownDescription": "**Record page layouts** (mold_v0-253; board name `pages`). A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Part 2 (mold_v0-254): sections listing another area's records that point back here (their columns, sort, limit, Show all, each row's own actions) or the runs that ran on the record; the header's actions (a primary, secondaries, a More menu: start a run on the record, move it, edit, delete, open a linked record, copy the link), each offered to and enforced for the roles that may, through /api/records/_page.\n\n- **Asked for** when a record area's page layout (detail) or a field marked copyable.\n- **Default** `false`.\n- **Off**: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); /api/records/_page answers nothing; the layouts stay declared and checked, and the generated files leave them and the flag out.\n\nBrief line: `features.record_pages = true` in `## Profile`."
+          "description": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Part 2 (mold_v0-254): sections listing another area's records that point back here (their columns, sort, limit, Show all, each row's own actions) or the runs that ran on the record; the header's actions (a primary, secondaries, a More menu: start a run on the record, move it, edit, delete, open a linked record, copy the link), each offered to and enforced for the roles that may, through /api/records/_page. mold_v0-254: related lists, a record's runs and the header's actions. mold_v0-256: a run's own page (/app/runs/<id>), the event/log viewer, a record's change history, code, table and file sections, facts and list columns computed from related records, Add <related record> with its fields filled in, a record picker for reference fields and a Key from the Title. Asked for when a record area's page layout (detail), a field marked copyable, an area whose Key follows its Title, or a tab column computed from related records. Default false. Off: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); /api/records/_page answers nothing; the layouts stay declared and checked, and the generated files leave them and the flag out.",
+          "markdownDescription": "**Record page layouts** (mold_v0-253; board name `pages`). A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Part 2 (mold_v0-254): sections listing another area's records that point back here (their columns, sort, limit, Show all, each row's own actions) or the runs that ran on the record; the header's actions (a primary, secondaries, a More menu: start a run on the record, move it, edit, delete, open a linked record, copy the link), each offered to and enforced for the roles that may, through /api/records/_page. mold_v0-254: related lists, a record's runs and the header's actions. mold_v0-256: a run's own page (/app/runs/<id>), the event/log viewer, a record's change history, code, table and file sections, facts and list columns computed from related records, Add <related record> with its fields filled in, a record picker for reference fields and a Key from the Title.\n\n- **Asked for** when a record area's page layout (detail), a field marked copyable, an area whose Key follows its Title, or a tab column computed from related records.\n- **Default** `false`.\n- **Off**: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); /api/records/_page answers nothing; the layouts stay declared and checked, and the generated files leave them and the flag out.\n\nBrief line: `features.record_pages = true` in `## Profile`."
+        },
+        "side_panel_forms": {
+          "type": "boolean",
+          "default": false,
+          "title": "Forms in a side panel (mold_v0-256)",
+          "description": "Add and edit forms of records (an area's Add, a record's Edit, a staff record's New and Edit, a record page's Add <related record>) open first in a panel at the right of the list or the page, which stays in view: Open full page expands the same form, its typed values kept, to the full in-page card. Focus stays in the panel, Esc closes it, and closing it with unsaved changes asks first. On a phone (640 px or narrower) the panel fills the screen. Asked for when always (the profile alone). Default false. Off: Every form is the full in-page card it always was; the generated files leave the flag out.",
+          "markdownDescription": "**Forms in a side panel** (mold_v0-256; board name `panel`). Add and edit forms of records (an area's Add, a record's Edit, a staff record's New and Edit, a record page's Add <related record>) open first in a panel at the right of the list or the page, which stays in view: Open full page expands the same form, its typed values kept, to the full in-page card. Focus stays in the panel, Esc closes it, and closing it with unsaved changes asks first. On a phone (640 px or narrower) the panel fills the screen.\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: Every form is the full in-page card it always was; the generated files leave the flag out.\n\nBrief line: `features.side_panel_forms = true` in `## Profile`."
         }
       }
     }

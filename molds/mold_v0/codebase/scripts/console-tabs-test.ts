@@ -669,7 +669,8 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
     assert.equal((ta.match(/<CardForm onSubmit=/g) ?? []).length, 2, "the start-run and create-record forms are the card's");
     assert.match(sc, /if \(stacked\) return <CardForm onSubmit=\{add\}/, "the new-schedule form too");
     assert.match(sc, /useActionOpen\('new'\)/); assert.match(ru, /if \(card\) return card;/, "runs: the card in the list's place");
-    assert.match(tp, /card \? card : <div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
+    // mold_v0-256: through FormHost (the card in the list's place; a new record's form in a side panel with side_panel_forms on).
+    assert.match(tp, /<FormHost card=\{card\} panel=\{panel && !imp\.card\}><div className='flex flex-col gap-6'>/, "an area tab: the card in the list's place");
     assert.match(tp, /<ExportCsvButton [^>]*\/>\s*\{action\}/, "a board or a timeline: the button after Export CSV in the views' row");
     // mold_v0-234: a workspace's Import, its own button just left of Export, its form a card in the list's place.
     assert.match(tp, /const card = actionCard \?\? imp\.card;/, "an area tab: the import's card in the list's place too");

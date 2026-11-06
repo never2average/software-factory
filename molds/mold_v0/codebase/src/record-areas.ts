@@ -22,6 +22,7 @@
  * database refuses another workspace's rows even when a query forgets its filter. The HTTP routes are in
  * src/record-routes.ts (this module stays free of the server's modules: src/packs.ts imports it).
  */
+import { historyKept, writeHistory } from "./record-history.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getDb, type Queryable } from "./db.js";
@@ -173,6 +174,12 @@ export interface RecordChange {
   orgId: number; pack: string; area: string; key: string;
   change: "created" | "updated" | "state_changed" | "deleted";
   record: RecordRow | null; from?: unknown; to?: unknown;
+  /**
+   * mold_v0-256: what the change's history line needs (src/record-history.ts, a transaction listener): the record's title
+   * and data before (null: it is new) and after (null: deleted), as stored before sealing (an encrypted field's value is
+   * compared, never kept), and who wrote it ("<kind>:<who>", as workspace_records.updated_by).
+   */
+  history?: { before: { title: string | null; data: Record<string, unknown> } | null; after: { title: string | null; data: Record<string, unknown> } | null; by: string | null };
 }
 const changeListeners: ((c: RecordChange) => unknown)[] = [];
 /** Hear every workspace record change once it is stored (after its transaction commits): nothing it does undoes the change. */
@@ -186,6 +193,9 @@ export const onRecordChange = (fn: (c: RecordChange) => unknown) => void changeL
 interface TxListener { fn: (c: RecordChange, tx: Queryable) => Promise<unknown>; wants: (area: string) => boolean }
 const txListeners: TxListener[] = [];
 export const onRecordChangeInTransaction = (fn: TxListener["fn"], wants: TxListener["wants"]) => void txListeners.push({ fn, wants });
+// mold_v0-256: a laid-out area's change history (src/record-history.ts), in the change's own transaction; only for an area
+// whose page has a history section while record_pages is on (else no transaction of its own, as before).
+onRecordChangeInTransaction((c, tx) => writeHistory(findArea(c.area)!, c, tx), (name) => historyKept(findArea(name)));
 /** Run a single write as a transaction when a transaction listener wants its area (inside a batch: the batch's). */
 const atomic = <T>(orgId: number, area: string, fn: () => Promise<T>): Promise<T> =>
   !txScope.getStore() && txListeners.some((l) => l.wants(area)) ? auditAtomic(() => inTransaction(orgId, fn)) : fn();
@@ -714,6 +724,10 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
   });
 }
 
+/** A change's history input (mold_v0-256): before (the row as read), after (as written, before sealing) and its writer. */
+const historyOf = (prev: { record: RecordRow; opened: Record<string, unknown> } | null, after: { title: string | null; data: Record<string, unknown> }, w: RecordWriter): RecordChange["history"] =>
+  ({ before: prev ? { title: prev.record.title, data: prev.opened } : null, after, by: writerText(w) });
+
 /** An append-only area's record (mold_v0-195): added once, never changed or deleted. */
 const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.label} records are append-only: ${key} is never changed or deleted once added`, 409);
 
@@ -739,8 +753,9 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   const t = title(value?.title);
   if (!area.lifecycle) {
-    const r = await writeRow(orgId, area, key, t, { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, prev, writerOf(actor, meta), meta);
-    await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
+    const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
+    const r = await writeRow(orgId, area, key, t, data, prev, w, meta);
+    await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data }, w) });
     return r;
   }
   // A lifecycle (mold_v0-057): a new record starts in its initial state; a write never changes the state.
@@ -755,8 +770,9 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   delete rest[field];
   const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
-  const r = await writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev, writerOf(actor, meta), meta);
-  await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r });
+  const after = { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, w = writerOf(actor, meta);
+  const r = await writeRow(orgId, area, key, t, after, prev, w, meta);
+  await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
   return r;
 }
 
@@ -788,8 +804,9 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  const r = await writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev, writerOf(actor, null), null, "move");
-  await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to });
+  const after = { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, w = writerOf(actor, null);
+  const r = await writeRow(orgId, area, key, prev.record.title, after, prev, w, null, "move");
+  await changed({ orgId, pack: area.pack, area: area.name, key, change: "state_changed", record: r, from, to, history: historyOf(prev, { title: prev.record.title, data: after }, w) });
   return r;
 }
 
@@ -807,7 +824,8 @@ async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, nam
     "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
     [orgId, area.pack, area.name, checkKey(key), source])).length > 0);
   if (gone) auditData(orgId, { action: "delete", pack: area.pack, area: area.name, key });
-  if (gone) await changed({ orgId, pack: area.pack, area: area.name, key, change: "deleted", record: null });
+  if (gone) await changed({ orgId, pack: area.pack, area: area.name, key, change: "deleted", record: null,
+    history: { before: null, after: null, by: writerText(source !== null ? { by: "repository", id: source } : writerOf(actor, null)) } });
   return gone;
 }
 

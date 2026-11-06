@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Icons } from '@/components/icons';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
-import { ActionCard, CardForm, CreateRecordForm, FieldsForm, ToolbarAction, fieldValues, useActionOpen, type FormField } from '@/features/tabs/tab-action';
+import { ActionCard, FormHost, CardForm, CreateRecordForm, FieldsForm, ToolbarAction, fieldValues, useActionOpen, type FormField } from '@/features/tabs/tab-action';
 import { Sparklines } from '@/features/tabs/sparklines';
 import { ErrorState, fail, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { httpError } from '@/features/status/from-error';
@@ -119,9 +119,8 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
   const [editing, setEditing] = useState<RecordRow | null>(null);
   const reload = () => setRound((n) => n + 1);
   const noun = nounOf(area);
-  return (
-    <PageContainer>
-      {form?.create && creating ? (
+  // mold_v0-256: New and Edit open in a panel beside the list with side_panel_forms on (FormHost); Import stays a full card.
+  const card = form?.create && creating ? (
         <ActionCard open onOpenChange={setCreating} title={`New ${noun}`} description={`A new ${noun} in ${area.label}, added to the list at once as a staff row.`}>
           <CreateRecordForm area={{ name: area.name, label: area.label, fields: form.fields }}
             post={(body) => adminDataApi('POST', `/${encodeURIComponent(area.name)}`, body)} onDone={() => { setCreating(false); reload(); }} />
@@ -134,7 +133,10 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
         <ActionCard open onOpenChange={(o) => { if (!o) setEditing(null); }} title={editTitle(editing)} description={editDescription(area, editing)}>
           <EditRecordForm area={area.name} fields={form.fields} row={editing} onDone={() => { setEditing(null); reload(); }} />
         </ActionCard>
-      ) : (
+      ) : null;
+  return (
+    <PageContainer>
+      <FormHost card={card} panel={!(form?.import && importing)}>
       <RecordTableView key={round} area={area} base='admin' url={`${recordsApi('admin')}/${area.name}`} id={`admin-records-${area.name}`}
         empty={<RecordEmpty area={area} base='admin' />}
         summary={<Sparklines url={consoleUrl(area.name, 'sparklines')} tag={`records/${area.name}`} label={`${area.label}: key numbers`} />}
@@ -148,7 +150,7 @@ export function StaffRecordListPage({ area }: { area: RecordAreaSpec }) {
         </>) : undefined}
         rowAction={form?.edit || form?.remove ? (r) => <RowActions area={area} form={form} row={r} edit={() => setEditing(r)} removed={reload} /> : undefined}
         detailNote={(r) => <ProvenanceFields row={r} form={form} />} />
-      )}
+      </FormHost>
     </PageContainer>
   );
 }
@@ -163,11 +165,13 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
   const router = useRouter();
   return (
     <PageContainer>
-      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : form?.edit && editing ? (
-        <ActionCard open onOpenChange={setEditing} title={editTitle(data.record)} description={editDescription(area, data.record)}>
-          <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
-        </ActionCard>
-      ) : (
+      {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
+        // mold_v0-256: Edit in a panel over the record (flag side_panel_forms), else the full card in its place.
+        <FormHost panel card={form?.edit && editing ? (
+          <ActionCard open onOpenChange={setEditing} title={editTitle(data.record)} description={editDescription(area, data.record)}>
+            <EditRecordForm area={area.name} fields={form.fields} row={data.record} onDone={() => { setEditing(false); void reload(); }} />
+          </ActionCard>
+        ) : null}>
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
             <CardDescription>
@@ -208,6 +212,7 @@ export function StaffRecordDetailPage({ area, recordKey }: { area: RecordAreaSpe
             })}
           </CardContent>
         </Card>
+        </FormHost>
       )}
     </PageContainer>
   );

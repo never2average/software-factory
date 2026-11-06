@@ -69,7 +69,8 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "checks": return any(d.get("checks") for d in docs)
     if by == "encrypted": return any(isinstance(f, dict) and f.get("encrypted") is True for a in _areas(docs) for f in a.get("fields") or [])
     if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
-    if by == "layouts": return any(isinstance(a.get("detail"), dict) or any(isinstance(f, dict) and f.get("copyable") is True for f in a.get("fields") or []) for a in _areas(docs))
+    if by == "layouts": return (any(isinstance(a.get("detail"), dict) or a.get("key_from_title") is True or any(isinstance(f, dict) and f.get("copyable") is True for f in a.get("fields") or []) for a in _areas(docs))
+                                or any(isinstance(c, dict) for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict) for c in (t.get("columns") or [])))
     if by == "no_engine":
         owned = {t for d in docs for t in (((d.get("host") or {}).get("schema") or {}).get("tables") or [])}
         return not all(t in owned for t in ENGINE_TABLES)
@@ -141,7 +142,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 15 and len(set(ids(root))) == 15, "the registry names 15 flags, each once")
+    ok(len(flags) == 16 and len(set(ids(root))) == 16, "the registry names 16 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -155,6 +156,11 @@ def self_test(root):
     ok("pages" not in words(effective({}, laid_out, root)) and "pages" in words(effective({"features": {"record_pages": True}}, laid_out, root))
        and "pages" in words(effective({"features": {"record_pages": True}}, copy_only, root)) and "pages" not in words(effective({"features": {"record_pages": True}}, [], root)),
        "record page layouts: off by default; on when the profile says and an area declares a layout or a copyable field (mold_v0-253)")
+    ok("panel" not in words(effective({}, [], root)) and "panel" in words(effective({"features": {"side_panel_forms": True}}, [], root)),
+       "forms in a side panel: off by default, on when the profile says (mold_v0-256)")
+    related_col = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "project"}]}],
+                    "tabs": [{"id": "projects", "kind": "area", "area": "projects", "columns": ["owner", {"related": {"area": "builds"}, "show": "count"}]}]}]
+    ok("pages" in words(effective({"features": {"record_pages": True}}, related_col, root)), "a tab column computed from related records asks for record pages (mold_v0-256)")
     ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")
