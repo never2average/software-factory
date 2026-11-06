@@ -2394,7 +2394,8 @@ const profileSidebar = (() => {
   const statusPages = pages.filter((r) => r.split("/").includes("console-status"));
   // A capability's own pages (mold_v0-243: the workspace agent's) are pages of the build only while its flag is on: off,
   // they are not in the list (so the proxy answers them not found) and the list is what the build wrote before them.
-  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"] };
+  // mold_v0-256: a run's own page, a page of the build only while record_pages is on.
+  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"] };
   const off = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
   const routes = pages.filter((r) => !statusPages.includes(r) && !/\/\[\.\.\.missing\]$/.test(r) && !off.includes(r));
   if (existsSync(APP_DIR)) files.set(path.join(OUT, "web", "src", "config", "console-routes.generated.json"), JSON.stringify({

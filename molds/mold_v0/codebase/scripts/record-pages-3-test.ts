@@ -364,16 +364,19 @@ const note = (id: string, text: string) => { const p = document.createElement('p
     if (features) writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ features }, null, 2));
     const g = spawnSync(process.execPath, ["scripts/gen-packs.mjs"], { cwd: copy, encoding: "utf8" });
     const read = (rel: string) => (existsSync(path.join(copy, rel)) ? readFileSync(path.join(copy, rel), "utf8") : "");
-    return { copy, status: g.status, out: `${g.stdout}\n${g.stderr}`, nav: read("web/src/config/pack-nav.generated.ts"), features: read("web/src/config/features.generated.ts") };
+    return { copy, status: g.status, out: `${g.stdout}\n${g.stderr}`, nav: read("web/src/config/pack-nav.generated.ts"), features: read("web/src/config/features.generated.ts"),
+      routes: read("web/src/config/console-routes.generated.json") };
   };
   try {
     const off = copyOf("off");
     assert.equal(off.status, 0, off.out.slice(-1500));
     assert.doesNotMatch(off.nav, /related_columns|key_from_title|rel_builds_count/, "off: no computed column, no Key from Title in the console's registry");
     assert.doesNotMatch(off.features, /record_pages|side_panel_forms/, "off: neither flag in the console's flags (quiet_off)");
+    assert.doesNotMatch(off.routes, /\/app\/runs\/\[id\]/, "off: no run page among the console's routes (the proxy answers it not found)");
     const on = copyOf("on", undefined, { record_pages: true, side_panel_forms: true });
     assert.equal(on.status, 0, on.out.slice(-1500));
     assert.match(on.features, /"record_pages": true,\s*"side_panel_forms": true/, "on: both flags");
+    assert.match(on.routes, /"\/app\/runs\/\[id\]"/, "on: the run page a route of the build");
     assert.match(on.nav, /"related_columns": \[\s*\{\s*"id": "rel_builds_count",\s*"at": 2,\s*"area": "builds",\s*"show": "count",\s*"label": "Builds"\s*\},\s*\{\s*"id": "rel_builds_latest_status",\s*"at": 3,\s*"area": "builds",\s*"show": "latest:status",\s*"label": "Last build"/, "the projects tab's computed columns, their places and headings");
     assert.match(on.nav, /"columns": \[\s*"health",\s*"owner"\s*\]/, "its own columns: the fields alone");
     const panelOnly = copyOf("panel-only", undefined, { side_panel_forms: true });
