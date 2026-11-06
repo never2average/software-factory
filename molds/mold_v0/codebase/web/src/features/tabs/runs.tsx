@@ -8,6 +8,8 @@
 // the record it ran over. A reports tab lists the finished runs only, newest result first.
 import Link from 'next/link';
 import { useMemo, type ReactNode } from 'react';
+import { useQueryState } from 'nuqs';
+import { featureOn } from '@/config/features';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
@@ -114,13 +116,16 @@ export function RunsTable({ tab, reports, summary }: {
     return reports ? all.filter((r) => FINISHED.has(r.status) && r.status !== 'cancelled') : all;
   }, [data, reports]);
   const cols = useMemo(() => columns(reports, runs), [reports, runs]);
+  // mold_v0-254 (flag record_pages): a record page's run links here with ?run=<id>: that run open beside the list.
+  const [runParam, setRunParam] = useQueryState('run');
+  const deep = featureOn('record_pages') ? { openKey: runParam, onOpenChange: (k: string | null) => void setRunParam(k, { history: 'replace' }) } : {};
   if (card) return card;
   if (error) return <ErrorState error={error} />;
   const noun = lowerFirst(tab.label);
   return (
     <RecordView<Run>
       id={`app-${reports ? 'reports' : 'runs'}-${tab.pack}-${tab.id}`} compact noun={noun} properties summary={summary}
-      toolbarAction={action ?? undefined}
+      toolbarAction={action ?? undefined} {...deep}
       rows={runs} rowKey={(r) => r.id} cols={cols} loading={!data}
       defaultSort={[{ key: reports ? 'ended' : 'started', dir: 'desc' }]}
       searchText={(r) => `${runKindLabel(r.pack, r.kind)} ${r.kind} ${runStatusText(r)} ${runTarget(r)?.key ?? ''} ${r.id}`}

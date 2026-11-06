@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, detailBuildProblems, LIST_TAB_KINDS, MetricSchema, optionValues, RecordAreaSchema, SPARK_KINDS, TAB_SOURCE_COLUMN, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab, type TabAction } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -189,7 +189,7 @@ export interface BuildViews {
   stores?: readonly string[];
   /** The packs' onboarding steps and job kinds, for the tabs' empty states (mold_v0-107). */
   steps?: readonly { pack: string; id: string; label: string; help?: string; done_when: string }[];
-  kinds?: readonly { pack: string; name: string; label?: string; approval?: boolean; report?: boolean }[];
+  kinds?: readonly { pack: string; name: string; label?: string; approval?: boolean; report?: boolean; args?: readonly string[] }[];
   /** The job kinds each pack schedules (its declared schedules): a schedules tab's default action (mold_v0-213). */
   scheduled?: readonly { pack: string; kind: string }[];
 }
@@ -394,6 +394,8 @@ export function checkViews(b: BuildViews): string[] {
     if (seen.has(k)) at(t.pack, `tab ${t.id}: the sidebar already has "${tabLabel(t, b)}"${t.group ? ` in ${t.group}` : ""} (tab ${seen.get(k)})`);
     else seen.set(k, `${t.pack}/${t.id}`);
   }
+  // A record page's related lists, runs and actions (mold_v0-254): what each names across the build.
+  problems.push(...detailBuildProblems(b.areas, b.kinds ?? []));
   return problems;
 }
 
@@ -586,8 +588,9 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     dueAreas: areas.filter((a) => a.due || (a.clocks?.length ?? 0) > 0).length,
     steps: packs.flatMap((p) => (p.definition.onboarding ?? []).map((x) => ({ ...(x as { id: string; label: string; help?: string; done_when: string }), pack: p.id }))),
     kinds: packs.flatMap((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].map((k) => {
-      const x = k as { name: string; label?: string; approval?: unknown; report?: unknown };
-      return { pack: p.id, name: x.name, label: x.label, approval: !!x.approval, report: !!x.report };
+      const x = k as { name: string; label?: string; approval?: unknown; report?: unknown; args?: { name: string }[] };
+      // mold_v0-254: its arguments' names (a record page's start_run action maps the record's fields onto them).
+      return { pack: p.id, name: x.name, label: x.label, approval: !!x.approval, report: !!x.report, args: (x.args ?? []).map((a) => a.name) };
     })),
     scheduled: packs.flatMap((p) => (p.definition.schedules ?? []).map((x) => ({ pack: p.id, kind: (x as { job_kind: string }).job_kind }))),
     stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),

@@ -102,6 +102,11 @@ through the same check `factory.py validate` and the build use.
   (field groups in 1, 2 or 3 columns, each with its own empty state); a field may be `copyable: true`. The pack schema
   refuses a field the area lacks, more than 8 facts, an empty tab and a badge colour outside the theme's tokens;
   docs/RECORDS.md section 6 "The record's page" has the whole shape. Off, every record page is as before.
+  mold_v0-254 adds, under the same flag: a section listing another area's records that point back (`related`) or the
+  record's runs (`runs`), and the header's `actions` (one primary, up to three secondary, the rest in More: start a run
+  on the record with its input taken from its fields, move, edit, delete, open a linked record, copy the link). The
+  build refuses a related list whose area has no link back, an action naming a job kind or a transition that does not
+  exist, and two primary actions.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |

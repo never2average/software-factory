@@ -11,8 +11,17 @@
 //                record's documents, deadlines and links, and its Credentials card, as on the page without a layout
 // Every copy (the id, the page's link, a copyable field) confirms with a toast and works on a phone (the clipboard,
 // else a selection copied the old way). Buttons are the shared outlined ones; no caption above any list.
+// Part 2 (mold_v0-254), in a workspace (GET /api/records/_page/<area>/<key>, src/record-page-routes.ts):
+//   actions      declared ones replace Copy ID and Copy link in the header: the primary, the secondary, More (the rest,
+//                then Copy ID and Copy link); a start_run's or an edit's form is a full card in the page's place
+//                (./page-actions.tsx)
+//   related      a section listing another area's records that point here: its columns (formatted as its list's cells),
+//                its sort and row limit, Show all (its list filtered to this record), each row's own actions, its empty
+//                state; not drawn for a role that may not read that area
+//   runs         a section listing the runs that ran on this record: kind (a link to the run), status, started,
+//                duration, cost, who started it
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -21,17 +30,22 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
+import { packTabs, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
+import { ErrorState, useOrgLoad } from '@/features/portal/shared';
+import { httpError } from '@/features/status/from-error';
+import { formatValue } from '@/features/tabs/charts';
+import { duration, runKindLabel, runSeconds, statusLabel } from '@/features/tabs/run-rows';
 import { cn } from '@/lib/utils';
 import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
-  BADGE_CLASS, NOTICE_CLASS, badgeColor, columnsClass, copyText, dateWords, isEmptyValue, numberWords, openTab, optionWords,
-  sectionEmpty, sectionGroups, shownNotices, tabId, unplacedFields,
-  type BadgeColor, type DetailLayout, type DetailSection, type LaidOutField, type NoticeTone
+  BADGE_CLASS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnsClass, copyText, dateWords, declaresActions, declaresCopyLink, isEmptyValue, numberWords, openTab,
+  optionWords, relatedColumns, relatedCountWords, runsCountWords, sectionEmpty, sectionGroups, sectionKey, showAllHref, shownNotices, tabId, unplacedFields,
+  type BadgeColor, type DetailLayout, type DetailSection, type LaidOutField, type NoticeTone, type PageData, type RelatedData, type RunsData
 } from './detail-layout';
+import { RowActions, usePageActionsBar, type ActionHost } from './page-actions';
 import { areaFieldLabel, findRecordArea } from './registry';
-import { FieldValue, type RecordRow } from './record-pages';
+import { FieldValue, fieldText, type RecordRow } from './record-pages';
 
 type Links = { field: string; area: string; records: { key: string; title: string | null }[] }[];
 
@@ -157,17 +171,229 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
   );
 }
 
+type PageLoad = { data: PageData | null; error: Error | null };
+
+/** A section of the open tab: its fields, a related list or the record's runs (mold_v0-254). */
+function AnySection({ s, id, area, base, layout, record, page, data, changed }: {
+  s: DetailSection; id: string; area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; page: PageLoad;
+  data: RelatedData | RunsData | undefined; changed: () => void;
+}) {
+  // Staff pages read no workspace's lists or runs: those sections are a workspace's.
+  if ((s.related || s.runs) && base !== 'app') return null;
+  if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
+  if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
+  return <SectionCard s={s} id={id} area={area} base={base} layout={layout} record={record} />;
+}
+
+/** A list section's card: its title, a count, an optional link at the right, then its body. */
+function ListCard({ id, title, count, link, children, kind }: { id: string; title: string; count?: ReactNode; link?: ReactNode; children: ReactNode; kind: 'related' | 'runs' }) {
+  return (
+    <Card className='w-full gap-0 py-0' data-detail-section={id} data-section-kind={kind} aria-labelledby={`${id}-title`} role='region'>
+      <CardHeader className='flex flex-row flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-3 [.border-b]:pb-3'>
+        <div className='flex min-w-0 items-baseline gap-2'>
+          <CardTitle id={`${id}-title`} className='text-sm font-semibold'>{title}</CardTitle>
+          {count && <span className='text-muted-foreground text-xs tabular-nums' data-section-count=''>{count}</span>}
+        </div>
+        {link}
+      </CardHeader>
+      <CardContent className='px-0 py-0'>{children}</CardContent>
+    </Card>
+  );
+}
+/** A list section's empty state, as a fields section's. */
+const ListEmpty = ({ text }: { text: string }) => (
+  <div className='flex items-center gap-3 px-6 py-5' data-section-empty=''>
+    <Icons.inbox aria-hidden className='text-muted-foreground size-5 shrink-0' />
+    <p className='text-muted-foreground text-sm'>{text}</p>
+  </div>
+);
+const ListLoading = () => (
+  <div className='flex flex-col gap-2 px-6 py-4' aria-busy='true' data-section-loading=''>
+    {[0, 1, 2].map((i) => <div key={i} className='bg-muted h-5 animate-pulse rounded' style={{ width: `${80 - i * 15}%` }} />)}
+  </div>
+);
+const TH = 'text-muted-foreground h-9 px-3 text-left align-middle text-xs font-medium whitespace-nowrap first:pl-6 last:pr-6';
+const TD = 'px-3 py-2.5 align-middle first:pl-6 last:pr-6';
+
+/** A cell of a related list: as the area's list shows it (an enum its layout colours as a badge). */
+function RelatedCell({ target, f, v, recordKey }: { target: RecordAreaSpec; f: RecordFieldSpec; v: unknown; recordKey: string }) {
+  if (isEmptyValue(v)) return <span className='text-muted-foreground'>—</span>;
+  const tl = (target as RecordAreaSpec & { detail?: DetailLayout }).detail ?? null;
+  if (f.type === 'enum' && !f.encrypted) return (
+    <span className='flex flex-wrap gap-1'>{(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(tl, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}</span>
+  );
+  const t = fieldText(f, v, recordKey);
+  return <span className={cn('line-clamp-2', f.type === 'number' && 'tabular-nums')}>{t}</span>;
+}
+
+/**
+ * A related list (mold_v0-254): the records of another area that point back to this one, newest first unless it says
+ * another order, at most its limit, then Show all (that area's list, narrowed to this record). A table on a desktop, a
+ * list of cards on a phone; each row opens its record and has its own actions.
+ */
+function RelatedSection({ s, id, base, record, page, data, changed }: {
+  s: DetailSection; id: string; base: 'app' | 'admin'; record: RecordRow; page: PageLoad; data: RelatedData | undefined; changed: () => void;
+}) {
+  const target = findRecordArea(base, s.related!.area);
+  // Hidden from this role (it may not read that area), or nothing for it in the page's answer: no card at all.
+  if (!target || data?.hidden || (page.data && !data)) return null;
+  const cols = relatedColumns(target, s.related!).map((n) => target.fields.find((f) => f.name === n)!).filter(Boolean);
+  const href = (k: string) => `/${base}/records/${target.name}/${encodeURIComponent(k)}`;
+  const rows = data && !data.hidden ? data.records : [];
+  const more = !!(data && !data.hidden && data.more);
+  const all = data && !data.hidden ? showAllHref(base, target.name, data.via, record.key) : null;
+  const hostOf = (r: (typeof rows)[number]): ActionHost => ({ area: target.name, areaLabel: target.label, base, record: { key: r.key, title: r.title, data: r.data, updated_at: r.updated_at },
+    copy: (t, done) => void copyWithToast(t, done), changed, deleted: changed });
+  return (
+    <ListCard id={id} kind='related' title={s.title} count={data && !data.hidden && rows.length ? relatedCountWords(rows.length, more, target.label) : undefined}
+      link={all && more ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={all} />} data-show-all=''>Show all<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !rows.length ? <ListEmpty text={s.empty ?? `No ${target.label.toLowerCase()} point to this record yet.`} />
+        : (<>
+          <div className='hidden overflow-x-auto md:block'>
+            <table className='w-full caption-bottom text-sm' data-related-table=''>
+              <thead className='[&_tr]:border-b'>
+                <tr><th scope='col' className={TH}>{singularLabel(target.label)}</th>{cols.map((f) => <th key={f.name} scope='col' className={cn(TH, f.type === 'number' && 'text-right')}>{f.label}</th>)}<th scope='col' className={cn(TH, 'w-10')}><span className='sr-only'>Actions</span></th></tr>
+              </thead>
+              <tbody className='[&_tr:last-child]:border-0'>
+                {rows.map((r) => (
+                  <tr key={r.key} className='hover:bg-muted/40 border-b transition-colors' data-related-row={r.key}>
+                    <td className={cn(TD, 'min-w-40')}>
+                      <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
+                      {r.title && r.title !== r.key && <span className='text-muted-foreground block font-mono text-xs break-all'>{r.key}</span>}
+                    </td>
+                    {cols.map((f) => <td key={f.name} className={cn(TD, f.type === 'number' && 'text-right')}><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} /></td>)}
+                    <td className={cn(TD, 'w-10 text-right')}><RowActions host={hostOf(r)} actions={r.actions} href={href(r.key)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className='divide-y md:hidden' data-related-list=''>
+            {rows.map((r) => (
+              <li key={r.key} className='flex items-start gap-3 px-4 py-3' data-related-row={r.key}>
+                <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
+                  <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
+                  <dl className='grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs'>
+                    {cols.map((f) => (
+                      <div key={f.name} className='flex min-w-0 flex-col gap-0.5'>
+                        <dt className='text-muted-foreground'>{f.label}</dt>
+                        <dd className='min-w-0 text-sm break-words'><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} /></dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+                <RowActions host={hostOf(r)} actions={r.actions} href={href(r.key)} />
+              </li>
+            ))}
+          </ul>
+          {more && all && (
+            <div className='border-t px-6 py-2.5 text-xs md:hidden'>
+              <Link href={all} className='text-primary underline-offset-4 hover:underline'>Show all {target.label.toLowerCase()}</Link>
+            </div>
+          )}
+        </>)}
+    </ListCard>
+  );
+}
+const singularLabel = (label: string) =>
+  /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');
+
+/** A run's link: its pack's runs tab, the run open (?run=<id>); none when the pack has no runs tab. */
+const runHref = (pack: string, id: string) => { const t = packTabs.find((x) => x.pack === pack && x.kind === 'runs'); return t ? `${t.url}?run=${encodeURIComponent(id)}` : null; };
+
+/** The record's runs (mold_v0-254): newest first, at most its limit, each with its state, timing, cost and who started it. */
+function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: RunsData | undefined }) {
+  const runs = data?.runs ?? [];
+  if (page.data && !data) return null;
+  const tab = runs.length ? packTabs.find((x) => x.pack === runs[0]!.pack && x.kind === 'runs') : null;
+  const status = (r: (typeof runs)[number]) => (
+    <span title={r.status === 'failed' && r.error ? r.error : undefined}><ToneBadge color={RUN_STATUS_COLOR[r.status] ?? 'neutral'}>{statusLabel(r.status)}</ToneBadge></span>
+  );
+  const kind = (r: (typeof runs)[number]) => { const h = runHref(r.pack, r.id); const label = runKindLabel(r.pack, r.kind);
+    return h ? <Link href={h} className='font-medium underline-offset-4 hover:underline' data-run-link={r.id}>{label}</Link> : <span className='font-medium'>{label}</span>; };
+  const started = (r: (typeof runs)[number]) => (r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} relative /> : <span className='text-muted-foreground'>—</span>);
+  const took = (r: (typeof runs)[number]) => duration(runSeconds(r)) || '—';
+  return (
+    <ListCard id={id} kind='runs' title={s.title} count={data && runs.length ? runsCountWords(runs.length, data.total) : undefined}
+      link={tab && data && data.total > runs.length ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
+      {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
+        : !data ? <ListLoading />
+        : !runs.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
+        : (<>
+          <div className='hidden overflow-x-auto md:block'>
+            <table className='w-full text-sm' data-runs-table=''>
+              <thead className='[&_tr]:border-b'>
+                <tr>{['Run', 'Status', 'Started', 'Duration', 'Cost', 'By'].map((h) => <th key={h} scope='col' className={cn(TH, (h === 'Duration' || h === 'Cost') && 'text-right')}>{h}</th>)}</tr>
+              </thead>
+              <tbody className='[&_tr:last-child]:border-0'>
+                {runs.map((r) => (
+                  <tr key={r.id} className='hover:bg-muted/40 border-b transition-colors' data-run-row={r.id}>
+                    <td className={cn(TD, 'min-w-44')}>{kind(r)}<span className='text-muted-foreground block font-mono text-xs break-all'>{r.id}</span></td>
+                    <td className={TD}>{status(r)}</td>
+                    <td className={cn(TD, 'whitespace-nowrap')}>{started(r)}</td>
+                    <td className={cn(TD, 'text-right tabular-nums')}>{took(r)}</td>
+                    <td className={cn(TD, 'text-right tabular-nums')}>{formatValue(r.cost_usd, 'usd')}</td>
+                    <td className={cn(TD, 'max-w-48 truncate')} title={r.by}>{r.by}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ul className='divide-y md:hidden' data-runs-list=''>
+            {runs.map((r) => (
+              <li key={r.id} className='flex flex-col gap-1.5 px-4 py-3' data-run-row={r.id}>
+                <div className='flex items-start justify-between gap-3'>{kind(r)}{status(r)}</div>
+                <p className='text-muted-foreground flex flex-wrap gap-x-2 text-xs'>
+                  <span>{started(r)}</span><span aria-hidden>·</span><span className='tabular-nums'>{took(r)}</span><span aria-hidden>·</span>
+                  <span className='tabular-nums'>{formatValue(r.cost_usd, 'usd')}</span><span aria-hidden>·</span><span className='break-all'>{r.by}</span>
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>)}
+    </ListCard>
+  );
+}
+
 const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', warning: 'warning', danger: 'alertCircle' };
 /** Where a workspace record came from, in words (mold_v0-236; the same words as the page without a layout). */
 const ADDED_BY: Record<string, string> = { people: 'A person of this workspace', staff: 'Platform staff', intake: 'The email intake', run: "The app's own automation", repository: 'Its data source' };
 
-export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials }: {
+/** Whether a layout reads anything from the page's own route (mold_v0-254): actions, a related list, the record's runs. */
+const readsPage = (layout: DetailLayout) => declaresActions(layout) || layout.tabs.some((t) => t.sections.some((s) => s.related || s.runs));
+
+async function getPage(url: string): Promise<PageData> {
+  const res = await fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+  const body = (await res.json().catch(() => ({}))) as PageData & { error?: string };
+  if (!res.ok) throw httpError(res.status, body);
+  return body;
+}
+
+export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode;
+  /** Read the record again (mold_v0-254: after an action changed it). */
+  onChanged?: () => void;
 }) {
   const [asked, setAsked] = useQueryState('tab');
   const tab = openTab(layout, asked);
   const first = tab === layout.tabs[0];
+  const ti = layout.tabs.indexOf(tab);
+  // mold_v0-254: the page's actions and the open tab's related lists and runs, a workspace's (staff pages read none).
+  const reads = base === 'app' && readsPage(layout);
+  const pageUrl = reads ? `/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(record.key)}?tab=${tabId(tab.label)}` : null;
+  const page = useOrgLoad(() => (pageUrl ? getPage(pageUrl) : Promise.resolve(null)), [pageUrl]);
+  // The header's actions stay as they were while another tab's sections load (they do not depend on the tab).
+  const [actions, setActions] = useState<PageData['actions'] | null>(null);
+  useEffect(() => { if (page.data) setActions(page.data.actions); }, [page.data]);
+  const changed = () => { void page.reload(); onChanged?.(); };
+  const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed };
+  const withActions = base === 'app' && declaresActions(layout);
+  const { bar, card } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
+  // An action's form (a run, an edit): a full card in the page's place.
+  if (withActions && card) return <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div>;
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
@@ -200,14 +426,16 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
                 </div>
               )}
             </div>
-            <div className='flex shrink-0 flex-wrap gap-2'>
-              <Button type='button' variant='outline' size='sm' data-copy-id='' onClick={() => void copyWithToast(record.key, 'Record ID copied')}>
-                <Icons.copy aria-hidden data-icon='inline-start' />Copy ID
-              </Button>
-              <Button type='button' variant='outline' size='sm' data-copy-link='' onClick={() => void copyWithToast(window.location.href, 'Link copied')}>
-                <Icons.link aria-hidden data-icon='inline-start' />Copy link
-              </Button>
-            </div>
+            {withActions ? bar : (
+              <div className='flex shrink-0 flex-wrap gap-2'>
+                <Button type='button' variant='outline' size='sm' data-copy-id='' onClick={() => void copyWithToast(record.key, 'Record ID copied')}>
+                  <Icons.copy aria-hidden data-icon='inline-start' />Copy ID
+                </Button>
+                <Button type='button' variant='outline' size='sm' data-copy-link='' onClick={() => void copyWithToast(window.location.href, 'Link copied')}>
+                  <Icons.link aria-hidden data-icon='inline-start' />Copy link
+                </Button>
+              </div>
+            )}
           </div>
           {!!facts.length && (
             <dl className='grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-4' data-record-facts=''>
@@ -248,13 +476,13 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
             </TabsList>
           </div>
           <TabsContent value={tabId(tab.label)} className='flex flex-col gap-4 md:gap-6'>
-            {tab.sections.map((s, i) => <SectionCard key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} />)}
+            {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
             {first && <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />}
           </TabsContent>
         </Tabs>
       ) : (
         <div className='flex w-full flex-col gap-4 md:gap-6'>
-          {tab.sections.map((s, i) => <SectionCard key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} />)}
+          {tab.sections.map((s, i) => <AnySection key={i} s={s} id={sectionId(i)} area={area} base={base} layout={layout} record={record} page={page} data={page.data?.sections[sectionKey(ti, i)]} changed={changed} />)}
           <FirstTabRest area={area} base={base} layout={layout} record={record} rest={rest} links={links} clockEvents={clockEvents} credentials={credentials} />
         </div>
       )}

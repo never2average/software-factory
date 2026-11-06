@@ -229,7 +229,13 @@ function formValue(f: FormField, v: unknown): unknown {
  * A record's title and fields, saved whole (PUT /api/admin/data/<area>/<key>); data the form does not show is kept. On a
  * repository's row (mold_v0-221) the save is an override: a staff row of the same key, the repository's kept behind it.
  */
-function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: FormField[]; row: RecordRow; onDone: () => void }) {
+/**
+ * A record's edit form (its title and fields; the key read only) as a full card. `put` sends it (default: the shared
+ * area's /api/admin/data; mold_v0-254, a workspace record page's Edit: its page action). What the form leaves out of the
+ * record's data is sent back as it was.
+ */
+export function EditRecordForm({ area, fields, row, onDone, put }: { area: string; fields: FormField[]; row: RecordRow; onDone: () => void;
+  put?: (body: { title: string | null; data: Record<string, unknown> }) => Promise<unknown> }) {
   const [title, setTitle] = useState(row.title ?? '');
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((f) => [f.name, formValue(f, row.data[f.name])])));
   const [busy, setBusy] = useState(false);
@@ -239,7 +245,8 @@ function EditRecordForm({ area, fields, row, onDone }: { area: string; fields: F
     const kept = Object.fromEntries(Object.entries(row.data).filter(([k]) => !fields.some((f) => f.name === k)));
     setBusy(true);
     try {
-      await adminDataApi('PUT', `/${encodeURIComponent(area)}/${encodeURIComponent(row.key)}`, { title: title.trim() || null, data: { ...kept, ...data } });
+      const body = { title: title.trim() || null, data: { ...kept, ...data } };
+      await (put ? put(body) : adminDataApi('PUT', `/${encodeURIComponent(area)}/${encodeURIComponent(row.key)}`, body));
       toast.success('Saved');
       onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }

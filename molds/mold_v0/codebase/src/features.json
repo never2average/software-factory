@@ -171,8 +171,8 @@
       "requested_by": "layouts",
       "requested_words": "a record area's page layout (detail) or a field marked copyable",
       "since": "mold_v0-253",
-      "about": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field.",
-      "off": "Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); the layouts stay declared and checked, and the generated files leave them and the flag out."
+      "about": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Part 2 (mold_v0-254): sections listing another area's records that point back here (their columns, sort, limit, Show all, each row's own actions) or the runs that ran on the record; the header's actions (a primary, secondaries, a More menu: start a run on the record, move it, edit, delete, open a linked record, copy the link), each offered to and enforced for the roles that may, through /api/records/_page.",
+      "off": "Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); /api/records/_page answers nothing; the layouts stay declared and checked, and the generated files leave them and the flag out."
     }
   ]
 }

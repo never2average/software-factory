@@ -2849,7 +2849,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
 | `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
 | `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
-| `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
+| `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -2934,7 +2934,7 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   optional title, Start; focus held inside, Esc closes it, its title names it; on Start the session's full card opens.
 - **What a session reaches** (mold_v0-250, `src/harness-reach.ts`; [docs/agent-harness.md](docs/agent-harness.md) "What a
   session reaches"): the app's own customer MCP server as the MCP server `app` (tools `mcp__app__<tool>`), opened by a token per wake
-  (`hst_...`, hashed in `harness_session_tokens`, migration 0047) that acts as the person who started the session with
+  (`hst_...`, hashed in `harness_session_tokens`, migration 0048) that acts as the person who started the session with
   their role (re-read on every call), for that workspace only, and works only while its wake runs: revoked when the wake
   ends, at a pause or stop, at budget, when the session ends, and refused once the person leaves the workspace. Reads
   (`readOnlyHint`) are used without asking; the rest become `tool` approval requests (what the call wanted to send shown
@@ -3402,7 +3402,7 @@ area, its page is also as before.
   documents and deadlines, its linked records and its Credentials card. Every copy confirms with a toast and works on a
   phone (the clipboard API, else a selection copied). Badge and notice colours are the console's status tones and the
   theme's chart colours mixed toward the foreground, legible in light and dark.
-- **Later parts**: related lists, the record's runs and a run's own page, logs, history, code views and page actions.
+- **Later parts**: a run's own page, logs, history, code views and a side panel for forms (part 2 is below).
 
 Proof: `npm run test:record-pages` (14: the schema's refusals and the build's, on and off; the badges' tokens; facts by
 type; a notice's conditions; tabs and sections; copy; off, the console's generated files those of the same pack without
@@ -3411,6 +3411,50 @@ no layout), `npm run test:features` (the flag off by default, asked for by a lay
 on), `npm run test:console-tabs` (a laid-out build's console typechecks), `npm run test:zero-pack`, and the fixture
 `scripts/fixtures/packs/fixture_pages` (projects, environments, builds), whose pages a lane world draws in light and dark
 at 1440 and 390 px with each copy's toast and the clipboard read back.
+
+## Record pages, part 2: related lists, runs, actions (mold_v0-254)
+
+Under the same flag (`record_pages`, off by default; off, `/api/records/_page` answers nothing and the generated files
+are as before), a layout's section may list **another area's records that point back** (`related`) or **the runs that
+ran on the record** (`runs`), and the layout's `actions` fill the header. docs/RECORDS.md section 6 has the shape.
+
+- **Declared** (`src/pack-api.ts` `DetailRelatedSchema`, `DetailRunsSchema`, `DetailActionSchema`; the pack schema and
+  the app spec's copy): a related list's `area`, `via`, up to 8 `columns`, `sort`, `limit` (5; at most 50); a runs
+  section's `kinds` and `limit`; each action's `kind` (`start_run`, `move`, `edit`, `delete`, `link`, `copy_link`),
+  `place` (`primary`: one; `secondary`: up to 3; `more`, the default), `label`, `job_kind` and `input` (an argument to
+  a field, `$key` or `$title`), `to`, `field`, `roles`, `unavailable` (a condition and its reason), `confirm`.
+- **Refused at build**, on or off: in the area (`detailProblems`) two primary actions, a fourth secondary, a move on an
+  area without a lifecycle or to a state no transition reaches, a write on a shared or append-only area, an edit on one
+  with an encrypted field, an input from a field it lacks, a viewer's write, a section mixing fields with a list;
+  across the build (`detailBuildProblems`, run by `checkViews`: gen-packs and the server's install) a related list
+  whose area has no link back here (or two without `via`), a column or sort it lacks, a job kind the pack does not
+  have, an argument the kind does not take, a kind that writes only after an approval.
+- **Served** (`src/record-page-routes.ts`, mounted before `/api/records`): `GET /api/records/_page/<area>/<key>?tab=`
+  answers the actions this person may take on the record (each with why it is disabled, when it is) and the open tab's
+  related lists (read as the person, in the workspace's own scope, each row with its own area's actions; `{hidden}`
+  for a role that may not read that area) and runs; `POST .../actions/<id>` takes one: a run of the kind (started as
+  its generated start tool starts one, inside `src/runs.ts` `onRecord`, so the run carries the record), a move, an edit
+  or a delete through the data API. A role the page hides an action from is refused (403), a disabled one with its
+  reason (409). Who may: the action's `roles` within the kind's start tool (a run), the area's move and the
+  transition's roles (a move), its update (an edit), its delete (a delete: an area with a lifecycle, the owner by
+  default), the target area's read (a link); never an operation the pack's MCP settings withhold.
+- **The link from a run to a record**: `runs.record_area` and `runs.record_key` (sql/migrations/0047, both or neither;
+  its rollback drops them). A record's runs are those that carry it and those whose `targets.asset` names it.
+- **Drawn** (`web/src/features/records/page-actions.tsx`, `detail-page.tsx`): the primary action as the filled
+  Button, the secondary outlined, More outlined (the rest, then Copy ID and Copy link, the delete last), each move a
+  menu of states; a disabled action keeps its place and focus (`aria-disabled`), its reason in a tooltip on hover and
+  focus and read with it (in a menu, under its label). Delete asks with the console's `ConfirmDialog` (ConfirmButton's
+  question); a run's form and the edit form (`EditRecordForm`, the staff pages' own) are full cards in the page's place
+  (`?act=<id>`). A related list is a table on a desktop and a list on a phone, with Show all (the area's list,
+  `?linked=<field>:<key>`); the runs likewise, each linked to its pack's runs tab with the run open (`?run=<id>`).
+
+Proof: `npm run test:record-pages` (15: the refusals in the area and across the build, the console's decisions, how
+it draws, gen-packs refusing a related list with no link back, an unknown kind or transition and two primaries, and the
+page with actions, a related list and runs drawn in a headless browser; then `scripts/record-page-actions-test.ts`:
+off, no route; each action by role, the API refusing the same, a run carrying its record, related lists by role and
+workspace), `npm run test:migrations` (0047 and its rollback), `npm run test:features`, `npm run test:console-tabs`,
+`npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_pages` (a project's builds and runs; a build's
+Re-run, Open project, Edit, Move, Copy link and Delete).
 
 ## How the factory runs it
 

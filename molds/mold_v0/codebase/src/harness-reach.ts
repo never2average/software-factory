@@ -10,7 +10,7 @@
  *            request of kind `tool`), and its standing instructions: the server's own instructions, then the company's
  *            and the person's context and memory (src/account-context.ts connectContext), each cut to its share of
  *            AGENT_CONTEXT_MAX_CHARS. Frozen into the session's policy like the other settings.
- *   token    one per wake (wakeStart), `hst_...`, only its sha256 kept (harness_session_tokens, migration 0047). The
+ *   token    one per wake (wakeStart), `hst_...`, only its sha256 kept (harness_session_tokens, migration 0048). The
  *            runner hands it to the harness CLI through its MCP config (`--mcp-config`, a ${...} reference to the
  *            wake's environment) and redacts it from every line it posts.
  *   resolve  on every /mcp call (src/http.ts): the scope comes from the token, never from the input. It works only

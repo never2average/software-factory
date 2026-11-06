@@ -107,17 +107,19 @@ export function useActionOpen(name: 'start' | 'new' | 'import'): [boolean, (open
   }];
 }
 
-const CardCtx = createContext<{ title: string; description?: string; cancel: () => void } | null>(null);
+const CardCtx = createContext<{ title: string; description?: string; cancel: () => void; back?: string } | null>(null);
 
 /**
  * An action's form as a full card in the list's place (mold_v0-217; the record details card's style): drawn while
  * `open`; its CardForm reads the title, the description and Cancel from here.
  */
-export function ActionCard({ open, onOpenChange, title, description, children }: {
-  open: boolean; onOpenChange: (open: boolean) => void; title: string; description?: string; children: ReactNode;
+export function ActionCard({ open, onOpenChange, title, description, back, children }: {
+  open: boolean; onOpenChange: (open: boolean) => void; title: string; description?: string;
+  /** The way back's words (default "Back to the list"; mold_v0-254, a record page's form: "Back to the record"). */
+  back?: string; children: ReactNode;
 }) {
   if (!open) return null;
-  return <CardCtx.Provider value={{ title, description, cancel: () => onOpenChange(false) }}>{children}</CardCtx.Provider>;
+  return <CardCtx.Provider value={{ title, description, cancel: () => onOpenChange(false), back }}>{children}</CardCtx.Provider>;
 }
 
 /**
@@ -136,7 +138,7 @@ export function CardForm({ onSubmit, submit, children }: { onSubmit: () => unkno
         <CardHeader className='border-b py-4 [.border-b]:pb-4'>
           <CardDescription>
             <Button variant='outline' size='sm' onClick={cancel}>
-              <Icons.chevronLeft className='size-3.5' />Back to the list
+              <Icons.chevronLeft className='size-3.5' />{c?.back ?? 'Back to the list'}
             </Button>
           </CardDescription>
           <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{c?.title}</CardTitle>

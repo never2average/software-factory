@@ -72,7 +72,7 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
 - **The app's own tools, as the person who started it.** At its start the session asks the customer MCP server what it
   lists to that person (an in-memory client, as the client skill does): the host packs' and packs' tools, the record
   tools, the memory tools; never the agent's own session tools (an agent does not start or steer sessions). Each wake gets
-  one token (`hst_...`, only its sha256 kept, `harness_session_tokens`, migration 0047) and its CLI an MCP config naming
+  one token (`hst_...`, only its sha256 kept, `harness_session_tokens`, migration 0048) and its CLI an MCP config naming
   the server `app` at the API's `/mcp` (not `workspace`: the pinned Claude Code reserves that name and silently drops a server called so) (the gateway's own address, so the run's egress already allows it), its
   `Authorization` a `${RUN_WORKSPACE_TOKEN}` reference to the wake's environment; the runner redacts the token from every
   line it posts. `/mcp` resolves the token on every call: the workspace is the session's (no argument names another),

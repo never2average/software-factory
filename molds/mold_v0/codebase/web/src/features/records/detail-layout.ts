@@ -14,7 +14,18 @@ type Scalar = string | number | boolean;
 export interface DetailCondition { field: string; equals?: Scalar; in?: Scalar[]; not_in?: Scalar[]; empty?: boolean }
 export interface DetailNotice { when: DetailCondition; tone: NoticeTone; title?: string; text: string }
 export interface DetailGroup { title?: string; fields: string[] }
-export interface DetailSection { title: string; columns?: 1 | 2 | 3; fields?: string[]; groups?: DetailGroup[]; empty?: string }
+export interface DetailSection { title: string; columns?: 1 | 2 | 3; fields?: string[]; groups?: DetailGroup[]; empty?: string; related?: DetailRelated; runs?: DetailRuns }
+/** A related list (mold_v0-254): another area's records that point back here, through `via`. */
+export interface DetailRelated { area: string; via?: string; columns?: string[]; sort?: { field: string; direction?: 'asc' | 'desc' }; limit?: number }
+/** The record's runs (mold_v0-254). */
+export interface DetailRuns { kinds?: string[]; limit?: number }
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link';
+export type PageActionPlace = 'primary' | 'secondary' | 'more';
+/** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
+export interface DetailActionSpec {
+  kind: PageActionKind; place?: PageActionPlace; label?: string; job_kind?: string; input?: Record<string, string>; to?: string; field?: string;
+  roles?: string[]; unavailable?: { when: DetailCondition; reason: string }[]; confirm?: string;
+}
 export interface DetailTab { label: string; sections: DetailSection[] }
 export interface DetailFact { field: string; label?: string; unit?: string }
 export interface DetailBadge { field: string; colors?: Record<string, BadgeColor> }
@@ -24,6 +35,7 @@ export interface DetailLayout {
   notices?: DetailNotice[];
   tabs: DetailTab[];
   unplaced?: 'show' | 'hide';
+  actions?: DetailActionSpec[];
 }
 /** The console's area spec with its layout (the generated type names `detail` only in a build with record_pages on). */
 export type LaidOutArea = RecordAreaSpec & { detail?: DetailLayout };
@@ -159,3 +171,64 @@ export const NOTICE_CLASS: Record<NoticeTone, string> = {
 
 /** A value as one line to copy: a list joined with ", ", an enum's stored value, a number as written. */
 export const copyText = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x)).join(', ') : v == null ? '' : String(v));
+
+// ---------------------------------------------------------------- part 2 (mold_v0-254): related lists, runs, actions
+
+/** A field of a form as the server sends it (src/tab-actions.ts FormField). */
+export interface PageFormField {
+  name: string; label: string; type: string; help: string | null; required: boolean; options: { value: string; label: string }[] | null;
+  multiple: boolean; min: number | null; max: number | null; max_length: number | null; to: string | null; preview?: 'document';
+}
+/** A page action as this person may take it on this record (src/record-page-routes.ts ActionView). */
+export interface PageAction {
+  id: string; kind: PageActionKind; place: PageActionPlace; label: string;
+  /** Why it cannot be taken now (on hover and focus), or null. */
+  disabled: string | null;
+  confirm: string | null;
+  run?: { kind: string; label: string; description: string | null; args: PageFormField[]; values: Record<string, unknown>; environments: string[] | null };
+  moves?: { to: string; label: string; disabled: string | null }[];
+  fields?: PageFormField[];
+  target?: { area: string; key: string } | null;
+}
+/** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
+export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;
+  records: { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; actions: PageAction[] }[] };
+/** A record's runs: the newest, and how many in all. */
+export interface RecordRun { id: string; pack: string; kind: string; status: string; error: string | null; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string }
+export type RunsData = { total: number; runs: RecordRun[] };
+export interface PageData { actions: PageAction[]; sections: Record<string, RelatedData | RunsData | undefined> }
+
+/** A section's key in the page's data: its tab's and its own place. */
+export const sectionKey = (tab: number, section: number) => `${tab}-${section}`;
+/** The header's actions by place: the primary (one at most), the secondary buttons, the rest for More (declared order). */
+export function placed(actions: readonly PageAction[]): { primary: PageAction | null; secondary: PageAction[]; more: PageAction[] } {
+  const primary = actions.find((a) => a.place === 'primary') ?? null;
+  return { primary, secondary: actions.filter((a) => a.place === 'secondary'), more: actions.filter((a) => a.place === 'more' || (a.place === 'primary' && a !== primary)) };
+}
+/** Whether the page draws its own actions: the area declares some (else Copy ID and Copy link, as part 1). */
+export const declaresActions = (layout: DetailLayout) => (layout.actions?.length ?? 0) > 0;
+/** Whether the copy-link action is among the declared (then More does not add its own). */
+export const declaresCopyLink = (layout: DetailLayout) => (layout.actions ?? []).some((a) => a.kind === 'copy_link');
+/** A related list's columns: its own, else the target area's list columns (at most 8). */
+export const relatedColumns = (target: RecordAreaSpec, related: DetailRelated) => (related.columns ?? target.list_columns).filter((c) => target.fields.some((f) => f.name === c)).slice(0, 8);
+
+/** The address param of a list narrowed to the records pointing at one (Show all): `?linked=<field>:<key>`. */
+export const LINKED_PARAM = 'linked';
+export const showAllHref = (base: 'app' | 'admin', area: string, via: string, key: string) => `/${base}/records/${area}?${LINKED_PARAM}=${encodeURIComponent(`${via}:${key}`)}`;
+/** `?linked=` read back: the field and the key, when the field is one of the area's. */
+export function parseLinked(v: string | null | undefined, area: Pick<RecordAreaSpec, 'fields'>): { field: string; key: string } | null {
+  if (!v) return null;
+  const i = v.indexOf(':');
+  if (i < 1) return null;
+  const field = v.slice(0, i), key = v.slice(i + 1);
+  return key && area.fields.some((f) => f.name === field) ? { field, key } : null;
+}
+
+/** A run's state as a badge's colour (the console's status tones). */
+export const RUN_STATUS_COLOR: Record<string, BadgeColor> = { queued: 'neutral', running: 'info', succeeded: 'success', failed: 'danger', cancelled: 'warning' };
+/** The words of a list of runs' count: "1 run", "12 runs", the latest shown of them when not all are. */
+export const runsCountWords = (shown: number, total: number) => (total <= shown ? `${total} ${total === 1 ? 'run' : 'runs'}` : `Latest ${shown} of ${total} runs`);
+/** A related list's count words: "3 builds", or "Newest 5" when there are more. */
+export const relatedCountWords = (n: number, more: boolean, label: string) => (more ? `First ${n} shown` : `${n} ${n === 1 ? singularOf(label).toLowerCase() : label.toLowerCase()}`);
+const singularOf = (label: string) =>
+  /ies$/i.test(label) ? label.replace(/ies$/i, 'y') : /(ss|us)$/i.test(label) ? label : /(ches|shes|xes|sses)$/i.test(label) ? label.replace(/es$/i, '') : label.replace(/s$/i, '');

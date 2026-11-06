@@ -1,6 +1,6 @@
--- Rolling back past 0047_harness_session_tokens (mold_v0-250), for a release from before it.
+-- Rolling back past 0048_harness_session_tokens (mold_v0-250), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0047_harness_session_tokens.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0048_harness_session_tokens.sql
 -- The agent sessions' tool tokens go: each was good for one wake only, and an older release neither makes nor reads them
 -- (its sessions reach nothing of the workspace). A wake running across the rollback loses its workspace tools.
 -- Found by its name. Refused when a later migration is applied.
