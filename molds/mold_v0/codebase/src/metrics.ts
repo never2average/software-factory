@@ -25,6 +25,7 @@ import { columnOf, metricRoles, metricUnit, pointOf, RUN_SOURCES, viewsOf, type 
 import { packs } from "./packs.js";
 import { findArea, may, type Actor } from "./record-areas.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { asViewerOf } from "./visibility.js";
 
 /** Rows of a sealed area opened and evaluated in code, at most. */
 export const MAX_SEALED_ROWS = 5000;
@@ -533,7 +534,11 @@ export async function computeSpec(orgId: number | null, m: SpecMetric, actor: Ac
 }
 
 /** Several metrics at once (the console's charts): each answer, or its refusal, by name. */
-export async function computeMetrics(orgId: number, names: string[], actor: Actor, now = new Date()): Promise<MetricResult[]> {
+export function computeMetrics(orgId: number, names: string[], actor: Actor, now = new Date()): Promise<MetricResult[]> {
+  // mold_v0-259 (flag teams): counted as the person reads (the database leaves out the records they may not see).
+  return asViewerOf(actor, () => computeMetricsNow(orgId, names, actor, now));
+}
+async function computeMetricsNow(orgId: number, names: string[], actor: Actor, now: Date): Promise<MetricResult[]> {
   if (names.length > MAX_METRICS_PER_REQUEST) throw new PackError(`at most ${MAX_METRICS_PER_REQUEST} metrics at once`, 400);
   const sealed = new Map<string, Promise<Sealed>>();
   const one = async (n: string): Promise<MetricResult> => {

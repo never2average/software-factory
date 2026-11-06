@@ -39,6 +39,7 @@ import { BLIND_PREFIX, blindIndex, checkEncryptedQuery, decryptValue, encryptedF
 import type { RevealedFields } from "./pack-api.js";
 import { featureSetting } from "./feature-flags.js";
 import { isStoredFileRef } from "./record-files-config.js";
+import { asViewerOf, mayShare, VISIBILITY_COLUMNS, visibilityForWrite, visibilityOf, visibilityShown, type StoredVisibility, type VisibilityWrite } from "./visibility.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
 export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
@@ -372,7 +373,11 @@ const title = (t: unknown): string | null => {
   return t;
 };
 
-interface Row { key: string; title: string | null; data: unknown; version?: string | null; updated_at: Date | string }
+interface Row extends Partial<StoredVisibility> { key: string; title: string | null; data: unknown; version?: string | null; updated_at: Date | string }
+/** mold_v0-259: a read's visibility columns, for an area whose records carry theirs (flag teams); else none (as before). */
+const visCols = (area: RecordArea) => (visibilityShown(area) ? `, ${VISIBILITY_COLUMNS}` : "");
+/** The columns a write of a record's visibility sets, in VisibilityWrite's order (0050). */
+const VIS_WRITE = ["visibility", "team_id", "owner_id", "collaborators"] as const;
 const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOString();
 async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promise<RecordRow> {
   // Sealed values open with the row's own workspace key only (a row sealed before its area stopped being sealed opens
@@ -382,7 +387,8 @@ async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promi
   if (orgId !== null && needsMasking(area, raw)) raw = await maskFields(orgId, area, row.key, raw);
   const { data, drift } = conform(area, raw);
   const t = orgId !== null && isSealed(row.title) ? await open(orgId, row.title) : row.title;
-  return { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}) };
+  return { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}),
+    ...(orgId !== null && visibilityShown(area) ? { visibility: visibilityOf(row as StoredVisibility) } : {}) };
 }
 
 /** A query (mold_v0-059) against an area's fields: limit, sort, filter, cursor (src/record-query.ts). */
@@ -436,7 +442,7 @@ async function listTable(area: RecordArea, orgId: number | null, query: Parsed):
     const parts = sqlParts(p, params, { table, where: base });
     params.push(p.limit + 1);
     const rows = await (await q()).query<Row>(
-      `SELECT key, title, data, ${orgId === null ? "version" : "NULL::text AS version"}, updated_at FROM ${table}
+      `SELECT key, title, data, ${orgId === null ? "version" : "NULL::text AS version"}, updated_at${orgId === null ? "" : visCols(area)} FROM ${table}
         WHERE ${[...base, ...parts.where].join(" AND ")} ORDER BY ${parts.order} LIMIT $${params.length}`, params);
     const page = await Promise.all(rows.slice(0, p.limit).map((r) => toRecord(area, r, orgId)));
     const last = rows[p.limit - 1];
@@ -452,7 +458,7 @@ async function scanWorkspace(orgId: number, area: RecordArea, keyConds: Parsed["
     const parts = sqlParts({ limit: 1, conds: keyConds, sort: { target: "key", name: "key", desc: false, text: "key" }, after: null }, params);
     params.push(MEMORY_SCAN_LIMIT + 1);
     const rows = await (await q()).query<Row>(
-      `SELECT key, title, data, updated_at FROM workspace_records WHERE ${["org_id = $1", "pack = $2", "area = $3", ...parts.where].join(" AND ")} ORDER BY key LIMIT $${params.length}`, params);
+      `SELECT key, title, data, updated_at${visCols(area)} FROM workspace_records WHERE ${["org_id = $1", "pack = $2", "area = $3", ...parts.where].join(" AND ")} ORDER BY key LIMIT $${params.length}`, params);
     if (rows.length > MEMORY_SCAN_LIMIT)
       throw new PackError(`${area.label} is sealed: a filter or sort opens every record, and it has more than ${MEMORY_SCAN_LIMIT}. Filter by key first.`, 413);
     return Promise.all(rows.map((r) => toRecord(area, r, orgId)));
@@ -486,14 +492,15 @@ export async function getPlatform(area: RecordArea, key: string): Promise<Record
 }
 
 /** A workspace row as stored (its raw data, for a compare-and-set) and as read. */
-async function readWorkspace(orgId: number, area: RecordArea, key: string): Promise<{ rev: string; record: RecordRow; opened: Record<string, unknown> } | null> {
+async function readWorkspace(orgId: number, area: RecordArea, key: string): Promise<{ rev: string; record: RecordRow; opened: Record<string, unknown>; stored: StoredVisibility } | null> {
   return withTenant(orgId, async () => {
     // xmin: the row version, for the compare-and-set of a write or move (exact, whatever the stored values are).
-    const [r] = await (await q()).query<Row & { rev: string }>("SELECT key, title, data, updated_at, xmin::text AS rev FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4",
+    const [r] = await (await q()).query<Row & { rev: string }>(`SELECT key, title, data, updated_at, xmin::text AS rev${visCols(area)} FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4`,
       [orgId, area.pack, area.name, checkKey(key)]);
     if (!r) return null;
     const opened = await openJson(orgId, r.data);
-    return { rev: r.rev, record: await toRecord(area, r, orgId), opened };
+    return { rev: r.rev, record: await toRecord(area, r, orgId), opened,
+      stored: { visibility: r.visibility ?? null, team_id: r.team_id ?? null, owner_id: r.owner_id ?? null, collaborators: r.collaborators ?? null, team_name: r.team_name ?? null } };
   });
 }
 async function getWorkspace(orgId: number, area: RecordArea, key: string): Promise<RecordRow | null> {
@@ -506,20 +513,76 @@ async function getWorkspace(orgId: number, area: RecordArea, key: string): Promi
  * One workspace's view of an area: a platform area's shared rows, or the workspace's own rows of a workspace area. With
  * an actor (the person asking), the area's read permission is checked first (mold_v0-057).
  */
-export const listFor = async (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR): Promise<RecordPage> => {
+export const listFor = (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR): Promise<RecordPage> =>
+  // mold_v0-259: as the person reads (src/visibility.ts): the database leaves out what they may not see.
+  asViewerOf(actor, () => listForNow(orgId, name, opts, actor));
+const listForNow = async (orgId: number, name: string, opts: RecordQuery | { limit?: unknown; after?: unknown } | undefined, actor: Actor): Promise<RecordPage> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
   if (a.scope === "platform") return listPlatform(a, opts);
   const page = await listWorkspace(orgId, a, opts);
   return hasClocks(a) ? { ...page, records: await (await clocks()).withClocks(orgId, a, page.records) } : page;
 };
-export const getFor = async (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> => {
+export const getFor = (orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow | null> =>
+  asViewerOf(actor, () => getForNow(orgId, name, key, actor));
+const getForNow = async (orgId: number, name: string, key: string, actor: Actor): Promise<RecordRow | null> => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
   if (a.scope === "platform") return getPlatform(a, key);
   const r = await getWorkspace(orgId, a, key);
   return r && hasClocks(a) ? (await (await clocks()).withClocks(orgId, a, [r]))[0]! : r;
 };
+// ---------- who sees a record: Share (mold_v0-259, flag teams; src/visibility.ts) ----------
+
+/**
+ * Change who sees one of the workspace's records (the record page's Share, the data API's POST .../visibility): its
+ * visibility alone, nothing else of it (when it changed stays as it was). For a person who may update the area's records
+ * and is the record's owner, a lead of its team, or a workspace owner (src/visibility.ts visibilityForWrite); an
+ * append-only record never changes. A record the person may not see is not there (404).
+ */
+export function shareFor(orgId: number, name: string, key: string, given: unknown, actor: Actor = SYSTEM_ACTOR): Promise<RecordRow> {
+  return asViewerOf(actor, async () => {
+    const area = areaOrThrow(name);
+    if (area.scope !== "workspace" || !visibilityShown(area)) throw new PackError(`${area.label} records are each open to the whole workspace (the area declares no \`visibility\`)`, 404);
+    if (isReadOnlyArea(area)) throw readOnly(area);
+    assertMay(area, "read", actor);
+    checkKey(key);
+    const prev = await readWorkspace(orgId, area, key);
+    if (!prev) throw new PackError(`no ${area.name} record ${key}`, 404);
+    assertMay(area, "update", actor);
+    if (area.append_only) throw appendOnly(area, key);
+    if (given === undefined || given === null) throw new PackError("give `visibility`: {mode: workspace|team|private, team?, collaborators?}", 400);
+    const vis = (await visibilityForWrite(orgId, area, actor, given, prev.stored))!;
+    const who = writerText(writerOf(actor, null));
+    const [r] = await withTenant(orgId, async () => (await q()).query<Row>(
+      `UPDATE workspace_records SET visibility = $5, team_id = $6, owner_id = $7, collaborators = $8, updated_by = $9
+        WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 RETURNING key, title, data, updated_at${visCols(area)}`,
+      [orgId, area.pack, area.name, key, vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, who]));
+    if (!r) throw new PackError(`no ${area.name} record ${key}`, 404);
+    auditData(orgId, { action: "update", pack: area.pack, area: area.name, key });
+    return toRecord(area, r, orgId);
+  });
+}
+
+/**
+ * The records shared with a team (mold_v0-259: a team's page), newest change first, as the person reads them (the
+ * database's visibility rule, their areas' read permission): each area that declares visibility, at most `limit` in all.
+ */
+export function recordsSharedWith(orgId: number, teamId: number, actor: Actor = SYSTEM_ACTOR, limit = 50): Promise<{ area: string; label: string; key: string; title: string | null; updated_at: string }[]> {
+  return asViewerOf(actor, async () => {
+    const areas = recordAreas().filter((a) => visibilityShown(a) && !isLive(a) && may(a, "read", actor) && !areaOpWithheld(a.name, "get"));
+    if (!areas.length) return [];
+    const rows = await withTenant(orgId, async () => (await q()).query<{ pack: string; area: string; key: string; title: string | null; updated_at: Date | string }>(
+      `SELECT pack, area, key, title, updated_at FROM workspace_records WHERE org_id = $1 AND team_id = $2 AND visibility = 'team'
+         AND (pack, area) IN (SELECT * FROM unnest($3::text[], $4::text[])) ORDER BY updated_at DESC, id DESC LIMIT $5`,
+      [orgId, teamId, areas.map((a) => a.pack), areas.map((a) => a.name), Math.min(Math.max(limit, 1), 200)]));
+    return Promise.all(rows.map(async (r) => {
+      const a = areas.find((x) => x.pack === r.pack && x.name === r.area)!;
+      return { area: a.name, label: a.label, key: r.key, title: isSealed(r.title) ? await withTenant(orgId, () => open(orgId, r.title as string)) : r.title, updated_at: iso(r.updated_at) };
+    }));
+  });
+}
+
 // ---------- encrypted fields: reveal (mold_v0-194, src/encrypted-fields.ts) ----------
 
 /**
@@ -543,7 +606,10 @@ export const mayReveal = (area: RecordArea, f: EncField, actor: Actor) =>
  * every encrypted field the actor may reveal. One `reveal` entry in the data trail (never a value); a value that does
  * not open (moved from another record or workspace) is refused, never shown.
  */
-export async function revealFor(orgId: number, name: string, key: string, fields: unknown, actor: Actor = SYSTEM_ACTOR): Promise<RevealedFields> {
+export function revealFor(orgId: number, name: string, key: string, fields: unknown, actor: Actor = SYSTEM_ACTOR): Promise<RevealedFields> {
+  return asViewerOf(actor, () => revealForNow(orgId, name, key, fields, actor));
+}
+async function revealForNow(orgId: number, name: string, key: string, fields: unknown, actor: Actor): Promise<RevealedFields> {
   const area = areaOrThrow(name);
   if (area.scope !== "workspace" || !hasEncryptedFields(area)) throw new PackError(`${area.label} has no encrypted fields`, 404);
   // The features registry (mold_v0-219): with encrypted_fields off nothing is revealed (values stay masked: fail closed).
@@ -600,7 +666,10 @@ const clocks = () => import("./record-clocks.js");
  * A record and the records its links and references name (in the same workspace for a workspace area), as one
  * workspace sees them; a linked area the actor may not read is left out.
  */
-export async function detailFor(orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) {
+export function detailFor(orgId: number, name: string, key: string, actor: Actor = SYSTEM_ACTOR) {
+  return asViewerOf(actor, () => detailForNow(orgId, name, key, actor));
+}
+async function detailForNow(orgId: number, name: string, key: string, actor: Actor) {
   const area = areaOrThrow(name);
   const record = await getFor(orgId, name, key, actor);
   if (!record) return null;
@@ -620,7 +689,9 @@ export async function detailFor(orgId: number, name: string, key: string, actor:
   const clockEvents = hasClocks(area) ? { clock_events: await (await clocks()).clockEvents(orgId, area, record.key) } : {};
   // mold_v0-236: where a workspace row came from and who last wrote it (a row written before 0042 has no mark).
   const written = area.scope === "workspace" ? (await workspaceProvenance(orgId, area, [record.key])).get(record.key) : undefined;
-  return { area: areaSummary(area), record, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}) };
+  // mold_v0-259 (flag teams): whether this person may change who sees it (the page's Share).
+  const share = record.visibility ? { can_share: !area.append_only && !isReadOnlyArea(area) && may(area, "update", actor) && await mayShare(orgId, area, actor, record.visibility) } : {};
+  return { area: areaSummary(area), record, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}), ...share };
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -682,7 +753,7 @@ const assertCanSeal = (area: RecordArea) => {
   if ((isSealedArea(area) || hasEncryptedFields(area)) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
 };
 
-async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, writer: RecordWriter, meta: WriteMeta | null = null, action: "move" | null = null): Promise<RecordRow> {
+async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, writer: RecordWriter, meta: WriteMeta | null = null, action: "move" | null = null, vis: VisibilityWrite | null = null): Promise<RecordRow> {
   let stored: Record<string, unknown> = data;
   // Encrypted fields (mold_v0-194): each value sealed for this record and field, with its blind index and the tag.
   let outside: Record<string, unknown> = {};
@@ -706,18 +777,23 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     // mold_v0-236: who wrote it. A new row takes its writer's kind; a later write keeps where the row came from (a
     // repository's index taking a row over makes it the repository's) and records only who wrote it last.
     const kind = writer.by === "shell" ? null : writer.by, who = writerText(writer);
+    // mold_v0-259: the visibility columns a write sets (none: they stay as they are, NULL on a new row).
+    const visInto = vis ? ", " + VIS_WRITE.join(", ") : "", visSet = vis ? VIS_WRITE.map((c, i) => ", " + c + " = $" + (12 + i)).join("") : "";
     const [r] = prev === null
       ? await db.query<Row>(
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-         ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null])
+        // mold_v0-259: a new record's visibility (flag teams, an area that declares one); else the columns stay NULL.
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by${visInto}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12${vis ? ", $13, $14, $15, $16" : ""})
+         ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at${visCols(area)}`,
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null,
+          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators] : [])])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
         `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now(),
             written_by = CASE WHEN $9::text IS NOT NULL AND provenance IS DISTINCT FROM 'repository' THEN $11 ELSE written_by END,
-            provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11
-          WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who]);
+            provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11${visSet}
+          WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at${visCols(area)}`,
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who,
+          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators] : [])]);
     if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
     auditData(orgId, { action: action ?? (prev === null ? "create" : "update"), pack: area.pack, area: area.name, key }); // mold_v0-197: never the values
     return toRecord(area, r, orgId);
@@ -735,7 +811,8 @@ const appendOnly = (area: RecordArea, key: string) => new PackError(`${area.labe
 export type PutMode = "put" | "create" | "update";
 
 function putWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
-  return atomic(orgId, name, () => putWorkspaceNow(orgId, pack, actor, name, key, value, mode, meta));
+  // mold_v0-259: as the person reads (a record they may not see is not there to change).
+  return asViewerOf(actor, () => atomic(orgId, name, () => putWorkspaceNow(orgId, pack, actor, name, key, value, mode, meta)));
 }
 async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
@@ -752,9 +829,11 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   // Encrypted fields (mold_v0-194): the mask, or a field left out, keeps the stored value; null clears it.
   const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   const t = title(value?.title);
+  // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
+  const vis = meta ? null : await visibilityForWrite(orgId, area, actor, value?.visibility, prev ? prev.stored : null);
   if (!area.lifecycle) {
     const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
-    const r = await writeRow(orgId, area, key, t, data, prev, w, meta);
+    const r = await writeRow(orgId, area, key, t, data, prev, w, meta, null, vis);
     await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data }, w) });
     return r;
   }
@@ -771,7 +850,7 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const data = { ...(await checkRecord(area, rest, orgId, actor, undefined, [field, ...Object.keys(carried)])), ...carried };
   const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
   const after = { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, w = writerOf(actor, meta);
-  const r = await writeRow(orgId, area, key, t, after, prev, w, meta);
+  const r = await writeRow(orgId, area, key, t, after, prev, w, meta, null, vis);
   await changed({ orgId, pack: area.pack, area: area.name, key, change: prev ? "updated" : "created", record: r, history: historyOf(prev, { title: t, data: after }, w) });
   return r;
 }
@@ -782,7 +861,7 @@ const movesFrom = (area: RecordArea, from: unknown) => area.lifecycle!.transitio
   .map((t) => `${JSON.stringify(t.to)}${t.label ? ` (${t.label})` : ""}${t.roles ? ` [${t.roles.join(", ")}]` : ""}`);
 
 function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
-  return atomic(orgId, name, () => moveWorkspaceNow(orgId, pack, actor, name, key, to));
+  return asViewerOf(actor, () => atomic(orgId, name, () => moveWorkspaceNow(orgId, pack, actor, name, key, to)));
 }
 async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
@@ -811,7 +890,7 @@ async function moveWorkspaceNow(orgId: number, pack: string, actor: Actor, name:
 }
 
 function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
-  return atomic(orgId, name, () => deleteWorkspaceNow(orgId, pack, actor, name, key, source));
+  return asViewerOf(actor, () => atomic(orgId, name, () => deleteWorkspaceNow(orgId, pack, actor, name, key, source)));
 }
 async function deleteWorkspaceNow(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
   const area = ownWorkspaceArea(pack, name);
@@ -1001,7 +1080,11 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   return out;
 }
 
-async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
+function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
+  // mold_v0-259: the batch's one transaction opens as the person reads.
+  return asViewerOf(actor, () => batchWorkspaceNow(orgId, pack, actor, raw, max, source, fingerprints, claim));
+}
+async function batchWorkspaceNow(orgId: number, pack: string, actor: Actor, raw: unknown, max: number, source: string | null, fingerprints: Map<string, string> | undefined, claim: boolean): Promise<RecordOperationResult[]> {
   const ops = checkOps(raw, max);
   // The data trail (mold_v0-197): each operation's entry, written only when the whole batch commits.
   return auditAtomic(() => inTransaction(orgId, async () => {
@@ -1012,7 +1095,7 @@ async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: un
         else if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deleteWorkspace(orgId, pack, actor, o.area, o.key, source) });
         else {
           const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
-          out.push({ op: o.op, area: o.area, key: o.key, record: await putWorkspace(orgId, pack, actor, o.area, o.key, { title: o.title, data: o.data }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
+          out.push({ op: o.op, area: o.area, key: o.key, record: await putWorkspace(orgId, pack, actor, o.area, o.key, { title: o.title, data: o.data, ...(o.visibility !== undefined ? { visibility: o.visibility } : {}) }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
         }
       } catch (e) { throw numbered(i, o, e); }
     }
@@ -1144,6 +1227,8 @@ export const areaSummary = (a: RecordArea) => ({
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),
   // mold_v0-234/235: who may export and import, when the area's contract says (else export is read's, and no import).
   ...(a.contract ? { export: exportRoles(a), ...(takesImport(a) ? { import: importRoles(a) } : {}) } : {}),
+  // mold_v0-259 (flag teams): who may see its records.
+  ...(visibilityShown(a) ? { visibility: a.visibility } : {}),
 });
 
 // ---------- MCP: list_records and get_record ----------

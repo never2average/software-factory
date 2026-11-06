@@ -4764,6 +4764,44 @@
                 ],
                 "additionalProperties": false
               },
+              "visibility": {
+                "type": "object",
+                "properties": {
+                  "modes": {
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "workspace",
+                        "team",
+                        "private"
+                      ]
+                    }
+                  },
+                  "default": {
+                    "type": "string",
+                    "enum": [
+                      "workspace",
+                      "team",
+                      "private"
+                    ]
+                  },
+                  "collaborators": {
+                    "type": "boolean"
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "modes",
+                  "default"
+                ],
+                "additionalProperties": false
+              },
               "samples": {
                 "maxItems": 20,
                 "type": "array",
@@ -17143,6 +17181,13 @@
           "title": "Forms in a side panel (mold_v0-256)",
           "description": "Add and edit forms of records (an area's Add, a record's Edit, a staff record's New and Edit, a record page's Add <related record>) open first in a panel at the right of the list or the page, which stays in view: Open full page expands the same form, its typed values kept, to the full in-page card. Focus stays in the panel, Esc closes it, and closing it with unsaved changes asks first. On a phone (640 px or narrower) the panel fills the screen. Asked for when always (the profile alone). Default false. Off: Every form is the full in-page card it always was; the generated files leave the flag out.",
           "markdownDescription": "**Forms in a side panel** (mold_v0-256; board name `panel`). Add and edit forms of records (an area's Add, a record's Edit, a staff record's New and Edit, a record page's Add <related record>) open first in a panel at the right of the list or the page, which stays in view: Open full page expands the same form, its typed values kept, to the full in-page card. Focus stays in the panel, Esc closes it, and closing it with unsaved changes asks first. On a phone (640 px or narrower) the panel fills the screen.\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: Every form is the full in-page card it always was; the generated files leave the flag out.\n\nBrief line: `features.side_panel_forms = true` in `## Profile`."
+        },
+        "teams": {
+          "type": "boolean",
+          "default": false,
+          "title": "Teams and record visibility (mold_v0-259)",
+          "description": "Teams inside a workspace, each with a name, members and leads, managed by the workspace's owners in Settings › Teams (each team's page lists its people, records and changes; every membership change is kept). A record area that declares visibility gives each record its own: open to the workspace, shared with one team, or private to its owner, with named collaborators where the area allows them. The database enforces it on every read and write (lists, record pages, related lists, computed facts and columns, the record picker, exports, metrics and charts, the MCP tools, the workspace agent's tools, the data and developer APIs): a person sees a record that is open to the workspace, theirs, one they collaborate on, or their team's; the workspace's owners see every record. Create and edit forms get a visibility field, lists a Visibility column and filter, record pages a Visibility line and Share. Asked for when the app's profile (no pack declares it; a record area's visibility, record_areas[].visibility, takes effect only with it on). Default false. Off: No Teams tab, no /api/teams, no visibility field, column, filter or Share; every record is open to its whole workspace, as before, and the generated files leave the flag out.",
+          "markdownDescription": "**Teams and record visibility** (mold_v0-259; board name `teams`). Teams inside a workspace, each with a name, members and leads, managed by the workspace's owners in Settings › Teams (each team's page lists its people, records and changes; every membership change is kept). A record area that declares visibility gives each record its own: open to the workspace, shared with one team, or private to its owner, with named collaborators where the area allows them. The database enforces it on every read and write (lists, record pages, related lists, computed facts and columns, the record picker, exports, metrics and charts, the MCP tools, the workspace agent's tools, the data and developer APIs): a person sees a record that is open to the workspace, theirs, one they collaborate on, or their team's; the workspace's owners see every record. Create and edit forms get a visibility field, lists a Visibility column and filter, record pages a Visibility line and Share.\n\n- **Asked for** when the app's profile (no pack declares it; a record area's visibility, record_areas[].visibility, takes effect only with it on).\n- **Default** `false`.\n- **Off**: No Teams tab, no /api/teams, no visibility field, column, filter or Share; every record is open to its whole workspace, as before, and the generated files leave the flag out.\n\nBrief line: `features.teams = true` in `## Profile`."
         }
       }
     }

@@ -1103,6 +1103,72 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} a record's change history (append-only to the tenant, its own lines; actions and lists checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Teams and per-record visibility (mold_v0-259, teams_and_visibility, found by name): three tenant tables the tenant role
+  // only reads; each record's visibility columns, NULL for every record written before (open to the workspace); the
+  // restrictive record_visibility policy on workspace_records. Its rollback drops them, the records staying, leaves
+  // exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "teams_and_visibility")!.version;
+    const before = await shellAt(kind, v - 1);
+    const [{ id: org }] = await before.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Visibility', 'visibility-before') RETURNING id");
+    await before.query("INSERT INTO workspace_records (org_id, pack, area, key) VALUES ($1, 'p', 'notes', 'n-before')", [org]);
+    await runMigrations(before, { packDirs: [] });
+    const [old] = await before.query<{ visibility: string | null; team_id: number | null; owner_id: string | null; collaborators: string[] | null }>("SELECT visibility, team_id, owner_id, collaborators FROM workspace_records WHERE key = 'n-before'");
+    assert.deepEqual([old!.visibility, old!.team_id, old!.owner_id, old!.collaborators], [null, null, null, null], "a record from before: open to the workspace");
+    await assert.rejects(before.query("INSERT INTO workspace_records (org_id, pack, area, key, visibility) VALUES ($1, 'p', 'notes', 'n-bad', 'everyone')", [org]), /check constraint/, "an unknown visibility refused");
+    const [{ id: team }] = await before.query<{ id: number }>("INSERT INTO workspace_teams (org_id, name) VALUES ($1, 'Design') RETURNING id", [org]);
+    await assert.rejects(before.query("INSERT INTO workspace_teams (org_id, name) VALUES ($1, 'design')", [org]), /unique|duplicate/, "a team's name is unique in its workspace (any case)");
+    await before.query("INSERT INTO workspace_team_members (org_id, team_id, user_id, role) VALUES ($1, $2, 'u1', 'lead')", [org, team]);
+    await assert.rejects(before.query("INSERT INTO workspace_team_members (org_id, team_id, user_id, role) VALUES ($1, $2, 'u2', 'boss')", [org, team]), /check constraint/, "a role is member or lead");
+    for (const t of ["workspace_teams", "workspace_team_members", "workspace_team_changes"]) {
+      const grants = (await before.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role() ORDER BY 1", [t])).map((g) => g.privilege_type);
+      assert.deepEqual(grants, ["SELECT"], `${t}: the tenant role reads it, never writes it`);
+    }
+    const [pol] = await before.query<{ permissive: string }>("SELECT permissive FROM pg_policies WHERE tablename = 'workspace_records' AND policyname = 'record_visibility'");
+    assert.equal(pol?.permissive, "RESTRICTIVE", "the visibility policy narrows tenant_isolation");
+    await before.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_teams_and_visibility.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_teams_and_visibility")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} teams and per-record visibility (records from before stay open; tenant reads only; a restrictive policy); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
+  // The workspace agent's profiles (mold_v0-261, agent_profiles, found by name): three staff tables the tenant role
+  // never reaches, a profile and a session's record both or neither; its rollback drops them and the session columns,
+  // the sessions staying, leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "agent_profiles")!.version;
+    const d = await shellAt(kind, v);
+    await d.query("INSERT INTO agent_profiles (id, name, created_by, updated_by) VALUES ('builder', 'Builder', 'staff', 'staff')");
+    await d.query("INSERT INTO agent_profile_versions (profile_id, version, name, config, created_by) VALUES ('builder', 1, 'Builder', '{}', 'staff')");
+    await d.query("INSERT INTO agent_profile_changes (profile_id, version, action, changed_by, after) VALUES ('builder', 1, 'created', 'staff', '{}')");
+    await assert.rejects(d.query("INSERT INTO agent_profiles (id, name, created_by, updated_by) VALUES ('Bad id', 'X', 's', 's')"), /check constraint/, "an id that is no address refused");
+    await assert.rejects(d.query("INSERT INTO agent_profile_changes (profile_id, version, action, changed_by, after) VALUES ('builder', 1, 'renamed', 's', '{}')"), /check constraint/, "an unknown action refused");
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Profiles', 'profiles-migration') RETURNING id");
+    await assert.rejects(d.query("INSERT INTO harness_sessions (id, org_id, title, state, flavour, model, provider, policy, budget_usd, profile_id) VALUES ('hss_a', $1, 't', 'starting', 'f', 'm', 'p', '{}', 1, 'builder')", [org]), /check constraint|profile_both/, "a profile without its version refused");
+    for (const t of ["agent_profiles", "agent_profile_versions", "agent_profile_changes"]) {
+      const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t]);
+      assert.equal(grants.length, 0, `${t}: the tenant role has no grant on it`);
+    }
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_agent_profiles.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_agent_profiles")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} the workspace agent's profiles (staff tables, no tenant grant; ids and actions checked; a session's profile both or neither); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

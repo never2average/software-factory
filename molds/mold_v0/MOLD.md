@@ -2851,6 +2851,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
 | `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`; mold_v0-256: a run's own page (`/app/runs/<id>`, `/api/runs/<id>/page`), log, history, code, table and file sections, computed facts and list columns, Add <related record>, the record picker, a Key from the Title, and `record_changes`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
 | `side_panel_forms` | off | always (the profile alone) | create and edit forms open first in a side panel (mold_v0-256, below): an area's Add, a record page's Edit and Add <related record>, staff's New and Edit. `quiet_off`: while off the generated files leave it out |
+| `teams` | off | always (the profile alone); an area's `visibility` takes effect only with it on | teams inside a workspace and per-record visibility (mold_v0-259, below): Settings › Access › Teams, `/api/teams`, `/app/settings/teams/<id>`, each record's visibility on every read and write, the forms' visibility field, the lists' Visibility column and filter, the record page's Share. `quiet_off`: while off the generated files leave it, the Teams tab and the areas' `visibility` out |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -2858,7 +2859,7 @@ with `embedded`); in a build the flag false turns a declared surface off. The sp
 needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platform`.
 
 **Settings, from the registry.** Each capability that is on contributes its Settings tabs, in four fixed groups:
-**Access** (Credentials, API keys, Allowed origins), **Connections** (Email, Webhooks, Integrations), **Automation**
+**Access** (Credentials, API keys, Allowed origins, Teams), **Connections** (Email, Webhooks, Integrations), **Automation**
 (Alerts), **Data & trust** (Signing), each followed by the packs' own: a workspace record area declared
 `"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
 table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operational. The sidebar follows the
@@ -2964,7 +2965,7 @@ page) out of `console-routes.generated.json`, so the proxy answers them not foun
     only at most 64 px a side (the console resizes every picture to a 64 px PNG before it sends it). Kept sealed with the
     workspace's data key at `workspaces/org-<id>/.agent-icon/icon.wse`, bound to the workspace (a copy under another
     workspace's prefix does not open), gone with the workspace. Staff consoles show the app's.
-- **Agent profiles** (mold_v0-261, `src/agent-profiles.ts`, `src/agent-profile-spec.ts`, migration 0050 with its
+- **Agent profiles** (mold_v0-261, `src/agent-profiles.ts`, `src/agent-profile-spec.ts`, migration 0051 with its
   rollback; [docs/agent-harness.md](docs/agent-harness.md) "Agent profiles"). Platform staff create, edit, version and
   archive named profiles in **Admin › Agent profiles** (`/admin/agent-profiles`: the standard list, cards, the search row
   with New profile, the table; a row opens the profile's page `/admin/agent-profiles/<id>`, laid out as a record's page:
@@ -3543,6 +3544,59 @@ answer and the table, computed facts by role, Add <related record>, the picker, 
 each off), `npm run test:run-page` (the run's page by role and workspace, polling, Stop and Re-run, off),
 `npm run test:migrations` (0049 and its rollback), `npm run test:features` (side_panel_forms), `npm run test:console-tabs`,
 `npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_pages` (projects, environments, builds, releases).
+
+## Teams and per-record visibility (mold_v0-259)
+
+Under the flag `teams` (off by default; off, `/api/teams` answers nothing, `/app/settings/teams/<id>` is a 404, no record carries
+a visibility, nothing is hidden, and the generated files are as before). docs/RECORDS.md section 4a has the contract.
+
+- **Teams** (`src/teams.ts`, `src/team-routes.ts` at `/api/teams`; `sql/migrations/0050_teams_and_visibility.sql` with
+  its rollback): `workspace_teams` (a name unique in the workspace, any case; a description), `workspace_team_members`
+  (a person's sign-in id, `member` or `lead`), `workspace_team_changes` (every change: created, renamed, deleted, a person
+  added or taken out, made a lead or a member, with who and when). The tenant role only reads them (row-level security);
+  the shell's own role writes them for an owner (`can("team")`). Everyone in the workspace reads the teams; a person
+  removed from the workspace leaves its teams (`src/app.ts` remove); a deleted team's records become private to their
+  owners (refused while an append-only, chained record is shared with it). The budget rules' `usage_teams` are separate.
+- **Per-record visibility** (`src/visibility.ts`; an area's `visibility: {modes, default, collaborators?}`,
+  `src/pack-api.ts` `VisibilitySchema`): `workspace_records.visibility` (NULL or `workspace`, `team`, `private`),
+  `team_id`, `owner_id`, `collaborators`. **One place decides**: the restrictive policy `record_visibility` on
+  `workspace_records`, against `app.viewer`, which `src/tenant-scope.ts` sets on every tenant transaction (`*` when no
+  viewer is in scope: every record; a transaction that sets none sees only the workspace's open records). The viewer is
+  the person a door acts for (`viewerOf`: none for an owner, an account key or the shell; the person's id for a viewer,
+  member or billing manager; `~api` for the developer API), set by `customerSession` (the console's and the packs' routes,
+  the data API, metrics, sparklines), `runPackTool` (every MCP tool, the workspace agent's included: its token acts as its
+  starter), the developer API's handler, and again by the record store from its actor (`listFor`, `getFor`, `detailFor`,
+  `revealFor`, every write and batch), metrics and sparklines. So the lists, record pages, related lists, computed facts
+  and columns, the record picker, CSV export, metrics, charts and cards, the MCP tools, `ctx.records`, reference checks
+  and writes each find only what the person may see, with no per-route filter.
+- **Writes** (`visibilityForWrite`): a new record takes what it names or its area's default (a `team` default: the
+  writer's one team), owned by its writer; no person (a run, the shell, a key): open to the workspace. A change keeps it
+  unless it names one; only the record's owner, a lead of its team (while it is the team's) or a workspace owner may
+  (`shareFor`, `POST /api/data/<area>/<key>/visibility`; `can_share` on the record's detail). Refused in words before
+  the database would: a mode the area lacks, an unknown team or one the writer is not in, collaborators where none are
+  named, a visibility hiding the record from its writer, anything but `workspace` from a caller that is no person.
+  The `create_<area>`/`update_<area>` tools take `visibility` (only for such an area, only while on:
+  `src/mcp-tools.ts` `withVisibilityInput`), so the catalog and every other build's tools are unchanged.
+- **The console** (`web/src/features/teams/`): Settings › Access › Teams (`teams-tab.tsx`: four cards, the search row
+  with New team for owners, the table; New team a full card), a team's page in the record page layout (`team-page.tsx`,
+  `/app/settings/teams/<id>`: the header with its badges, four facts and its actions (Add people, Rename, More: Copy link, Delete
+  team), tabs People, Records, History); the create and edit forms' **Who sees it** field (`visibility.tsx`
+  `VisibilityField`: the modes, the person's teams (an owner: every team), the workspace's people as collaborators); a
+  list's **Visibility** column (a select the Filter menu filters; `?visibility=workspace|private|team:<name>`); a
+  record's page (laid out or the details card) shows its visibility with **Share** (a dialog, for those who may).
+- `src/rls.ts`'s probe adds: the tenant role cannot put anyone in a team, create one or rewrite its history; a person
+  who is neither its owner, named on it nor in its team does not see a private or team record, its member and owner do,
+  `*` sees both, a transaction with no viewer sees neither; such a person can neither change nor write one.
+
+Proof: `npm run test:teams` (off; the declaration's refusals; teams managed by owners only and every change kept; writes
+and their refusals; every read path for six people (an owner, the record's owner, its team's lead, another team's member,
+a collaborator, a viewer) through the console's routes, the data API, the record page's related list and computed facts,
+a tab's computed column, the picker, CSV export, metrics and cards, the MCP tools, the agent's token, `ctx.records`,
+reference checks and the developer API's door; writes, Share and the edit form; the database alone (a raw query, count
+and update as a person; no viewer fails closed; the policy refuses a hidden insert); workspace isolation; leaving a team,
+a deleted team, leaving the workspace; off again), `npm run test:migrations` (0050 and its rollback), `npm run check:rls`
+(the probe above), `npm run test:features` (the flag), `npm run test:console-tabs` (a teams build's console typechecks),
+`npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_teams` (projects, notes, places).
 
 ## How the factory runs it
 

@@ -15,6 +15,7 @@ import { ledgerAppRouter, ledgerKeysRoute } from "./ledger.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { recordPageRouter } from "./record-page-routes.js";
+import { teamAppRouter } from "./team-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
 import { emailAppRouter } from "./email-routes.js";
@@ -292,6 +293,8 @@ export function createApp() {
   app.use("/api/runner", onPremRunnerRouter());
   // The workspace agent (mold_v0-243, src/agent-routes.ts): its sessions and their steering; only with its flag on.
   app.use("/api/agent", agentAppRouter());
+  // Teams inside a workspace (mold_v0-259, src/team-routes.ts): only with the teams flag on (read per request).
+  app.use("/api/teams", teamAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------

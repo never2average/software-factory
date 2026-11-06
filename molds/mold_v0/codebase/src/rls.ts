@@ -106,7 +106,7 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "platform_setting_changes",
   // The workspace agent's tool tokens (mold_v0-250, 0048_harness_session_tokens): minted and checked by the shell's code only.
   "harness_session_tokens",
-  // The workspace agent's profiles, their versions and their changes (mold_v0-261, 0050_agent_profiles): staff bookkeeping.
+  // The workspace agent's profiles, their versions and their changes (mold_v0-261, 0051_agent_profiles): staff bookkeeping.
   "agent_profiles", "agent_profile_versions", "agent_profile_changes"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
@@ -254,6 +254,12 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
         await tx.query("INSERT INTO audit_data_events (org_id, seq, actor_kind, action, target, channel) VALUES ($1, 1000000000 + $1, 'system', 'read', 'record', 'system')", [o]);
         await tx.query("INSERT INTO audit_platform_events (scope_id, seq, org_id, kind, channel, method, path, actor_kind) VALUES ($1, 1000000000 + $1, $1, 'request', 'api', 'GET', '/probe', 'system')", [o]);
       }
+      // Teams (mold_v0-259, 0050_teams_and_visibility): a team, a member and a change per organization.
+      if (has.has("workspace_teams")) {
+        const [{ id: team }] = await tx.query<{ id: number }>("INSERT INTO workspace_teams (org_id, name) VALUES ($1, $2) RETURNING id", [o, tag]);
+        await tx.query("INSERT INTO workspace_team_members (org_id, team_id, user_id) VALUES ($1, $2, $3)", [o, team, `${tag}-member`]);
+        await tx.query("INSERT INTO workspace_team_changes (org_id, team_id, team_name, action) VALUES ($1, $2, $3, 'created')", [o, team, tag]);
+      }
       // Chain and sign (mold_v0-195, 0033_ledger_chain): a signed checkpoint per organization.
       if (has.has("ledger_checkpoints"))
         await tx.query(`INSERT INTO ledger_checkpoints (scope_id, org_id, stream, n, from_seq, to_seq, entries, last_hash, merkle_root, prev_checkpoint, checkpoint_hash, key_id, signature, signed_at)
@@ -358,6 +364,35 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await refused("ledger_checkpoints: a tenant changes its own checkpoint", "/* tenant: rls probe */ UPDATE ledger_checkpoints SET key_id = 'x'");
       await refused("ledger_checkpoints: a tenant removes its own checkpoint", "/* tenant: rls probe */ DELETE FROM ledger_checkpoints");
       await refused("ledger_heads: readable by a tenant query", "SELECT 1 FROM ledger_heads LIMIT 1");
+    }
+    // Teams and per-record visibility (mold_v0-259): tenant work reads its own teams and puts nobody in one; a record
+    // private to someone, or shared with a team, is not there for a person who is neither its owner, named on it nor in
+    // the team, and a viewer of "*" (the shell's own work) sees it; a hidden record cannot be changed or written.
+    if (has.has("workspace_teams")) {
+      await refused("workspace_team_members: a tenant adds someone to a team", "/* tenant: rls probe */ INSERT INTO workspace_team_members (org_id, team_id, user_id) SELECT org_id, id, 'x' FROM workspace_teams WHERE org_id = $1", [a]);
+      await refused("workspace_teams: a tenant creates a team", "INSERT INTO workspace_teams (org_id, name) VALUES ($1, 'x')", [a]);
+      await refused("workspace_team_changes: a tenant rewrites a team's history", "/* tenant: rls probe */ DELETE FROM workspace_team_changes");
+      await tx.query("RESET ROLE");
+      const [{ id: team }] = await tx.query<{ id: number }>("SELECT id FROM workspace_teams WHERE org_id = $1 AND name = $2", [a, tag]);
+      await tx.query("INSERT INTO workspace_records (org_id, pack, area, key, visibility, owner_id) VALUES ($1, 'probe', 'probe', $2, 'private', $3)", [a, `${tag}-private`, `${tag}-owner`]);
+      await tx.query("INSERT INTO workspace_records (org_id, pack, area, key, visibility, team_id) VALUES ($1, 'probe', 'probe', $2, 'team', $3)", [a, `${tag}-team`, team]);
+      const sees = async (viewer: string | null) => {
+        await as(a);
+        if (viewer !== null) await tx.query("SELECT set_config('app.viewer', $1, true)", [viewer]);
+        else await tx.query("SELECT set_config('app.viewer', '', true)");
+        return (await tx.query<{ key: string }>("/* tenant: rls probe */ SELECT key FROM workspace_records WHERE org_id = $1 AND key LIKE $2 ORDER BY key", [a, `${tag}%`])).map((r) => r.key.slice(tag.length));
+      };
+      const want = (who: string, got: string[], expect: string[]) => { checked++; if (got.join(",") !== expect.join(",")) problems.push(`workspace_records: ${who} sees ${got.join(", ") || "nothing"} of the probe's records, expected ${expect.join(", ")}`); };
+      want("a person neither owner nor in the team", await sees(`${tag}-stranger`), [""]);
+      want("the team's member", await sees(`${tag}-member`), ["", "-team"]);
+      want("the private record's owner", await sees(`${tag}-owner`), ["", "-private"]);
+      want("the shell's own work (*)", await sees("*"), ["", "-private", "-team"]);
+      want("a transaction with no viewer", await sees(null), [""]);
+      await sees(`${tag}-stranger`);
+      if ((await tx.query("/* tenant: rls probe, as a stranger on purpose */ UPDATE workspace_records SET title = 'x' WHERE org_id = $1 AND key = $2 RETURNING key", [a, `${tag}-private`])).length) problems.push("workspace_records: a person changed a record private to someone else");
+      checked++;
+      await refused("workspace_records: a person writes a record private to someone else", "/* tenant: rls probe */ INSERT INTO workspace_records (org_id, pack, area, key, visibility, owner_id) VALUES ($1, 'probe', 'probe', $2, 'private', 'someone')", [a, `${tag}-sneak`]);
+      await as(a);
     }
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);

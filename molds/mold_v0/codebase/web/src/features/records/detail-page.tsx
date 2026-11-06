@@ -56,6 +56,7 @@ import { LogViewer } from './log-viewer';
 import { FormHost } from '@/features/tabs/tab-action';
 import { areaFieldLabel, findRecordArea } from './registry';
 import { FieldValue, fieldText, type RecordRow } from './record-pages';
+import { ShareButton, VisibilityBadge, visibilityOf } from '@/features/teams/visibility';
 
 type Links = { field: string; area: string; records: { key: string; title: string | null }[] }[];
 
@@ -511,11 +512,13 @@ async function getPage(url: string): Promise<PageData> {
   return body;
 }
 
-export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged }: {
+export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode;
   /** Read the record again (mold_v0-254: after an action changed it). */
   onChanged?: () => void;
+  /** mold_v0-259 (flag teams): this person may change who sees it (the header's Share). */
+  canShare?: boolean;
 }) {
   const [asked, setAsked] = useQueryState('tab');
   const tab = openTab(layout, asked);
@@ -529,7 +532,7 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   const [actions, setActions] = useState<PageData['actions'] | null>(null);
   useEffect(() => { if (page.data) setActions(page.data.actions); }, [page.data]);
   const changed = () => { void page.reload(); onChanged?.(); };
-  const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed };
+  const host: ActionHost = { area: area.name, areaLabel: area.label, base, record, copy: (t, done) => void copyWithToast(t, done), changed, canShare };
   const withActions = base === 'app' && declaresActions(layout);
   const { bar, card, panel } = usePageActionsBar(host, withActions ? actions ?? page.data?.actions ?? [] : [], !actions && !page.data && !page.error, declaresCopyLink(layout));
   // mold_v0-256: a log section that is live (its live_when holds) reads the record again every few seconds.
@@ -544,17 +547,22 @@ export function LaidOutRecord({ area, base, layout, record, links, clockEvents, 
   return (
     <FormHost card={withActions && card ? <div className='flex w-full flex-col gap-4' data-page-action-card=''>{card}</div> : null} panel={panel}>
       <LaidOutBody area={area} base={base} layout={layout} record={record} links={links} clockEvents={clockEvents} provenance={provenance} where={where}
-        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} />
+        credentials={credentials} tab={tab} ti={ti} first={first} page={page} changed={changed} withActions={withActions} bar={bar} setAsked={setAsked} canShare={canShare} />
     </FormHost>
   );
 }
 
 /** The laid-out page itself: the header, the notices, the tabs and their sections. */
-function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar, setAsked }: {
+function LaidOutBody({ area, base, layout, record, links, clockEvents, provenance, where, credentials, tab, ti, first, page, changed, withActions, bar: actionsBar, setAsked, canShare }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode; tab: DetailLayout['tabs'][number]; ti: number; first: boolean;
-  page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown;
+  page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
 }) {
+  // mold_v0-259 (flag teams): who sees it, in the header, with Share for the people who may change it.
+  const visibility = base === 'app' && visibilityOf(area) ? record.visibility ?? null : null;
+  const share = visibility ? <ShareButton area={area} recordKey={record.key} visibility={visibility} canShare={canShare} onShared={changed} /> : null;
+  // Share sits beside the declared actions, ahead of them.
+  const bar = share && canShare ? <div className='flex shrink-0 flex-wrap items-start gap-2'>{share}{actionsBar}</div> : actionsBar;
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
@@ -580,6 +588,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
               {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
                 <p className='text-muted-foreground max-w-prose text-sm leading-relaxed break-words' data-record-subtitle=''>{String(record.data[subtitle.name])}</p>
               )}
+              {visibility && <div className='flex flex-wrap items-center gap-2' data-record-visibility=''><VisibilityBadge v={visibility} /></div>}
               {!!h.badges?.length && (
                 <div className='flex flex-wrap items-center gap-2 pt-1' data-record-badges=''>
                   {h.badges.map((b) => {
@@ -591,6 +600,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
             </div>
             {withActions ? bar : (
               <div className='flex shrink-0 flex-wrap gap-2'>
+                {share}
                 <Button type='button' variant='outline' size='sm' data-copy-id='' onClick={() => void copyWithToast(record.key, 'Record ID copied')}>
                   <Icons.copy aria-hidden data-icon='inline-start' />Copy ID
                 </Button>

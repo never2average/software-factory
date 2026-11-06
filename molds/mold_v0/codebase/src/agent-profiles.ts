@@ -1,7 +1,7 @@
 /**
  * Workspace agent profiles (mold_v0-261; molds/mold_v0/docs/agent-harness.md "Agent profiles"): named sets of what a
  * session runs with, edited by platform staff in Admin › Agent profiles, every change versioned and audited. The only
- * writer of agent_profiles, agent_profile_versions and agent_profile_changes (sql/migrations/0050_agent_profiles.sql).
+ * writer of agent_profiles, agent_profile_versions and agent_profile_changes (sql/migrations/0051_agent_profiles.sql).
  * Nothing here answers unless the app's profile turns `agent_harness` on.
  *
  *   what      a profile's instructions (the standing prompt, the on-start template, the on-resume prompt), its model and

@@ -38,6 +38,7 @@ import { singular } from '@/features/tabs/run-rows';
 import { FieldValue, RecordEmpty, RecordTableView, type RecordRow } from './record-pages';
 import { ImportRecordsForm } from './staff-import';
 import { areaFieldLabel, findRecordArea, recordsApi } from './registry';
+import { useVisibilityInput, type RecordVisibility } from '@/features/teams/visibility';
 
 /** What the page offers this staff role (src/record-routes.ts `_console/<area>/form`). */
 interface StaffForm {
@@ -239,18 +240,22 @@ function formValue(f: FormField, v: unknown): unknown {
  * area's /api/admin/data; mold_v0-254, a workspace record page's Edit: its page action). What the form leaves out of the
  * record's data is sent back as it was.
  */
-export function EditRecordForm({ area, fields, row, onDone, put }: { area: string; fields: FormField[]; row: RecordRow; onDone: () => void;
-  put?: (body: { title: string | null; data: Record<string, unknown> }) => Promise<unknown> }) {
+export function EditRecordForm({ area, fields, row, onDone, put, shareable = null }: { area: string; fields: FormField[]; row: RecordRow; onDone: () => void;
+  put?: (body: { title: string | null; data: Record<string, unknown> }) => Promise<unknown>;
+  /** mold_v0-259 (flag teams): a workspace record whose visibility this person may change (its owner, a team lead, an owner). */
+  shareable?: RecordVisibility | null }) {
+  const vis = useVisibilityInput(shareable ? findRecordArea('app', area) : null, shareable);
   const [title, setTitle] = useState(row.title ?? '');
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map((f) => [f.name, formValue(f, row.data[f.name])])));
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     const { values: data, problem } = fieldValues(fields, values);
     if (problem) return void toast.error(problem);
+    if (shareable && vis.problem) return void toast.error(vis.problem);
     const kept = Object.fromEntries(Object.entries(row.data).filter(([k]) => !fields.some((f) => f.name === k)));
     setBusy(true);
     try {
-      const body = { title: title.trim() || null, data: { ...kept, ...data } };
+      const body = { title: title.trim() || null, data: { ...kept, ...data }, ...(shareable ? vis.body : {}) };
       await (put ? put(body) : adminDataApi('PUT', `/${encodeURIComponent(area)}/${encodeURIComponent(row.key)}`, body));
       toast.success('Saved');
       onDone();
@@ -267,6 +272,7 @@ export function EditRecordForm({ area, fields, row, onDone, put }: { area: strin
         <Input id='edit-title' value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
       <FieldsForm fields={fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='edit-field' />
+      {shareable && vis.field?.('edit-visibility', shareable.owner)}
     </CardForm>
   );
 }
