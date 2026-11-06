@@ -56,7 +56,7 @@
  *   features           optional (mold_v0-219, src/features.ts, src/features.json): one on/off flag per optional capability,
  *                      {"company_email": false, "audit.data": true}: customer_key_vault, company_email, scheduled_alerts,
  *                      record_clocks, audit.data, audit.platform, audit.sign, onprem_runners, developer_surface,
- *                      declarative_checks, encrypted_fields, health_history, document_preview, agent_harness. A capability is on only when something asks
+ *                      declarative_checks, encrypted_fields, health_history, document_preview, agent_harness, record_pages. A capability is on only when something asks
  *                      for it (a pack's declaration; the audit toggles always) and its flag is not false; absent, the
  *                      registry's default (the legacy keys audit.* and onprem_runners still read, and must agree)
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's

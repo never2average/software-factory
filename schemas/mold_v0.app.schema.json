@@ -1935,6 +1935,9 @@
                       "enum": [
                         "document"
                       ]
+                    },
+                    "copyable": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -2998,6 +3001,312 @@
                 ],
                 "additionalProperties": false
               },
+              "detail": {
+                "type": "object",
+                "properties": {
+                  "header": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "subtitle": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "badges": {
+                        "maxItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "colors": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "neutral",
+                                  "info",
+                                  "success",
+                                  "warning",
+                                  "danger",
+                                  "viz-1",
+                                  "viz-2",
+                                  "viz-3",
+                                  "viz-4",
+                                  "viz-5",
+                                  "viz-6",
+                                  "viz-7",
+                                  "viz-8"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "field"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "creator": {
+                        "type": "boolean"
+                      },
+                      "facts": {
+                        "maxItems": 8,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 40,
+                              "pattern": "^[^\\n\\r{}<>]*$"
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 12,
+                              "pattern": "^[^\\n\\r{}<>]*$"
+                            }
+                          },
+                          "required": [
+                            "field"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "notices": {
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "when": {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "equals": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "not_in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "field"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "tone": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "warning",
+                            "danger"
+                          ]
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        }
+                      },
+                      "required": [
+                        "when",
+                        "tone",
+                        "text"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "tabs": {
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "sections": {
+                          "maxItems": 12,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 60,
+                                "pattern": "^[^\\n\\r{}<>]*$"
+                              },
+                              "columns": {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "const": 1
+                                  },
+                                  {
+                                    "type": "number",
+                                    "const": 2
+                                  },
+                                  {
+                                    "type": "number",
+                                    "const": 3
+                                  }
+                                ]
+                              },
+                              "fields": {
+                                "maxItems": 30,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                }
+                              },
+                              "groups": {
+                                "maxItems": 6,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 60,
+                                      "pattern": "^[^\\n\\r{}<>]*$"
+                                    },
+                                    "fields": {
+                                      "maxItems": 30,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "fields"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "empty": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "pattern": "^[^\\n\\r{}<>]*$"
+                              }
+                            },
+                            "required": [
+                              "title"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "sections"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "unplaced": {
+                    "type": "string",
+                    "enum": [
+                      "show",
+                      "hide"
+                    ]
+                  }
+                },
+                "required": [
+                  "tabs"
+                ],
+                "additionalProperties": false
+              },
               "samples": {
                 "maxItems": 20,
                 "type": "array",
@@ -3367,6 +3676,9 @@
                           "enum": [
                             "document"
                           ]
+                        },
+                        "copyable": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -3757,6 +4069,9 @@
                           "enum": [
                             "document"
                           ]
+                        },
+                        "copyable": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -15042,6 +15357,13 @@
           "title": "Workspace agent (mold_v0-243)",
           "description": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings). Asked for when the app's profile (no pack declares it). Default false. Off: No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out.",
           "markdownDescription": "**Workspace agent** (mold_v0-243; board name `agent`). A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings).\n\n- **Asked for** when the app's profile (no pack declares it).\n- **Default** `false`.\n- **Off**: No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out.\n\nBrief line: `features.agent_harness = true` in `## Profile`."
+        },
+        "record_pages": {
+          "type": "boolean",
+          "default": false,
+          "title": "Record page layouts (mold_v0-253)",
+          "description": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field. Asked for when a record area's page layout (detail) or a field marked copyable. Default false. Off: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); the layouts stay declared and checked, and the generated files leave them and the flag out.",
+          "markdownDescription": "**Record page layouts** (mold_v0-253; board name `pages`). A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field.\n\n- **Asked for** when a record area's page layout (detail) or a field marked copyable.\n- **Default** `false`.\n- **Off**: Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); the layouts stay declared and checked, and the generated files leave them and the flag out.\n\nBrief line: `features.record_pages = true` in `## Profile`."
         }
       }
     }
