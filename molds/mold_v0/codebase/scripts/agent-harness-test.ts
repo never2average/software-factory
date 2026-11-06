@@ -467,6 +467,16 @@ try {
     assert.equal(r.status, 200);
     const body = await r.json() as { sessions: unknown[]; can_start: boolean; offer: { harness: string } };
     assert.equal(body.can_start, true); assert.equal(body.offer.harness, "Claude Code");
+    // The start dialog's budget range (mold_v0-249): a member may lower the default, never pass it.
+    const range = (body as unknown as { offer: { budget: { default_usd: number; max_usd: number; ceiling_usd: number } } }).offer.budget;
+    assert.deepEqual(range, { default_usd: 1, max_usd: 1, ceiling_usd: 5 }, "a member: the setting's budget at most");
+    r = await http.req("POST", "/api/agent", h(m), { message: "x", budget_usd: 3 });
+    assert.equal(r.status, 400, "a member cannot start above the setting's budget");
+    r = await http.req("POST", "/api/agent", h(o), { message: "x", budget_usd: 0.5 });
+    assert.equal(r.status, 201);
+    const lowered = (await r.json() as { session: { id: string; budget_usd: number } }).session;
+    assert.equal(lowered.budget_usd, 0.5, "a lower budget is kept");
+    await http.req("POST", `/api/agent/${lowered.id}/stop`, h(o), {});
     r = await http.req("POST", "/api/agent", h(v), { message: "hi" });
     assert.equal(r.status, 403, "a viewer cannot start one");
     r = await http.req("POST", "/api/agent", h(m), { message: "slow 200\nhello over http" });
