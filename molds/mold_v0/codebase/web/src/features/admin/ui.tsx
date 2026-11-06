@@ -180,21 +180,34 @@ export function ConfirmButton({ label, title, description, confirmLabel, onConfi
       <Button variant={variant} size={size} disabled={disabled} onClick={(e) => { e.stopPropagation(); setOpen(true); }}>
         {label}
       </Button>
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{title}</AlertDialogTitle>
-            <AlertDialogDescription>{description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant={variant === 'destructive' ? 'destructive' : 'default'} onClick={() => { setOpen(false); onConfirm(); }}>
-              {confirmLabel ?? 'Confirm'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog open={open} onOpenChange={setOpen} title={title} description={description} confirmLabel={confirmLabel} onConfirm={onConfirm}
+        destructive={variant === 'destructive'} />
     </>
+  );
+}
+
+/**
+ * ConfirmButton's question on its own (mold_v0-254): opened by something else (a menu's item, a record page's action),
+ * the same words, Cancel and the confirming button.
+ */
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, onConfirm, destructive = false }: {
+  open: boolean; onOpenChange: (open: boolean) => void; title: string; description: ReactNode; confirmLabel?: string; onConfirm: () => void; destructive?: boolean;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant={destructive ? 'destructive' : 'default'} onClick={() => { onOpenChange(false); onConfirm(); }}>
+            {confirmLabel ?? 'Confirm'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

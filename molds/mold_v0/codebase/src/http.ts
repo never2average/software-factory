@@ -14,6 +14,7 @@ import { checkAppRouter } from "./checks.js";
 import { ledgerAppRouter, ledgerKeysRoute } from "./ledger.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
+import { recordPageRouter } from "./record-page-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
 import { emailAppRouter } from "./email-routes.js";
@@ -267,6 +268,9 @@ export function createApp() {
   // ---------- packs' customer routes: /api/packs/<id> (src/pack-routes.ts); with no pack routes nothing is mounted ----------
   app.use("/api/packs", packAppRouter());
   // ---------- record areas' list and detail data: /api/records (src/record-areas.ts); with no area nothing is mounted ----------
+  // mold_v0-254: a laid-out record page's related lists, runs and actions (src/record-page-routes.ts), while record_pages
+  // is on and an area declares a layout; else every request passes on to /api/records, as before.
+  app.use("/api/records/_page", recordPageRouter());
   app.use("/api/records", recordAppRouter());
   // ---------- the generic data API: /api/data (src/data-routes.ts, mold_v0-059); with no area nothing is mounted ----------
   app.use("/api/data", dataAppRouter());

@@ -19,6 +19,7 @@
  * claimed again can neither heartbeat, write nor complete it. Every row carries the workspace (org_id); the workspace
  * of a run is taken from the caller's session (start, cancel) or from the run row (claim), never from a runner's input.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
 import { attemptGatewayUsage, brokerRunCredentials, revokeRunTokens, runGatewayUsage } from "./gateway.js";
@@ -94,6 +95,43 @@ const jsonObject = (v: unknown, what: string) => {
   return v as Record<string, unknown>;
 };
 
+// ---------- a run started on a record (mold_v0-254) ----------
+
+/** The record a run is started on: its area and key (runs.record_area, runs.record_key; sql/migrations/0047). */
+export interface RunRecord { area: string; key: string }
+const recordScope = new AsyncLocalStorage<RunRecord>();
+/**
+ * Start runs inside `fn` on `record` (mold_v0-254): a record page's start_run action (src/record-page-routes.ts) wraps
+ * the start it makes as the generated start tool would make it, and the run carries the record. Nothing else starts a run
+ * in this scope, so every other run (a tool, a schedule, a list's action, the developer API) carries none.
+ */
+export const onRecord = <T>(record: RunRecord, fn: () => T): T => recordScope.run(record, fn);
+
+/** A run as a record's page lists it (mold_v0-254): its state, when, how long, its cost and who started it. */
+export interface RecordRunRow {
+  id: string; pack: string; kind: string; status: RunView["status"]; error: string | null; cost_usd: number;
+  created_at: string; started_at: string | null; ended_at: string | null; requested_by: string | null;
+}
+/**
+ * The runs of workspace `orgId` that ran on a record, newest first: those started on it (runs.record_area and
+ * record_key) and those that targeted it (targets.asset, an asset area's record: the start tools' target_asset), of
+ * `kinds` (each "pack/kind"; all when null), at most `limit`, and how many there are in all.
+ */
+export async function recordRuns(orgId: number, record: RunRecord, opts: { kinds?: string[] | null; limit?: number } = {}): Promise<{ runs: RecordRunRow[]; total: number }> {
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 5), 1), 50);
+  const where = `org_id = $1 AND ((record_area = $2 AND record_key = $3) OR (targets->'asset'->>'area' = $2 AND targets->'asset'->>'key' = $3))
+    AND ($4::text[] IS NULL OR pack || '/' || kind = ANY ($4::text[]))`;
+  const args = [orgId, record.area, record.key, opts.kinds ?? null];
+  const db = await getDb();
+  const [rows, [{ n }]] = await Promise.all([
+    db.query<{ id: string; pack: string; kind: string; status: RunView["status"]; error: string | null; cost_usd: number; created_at: Date; started_at: Date | null; ended_at: Date | null; requested_by: string | null }>(
+      `SELECT id, pack, kind, status, error, cost_usd, created_at, started_at, ended_at, requested_by FROM runs WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit}`, args),
+    db.query<{ n: number }>(`SELECT count(*)::int AS n FROM runs WHERE ${where}`, args),
+  ]);
+  return { total: n, runs: rows.map((r) => ({ id: r.id, pack: r.pack, kind: r.kind, status: r.status, error: r.error, cost_usd: Number(r.cost_usd),
+    created_at: iso(r.created_at)!, started_at: iso(r.started_at), ended_at: iso(r.ended_at), requested_by: r.requested_by })) };
+}
+
 // ---------- the workspace's side: start, read, cancel ----------
 
 /**
@@ -139,6 +177,7 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   // the run ends (0014_run_charges.sql).
   const price = run_charges === "included" ? null : priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
   const id = `run_${randomBytes(12).toString("base64url")}`;
+  const record = wake ? null : recordScope.getStore() ?? null;
   let location: "hosted" | "on_premises" = "hosted";
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
@@ -153,12 +192,13 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     // mold_v0-036: a run that may need the workspace's private network goes to its own on-premises runner when the
     // workspace chose that (src/onprem-runners.ts); every other run, and every run of a build without such a kind, is hosted.
     location = k.private_network ? await runLocationFor(tx, orgId) : "hosted";
+    // mold_v0-254: a run started on a record (a record page's action, onRecord above) carries it.
     const rows = await tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id, runner_location, harness_session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING ${COLS}`,
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id, runner_location, harness_session_id${record ? ", record_area, record_key" : ""})
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17${record ? ", $18, $19" : ""}) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
        k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null, location,
-       wake?.harness_session_id ?? null]);
+       wake?.harness_session_id ?? null, ...(record ? [record.area, record.key] : [])]);
     if (approval) await event(id, orgId, 0, "approval_used", { approval: approval.id, preview_run_id: approval.preview_run_id, sha256: approval.output_sha256,
       approved_by: approval.approved_by, role: approval.approver_role }, tx);
     return rows;

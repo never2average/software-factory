@@ -3,7 +3,7 @@
   "id": "fixture_pages",
   "name": "Fixture pages",
   "version": "0.1.0",
-  "description": "A declarative test fixture (mold_v0-253; scripts/record-pages-test.ts): record areas whose pages are laid out (detail): a header with badges and facts, notices, tabs of sections, copyable fields. Never shipped.",
+  "description": "A declarative test fixture (mold_v0-253, mold_v0-254; scripts/record-pages-test.ts): record areas whose pages are laid out (detail): a header with badges, facts and actions, notices, tabs of sections, copyable fields, related lists and a record's runs. Never shipped.",
   "record_areas": [
     {
       "name": "projects",
@@ -101,8 +101,59 @@
                   "repository",
                   "owner"
                 ]
+              },
+              {
+                "title": "Builds",
+                "related": {
+                  "area": "builds",
+                  "columns": [
+                    "status",
+                    "branch",
+                    "environment",
+                    "started",
+                    "duration"
+                  ],
+                  "sort": {
+                    "field": "started",
+                    "direction": "desc"
+                  },
+                  "limit": 5
+                },
+                "empty": "No builds of this project yet. Start one from the header."
+              },
+              {
+                "title": "Runs",
+                "runs": {
+                  "kinds": [
+                    "build",
+                    "rebuild"
+                  ],
+                  "limit": 5
+                },
+                "empty": "No runs on this project yet."
               }
             ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Start a build",
+            "job_kind": "build",
+            "input": {
+              "project": "$key"
+            }
+          },
+          {
+            "kind": "edit",
+            "place": "secondary"
+          },
+          {
+            "kind": "copy_link"
+          },
+          {
+            "kind": "delete"
           }
         ]
       }
@@ -434,7 +485,14 @@
                   "approver",
                   "approved_on"
                 ],
-                "empty": "No one has approved this build yet. An owner approves it from the list's actions."
+                "empty": "No one has approved this build yet."
+              },
+              {
+                "title": "Runs",
+                "runs": {
+                  "limit": 5
+                },
+                "empty": "This build has not been re-run."
               }
             ]
           },
@@ -481,8 +539,248 @@
             ]
           }
         ],
-        "unplaced": "show"
+        "unplaced": "show",
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Re-run",
+            "job_kind": "rebuild",
+            "input": {
+              "build": "$key",
+              "branch": "branch",
+              "commit": "commit"
+            },
+            "unavailable": [
+              {
+                "when": {
+                  "field": "status",
+                  "in": [
+                    "queued",
+                    "running"
+                  ]
+                },
+                "reason": "A build that is still going can't be re-run: cancel it first, or wait for it to end."
+              }
+            ]
+          },
+          {
+            "kind": "link",
+            "place": "secondary",
+            "field": "project",
+            "label": "Open project"
+          },
+          {
+            "kind": "edit",
+            "place": "secondary"
+          },
+          {
+            "kind": "move",
+            "label": "Move"
+          },
+          {
+            "kind": "copy_link"
+          },
+          {
+            "kind": "delete",
+            "confirm": "Delete this build and its results? Its runs stay in the runs list. This can't be undone."
+          }
+        ]
+      },
+      "lifecycle": {
+        "field": "status",
+        "initial": "queued",
+        "transitions": [
+          {
+            "from": [
+              "queued"
+            ],
+            "to": "running",
+            "label": "Start"
+          },
+          {
+            "from": [
+              "running"
+            ],
+            "to": "passed",
+            "label": "Mark passed"
+          },
+          {
+            "from": [
+              "running"
+            ],
+            "to": "failed",
+            "label": "Mark failed"
+          },
+          {
+            "from": [
+              "queued",
+              "running"
+            ],
+            "to": "cancelled",
+            "label": "Cancel"
+          },
+          {
+            "from": [
+              "failed",
+              "cancelled"
+            ],
+            "to": "queued",
+            "label": "Queue again",
+            "roles": [
+              "owner"
+            ]
+          }
+        ]
       }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "build",
+      "label": "Build a project",
+      "description": "Builds a project's branch and runs its tests.",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "project",
+          "label": "Project",
+          "type": "reference",
+          "to": "projects",
+          "required": true
+        },
+        {
+          "name": "branch",
+          "label": "Branch",
+          "type": "text",
+          "required": true,
+          "max_length": 200
+        }
+      ],
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-builder.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "build.mjs",
+          "--project",
+          "{project}"
+        ],
+        "args": {
+          "project": {
+            "from": "scope.project"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "timeout_seconds": 1200,
+        "write_back": [
+          "results"
+        ]
+      }
+    },
+    {
+      "name": "rebuild",
+      "label": "Re-run a build",
+      "description": "Builds the same commit again and runs its tests.",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "build",
+          "label": "Build",
+          "type": "reference",
+          "to": "builds",
+          "required": true
+        },
+        {
+          "name": "branch",
+          "label": "Branch",
+          "type": "text",
+          "required": true,
+          "max_length": 200
+        },
+        {
+          "name": "commit",
+          "label": "Commit",
+          "type": "text",
+          "max_length": 200
+        }
+      ],
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-builder.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "rebuild.mjs",
+          "--build",
+          "{build}"
+        ],
+        "args": {
+          "build": {
+            "from": "scope.build"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "timeout_seconds": 1200,
+        "write_back": [
+          "results"
+        ]
+      }
+    }
+  ],
+  "tabs": [
+    {
+      "id": "projects",
+      "kind": "area",
+      "area": "projects",
+      "icon": "building",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "builds",
+      "kind": "area",
+      "area": "builds",
+      "icon": "play",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "environments",
+      "kind": "area",
+      "area": "environments",
+      "icon": "book",
+      "group": "Delivery",
+      "charts": [],
+      "views": [
+        "table"
+      ]
+    },
+    {
+      "id": "build-runs",
+      "kind": "runs",
+      "label": "Runs",
+      "icon": "play",
+      "group": "Delivery"
     }
   ]
 }

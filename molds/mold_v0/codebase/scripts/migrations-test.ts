@@ -1029,6 +1029,36 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} gpt-5.6-luna priced (an operator's row kept); its rollback keeps the row, and it applies again`);
   }
 
+  // A run started on a record carries the record (mold_v0-254, run_record_link, found by name): two nullable columns, both
+  // or neither; a run from before keeps NULL; its rollback drops them, the runs staying, leaves exactly what the migration
+  // before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "run_record_link")!.version;
+    const own = await shellAt(kind, v - 1);
+    const [{ id: org }] = await own.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Runs', 'runs-record-link') RETURNING id");
+    const run = (id: string, record: [string | null, string | null] | null = null) => own.query(
+      `INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd${record ? ", record_area, record_key" : ""})
+       VALUES ($1, $2, 'p', 'k', '{}', 1, 600, 60, 1${record ? ", $3, $4" : ""})`, record ? [id, org, ...record] : [id, org]);
+    await run("run_before");
+    await runMigrations(own, { packDirs: [] });
+    const [before] = await own.query<{ record_area: string | null; record_key: string | null }>("SELECT record_area, record_key FROM runs WHERE id = 'run_before'");
+    assert.deepEqual([before!.record_area, before!.record_key], [null, null], "a run from before carries no record");
+    await run("run_on", ["builds", "build-1"]);
+    await assert.rejects(run("run_half", ["builds", null]), /runs_record_both|check constraint/, "an area without a key refused");
+    assert.deepEqual((await own.query<{ id: string }>("SELECT id FROM runs WHERE org_id = $1 AND record_area = 'builds' AND record_key = 'build-1'", [org])).map((r) => r.id), ["run_on"]);
+    await own.drop();
+    const d = await shellAt(kind);
+    await rollBackAfter(d, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_run_record_link.sql`), "utf8");
+    await d.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(d), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(d.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_run_record_link")).length, 1, "and it applies again");
+    await d.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} a run's record (area and key, both or neither; earlier runs none); its rollback keeps the runs and leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

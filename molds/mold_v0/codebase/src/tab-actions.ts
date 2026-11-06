@@ -103,7 +103,7 @@ const actionKinds = (t: SpecTab) => {
 };
 
 /** The environments a start tool takes (its enum), [] for free text, null when it takes none. */
-const environmentsOf = (input: z.ZodRawShape): string[] | null => {
+export const environmentsOf = (input: z.ZodRawShape): string[] | null => {
   const s = input.target_environment as z.ZodType | undefined;
   if (!s) return null;
   const inner = (s as unknown as { unwrap?: () => z.ZodType }).unwrap?.() ?? s;

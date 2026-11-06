@@ -904,6 +904,38 @@ const plainWords = (max: number) => z.string().trim().min(1).max(max).regex(/^[^
 const scalar = z.union([z.string().min(1).max(200), z.number().finite(), z.boolean()]);
 /** A field group: a few of the section's fields under an optional heading, laid out in the section's columns. */
 const DetailGroupSchema = z.object({ title: plainWords(60).optional(), fields: z.array(name).max(30) }).strict();
+// ---------- a record's page, part 2: related lists, its runs, its actions (mold_v0-254; flag record_pages) ----------
+
+/** The most columns a related list shows (as an area's list_columns), and the most rows it shows before Show all. */
+export const RELATED_COLUMNS_MAX = 8;
+export const RELATED_LIMIT_MAX = 50;
+/**
+ * A related list (mold_v0-254): a section listing the records of another area (`area`) that point back to this record
+ * through one of their link or reference fields to this area (`via`: needed only when it has several), each row in
+ * `columns` (up to 8 of its fields, formatted as its list's cells; default its list's columns), sorted by `sort` (one of
+ * its fields, or updated_at; default the newest change first), at most `limit` rows (default 5, at most 50) and a Show
+ * all link to its list filtered to this record. The section's `empty` is its empty state. Its rows' actions are that
+ * area's own page actions this person may take. Shown only to the roles that may read that area, and only ever the
+ * workspace's own records (the list reads as the person, in the workspace's scope).
+ */
+export const DetailRelatedSchema = z.object({
+  area: name,
+  via: name.optional(),
+  columns: z.array(name).min(1).max(RELATED_COLUMNS_MAX, `at most ${RELATED_COLUMNS_MAX} columns: a related list's row is one line on a desktop`).optional(),
+  sort: z.object({ field: name, direction: z.enum(["asc", "desc"]).optional() }).strict().optional(),
+  limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
+}).strict();
+/**
+ * A record's runs (mold_v0-254): a section listing the runs that ran on this record (started on it from its page, or
+ * targeting it: an asset area's record), newest first: each run's kind, status, when it started, how long it took, its
+ * cost, who started it and a link to it. `kinds` keeps the runs of these job kinds of the area's pack (default every
+ * kind); at most `limit` (default 5, at most 50). The section's `empty` is its empty state.
+ */
+export const DetailRunsSchema = z.object({
+  kinds: z.array(name).min(1).max(20).optional(),
+  limit: z.number().int().min(1).max(RELATED_LIMIT_MAX).optional(),
+}).strict();
+
 /**
  * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
  * phone), given as `fields` (one group) or `groups` (several, each with an optional heading). When every field of it is
@@ -915,6 +947,10 @@ export const DetailSectionSchema = z.object({
   fields: z.array(name).max(30).optional(),
   groups: z.array(DetailGroupSchema).max(6).optional(),
   empty: plainWords(200).optional(),
+  /** mold_v0-254: a list of another area's records that point back to this one, in place of fields (DetailRelatedSchema). */
+  related: DetailRelatedSchema.optional(),
+  /** mold_v0-254: the runs that ran on this record, in place of fields (DetailRunsSchema). */
+  runs: DetailRunsSchema.optional(),
 }).strict();
 /** A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. */
 export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12) }).strict();
@@ -937,6 +973,44 @@ export const DetailNoticeSchema = z.object({
   title: plainWords(80).optional(),
   text: plainWords(300),
 }).strict();
+/** The kinds of a page action (mold_v0-254). */
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link"] as const;
+/** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
+export const PAGE_ACTION_PLACES = ["primary", "secondary", "more"] as const;
+export const PAGE_ACTIONS_MAX = 12;
+export const PAGE_SECONDARY_MAX = 3;
+/** What a start_run action's input may take from the record besides its fields: its key and its title. */
+export const RECORD_INPUT_SPECIAL = ["$key", "$title"] as const;
+/**
+ * An action of a record's page (mold_v0-254), in its header (`place`: the primary, a secondary button, or the More
+ * menu, the default):
+ *   start_run  start a run of the area's pack's job kind `job_kind` on this record: its form, a full card in the page's
+ *              place, takes the kind's arguments pre-filled from the record (`input`: an argument's name -> a field of
+ *              the record, or $key, $title); the run carries the record (its runs section lists it)
+ *   move       move the record along its lifecycle: to `to`, or (without it) to any state a transition allows from where
+ *              it is, each a choice; only the transitions this person's role may make
+ *   edit       the record's edit form (a full card in the page's place)
+ *   delete     delete the record, after a confirmation
+ *   link       open the record its link or reference field `field` names
+ *   copy_link  copy the page's address
+ * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
+ * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
+ * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
+ * take it; the API enforces the same.
+ */
+export const DetailActionSchema = z.object({
+  kind: z.enum(PAGE_ACTION_KINDS, { error: () => `an action's kind is one of ${PAGE_ACTION_KINDS.join(", ")}` }),
+  place: z.enum(PAGE_ACTION_PLACES).optional(),
+  label: plainWords(40).optional(),
+  job_kind: name.optional(),
+  input: z.record(name, z.union([name, z.enum(RECORD_INPUT_SPECIAL)])).optional(),
+  to: choiceValue.optional(),
+  field: name.optional(),
+  roles: z.array(role).min(1).max(4).optional(),
+  unavailable: z.array(z.object({ when: DetailConditionSchema, reason: plainWords(200) }).strict()).max(6).optional(),
+  confirm: plainWords(300).optional(),
+}).strict();
+export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
  * A record area's page layout (mold_v0-253), shown while the app's flag record_pages is on (off: the page is the one
  * details card it always was). Every field it names is one of the area's fields (gen-packs refuses any other).
@@ -965,14 +1039,21 @@ export const RecordDetailSchema = z.object({
   notices: z.array(DetailNoticeSchema).max(6).optional(),
   tabs: z.array(DetailTabSchema).min(1, "a layout has at least one tab").max(8),
   unplaced: z.enum(["show", "hide"]).optional(),
+  /** mold_v0-254: the header's actions (DetailActionSchema): one primary, up to 3 secondary, the rest in its More menu. */
+  actions: z.array(DetailActionSchema).max(PAGE_ACTIONS_MAX, `at most ${PAGE_ACTIONS_MAX} actions on a record's page`).optional(),
 }).strict();
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
+
+/** An action's id on its page and in the API (POST /api/records/_page/<area>/<key>/actions/<id>): its kind, then what it names. */
+export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field">) =>
+  [a.kind, a.job_kind ?? a.to ?? a.field].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
 
 /** A layout's id for each tab (its label, lowercased, words joined by -): the page's ?tab= value. */
 export const detailTabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "tab";
 
 /** What keeps an area's layout from being drawn (mold_v0-253): fields it names that the area lacks, empty tabs, and so on. */
-export function detailProblems(a: { fields: z.output<typeof RecordFieldSchema>[]; detail?: RecordDetailLayout }): { message: string; path: (string | number)[] }[] {
+export function detailProblems(a: { name?: string; scope?: string; fields: z.output<typeof RecordFieldSchema>[]; links?: { field: string; area: string }[]; lifecycle?: z.output<typeof LifecycleSchema>;
+  append_only?: boolean; repository?: string; detail?: RecordDetailLayout }): { message: string; path: (string | number)[] }[] {
   const d = a.detail;
   if (!d) return [];
   const out: { message: string; path: (string | number)[] }[] = [];
@@ -1012,6 +1093,12 @@ export function detailProblems(a: { fields: z.output<typeof RecordFieldSchema>[]
     if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
     if (!t.sections.length) bad(`tab ${t.label} is empty: a tab has at least one section`, "tabs", ti, "sections");
     for (const [si, s] of t.sections.entries()) {
+      // mold_v0-254: a related list or the record's runs, in place of fields (checked across the build: detailBuildProblems).
+      if (s.related || s.runs) {
+        if (s.related && s.runs) bad(`section ${s.title} is a related list or the record's runs, not both`, "tabs", ti, "sections", si);
+        for (const k of ["fields", "groups", "columns"] as const) if (s[k] !== undefined) bad(`section ${s.title} lists ${s.related ? "related records" : "runs"}: it has no ${k}`, "tabs", ti, "sections", si, k);
+        continue;
+      }
       if (s.fields && s.groups) bad(`section ${s.title} gives fields or groups, not both`, "tabs", ti, "sections", si);
       const lists = s.groups ? s.groups.map((g, gi) => ({ names: g.fields, path: ["groups", gi, "fields"] as (string | number)[] })) : [{ names: s.fields ?? [], path: ["fields"] as (string | number)[] }];
       if (!lists.some((l) => l.names.length)) bad(`section ${s.title} lists no fields`, "tabs", ti, "sections", si);
@@ -1022,6 +1109,118 @@ export function detailProblems(a: { fields: z.output<typeof RecordFieldSchema>[]
         if (seen.has(n)) bad(`${n} is in section ${s.title} twice`, "tabs", ti, "sections", si, ...l.path, k);
         seen.add(n);
       }
+    }
+  }
+  out.push(...actionProblems(a, d.actions ?? []));
+  return out;
+}
+
+const lastAt = (actions: DetailAction[], place: string) => actions.map((x) => x.place).lastIndexOf(place as DetailAction["place"]);
+/** What one area can tell alone of its page's actions (mold_v0-254); detailBuildProblems checks what they name elsewhere. */
+function actionProblems(a: Parameters<typeof detailProblems>[0], actions: DetailAction[]): { message: string; path: (string | number)[] }[] {
+  const out: { message: string; path: (string | number)[] }[] = [];
+  const bad = (message: string, ...path: (string | number)[]) => out.push({ message, path: ["actions", ...path] });
+  const primaries = actions.filter((x) => x.place === "primary").length;
+  if (primaries > 1) bad(`${primaries} actions are primary: a record's page has one primary action (the others are secondary or in More)`, lastAt(actions, "primary"), "place");
+  const secondary = actions.filter((x) => x.place === "secondary").length;
+  if (secondary > PAGE_SECONDARY_MAX) bad(`${secondary} actions are secondary: at most ${PAGE_SECONDARY_MAX} sit beside the primary (put the rest in More)`, lastAt(actions, "secondary"), "place");
+  const fieldOf = (n: string) => a.fields.find((f) => f.name === n);
+  const shared = a.scope === "platform", readOnly = a.repository !== undefined;
+  const ids = actions.map(pageActionId);
+  for (const [i, x] of actions.entries()) {
+    const only = (k: "job_kind" | "input" | "to" | "field", kinds: readonly string[]) => { if (x[k] !== undefined && !kinds.includes(x.kind)) bad(`${k} is for a ${kinds.join(" or ")} action, not ${x.kind}`, i, k); };
+    only("job_kind", ["start_run"]); only("input", ["start_run"]); only("to", ["move"]); only("field", ["link"]);
+    // A run's and an edit's form is the question; a link or a copy changes nothing: only a move or a delete asks first.
+    if (x.confirm !== undefined && x.kind !== "move" && x.kind !== "delete") bad(`confirm is for a move or a delete (a ${x.kind} ${x.kind === "start_run" || x.kind === "edit" ? "opens its form first" : "changes nothing"})`, i, "confirm");
+    if (ids.indexOf(ids[i]!) !== i) bad(`two actions are ${ids[i]}: give each its own kind, job kind, state or field`, i);
+    const writes = x.kind === "move" || x.kind === "edit" || x.kind === "delete";
+    if (writes && shared) bad(`a shared (platform) area's records are written by platform staff, never from a workspace's page: no ${x.kind} action`, i, "kind");
+    if (writes && !shared && readOnly && x.kind !== "delete") bad(`${a.name ?? "the area"}'s records come from its repository: no ${x.kind} action`, i, "kind");
+    if (writes && a.append_only) bad(`an append-only area's records are never changed: no ${x.kind} action`, i, "kind");
+    if (x.kind === "start_run" && !x.job_kind) bad("a start_run action names its job_kind", i, "job_kind");
+    for (const [arg, from] of Object.entries(x.input ?? {})) {
+      if ((RECORD_INPUT_SPECIAL as readonly string[]).includes(from)) continue;
+      const f = fieldOf(from);
+      if (!f) bad(`${from} is not one of the area's fields (input ${arg} takes a field, $key or $title)`, i, "input", arg);
+      else if (f.encrypted || f.type === "file") bad(`${from} is ${f.encrypted ? "encrypted" : "a file field"}: a run's input never takes it from the page`, i, "input", arg);
+    }
+    if (x.kind === "move") {
+      const lc = a.lifecycle;
+      if (!lc) bad("a move action is for an area with a lifecycle: this one's records do not move", i, "kind");
+      else if (x.to !== undefined && !lc.transitions.some((t) => t.to === x.to))
+        bad(`no transition of the lifecycle goes to ${x.to}: a move action names a state a transition reaches (${[...new Set(lc.transitions.map((t) => t.to))].join(", ")})`, i, "to");
+      if (lc && x.roles) for (const r of x.roles) if (!lc.transitions.some((t) => (x.to === undefined || t.to === x.to) && (!t.roles || t.roles.includes(r))))
+        bad(`${r} makes none of the moves this action offers: its roles narrow the transitions' own`, i, "roles");
+    }
+    if (x.kind === "link") {
+      if (!x.field) bad("a link action names the field whose record it opens", i, "field");
+      else if (!areaLinks({ fields: a.fields, links: a.links }).some((l) => l.field === x.field)) bad(`${x.field} is not a link or reference field of the area: a link action opens the record one names`, i, "field");
+    }
+    if (x.kind === "edit" && a.fields.some((f) => f.encrypted)) bad("the edit form never holds an encrypted value: an area with an encrypted field has no edit action", i, "kind");
+    if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
+    for (const [j, u] of (x.unavailable ?? []).entries()) {
+      const w = u.when, ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => w[k] !== undefined);
+      if (ops.length !== 1) bad(`a condition is one test: equals, in, not_in or empty (it has ${ops.length ? ops.join(" and ") : "none"})`, i, "unavailable", j, "when");
+      const f = fieldOf(w.field);
+      if (!f) bad(`${w.field} is not one of the area's fields`, i, "unavailable", j, "when", "field");
+      else if (f.encrypted) bad(`${w.field} is encrypted: the page never reads its value, so no condition can test it`, i, "unavailable", j, "when", "field");
+      else if (f.type === "enum") for (const v of [w.equals, ...(w.in ?? []), ...(w.not_in ?? [])]) if (v !== undefined && !optionValues(f).includes(String(v))) bad(`${String(v)} is not one of ${f.name}'s options`, i, "unavailable", j, "when");
+    }
+  }
+  return out;
+}
+
+/** A build's areas and job kinds as detailBuildProblems reads them (src/metric-spec.ts checkViews passes them). */
+export interface DetailBuildArea {
+  pack: string; name: string; scope: string; fields: z.output<typeof RecordFieldSchema>[]; links?: { field: string; area: string }[]; detail?: RecordDetailLayout;
+}
+export interface DetailBuildKind { pack: string; name: string; args?: readonly string[]; approval?: boolean }
+/** The fields of `target` that point at area `to`: its reference fields to it and its links to it. */
+export const linksBack = (target: Pick<DetailBuildArea, "fields" | "links">, to: string) => areaLinks(target).filter((l) => l.area === to).map((l) => l.field);
+/**
+ * What a record page's layout names across the build (mold_v0-254), each problem naming its pack and area: a related
+ * list's area, the field it points back through, its columns and sort; a runs section's kinds; a start_run action's job
+ * kind and its input's arguments. Run by src/metric-spec.ts checkViews, so gen-packs and the server's install refuse the
+ * same, with the flag on or off (a layout is declared and checked either way).
+ */
+export function detailBuildProblems(areas: readonly DetailBuildArea[], kinds: readonly DetailBuildKind[]): string[] {
+  const out: string[] = [];
+  for (const a of areas) {
+    const d = a.detail;
+    if (!d) continue;
+    const at = (where: string, what: string) => out.push(`pack ${a.pack}: record area ${a.name}'s page: ${where}: ${what}`);
+    const kindOf = (k: string) => kinds.find((x) => x.pack === a.pack && x.name === k);
+    for (const t of d.tabs) for (const s of t.sections) {
+      const where = `section ${s.title}`;
+      if (s.related) {
+        const r = s.related, target = areas.find((x) => x.name === r.area);
+        if (!target) { at(where, `${r.area} is not a record area of this build`); continue; }
+        const back = linksBack(target, a.name);
+        if (r.via !== undefined) {
+          if (!target.fields.some((f) => f.name === r.via)) at(where, `via ${r.via} is not one of ${r.area}'s fields`);
+          else if (!back.includes(r.via)) at(where, `${r.area}'s field ${r.via} does not point at ${a.name}: a related list shows the records that point back here (${back.length ? `its fields that do: ${back.join(", ")}` : `${r.area} has no reference or link field to ${a.name}`})`);
+        } else if (!back.length) at(where, `${r.area} has no link back to ${a.name}: a related list shows the records that point here, through a reference or link field of theirs to ${a.name}`);
+        else if (back.length > 1) at(where, `${r.area} points at ${a.name} through ${back.join(" and ")}: say which with via`);
+        for (const c of r.columns ?? []) {
+          const f = target.fields.find((x) => x.name === c);
+          if (!f) at(where, `column ${c} is not one of ${r.area}'s fields`);
+          else if (f.encrypted || f.type === "file") at(where, `column ${c} is ${f.encrypted ? "encrypted" : "a file field"}: a related list's cell shows a value`);
+        }
+        if ((r.columns ?? []).length !== new Set(r.columns ?? []).size) at(where, "a column is listed twice");
+        if (r.sort) {
+          const f = target.fields.find((x) => x.name === r.sort!.field);
+          if (!f && !["updated_at", "title", "key"].includes(r.sort.field)) at(where, `sort ${r.sort.field} is not one of ${r.area}'s fields (or updated_at, title, key)`);
+          else if (f && (f.encrypted || f.type === "json" || f.type === "file" || f.multiple)) at(where, `sort ${r.sort.field} is ${f.encrypted ? "encrypted" : f.multiple ? "a list" : `a ${f.type} field`}: sort by a field with one plain value`);
+        }
+      }
+      if (s.runs) for (const k of s.runs.kinds ?? []) if (!kindOf(k)) at(where, `${k} is not a job kind of pack ${a.pack}`);
+    }
+    for (const x of d.actions ?? []) {
+      if (x.kind !== "start_run" || !x.job_kind) continue;
+      const where = `action ${pageActionId(x)}`, k = kindOf(x.job_kind);
+      if (!k) { at(where, `${x.job_kind} is not a job kind of pack ${a.pack}`); continue; }
+      if (k.approval) at(where, `${x.job_kind} writes only after its preview is approved: start it from its own list, not a record's page`);
+      for (const arg of Object.keys(x.input ?? {})) if (!(k.args ?? []).includes(arg)) at(where, `input ${arg} is not an argument of ${x.job_kind}${k.args?.length ? ` (${k.args.join(", ")})` : " (it takes none)"}`);
     }
   }
   return out;

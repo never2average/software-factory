@@ -57,6 +57,7 @@ try {
   const { developerSurface } = await import("../src/developer-surface.js");
   const rec = await import("../src/record-areas.js");
   const { agentAppRouter } = await import("../src/agent-routes.js");
+  const { pageRoutesOn } = await import("../src/record-page-routes.js");
   const { runnableKinds } = await import("../src/runs.js");
   const { settingGroups } = await import("../src/settings.js");
 
@@ -128,8 +129,8 @@ try {
       // The workspace agent (mold_v0-243): its routes, its MCP tools, its claimable kind, its settings and its sweep.
       agent_harness: stack(agentAppRouter()) > 0 && t.includes("start_agent_session") && runnableKinds().some((k) => k.pack === "_agent")
         && settingGroups().some((g) => g.id === "agent") && jobs().includes("harness_sessions"),
-      // Record page layouts (mold_v0-253): the console's alone (the server serves the same record); the flag as the build reads it.
-      record_pages: F.featureOn("record_pages"),
+      // Record page layouts (mold_v0-253): the console's; mold_v0-254, the page's own route (related lists, runs, actions).
+      record_pages: F.featureOn("record_pages") && pageRoutesOn(),
     } as Record<string, boolean>;
   };
 
