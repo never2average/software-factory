@@ -224,7 +224,7 @@ function AddKey({ providers, initial, onClose, onObjectStorage, declared }: { pr
                   {!f.secret && (pasting
                     ? <Textarea id='ak-secret' rows={3} spellCheck={false} autoComplete='off' className='font-mono text-xs [-webkit-text-security:disc]' placeholder='Paste the whole key file' value={f.secret}
                         onChange={(e) => { setFile(null); setF({ ...f, secret: e.target.value.replace(/^\uFEFF/, '').trim() }); }} />
-                    : <button type='button' className='text-muted-foreground hover:text-foreground self-start text-xs underline-offset-2 hover:underline' onClick={() => setPasting(true)}>Or paste the JSON instead</button>)}
+                    : <Button variant='ghost' size='xs' className='text-muted-foreground self-start' onClick={() => setPasting(true)}>Or paste the JSON instead</Button>)}
                 </div>
               : <Input id='ak-secret' type='password' autoComplete='new-password' spellCheck={false} required value={f.secret} onChange={(e) => setF({ ...f, secret: e.target.value })} />}
           </FormRow>

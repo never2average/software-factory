@@ -351,7 +351,7 @@ const host = (u: string) => { try { return new URL(u).host; } catch { return u.r
 const amber = 'text-amber-700 dark:text-amber-400';
 /** Plain text that copies itself on click or Enter. */
 const CopyText = ({ value, ok }: { value: string; ok: string }) => (
-  <button type='button' title='Copy' aria-label={`Copy ${value}`} onClick={() => copyText(value, ok)} className='cursor-pointer text-left leading-none hover:underline focus-visible:underline focus-visible:outline-none'>{value}</button>
+  <button type='button' title='Copy' aria-label={`Copy ${value}`} onClick={() => copyText(value, ok)} className='border-border hover:bg-muted cursor-pointer rounded-sm border px-1 py-0.5 text-left leading-none hover:underline focus-visible:underline focus-visible:outline-none'>{value}</button>
 );
 
 /** The one-click fix for an attention message (src/admin.ts shapeOrg), or null when there is none. */

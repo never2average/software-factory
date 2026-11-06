@@ -158,9 +158,9 @@ export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record',
         onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}>
         <CardHeader className='border-b py-4 [.border-b]:pb-4'>
           <CardDescription>
-            <button type='button' className='inline-flex items-center gap-1 underline-offset-4 hover:underline' onClick={onClose}>
+            <Button variant='outline' size='sm' onClick={onClose}>
               <Icons.chevronLeft className='size-3.5' />Back to {back}
-            </button>
+            </Button>
           </CardDescription>
           <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{verb} {c.label}</CardTitle>
           <p className='text-muted-foreground text-sm'>{forWhat}{needsEnv && environment ? ` · ${envWord(environment)}` : ''}</p>
