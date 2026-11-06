@@ -7,7 +7,7 @@ build, scripts/gen-packs.mjs, read the same file). Each flag:
              `features.<id> = true|false` lines in ## Profile), else its legacy key (profile.audit.data, .platform, .sign;
              profile.onprem_runners; for developer_surface the spec's `kind`), else the registry's default
   requested  what asks for it: a pack's declaration (credentials, email, due dates or clocks, private-network kinds,
-             developer_surface, checks, encrypted fields), a build without the session engine, or always
+             developer_surface, checks, encrypted fields, record page layouts), a build without the session engine, or always
   on         requested and the setting not false
 
 `effective()` gives every flag's state for an app (`factory.py spec check` and `spec apps` report them; the factory
@@ -69,6 +69,7 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "checks": return any(d.get("checks") for d in docs)
     if by == "encrypted": return any(isinstance(f, dict) and f.get("encrypted") is True for a in _areas(docs) for f in a.get("fields") or [])
     if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
+    if by == "layouts": return any(isinstance(a.get("detail"), dict) or any(isinstance(f, dict) and f.get("copyable") is True for f in a.get("fields") or []) for a in _areas(docs))
     if by == "no_engine":
         owned = {t for d in docs for t in (((d.get("host") or {}).get("schema") or {}).get("tables") or [])}
         return not all(t in owned for t in ENGINE_TABLES)
@@ -140,7 +141,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 14 and len(set(ids(root))) == 14, "the registry names 14 flags, each once")
+    ok(len(flags) == 15 and len(set(ids(root))) == 15, "the registry names 15 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -149,6 +150,11 @@ def self_test(root):
     ok(words(effective(prof, audit_app_like, root)) == "vault, email, alerts, clocks, audit.data, runners, health", "legacy keys and pack signals give the effective flags")
     ok(words(effective({}, [], root)) == "health", "zero packs and no profile: only health history (no engine)")
     ok("agent" not in words(effective({}, [], root)) and "agent" in words(effective({"features": {"agent_harness": True}}, [], root)), "the workspace agent: off by default, on when the profile says (mold_v0-243)")
+    laid_out = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "status"}], "detail": {"tabs": [{"label": "Overview", "sections": []}]}}]}]
+    copy_only = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "commit", "copyable": True}]}]}]
+    ok("pages" not in words(effective({}, laid_out, root)) and "pages" in words(effective({"features": {"record_pages": True}}, laid_out, root))
+       and "pages" in words(effective({"features": {"record_pages": True}}, copy_only, root)) and "pages" not in words(effective({"features": {"record_pages": True}}, [], root)),
+       "record page layouts: off by default; on when the profile says and an area declares a layout or a copyable field (mold_v0-253)")
     ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")

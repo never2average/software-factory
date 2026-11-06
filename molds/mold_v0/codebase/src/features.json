@@ -161,6 +161,18 @@
       "since": "mold_v0-243",
       "about": "A long-lived agent a person talks to, run through a harness in the workspace's own run sandbox: its sessions, steering mid-run (guidance, approvals, pause, resume, stop), parking and crash recovery, its budgets and retention. /api/agent, the agent MCP tools, the top bar's agent icon (the brand's own, or a workspace owner's in Settings › Workspace agent, mold_v0-252) and /app/agent (staff: /admin/agent and the Workspace agent settings).",
       "off": "No route answers, no tool is listed, no icon, page, Settings tab or setting shows, and no agent session can start; the generated files leave its flag out."
+    },
+    {
+      "id": "record_pages",
+      "short": "pages",
+      "label": "Record page layouts",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "layouts",
+      "requested_words": "a record area's page layout (detail) or a field marked copyable",
+      "since": "mold_v0-253",
+      "about": "A record's page laid out as its area declares (detail): a header with the title, a summary, coloured status badges, who added it and up to 8 facts; notices shown while a condition on the record holds; tabs of sections, each a card of field groups in 1, 2 or 3 columns with its own empty state; and copy buttons for the record's id, the page's link and each copyable field.",
+      "off": "Every record page is the one details card it always was (every field, then documents, deadlines, links and credentials); the layouts stay declared and checked, and the generated files leave them and the flag out."
     }
   ]
 }

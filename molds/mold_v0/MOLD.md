@@ -2849,6 +2849,7 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `health_history` | on | a build without the session engine | the `health_samples` job and its history (Status's graphs) |
 | `document_preview` | on | a `file` field, or a field with `preview: "document"` | the record file card routes (`/api/records/<area>/<key>/files[/...]`) and the console's document cards |
 | `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
+| `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3358,6 +3359,44 @@ until asked, the frame's policy; the data trail's entries; URL documents: the al
 addresses, size and type, the cache, a shared area for every workspace and staff, a workspace area's sealed copy, a
 failure on the card), `npm run test:company-email` (8b: the body and attachments kept as files, previewed, and the
 backfill once), `npm run test:migrations` (0041 and its rollback).
+
+## Record page layouts (mold_v0-253)
+
+Part 1 of rich record pages: a pack lays out an area's record page in pack.json (`record_areas[].detail`), and marks
+fields `copyable`. **Off by default** (`features.record_pages`, `quiet_off`): off, every record page is the one details
+card it always was, and the build writes exactly what it wrote before the flag (no `detail`, no `copyable`, no flag in
+`web/src/config/features.generated.ts`, the generated types unchanged). With the flag on and no layout declared for an
+area, its page is also as before.
+
+- **Declared** (`src/pack-api.ts` `RecordDetailSchema`, the pack schema, the app spec's embedded copy): a `header`
+  (`title` and `subtitle` fields, up to 3 `badges` on single-choice enum fields with each value's colour a theme token
+  of `BADGE_COLORS`, `creator`, up to 8 `facts` with a number's `unit`), `notices` (`when` one test of one field:
+  `equals`, `in`, `not_in`, `empty`; tone `info`, `warning`, `danger`; `title`, `text`), `tabs` (a `label`, at least one
+  section each), each section a `title`, `fields` or `groups` of fields, `columns` 1, 2 or 3 and its own `empty` words;
+  `unplaced` (`show`: the fields nothing names as "Other details" at the end of the first tab; `hide`).
+- **Refused at build** (`detailProblems`, run by the area's schema, so `gen-packs` and the factory's spec check both
+  refuse it): a field the area lacks, more than 8 facts, a tab without sections, a section without fields, fields and
+  groups together, a badge on another kind of field or with a colour outside the token set, option values the field
+  does not have, a unit on a field that is not a number, a title, subtitle, badge or fact on an encrypted or file field,
+  two facts or badges on one field, two tabs with one address. `copyable` is refused on encrypted, file and json fields.
+- **Drawn** (`web/src/features/records/detail-page.tsx`; what it decides, pure, in `detail-layout.ts`): in the standard
+  grid, full-width cards. The header card (the area and where its records live, the title, the summary, the badges,
+  **Copy ID** and **Copy link** as outlined buttons, the facts in a grid of 2 on a phone, 3, then 4, each formatted by its
+  type, and a line with who added it, the id, the version and when it changed), the notices whose condition holds, the
+  tab strip (`?tab=<id>`, the first tab with none; one tab: no strip), then the open tab's sections, each a card of field
+  groups in its columns (one on a phone) or its empty state. The first tab ends with "Other details", the record's
+  documents and deadlines, its linked records and its Credentials card. Every copy confirms with a toast and works on a
+  phone (the clipboard API, else a selection copied). Badge and notice colours are the console's status tones and the
+  theme's chart colours mixed toward the foreground, legible in light and dark.
+- **Later parts**: related lists, the record's runs and a run's own page, logs, history, code views and page actions.
+
+Proof: `npm run test:record-pages` (14: the schema's refusals and the build's, on and off; the badges' tokens; facts by
+type; a notice's conditions; tabs and sections; copy; off, the console's generated files those of the same pack without
+its layouts; the page drawn in a headless browser for a failed and a running build, a one-tab project and an area with
+no layout), `npm run test:features` (the flag off by default, asked for by a layout, in the console's files only while
+on), `npm run test:console-tabs` (a laid-out build's console typechecks), `npm run test:zero-pack`, and the fixture
+`scripts/fixtures/packs/fixture_pages` (projects, environments, builds), whose pages a lane world draws in light and dark
+at 1440 and 390 px with each copy's toast and the clipboard read back.
 
 ## How the factory runs it
 

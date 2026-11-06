@@ -364,6 +364,12 @@ export const RecordFieldSchema = z.object({
    * kept in the object store.
    */
   preview: z.enum(["document"]).optional(),
+  /**
+   * A copy button beside its value on the record's page (mold_v0-253, flag record_pages): in the layout's sections and
+   * facts, with a toast; a value a person copies elsewhere (an address, an identifier, a commit). Never on an encrypted
+   * or file field (the page never holds the value) or a json one (no one line to copy).
+   */
+  copyable: z.boolean().optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -382,6 +388,7 @@ export const RecordFieldSchema = z.object({
   if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
   if (f.max_length !== undefined && f.type !== "text") bad("max_length is for a text field", "max_length");
+  if (f.copyable && (f.encrypted || f.type === "file" || f.type === "json")) bad(`copyable is for a value the page shows in full (not an encrypted, file or json field)`, "copyable");
   if (f.preview && (!["text", "url"].includes(f.type) || f.encrypted)) bad("preview: \"document\" is for a url field, or a text field holding a URL (not encrypted)", "preview");
 });
 const field = RecordFieldSchema;
@@ -881,6 +888,145 @@ export function contractProblems(a: {
   return out;
 }
 
+// ---------- a record's page, laid out (mold_v0-253; flag record_pages) ----------
+
+/**
+ * The colours a badge may take (mold_v0-253): theme tokens, never a raw colour. The five tones (neutral, info, success,
+ * warning, danger: the console's status colours) and the eight chart colours (viz-1 .. viz-8, the theme's --viz-N),
+ * each drawn as a tinted chip legible in light and dark.
+ */
+export const BADGE_COLORS = ["neutral", "info", "success", "warning", "danger", "viz-1", "viz-2", "viz-3", "viz-4", "viz-5", "viz-6", "viz-7", "viz-8"] as const;
+/** A notice's tones (mold_v0-253): a banner's colour and icon. */
+export const NOTICE_TONES = ["info", "warning", "danger"] as const;
+/** The most facts a record's header shows (mold_v0-253): two rows of four on a desktop. */
+export const DETAIL_FACTS_MAX = 8;
+const plainWords = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets");
+const scalar = z.union([z.string().min(1).max(200), z.number().finite(), z.boolean()]);
+/** A field group: a few of the section's fields under an optional heading, laid out in the section's columns. */
+const DetailGroupSchema = z.object({ title: plainWords(60).optional(), fields: z.array(name).max(30) }).strict();
+/**
+ * A section of a tab: a full-width card titled `title`, its fields in `columns` (1, 2 or 3 on a desktop; one on a
+ * phone), given as `fields` (one group) or `groups` (several, each with an optional heading). When every field of it is
+ * empty on a record, the card says `empty` (default "Nothing here yet.") in their place.
+ */
+export const DetailSectionSchema = z.object({
+  title: plainWords(60),
+  columns: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  fields: z.array(name).max(30).optional(),
+  groups: z.array(DetailGroupSchema).max(6).optional(),
+  empty: plainWords(200).optional(),
+}).strict();
+/** A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. */
+export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12) }).strict();
+/**
+ * When a notice shows (mold_v0-253): one test of one of the record's fields. `equals` a value, `in` one of a list,
+ * `not_in` none of a list, or `empty` (true: the field has no value; false: it has one). An enum field's values are its
+ * options' values.
+ */
+export const DetailConditionSchema = z.object({
+  field: name,
+  equals: scalar.optional(),
+  in: z.array(scalar).min(1).max(20).optional(),
+  not_in: z.array(scalar).min(1).max(20).optional(),
+  empty: z.boolean().optional(),
+}).strict();
+/** A banner above the tabs while its condition holds on the record: its tone, an optional title and its words. */
+export const DetailNoticeSchema = z.object({
+  when: DetailConditionSchema,
+  tone: z.enum(NOTICE_TONES, { error: () => `a notice's tone is one of ${NOTICE_TONES.join(", ")}` }),
+  title: plainWords(80).optional(),
+  text: plainWords(300),
+}).strict();
+/**
+ * A record area's page layout (mold_v0-253), shown while the app's flag record_pages is on (off: the page is the one
+ * details card it always was). Every field it names is one of the area's fields (gen-packs refuses any other).
+ *   header   `title` (a field shown as the page's title; default the record's own title), `subtitle` (a summary line),
+ *            `badges` (single-choice enum fields, each value's colour a theme token: BADGE_COLORS; a value left out
+ *            is neutral), `creator` (false hides "Added by", the record's provenance; mold_v0-236), and up to 8 `facts`
+ *            (a field, its label, a number's unit), each formatted by its type: a date relative with the exact date on
+ *            hover, a number with its unit, a link or address as a link, an enum as its badge
+ *   notices  banners shown while a condition on the record's fields holds (tone info, warning or danger)
+ *   tabs     the page's tabs, each with its sections (at least one each); one tab draws no strip
+ *   unplaced what of the area's fields no section, fact or header names: "show" (the default: an "Other details"
+ *            section at the end of the first tab, the fields that have a value) or "hide"
+ */
+export const RecordDetailSchema = z.object({
+  header: z.object({
+    title: name.optional(),
+    subtitle: name.optional(),
+    badges: z.array(z.object({
+      field: name,
+      colors: z.record(z.string(), z.enum(BADGE_COLORS, { error: (i) => `${String(i.input)} is not a badge colour: one of the theme's tokens ${BADGE_COLORS.join(", ")}` })).optional(),
+    }).strict()).max(3).optional(),
+    creator: z.boolean().optional(),
+    facts: z.array(z.object({ field: name, label: plainWords(40).optional(), unit: plainWords(12).optional() }).strict())
+      .max(DETAIL_FACTS_MAX, `at most ${DETAIL_FACTS_MAX} facts: the header shows two rows of four`).optional(),
+  }).strict().optional(),
+  notices: z.array(DetailNoticeSchema).max(6).optional(),
+  tabs: z.array(DetailTabSchema).min(1, "a layout has at least one tab").max(8),
+  unplaced: z.enum(["show", "hide"]).optional(),
+}).strict();
+export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
+
+/** A layout's id for each tab (its label, lowercased, words joined by -): the page's ?tab= value. */
+export const detailTabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "tab";
+
+/** What keeps an area's layout from being drawn (mold_v0-253): fields it names that the area lacks, empty tabs, and so on. */
+export function detailProblems(a: { fields: z.output<typeof RecordFieldSchema>[]; detail?: RecordDetailLayout }): { message: string; path: (string | number)[] }[] {
+  const d = a.detail;
+  if (!d) return [];
+  const out: { message: string; path: (string | number)[] }[] = [];
+  const bad = (message: string, ...path: (string | number)[]) => out.push({ message, path });
+  const fieldOf = (n: string) => a.fields.find((f) => f.name === n);
+  const known = (n: string, ...path: (string | number)[]) => { const f = fieldOf(n); if (!f) bad(`${n} is not one of the area's fields`, ...path); return f; };
+  const shown = (n: string, what: string, ...path: (string | number)[]) => {
+    const f = known(n, ...path);
+    if (f && (f.encrypted || f.type === "file")) bad(`${n} is ${f.encrypted ? "encrypted" : "a file field"}: ${what} shows a value, so it names a field the page reads`, ...path);
+    return f;
+  };
+  const h = d.header;
+  if (h?.title) shown(h.title, "the title", "header", "title");
+  if (h?.subtitle) shown(h.subtitle, "the subtitle", "header", "subtitle");
+  for (const [i, b] of (h?.badges ?? []).entries()) {
+    const f = shown(b.field, "a badge", "header", "badges", i, "field");
+    if (f && (f.type !== "enum" || f.multiple)) bad(`${b.field} is not a single-choice enum field: a badge shows one of its options`, "header", "badges", i, "field");
+    else if (f) for (const v of Object.keys(b.colors ?? {})) if (!optionValues(f).includes(v)) bad(`${v} is not one of ${f.name}'s options`, "header", "badges", i, "colors", v);
+    if ((h?.badges ?? []).findIndex((x) => x.field === b.field) !== i) bad(`${b.field} has two badges`, "header", "badges", i, "field");
+  }
+  for (const [i, x] of (h?.facts ?? []).entries()) {
+    const f = shown(x.field, "a fact", "header", "facts", i, "field");
+    if (f?.type === "json") bad(`${x.field} is a json field: a fact is one short value`, "header", "facts", i, "field");
+    if (x.unit !== undefined && f && f.type !== "number") bad(`a unit is for a number field (${x.field} is ${f.type})`, "header", "facts", i, "unit");
+    if ((h?.facts ?? []).findIndex((y) => y.field === x.field) !== i) bad(`${x.field} is a fact twice`, "header", "facts", i, "field");
+  }
+  for (const [i, n] of (d.notices ?? []).entries()) {
+    const w = n.when;
+    const ops = (["equals", "in", "not_in", "empty"] as const).filter((k) => w[k] !== undefined);
+    if (ops.length !== 1) bad(`a notice's condition is one test: equals, in, not_in or empty (it has ${ops.length ? ops.join(" and ") : "none"})`, "notices", i, "when");
+    const f = known(w.field, "notices", i, "when", "field");
+    if (f?.encrypted) bad(`${w.field} is encrypted: the page never reads its value, so no notice can test it`, "notices", i, "when", "field");
+    if (f?.type === "enum") for (const v of [w.equals, ...(w.in ?? []), ...(w.not_in ?? [])]) if (v !== undefined && !optionValues(f).includes(String(v))) bad(`${String(v)} is not one of ${f.name}'s options`, "notices", i, "when");
+  }
+  const ids = d.tabs.map((t) => detailTabId(t.label));
+  for (const [ti, t] of d.tabs.entries()) {
+    if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
+    if (!t.sections.length) bad(`tab ${t.label} is empty: a tab has at least one section`, "tabs", ti, "sections");
+    for (const [si, s] of t.sections.entries()) {
+      if (s.fields && s.groups) bad(`section ${s.title} gives fields or groups, not both`, "tabs", ti, "sections", si);
+      const lists = s.groups ? s.groups.map((g, gi) => ({ names: g.fields, path: ["groups", gi, "fields"] as (string | number)[] })) : [{ names: s.fields ?? [], path: ["fields"] as (string | number)[] }];
+      if (!lists.some((l) => l.names.length)) bad(`section ${s.title} lists no fields`, "tabs", ti, "sections", si);
+      for (const [gi, g] of (s.groups ?? []).entries()) if (!g.fields.length) bad(`a group of section ${s.title} lists no fields`, "tabs", ti, "sections", si, "groups", gi, "fields");
+      const seen = new Set<string>();
+      for (const l of lists) for (const [k, n] of l.names.entries()) {
+        known(n, "tabs", ti, "sections", si, ...l.path, k);
+        if (seen.has(n)) bad(`${n} is in section ${s.title} twice`, "tabs", ti, "sections", si, ...l.path, k);
+        seen.add(n);
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * The icons a tab, a record area (mold_v0-242) or a host pack's sidebar entry may use: names of the console's icon set
  * (web/src/components/icons.tsx).
@@ -974,6 +1120,11 @@ export const RecordAreaSchema = z.object({
    */
   contract: RecordContractSchema.optional(),
   /**
+   * The record's page, laid out (mold_v0-253; RecordDetailSchema above): a header with badges and facts, notices, tabs
+   * of sections. Drawn while the app's flag record_pages is on; absent (or the flag off), the page is one details card.
+   */
+  detail: RecordDetailSchema.optional(),
+  /**
    * Example records of a shared (platform) area (mold_v0-170), for the test lanes only: the lane world
    * (molds/mold_v0/testing/console/world.mts) writes them into its throwaway database, so the area's console pages are
    * graded with rows as well as empty. A deployed build never writes them; the lane checks each against the area's
@@ -1020,6 +1171,7 @@ export const RecordAreaSchema = z.object({
   if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
   for (const p of clockProblems(a, a.clocks ?? [])) bad(p.message, "clocks", ...p.path);
   for (const p of contractProblems(a)) bad(p.message, "contract", ...p.path);
+  for (const p of detailProblems(a)) bad(p.message, "detail", ...p.path);
   if (a.action === false && !a.action_reason) bad("action: false says why its lists have no primary action (action_reason)", "action_reason");
   if (a.action_reason !== undefined && a.action !== false) bad("action_reason is for action: false", "action_reason");
   const p = a.permissions;

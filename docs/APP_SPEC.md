@@ -87,6 +87,7 @@ through the same check `factory.py validate` and the build use.
   | `encrypted_fields` | true | an `encrypted: true` field (false while one is declared is refused) | encrypted |
   | `health_history` | true | a build without the session engine | health |
   | `document_preview` | true | a `file` field, or `preview: "document"` | documents |
+  | `record_pages` | false | an area's page layout (`detail`) or a `copyable` field | pages |
 
   Written to the app's `profile.features`; in a brief, `features.<flag> = true|false` lines in `## Profile`. A legacy key
   (the spec's `audit` block, `profile.onprem_runners`) still works and must agree with its flag. **`kind` stays the
@@ -95,6 +96,12 @@ through the same check `factory.py validate` and the build use.
   while a job kind needs a credential that is not optional. `factory.py spec check` prints the effective flags
   (`flags: vault, email, alerts, clocks, audit.data, runners, health`), `factory.py spec apps` each app's, and the factory
   board shows them on each mold_v0 app's line.
+- A record area may lay out its records' page (mold_v0-253, flag `record_pages`, off by default: turn it on with
+  `features.record_pages = true`): `detail` with a `header` (title and subtitle fields, coloured status badges, the
+  creator, up to 8 facts), `notices` (banners while a condition on the record's fields holds) and `tabs` of sections
+  (field groups in 1, 2 or 3 columns, each with its own empty state); a field may be `copyable: true`. The pack schema
+  refuses a field the area lacks, more than 8 facts, an empty tab and a badge colour outside the theme's tokens;
+  docs/RECORDS.md section 6 "The record's page" has the whole shape. Off, every record page is as before.
 - A record area's field may be `encrypted: true` (mold_v0-194: workspace areas stored in the shell's tables; text, number,
   date, boolean, json or enum), with `reveal_roles` (who may reveal it; default the roles that may update the area) and
   `searchable: "equality"` (a keyed blind index for equality filters only); brief line `field <name>: <Label> | text |
