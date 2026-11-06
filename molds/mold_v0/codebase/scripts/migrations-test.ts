@@ -1005,6 +1005,30 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} cache writes priced apart: Haiku priced (an operator's row kept), write prices empty, earlier usage not repriced; its rollback keeps the price rows and leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // gpt-5.6-luna priced (mold_v0-248, model_price_gpt_56_luna): an operator's own row is kept; the rollback keeps the row.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "model_price_gpt_56_luna")!.version;
+    const own = await shellAt(kind, v - 1);
+    assert.equal((await own.query("SELECT 1 FROM model_prices WHERE model = 'gpt-5.6-luna'")).length, 0, "unpriced before");
+    await runMigrations(own, { packDirs: [] });
+    const [r] = await own.query<{ input_per_mtok: string; cached_input_per_mtok: string; output_per_mtok: string }>(
+      "SELECT input_per_mtok, cached_input_per_mtok, output_per_mtok FROM model_prices WHERE model = 'gpt-5.6-luna'");
+    assert.deepEqual([Number(r!.input_per_mtok), Number(r!.cached_input_per_mtok), Number(r!.output_per_mtok)], [0.2, 0.02, 1.2], "gpt-5.6-luna priced");
+    await own.drop();
+    const kept = await shellAt(kind, v - 1);
+    await kept.query("INSERT INTO model_prices (model, input_per_mtok, cached_input_per_mtok, output_per_mtok, source) VALUES ('gpt-5.6-luna', 9, 9, 9, 'operator')");
+    await runMigrations(kept, { packDirs: [] });
+    assert.equal(Number((await kept.query<{ input_per_mtok: string }>("SELECT input_per_mtok FROM model_prices WHERE model = 'gpt-5.6-luna'"))[0]!.input_per_mtok), 9, "an operator's row kept");
+    await kept.drop();
+    const d = await shellAt(kind);
+    await rollBackAfter(d, v);
+    await d.exec(readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_model_price_gpt_56_luna.sql`), "utf8"));
+    assert.equal((await d.query("SELECT 1 FROM model_prices WHERE model = 'gpt-5.6-luna'")).length, 1, "the price row stays after a rollback");
+    assert.deepEqual((await runMigrations(d, { packDirs: [] })).applied.filter((m) => m.endsWith("_model_price_gpt_56_luna")).length, 1, "and it applies again");
+    await d.drop();
+    log(`  ✓ ${kind}: ${v} gpt-5.6-luna priced (an operator's row kept); its rollback keeps the row, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);
