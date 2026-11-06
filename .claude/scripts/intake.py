@@ -118,6 +118,11 @@ def _extract(text):
     if m: h["brand_logo"] = m.group(1).strip()
     m = re.search(r"^\s*tagline:\s*([^\n]+?)\s*$", text, re.I | re.M)
     if m: h["brand_tagline"] = m.group(1).strip()
+    # mold_v0-252: the workspace agent's own icon, `agent icon: brands/acme/agent.svg` or `agent icon: icon:robot`
+    m = re.search(r"^\s*agent icon:\s*(\S+)\s*$", text, re.I | re.M)
+    if m: h["brand_agent_icon"] = m.group(1).strip()
+    m = re.search(r"^\s*agent icon dark:\s*(\S+)\s*$", text, re.I | re.M)
+    if m: h["brand_agent_icon_dark"] = m.group(1).strip()
     # The starter library a new workspace is given. The mold carries none of its own; the original product's (13
     # workflows and 5 onboarding recipes for a team that delivers a platform to accounts) is the mold's
     # library/account-delivery/, and an app gets it only by asking: "workflows: all" (or "library"), or in plain
@@ -167,6 +172,7 @@ _KEYS = [   # `Key: value`: the whole sentence (the whole line for the line keys
  ("brand", r"brand(?:\s+name)?\s*:", {"brand_name"}),
  ("logo", r"logo\s*:", {"brand_logo"}),
  ("tagline", r"tagline\s*:", {"brand_tagline"}),
+ ("agent_icon", r"agent\s+icon(?:\s+dark)?\s*:", {"brand_agent_icon", "brand_agent_icon_dark"}),
  ("workspace", r"(?:workspace|org(?:anisation|anization)?)(?:\s+name)?\s*:", {"workspace_name"}),
  ("owner", None, {"operator_email"}),
  ("admins", r"(?:platform\s+)?admin(?:istrator)?s?\s*:", {"platform_admins"}),
@@ -683,11 +689,12 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # The product's identity is COPIED into the app, not referenced: an application must be readable
     # on its own, and editing a product's brand later must not change an app that already exists.
     brand = {} if hints.get("no_branding") else dict(prod.get("brand") or {})
-    if brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline")):
+    if brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline", "brand_agent_icon")):
         # The brief's brand lines override the product's brand; everything not named is derived.
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from branding import normalize
-        brand = normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"))
+        brand = normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"),
+                          hints.get("brand_agent_icon"), hints.get("brand_agent_icon_dark"), mold_id)
         surface["branding"] = brand
 
     # Packs: the application's own code, added to the mold's build copy without forking it (packs.py). The brief
@@ -1481,11 +1488,12 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
         if not os.path.exists(os.path.join(ROOT, "packs", pid, "pack.json")): sys.exit(f"the brief names pack '{pid}' but packs/{pid}/pack.json does not exist")
     if packs: app["packs"] = packs
     brand = {} if hints.get("no_branding") else dict(prod.get("brand") or {})
-    if (brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline"))) and "brand" not in nn \
+    if (brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline", "brand_agent_icon"))) and "brand" not in nn \
             and os.path.isfile(os.path.join(ROOT, "molds", mold_id, "branding", "rules.json")):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from branding import normalize, name_problem
-        app["surface"] = {"branding": normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"))}
+        app["surface"] = {"branding": normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"),
+                                                hints.get("brand_agent_icon"), hints.get("brand_agent_icon_dark"), mold_id)}
         why = name_problem(app["surface"]["branding"]["product_name"], mold_id)
         if why: sys.exit(f"{app_id}: {why}. Nothing was written.")
     # The app's own profile settings (mold_v0-090): the brief's `## Profile` / `## Budgets` settings, exactly. The brief is
