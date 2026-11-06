@@ -7,7 +7,7 @@
 // page, and a session is ?session=<id> on it. One exception to the console's full-card rule, the operator's (mold_v0-249):
 // Start a session opens as a modal dialog (the first message, the model, the budget, Start), then the new session's
 // full card. Nothing else here is a dialog or a side sheet.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -183,10 +183,21 @@ function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boo
       toast.success('Started'); onStarted(r.session.id);
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
+  // Tab wraps from the last control to the first (Shift+Tab the other way): focus never leaves the dialog for the page
+  // behind it, whatever the library's own focus guards do (measured on the lane: they let it out after the last one).
+  const keepTabInside = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+      .filter((x) => x.getClientRects().length > 0);
+    if (!items.length) return;
+    const first = items[0]!, last = items[items.length - 1]!, at = document.activeElement;
+    if (e.shiftKey ? at === first || !e.currentTarget.contains(at) : at === last) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+  };
   const tools = offer.workspace_tools === 'all' ? 'uses every tool you may use without asking' : offer.workspace_tools === 'reads_and_named' ? 'reads without asking, uses a few named tools, and asks you before any other change' : 'reads without asking and asks you before it changes anything';
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
-      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-start-dialog=''>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl' data-agent-start-dialog='' onKeyDown={keepTabInside}
+        finalFocus={() => document.querySelector<HTMLElement>("[data-toolbar-action][aria-label='Start a session']")}>
         <form className='grid gap-4' onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <DialogHeader>
             <DialogTitle>Start a session</DialogTitle>
@@ -202,7 +213,7 @@ function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boo
             <dd><span className='font-mono text-xs'>{offer.model}</span><span className='text-muted-foreground block text-xs'>Set by the platform&apos;s staff for every new session.</span></dd>
             <dt className='text-muted-foreground'><label htmlFor='agent-start-budget'>Budget (USD)</label></dt>
             <dd className='grid gap-1'>
-              <Input id='agent-start-budget' className='w-32' type='number' inputMode='decimal' min={0.1} max={range.max_usd} step='0.5' value={budget}
+              <Input id='agent-start-budget' className='w-32' type='number' inputMode='decimal' min={0.1} max={range.max_usd} step='0.01' value={budget}
                 aria-invalid={budgetWrong || undefined} aria-describedby='agent-start-budget-hint' onChange={(e) => setBudget(e.target.value)} />
               <span id='agent-start-budget-hint' className='text-muted-foreground text-xs'>
                 {range.max_usd > range.default_usd ? `${usd(range.default_usd)} unless you change it; you can give it up to ${usd(range.max_usd)}.` : `At most ${usd(range.max_usd)}; lower it if you like.`} When it is spent the session stops and asks{range.max_usd > range.default_usd ? '' : ' a billing manager or an owner'} to raise it, up to {usd(range.ceiling_usd)}.

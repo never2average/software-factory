@@ -193,3 +193,21 @@ order: the workspace's own (an owner uploads it in Settings › Workspace agent:
 `src/agent-icon.ts` sanitises an SVG and resizes a picture, and keeps it sealed under the workspace's prefix), the app's
 (its brand: `branding.py <app> set --agent-icon <file>` or `--agent-icon-name <name>`, light and dark), else the default.
 An icon drawn in one colour follows the theme's text colour. Reset goes back to the app's. See MOLD.md "Workspace agent".
+
+### A real session that reaches its workspace (mold_v0-250, measured once, 2026-11-06)
+
+On the example app's lane copy with the flag on (the lane world, its seeded records, its gateway to Claude on Vertex AI
+(global)), the pinned Claude Code 2.1.316, budget $1. The two Haiku models were refused by that Vertex project ("there's
+an issue with the selected model", nothing spent), so the session ran on `claude-sonnet-5-5`.
+
+- **Its tools.** The CLI connected to the app's server (`app`, by `--mcp-config`, the token expanded from the wake's
+  environment): 58 tools as the lane workspace's owner, 43 reads without asking, 15 asking first. Asked "Summarise this
+  workspace's findings", it called the app's metrics tool and its findings list tool (the API logged both for the
+  session's client) and answered from the eight seeded records: each by key, severity, status and fix-by date.
+- **A change asks first.** Asked to create a record, it called the app's create tool: the wake stopped with a `tool`
+  request carrying what it wanted to send, the server ran no such call, and the wake's token was revoked ("awaiting a
+  decision"). Spend: $0.23 of $1 (the gateway and the session agree).
+- **Found and fixed on the way.** The pinned CLI reserves the MCP server name `workspace` and drops a server called so
+  (said only in its init event): the server is `app`. The start dialog's budget field stepped by 0.5 from 0.1, so the
+  browser refused the default $1: it steps by 0.01. The dialog library let Tab leave the dialog after its last control
+  and did not give focus back to Start a session on Esc: the dialog wraps Tab itself and names where focus returns.
