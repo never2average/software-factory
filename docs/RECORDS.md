@@ -38,6 +38,7 @@ pack's areas as you type. `factory.py spec check` adds the completeness rules be
 | `action`, `action_reason` | The primary action of the area's own lists, its Settings tab and its Records page: absent, the shell's default; `false` with `action_reason`, none (section 5). |
 | `samples` | Up to 20 example rows of a shared area, written only by the test lanes' throwaway database. |
 | `contract` | The area's contract in one place (section 8). |
+| `visibility` | Who sees each record, with the app's flag `teams` on (section 4a, mold_v0-259). |
 
 ## 2. Field types
 
@@ -140,6 +141,61 @@ What turns an action off:
   and with it the same operation's routes (`src/mcp-withheld.ts`): `create_<area>` withholds `POST /api/data/<area>`;
   a workspace area's delete is withheld when every write of it is; `list_` and `export_` withhold the console's Export
   CSV; `admin_create_`/`admin_update_`/`admin_delete_` withhold the staff routes.
+
+## 4a. Visibility: who sees each record (mold_v0-259, flag `teams`)
+
+With the app's flag `teams` on (off by default), a workspace has **teams** (each a name, an optional description, and
+its people, each a member or a lead), managed by its owners in Settings › Teams; and an area that declares
+`visibility` gives **each record its own**:
+
+```json
+"visibility": { "modes": ["private", "team", "workspace"], "default": "private", "collaborators": true }
+```
+
+| Key | What it says |
+|---|---|
+| `modes` | The visibilities a record may take, 1 to 3 of `workspace` (everyone in the workspace), `team` (one team's members and leads) and `private` (its owner). |
+| `default` | The one a new record takes when its writer does not say (one of `modes`). A `team` default takes the writer's team when they are in exactly one; else the writer chooses. |
+| `collaborators` | `true`: people may be named on a record, each seeing it whatever its mode. Default `false`. |
+
+A workspace area of the shell's own tables only (never a shared area, nor one fed by a repository). Off, or not
+declared, every record is open to its whole workspace, exactly as before; records written before the flag (or before the
+area declared it) stay open to the workspace.
+
+**The rule**, in one place: the database (`sql/migrations/0050_teams_and_visibility.sql`, the restrictive policy
+`record_visibility` on `workspace_records`, beside `tenant_isolation`). A person sees a record that is open to the
+workspace, theirs (its owner), one they are named on, or one shared with a team they are in. **The workspace's owners
+always see every record**, as do an account API key and the shell's own work (a run, a schedule, the clock check). Every
+door names the person it acts for (`src/visibility.ts`): the console's and the packs' routes and the data API
+(`src/app.ts` `customerSession`), every MCP tool, the workspace agent's included (`src/packs.ts` `runPackTool`), the
+developer API (a workspace's backend is no person of it: the records open to the workspace), and the record store
+again from the actor it is given. So **every read path** finds only what the person may see, with nothing to forget per
+route: lists, record pages, related lists, computed facts and columns, the record picker and its search, CSV export,
+metrics, charts and the lists' cards, the MCP `list_`, `get_` and `export_` tools and `list_records`/`get_record`, a
+pack tool's `ctx.records`, a reference check (a person cannot point a record at one they may not see), and the
+developer API. **Writes follow the same rule**: a record the person may not see is not there to change, move, delete
+or share (404).
+
+**Writing it.** Every write door takes `visibility: {mode, team?, collaborators?}` beside `title` and `data` (the data
+API's create and update, the `create_<area>`/`update_<area>` tools, `ctx.records`, a batch's put): on a new record, else
+the area's default, owned by the person adding it (a run, the shell or a key owns none: open to the workspace unless it
+says); on a change, absent keeps it. **Share** (`POST /api/data/<area>/<key>/visibility`, the record page's Share) changes
+it alone: the record's owner, a lead of its team (while it is the team's), or a workspace owner. Refused in words: a
+mode the area does not take, a team that does not exist or that the writer is not in, collaborators where the area
+names none, a visibility that would hide the record from the person writing it, any visibility but the workspace's from
+a caller that is no person (the developer API). An append-only record never changes its visibility either.
+
+**On screen** (`web/src/features/teams/`): the create and edit forms carry a **Who sees it** field (the modes, a team
+picker of the person's teams, a collaborators picker of the workspace's people); lists get a **Visibility** column the
+Filter menu filters (`?visibility=workspace|private|team:<name>` in the address); a record's page shows its visibility
+in the header with **Share**; Settings › Access › **Teams** lists the teams (four cards, the search row with New team,
+the table) and each team has its page in the record page layout (`/app/settings/teams/<id>`: People, Records, History).
+
+**Teams** (`src/teams.ts`, `/api/teams`): everyone in the workspace reads them (so the forms offer a person their
+teams); only its owners create, rename and delete them and add, remove or make leads of their people. Every change is
+kept (`workspace_team_changes`: who, what, when; a team's History tab). A deleted team's records become private to their
+owners; someone removed from the workspace leaves its teams. The budget rules' teams (`usage_teams`, Billing) are
+separate.
 
 ## 5. Lists
 
@@ -515,6 +571,11 @@ append-only and chained, so update, move and delete are none). Their other areas
 ## 10. Not built yet (follow-ups)
 
 What the contract can name only as `none`, or cannot name, because the runtime does not do it:
+
+- **Visibility beyond the record** (mold_v0-259). A record's own reads are filtered; what the shell keeps about it
+  elsewhere is not: the data trail's entries, a due-date notice's title, the Due soon card's clock rows, the runs linked
+  to it (shown only on its page, which needs the record), and its change history (read only through its page). A
+  record's owner cannot be changed, and a team's leads do not manage its people (the workspace's owners do).
 
 - **Import through MCP.** A workspace imports through the data API and the console; there is no `import_<area>` tool
   (an AI client writes several records with the data API's batch).

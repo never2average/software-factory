@@ -3547,6 +3547,44 @@
             ],
             "additionalProperties": false
           },
+          "visibility": {
+            "type": "object",
+            "properties": {
+              "modes": {
+                "minItems": 1,
+                "maxItems": 3,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "workspace",
+                    "team",
+                    "private"
+                  ]
+                }
+              },
+              "default": {
+                "type": "string",
+                "enum": [
+                  "workspace",
+                  "team",
+                  "private"
+                ]
+              },
+              "collaborators": {
+                "type": "boolean"
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "modes",
+              "default"
+            ],
+            "additionalProperties": false
+          },
           "samples": {
             "maxItems": 20,
             "type": "array",

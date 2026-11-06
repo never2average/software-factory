@@ -106,11 +106,25 @@ export interface RecordRow {
    * declared is left out of `data`, the rest is shown as stored, and the next write must fit the declaration.
    */
   drift?: string[];
+  /** mold_v0-259 (flag teams): who sees it, on an area that declares `visibility`. */
+  visibility?: RecordVisibility;
   /** A clock area's deadlines (mold_v0-191, src/record-clocks.ts): each clock's due_at, status and whether it is overdue. */
   clocks?: Record<string, ClockView>;
 }
 export interface RecordPage { records: RecordRow[]; next: string | null }
-export interface RecordInput { title?: string | null; data: Record<string, unknown>; version?: string | null }
+export interface RecordInput {
+  title?: string | null; data: Record<string, unknown>; version?: string | null;
+  /**
+   * mold_v0-259 (flag teams; an area declaring `visibility`): who sees the record. On a new record, absent: the area's
+   * default. On a change, absent: kept as it is; given: changed (by the record's owner, a lead of its team, or an owner
+   * of the workspace).
+   */
+  visibility?: VisibilityInput;
+}
+/** A record's visibility as a write gives it (mold_v0-259): a mode, its team (id or name) and its collaborators (people's ids). */
+export interface VisibilityInput { mode: "workspace" | "team" | "private"; team?: number | string | null; collaborators?: string[] }
+/** A record's visibility as a read shows it (mold_v0-259): records written before the flag are open to the workspace. */
+export interface RecordVisibility { mode: "workspace" | "team" | "private"; team: { id: number; name: string } | null; owner: string | null; collaborators: string[] }
 /**
  * A page of an area (mold_v0-059): `limit` (1-200, default 50); `after` (the previous page's `next`); `sort` (a field, or
  * key, title or updated_at; "-" first for descending; default the key); `filter` ({field: value} or {field: {op: value}},
@@ -123,7 +137,7 @@ export interface RecordQuery { limit?: number; after?: string; sort?: string; fi
  * transaction: every operation is checked and applied, or none is.
  */
 export type RecordOperation =
-  | { op: "put" | "create" | "update"; area: string; key: string; title?: string | null; data: Record<string, unknown>; version?: string | null }
+  | { op: "put" | "create" | "update"; area: string; key: string; title?: string | null; data: Record<string, unknown>; version?: string | null; visibility?: VisibilityInput }
   | { op: "move"; area: string; key: string; to: string }
   | { op: "delete"; area: string; key: string };
 export interface RecordOperationResult { op: RecordOperation["op"]; area: string; key: string; record?: RecordRow; deleted?: boolean }
@@ -1531,6 +1545,20 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
  * record store (src/record-areas.ts) on every write and move through it (ctx.records, the record tools and routes); a
  * pack's code may not name the record tables in its own queries (scripts/gen-packs.mjs refuses it).
  */
+/** The visibility modes of a record (mold_v0-259), in their order on screen. */
+export const VISIBILITY_MODES = ["workspace", "team", "private"] as const;
+/** An area's `visibility` (mold_v0-259; RecordAreaSchema.visibility). */
+export const VisibilitySchema = z.object({
+  modes: z.array(z.enum(VISIBILITY_MODES)).min(1).max(3),
+  default: z.enum(VISIBILITY_MODES),
+  /** People may be named on a record (each sees it whatever its mode). Default false. */
+  collaborators: z.boolean().optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((v, ctx) => {
+  if (new Set(v.modes).size !== v.modes.length) ctx.addIssue({ code: "custom", message: "a mode is listed twice", path: ["modes"] });
+  if (!v.modes.includes(v.default)) ctx.addIssue({ code: "custom", message: `default ${v.default} is not one of modes (${v.modes.join(", ")})`, path: ["default"] });
+});
+
 export const RecordAreaSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -1639,6 +1667,14 @@ export const RecordAreaSchema = z.object({
    */
   detail: RecordDetailSchema.optional(),
   /**
+   * Who sees each record (mold_v0-259; src/visibility.ts), while the app's flag `teams` is on: the modes a record may
+   * take (workspace: everyone in the workspace; team: one team's members and leads; private: its owner), the mode a new
+   * record takes when its writer does not say, and whether people may be named on a record as collaborators (each sees
+   * it whatever its mode). The workspace's owners always see every record. Workspace areas of the shell's own tables only.
+   * Off (the default), or not declared: every record is open to the whole workspace, as before.
+   */
+  visibility: VisibilitySchema.optional(),
+  /**
    * Example records of a shared (platform) area (mold_v0-170), for the test lanes only: the lane world
    * (molds/mold_v0/testing/console/world.mts) writes them into its throwaway database, so the area's console pages are
    * graded with rows as well as empty. A deployed build never writes them; the lane checks each against the area's
@@ -1693,6 +1729,9 @@ export const RecordAreaSchema = z.object({
   for (const p of clockProblems(a, a.clocks ?? [])) bad(p.message, "clocks", ...p.path);
   for (const p of contractProblems(a)) bad(p.message, "contract", ...p.path);
   for (const p of detailProblems(a)) bad(p.message, "detail", ...p.path);
+  // mold_v0-259: a record's visibility is a workspace's own row's, written through the record store's doors.
+  if (a.visibility && a.scope !== "workspace") bad("`visibility` is for a workspace's own records (a shared area is every workspace's)", "visibility");
+  if (a.visibility && a.repository) bad("`visibility` is for records written through the record store: an area fed by a repository has no person who owns its rows", "visibility");
   if (a.action === false && !a.action_reason) bad("action: false says why its lists have no primary action (action_reason)", "action_reason");
   if (a.action_reason !== undefined && a.action !== false) bad("action_reason is for action: false", "action_reason");
   const p = a.permissions;

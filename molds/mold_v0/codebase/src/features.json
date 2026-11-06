@@ -187,6 +187,18 @@
       "off": "Every form is the full in-page card it always was; the generated files leave the flag out."
     },
     {
+      "id": "teams",
+      "short": "teams",
+      "label": "Teams and record visibility",
+      "default": false,
+      "quiet_off": true,
+      "requested_by": "always",
+      "requested_words": "the app's profile (no pack declares it; a record area's visibility, record_areas[].visibility, takes effect only with it on)",
+      "since": "mold_v0-259",
+      "about": "Teams inside a workspace, each with a name, members and leads, managed by the workspace's owners in Settings › Teams (each team's page lists its people, records and changes; every membership change is kept). A record area that declares visibility gives each record its own: open to the workspace, shared with one team, or private to its owner, with named collaborators where the area allows them. The database enforces it on every read and write (lists, record pages, related lists, computed facts and columns, the record picker, exports, metrics and charts, the MCP tools, the workspace agent's tools, the data and developer APIs): a person sees a record that is open to the workspace, theirs, one they collaborate on, or their team's; the workspace's owners see every record. Create and edit forms get a visibility field, lists a Visibility column and filter, record pages a Visibility line and Share.",
+      "off": "No Teams tab, no /api/teams, no visibility field, column, filter or Share; every record is open to its whole workspace, as before, and the generated files leave the flag out."
+    },
+    {
       "id": "record_run_inputs",
       "short": "inputs",
       "label": "Run inputs from a record",
@@ -256,7 +268,7 @@
       "requested_words": "a home tab naming a fifth headline number, or the recent_runs or attention card in its rail",
       "since": "mold_v0-260",
       "about": "The home page's headline row takes a fifth number; its rail takes a Recent runs card (the workspace's latest runs, as the person may read them) and a Needs attention card (the records whose page notices of tone warning or danger hold, from each area's detail.notices): GET /api/home/recent-runs and /api/home/attention.",
-      "off": "The home page is as before: four headline numbers at most and the cards it had; the routes answer not found; the generated files leave the flag out."
+      "off": "The home page is as before: a fifth headline number, a third rail card and the two cards are refused at build, as they always were; the routes answer not found; the generated files leave the flag out."
     },
     {
       "id": "run_analytics",

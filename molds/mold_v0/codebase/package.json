@@ -105,6 +105,7 @@
     "test:schedules": "tsx scripts/schedules-test.ts",
     "test:record-clocks": "tsx scripts/record-clocks-test.ts",
     "test:features": "tsx scripts/features-test.ts",
+    "test:teams": "tsx scripts/teams-test.ts",
     "test:agent-harness": "tsx scripts/agent-harness-test.ts",
     "test:agent-icon": "tsx scripts/agent-icon-test.ts",
     "test:checks": "tsx scripts/checks-test.ts",

@@ -11,6 +11,7 @@
  * `status`), so one card never hides the others, as on the charts.
  */
 import { metricRoles, metricUnit, RUN_SOURCES, sparkPlan, sparkSeries, SPARK_WEEKS, tabLabel, type RunSource, type SparkMode, type SpecMetric, type SpecTab } from "./metric-spec.js";
+import { asViewerOf } from "./visibility.js";
 import { bucketsOf, buildViews, computeSpec, type MetricAnswer, type MetricOptions, type Sealed } from "./metrics.js";
 import { packOpWithheld } from "./mcp-withheld.js";
 import { PackError } from "./pack-api.js";
@@ -40,7 +41,11 @@ const valuesOf = (a: MetricAnswer) => a.series?.[0]?.values ?? [];
  * The four cards of `tab` for one workspace, as `actor` may read them. `now` fixes "this week" (tests pass their own).
  * orgId null: no workspace (a staff record page's cards over a shared area, areaSparklines below).
  */
-export async function computeSparklines(orgId: number | null, tab: SpecTab, actor: Actor, now = new Date()): Promise<SparkAnswers> {
+export function computeSparklines(orgId: number | null, tab: SpecTab, actor: Actor, now = new Date()): Promise<SparkAnswers> {
+  // mold_v0-259 (flag teams): counted as the person reads.
+  return asViewerOf(actor, () => computeSparklinesNow(orgId, tab, actor, now));
+}
+async function computeSparklinesNow(orgId: number | null, tab: SpecTab, actor: Actor, now: Date): Promise<SparkAnswers> {
   const b = buildViews();
   const readable = (m: SpecMetric) => !packOpWithheld(m.pack, "metrics") && (actor.role === null || metricRoles(m, b.areas).includes(actor.role));
   const plan = sparkPlan(tab, b, { readable, fill, label: tabLabel(tab, b) });

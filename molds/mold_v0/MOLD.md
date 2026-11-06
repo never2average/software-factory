@@ -2851,12 +2851,13 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `agent_harness` | off | always (the profile alone) | the workspace agent (mold_v0-243, below): `/api/agent`, staff's `/api/admin/onboarding/agent`, the worker's `/agent/*` steps, the agent MCP tools, the top bar's agent icon, `/app/agent` and `/admin/agent`, the "Workspace agent" settings, the built-in run kind and the sweep. `quiet_off`: while off it is left out of the generated files |
 | `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`; mold_v0-256: a run's own page (`/app/runs/<id>`, `/api/runs/<id>/page`), log, history, code, table and file sections, computed facts and list columns, Add <related record>, the record picker, a Key from the Title, and `record_changes`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
 | `side_panel_forms` | off | always (the profile alone) | create and edit forms open first in a side panel (mold_v0-256, below): an area's Add, a record page's Edit and Add <related record>, staff's New and Edit. `quiet_off`: while off the generated files leave it out |
+| `teams` | off | always (the profile alone); an area's `visibility` takes effect only with it on | teams inside a workspace and per-record visibility (mold_v0-259, below): Settings › Access › Teams, `/api/teams`, `/app/settings/teams/<id>`, each record's visibility on every read and write, the forms' visibility field, the lists' Visibility column and filter, the record page's Share. `quiet_off`: while off the generated files leave it, the Teams tab and the areas' `visibility` out |
 | `record_run_inputs` | off | a kind's `input_from_record` | a run started on a record takes its arguments from the record (mold_v0-260, below): the start tool's `record`, a record page's start_run filled on the server. `quiet_off` |
 | `private_catalogs` | off | an upstream catalog's `access` (`deploy_key`, `github_app`) | the private catalog's fetch, Admin › Key vault's Private catalogs and `/api/admin/onboarding/catalog-access`. `quiet_off` |
 | `wide_lists` | off | an area's `list_columns` or a tab's `columns` past 8 | up to 12 columns, the table scrolling sideways inside its frame with the first column kept in view; off, more than 8 is refused at build. `quiet_off` |
 | `record_rules` | off | a reference field's `where`, an area's `on_save` | the condition on a reference's target (every write, the picker) and the checks run on save; off, either is refused at build. `quiet_off` |
 | `credential_sets` | off | a credential's `entries`, a `tenant` binding | several labelled values per credential and the tenant scope; off, either is refused at build. `quiet_off` |
-| `overview_cards` | off | a home tab's fifth headline number, or its `recent_runs` or `attention` card | those three on the home page, `/api/home/recent-runs` and `/api/home/attention`. `quiet_off` |
+| `overview_cards` | off | a home tab's fifth headline number, or its `recent_runs` or `attention` card | those three on the home page, `/api/home/recent-runs` and `/api/home/attention`; off, a fifth number, a third rail card or either card is refused at build, as before. `quiet_off` |
 | `run_analytics` | off | always (the profile alone) | `/app/run-analytics`, `/admin/run-analytics`, `/api/analytics/runs`, `/api/admin/onboarding/run-analytics`, their sidebar entries and the Activity page's link. `quiet_off` |
 | `filters_in_address` | off | always (the profile alone) | the dashboards' filters kept in the address (staff's Overview, a workspace's Activity, run analytics). `quiet_off` |
 | `usage_tool` | off | always (the profile alone) | the customer MCP's `get_usage`. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
@@ -2867,7 +2868,7 @@ with `embedded`); in a build the flag false turns a declared surface off. The sp
 needs `audit.data` or `audit.platform`; `developer_surface` needs `audit.platform`.
 
 **Settings, from the registry.** Each capability that is on contributes its Settings tabs, in four fixed groups:
-**Access** (Credentials, API keys, Allowed origins), **Connections** (Email, Webhooks, Integrations), **Automation**
+**Access** (Credentials, API keys, Allowed origins, Teams), **Connections** (Email, Webhooks, Integrations), **Automation**
 (Alerts), **Data & trust** (Signing), each followed by the packs' own: a workspace record area declared
 `"settings": {"group": "automation", "label": "Escalation contacts"}` is a Settings tab of that group (its standard record
 table) instead of an entry in Records (never also a sidebar tab). Billing stays under Operational. The sidebar follows the
@@ -3529,6 +3530,59 @@ each off), `npm run test:run-page` (the run's page by role and workspace, pollin
 `npm run test:migrations` (0049 and its rollback), `npm run test:features` (side_panel_forms), `npm run test:console-tabs`,
 `npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_pages` (projects, environments, builds, releases).
 
+## Teams and per-record visibility (mold_v0-259)
+
+Under the flag `teams` (off by default; off, `/api/teams` answers nothing, `/app/settings/teams/<id>` is a 404, no record carries
+a visibility, nothing is hidden, and the generated files are as before). docs/RECORDS.md section 4a has the contract.
+
+- **Teams** (`src/teams.ts`, `src/team-routes.ts` at `/api/teams`; `sql/migrations/0050_teams_and_visibility.sql` with
+  its rollback): `workspace_teams` (a name unique in the workspace, any case; a description), `workspace_team_members`
+  (a person's sign-in id, `member` or `lead`), `workspace_team_changes` (every change: created, renamed, deleted, a person
+  added or taken out, made a lead or a member, with who and when). The tenant role only reads them (row-level security);
+  the shell's own role writes them for an owner (`can("team")`). Everyone in the workspace reads the teams; a person
+  removed from the workspace leaves its teams (`src/app.ts` remove); a deleted team's records become private to their
+  owners (refused while an append-only, chained record is shared with it). The budget rules' `usage_teams` are separate.
+- **Per-record visibility** (`src/visibility.ts`; an area's `visibility: {modes, default, collaborators?}`,
+  `src/pack-api.ts` `VisibilitySchema`): `workspace_records.visibility` (NULL or `workspace`, `team`, `private`),
+  `team_id`, `owner_id`, `collaborators`. **One place decides**: the restrictive policy `record_visibility` on
+  `workspace_records`, against `app.viewer`, which `src/tenant-scope.ts` sets on every tenant transaction (`*` when no
+  viewer is in scope: every record; a transaction that sets none sees only the workspace's open records). The viewer is
+  the person a door acts for (`viewerOf`: none for an owner, an account key or the shell; the person's id for a viewer,
+  member or billing manager; `~api` for the developer API), set by `customerSession` (the console's and the packs' routes,
+  the data API, metrics, sparklines), `runPackTool` (every MCP tool, the workspace agent's included: its token acts as its
+  starter), the developer API's handler, and again by the record store from its actor (`listFor`, `getFor`, `detailFor`,
+  `revealFor`, every write and batch), metrics and sparklines. So the lists, record pages, related lists, computed facts
+  and columns, the record picker, CSV export, metrics, charts and cards, the MCP tools, `ctx.records`, reference checks
+  and writes each find only what the person may see, with no per-route filter.
+- **Writes** (`visibilityForWrite`): a new record takes what it names or its area's default (a `team` default: the
+  writer's one team), owned by its writer; no person (a run, the shell, a key): open to the workspace. A change keeps it
+  unless it names one; only the record's owner, a lead of its team (while it is the team's) or a workspace owner may
+  (`shareFor`, `POST /api/data/<area>/<key>/visibility`; `can_share` on the record's detail). Refused in words before
+  the database would: a mode the area lacks, an unknown team or one the writer is not in, collaborators where none are
+  named, a visibility hiding the record from its writer, anything but `workspace` from a caller that is no person.
+  The `create_<area>`/`update_<area>` tools take `visibility` (only for such an area, only while on:
+  `src/mcp-tools.ts` `withVisibilityInput`), so the catalog and every other build's tools are unchanged.
+- **The console** (`web/src/features/teams/`): Settings › Access › Teams (`teams-tab.tsx`: four cards, the search row
+  with New team for owners, the table; New team a full card), a team's page in the record page layout (`team-page.tsx`,
+  `/app/settings/teams/<id>`: the header with its badges, four facts and its actions (Add people, Rename, More: Copy link, Delete
+  team), tabs People, Records, History); the create and edit forms' **Who sees it** field (`visibility.tsx`
+  `VisibilityField`: the modes, the person's teams (an owner: every team), the workspace's people as collaborators); a
+  list's **Visibility** column (a select the Filter menu filters; `?visibility=workspace|private|team:<name>`); a
+  record's page (laid out or the details card) shows its visibility with **Share** (a dialog, for those who may).
+- `src/rls.ts`'s probe adds: the tenant role cannot put anyone in a team, create one or rewrite its history; a person
+  who is neither its owner, named on it nor in its team does not see a private or team record, its member and owner do,
+  `*` sees both, a transaction with no viewer sees neither; such a person can neither change nor write one.
+
+Proof: `npm run test:teams` (off; the declaration's refusals; teams managed by owners only and every change kept; writes
+and their refusals; every read path for six people (an owner, the record's owner, its team's lead, another team's member,
+a collaborator, a viewer) through the console's routes, the data API, the record page's related list and computed facts,
+a tab's computed column, the picker, CSV export, metrics and cards, the MCP tools, the agent's token, `ctx.records`,
+reference checks and the developer API's door; writes, Share and the edit form; the database alone (a raw query, count
+and update as a person; no viewer fails closed; the policy refuses a hidden insert); workspace isolation; leaving a team,
+a deleted team, leaving the workspace; off again), `npm run test:migrations` (0050 and its rollback), `npm run check:rls`
+(the probe above), `npm run test:features` (the flag), `npm run test:console-tabs` (a teams build's console typechecks),
+`npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_teams` (projects, notes, places).
+
 ## Generic gaps (mold_v0-260)
 
 Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and
@@ -3563,7 +3617,7 @@ is not a capability and has no flag. The fixture `scripts/fixtures/packs/fixture
    records it keeps and says so under the field. An area's `on_save`: a declarative check (mold_v0-196) with inputs from
    the record being saved (`@field`, `$key`, `$title`, a literal), on create or update; a no is refused (409) with the
    declared message. The build checks the fields, the enum values, the check, its inputs (`gapBuildProblems`).
-6. **Credential sets and tenants** (`credential_sets`, migration 0050). A credential's `entries: {label, max}`: several
+6. **Credential sets and tenants** (`credential_sets`, migration 0051). A credential's `entries: {label, max}`: several
    labelled values (a host and its token), each its own row (`workspace_credentials.entry`, sealed with its label bound
    in), set, replaced and removed one by one by owners, delivered to a run as one JSON object `{"<label>": "<value>"}`
    (each value redacted from its output on its own). `bound_to: "tenant"` with `area` a record area declared
@@ -3574,6 +3628,7 @@ is not a capability and has no flag. The fixture `scripts/fixtures/packs/fixture
 7. **The home page's cards** (`overview_cards`): a fifth headline number (a home tab's `sparklines`, 5 across on a wide
    screen), and its rail's `recent_runs` (the workspace's latest runs of packs whose runs list is not withheld) and
    `attention` (the records whose page notices of tone warning or danger hold now, danger first, read as the person).
+   While the flag is off the build refuses them (and a rail past 2 cards), as it always did.
 8. **Run analytics** (`run_analytics`, `src/run-analytics.ts`): a period's runs (at most 5,000) by record, person,
    model, tool and failure reason, tokens by model (a run's own `agent_usage` report, else the gateway's meter by
    provider), spend from `RUN_USD`; a workspace's billing managers and owners at `/app/run-analytics`, staff at
@@ -3585,7 +3640,7 @@ is not a capability and has no flag. The fixture `scripts/fixtures/packs/fixture
     whole of it, anyone else their own runs (`scope`). Off unless the profile turns it on.
 
 Proof: `npm run test:generic-gaps` (each item, its permissions and two workspaces; off, every route and tool absent),
-`npm run test:migrations` (0050 and its rollback), `npm run test:features`, `npm run test:record-pages`,
+`npm run test:migrations` (0051 and its rollback), `npm run test:features`, `npm run test:record-pages`,
 `npm run test:credentials`, `npm run test:mcp-tools`, `npm run test:zero-pack` (`4e3e14917286b00c`), the factory's
 `lib/features.py` self-test; the fixture drawn in a lane world in light and dark at 1440 and 390 px.
 

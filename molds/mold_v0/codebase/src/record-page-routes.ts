@@ -509,11 +509,13 @@ export function recordPageRouter(): Router {
       }
       case "edit": {
         if (a.disabled) throw new PackError(a.disabled, 409);
-        const v = body as { title?: unknown; data?: unknown };
+        const v = body as { title?: unknown; data?: unknown; visibility?: unknown };
         if (!v.data || typeof v.data !== "object" || Array.isArray(v.data)) throw new PackError("give {title?, data}", 400);
         // What the form leaves out (the lifecycle's field, file fields) stays as it is.
         const kept = Object.fromEntries(Object.entries(record.data).filter(([k]) => !a.fields?.some((f) => f.name === k)));
-        return dataApi.update(callerOf(res), area.name, record.key, { title: typeof v.title === "string" ? v.title : record.title, data: { ...kept, ...(v.data as Record<string, unknown>) } });
+        // mold_v0-259 (flag teams): who sees it, when the form changed it (the record store checks who may).
+        return dataApi.update(callerOf(res), area.name, record.key, { title: typeof v.title === "string" ? v.title : record.title, data: { ...kept, ...(v.data as Record<string, unknown>) },
+          ...(v.visibility !== undefined ? { visibility: v.visibility } : {}) });
       }
       case "delete": {
         if (a.disabled) throw new PackError(a.disabled, 409);

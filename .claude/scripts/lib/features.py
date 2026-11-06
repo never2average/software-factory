@@ -142,7 +142,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
             if re.search(r'"clock"\s*:', json.dumps([d.get("metrics") or [], d.get("charts") or [], d.get("tabs") or []])):
                 errs.append(f"{at}.record_clocks is false but pack {d.get('id', '?')} has a metric, chart or tab that counts by a clock: take it out, or leave the clocks on")
     # mold_v0-260: what these flags check is never quietly dropped (gen-packs refuses the same)
-    for i, what in (("wide_lists", "a list with more than 8 columns"), ("record_rules", "a reference field's where or an area's on_save"), ("credential_sets", "a credential with entries or bound to a tenant")):
+    for i, what in (("wide_lists", "a list with more than 8 columns"), ("record_rules", "a reference field's where or an area's on_save"), ("credential_sets", "a credential with entries or bound to a tenant"), ("overview_cards", "a home tab's fifth number or its recent_runs or attention card")):
         st = states.get(i)
         if st and not st["setting"] and st["requested"]:
             errs.append(f"{at}.{i} is off but a pack declares {what}: turn it on (features.{i} = true) or take the declaration out")
@@ -156,7 +156,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 25 and len(set(ids(root))) == 25, "the registry names 25 flags, each once")
+    ok(len(flags) == 26 and len(set(ids(root))) == 26, "the registry names 26 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -183,11 +183,13 @@ def self_test(root):
        and all(x in words(effective(all_on, gaps, root)).split(", ") for x in ("inputs", "private", "wide", "rules", "credsets", "overview", "analytics", "filters", "usage")),
        "mold_v0-260's nine flags: off by default; on when the profile says and (for six of them) a pack declares what asks for it")
     ok(not any("wide" in w for w in words(effective(all_on, [], root)).split(", ")), "wide lists: on only when a list asks for it")
-    ok(len([e for e in problems({}, gaps, root) if "is off but a pack declares" in e]) == 3 and not [e for e in problems(all_on, gaps, root) if "is off but" in e],
+    ok(len([e for e in problems({}, gaps, root) if "is off but a pack declares" in e]) == 4 and not [e for e in problems(all_on, gaps, root) if "is off but" in e],
        "a wide list, a record rule and a credential set are refused while their flag is off (mold_v0-260)")
     related_col = [{"id": "m", "record_areas": [{"name": "builds", "scope": "workspace", "fields": [{"name": "project"}]}],
                     "tabs": [{"id": "projects", "kind": "area", "area": "projects", "columns": ["owner", {"related": {"area": "builds"}, "show": "count"}]}]}]
     ok("pages" in words(effective({"features": {"record_pages": True}}, related_col, root)), "a tab column computed from related records asks for record pages (mold_v0-256)")
+    ok("teams" not in words(effective({}, [], root)) and "teams" in words(effective({"features": {"teams": True}}, [], root)),
+       "teams and record visibility: off by default, on when the profile says (mold_v0-259)")
     ok(words(effective({"features": {"record_clocks": False}}, audit_app_like, root)).find("clocks") < 0, "a flag false turns a requested capability off")
     ok(problems({"features": {"audit.data": False}, "audit": {"data": True}}, [], root) != [], "a features flag and its legacy key that disagree are refused")
     ok(any("needs one of" in e for e in problems({"features": {"audit.sign": True}}, [], root)), "audit.sign needs audit.data or audit.platform")

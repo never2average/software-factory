@@ -66,6 +66,8 @@ export interface ActionHost {
   changed: () => void;
   /** After a delete (default: the record's list; a related list's row: read the list again). */
   deleted?: () => void;
+  /** mold_v0-259 (flag teams): this person may change who sees it: the edit form carries the visibility field. */
+  canShare?: boolean;
 }
 
 /** The state the header's actions share: the open confirm, the open card (?act=<id>), what is running. */
@@ -277,7 +279,7 @@ function ActionFormCard({ host, a, onClose }: { host: ActionHost; a: PageAction;
     <ActionCard open onOpenChange={(o) => { if (!o) onClose(); }} title={`${a.label} · ${host.record.title || host.record.key}`} back='Back to the record'
       description={`Changes ${host.record.title || host.record.key} in ${host.areaLabel}. Its state and its files stay as they are.`}>
       <EditRecordForm area={host.area} fields={(a.fields ?? []) as FormField[]} row={host.record} onDone={done}
-        put={(body) => takeAction(host.area, host.record.key, a.id, body)} />
+        put={(body) => takeAction(host.area, host.record.key, a.id, body)} shareable={host.canShare ? host.record.visibility ?? null : null} />
     </ActionCard>
   );
   return (

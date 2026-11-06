@@ -3,7 +3,7 @@
 import { useConsolePathname } from '@/lib/console-path';
 import { useMemo } from 'react';
 import { packPages, packTabs, recordAreas } from '@/config/pack-nav.generated';
-import { settingsGroups } from '@/config/settings';
+import { settingsGroups, settingsTabUrl } from '@/config/settings';
 
 type BreadcrumbItem = {
   title: string;
@@ -49,6 +49,9 @@ export function useBreadcrumbs() {
     return segments.flatMap((segment, index) => {
       const path = `/${segments.slice(0, index + 1).join('/')}`;
       if (RECORDS.test(path)) return [];
+      // mold_v0-259: a team's page (/app/settings/teams/<id>): Teams is Settings' tab (no page of its own), the team by its id.
+      if (path === '/app/settings/teams') return [{ title: 'Teams', link: settingsTabUrl('teams') ?? '/app/settings' }];
+      if (path.startsWith('/app/settings/teams/') && index === 3) return [{ title: `Team ${decode(segment)}`, link: path }];
       // A record's key (/admin/records/<area>/<key>) reads as it is written, never capitalised or encoded.
       if (segments[index - 2] === 'records' && index === 3) return [{ title: decode(segment), link: path }];
       // A doc's slug (/admin/docs/budget-rules-spec) reads as words.

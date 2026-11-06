@@ -21,6 +21,7 @@ import { findRecordArea } from '@/features/records/registry';
 import { AlertsTab } from './alerts-tab';
 import { SigningTab } from './signing-tab';
 import { AgentTab } from './agent-tab';
+import { TeamsTab } from '@/features/teams/teams-tab';
 
 /** The tabs this build's Settings has, in order (every group's). */
 export const settingsTabIds = (tabs: readonly SettingsTabSpec[] = ALL): string[] => tabs.map((t) => t.id);
@@ -28,6 +29,8 @@ export const settingsTabIds = (tabs: readonly SettingsTabSpec[] = ALL): string[]
 function TabBody({ tab }: { tab: SettingsTabSpec }) {
   // Workspace agent (mold_v0-252): a kind of the generated list only while agent_harness is on.
   if ((tab.kind as SettingsTabSpec['kind'] | 'agent') === 'agent') return <AgentTab />;
+  // Teams (mold_v0-259): a kind of the generated list only while the teams flag is on.
+  if ((tab.kind as SettingsTabSpec['kind'] | 'teams') === 'teams') return <TeamsTab />;
   switch (tab.kind) {
     case 'credentials': return <CredentialsTab />;
     case 'email': return <EmailTab />;

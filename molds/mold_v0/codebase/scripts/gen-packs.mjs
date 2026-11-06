@@ -276,6 +276,8 @@ const BANNED_CODE = [
   [/\b(SET|RESET)\s+(LOCAL\s+|SESSION\s+)?ROLE\b/i, "SET/RESET ROLE (leaves the tenant role)"],
   [/\bset_config\b/i, "set_config (changes the tenant setting)"],
   [/\b(?:app|octillion)\.org_id\b/, "the tenant setting (app.org_id, or its name before mold_v0-097)"],
+  // mold_v0-259: who reads the workspace's records (the visibility policy's viewer); src/tenant-scope.ts sets it.
+  [/\bapp\.viewer\b/, "the viewer setting (app.viewer: whose records the workspace's queries may see)"],
   // The record tables are the shell's record store's (mold_v0-057): a pack reaches records through ctx.records, which
   // checks fields, states and permissions; a raw query would write past them.
   [/\b(workspace_records|platform_records)\b/i, "the record tables (use ctx.records: it checks fields, states and permissions)"],
@@ -1529,6 +1531,15 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
   // binding need their flag: none of them is quietly dropped.
   for (const [id, what] of [["wide_lists", "a list with more than 8 columns"], ["record_rules", "a reference field's where or an area's on_save"], ["credential_sets", "a credential with entries or bound to a tenant"]])
     if (!FEATURE_SETTING[id] && FEATURE_REQUESTED[id]) fail(rel(PROFILE_FILE), `features.${id} is off but a pack declares ${what}: turn it on (features.${id} = true) or take the declaration out`);
+  // mold_v0-260: a home tab's rail past 2 cards, its recent_runs and attention cards and a fifth headline number are
+  // overview_cards' (the pack schema takes them): while it is off they are refused as they always were.
+  if (!FEATURE_SETTING.overview_cards) for (const p of packs) for (const [i, t] of (p.json?.tabs ?? []).entries()) {
+    if (!t || t.kind !== "overview" || !(t.include ?? []).includes("setup")) continue;
+    const at = `packs/${p.id}/pack.json`;
+    if ((t.rail ?? []).length > 2) fail(at, `tabs[${i}].rail: Too big: a home tab's rail takes at most 2 cards (4 with features.overview_cards)`);
+    else for (const x of t.rail ?? []) if (x === "recent_runs" || x === "attention") fail(at, `tabs[${i}].rail: ${x} is a card of features.overview_cards, which is off`);
+    if ((t.sparklines ?? []).length > 4) fail(at, `tabs[${i}].sparklines: exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab (5 with features.overview_cards)`);
+  }
   if (!FEATURE_SETTING.encrypted_fields && FEATURE_REQUESTED.encrypted_fields)
     fail(rel(PROFILE_FILE), "features.encrypted_fields is false but a pack declares an encrypted field: turning it off would store those values in the clear (take encrypted: true off the field first)");
   if (!FEATURE_SETTING.customer_key_vault) {
@@ -2008,6 +2019,8 @@ const SETTINGS_TABS = (() => {
     { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
     // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
     { id: "agent", label: "Workspace agent", group: "automation", kind: "agent", on: !!FEATURE_ON.agent_harness },
+    // mold_v0-259: a workspace's teams (src/team-routes.ts), in Access after its shell tabs' credentials
+    { id: "teams", label: "Teams", group: "access", kind: "teams", on: !!FEATURE_ON.teams },
     { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },
   ].filter((t) => t.on).map(({ on: _o, ...t }) => t);
   const taken = new Set(shell.map((t) => t.id));
@@ -2231,6 +2244,23 @@ const SHELL_APP_SEGMENTS = new Set(existsSync(SHELL_APP_DIR) ? readdirSync(SHELL
   .filter((e) => e.isDirectory() && !/^[[(@_]/.test(e.name)).map((e) => e.name) : []);
 // The nested addresses of before (they redirect) and the host page route stay the shell's.
 for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
+/**
+ * A capability's own pages (mold_v0-243: the workspace agent's; mold_v0-256: a run's page; mold_v0-259: a team's page;
+ * mold_v0-260: run analytics) are pages of the build only while its flag is on: off, they are left out of the routes (so
+ * the proxy answers them not found) and the list is what the build wrote before them.
+ */
+const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
+const OFF_PAGES = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
+{
+  // A shell segment whose every page is such a page, with its flag off, is not the shell's in this build: a pack's tab or
+  // page may take its address (mold_v0-260: a pack's tab `runs`, while record_pages is off). On, it stays refused.
+  const pagesUnder = (dir, url) => existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? pagesUnder(path.join(dir, e.name), `${url}/${e.name}`)
+    : /^page\.(tsx|ts|jsx|js)$/.test(e.name) ? [url] : []) : [];
+  for (const seg of [...SHELL_APP_SEGMENTS]) {
+    const pages = pagesUnder(path.join(SHELL_APP_DIR, seg), `/app/${seg}`);
+    if (pages.length && pages.every((pg) => OFF_PAGES.includes(pg))) SHELL_APP_SEGMENTS.delete(seg);
+  }
+}
 /** The shell's own /admin pages (mold_v0-143: /admin/journeys is the journeys and tips components'): a pack's route never claims one. */
 const SHELL_ADMIN_DIR = path.join(ROOT, "web", "src", "app", "admin");
 const SHELL_ADMIN_SEGMENTS = new Set(existsSync(SHELL_ADMIN_DIR) ? readdirSync(SHELL_ADMIN_DIR, { withFileTypes: true })
@@ -2410,9 +2440,7 @@ const profileSidebar = (() => {
   // A capability's own pages (mold_v0-243: the workspace agent's) are pages of the build only while its flag is on: off,
   // they are not in the list (so the proxy answers them not found) and the list is what the build wrote before them.
   // mold_v0-256: a run's own page, a page of the build only while record_pages is on.
-  // mold_v0-260: run analytics, a workspace's and staff's, pages only while run_analytics is on.
-  const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
-  const off = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
+  const off = OFF_PAGES;
   const routes = pages.filter((r) => !statusPages.includes(r) && !/\/\[\.\.\.missing\]$/.test(r) && !off.includes(r));
   if (existsSync(APP_DIR)) files.set(path.join(OUT, "web", "src", "config", "console-routes.generated.json"), JSON.stringify({
     $comment: "Generated by scripts/gen-packs.mjs from web/src/app (mold_v0-155): the console's page routes, read by web/src/lib/console-routes.ts. Do not edit: run npm run gen:packs.",
@@ -2523,6 +2551,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "  action?: { kind: 'create_record'; label: string | null; area: string };\n" +
   // mold_v0-253: a record page's layout, only while record_pages is on (off, this file is what it was before the flag).
   (FEATURE_ON.record_pages ? "  /** Its record page's layout (mold_v0-253, flag record_pages; web/src/features/records/detail-layout.ts). */\n  detail?: import('@/features/records/detail-layout').DetailLayout;\n" : "") +
+  // mold_v0-259: who may see its records, only while teams is on (off, this file is what it was before the flag).
+  (FEATURE_ON.teams ? "  /** Who sees each record (mold_v0-259, flag teams): the modes it takes, a new record's, and whether it names collaborators. */\n  visibility?: { modes: ('workspace' | 'team' | 'private')[]; default: 'workspace' | 'team' | 'private'; collaborators?: boolean };\n" : "") +
   "}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
@@ -2536,7 +2566,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
     ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a),
-    ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail } : {}) })))};\n\n` +
+    ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail } : {}),
+    ...(FEATURE_ON.teams && a.visibility && a.scope === "workspace" ? { visibility: { modes: a.visibility.modes, default: a.visibility.default, ...(a.visibility.collaborators ? { collaborators: true } : {}) } } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
@@ -2564,7 +2595,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "\n/** A Settings tab (mold_v0-219): a shell tab a capability contributes, or a pack's record area declared as settings. */\n" +
   "export interface SettingsTabSpec {\n  id: string;\n  label: string;\n  group: 'access' | 'connections' | 'automation' | 'data_trust';\n" +
   // 'agent' (mold_v0-252) only while agent_harness is on: a quiet_off flag leaves the file as it was while off.
-  `  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | ${FEATURE_ON.agent_harness ? "'agent' | " : ""}'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n` +
+  `  kind: 'credentials' | 'api_keys' | 'allowed_origins' | 'email' | 'webhooks' | 'integrations' | 'alerts' | 'signing' | ${FEATURE_ON.agent_harness ? "'agent' | " : ""}${FEATURE_ON.teams ? "'teams' | " : ""}'area';\n  /** The record area (kind area). */\n  area?: string;\n  pack?: string;\n}\n` +
   "/** Settings' tabs, in group order (Access, Connections, Automation, Data & trust), each group's shell tabs first. */\n" +
   `export const settingsTabs: SettingsTabSpec[] = ${json(SETTINGS_TABS)};\n` +
   "\n/** Settings › Alerts (mold_v0-219): who is told, and when, by the due dates and the clocks' reminders and escalation steps. */\n" +

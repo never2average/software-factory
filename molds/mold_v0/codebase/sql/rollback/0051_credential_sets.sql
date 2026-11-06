@@ -1,6 +1,6 @@
--- Rolling back past 0050_credential_sets (mold_v0-260), for a release from before it.
+-- Rolling back past 0051_credential_sets (mold_v0-260), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0050_credential_sets.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0051_credential_sets.sql
 -- Removes what the older release cannot read: every labelled value (entry) and every value bound to a tenant (they are
 -- set again after a later upgrade), and the private catalogs' access in the key vault (staff set it again). Every other
 -- credential stays as it is. Found by its name, so it also undoes it where it was recorded under another number. Refused

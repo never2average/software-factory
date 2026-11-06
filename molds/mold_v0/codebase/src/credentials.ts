@@ -276,7 +276,7 @@ function checkValue(v: unknown, label?: string): asserts v is string {
 }
 const seal = async (orgId: number, s: Slot, v: string) => (await asPlatform(() => sealBytes(orgId, Buffer.from(v, "utf8"), aad(orgId, s)))).toString("base64");
 const upsert = (db: Queryable, orgId: number, by: string | null, s: Slot, sealed: string, v: string) => s.entry ? db.query<Row>(
-  // mold_v0-260: a labelled value (credential_sets on: its column exists since 0050).
+  // mold_v0-260: a labelled value (credential_sets on: its column exists since 0051).
   `INSERT INTO workspace_credentials (org_id, pack, name, bound_to, asset_area, asset_key, environment, sealed, last4, created_by, updated_by, entry)
    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)
    ON CONFLICT (org_id, pack, name, (coalesce(asset_key, '')), (coalesce(environment, '')), (coalesce(entry, '')))
