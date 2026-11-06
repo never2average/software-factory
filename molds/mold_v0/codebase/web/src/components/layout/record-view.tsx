@@ -240,7 +240,7 @@ export function RecordView<T>({
       {primaryEl || (exportName && <Button variant='outline' onClick={() => exportRows(data.ordered)}><Icons.download /> Export CSV</Button>)}
       <DropdownMenu>
         <DropdownMenuTrigger render={primaryEl
-          ? <Button size='icon' aria-label='More actions' className='border-primary-foreground/20 border-l' />
+          ? <Button size='icon' aria-label='More actions' className='border-l-primary-foreground/20 border-l' />
           : <Button size='icon' variant='outline' aria-label='More export options' />}>
           <Icons.chevronDown />
         </DropdownMenuTrigger>

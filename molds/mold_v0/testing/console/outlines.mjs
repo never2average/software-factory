@@ -61,6 +61,11 @@ export function measure() {
     const why = [];
     for (const side of sides) {
       const w = parseFloat(s[`border${side}Width`]), style = s[`border${side}Style`], c = rgba(s[`border${side}Color`]);
+      // In a button group (components/ui/button-group.tsx) neighbours share an edge: the one after drops its own, the one
+      // before draws it.
+      const group = el.parentElement?.dataset.slot === 'button-group';
+      const vertical = el.parentElement?.dataset.orientation === 'vertical';
+      if (group && el.previousElementSibling && side === (vertical ? 'Top' : 'Left')) continue;
       if (!(w > 0) || style === 'none' || style === 'hidden') { why.push(`no ${side.toLowerCase()} border`); continue; }
       if (c[3] === 0) { why.push(`${side.toLowerCase()} border transparent`); continue; }
       const under = backdrop(el, s.backgroundClip === 'border-box');
