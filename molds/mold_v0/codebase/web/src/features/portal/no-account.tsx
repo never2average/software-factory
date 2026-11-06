@@ -73,7 +73,7 @@ export function NoAccount({ reason, email: serverEmail = null, platformAdmin = f
             <p className='text-muted-foreground break-words'>
               Signed in as <span className='text-foreground font-medium break-all' data-testid='signed-in-as'>{email || 'an address with no email'}</span>.{' '}
               <SignOutButton redirectUrl='/auth/sign-in'>
-                <button type='button' className='text-foreground inline-flex min-h-6 items-center underline underline-offset-4'>Sign out and use another address</button>
+                <Button type='button' variant='outline' size='sm' className='align-baseline'>Sign out and use another address</Button>
               </SignOutButton>
             </p>
             {!choosing && !platformAdmin ? (

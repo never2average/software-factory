@@ -84,7 +84,7 @@ export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
                   <li key={r.key} className='bg-background rounded-md border p-2 text-sm'>
                     <RecordLink area={area} r={r} detail={detail} />
                     {onMove && movesFrom(area, s, role).length > 0 && (
-                      <select aria-label={`Move ${r.title || r.key}`} className='border-input bg-background mt-2 block w-full rounded-md border px-2 py-1 text-xs'
+                      <select aria-label={`Move ${r.title || r.key}`} className='border-border bg-background mt-2 block w-full rounded-md border px-2 py-1 text-xs'
                         value='' onChange={(e) => { if (e.target.value) onMove(r.key, e.target.value); }}>
                         <option value=''>Move to…</option>
                         {movesFrom(area, s, role).map((m) => <option key={m.to} value={m.to}>{m.label}</option>)}

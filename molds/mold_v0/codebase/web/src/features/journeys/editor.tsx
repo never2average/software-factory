@@ -115,7 +115,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
               <Prop label='Example'><Input value={d.example.title} onChange={(e) => set('example', { ...d.example, title: e.target.value })} placeholder='A real customer, e.g. Resend inbound email' maxLength={120} className={cn('h-8 px-2', ghost)} /></Prop>
               <Prop label='Result'><Textarea rows={2} value={d.example.result} onChange={(e) => set('example', { ...d.example, result: e.target.value })} placeholder='What happened for them' maxLength={600} className={cn('resize-none px-2 text-sm', ghost)} /></Prop>
             </>) : (
-              <button type='button' onClick={() => setExample(true)} className='text-muted-foreground hover:text-foreground w-fit px-2 py-1.5 text-sm leading-none'>+ Add a worked example</button>
+              <Button variant='ghost' size='sm' onClick={() => setExample(true)} className='text-muted-foreground w-fit font-normal'>+ Add a worked example</Button>
             )}
           </dl>
 
@@ -129,7 +129,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
               return (
                 <li key={i}>
                   <div className='flex items-center gap-3 py-2.5'>
-                    <button type='button' onClick={() => setOpen(isOpen ? null : i)} aria-expanded={isOpen} className='flex min-w-0 flex-1 items-center gap-3 text-left'>
+                    <button type='button' onClick={() => setOpen(isOpen ? null : i)} aria-expanded={isOpen} className='border-border hover:bg-muted/50 flex min-w-0 flex-1 items-center gap-3 rounded-md border px-2 py-1.5 text-left'>
                       <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full border text-xs tabular-nums', stageBad ? 'border-destructive text-destructive' : 'text-muted-foreground')}>{i + 1}</span>
                       <span className={cn('min-w-0 flex-1 truncate text-sm leading-none', st.title ? 'font-medium' : 'text-muted-foreground')}>{st.title || 'Untitled stage'}</span>
                       <span className='text-muted-foreground hidden shrink-0 truncate font-mono text-xs sm:inline'>
@@ -163,7 +163,7 @@ export function Editor({ draft: initial, tools, onClose }: { draft: Draft; tools
                       <div className='flex flex-wrap items-center gap-1.5'>
                         <span className='text-muted-foreground mr-1 text-xs leading-none'>Done when</span>
                         {st.tools.map((t) => (
-                          <span key={t} className='bg-muted flex items-center gap-1 rounded px-2 py-1 font-mono text-xs leading-none'>
+                          <span key={t} data-outline='group' className='bg-muted border-border flex items-center gap-1 rounded border px-2 py-1 font-mono text-xs leading-none'>
                             {t}<button type='button' aria-label={`Remove ${t}`} onClick={() => setStage(i, { tools: st.tools.filter((x) => x !== t) })} className='text-muted-foreground hover:text-foreground'><Icons.close className='size-3' /></button>
                           </span>
                         ))}
@@ -212,10 +212,10 @@ function ToolPicker({ tools, value, onChange }: { tools: string[]; value: string
             const on = value.includes(t);
             return (
               <li key={t}>
-                <button type='button' onClick={() => onChange(on ? value.filter((x) => x !== t) : [...value, t])}
-                  className={cn('hover:bg-muted flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-mono text-xs leading-none', on && 'text-primary')}>
+                <Button variant='ghost' size='sm' onClick={() => onChange(on ? value.filter((x) => x !== t) : [...value, t])}
+                  className={cn('w-full justify-start font-mono text-xs font-normal', on && 'text-primary')}>
                   <Icons.check className={cn('size-3.5', !on && 'invisible')} />{t}
-                </button>
+                </Button>
               </li>
             );
           })}

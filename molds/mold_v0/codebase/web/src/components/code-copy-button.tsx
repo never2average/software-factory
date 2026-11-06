@@ -22,7 +22,7 @@ export function CodeCopyButton({ className }: { className?: string }) {
   };
   return (
     <button ref={ref} type='button' onClick={copy} aria-label={copied ? 'Copied' : 'Copy code'}
-      className={cn('text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring inline-flex size-7 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none', className)}>
+      className={cn('border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring inline-flex size-7 border items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none', className)}>
       {copied ? <IconCheck className='size-3.5' /> : <IconCopy className='size-3.5' />}
     </button>
   );

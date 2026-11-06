@@ -11,8 +11,9 @@ import { TOP_BAR_CONTROL } from './top-bar';
 /**
  * The workspace agent (mold_v0-243): the top bar's last item, after Search, Docs and the theme switcher, one icon button
  * that opens the agent as a full page of the console (/app/agent; staff: /admin/agent), never a dialog or a side sheet.
- * Not drawn at all while the app's profile leaves `agent_harness` off. The shared outline variant (no styling of its own
- * here); its icon is the workspace's own, else the app's, else the default (agent-icon.tsx, mold_v0-252), 18 px, centred.
+ * Not drawn at all while the app's profile leaves `agent_harness` off. Its look is the shared outline variant's
+ * (mold_v0-251), its page open shown by that variant's aria-current state. Its icon is the workspace's own, else the
+ * app's, else the default (agent-icon.tsx, mold_v0-252), 18 px, centred.
  */
 export function AgentButton() {
   const pathname = useConsolePathname();
