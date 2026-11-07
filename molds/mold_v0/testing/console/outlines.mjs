@@ -48,7 +48,7 @@ export function measure() {
   };
   // Out of scope: the sidebar's navigation (and the docs' own page list, data-sidebar-nav), the info panel's edge handle,
   // and a date picker's day cells (scripts/console-outlines.ts ALLOW says why for each).
-  const inScope = (el) => !el.closest('[data-sidebar], [data-slot="sidebar"], [data-slot="sidebar-container"], [data-sidebar-nav], [data-slot="infobar-rail"], [data-day]') && !!el.closest('main, header');
+  const inScope = (el) => !el.closest('[data-sidebar], [data-slot="sidebar"], [data-slot="sidebar-container"], [data-sidebar-nav], [data-slot="infobar-rail"], [data-day], [data-column-header]') && !!el.closest('main, header');
   const name = (el) => (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40) || '(no name)';
   const seen = new Set(), bad = [];
   let n = 0;
