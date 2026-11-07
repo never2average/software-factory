@@ -453,7 +453,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
 
     // b. A pack declares it: exactly its entries, a shell page among them, an area relabelled; Journeys moved, at its address.
     const p = navProbe(built("records-declared", PACKS, declare(["journeys", { id: "controls", label: "Control library" }])));
-    assert.deepEqual(group(p, "Records"), ["Journeys /admin/journeys", "Control library /admin/records/controls"], "exactly the declared entries, in order, relabelled where it says");
+    assert.deepEqual(group(p, "Records"), ["Pipelines /admin/journeys", "Control library /admin/records/controls"], "exactly the declared entries, in order, relabelled where it says (Journeys in the pack's own word for them)");
     assert.deepEqual(everywhere(p, "/admin/journeys"), ["Records"], "Journeys left Engagement for Records (once, at the same address)");
     assert.ok(!p.adminNav.some((g: any) => g.label === "Engagement"), "a group left empty goes");
     assert.equal(p.lit.journeys, "/admin/journeys", "Journeys is lit in its new place");
@@ -475,7 +475,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     // d. The Recipes page: with the workspace agent on it asks for workspace_recipes (quiet otherwise).
     assert.ok(!("workspace_recipes" in base.features), "undeclared: workspace_recipes is not in the console's flags (quiet while off)");
     const rec = navProbe(built("records-recipes", PACKS, declare(["recipes", "journeys", "controls"]), { features: { agent_harness: true } }));
-    assert.deepEqual(group(rec, "Records"), ["Recipes /admin/recipes", "Journeys /admin/journeys", "Controls /admin/records/controls"]);
+    assert.deepEqual(group(rec, "Records"), ["Recipes /admin/recipes", "Pipelines /admin/journeys", "Controls /admin/records/controls"]);
     assert.equal(rec.features.workspace_recipes, true, "listed, with the workspace agent on: workspace_recipes is on");
     assert.equal(rec.lit.recipes, "/admin/recipes");
 
