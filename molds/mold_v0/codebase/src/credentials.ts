@@ -592,7 +592,7 @@ async function operatorCredentials(run: RunForCredentials, out: RunCredentials, 
  * "vault:<provider>/<label>"). Only the workspace agent's built-in kind carries them (a pack's kind cannot name them).
  */
 async function vaultKeys(run: RunForCredentials, out: RunCredentials, opts: { strict?: boolean }) {
-  const list = Array.isArray(run.spec?.vault_keys) && run.pack === "_agent" ? run.spec!.vault_keys : [];
+  const list = run.pack === "_agent" && Array.isArray(run.spec?.vault_keys) ? run.spec?.vault_keys ?? [] : [];
   if (!list.length) return;
   const { decrypt } = await import("./keyvault.js");
   for (const k of list) {
