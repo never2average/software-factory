@@ -15,7 +15,7 @@
 //    a staff entry for each in the account's slice (audit_platform_events).
 // 6. The factory's call: POST /api/cron/platform-account refuses without the cron secret or the worker token; with either
 //    it answers counts only (no address) and changes nothing more; an owner demoted on the account's Team page is made
-//    owner again. With the mark gone (as sql/rollback/0058 leaves it) it makes the account afresh under the next free
+//    owner again. With the mark gone (as sql/rollback/0059 leaves it) it makes the account afresh under the next free
 //    slug, every admin in it.
 // 7. An address taken off APP_PLATFORM_ADMINS keeps its membership; the account is not deleted.
 // With --browser (built-in): the console built and started against this API; an admin signs in and opens /app, and the
@@ -204,7 +204,7 @@ try {
   assert.equal(viaWorker.body.promoted, 1); assert.equal(viaWorker.body.added, 0);
   assert.equal(await roleIn(acct!.clerk_org_id, await a2.userId()), "owner", "owner again");
   assert.equal(lines("platform_account.member_role").length, 1, "the role raised is in the staff log");
-  // The mark gone (sql/rollback/0058_platform_account.sql leaves the account as an ordinary one): the call makes it afresh
+  // The mark gone (sql/rollback/0059_platform_account.sql leaves the account as an ordinary one): the call makes it afresh
   // under the next free slug, with every admin who has signed in.
   await db.query("UPDATE organizations SET platform_account = false WHERE id = $1", [acct!.id]);
   const fresh = await call("POST", P, { authorization: `Bearer ${process.env.CRON_SECRET}` });

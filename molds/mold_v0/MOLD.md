@@ -3752,7 +3752,7 @@ account the platform's own staff use the portal in.
   membership, never an account to make or to clean up.
 - **Named from the brand, under a stable slug** (`src/platform-account.ts`): "<profile name> (platform)", slug
   `platform` (or the first free one after it), marked on its row (`organizations.platform_account`,
-  `0058_platform_account`, one mark at most by a partial unique index), so a rename, or a customer account that took the
+  `0059_platform_account`, one mark at most by a partial unique index), so a rename, or a customer account that took the
   slug first, never makes a second one. Made the way staff make an account (`src/admin.ts` `createPlatformAccount`:
   the directory's organization under Clerk or the built-in sign-in, the app's row, the Stripe customer as for any
   account).
@@ -3777,7 +3777,7 @@ account the platform's own staff use the portal in.
   `infrastructure.json` `platform_account`; it never fails or undoes a deploy (the app makes the account itself at an
   admin's first sign-in). Proven by `npm run test:platform-account` (both sign-ins; `--browser --shots <dir>` adds the
   console and a screenshot).
-- **Rolling back** (`sql/rollback/0058_platform_account.sql`) drops only the mark: the account stays, an ordinary one to
+- **Rolling back** (`sql/rollback/0059_platform_account.sql`) drops only the mark: the account stays, an ordinary one to
   the older release. A later release makes a new one under the next free slug.
 
 ## Generic gaps (mold_v0-260)
