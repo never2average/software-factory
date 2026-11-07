@@ -591,7 +591,10 @@ export async function editorChoices() {
   const platform = vault.filter((v) => !(KEYS_NEVER_INJECTED as readonly string[]).includes(v.provider))
     .map((v) => ({ provider: v.provider, provider_name: providerName(v.provider), label: v.label, hint: v.hint, enabled: v.enabled }));
   const s = effectiveOf({});
-  return { harnesses, providers, models, keys: { workspace, platform }, upload_max_bytes: uploadLimitBytes(), part_bytes: UPLOAD_PART_BYTES,
+  // mold_v0-271: the workspace recipes a profile may name (active ones, with their latest version), only while they are on.
+  const R = await import("./recipes.js");
+  const recipes = R.recipesOn() ? (await R.listRecipes()).filter((r) => r.status === "active" && r.version > 0).map((r) => ({ id: r.id, name: r.name, version: r.version, files: r.files, bytes: r.bytes })) : null;
+  return { harnesses, providers, models, keys: { workspace, platform }, upload_max_bytes: uploadLimitBytes(), part_bytes: UPLOAD_PART_BYTES, ...(recipes ? { recipes } : {}),
     retention_days_max: settingNumber("AGENT_RETENTION_DAYS"), exception_days_max: GOVERNANCE_LIMITS.exception_days,
     settings: { harness: s.harness, provider: s.provider, model: s.model, web_tools: settingText("AGENT_WEB_TOOLS"), web_calls_max: settingNumber("AGENT_WEB_CALLS_MAX") } };
 }

@@ -65,6 +65,11 @@ const FAILED_RETRY_MS = 3_600_000;
 // ---------- stored files ----------
 
 const objectKey = (orgId: number, area: string, object: string) => `workspaces/org-${Math.trunc(orgId)}/.records/${area}/${object}.wse`;
+/**
+ * mold_v0-271: a shared (platform-scope) area's stored file: staff's, read by every workspace that reads the area, so not
+ * sealed with a workspace's key; bound to its record by its place (the record key's hash) and checked by its sha256.
+ */
+const sharedKey = (area: string, recordKey: string, object: string) => `records/shared/${area}/${createHash("sha256").update(recordKey).digest("hex").slice(0, 32)}/${object}.bin`;
 const aad = (orgId: number, pack: string, area: string, recordKey: string, ref: Pick<StoredFileRef, "object" | "sha256">) =>
   `record-file:v1:org-${orgId}:${pack}:${area}:${recordKey}:${ref.object}:${ref.sha256}`;
 /** A file name safe to store and show: no directory, no control character, at most 200 characters. */
@@ -83,14 +88,19 @@ export function storedType(data: Buffer, declared: string): string {
  * Keep one file for a record of a workspace area: sealed with the workspace's data key, bound to the record. Returns the
  * reference its file field holds. The record need not exist yet (the mail intake keeps the files, then writes it).
  */
-export async function storeRecordFile(orgId: number, area: RecordArea, recordKey: string, file: { name: string; content_type: string; data: Buffer }): Promise<StoredFileRef> {
-  if (area.scope !== "workspace") throw new PackError(`area ${area.name} is shared: files are kept for a workspace's own records`, 400);
+export async function storeRecordFile(orgId: number | null, area: RecordArea, recordKey: string, file: { name: string; content_type: string; data: Buffer }): Promise<StoredFileRef> {
+  // mold_v0-271: a shared area's file is staff's (orgId null), kept unsealed under records/shared/.
+  if ((area.scope === "workspace") !== (orgId !== null)) throw new PackError(area.scope === "workspace" ? `area ${area.name} holds each workspace's own records` : `area ${area.name} is shared: its files are kept by staff`, 400);
   checkKey(recordKey);
   if (file.data.length > RECORD_FILE_MAX) throw new PackError(`a record's file is at most ${RECORD_FILE_MAX} bytes`, 413);
   const ref: StoredFileRef = {
     object: `rf_${randomBytes(16).toString("hex")}`, name: cleanFileName(file.name), size: file.data.length,
     content_type: storedType(file.data, file.content_type), sha256: createHash("sha256").update(file.data).digest("hex"),
   };
+  if (orgId === null) {
+    await (await objectStore()).put(sharedKey(area.name, recordKey, ref.object), file.data, "application/octet-stream");
+    return ref;
+  }
   const sealed = await asPlatform(() => sealBytes(orgId, file.data, aad(orgId, area.pack, area.name, recordKey, ref)));
   await (await objectStore()).put(objectKey(orgId, area.name, ref.object), sealed, "application/octet-stream");
   return ref;
@@ -100,7 +110,14 @@ export async function removeRecordFiles(orgId: number, area: string, refs: Store
   if (refs.length) await (await objectStore()).remove(refs.map((r) => objectKey(orgId, area, r.object))).catch(() => null);
 }
 /** One stored file's bytes for its record (opened with the workspace's key, checked against its sha256). */
-export async function openRecordFile(orgId: number, area: RecordArea, recordKey: string, ref: StoredFileRef): Promise<Buffer> {
+export async function openRecordFile(orgId: number | null, area: RecordArea, recordKey: string, ref: StoredFileRef): Promise<Buffer> {
+  // mold_v0-271: a shared area's file, whoever reads it (staff, or any workspace that reads the area): checked by its sha256.
+  if (area.scope === "platform") {
+    const data = await (await objectStore()).get(sharedKey(area.name, recordKey, ref.object));
+    if (!data || createHash("sha256").update(data).digest("hex") !== ref.sha256) throw new PackError("no such file", 404);
+    return data;
+  }
+  if (orgId === null) throw new PackError("no such file", 404);
   if (!vaultUnlocked()) throw new PackError("the key vault is locked: files cannot be opened now, try again later", 503);
   const sealed = await (await objectStore()).get(objectKey(orgId, area.name, ref.object));
   // Missing, or named by a reference from another record or workspace: the same answer.
@@ -119,9 +136,41 @@ export async function openRecordFile(orgId: number, area: RecordArea, recordKey:
  * shell's own tables (not a read-only repository's) with a file field, while document previews are on (the cards are
  * where an uploaded file is opened again).
  */
-export function uploadMax(area: Pick<RecordArea, "scope" | "repo" | "fields">): number | null {
-  if (area.scope !== "workspace" || isReadOnlyArea(area) || !area.fields.some((f) => f.type === "file") || !featureOn("document_preview")) return null;
+export function uploadMax(area: Pick<RecordArea, "scope" | "repo" | "fields">, staff = false): number | null {
+  // mold_v0-271: a shared area's for staff (they upload its files from the staff record page; a workspace never writes it).
+  if (area.scope !== (staff ? "platform" : "workspace") || isReadOnlyArea(area) || !area.fields.some((f) => f.type === "file") || !featureOn("document_preview")) return null;
   return recordUploadMax();
+}
+
+/**
+ * mold_v0-271: one file staff upload from the staff record page for record `key` of the shared area `areaName` (which
+ * need not exist yet): kept for that record (storeRecordFile, unsealed under records/shared/). The caller checked the
+ * staff role ("library") and that the area's staff writes are not withheld.
+ */
+export async function uploadSharedFile(areaName: string, key: string, fieldName: string, file: { name: string; content_type: string; data: Buffer }): Promise<StoredFileRef> {
+  const area = areaOrThrow(areaName);
+  if (uploadMax(area, true) === null) throw new PackError(`${area.label} takes no file uploads`, 404);
+  if (!area.fields.some((f) => f.name === fieldName && f.type === "file")) throw new PackError(`${area.label} has no file field ${fieldName.slice(0, 64)}`, 404);
+  checkKey(key);
+  if (!file.data.length) throw new PackError("the file is empty", 400);
+  if (file.data.length > recordUploadMax()) throw new PackError(`a file uploaded here is at most ${Math.floor(recordUploadMax() / 1048576)} MB`, 413);
+  const declared = CONTENT_TYPE.test(file.content_type.split(";")[0]!.trim().toLowerCase()) ? file.content_type : "application/octet-stream";
+  return storeRecordFile(null, area, key, { name: file.name, content_type: declared, data: file.data });
+}
+/** mold_v0-271: remove a shared file staff uploaded for record `key` but did not write (never one the record holds). */
+export async function discardSharedFile(areaName: string, key: string, fieldName: string, raw: unknown): Promise<void> {
+  const area = areaOrThrow(areaName);
+  if (area.scope !== "platform" || !area.fields.some((f) => f.name === fieldName && f.type === "file")) throw new PackError("Not found", 404);
+  checkKey(key);
+  if (!isStoredFileRef(raw)) throw new PackError("give the file's reference, as the upload answered it", 400);
+  await openRecordFile(null, area, key, raw);
+  const record = await getPlatform(area, key);
+  const held = (record ? area.fields.filter((f) => f.type === "file") : []).some((f) => {
+    const v = record!.data[f.name];
+    return (Array.isArray(v) ? v : [v]).some((x) => isStoredFileRef(x) && x.object === raw.object);
+  });
+  if (held) throw new PackError("the record holds this file: change the record to remove it", 409);
+  await (await objectStore()).remove([sharedKey(area.name, key, raw.object)]).catch(() => null);
 }
 
 /** The area and file field an upload names, for a person who may write the area's records; refused otherwise. */
@@ -379,7 +428,7 @@ export async function serveFile(door: FileDoor, req: Request, res: Response): Pr
   const mode = req.query.mode === "download" ? "download" : "inline";
   let data: Buffer, name: string, type: string;
   if (slot.ref) {
-    data = await openRecordFile(orgId!, area, record.key, slot.ref);
+    data = await openRecordFile(area.scope === "platform" ? null : orgId, area, record.key, slot.ref);
     name = slot.ref.name; type = slot.ref.content_type;
   } else {
     const docOrg = area.scope === "platform" ? null : orgId;

@@ -2666,7 +2666,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +
   `export const exportWithheldAreas: string[] = ${json(recordAreas.filter((a) => listWithheld(a.name, "export")).map((a) => a.name))};\n\n` +
-  "/** The /admin sidebar's Records group: the platform-scope areas staff maintain (mold_v0-271: or exactly the entries console.admin_records lists). */\n" +
+  // mold_v0-271: or exactly the entries console.admin_records lists (recordAdminItems).
+  "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
   `export const recordAdminNav: NavGroup[] = ${json(recordAdminItems.length ? [{ label: "Records", items: recordAdminItems }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
   " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates, Files (mold_v0-056)\n" +

@@ -20,6 +20,7 @@ export interface FeatureSpec {
   default: boolean;
   legacy?: string;
   requested_by: "credentials" | "email" | "alerts" | "clocks" | "always" | "private_network" | "developer_surface" | "checks" | "encrypted" | "no_engine" | "documents" | "layouts"
+    | "recipes"
     | "record_inputs" | "private_catalogs" | "wide_lists" | "record_rules" | "credential_sets" | "home_cards";
   requested_words: string;
   requires?: FeatureId[];
