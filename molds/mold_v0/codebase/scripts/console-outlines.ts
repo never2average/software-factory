@@ -37,6 +37,7 @@ export const ALLOW: [string, string, string][] = [
   ["app/global-error.tsx", "<button", "the last-resort error page draws without the console's styles (inline style, its own border)"],
   ["components/ui/input-group.tsx", "data-slot='input-group-addon'", "a click on the box's label or icon moves the focus into its text box (mouse only); the box is outlined, the addon is not a control"],
   ["components/ui/table/data-table-filter-clear.tsx", "role='button'", "the clear mark inside a filter's trigger, which is the shared outlined Button (a button inside a button is invalid HTML)"],
+  ["components/ui/table/data-table-column-header.tsx", "DropdownMenuTrigger", "a table column heading that opens its sort menu: it reads as the heading, never boxed (operator, 2026-11-07); hover and keyboard focus still show it"],
   ["components/ui/calendar.tsx", "data-day=", "a date picker's day cells: a grid of dates (the grid is the control, framed by its popover); its month arrows are outlined Buttons"],
   ["components/ui/infobar.tsx", "data-infobar='rail'", "the info panel's edge, a pointer-only handle out of the tab order, like the sidebar's rail"],
   ["features/tabs/side-panel.tsx", "data-side-panel-backdrop=''", "the dimmed page behind a form's side panel (mold_v0-256): a click outside the panel closes it (pointer only, aria-hidden); Esc and the panel's outlined Close and Cancel buttons are its controls"],
