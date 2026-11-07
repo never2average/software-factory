@@ -14353,54 +14353,6 @@
               },
               "additionalProperties": false
             },
-            "connected": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 120,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                },
-                "help": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 600,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                },
-                "prompt": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 400,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                }
-              },
-              "additionalProperties": false
-            },
-            "tools": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 120,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                },
-                "help": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 600,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                },
-                "prompt": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 400,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
-                }
-              },
-              "additionalProperties": false
-            },
             "first_call": {
               "type": "object",
               "properties": {

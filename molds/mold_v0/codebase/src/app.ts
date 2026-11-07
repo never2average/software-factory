@@ -33,6 +33,7 @@ import { PROFILE } from "./profile.js";
 import { fill } from "./vocabulary.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
+import * as mail from "./email.js";
 import * as limits from "./limits.js";
 import * as clerk from "./clerk.js";
 import { people, signedIn } from "./people.js";
@@ -82,7 +83,8 @@ const startsWith = (prefix: string) => `${prefix.replace(/[\\%_]/g, "\\$&")}%`;
  *                stages (`stage:<id>`: onboarded, simulated, reported); `optional` ones are not counted; `help_text_only`
  *                is its help for someone whose every AI client shows results as text; `launch` ones (they start work) show
  *                `viewer_note` instead to someone who may not launch
- *   shell_steps  the shell's steps (joined, connected, tools, first_call) in the product's words
+ *   shell_steps  the shell's steps (joined, first_call) in the product's words; connecting a client is the Connect card's
+ *                (the connection URL, the client's own steps, Test my connection, the setup email: mold_v0-277), not a step
  *   workflow     the tool groups that make up using it fully: per group, how many of its tools the account has called
  *                (coverage, and the next group nobody has used, with the prompt that starts it)
  * and a plain-language fix for each recent error from the packs' pack.json mcp.error_hints.
@@ -97,8 +99,7 @@ async function setup(s: Session, since?: string) {
   const own = cfg.steps ?? [];
   const resources = own.filter((st) => st.done_when.startsWith("resource:"));
   const [m] = await db.query<Record<string, any>>(
-    `/* tenant: who = org_id = $1, the session's account */ SELECT min(at) FILTER (WHERE method = 'initialize') AS connected,
-            min(at) FILTER (WHERE method = 'tools/list') AS tools_listed,${resources.map((_st, i) => `
+    `/* tenant: who = org_id = $1, the session's account */ SELECT${resources.map((_st, i) => `
             min(at) FILTER (WHERE method = 'resources/read' AND name LIKE $${args.length + i + 1}) AS resource_${i},`).join("")}
             min(at) FILTER (WHERE method = 'tools/call' AND ok) AS first_call,
             count(*) FILTER (WHERE method = 'tools/call') AS calls
@@ -115,12 +116,14 @@ async function setup(s: Session, since?: string) {
   const textOnly = clients.length > 0 && clients.every((c) => !WIDGET_CLIENTS.test(c.client));
   const shellWords = (id: string, label: string, help: string) => ({ label: cfg.shell_steps?.[id]?.label ?? label, help: cfg.shell_steps?.[id]?.help ?? help });
   type Step = { id: string; label: string; done: boolean; at: Date | string | null; optional?: true; help: string };
+  // Connecting a client and switching its tools on are the Connect card's (mold_v0-277), never rows of their own: their
+  // ids stay only as places a host pack's step may be put after (pack.json setup.steps after: connected | tools), where
+  // they stood, between joining and the first question. They are dropped before the list is returned.
+  const ANCHORS = new Set(["connected", "tools"]);
+  const anchor = (id: string): Step => ({ id, label: "", done: false, at: null, help: "" });
   const steps: Step[] = [
     { id: "joined", ...shellWords("joined", "Join your team's account", "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account."), done: true, at: null },
-    { id: "connected", ...shellWords("connected", `Add the ${P} connector to your AI client`,
-      `${P} runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.`), done: Boolean(m.connected), at: m.connected },
-    { id: "tools", ...shellWords("tools", `Switch the ${P} tools on`,
-      `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.`), done: Boolean(m.tools_listed), at: m.tools_listed },
+    anchor("connected"), anchor("tools"),
     { id: "first_call", ...shellWords("first_call", `Ask ${P} something`, `Your first question checks everything works end to end. Type: "What can ${P} do?"`), done: Boolean(m.first_call), at: m.first_call },
   ];
   for (const st of own) {
@@ -129,9 +132,9 @@ async function setup(s: Session, since?: string) {
     const after = st.after ? steps.findIndex((x) => x.id === st.after) : -1;
     if (after >= 0) steps.splice(after + 1, 0, step); else steps.push(step);
   }
+  for (const id of ANCHORS) steps.splice(steps.findIndex((x) => x.id === id), 1);
   // Every step has a prompt to paste into the AI client: the one it declares, or the one its help names (Type: "…").
   const STEP_PROMPTS: Record<string, string | undefined> = {
-    connected: `Is ${P} connected? Tell me what it can do.`, tools: `Which ${P} tools can you use?`,
     ...Object.fromEntries([...Object.entries(cfg.shell_steps ?? {}).map(([id, w]) => [id, w.prompt]), ...own.map((st) => [st.id, st.prompt])].filter(([, x]) => x !== undefined)),
   };
   // Someone who may not launch: where a step that starts work would ask them to, the product's note instead.
@@ -154,6 +157,8 @@ async function setup(s: Session, since?: string) {
     next: groups.find((g) => g.used === 0) ?? null,
     errors: errors.map((e) => ({ ...e, hint: hints.find((h) => h.re.test(e.error ?? ""))?.text ?? null })),
     connect: await withUsageShares(admin.connectInfo()), live, viewer_note: viewer ? cfg.viewer_note! : null,
+    // Where the Connect card's Send setup by email goes (mold_v0-277): the person's own address, never another.
+    email: s.email,
   };
 }
 
@@ -585,6 +590,17 @@ export function appRouter() {
   api.post("/setup/test", async (_req, res) => {
     capture({ distinctId: S(res).user ?? `org:${S(res).slug}`, orgSlug: S(res).slug }, "app_connection_test_started");
     res.json({ since: new Date().toISOString() });
+  });
+  // The setup email (mold_v0-277): built only for the clients the person chose (src/setup-email.ts; none, an unknown one
+  // or too many are refused), previewed, then sent to their own address. Nobody else's address can be named.
+  api.post("/setup/email/preview", async (req, res) => void res.json({ ...admin.setupEmail(req.body?.clients), to: S(res).email }));
+  api.post("/setup/email", async (req, res) => {
+    const s = S(res);
+    if (!s.user || !s.email) throw new AppError("Sign in as a person with an email address to email yourself the setup", 403);
+    const e = admin.setupEmail(req.body?.clients);
+    const r = await mail.setupEmail({ to: s.email, user: s.user, org: s.org, subject: e.subject, text: e.body, clients: e.clients });
+    if (r.status === "failed" || r.status === "skipped") throw new AppError(`The email could not be sent${r.error ? `: ${r.error}` : ""}`, 503);
+    res.json({ status: r.status, to: s.email, subject: e.subject, clients: e.clients });
   });
   api.get("/usage", async (req, res) => void res.json(await usage(S(res), req.query)));
   api.get("/team", async (_req, res) => void res.json({ ...(await admin.team(S(res).slug, true)), me: S(res).user, can_manage: can(res, "team"), permissions: perms(res) }));

@@ -1,11 +1,12 @@
-// One setup checklist (mold_v0-146): the shell's setup steps (joining, connecting an AI client, its tools, a first
-// question; src/app.ts setup, or a host pack's own) and the packs' onboarding steps (src/onboarding.ts) as one ordered
-// list, so a home tab and the Setup page never show two checklists that ask the same thing.
+// One setup checklist (mold_v0-146): the shell's setup steps (joining and a first question; src/app.ts setup, or a host
+// pack's own) and the packs' onboarding steps (src/onboarding.ts) as one ordered list, so a home tab and the Setup page
+// never show two checklists that ask the same thing. Connecting an AI client is no step (mold_v0-277): it is the
+// Overview's Connect card.
 //
 // Order: the shell's steps first (an AI client is how most pack steps are done), then the packs' steps in their
-// declared order. A pack step whose condition is one the shell measures (`workspace`, `connected`, `first_call`:
-// /api/onboarding `covers`) takes that shell step's place: the shell's step is dropped, and the shell steps after it
-// follow the pack's step. So a pack places the connection where it wants it by declaring a step `done_when: connected`.
+// declared order. A pack step whose condition is one the shell measures (`workspace`, `first_call`: /api/onboarding
+// `covers`) takes that shell step's place: the shell's step is dropped, and the shell steps after it follow the pack's
+// step.
 
 export interface ShellSetupStep { id: string; label: string; done: boolean; at: string | null; help: string; prompt?: string | null; optional?: boolean }
 export interface PackSetupStep { pack: string; id: string; label: string; help: string | null; prompt?: string | null; done: boolean; at: string | null; covers?: string | null }
@@ -21,7 +22,7 @@ export interface ChecklistStep {
   /** A pack's step: its pack (a step the page links to by its anchor). */
   pack?: string;
   id: string;
-  /** The shell's step it is or stands for (`joined`, `connected`, ...), if any: `connected` carries the connection panel. */
+  /** The shell's step it is or stands for (`joined`, `first_call`, ...), if any. */
   shell: string | null;
   /** A step the list shows but never counts (a host pack's setup step declared `optional`, src/app.ts setup). */
   optional?: boolean;

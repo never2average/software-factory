@@ -20,6 +20,7 @@ import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
 import { parsePlanConfig, PlanConfigError } from "./plan-config.js";
 import { clientCatalog } from "./connect-catalog.js";
+import { chosenClients, setupEmailText, SetupEmailError } from "./setup-email.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import { onboardingSteps, stageSteps, stageStepsReached, stepKey } from "./onboarding.js";
@@ -77,21 +78,19 @@ export function connectInfo(key?: string) {
   // Every client the app supports, with its exact way in (src/connect-catalog.ts).
   const signInAvailable = Boolean(clerk.clerkEnabled() && clerk.frontendApi());
   const clients = clientCatalog(url, key, { signInAvailable });
-  const subject = `Your ${PROFILE.name} access`;
-  const body = `Hi,
+  return { connector_url: url, secret: Boolean(key), clients };
+}
 
-You now have access to ${PROFILE.name}. Add this connector URL to your AI client:
-
-${url}
-${key ? `\nYour personal API key is:\n\n${key}\n\nIt is your login: anyone with it can use your account, so keep it private. Your client sends it as a header\n(Authorization: Bearer <key>); it never goes in the URL. ${signInAvailable ? "Claude and ChatGPT's own apps cannot send it: ask us for a\nsign-in invitation to use them." : "Claude and ChatGPT's own apps cannot send it: use a client that can (listed below)."}\n` : "\nIt has no secret in it: you sign in with your work email (accept the invitation email first).\n"}
-Connect it:
-${clients.filter((c) => ["claude", "chatgpt", "claude-code", "cursor", "codex"].includes(c.id)).map((c) => `- ${c.client}: ${c.command ? `${c.steps} ${c.command}` : c.steps}`).join("\n")}
-Every other client (Copilot, OpenCode, Gemini CLI, VS Code, Windsurf and more) is listed at ${base}/app
-
-Then type: "Get me started with ${PROFILE.name}."
-
-Reply to this email with anything that gets in your way.`;
-  return { connector_url: url, secret: Boolean(key), clients, email: { subject, body } };
+/**
+ * The setup email for the chosen clients only (mold_v0-277, src/setup-email.ts): `ids` are catalog ids (an empty
+ * choice or an unknown one is refused, a 400). With `key` (a legacy key, or KEY_PLACEHOLDER for the staff console's
+ * copy) each client's steps carry it in their header, as connectInfo's.
+ */
+export function setupEmail(ids: unknown, key?: string) {
+  const c = connectInfo(key);
+  try {
+    return setupEmailText(chosenClients(ids, c.clients), { name: PROFILE.name, url: c.connector_url, key, prompt: `Get me started with ${PROFILE.name}.` });
+  } catch (e) { if (e instanceof SetupEmailError) throw new AdminError(e.message, e.status); throw e; }
 }
 
 // ---------- local facts ----------
@@ -570,7 +569,8 @@ const result = async (slug: string, email: string | null, extra: { key?: string;
   const o = await factsBySlug(slug);
   const c = connectInfo(extra.key);
   return { org: { slug: o.slug, name: o.name }, created: extra.created ?? false, invitation: extra.invitation ?? null, key: extra.key ?? null,
-           ...c, email: { ...c.email, to: email, mailto: email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(c.email.subject)}&body=${encodeURIComponent(extra.key ? c.email.body.replaceAll(extra.key, KEY_PLACEHOLDER) : c.email.body)}` : null } };
+           // The email is built for the clients the staff member picks (setupEmail, POST /setup-email): only its address here.
+           ...c, email: { to: email } };
 };
 
 /** Approve a request: a new account (name and slug default to the company), or, with `org_slug`, another person in one. */

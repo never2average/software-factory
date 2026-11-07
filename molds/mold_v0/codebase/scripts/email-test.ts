@@ -69,7 +69,7 @@ try {
     assert.equal(s.provider, "test");
     assert.equal(s.connected, true);
     assert.deepEqual(s.notifications, []);
-    assert.deepEqual([...s.on].sort(), ["invitation", "sign_in_code", "test"], "the build's profile turns on no notification");
+    assert.deepEqual([...s.on].sort(), ["invitation", "setup", "sign_in_code", "test"], "the build's profile turns on no notification (a person's own setup email is always on, mold_v0-277)");
     assert.match(s.summary, /sign-in codes and invitations only/);
     process.env.APP_EMAIL_PROVIDER = "none";
     s = await mail.emailStatus();

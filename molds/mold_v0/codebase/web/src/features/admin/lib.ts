@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminApi } from '@/lib/api-client';
+import type { ConnectClient } from '@/features/connect/connect-parts';
 import { fill } from '@/lib/vocabulary';
 import { engineWords } from './engine';
 import { isStatusError } from '@/features/status/from-error';
@@ -72,8 +73,9 @@ export interface InviteResult {
   key: string | null;
   connector_url: string;
   invitation: { id: string; email: string; state: string; role?: string; expires_at: string | null } | null;
-  clients: { client: string; steps: string; snippet?: string }[];
-  email: { to: string | null; subject: string; body: string; mailto: string | null };
+  /** Every AI client's way in (src/connect-catalog.ts); the setup email is built for the ones chosen (POST /setup-email). */
+  clients: ConnectClient[];
+  email: { to: string | null };
 }
 
 export interface OrgRow {

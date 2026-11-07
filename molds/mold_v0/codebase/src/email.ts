@@ -75,7 +75,9 @@ export const EMAIL_KINDS = ["request_received", "request_alert", "request_declin
   // A billing notice to the operator (mold_v0-083): a run's charge that could not be delivered.
   "billing_notice",
   // A record clock's reminders and escalation steps (mold_v0-191, src/record-clocks.ts): the due_dates group.
-  "clock_step"] as const;
+  "clock_step",
+  // The setup email a person sends themself from the Overview's Connect card (mold_v0-277, src/setup-email.ts).
+  "setup"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 /** The groups a profile turns on (`email.notifications`), and the kinds in each. Sign-in and test are always on. */
@@ -87,7 +89,7 @@ export const NOTIFICATION_GROUPS = {
   billing: ["billing_notice"],
 } as const satisfies Record<string, readonly EmailKind[]>;
 export type NotificationGroup = keyof typeof NOTIFICATION_GROUPS;
-export const ALWAYS_ON: readonly EmailKind[] = ["sign_in_code", "invitation", "test"];
+export const ALWAYS_ON: readonly EmailKind[] = ["sign_in_code", "invitation", "test", "setup"];
 export const groupOf = (k: EmailKind): NotificationGroup | null =>
   (Object.entries(NOTIFICATION_GROUPS) as [NotificationGroup, readonly EmailKind[]][]).find(([, ks]) => ks.includes(k))?.[0] ?? null;
 
@@ -725,6 +727,17 @@ export function invitation(i: { id: string; to: string; account: string; account
       `To accept, sign in with this address (${i.to}): ${siteUrl()}/auth/sign-in?redirect_url=%2Fapp`,
       `We'll email you a sign-in code${i.google ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${w.product}, accept the invitation on your profile page once signed in. The invitation is good for ${i.days} days.`,
       `If you weren't expecting it, ignore this email.`, sign()) });
+}
+
+/**
+ * The setup email (mold_v0-277): to the signed-in person's own address only, at their request, with the subject and text
+ * src/setup-email.ts built for the clients they chose. The same choice goes out at most once in ten minutes (a second
+ * press is a duplicate, never a second email).
+ */
+export function setupEmail(m: { to: string; user: string; org: number; subject: string; text: string; clients: string[] }) {
+  const window = Math.floor(Date.now() / 600_000);
+  return send({ kind: "setup", to: m.to, org: m.org, idempotencyKey: `setup:${hashAddress(`${m.user}:${m.clients.join(",")}`).slice(0, 24)}:${window}`,
+    meta: { clients: m.clients }, subject: m.subject, text: lines(m.text, sign()) });
 }
 
 // ---------- billing notices (mold_v0-083: src/run-charges.ts) ----------
