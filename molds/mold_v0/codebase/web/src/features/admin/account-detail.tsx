@@ -23,6 +23,7 @@ import { W } from '@/lib/vocabulary';
 import { sessionEngine } from './engine';
 import { AccountAgentIcon } from './account-agent-icon';
 import { featureOn } from '@/config/features';
+import { IdentityName } from '@/components/identity-avatar';
 
 type Detail = any; // GET /orgs/:slug (src/admin.ts orgDetail)
 /** An account's pack runs (src/admin.ts accountRuns), in a build without the session engine; null with no job kind. */
@@ -240,10 +241,10 @@ function People({ d, path, onResult }: { d: Detail; path: string; onResult: (r: 
             {
               label: 'Person',
               render: (m: any) => (
-                <>
+                <IdentityName id={m.user_id} name={m.name} email={m.email}>
                   <div className='font-medium'>{m.email || m.user_id}</div>
                   {m.name && <div className='text-muted-foreground text-xs'>{m.name}</div>}
-                </>
+                </IdentityName>
               )
             },
             {

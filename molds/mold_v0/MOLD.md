@@ -3761,6 +3761,31 @@ Proof: `npm run test:generic-gaps` (each item, its permissions and two workspace
 `npm run test:credentials`, `npm run test:mcp-tools`, `npm run test:zero-pack` (`4e3e14917286b00c`), the factory's
 `lib/features.py` self-test; the fixture drawn in a lane world in light and dark at 1440 and 390 px.
 
+## Avatars in the brand's colours (mold_v0-275)
+
+People and organisations that have not uploaded a picture are drawn by the console itself, never with the sign-in
+provider's generated picture (Clerk answers `imageUrl` with one of its gradients when `hasImage` is false; the built-in
+sign-in has no pictures). `web/src/components/identity-avatar.tsx` (`IdentityAvatar`, and `IdentityName` for a list's
+cell) paints a soft gradient of two of the app's avatar colours with the initials in white, the pair, the gradient's
+angle and its glow chosen from the person's or organisation's id (FNV-1a, `web/src/lib/avatar.ts`), so they look the
+same on every page and visit; an uploaded picture (`hasImage`) is shown as it is, with the drawing behind it while it
+loads. Where: the sidebar's footer (Profile) and the top bar's user menu, the profile pages, the account switcher (the
+workspace's tile and each workspace in its menu: an organisation is a rounded square), Billing › Team, a team's People,
+and in the staff console the Accounts list, an account's Members (page and peek) and Admins. The record page's
+"Added by" names a kind of author (a person of the workspace, platform staff, the email intake), not a person, so it
+has none. Decorative (`aria-hidden`): the name is always beside it.
+
+The colours: the brand's (`profile.json` `avatar_palette`, 3 to 8 `#RRGGBB`, written by the factory's branding step:
+`branding.py <app> set` derives five from the brand colour, `--avatar-colors "#RRGGBB,..."` pins the app's own; the
+app spec's `product.avatar_colors`, the brief's `Avatar colours:` line; [branding/rules.json](branding/rules.json)
+`avatar_palette`). `scripts/gen-packs.mjs` refuses a list that is not 3 to 8 distinct colours, or one on which white
+initials read under 4.5:1, refuses one from a host pack (it is the app's brand), and writes it into the console's
+profile module only. Without one (no brand, a brand with no colour) the theme's `--avatar-1` to `--avatar-5`
+(`web/src/styles/themes/supabase.css`): five shades of its primary colour, its hue only, darkened in the dark theme
+(whose primary is light), each at 4.5:1 or more with white. So a build that sets nothing (the zero-pack build, a host
+pack's product with no brand of its own) draws shades of its theme's green, and builds exactly the generated files it
+built before.
+
 ## How the factory runs it
 
 mold_v0 is a **single-service mold**: [mold.json](mold.json) says so, and every factory script hands such an app to

@@ -124,6 +124,19 @@
           "x-hint": "brands/acme/agent-dark.svg",
           "description": "The agent icon's dark-theme variant (optional; needs agent_icon): a file as agent_icon. Unset: agent_icon in both themes.",
           "markdownDescription": "The agent icon's variant for the dark theme (optional; needs `agent_icon`), a file as `agent_icon`. Unset: `agent_icon` serves both themes (an icon in the text colour needs none)."
+        },
+        "avatar_colors": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "x-hint": "3 to 8 #RRGGBB colours, dark enough for white initials",
+          "description": "The colours people's and organisations' avatars are drawn in when they have no picture (optional): 3 to 8 #RRGGBB, each dark enough for white initials (4.5:1). Unset: five derived from the brand colour.",
+          "markdownDescription": "The colours the console draws people's and organisations' avatars in when they have not uploaded a picture (a soft gradient of two of them, chosen from the id, with white initials): 3 to 8 `#RRGGBB`, each dark enough for white initials at 4.5:1 (optional). Unset: five derived from `colour` (its hue and its neighbours, never purple unless the brand is). `branding.py <app> set --avatar-colors`."
         }
       },
       "allOf": [

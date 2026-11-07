@@ -155,7 +155,8 @@ def st_packs(app, a, i):
 
 def st_brand(app, a, i):
     b = (a.get("surface") or {}).get("branding") or {}
-    return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
+    av = f", {len(b['avatar_colors'])} avatar colours" if b.get("avatar_colors") else ""     # mold_v0-275
+    return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}{av}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
 
 MISSING_KEYS = {}   # app -> the key names st_keys found missing (for --json's needs)
 GENERATED_KEYS = {} # app -> those of them the factory makes (provision.py --generate-secret; mold_v0-227), never typed
@@ -694,6 +695,8 @@ def finish_new(app, brief_text):
         c = re.search(r"^\s*(?:brand )?colou?r:\s*(#[0-9a-fA-F]{6})", brief_text, re.I | re.M); l = re.search(r"^\s*logo:\s*(\S+)", brief_text, re.I | re.M)
         if c: args += ["--color", c.group(1)]
         if l and os.path.exists(os.path.join(ROOT, l.group(1))): args += ["--logo", l.group(1)]
+        av = re.search(r"^\s*avatar colou?rs?:\s*([^\n]+?)\s*$", brief_text, re.I | re.M)     # mold_v0-275
+        if av: args += ["--avatar-colors", ",".join(x for x in re.split(r"[,\s]+", av.group(1)) if x)]
         py(os.path.join(S, "branding.py"), app, "set", *args, capture_output=True)
     a, i = docs(app)
     if not i.get("agent_cli") and d.get("agent_cli_scope") and (i.get("vercel") or {}).get("project"):
