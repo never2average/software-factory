@@ -1,9 +1,13 @@
 'use client';
 // A Notion-style database page: headline numbers (the summary: a list tab's four cards) first, then view tabs, a toolbar (full-width search, filters, sort, properties, group, export,
-// then the page's primary action at its right end), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and a side peek.
-// Clicking a row narrows the table to 40% and opens the record beside it; Escape or ✕ closes it, j/k walk the list. On
-// small screens the record replaces the table, with a way back. Every database feature is opt-in, so simple pages stay simple.
+// then the page's primary action at its right end), one paged table exactly the page's height that scrolls inside, a ⋯ menu of actions on each row, and the record panel.
+// mold_v0-278: clicking a row never leaves the page: the list narrows and the record opens in a panel at its right
+// (./detail-panel.tsx: a splitter, Expand / Collapse, the ⋯ menu with Open in its own page, ✕ and Esc, Back to list on
+// a phone), the open row highlighted and kept in the address (?id=<key>, &panel=full, &panelTab=); another row switches
+// it, ↑ ↓ (j k) walk the rows. Every database feature is opt-in, so simple pages stay simple.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { parseAsString, useQueryStates } from 'nuqs';
 import { IconArrowDown, IconArrowUp } from '@tabler/icons-react';
 import {
   applyFilters, colName, FilterButton, FilterChips, groupRows, ruleActive, sortRows, ViewMenu, typed,
@@ -12,11 +16,12 @@ import {
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { RecordPanel, guarded, usePanelSplit } from '@/components/layout/detail-panel';
+import { DETAIL_PARAM, PANEL_FULL, PANEL_PARAM, PANEL_TAB_PARAM, type PanelKind } from '@/lib/split-panel';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
 import { downloadCsv, today, type CsvValue } from '@/lib/csv';
@@ -50,7 +55,7 @@ const WIDE_TABLE = 'w-max min-w-full [&_td]:max-w-72 [&_tr>*:first-child]:sticky
 
 export function RecordView<T>({
   rows, rowKey, cols, searchText, searchPlaceholder = 'Search', filters, primary, detail, detailTitle, actions, empty, noun = 'items', loading, initialSize,
-  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, detailActions, compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide
+  id, views, defaultSort, groupable, bulk, exportName, primaryMenu, properties, panelActions, panelMenu, pageHref, panelKind = 'detail', compact, openKey, onOpenChange, summary, toolbarAction, initialRules, onRulesChange, wide
 }: {
   /**
    * mold_v0-260 (flag wide_lists): a list of more than 8 columns: the table keeps each column's width and scrolls sideways
@@ -66,7 +71,7 @@ export function RecordView<T>({
   filters?: ReactNode;
   /** The toolbar's own action (Export); a function is given the view: its rows as shown and whether search or a filter narrows them. */
   primary?: ReactNode | ((view: { rows: readonly T[]; narrowed: boolean }) => ReactNode);
-  /** The record, shown beside the table when a row is clicked; without it rows are not clickable. */
+  /** The record, shown in the panel beside the table when a row is clicked (mold_v0-278); without it rows are not clickable. */
   detail?: (row: T, close: () => void) => ReactNode;
   detailTitle?: (row: T) => ReactNode;
   /** The row's ⋯ menu: toggles and actions live here, not in the cells. */
@@ -87,12 +92,19 @@ export function RecordView<T>({
   exportName?: string;
   /** Extra items in the primary's ▾ menu. */
   primaryMenu?: RowAction[];
-  /** The peek lists every column as a property above detail(). */
-  properties?: boolean;
-  detailActions?: (row: T, close: () => void) => ReactNode;
+  /** The panel lists every column as a property above detail() (a function: for the rows it says). */
+  properties?: boolean | ((row: T) => boolean);
+  /** mold_v0-278: the open record's actions, the panel's ⋯ menu (before the row's own ⋯ items and Open in its own page). */
+  panelActions?: (row: T, close: () => void) => RowAction[];
+  /** A ⋯ menu of its own (a component reading the record's own data), given the items the panel would show. */
+  panelMenu?: (row: T, items: RowAction[], close: () => void) => ReactNode;
+  /** The record's own page: the ⋯ menu's "Open in its own page" (Expand shows it at the list's full width in place). */
+  pageHref?: (row: T) => string | null;
+  /** An editor (half the width at first) or details (40%). */
+  panelKind?: PanelKind;
   /** Inside a page with other content (a tab under a summary): as tall as its rows, at most most of the screen. */
   compact?: boolean;
-  /** Controls which record is open (a deep link; a page that pauses refresh while one is); omitted, the view keeps it. */
+  /** Controls which record is open (a page's own address parameter); omitted, the view keeps it in the address as ?id=<key>. */
   openKey?: string | null;
   onOpenChange?: (key: string | null) => void;
   /**
@@ -111,9 +123,19 @@ export function RecordView<T>({
 }) {
   const ns = (s: string) => (id ? `rv:${id}:${s}` : null);
   const [q, setQ] = useState('');
-  const [openState, setOpenState] = useState<string | null>(null);
-  const open = openKey !== undefined ? openKey : openState;
-  const setOpen = (k: string | null) => { if (openKey === undefined) setOpenState(k); onOpenChange?.(k); };
+  // mold_v0-278: the open row is the address's ?id=<key> (a reload or a shared link reopens it), &panel=full expands it;
+  // a page that names its own parameter (openKey) keeps it, and its Expand is the view's own.
+  const [url, setUrl] = useQueryStates({ [DETAIL_PARAM]: parseAsString, [PANEL_PARAM]: parseAsString, [PANEL_TAB_PARAM]: parseAsString }, { history: 'replace', scroll: false });
+  const controlled = openKey !== undefined;
+  const [ownExpanded, setOwnExpanded] = useState(false);
+  const open = controlled ? openKey : url[DETAIL_PARAM] ?? null;
+  const expanded = controlled ? ownExpanded : url[PANEL_PARAM] === PANEL_FULL;
+  const setExpanded = (v: boolean) => (controlled ? setOwnExpanded(v) : void setUrl({ [PANEL_PARAM]: v ? PANEL_FULL : null }));
+  const setOpen = (k: string | null) => {
+    if (!controlled) void setUrl(k ? { [DETAIL_PARAM]: k } : { [DETAIL_PARAM]: null, [PANEL_PARAM]: null, [PANEL_TAB_PARAM]: null });
+    else if (!k) setOwnExpanded(false);
+    onOpenChange?.(k);
+  };
   const [sortMap, setSortMap] = useStored<Record<string, SortRule[]>>(ns('sort'), {});
   const [groupMap, setGroupMap] = useStored<Record<string, string | null>>(ns('group'), {});
   const [hiddenStored, setHidden] = useStored<string[] | null>(ns('cols'), null);
@@ -178,7 +200,13 @@ export function RecordView<T>({
   const toggle = (keys: string[], on: boolean) => setSel((s) => { const n = new Set(s); keys.forEach((k) => (on ? n.add(k) : n.delete(k))); return n; });
 
   const current = open ? rows.find((r) => rowKey(r) === open) : undefined;
-  const close = () => setOpen(null);
+  // The panel's close asks first when an editor in it has unsaved changes, then focuses the row again.
+  const panelClose = useRef<(() => void) | null>(null);
+  const close = () => (panelClose.current ? panelClose.current() : setOpen(null));
+  const hostRef = useRef<HTMLDivElement>(null);
+  const showRecord = Boolean(current && detail);
+  const split = usePanelSplit(hostRef, showRecord, `${id ?? noun}`, panelKind, expanded);
+  const openRow = (k: string) => { if (k !== open) guarded(() => setOpen(k)); };
 
   // ↑ ↓ walk the rows as listed (collapsed groups skipped), turning the page when needed.
   const navRows = data.items.flatMap((i) => (i.row ? [i.row] : []));
@@ -186,18 +214,26 @@ export function RecordView<T>({
   const go = (d: number) => {
     const next = navRows[at + d];
     if (at < 0 || !next) return;
-    setOpen(rowKey(next));
-    const i = data.items.findIndex((x) => x.row === next);
-    page.setPage(Math.floor(i / page.size) + 1);
+    const k = rowKey(next);
+    guarded(() => {
+      setOpen(k);
+      const i = data.items.findIndex((x) => x.row === next);
+      page.setPage(Math.floor(i / page.size) + 1);
+      // Focus follows the open row (it was on a row: the list's keyboard).
+      requestAnimationFrame(() => {
+        if (!(document.activeElement as HTMLElement | null)?.closest?.('[data-row-key]')) return;
+        hostRef.current?.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(k)}"]`)?.focus();
+      });
+    });
   };
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
   useEffect(() => {
     onKey.current = (e) => {
       const t = e.target as HTMLElement | null;
-      if (t && (t.closest?.('input,textarea,select') || t.isContentEditable)) return;
-      if (document.querySelector('[role=dialog]') || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape') setOpen(null);
-      else if (!database) return; // simple pages: Escape only, as before
+      if (e.defaultPrevented || (t && (t.closest?.('input,textarea,select,[role=separator],[data-slot=detail-panel]') || t.isContentEditable))) return;
+      if (document.querySelector('[role=dialog],[role=alertdialog],[role=menu]') || e.metaKey || e.ctrlKey || e.altKey) return;
+      // Esc is the panel's own (./detail-panel.tsx: it asks first when something is unsaved, then focuses the row).
+      if (!database) return; // simple pages: Escape only, as before
       else if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); go(1); }
       else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); go(-1); }
     };
@@ -211,8 +247,6 @@ export function RecordView<T>({
   }, [hasCurrent]);
 
   const shownCols = cols.filter((c) => !hidden.includes(c.key));
-  // mold_v0-217: an open record is a full card in the list's place (the record details card's style), not a peek beside it.
-  const showRecord = Boolean(current && detail);
   const visible = shownCols;
   const span = visible.length + (actions ? 1 : 0) + (bulk ? 1 : 0);
   const anyTyped = cols.some(typed);
@@ -263,6 +297,13 @@ export function RecordView<T>({
     setSort(d === 'asc' ? [{ key: k, dir: 'desc' }] : d === 'desc' ? [] : [{ key: k, dir: 'asc' }]);
   };
   const titleCol = cols.find((c) => c.title);
+  // The panel's header: the title; the ⋯ menu: the record's own actions, the row's ⋯ items, then Open in its own page.
+  const panelTitle: ReactNode = current ? (detailTitle ? detailTitle(current) : titleCol?.render(current)) : null;
+  const href = current && pageHref ? pageHref(current) : null;
+  const own = current ? panelActions?.(current, close) ?? [] : [];
+  const rowItems = (current && actions ? actions(current) : []).filter((a) => !own.some((x) => x.label === a.label));
+  const panelItems: RowAction[] = [...own, ...rowItems.map((a, i) => (i === 0 && own.length ? { ...a, separator: true } : a)),
+    ...(href ? [{ label: 'Open in its own page', icon: <Icons.externalLink />, href, separator: true }] : [])];
   const bulkItems = bulk && selRows.length ? bulk(selRows, clearSel) : [];
   // compact: fill from where the table starts to the bottom of the window (content above it, like a summary and tabs,
   // varies), so the page itself never scrolls; re-measured on resize.
@@ -279,42 +320,12 @@ export function RecordView<T>({
     return () => { window.removeEventListener('resize', fit); io.disconnect(); };
   }, [compact, showRecord]);
 
-  if (current && detail) return (
-    <div className='flex min-w-0 flex-col gap-3'>
-      <Card className='w-full max-w-4xl gap-0 py-0' data-record-card='' role='region' aria-label='Record'>
-        <CardHeader className='border-b py-4 [.border-b]:pb-4'>
-          {/* The way back and the record's actions on one line; the title below them, the card's whole width. */}
-          <div className='flex flex-wrap items-center justify-between gap-2'>
-            <CardDescription>
-              <Button variant='outline' size='sm' onClick={close}>
-                <Icons.chevronLeft className='size-3.5' />Back to the list
-              </Button>
-            </CardDescription>
-            <div className='flex flex-wrap items-center justify-end gap-1'>
-              {detailActions?.(current, close)}
-              {at >= 0 && database && (<>
-                <Button variant='ghost' size='icon-sm' aria-label='Previous record' disabled={at <= 0} onClick={() => go(-1)}><Icons.chevronUp /></Button>
-                <Button variant='ghost' size='icon-sm' aria-label='Next record' disabled={at >= navRows.length - 1} onClick={() => go(1)}><Icons.chevronDown /></Button>
-              </>)}
-              <Button variant='ghost' size='icon-sm' aria-label='Close' onClick={close}><Icons.close /></Button>
-            </div>
-          </div>
-          <CardTitle className='text-lg leading-snug break-words'>{detailTitle ? detailTitle(current) : titleCol?.render(current)}</CardTitle>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-4 py-2'>
-          {properties && (<>
-            <dl>{cols.filter((c) => c.peek !== false).map((c) => <Field key={c.key} label={colName(c)}>{c.render(current)}</Field>)}</dl>
-            <Separator />
-          </>)}
-          <div className='pb-4'>{detail(current, close)}</div>
-        </CardContent>
-      </Card>
-    </div>
-  );
   return (
     // Fills the page below the header (header 3.5–4rem plus the page's padding): the table frame never scrolls or shrinks.
-    <div ref={fitRef} style={compact && fitH ? { height: fitH } : undefined}
-      className={cn('flex min-w-0 flex-col gap-3', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
+    // mold_v0-278: the list and, when a row is open, the record panel at its right (the list's column narrows).
+    <div ref={hostRef} style={compact && fitH ? { height: fitH } : undefined} data-slot='list-split' data-panel-open={showRecord || undefined}
+      className={cn('flex min-w-0 items-stretch', compact ? 'min-h-[16rem]' : 'h-[calc(100svh-5.5rem)] min-h-[24rem]')}>
+    <div ref={fitRef} data-slot='list-main' className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-3', split.layout?.full && 'lg:hidden')}>
       {summary && <div className='flex shrink-0 flex-col'>{summary}</div>}
       <div className='flex flex-wrap items-center gap-2'>
         <div className='relative min-w-48 flex-1'>
@@ -402,10 +413,11 @@ export function RecordView<T>({
                         </TableRow>
                       )}
                       {r && (
-                        <TableRow data-state={open === k ? 'selected' : undefined}
+                        <TableRow data-state={open === k ? 'selected' : undefined} data-row-key={detail ? k : undefined} aria-current={detail && open === k ? 'true' : undefined}
                           className={cn('align-top', detail && 'cursor-pointer', sel.has(k) && open !== k && 'bg-muted/40')}
-                          onClick={detail ? () => setOpen(open === k ? null : k) : undefined}
-                          onKeyDown={detail ? (e) => { if (e.key === 'Enter') setOpen(k); } : undefined}
+                          // mold_v0-278: a row opens its record in the panel beside the list (never a page of its own).
+                          onClick={detail ? (e) => { if ((e.target as HTMLElement).closest('a[href]')) return; openRow(k); } : undefined}
+                          onKeyDown={detail ? (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) openRow(k); } : undefined}
                           tabIndex={detail ? 0 : undefined}>
                           {bulk && (
                             <TableCell className='w-8 py-3' onClick={(e) => e.stopPropagation()}>
@@ -427,13 +439,25 @@ export function RecordView<T>({
 
       </div>
     </div>
+      {current && detail && (
+        <RecordPanel hostRef={hostRef} split={split} type={id ?? noun} rowKey={open!} title={panelTitle}
+          name={typeof panelTitle === 'string' && panelTitle ? panelTitle : 'Record'} items={panelItems} menu={panelMenu?.(current, panelItems, close)}
+          expanded={expanded} onExpandedChange={setExpanded} onClose={() => setOpen(null)} closeRef={(c) => { panelClose.current = c; }}>
+          {(typeof properties === 'function' ? properties(current) : properties) && (<>
+            <dl>{cols.filter((c) => c.peek !== false).map((c) => <Field key={c.key} label={colName(c)}>{c.render(current)}</Field>)}</dl>
+            <Separator className='mb-4' />
+          </>)}
+          <div className='pb-4' data-record-body=''>{detail(current, close)}</div>
+        </RecordPanel>
+      )}
+    </div>
   );
 }
 
 function MenuItem({ a, sep }: { a: RowAction; sep: boolean }) {
   return (<>
     {a.separator && sep && <DropdownMenuSeparator />}
-    <DropdownMenuItem disabled={a.disabled} onClick={a.onSelect} className={cn(a.destructive && 'text-destructive focus:text-destructive')}>{a.icon}{a.label}
+    <DropdownMenuItem disabled={a.disabled} onClick={a.onSelect} render={a.href && !a.disabled ? <Link href={a.href} /> : undefined} className={cn(a.destructive && 'text-destructive focus:text-destructive')}>{a.icon}{a.label}
       {a.hint && <span className='text-muted-foreground ml-auto pl-3 text-xs'>{a.hint}</span>}</DropdownMenuItem>
   </>);
 }

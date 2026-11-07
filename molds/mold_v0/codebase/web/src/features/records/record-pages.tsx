@@ -11,11 +11,10 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { parseAsFlag } from '@/lib/query-flag';
 import PageContainer from '@/components/layout/page-container';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { recordAreas, type RecordAreaSpec, type RecordFieldSpec } from '@/config/pack-nav.generated';
 import { keyChunks, latestField, placeColumns, type RelatedColumns } from './related-columns';
-import { Field, RecordView, type PropType, type RecordCol, type SortRule } from '@/components/layout/record-view';
+import { Field, RecordView, type PropType, type RecordCol, type RowAction, type SortRule } from '@/components/layout/record-view';
 import type { FilterRule, RawValue } from '@/components/layout/record-filters';
 import { useRepositories } from '@/features/admin/repositories';
 import { EmptyState } from '@/features/tabs/empty';
@@ -36,7 +35,8 @@ import { JsonValue } from './json-value';
 import { featureOn } from '@/config/features';
 import { LINKED_PARAM, layoutOf, parseLinked } from './detail-layout';
 import { LaidOutRecord } from './detail-page';
-import { RowCreateActions } from './row-create';
+import { RowCreateMenu } from './row-create';
+import { PANEL_TAB_PARAM } from '@/lib/split-panel';
 import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilityRule, type RecordVisibility } from '@/features/teams/visibility';
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
@@ -238,7 +238,7 @@ export function RecordEmpty({ area, base }: { area: RecordAreaSpec; base: 'app' 
  * record for its own page when `open` (a merged tab's row: the record of the first of its areas). `url` is a records
  * route that pages with limit and after (an area's, or a merged tab's, src/record-merge.ts); `rows` completes each page.
  */
-export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowAction, detailNote, related }: {
+export function RecordTableView({ area, base, url, rows, id, empty, open = true, exportName, exportAreas, compact = true, summary, source, toolbarAction, importAction, rowActions, detailNote, related }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; url: string; rows?: (p: Page) => Page; id: string; empty: ReactNode; open?: boolean;
   /** Rows from a data adapter instead of `url` (mold_v0-205: a read-only system area, the Access log). */
   source?: RecordSource;
@@ -248,8 +248,8 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   toolbarAction?: ReactNode;
   /** The list's Import (mold_v0-234, ./workspace-import.tsx): its own button, just left of Export in the search row. */
   importAction?: ReactNode;
-  /** An open record's own action beside Open record (mold_v0-212: a staff record page's Edit, features/records/staff-records.tsx). */
-  rowAction?: (r: RecordRow) => ReactNode;
+  /** An open record's own actions, its panel's ⋯ items (mold_v0-212: a staff record's Edit, features/records/staff-records.tsx). */
+  rowActions?: (r: RecordRow) => RowAction[];
   /** An open record's first lines (mold_v0-221: a staff row's provenance and an override's mark, features/records/staff-records.tsx). */
   detailNote?: (r: RecordRow) => ReactNode;
   /** Fit the table to the window below what is above it (the default); false: a whole window's height (below charts). */
@@ -320,6 +320,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   const shown = data?.records ?? [];
   const recordArea = (r: RecordRow) => r.areas?.[0] ?? area.name;
   const detailHref = (r: RecordRow) => (open && findRecordArea(base, recordArea(r)) ? `/${base}/records/${recordArea(r)}/${encodeURIComponent(r.key)}` : null);
+  const laidOut = (r: RecordRow) => !source && !detailNote && recordArea(r) === area.name && featureOn('record_pages') && !!layoutOf(area);
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
@@ -347,11 +348,14 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       ))}
       empty={empty}
       detailTitle={(r) => r.title || r.key}
-      detailActions={(r) => { const href = detailHref(r); return <>{rowAction?.(r)}
-        {/* mold_v0-256: the Add <related record> actions its page declares (flag record_pages). */}
-        {base === 'app' && !source && recordArea(r) === area.name && <RowCreateActions area={area} recordKey={r.key} />}
-        {href && <Button variant='outline' size='sm' render={<Link href={href} />}>Open record</Button>}</>; }}
-      detail={(r) => (<>
+      // mold_v0-278: the panel's ⋯ menu: the row's own actions (a staff row's Edit), its page's Add <related record>
+      // actions (flag record_pages), then Open in its own page.
+      panelActions={(r) => rowActions?.(r) ?? []}
+      panelMenu={base === 'app' && !source ? (r, items) => (recordArea(r) === area.name ? <RowCreateMenu area={area} recordKey={r.key} items={items} name={r.title || r.key} /> : undefined) : undefined}
+      pageHref={detailHref}
+      // A record whose area declares its page's layout (flag record_pages): the laid-out record itself in the panel.
+      properties={(r) => !laidOut(r)}
+      detail={(r) => laidOut(r) ? <RecordDetailBody area={area} recordKey={r.key} base={base} inPanel /> : (<>
         <dl>
           {detailNote?.(r)}
           {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}
@@ -408,22 +412,28 @@ export function RecordListPage({ area, base }: { area: RecordAreaSpec; base: 'ap
  * record_pages on and a layout declared for the area (mold_v0-253), the page is laid out instead (./detail-page.tsx).
  */
 export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin' }) {
+  return <PageContainer><RecordDetailBody area={area} recordKey={recordKey} base={base} /></PageContainer>;
+}
+
+/** A record's page without its page (mold_v0-278: also a list's record panel, `inPanel`: its tabs under &panelTab=). */
+export function RecordDetailBody({ area, recordKey, base, inPanel = false }: { area: RecordAreaSpec; recordKey: string; base: 'app' | 'admin'; inPanel?: boolean }) {
   const url = `${recordsApi(base)}/${area.name}/${encodeURIComponent(recordKey)}`;
   const { data, error, reload } = useOrgLoad(() => getJson<Detail>(url), [url]);
   // mold_v0-260 (flag credential_sets): a tenant area's records have credentials too (the server says which: 404 otherwise).
   const credentials = useRecordCredentials(area, recordKey, base === 'app' && (area.role === 'asset' || featureOn('credential_sets')), featureOn('record_pages') && !!layoutOf(area));
-  if (credentials.card) return <PageContainer>{credentials.card}</PageContainer>;
+  if (credentials.card) return <>{credentials.card}</>;
   const layout = featureOn('record_pages') ? layoutOf(area) : null;
   if (layout) return (
-    <PageContainer>
+    <>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={3} /> : (
         <LaidOutRecord area={area} base={base} layout={layout} record={data.record} links={data.links} clockEvents={data.clock_events}
-          provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} canShare={!!data.can_share} />
+          provenance={data.provenance} where={where(area)} credentials={credentials.section} onChanged={() => void reload()} canShare={!!data.can_share}
+          tabParam={inPanel ? PANEL_TAB_PARAM : undefined} />
       )}
-    </PageContainer>
+    </>
   );
   return (
-    <PageContainer>
+    <>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (<div className='flex w-full flex-col gap-6'>
         <Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>
           <CardHeader className='border-b py-4 [.border-b]:pb-4'>
@@ -467,6 +477,6 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
         </Card>
         {credentials.section}
       </div>)}
-    </PageContainer>
+    </>
   );
 }

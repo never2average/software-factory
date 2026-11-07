@@ -14,8 +14,9 @@
 // was last used and who set it. One request per such area (?records=<area>, only the areas and records the person may
 // read), never one per record. Opening the row opens the record's own page at its Credentials card (#credentials): the
 // card is never drawn here. The four cards count every credential: the workspace's, and each record's one by one.
-import { useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import type { ReactNode } from 'react';
+import Link from 'next/link';
+import { Icons } from '@/components/icons';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { StatStrip } from '@/components/layout/section';
 import { Button } from '@/components/ui/button';
@@ -104,8 +105,6 @@ export function CredentialsTab() {
   const { data: records, error: recordsError } = useOrgLoad(() => areas === null ? Promise.resolve(null) : Promise.all(areas.split(',').filter(Boolean).map((area) =>
     credentialsCall<AreaVault>('GET', undefined, `?records=${encodeURIComponent(area)}`).then((v) => ({ ...v, area }), (e) => { if (noRows(e)) return null; throw e; })))
     .then((xs) => xs.filter((x) => x !== null)), [areas]);
-  const router = useRouter();
-  const [openKey, setOpenKey] = useState<string | null>(null);
   const card = useCredentialCard();
   useOAuthOutcome();
   useGithubOutcome();
@@ -119,12 +118,12 @@ export function CredentialsTab() {
     asset={null} environment={null} environments={null} onClose={card.close} onDone={reload} entry={card.open!.entry} />;
   // The cards count credentials, not rows: a record's row counts each of its credentials (each environment's apart).
   const n = settingsCounts(rows.flatMap((r) => r.units ?? [{ status: r.status, required: r.required, changed_at: r.changed_at }]));
-  const byKey = new Map(rows.map((r) => [r.key, r]));
   return (
     <RecordView<Row>
       id='settings-credentials' compact noun={rows.length === 1 ? 'credential' : 'credentials'} properties
-      // A record's row opens the record's own page at its Credentials card; any other row its details card here.
-      openKey={openKey} onOpenChange={(k) => { const href = k ? byKey.get(k)?.href : undefined; if (href) router.push(href); else setOpenKey(k); }}
+      // mold_v0-278: every row opens its panel beside the list (?id=); a record's row says its credentials are on the
+      // record's page, Open in its own page (and the panel's link) taking you there.
+      pageHref={(r) => r.href ?? null}
       rows={rows} rowKey={(r) => r.key} cols={COLUMNS}
       summary={<StatStrip quad items={[
         { label: 'Set', value: n.set, said: `${n.set} set` },
@@ -136,7 +135,11 @@ export function CredentialsTab() {
       searchPlaceholder='Search credentials'
       empty={<p className='text-muted-foreground text-sm'>Nothing for the whole workspace needs a credential. One that belongs to a single record is on that record&apos;s own page.</p>}
       detailTitle={(r) => r.name}
-      detail={(r) => r.kind === 'record' ? null : r.kind === 'github' ? <GithubAppSection bare onChanged={reloadGithub} />
+      detail={(r) => r.kind === 'record' ? (
+          <div className='flex flex-col items-start gap-3' data-record-credentials-link=''>
+            <p className='text-muted-foreground text-sm'>This record&apos;s credentials are set on its own page, in its Credentials card.</p>
+            {r.href && <Button variant='outline' size='sm' nativeButton={false} render={<Link href={r.href} />}><Icons.externalLink aria-hidden />Open its Credentials card</Button>}
+          </div>) : r.kind === 'github' ? <GithubAppSection bare onChanged={reloadGithub} />
         : r.kind === 'runner' ? <RunnersSection bare onChanged={reloadRunners} />
         : <CredentialDetails key={r.key} c={r.credential!} state={r.state!} canManage={data.can_manage} open={(mode, entry) => card.show(r.credential!.id, mode, null, entry ?? null)}
             oauth={r.credential!.oauth && oauth ? <OAuthConnections f={r.credential!.parts[0]!} view={oauth} onChanged={reloadOAuth} /> : null} />}

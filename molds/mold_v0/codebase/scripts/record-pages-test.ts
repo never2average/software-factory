@@ -275,7 +275,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.match(st, /\{form\.import && \([\s\S]{0,80}<Button type='button' variant='outline' onClick=\{\(\) => setImporting\(true\)\}/, "Import: the search row's secondary action, before New, only when the server offers import");
   assert.match(st, /<ImportRecordsForm area=\{area\}/, "the import card");
   assert.doesNotMatch(st, /\bFab\b|fab=/, "no floating action");
-  assert.match(st, /rowAction=\{form\?\.edit \|\| form\?\.remove \?/, "Edit (Override) and Remove on an open record, only when the server offers them");
+  assert.match(st, /rowActions=\{form\?\.edit \|\| form\?\.remove \?/, "Edit (Override) and Remove on an open record, only when the server offers them");
   assert.match(st, /fromRepository \? 'Override' : 'Edit'/, "a repository's row: Override");
   assert.match(st, /Overridden by staff/, "an override marked in the details card");
   assert.match(st, /detailNote=\{\(r\) => <ProvenanceFields/, "the open record says where it comes from");
@@ -456,10 +456,10 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(tab, /filters=|Open a credential to set, replace or clear it/, "no caption beside the search row");
   assert.doesNotMatch(tab, /label: 'Bound to'/, "no Bound to column");
   assert.match(tab, /if \(opened && data\.can_manage\) return <CredentialCard /, "Set, Replace and Clear: the full card in the list's place");
-  const detail = /export function RecordDetailPage\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
+  const detail = /export function RecordDetailBody\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
   // mold_v0-260: also a tenant area's record while credential_sets is on (off: an asset's alone, as before); the card as wide as the page's others.
   assert.match(detail, /const credentials = useRecordCredentials\(area, recordKey, base === 'app' && \(area\.role === 'asset' \|\| featureOn\('credential_sets'\)\), featureOn\('record_pages'\) && !!layoutOf\(area\)\);/, "a record's page reads its credentials (a workspace's page only)");
-  assert.match(detail, /if \(credentials\.card\) return <PageContainer>\{credentials\.card\}<\/PageContainer>;/, "the set card takes the page's place");
+  assert.match(detail, /if \(credentials\.card\) return <>\{credentials\.card\}<\/>;/, "the set card takes the page's place");
   assert.match(detail, /<\/Card>\s*\{credentials\.section\}/, "its Credentials card below the details card");
   assert.match(rc, /'\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}'|`\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}`/, "the record's own credentials");
   assert.match(rc, /<CardTitle className='text-base'>Credentials<\/CardTitle>/, "titled Credentials");
@@ -668,8 +668,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(dp, /<(?:Dialog|Sheet|AlertDialog|Drawer)\b|max-w-4xl|max-w-3xl/, "full-width cards, no dialog or side sheet");
   assert.ok(((dp.match(/<Card className='w-full /g) ?? []).length) >= 4, "each part a full-width card");
   assert.match(rp, /const layout = featureOn\('record_pages'\) \? layoutOf\(area\) : null;\s*if \(layout\) return \(/, "the layout only with the flag on and a layout declared");
-  const detail = /export function RecordDetailPage\b[\s\S]*?\n\}\n/.exec(rp)?.[0] ?? "";
-  assert.match(detail.slice(detail.indexOf("if (layout) return")), /\);\s*return \(\s*<PageContainer>\s*\{error \? <ErrorState error=\{error\} \/> : !data \? <LoadingCards count=\{2\} \/> : \(<div className='flex w-full flex-col gap-6'>\s*<Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>/,
+  const detail = /export function RecordDetailBody\b[\s\S]*?\n\}\n/.exec(rp)?.[0] ?? "";
+  assert.match(detail.slice(detail.indexOf("if (layout) return")), /\);\s*return \(\s*<>\s*\{error \? <ErrorState error=\{error\} \/> : !data \? <LoadingCards count=\{2\} \/> : \(<div className='flex w-full flex-col gap-6'>\s*<Card className='w-full max-w-4xl gap-0 py-0' data-record-card=''>/,
     "else the one details card, as before");
   ok("copy: the record's id, the page's link and each copyable field, each confirmed by a toast (the clipboard, else a selection: phones); outlined buttons, full-width cards, no dialog; the details card as before without a layout or the flag");
 

@@ -10,7 +10,6 @@ import Link from 'next/link';
 import { useMemo, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { featureOn } from '@/config/features';
-import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { recordAreas, type PackTabSpec } from '@/config/pack-nav.generated';
@@ -133,16 +132,12 @@ export function RunsTable({ tab, reports, summary }: {
       primary={runs.length ? <ExportRowsButton name={`${tab.pack}-${tab.id}`} rows={runs} cols={cols} /> : undefined}
       empty={<div className='sticky left-0 max-w-[min(36rem,calc(100vw-5rem))] text-left sm:mx-auto'><EmptyState empty={tab.empty} id={reports ? 'empty-reports' : 'empty-runs'} /></div>}
       detailTitle={(r) => runKindLabel(r.pack, r.kind)}
-      detailActions={(r) => {
+      // mold_v0-278: the panel's ⋯ menu: the record it ran on; the run's own page (flag record_pages, mold_v0-256) is Open in its own page.
+      panelActions={(r) => {
         const t = runTarget(r);
-        return (<>
-          {t && findRecordArea('app', t.area)
-            ? <Button variant='outline' size='sm' render={<Link href={`/app/records/${t.area}/${encodeURIComponent(t.key)}`} />}>Open {lowerFirst(targetLabel([r]))}</Button>
-            : null}
-          {/* mold_v0-256 (flag record_pages): the run's own page (its timeline, agent, tools, results, files, records). */}
-          {featureOn('record_pages') && <Button variant='outline' size='sm' render={<Link href={`/app/runs/${encodeURIComponent(r.id)}`} />} data-open-run={r.id}>Open run</Button>}
-        </>);
+        return t && findRecordArea('app', t.area) ? [{ label: `Open ${lowerFirst(targetLabel([r]))}`, icon: <Icons.arrowRight />, href: `/app/records/${t.area}/${encodeURIComponent(t.key)}` }] : [];
       }}
+      pageHref={featureOn('record_pages') ? (r) => `/app/runs/${encodeURIComponent(r.id)}` : undefined}
       detail={(r) => (
         <div className='flex flex-col gap-4'>
           <dl>
