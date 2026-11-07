@@ -702,11 +702,58 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
   which has git and nftables (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
   is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
-  privileges, no mount, memory, CPU and process limits); `off`. `auto` takes boat when its key is in the vault, else
+  privileges, no mount, memory, CPU and process limits); `freestyle` (below); `off`. `auto` takes boat when its key is in the vault, else
   docker when this process has the socket. **With no provider nothing runs unsandboxed:** queued runs wait, each with
   one `waiting` event that says why, and the tick says so too. `process` (the runner as a child process, no sandbox,
   no firewall) and a runner told `APP_RUN_LOCKDOWN=off` are refused unless `APP_ALLOW_UNSANDBOXED_RUNS=yes`
   (offline tests only).
+  **Which provider (mold_v0-274).** The platform setting **Sandbox provider** (`APP_RUN_SANDBOX`, group Runs, on Admin ›
+  Agent configuration; listed only in a build whose packs have job kinds or whose workspace agent is on) chooses auto,
+  boat, docker or freestyle: a staff member's choice wins over the server's `APP_RUN_SANDBOX`, which wins over the app's
+  profile (`run_sandbox`, the setting's default; `src/run-sandboxes.ts runSandboxMode`). The server's `off` (the kill
+  switch) and `process` (tests) always win. There is no per-profile override: every run and every agent wake of the app
+  gets its sandbox from the one provider. A run sandbox of the provider used before a change finishes where it is and
+  is reaped by a process using that provider (as before: never reaped blind).
+  **`freestyle`** (mold_v0-274, `src/freestyle.ts`, `freestyleProvider`): a Freestyle VM per run and per agent wake
+  (https://docs.freestyle.sh/docs/vms), through Freestyle's HTTP API version 5 called directly (the shapes of the
+  official SDK `freestyle` 0.2.21; no SDK installed). Its API key is the Key vault's **Freestyle** provider (migration
+  0057; a platform owner adds it on Admin › Key vault, listed while the runs' sandboxes come from Freestyle; a
+  `FREESTYLE_API_KEY` on the server is imported into the vault once, as every provider key is); never in a pack or the
+  repository, never handed to a run or a session (`KEYS_NEVER_INJECTED`, `ORCHESTRATOR_ONLY_PROVIDERS`). The launch is
+  boat's (mold_v0-179): `POST /v5/vms` from the base snapshot `freestyle/ubuntu-sm` (Ubuntu 24.04 with node, npm, git,
+  sudo and systemd; `FREESTYLE_RUN_SNAPSHOT`), with a slug and display name `<ns>-run-<row>-<id>`, metadata
+  `org.<ns>.run-sandbox=<namespace>` (how the listing finds this deployment's VMs: Freestyle filters it by metadata), run
+  id and row, `ttlSeconds` the run's lifetime and a margin (Freestyle deletes it then, whatever it is doing),
+  `autoDeleteSeconds: 0` (ephemeral: deleted the moment it stops), `automaticRestart: false`, and **its own firewall**:
+  nothing in (no rule names the VM as a destination, no port is published), out only the public Internet on TCP 443, TCP 80
+  (the set-up's package mirrors) and DNS (UDP and TCP 53); Freestyle closes outbound mail whatever a rule says. Then, once
+  the VM runs, the code's tarball in parts and the env file (0600) and the set-up script (0700) by `PUT
+  /v5/vms/{id}/fs/write` (raw bytes, their mode, their sha256 checked by Freestyle), and the set-up started as root by
+  `POST .../exec-await` (`systemd-run`, detached, returning at once); the same `runSetupScript` then unpacks, runs `npm ci`,
+  makes the run user, installs git and nft when missing and the run tools, and starts the same runner, which locks the
+  run's user down exactly as on boat. Each tick reads the set-up's status with `exec-await`, lists this deployment's VMs
+  by their metadata (live: `starting` or `running`), and deletes with `DELETE /v5/vms/{id}` (a VM already gone is not an
+  error); an orphan VM of ours goes whether it runs or not (a paused one still holds a saved-VM place), another
+  deployment's is never listed. A request Freestyle takes into the background (202) is polled at
+  `/v5/background-requests/{id}`. **Free VMs:** `FREESTYLE_MAX_VMS` (default 10, the Free plan's concurrent VMs; Hobby
+  40, Pro 400: Freestyle's API does not say) less what runs, starts or pauses on the account (the listing's counts).
+  **Egress, and why the proxy stays in front.** Freestyle's firewall rules are addresses and ports only, never host
+  names, so the run's host allowlist (its kind's egress, an agent wake's governance policy, mold_v0-267, and what was
+  approved) is enforced where it is on boat: the runner's egress proxy and the firewall by the run user's uid, inside the
+  VM's own kernel. Freestyle's firewall is the outer fence: what root in the VM may reach at all, never more than the
+  proxy allows the run. `APP_FREESTYLE_EGRESS=public` opens every public port out instead (a VM whose resolver or mirror
+  is elsewhere); the run's user is locked down either way. **Health** says a missing key in plain words, naming the
+  provider and where it is set ("{Runs} cannot start: there is no Freestyle key. A platform owner adds it in Admin › Key
+  vault, under Freestyle (Sandbox)", code `no_freestyle_key`; boat's says boat.dev the same way in a build without the
+  session engine), and each queued run's `waiting` event says the same; a build without the session engine whose runs
+  do not use boat never reads a boat key (the autoscaler's orchestrator part is skipped, so no "No boat credential"
+  tick error). **What Freestyle does not do that boat does** (measured against its documentation, not a live account):
+  no host-name firewall rules (the proxy covers it, above); no plan limits in its API (`FREESTYLE_MAX_VMS`); `exec-await`
+  runs at most 5 minutes (the launch runs only short commands; the set-up is detached); its idle timeout would pause a
+  quiet VM (none is set, so a run's VM is never paused). `npm run test:freestyle-sandbox` proves it offline against a
+  stand-in of the API (`scripts/freestyle-sandbox-test.ts`): the setting and the missing key, a job run and an agent
+  session end to end (create, the run's lease, a steer, an executable upload, a key redacted, a governance refusal),
+  stop and delete, and the reaping.
   **What is enforced where.** The run's proxy allowlist: the proxy in the sandbox, for every connection through it.
   Direct egress (a program ignoring proxy settings, raw sockets to any port, DNS): the sandbox's firewall by the run
   user's uid, in the sandbox's own kernel (boat) or network namespace (docker); the run user cannot change it (no

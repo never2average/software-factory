@@ -1544,6 +1544,12 @@ def run():
                f"the check's one line: what the run kinds need and the exact command: {said}")
             said = []; SS.say_run_needs("zz_shop", app_p, "compose_remote", say=said.append, root=t)
             ok(len(said) == 1 and "boat" not in said[0] and "--operator" not in said[0] and "Key vault" in said[0], f"on its own server: no boat assumed, the Key vault page: {said}")
+            # mold_v0-274: an app whose runs' sandboxes are Freestyle VMs needs Freestyle's key, in its own Key vault, never boat's.
+            for fs_app in (dict(app_p, profile={"run_sandbox": "freestyle"}), dict(app_p, run_keys={"sandbox": "freestyle"})):
+                rn = SS.run_needs("zz_shop", fs_app, "vercel", root=t)
+                said = []; SS.say_run_needs("zz_shop", fs_app, "vercel", say=said.append, root=t)
+                ok(rn["freestyle"] and not rn["boat"] and len(said) == 1 and "freestyle (the runs' sandboxes are Freestyle VMs: its API key goes in the app's Admin › Key vault, under Freestyle; not --set-secret)" in said[0]
+                   and "boat (" not in said[0], f"mold_v0-274: Freestyle's key named, as a Key vault key, and no boat: {said}")
             said = []; SS.say_run_needs("zz_shop", dict(va, packs=[]), "vercel", say=said.append, root=t)
             ok(said == [], "an app without packs: no line")
             fp = FakeP(projects=["zz-shop-api", "zz-shop"]); said = []

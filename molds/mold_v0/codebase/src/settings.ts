@@ -1,5 +1,5 @@
 import { getDb } from "./db.js";
-import { defaultSender } from "./profile.js";
+import { defaultSender, PROFILE } from "./profile.js";
 import { packConfigs } from "./host.js";
 import { fill } from "./vocabulary.js";
 import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
@@ -42,9 +42,10 @@ export interface SettingDef {
   /**
    * A shell setting only some builds read (mold_v0-169; listSettings lists it only there): "engine" the session engine's
    * (its orchestrators, sessions and capacity: a build whose host pack owns its tables, src/host-tables.ts); "vertex" Claude
-   * on Vertex AI's (the session engine's, or a build whose key vault holds a Vertex service-account key).
+   * on Vertex AI's (the session engine's, or a build whose key vault holds a Vertex service-account key); "runs" the run
+   * sandboxes' (mold_v0-274: a build whose packs have job kinds, or whose workspace agent is on).
    */
-  readBy?: "engine" | "vertex";
+  readBy?: "engine" | "vertex" | "runs";
   /** The label and help a build without the session engine shows instead (what the setting does there). */
   withoutEngine?: { label: string; help: string };
 }
@@ -66,6 +67,10 @@ export const SETTINGS: SettingDef[] = [
     withoutEngine: { label: "Quick answers model", help: "Cloudflare Workers AI model asked first for the docs' \"Ask AI\" answers (Claude answers when it does not). Used only while Cloudflare Workers AI is on in Key vault." } },
   { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5", readBy: "vertex",
     help: "Google Cloud region for Claude (and Gemini) on Vertex AI, e.g. us-east5, europe-west1, global. The project comes from the Vertex AI service-account key in Key vault." },
+  // mold_v0-274: where each run's sandbox comes from (src/run-sandboxes.ts RUN_SANDBOXES.mode). Its default is the app's
+  // profile (run_sandbox), else auto; the server's APP_RUN_SANDBOX=off (the kill switch) and =process (tests) always win.
+  { key: "APP_RUN_SANDBOX", readBy: "runs", group: "runs", label: "Sandbox provider", kind: "choice", default: PROFILE.run_sandbox ?? "auto", options: ["auto", "boat", "docker", "freestyle"],
+    help: "Where each {run} (and each agent session's wake) gets its own sandbox: boat (a boat.dev sandbox), docker (a container on this server's Docker), freestyle (a Freestyle VM) or auto (boat when its key is in Key vault, else this server's Docker). boat and freestyle need their key in Key vault. Applies to sandboxes launched after the change; one already running finishes where it is." },
   { key: ENGINE_SETTINGS.maxSessionsPerRun, readBy: "engine", group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
     help: "A run that would start more sessions than this is refused." },
   { key: ENGINE_SETTINGS.maxOrchestrators, readBy: "engine", group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
@@ -203,6 +208,16 @@ export function refreshSettings(): Promise<void> {
   return loading;
 }
 
+/**
+ * The cache from rows read elsewhere (mold_v0-274): the operator's read-only vault report (src/vault-status.ts) reads
+ * platform_settings in its own READ ONLY transaction and never calls getDb, so what a staff member chose (the runs'
+ * sandbox provider) is seen there too.
+ */
+export function useSettingRows(rows: { key: string; value: unknown }[]) {
+  cache = new Map(rows.map((r) => [r.key, { value: r.value, updated_at: new Date(0).toISOString(), updated_by: null }]));
+  loadedAt = Date.now();
+}
+
 /** Resolve once the cache is at most 30s old (no-op when it is). Called per request and per autoscaler tick. */
 export const freshSettings = (): Promise<void> => (Date.now() - loadedAt < TTL_MS ? Promise.resolve() : refreshSettings());
 
@@ -306,7 +321,8 @@ export async function setSettings(actor: string, values: Record<string, unknown>
 
 /**
  * Whether this build reads a setting (mold_v0-169): a shell setting marked `readBy` only in a build with what reads it
- * (the session engine; Claude on Vertex AI: the engine, or a Vertex service-account key in the vault); every other one
+ * (the session engine; Claude on Vertex AI: the engine, or a Vertex service-account key in the vault; the run sandboxes'
+ * provider: job kinds or the workspace agent, mold_v0-274); every other one
  * always. A setting the build does not read is still kept and may still be set (setSettings): it is only not listed.
  */
 export async function settingsInBuild(): Promise<(d: SettingDef) => boolean> {
@@ -316,7 +332,9 @@ export async function settingsInBuild(): Promise<(d: SettingDef) => boolean> {
     const [creds, providers] = await Promise.all([listCredentials() as Promise<{ provider: string; label: string }[]>, listProviders()]);
     return creds.some((c) => c.provider === VERTEX_PROVIDER || c.label === VERTEX_LABEL) || providers.some((p) => p.backend === "vertex");
   })().catch(() => false);
-  return (d) => (d.readBy === "engine" ? eng : d.readBy === "vertex" ? vertex : true);
+  // mold_v0-274: the run sandboxes' provider, only where runs are carried out in sandboxes (job kinds, or the workspace agent).
+  const runs = (await import("./runs.js")).jobKinds().length > 0 || featureSetting("agent_harness");
+  return (d) => (d.readBy === "engine" ? eng : d.readBy === "vertex" ? vertex : d.readBy === "runs" ? runs : true);
 }
 
 /**

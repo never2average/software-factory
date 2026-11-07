@@ -374,6 +374,8 @@ interface Check { id: string; label: string; state: 'ok' | 'warn' | 'bad' | 'off
 interface Provider { slug: string; name: string; set: 'yes' | 'no' }
 interface StatusData {
   checks: Check[]; providers: Provider[];
+  /** mold_v0-274: the runs' sandbox provider has no key: which, and where it is set, in plain words. */
+  sandbox_missing?: { provider: string; name: string; text: string } | null;
   release: { runtime: string; commit: string | null; instance_started_at: string; last_migration: { version: number; name: string; applied_at: string | null } | null; mold: { schema: string | null; package: string | null } };
 }
 interface Sample { at: string; up: boolean; db_ms: number | null; api_p50_ms: number | null; api_p95_ms: number | null; rls: string; storage: string; vault_set: number; vault_missing: number; scheduler_lag_s: number | null }
@@ -416,6 +418,12 @@ function StatusTab() {
   return (
     <div className='flex flex-col gap-3' data-health-status>
       <ErrorBox error={live.error ?? hist.error} />
+      {d?.sandbox_missing && (
+        <div role='alert' data-sandbox-missing={d.sandbox_missing.provider} className='border-destructive/30 bg-destructive/5 text-destructive flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 text-sm'>
+          <span className='min-w-0 flex-1'>{d.sandbox_missing.text}</span>
+          <a href='/admin/keys' className='font-medium underline underline-offset-2'>Open Key vault</a>
+        </div>
+      )}
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <ReleaseLine r={d?.release} />
         <ToggleGroup aria-label='Period' variant='outline' size='sm' spacing={0} value={[range]} onValueChange={(v: unknown[]) => { if (v[0]) setRange(v[0] as HistoryRange); }}>

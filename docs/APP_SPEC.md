@@ -68,6 +68,13 @@ through the same check `factory.py validate` and the build use.
 - `profile.onprem_runners` (mold_v0-205; default `false`): `true` lets the app's workspaces install an on-premises runner
   for its kinds with `private_network: true` (molds/mold_v0/MOLD.md "On-premises runners"); off, no runner route, page,
   tab or enrolment exists and every run is hosted. Brief line `onprem_runners = true` in `## Profile`.
+- `profile.run_sandbox` (mold_v0-274; default `auto`): where each run and each workspace agent wake gets its sandbox:
+  `auto` (boat when its key is in Key vault, else the server's Docker), `boat`, `docker` or `freestyle` (a Freestyle VM
+  per run). It is the default of the app's **Sandbox provider** setting (Admin › Agent configuration), which a staff
+  member's choice and the server's `APP_RUN_SANDBOX` win over. Brief line `run_sandbox = freestyle` in `## Profile`;
+  `run_keys.sandbox = freestyle` implies it (the two must agree when both are given). Freestyle's API key is a **Key
+  vault** key the platform owner sets in the app's own Admin › Key vault (provider Freestyle), never `--set-secret`, a
+  pack or this repository; `provision.py <app>` names it in its check.
 - `features` (mold_v0-219): one on/off flag per optional mold_v0 capability, `{"<flag>": true|false}`, each with its
   default and documentation in `molds/mold_v0/codebase/src/features.json` (the editor shows them on hover). A capability
   is **on** when something asks for it (a pack's declaration; the audit toggles always) **and** its flag is not `false`:
@@ -165,7 +172,8 @@ through the same check `factory.py validate` and the build use.
   share one ([RECORDS.md](RECORDS.md) section 5). Two areas declaring the same icon is a build warning.
 - mold_v0: a pack with job kinds needs `budgets.runs` and `run_keys`; agent job kinds (runner `agent-workspace`) need an
   agent source (repository + commit), `run_keys.model` (`anthropic` or `vertex`) and `run_keys.object_storage`; on
-  Vercel, `run_keys.sandbox` (`boat`). `compose_remote` needs `product.domain`. At least one platform administrator.
+  Vercel, `run_keys.sandbox` (`boat`, or `freestyle`: mold_v0-274, Freestyle VMs on Vercel or a server, its key in the
+  app's Key vault). `compose_remote` needs `product.domain`. At least one platform administrator.
 - mold_v1: `vm_remote` needs `deploy.server` and `product.domain`; budgets, profile and run keys are not supported.
 
 ## Commands

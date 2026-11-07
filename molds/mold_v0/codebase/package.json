@@ -111,6 +111,7 @@
     "test:agent-icon": "tsx scripts/agent-icon-test.ts",
     "test:checks": "tsx scripts/checks-test.ts",
     "test:run-sandboxes": "tsx scripts/run-sandboxes-test.ts",
+    "test:freestyle-sandbox": "tsx scripts/freestyle-sandbox-test.ts",
     "test:run-firewall": "tsx scripts/run-firewall-test.ts",
     "test:onprem-runners": "tsx scripts/onprem-runners-test.ts",
     "test:run-users": "tsx scripts/run-users-test.ts",

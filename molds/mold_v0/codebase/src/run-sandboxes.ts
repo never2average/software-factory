@@ -18,10 +18,12 @@
  *              APP_RUN_LAUNCH_ATTEMPTS failed starts: nothing launches forever
  *
  * Providers: "boat" (the sandbox provider the product already uses for its orchestrators, with its key in the vault),
- * "docker" (a container per run on the server's own Docker, from the runner service only: it holds the Docker socket,
- * the app does not), and "process" (no sandbox at all: refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes, for tests).
- * APP_RUN_SANDBOX picks one (auto: boat when its key is in the vault, else docker when this process has the
- * socket, else none); "off" launches nothing. With no provider no run is ever carried out unsandboxed: queued runs wait,
+ * "freestyle" (mold_v0-274: a Freestyle VM per run, src/freestyle.ts, with its key in the vault), "docker" (a container
+ * per run on the server's own Docker, from the runner service only: it holds the Docker socket, the app does not), and
+ * "process" (no sandbox at all: refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes, for tests). The platform setting
+ * APP_RUN_SANDBOX picks one (runSandboxMode: a staff member's choice, else the server's environment, else the profile's
+ * run_sandbox; auto: boat when its key is in the vault, else docker when this process has the socket, else none); the
+ * server's "off" launches nothing whatever the setting says. With no provider no run is ever carried out unsandboxed: queued runs wait,
  * each with a `waiting` event that says why.
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -42,6 +44,10 @@ import { NS } from "./namespace.js";
 import { dockerApi, runContainerBody } from "./run-container.js";
 import { onPremAvailable, reapSilentRunners } from "./onprem-runners.js";
 import { boatNamespace, boatNamespaces } from "../orchestrator/core/boat-namespace.js";
+import { freshSettings, setting } from "./settings.js";
+import { PROFILE } from "./profile.js";
+import { fill } from "./vocabulary.js";
+import { FREESTYLE_PROVIDER, FreestyleClient, type FirewallRule } from "./freestyle.js";
 
 const env = ENV;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,8 +57,35 @@ export const RUN_USER = "apprun";
 /** The range a sandbox's runner leases its run's user from (mold_v0-078, src/run-users.ts). */
 const runUids = () => env.APP_RUN_UIDS || DEFAULT_RUN_UIDS;
 
+/** The providers a staff member may choose (the setting APP_RUN_SANDBOX, src/settings.ts) and the profile may name. */
+export const RUN_SANDBOX_CHOICES = ["auto", "boat", "docker", "freestyle"] as const;
+/**
+ * Where runs get their sandbox (mold_v0-274): the server's APP_RUN_SANDBOX=off (the kill switch) or =process (tests)
+ * always; else the platform setting a staff member chose (Admin › Agent configuration); else the server's
+ * APP_RUN_SANDBOX; else the app's profile (run_sandbox); else auto. Synchronous: the setting is read from the settings'
+ * cache (refreshed every 30 s, and by each tick).
+ */
+export function runSandboxMode(): string {
+  const e = (env.APP_RUN_SANDBOX ?? "").trim().toLowerCase();
+  if (e === "off" || e === "process") return e;
+  const chosen = setting("APP_RUN_SANDBOX");
+  if (typeof chosen === "string" && (RUN_SANDBOX_CHOICES as readonly string[]).includes(chosen.toLowerCase())) return chosen.toLowerCase();
+  return e || PROFILE.run_sandbox || "auto";
+}
+/** A sandbox provider's name as people read it (Health, the runs' waiting events). */
+export const SANDBOX_PROVIDER_NAME: Record<string, string> = { boat: "boat.dev", freestyle: "Freestyle", docker: "this server's Docker" };
+/**
+ * Why runs cannot start for want of a provider's key, in plain words (mold_v0-274): which key, and where a platform owner
+ * sets it. The first words are as before ("the sandbox provider's key is not in the vault").
+ */
+export const missingSandboxKey = (provider: "boat" | "freestyle") =>
+  `the sandbox provider's key is not in the vault (no ${SANDBOX_PROVIDER_NAME[provider]} key: a platform owner adds it in Admin › Key vault, under ${SANDBOX_PROVIDER_NAME[provider]})`;
+/** The same for a person on Health (Compute's verdict, Health › Status), in the build's words. */
+export const missingSandboxKeyText = (provider: "boat" | "freestyle") =>
+  fill(`{Runs} cannot start: there is no ${SANDBOX_PROVIDER_NAME[provider]} key. A platform owner adds it in Admin › Key vault, under ${SANDBOX_PROVIDER_NAME[provider]} (Sandbox).`);
+
 export const RUN_SANDBOXES = {
-  mode: () => (env.APP_RUN_SANDBOX ?? "auto").toLowerCase(),
+  mode: () => runSandboxMode(),
   maxSandboxes: () => Math.max(0, num(env.APP_MAX_RUN_SANDBOXES, 10)),
   launchesPerTick: () => Math.max(1, num(env.APP_RUN_LAUNCHES_PER_TICK, 4)),
   bootMinutes: () => Math.max(1, num(env.APP_RUN_BOOT_MINUTES, 10)),
@@ -169,7 +202,7 @@ export interface RunSandboxSpec {
 }
 export interface ListedSandbox { id: string; name: string; live: boolean; state: string }
 export interface RunSandboxProvider {
-  readonly name: "boat" | "docker" | "process";
+  readonly name: "boat" | "docker" | "process" | "freestyle";
   /** Where the sandbox's runner reaches the API. */
   apiUrl(): string;
   /** Sandboxes the provider's plan still has room for (null: no plan limit here). */
@@ -256,6 +289,123 @@ sudo -n systemd-run --quiet --collect --unit=${RUN_SETUP.unit} --setenv=HOME=/ro
         .map((s) => ({ id: s.id, name: s.name ?? "", live: lib.isLive(s), state: s.state }));
     },
     async remove(id) { await (await libP).deleteSandbox(id); },
+  };
+}
+
+// ---------- freestyle (mold_v0-274) ----------
+
+/** Where a Freestyle run sandbox's files go (root's, 0700): the code, the env file, the set-up script and its status. */
+export const FREESTYLE_HOME = "/opt/app-run";
+/** The base snapshot a run's VM boots from (FREESTYLE_RUN_SNAPSHOT): Ubuntu 24.04 with node, npm, git, sudo and systemd. */
+export const FREESTYLE_SNAPSHOT = () => env.FREESTYLE_RUN_SNAPSHOT || "freestyle/ubuntu-sm";
+/** How many VMs the account's plan runs at once (FREESTYLE_MAX_VMS; Free 10, Hobby 40, Pro 400): the API does not say. */
+export const FREESTYLE_PLAN_VMS = () => Math.max(1, num(env.FREESTYLE_MAX_VMS, 10));
+/** A raw upload's largest part: under the 8 MiB above which the API wants a chunked upload session. */
+const FREESTYLE_PART = 7 * 1024 * 1024;
+/** The metadata label a run VM of this deployment carries (Freestyle filters the listing by it). */
+export const FREESTYLE_LABEL = `org.${NS}.run-sandbox`;
+
+/**
+ * The VM's own firewall (Freestyle requires one; nothing is allowed implicitly). Nothing comes in (no rule names the VM
+ * as a destination, no port is published); out, only the public Internet on HTTPS, HTTP (the set-up's apt mirrors) and
+ * DNS, and never mail (Freestyle closes 25, 465 and 587 whatever a rule says). It cannot name hosts: Freestyle's rules are
+ * addresses and ports only, so the run's host allowlist is the runner's own lockdown inside the VM, as on boat (the
+ * egress proxy with the run's hosts, the firewall by the run user's uid). APP_FREESTYLE_EGRESS=public allows every public
+ * port out instead (for a VM whose resolver or package mirror is elsewhere); the run user is locked down either way.
+ */
+export function freestyleFirewall(mode = env.APP_FREESTYLE_EGRESS): FirewallRule[] {
+  if ((mode ?? "").toLowerCase() === "public") return [{ action: "allow", source: {}, destination: { public: true } }];
+  return ([[443, "tcp"], [80, "tcp"], [53, "udp"], [53, "tcp"]] as const).map(([port, protocol]) => ({ action: "allow" as const, source: {}, destination: { public: true as const, port, protocol } }));
+}
+/** A Freestyle slug from a sandbox's name: [a-z0-9-], 1 to 63 characters, no leading, trailing or repeated hyphen. */
+export const freestyleSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/g, "") || "run";
+const FREESTYLE_LIVE = new Set(["starting", "running"]);
+
+/**
+ * freestyle: a VM per run from Freestyle (src/freestyle.ts), its key from the vault. The launch is boat's (mold_v0-179):
+ * create the VM (its firewall, its TTL, ephemeral: deleted when it stops, never restarted after a crash, labelled with
+ * this deployment's namespace), wait for it to run, send the code's tarball and the env file (0600) and the set-up script
+ * (0700), and start the set-up as root, detached; the set-up then does in the VM what it does in a boat sandbox (unpack,
+ * `npm ci`, the run user, git and nft, the run tools, the runner as a unit of its own), writing its step where each tick
+ * reads it. The runner it starts is the same one, with the same lockdown: isolation is unchanged.
+ */
+export function freestyleProvider(apiUrl: string, key: string): RunSandboxProvider {
+  const fs = new FreestyleClient(key);
+  const H = FREESTYLE_HOME;
+  return {
+    name: "freestyle",
+    apiUrl: () => apiUrl,
+    async free() {
+      const c = await fs.listVms(undefined, { limit: 1 });
+      const busy = Number(c.runningCount ?? 0) + Number(c.startingCount ?? 0) + Number(c.pausingCount ?? 0);
+      return Math.max(0, FREESTYLE_PLAN_VMS() - busy);
+    },
+    async launch(spec, onCreated) {
+      let step = "create", id = "";
+      const left = () => (spec.deadlineAt ? spec.deadlineAt - Date.now() : Infinity);
+      const need = (s: string, ms: number) => {
+        step = s;
+        if (left() < ms) throw new Error(`the call launching it had ${Math.max(0, Math.round(left() / 1000))} s left, too little to ${s}: tried again from a later one`);
+      };
+      try {
+        need("create", 45_000);
+        const vm = await fs.createVm({
+          snapshotId: FREESTYLE_SNAPSHOT(), slug: freestyleSlug(spec.name), displayName: spec.name,
+          metadata: { [FREESTYLE_LABEL]: namespace(), [`org.${NS}.run-id`]: spec.runId.slice(0, 63), [`org.${NS}.run-sandbox-row`]: String(spec.rowId) },
+          ttlSeconds: spec.ttlSeconds, autoDeleteSeconds: 0, automaticRestart: false, firewall: { rules: freestyleFirewall() },
+        });
+        id = String(vm.id);
+        step = "name";
+        await onCreated(id);
+        need("ready", 30_000);
+        for (const t0 = Date.now(); ; await new Promise((r) => setTimeout(r, 2000))) {
+          const st = (await fs.getVm(id)).state;
+          if (st === "running") break;
+          if (st !== "starting") throw new Error(`the VM is ${st}`);
+          if (Date.now() - t0 > Math.min(300_000, left() - 25_000)) throw new Error(`the VM is not running after ${Math.round((Date.now() - t0) / 1000)} s`);
+        }
+        need("code upload", 20_000);
+        const prep = await fs.exec(id, `install -d -m 700 -o root -g root ${H} && rm -f ${H}/code.tgz.part*`, { linuxUser: "root", timeoutMs: 30_000 });
+        if (prep.code !== 0) throw new Error(`its directory could not be made: ${(prep.stderr || prep.stdout).slice(-300)}`);
+        const lib = await import("../orchestrator/deploy/boat-lib.js");
+        const files = [...lib.runnerCodeFiles(ROOT, spec.packDirs), ...RUN_TOOL_INSTALL_FILES];
+        const tgz = lib.tarball(ROOT, files);
+        const parts = Math.ceil(tgz.length / FREESTYLE_PART);
+        for (let i = 0; i < parts; i++) await fs.writeFile(id, `${H}/code.tgz.part${String(i).padStart(3, "0")}`, tgz.subarray(i * FREESTYLE_PART, (i + 1) * FREESTYLE_PART), 0o600);
+        spec.log(`run sandbox ${spec.name}: ${files.length} files, ${tgz.length} bytes (${parts} part${parts === 1 ? "" : "s"})`);
+        step = "configure";
+        const envBody = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+        if (/[\r]/.test(envBody) || Object.values(spec.env).some((v) => v.includes("\n"))) throw new Error("an environment value spans lines");
+        await fs.writeFile(id, `${H}/runner.env.new`, envBody, 0o600);
+        await fs.writeFile(id, `${H}/${RUN_SETUP.script}`, runSetupScript(H), 0o700);
+        need("start", 10_000);
+        // As root, detached, as a unit of its own (the boat launch's line): the call returns at once, the set-up goes on.
+        const st = await fs.exec(id, `set -e; cd ${H}; rm -f ${RUN_SETUP.status} ${RUN_SETUP.log}; chmod 700 ${RUN_SETUP.script}
+systemd-run --quiet --collect --unit=${RUN_SETUP.unit} --setenv=HOME=/root --setenv=PATH="$PATH" \\
+  --property=WorkingDirectory=${H} /bin/bash ${H}/${RUN_SETUP.script}`, { linuxUser: "root", timeoutMs: 60_000 });
+        if (st.code !== 0) throw new Error(`the set-up did not start: ${(st.stderr || st.stdout).slice(-300)}`);
+        return { sandboxId: id };
+      } catch (e) {
+        if (id) await fs.deleteVm(id).catch((d) => spec.log(`run sandbox ${id} could not be deleted after its failed launch: ${(d as Error).message}`));
+        throw stepError(step, e);
+      }
+    },
+    async bootStatus(id) {
+      const r = await fs.exec(id, `cat ${H}/${RUN_SETUP.status} 2>/dev/null || echo none; echo ---; tail -c 2000 ${H}/${RUN_SETUP.log} 2>/dev/null || true`, { linuxUser: "root", timeoutMs: 30_000 });
+      return parseBootStatus(r.stdout);
+    },
+    async list() {
+      // Ours under the namespace's old default too (a run VM launched before a rename is reaped as ours, never leaked).
+      const out: ListedSandbox[] = [];
+      for (const ns of boatNamespaces()) {
+        for (const v of (await fs.listVms({ key: FREESTYLE_LABEL, value: ns })).vms) {
+          if (v.metadata && v.metadata[FREESTYLE_LABEL] !== undefined && v.metadata[FREESTYLE_LABEL] !== ns) continue;
+          out.push({ id: String(v.id), name: String(v.displayName ?? v.slug ?? ""), live: FREESTYLE_LIVE.has(String(v.state)), state: String(v.state) });
+        }
+      }
+      return out;
+    },
+    async remove(id) { await fs.deleteVm(id); },
   };
 }
 
@@ -372,6 +522,22 @@ export function processProvider(apiUrl: string): RunSandboxProvider {
 const runApiUrl = () => (env.APP_RUN_API_URL || env.APP_INTERNAL_URL || env.PUBLIC_URL || "").replace(/\/$/, "");
 
 let boatKeyAt = 0;
+let freestyleKey: { secret: string; at: number } | null = null;
+/** The vault's Freestyle key (mold_v0-274), read at most every 5 minutes; a vault that does not answer keeps the last. */
+async function freestyleConfigured(): Promise<string | null> {
+  if (freestyleKey && Date.now() - freestyleKey.at < 5 * 60_000) return freestyleKey.secret;
+  try {
+    const { useCredential } = await import("./keyvault.js");
+    freestyleKey = { secret: (await useCredential(FREESTYLE_PROVIDER)).secret, at: Date.now() };
+    return freestyleKey.secret;
+  } catch (e) {
+    if (freestyleKey && !/no .*credential|not found|no enabled/i.test(String((e as Error).message))) return freestyleKey.secret;
+    freestyleKey = null;
+    return null;
+  }
+}
+/** For tests: forget the Freestyle key read. */
+export function forgetFreestyleKey() { freestyleKey = null; }
 let processCache: RunSandboxProvider | null = null;
 /** Whether the vault has the provider's key (and sets it for the boat client), checked at most every 5 minutes. */
 async function boatConfigured(): Promise<boolean> {
@@ -392,16 +558,24 @@ async function boatConfigured(): Promise<boolean> {
 
 /** The provider this process launches run sandboxes with, or why there is none. */
 export async function resolveRunProvider(): Promise<{ provider: RunSandboxProvider | null; why: string }> {
+  await freshSettings().catch(() => {}); // the platform setting that chooses the provider
   const mode = RUN_SANDBOXES.mode(), url = runApiUrl();
   const boat = async () => {
-    if (!(await boatConfigured())) return "the sandbox provider's key is not in the vault";
+    if (!(await boatConfigured())) return missingSandboxKey("boat");
     if (!/^https:\/\//.test(url)) return "the API's address for sandboxes is not HTTPS (PUBLIC_URL or APP_RUN_API_URL)";
     return boatProvider(url);
+  };
+  const freestyle = async () => {
+    const key = await freestyleConfigured();
+    if (!key) return missingSandboxKey("freestyle");
+    if (!/^https:\/\//.test(url)) return "the API's address for sandboxes is not HTTPS (PUBLIC_URL or APP_RUN_API_URL)";
+    return freestyleProvider(url, key);
   };
   const pick = (p: RunSandboxProvider | string) => (typeof p === "string" ? { provider: null, why: p } : { provider: p, why: "" });
   switch (mode) {
     case "off": return { provider: null, why: "run sandboxes are off on this deployment (APP_RUN_SANDBOX=off)" };
     case "boat": return pick(await boat());
+    case "freestyle": return pick(await freestyle());
     case "docker": return pick(await dockerProvider(url));
     case "process":
       return RUN_SANDBOXES.unsandboxedAllowed() ? { provider: (processCache ??= processProvider(url)), why: "" }
@@ -413,7 +587,7 @@ export async function resolveRunProvider(): Promise<{ provider: RunSandboxProvid
       if (typeof d !== "string") return { provider: d, why: "" };
       return { provider: null, why: `no sandbox provider is configured: ${b}, and ${d}` };
     }
-    default: return { provider: null, why: `APP_RUN_SANDBOX=${mode} is not one of auto, boat, docker, off` };
+    default: return { provider: null, why: `APP_RUN_SANDBOX=${mode} is not one of auto, boat, docker, freestyle, off` };
   }
 }
 
@@ -574,7 +748,8 @@ export class RunScaler {
       const known = new Set((await db.query<{ sandbox_id: string }>("SELECT sandbox_id FROM run_sandboxes WHERE state <> 'deleted' AND sandbox_id IS NOT NULL")).map((r) => r.sandbox_id));
       for (const sb of listing) {
         if (known.has(sb.id) || this.inflightIds.has(sb.id)) continue;
-        if (!sb.live && p.name !== "docker") continue;
+        // A container or a Freestyle VM that is not live still holds a place (a stopped container, a paused VM): deleted.
+        if (!sb.live && p.name !== "docker" && p.name !== "freestyle") continue;
         await p.remove(sb.id).catch(() => {});
         await recordComputeEvent({ kind: "orphan_deleted", sandbox_id: sb.id, reason: `run sandbox with no row: ${sb.name}` });
         st.reaped.push({ row: 0, run: "", reason: `orphan ${sb.name}` });
