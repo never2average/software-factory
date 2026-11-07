@@ -74,7 +74,7 @@ CONSOLE_SERVICE = """  web:
 """
 CONSOLE_DOCKERFILE = "FROM node:22-slim AS build\nCOPY web/package.json web/package-lock.json ./\nCOPY web ./\nRUN true\nFROM node:22-slim\nCOPY --from=build /a ./\nUSER node\nHEALTHCHECK CMD true\n"
 
-def fixture_mold(t, lockfile=True, console=False):
+def fixture_mold(t, lockfile=True, console=False, sign_in=False):
     """A one-service mold in a temp factory root: mold.json, a compose file, a Dockerfile, the mold's bootstrap. With
     console=True the stack also builds its web console (mold_v0-020): service `web` from web/Dockerfile; without it the
     mold names no console (mold.json compose.console removed), the shape before mold_v0-020."""
@@ -95,6 +95,9 @@ def fixture_mold(t, lockfile=True, console=False):
     # A console that requires its sign-in keys (mold_v0 itself made them optional in mold_v0-004): the rehearsals below
     # check that a required key stops a deploy for the operator.
     man["vercel"]["projects"]["web"]["operator_env"] = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "required", "CLERK_SECRET_KEY": "required"}
+    # Clerk on every deploy (mold_v0-265): its own checks below (sign_in_checks) keep the rule; the rest stand for a mold
+    # without one, so each checks what it names and nothing else.
+    if not sign_in: man.pop("sign_in_required", None)
     json.dump(man, open(os.path.join(t, "molds", "mold_vx", "mold.json"), "w"))
     os.makedirs(os.path.join(t, "state"))
     json.dump({"molds": [{"mold_id": "mold_vx", "source": {"commit": "c" * 40}}]}, open(os.path.join(t, "state", "factory.json"), "w"))
@@ -225,6 +228,135 @@ def rehearsal(ok):
         new = calls()[len(before):]
         ok(code == 1 and "LIVE" in out and "zz-live" not in new, f"rehearsal: an app whose API project would be a LIVE one is refused before Vercel hears its name: {out[-300:]}")
     except BaseException as e_: ok(False, f"rehearsal: crashed: {type(e_).__name__}: {e_}"[:400])
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
+def sign_in_rehearsal(ok):
+    """mold_v0-265: Clerk on every deploy (mold.json sign_in_required), through provision.py as subprocesses in a
+    REHEARSAL as above. A new app without Clerk's keys: the check and --deploy stop for the operator (exit 3) with
+    Clerk's dashboard steps and one --set-secret line per key, creating nothing; with them all set: ready and deployed;
+    an app already deployed on Clerk keeps redeploying without the JWT key (said, never a stop); one that lost its secret
+    key stops again. Then the server target (offline): the names join the operator's values, the deploy stops for them
+    before anything on the server changes, an app on Clerk keeps going without the JWT key, and a pasted PEM block is
+    read as one line."""
+    scripts = os.path.dirname(HERE); fake = os.path.join(scripts, "fixtures", "release", "fake.py")
+    t = tempfile.mkdtemp(prefix="single-sign-in-")
+    try:
+        shutil.copytree(scripts, os.path.join(t, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__"))
+        cb = fixture_mold(t, sign_in=True); fixture_console(cb)
+        man = json.load(open(os.path.join(t, "molds", "mold_vx", "mold.json")))
+        man["vercel"]["projects"]["web"]["operator_env"] = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "optional", "CLERK_SECRET_KEY": "optional"}   # as mold_v0's own
+        json.dump(man, open(os.path.join(t, "molds", "mold_vx", "mold.json"), "w"))
+        os.makedirs(os.path.join(cb, "node_modules", "pg")); open(os.path.join(cb, "node_modules", "pg", "package.json"), "w").write("{}")
+        shutil.copytree(os.path.join(ROOT, "state", "application", "app_id"), os.path.join(t, "state", "application", "app_id"))
+        f = json.load(open(os.path.join(t, "state", "factory.json"))); f["molds"][0].update(status="wip"); f["applications"] = ["zz_shop"]
+        json.dump(f, open(os.path.join(t, "state", "factory.json"), "w"))
+        docs = SS.shape_state("zz_shop", "mold_vx", "vercel", {"product_id": "zz_product"}, {"source": {"commit": "c" * 40}}, {"vercel_project": "zz-shop", "platform_admins": "ops@example.com"}, {},
+                              "briefs/zz_shop.md", {"vercel_team": "t"}, root=t)
+        a = os.path.join(t, "state", "application", "zz_shop"); os.makedirs(a)
+        for nm, doc in zip(("application", "infrastructure", "datastores", "datainfra"), docs): json.dump(doc, open(os.path.join(a, nm + ".json"), "w"), indent=2)
+        ok(docs[1]["secrets_user"] == [] and {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"} <= set(docs[1]["secrets_optional"]),
+           f"sign-in: a new app's state still lists Clerk's keys as optional (the built-in sign-in runs its lanes and local runs): {docs[1]['secrets_user']} {docs[1]['secrets_optional']}")
+        local = os.path.join(t, "local.json"); json.dump({"mold_sources": {"mold_vx": "https://github.com/acme/base.git"}, "live_projects": {}}, open(local, "w"))
+        reh = os.path.join(t, ".reh"); b = os.path.join(reh, "bin"); priv = os.path.join(t, ".private"); os.makedirs(b); os.makedirs(priv)
+        shutil.copy(fake, os.path.join(b, "fake.py")); os.chmod(os.path.join(b, "fake.py"), 0o755)
+        for nm in ("vercel", "curl", "gh"): os.symlink("fake.py", os.path.join(b, nm))
+        W = os.path.join(reh, "world.json")
+        json.dump({"ci": "green", "projects": {"zz-shop-api": {"id": "prj_zz-shop-api", "auto": True, "prod": None, "env": {"DATABASE_URL": "standin-database-address"}, "deps": []}}}, open(W, "w"))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_")}
+        env.update(FACTORY_REHEARSAL=reh, FACTORY_PRIVATE_DIR=priv, FACTORY_LOCAL=local, PROVISION_MIN_FREE_MB="0", PROVISION_MAX_LOAD="100000",
+                   PROVISION_HEADROOM_WAIT_S="0", PROVISION_ROLLBACK_POLL_S="0.05", PROVISION_ROLLBACK_WAIT_S="5", PROVISION_DEPLOY_POLL_S="0.2",
+                   PROVISION_ADDRESS_WAIT_S="3", PROVISION_ADDRESS_POLL_S="0.1", PYTHONDONTWRITEBYTECODE="1")
+        P = os.path.join(t, ".claude", "scripts", "provision.py")
+        def go(*args):
+            r = subprocess.run([sys.executable, P, *args], cwd=t, env=env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+            return r.returncode, r.stdout + r.stderr
+        def as_json(out):
+            try: return json.loads(out[out.index("{"):])
+            except ValueError: return {}
+        W_ = lambda: json.load(open(W)); calls = lambda: open(W + ".calls").read() if os.path.exists(W + ".calls") else ""
+        st = lambda: json.load(open(os.path.join(a, "application.json")))
+        want = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"]
+        plain = lambda how, n: all(w in how for w in ("https://dashboard.clerk.com", "Create application", "Configure", "API keys", "separate terminal",
+                                                      f"provision.py zz_shop --set-secret {n}", "never shown"))
+        code, out = go("zz_shop", "--json"); d_ = as_json(out); nd_ = d_.get("needs") or []
+        ok(code == 3 and d_.get("status") == "needs_human" and [n_["name"] for n_ in nd_] == want and all(n_["kind"] == "secret" and plain(n_["how"], n_["name"]) for n_ in nd_)
+           and set(W_()["projects"]) == {"zz-shop-api"},
+           f"sign-in: the check of a new app without Clerk's keys stops for the operator (exit 3), each key asked for with Clerk's dashboard steps: {code} {nd_}")
+        code, out = go("zz_shop")
+        ok(code == 3 and "dashboard.clerk.com" in out and all(f"python3 .claude/scripts/provision.py zz_shop --set-secret {n}" in out for n in want)
+           and "PEM public key" in out and "sk_live_" in out, f"sign-in: ...and says it in plain words, one --set-secret line per key: {out[-900:]}")
+        before = calls(); code, out = go("zz_shop", "--deploy", "--json"); d_ = as_json(out)
+        ok(code == 3 and d_.get("status") == "needs_human" and [n_["name"] for n_ in d_.get("needs") or []] == want and plain((d_.get("needs") or [{}])[0].get("how", ""), want[0])
+           and set(W_()["projects"]) == {"zz-shop-api"} and "\"deploy\"" not in calls()[len(before):] and st().get("status") != "reverted",
+           f"sign-in: --deploy without them: exit 3 before any project is made or deployed, never reverted: {code} {d_.get('status')} {d_.get('needs')}")
+        clerk_web = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_standin", "CLERK_SECRET_KEY": "sk_standin"}
+        w0 = W_(); w0["projects"]["zz-shop"] = {"id": "prj_zz-shop", "auto": True, "prod": None, "env": dict(clerk_web), "deps": []}
+        w0["projects"]["zz-shop-api"]["env"].update(CLERK_SECRET_KEY="sk_standin"); json.dump(w0, open(W, "w"))
+        code, out = go("zz_shop", "--json"); d_ = as_json(out)
+        ok(code == 3 and [n_["name"] for n_ in d_.get("needs") or []] == ["CLERK_JWT_KEY"], f"sign-in: a first deploy needs the JWT key too: {code} {d_.get('needs')}")
+        w0 = W_(); w0["projects"]["zz-shop-api"]["env"]["CLERK_JWT_KEY"] = "-----BEGIN PUBLIC KEY----- standin -----END PUBLIC KEY-----"; json.dump(w0, open(W, "w"))
+        code, out = go("zz_shop")
+        ok(code == 0 and "Ready" in out and "copied from zz-shop's NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in out, f"sign-in: with every key set the check is ready: {out[-500:]}")
+        st_ = st(); st_["status"] = "stamped"; json.dump(st_, open(os.path.join(a, "application.json"), "w"), indent=2)
+        code, out = go("zz_shop", "--deploy")
+        ok(code == 0 and json.load(open(os.path.join(a, "infrastructure.json"))).get("deployed_at"), f"sign-in: ...and the deploy goes ahead: {out[-500:]}")
+        # an app deployed on Clerk before the rule, without the JWT key (the live apps' shape): redeploys, said
+        w0 = W_(); w0["projects"]["zz-shop-api"]["env"].pop("CLERK_JWT_KEY"); json.dump(w0, open(W, "w"))
+        code, out = go("zz_shop", "--json"); d_ = as_json(out)
+        ok(code == 0 and not d_.get("needs"), f"sign-in: an app already on Clerk without the JWT key: the check is ready: {code} {d_.get('needs')}")
+        code, out = go("zz_shop")
+        ok(code == 0 and "NOTE: CLERK_JWT_KEY is not set yet" in out and "keeps deploying without it" in out, f"sign-in: ...and says the key is still to set: {out[-600:]}")
+        code, out = go("zz_shop", "--deploy")
+        ok(code == 0, f"sign-in: ...and redeploys: {out[-400:]}")
+        w0 = W_(); w0["projects"]["zz-shop"]["env"].pop("CLERK_SECRET_KEY"); json.dump(w0, open(W, "w"))
+        code, out = go("zz_shop", "--json"); d_ = as_json(out)
+        ok(code == 3 and [n_["name"] for n_ in d_.get("needs") or []] == ["CLERK_SECRET_KEY", "CLERK_JWT_KEY"],
+           f"sign-in: a deployed app that lost Clerk's secret key stops again, the JWT key asked for with it: {code} {d_.get('needs')}")
+        # the server target (offline): the names are the operator's values at the deploy's hidden prompt
+        mx = SS.manifest("mold_vx", t)
+        ok(SS.sign_in_typed(mx, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and SS.sign_in_typed(mx, "vercel") == want
+           and SS.sign_in_names(mx) == ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and SS.sign_in_typed({}, "vercel") == [],
+           "sign-in: the names each target's operator gives (the browser's publishable key on a server, the API's on Vercel, filled from the other)")
+        held = {"env": {"CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"}}
+        ok(SS.sign_in_missing(mx, "compose_remote", held, deployed=False) == (["CLERK_JWT_KEY"], []) and SS.sign_in_missing(mx, "compose_remote", held, deployed=True) == ([], ["CLERK_JWT_KEY"])
+           and SS.sign_in_missing(mx, "compose_remote", {"env": set()}, deployed=True) == (["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"], [])
+           and SS.sign_in_missing({}, "vercel", {}) == ([], []), "sign-in: what is missing, and the JWT key let go only for an app already deployed with the rest")
+        ci = {"target": "compose_remote", "secrets_user": [], "secrets_optional": ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY", "PAY_SECRET_KEY"],
+              "compose_remote": {"host": "203.0.113.9", "domain": "shop.example.org"}}
+        S = SS.settings("zz_shop", {"app_id": "zz_shop", "mold_id": "mold_vx"}, ci, root=t)
+        ok(S["secrets_user"] == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and S["secrets_optional"] == ["PAY_SECRET_KEY"] and not S["deployed"],
+           f"sign-in: on a server Clerk's names are the operator's values (asked for at the deploy), whatever the state lists: {S['secrets_user']} {S['secrets_optional']}")
+        import agent_result as AR
+        F = SS.compose_facts(cb, mx)
+        R = Runner({"qualify": (0, GOOD_FACTS), "names": (0, "POSTGRES_PASSWORD\nAPP_VAULT_KEY\n")}); AR.reset(); said = []; err = None
+        saved_env = {n: os.environ.pop(n) for n in S["secrets_user"] if n in os.environ}
+        try: SS.deploy(S, F, cb, runner=R, resolver=lambda h: ["203.0.113.9"], say=said.append)
+        except SS.NeedsHuman as e: err = e
+        except SS.Stop as e: err = ("Stop", str(e))
+        finally: os.environ.update(saved_env)
+        ran = [c[0] for c in R.calls]
+        ok(isinstance(err, SS.NeedsHuman) and [n_["name"] for n_ in AR.NOTES["needs"]] == S["secrets_user"]
+           and all("dashboard.clerk.com" in n_["how"] and "--deploy-remote" in n_["how"] for n_ in AR.NOTES["needs"])
+           and "env" not in ran and "up" not in ran and "release-dir" not in ran and any("dashboard.clerk.com" in l for l in said),
+           f"sign-in: a server deploy with nobody at a terminal stops for Clerk's keys (exit 3) before the release or its env file is touched: {err} {ran} {AR.NOTES['needs'][:1]}")
+        S2 = dict(S, deployed=True); AR.reset(); seen = []
+        R2 = Runner({"qualify": (0, GOOD_FACTS), "names": (0, "POSTGRES_PASSWORD\nAPP_VAULT_KEY\nCLERK_SECRET_KEY\nCLERK_PUBLISHABLE_KEY\n"),
+                     "up": (0, "UP=ok\nSERVING=20261020T000000Z\n"), "health": (0, HEALTHY)}); said = []
+        try: SS.deploy(S2, F, cb, runner=R2, resolver=lambda h: ["203.0.113.9"], say=said.append, secrets_for=lambda m: seen.append(list(m)) or {},
+                       read_public=lambda u: ("200", {"ok": True}, ""), wait=lambda s_: None, read_page=lambda u: ("307", ""), release="20261020T000000Z")
+        except SS.Stop as e: said.append("STOP " + str(e))
+        ok(seen == [] and any("NOTE: CLERK_JWT_KEY is not on the server yet" in l for l in said) and "env" in [c[0] for c in R2.calls],
+           f"sign-in: a server already on Clerk without the JWT key is deployed, nothing asked, the key said as still to set: {seen} {said[-3:]}")
+        AR.reset()
+        # a pasted PEM block (several lines at a hidden prompt) is read as one line an env file holds
+        lines = iter(["-----BEGIN PUBLIC KEY-----", "MIIBIjANBgkqhkiG9w0BAQEFAAOC", "AQ8AMIIBCgKCAQEAstandin", "-----END PUBLIC KEY-----", "never read"])
+        v = VR.pem_ask(lambda p_: next(lines))("CLERK_JWT_KEY (hidden): ")
+        ok(v == "-----BEGIN PUBLIC KEY----- MIIBIjANBgkqhkiG9w0BAQEFAAOC AQ8AMIIBCgKCAQEAstandin -----END PUBLIC KEY-----" and VR.env_check("CLERK_JWT_KEY", v) is None
+           and next(lines) == "never read" and VR.pem_ask(lambda p_: "sk_test_standin")("x") == "sk_test_standin"
+           and VR.pem_ask(lambda p_: "-----BEGIN PUBLIC KEY-----AAAA-----END PUBLIC KEY-----")("x") == "-----BEGIN PUBLIC KEY-----AAAA-----END PUBLIC KEY-----",
+           f"sign-in: a PEM block pasted over several lines is read to its END line and joined by spaces; any other value as typed: {v!r}")
+    except BaseException as e_: ok(False, f"sign-in rehearsal: crashed: {type(e_).__name__}: {e_}"[:400])
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -1422,6 +1554,7 @@ def run():
         else: os.environ["FACTORY_PRIVATE_DIR"] = priv_was
         shutil.rmtree(t, ignore_errors=True)
     rehearsal(ok)
+    sign_in_rehearsal(ok)
     if fails:
         print("single_service self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"single_service: {n[0]} checks passed (offline: stand-in server, DNS, health and Vercel; the two-project deploy rehearsed through provision.py; nothing contacted)")
