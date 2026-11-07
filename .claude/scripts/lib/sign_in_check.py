@@ -387,7 +387,10 @@ def lines(res, indent="  "):
     return out
 
 
-def failing(res): return [f for f in res.get("flows") or [] if f["result"] == "fail"]
+def failing(res):
+    """The failures the operator is asked about. AI clients' registration with Clerk is not one of them: provision.py's
+    Clerk reading (lib/clerk_mcp.py) already asks for it, and stops only when nothing else lets an AI client connect."""
+    return [f for f in res.get("flows") or [] if f["result"] == "fail" and not (f["id"] == "mcp" and f.get("provider") == "clerk")]
 
 
 def ask(app_id, res):
@@ -404,7 +407,8 @@ def ask(app_id, res):
     rest = [g["label"] for g in bad[1:]]
     return "\n".join([
         f"{f['label']} does not work for {app_id} at {res.get('front_door')}: {f['detail']}.",
-        f"It needs one address added in {f['where'].split(' → ')[0]} (about three minutes):", *numbered,
+        (f"It needs one address added in {f['where'].split(' → ')[0]} (about three minutes):" if f.get("redirect_uri")
+         else f"It needs one setting changed in {f['where'].split(' → ')[0]} (about a minute):"), *numbered,
         f"Then say it is done, and the check runs again (it only reads): python3 .claude/scripts/provision.py {app_id} --sign-in-check",
         "Nothing secret is involved: the address is public, and no password or key is typed anywhere.",
         *( [f"After that, {len(rest)} more sign-in(s) need the same kind of fix ({', '.join(rest)}); I will give you those steps one at a time."] if rest else [])])
@@ -577,6 +581,7 @@ def self_test():
         res = check("zz_app", FRONT, API, dict(clerk_vals, CLERK_SECRET_KEY="sk_live_wrong"), {})
         ok([(f["id"], f["result"]) for f in res["flows"]] == [("clerk.domain", "unknown"), ("clerk.social", "unknown"), ("app", "unknown"), ("mcp", "fail")],
            "Clerk not readable, an older app: unknown, never pass; registration off: AI clients fail", [(f["id"], f["result"]) for f in res["flows"]])
+        ok(failing(res) == [] and ask("zz_app", res) == "", "AI clients' registration with Clerk is said, not asked twice (provision.py's Clerk reading asks for it)")
         W["social"] = True; W["registration"] = True; W["report"] = True
 
         built = {"AUTH_PROVIDER": "builtin", "GOOGLE_CLIENT_ID": OWN, "CRON_SECRET": CRON}
