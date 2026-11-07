@@ -704,8 +704,11 @@ email service's key (Resend: invitations and emailed sign-in codes) go in the ap
 and press **Save key**. A key is shown
 only as a hint after that, is stored sealed, and never reaches a run: a run gets a short-lived gateway token instead.
 
-Sign-in: an app whose state names Clerk's keys keeps Clerk (both apps today); otherwise the shell's built-in sign-in
-is used, an emailed eight-digit code (it needs the Resend key in the Key vault) and Google when its two names are set.
+Sign-in: every deployed mold_v0 app signs people in with Clerk (mold_v0-265): the check and the deploy stop (exit 3)
+until Clerk's keys are on the deploy target, and say which values to copy from https://dashboard.clerk.com
+(Configure, then API keys) and the `--set-secret` line for each. The shell's built-in sign-in, an emailed eight-digit
+code (it needs the Resend key in the Key vault) and Google when its two names are set, runs the lanes, local runs
+and tests.
 
 ### 11.4 Deploy (you say yes; about 10 minutes)
 
