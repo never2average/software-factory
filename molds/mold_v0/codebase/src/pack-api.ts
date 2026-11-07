@@ -71,6 +71,7 @@ import { emailPackProblems, type EmailPackSchema } from "./company-email-config.
 import { documentProblems, type DocumentsSchema } from "./record-files-config.js";
 import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 import { templateProblems } from "./text-template.js";
+import { configProblems, PackAgentProfileSchema, PROFILE_ID, templateNames, DEFAULT_PROFILE } from "./agent-profile-spec.js";
 
 import { CheckSchema } from "./check-spec.js";
 export { z };
@@ -1176,7 +1177,7 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent"] as const;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
 export const PAGE_ACTION_PLACES = ["primary", "secondary", "more"] as const;
 export const PAGE_ACTIONS_MAX = 12;
@@ -1201,6 +1202,9 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *   delete     delete the record, after a confirmation
  *   link       open the record its link or reference field `field` names
  *   copy_link  copy the page's address
+ *   start_agent (mold_v0-261, flag agent_harness) start a workspace agent session with the agent profile `profile` (the
+ *              pack's own, or "default"), its first message `first_message` filled from the record ({{key}}, {{title}},
+ *              {{<field>}}); the session links back to the record and shows in its runs section
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1224,6 +1228,10 @@ export const DetailActionSchema = z.object({
   roles: z.array(role).min(1).max(4).optional(),
   unavailable: z.array(z.object({ when: DetailConditionSchema, reason: plainWords(200) }).strict()).max(6).optional(),
   confirm: plainWords(300).optional(),
+  /** mold_v0-261: a start_agent action's agent profile (the pack's own agent_profiles, or "default"). */
+  profile: z.string().regex(PROFILE_ID, "an agent profile's id").optional(),
+  /** mold_v0-261: a start_agent action's first message, a template filled from the record ({{key}}, {{title}}, {{<field>}}). */
+  first_message: z.string().trim().min(1).max(4000).optional(),
 }).strict();
 export type DetailAction = z.output<typeof DetailActionSchema>;
 /**
@@ -1261,8 +1269,8 @@ export const RecordDetailSchema = z.object({
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
 
 /** An action's id on its page and in the API (POST /api/records/_page/<area>/<key>/actions/<id>): its kind, then what it names. */
-export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field"> & { area?: string }) =>
-  [a.kind, a.job_kind ?? a.to ?? a.field ?? a.area].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
+export const pageActionId = (a: Pick<DetailAction, "kind" | "job_kind" | "to" | "field"> & { area?: string; profile?: string }) =>
+  [a.kind, a.job_kind ?? a.to ?? a.field ?? a.area ?? a.profile].filter((x) => x !== undefined && x !== "").join(".").replace(/[^A-Za-z0-9_.-]+/g, "-");
 
 /** A layout's id for each tab (its label, lowercased, words joined by -): the page's ?tab= value. */
 export const detailTabId = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "tab";
@@ -1397,6 +1405,19 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
     if (writes && !shared && readOnly && x.kind !== "delete") bad(`${a.name ?? "the area"}'s records come from its repository: no ${x.kind} action`, i, "kind");
     if (writes && a.append_only) bad(`an append-only area's records are never changed: no ${x.kind} action`, i, "kind");
     if (x.kind === "start_run" && !x.job_kind) bad("a start_run action names its job_kind", i, "job_kind");
+    // mold_v0-261: a start_agent action names its profile and its first message, which names only the record's own fields.
+    if (x.kind !== "start_agent") { if (x.profile !== undefined) bad(`profile is for a start_agent action, not ${x.kind}`, i, "profile"); if (x.first_message !== undefined) bad(`first_message is for a start_agent action, not ${x.kind}`, i, "first_message"); }
+    else {
+      if (!x.profile) bad("a start_agent action names the agent profile it starts (profile)", i, "profile");
+      if (!x.first_message) bad("a start_agent action says its first message (first_message, filled from the record)", i, "first_message");
+      if ((x.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a start_agent action cannot be a viewer's", i, "roles");
+      for (const n of templateNames(x.first_message ?? "")) {
+        if (n === "key" || n === "title") continue;
+        const f = fieldOf(n);
+        if (!f) bad(`{{${n}}} is not one of the area's fields (a first message takes {{key}}, {{title}} or a field)`, i, "first_message");
+        else if (f.encrypted || f.type === "file") bad(`{{${n}}} is ${f.encrypted ? "encrypted" : "a file field"}: a first message never carries it`, i, "first_message");
+      }
+    }
     for (const [arg, raw] of Object.entries(x.input ?? {})) {
       const from = inputField(raw);
       if (from === null) continue;
@@ -2236,12 +2257,12 @@ export type TabArea = z.output<typeof TabAreaSchema>;
  * Every list tab has one by default (mold_v0-213; src/metric-spec.ts tabAction): `action` absent is the shell's own,
  * from what the tab shows; `action: false` (with `reason`, required, documented and shown nowhere) is none.
  */
-export const TAB_ACTION_KINDS = ["start_run", "new_schedule", "create_record", "link"] as const;
+export const TAB_ACTION_KINDS = ["start_run", "new_schedule", "create_record", "link", "start_agent"] as const;
 /** The tab kinds that are lists (mold_v0-213): each has a primary action, its own, the shell's default, or none with a reason. */
 export const LIST_TAB_KINDS = ["area", "runs", "reports", "schedules"] as const;
 /** The tab kinds each action is for (mold_v0-208). */
 export const TAB_ACTION_TABS: Record<(typeof TAB_ACTION_KINDS)[number], readonly string[]> = {
-  start_run: ["area", "runs", "reports"], new_schedule: ["schedules"], create_record: ["area"], link: LIST_TAB_KINDS,
+  start_run: ["area", "runs", "reports"], new_schedule: ["schedules"], create_record: ["area"], link: LIST_TAB_KINDS, start_agent: LIST_TAB_KINDS,
 };
 export const TabActionSchema = z.object({
   kind: z.enum(TAB_ACTION_KINDS, { error: () => `an action is one of ${TAB_ACTION_KINDS.join(", ")}` }),
@@ -2250,9 +2271,20 @@ export const TabActionSchema = z.object({
   job_kinds: z.array(name).min(2, "2 to 20 job kinds (one: job_kind)").max(20).optional(),
   area: name.optional(),
   href: z.string().min(1).max(500).superRefine((h, ctx) => { const p = hrefProblem(h); if (p) ctx.addIssue({ code: "custom", message: p }); }).optional(),
+  /** mold_v0-261: a start_agent action's agent profile (the pack's own agent_profiles, or "default"). */
+  profile: z.string().regex(PROFILE_ID, "an agent profile's id").optional(),
+  /** mold_v0-261: a start_agent action's first message, offered in the Start a session dialog (a list has no record: no {{field}}). */
+  first_message: z.string().trim().min(1).max(4000).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((a, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (a.kind !== "start_agent") { for (const k of ["profile", "first_message"] as const) if (a[k] !== undefined) bad(`${k} is for a start_agent action`, k); }
+  else {
+    if (a.profile === undefined) bad("a start_agent action names the agent profile it starts (profile)", "profile");
+    if (a.first_message !== undefined && templateNames(a.first_message).length) bad("a list's action has no record to fill a first message from: write it without {{...}}", "first_message");
+    for (const k of ["job_kind", "job_kinds", "area", "href"] as const) if (a[k] !== undefined) bad(`${k} is not for a start_agent action`, k);
+    return;
+  }
   if (a.kind === "link") {
     if (a.label === undefined) bad("a link action names its label", "label");
     if (a.href === undefined) bad("a link action names where it goes (href)", "href");
@@ -2772,6 +2804,12 @@ export interface PackDefinition {
    */
   documents?: z.input<typeof DocumentsSchema>;
   /**
+   * The workspace agent's profiles this pack brings (mold_v0-261, pack.json `agent_profiles`; src/agent-profiles.ts): each
+   * written once into the platform's profiles (version 1) the first time the app runs with it, then staff's to edit,
+   * version and archive in Admin › Agent profiles. Its page and tab actions `start_agent` name one of them (or "default").
+   */
+  agentProfiles?: z.input<typeof PackAgentProfileSchema>[];
+  /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
@@ -2891,6 +2929,24 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     }
   }
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
+  // mold_v0-261: the agent profiles it brings (each id once), and the start_agent actions naming one of them (or default).
+  const profileIds = new Set<string>();
+  for (const [i, x] of (p.agentProfiles ?? []).entries()) {
+    const r = PackAgentProfileSchema.safeParse(x);
+    if (!r.success) { problems.push(at(`agentProfiles[${i}]: ${r.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`)); continue; }
+    for (const m of configProblems(r.data)) problems.push(at(`agent profile ${r.data.id}: ${m}`));
+    if (profileIds.has(r.data.id)) problems.push(at(`agent profile ${r.data.id} is declared twice`));
+    profileIds.add(r.data.id);
+  }
+  const knownProfile = (id: string | undefined) => !id || id === DEFAULT_PROFILE || profileIds.has(id);
+  for (const t of p.tabs ?? []) {
+    const a = t?.action as { kind?: string; profile?: string } | false | undefined;
+    if (a && typeof a === "object" && a.kind === "start_agent" && !knownProfile(a.profile))
+      problems.push(at(`tab ${t.id}: action start_agent: agent profile ${a.profile} is not one this pack declares (agent_profiles) or default`));
+  }
+  for (const ar of p.recordAreas ?? []) for (const x of ((ar as { detail?: { actions?: { kind?: string; profile?: string }[] } })?.detail?.actions ?? []))
+    if (x?.kind === "start_agent" && !knownProfile(x.profile))
+      problems.push(at(`record area ${(ar as { name?: string }).name}'s page: action start_agent: agent profile ${x.profile} is not one this pack declares (agent_profiles) or default`));
   each(p.checks, CheckSchema, "checks");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.oauthProviders, OAuthProviderSchema, "oauthProviders");

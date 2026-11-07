@@ -4565,7 +4565,8 @@
                             "delete",
                             "link",
                             "copy_link",
-                            "create_record"
+                            "create_record",
+                            "start_agent"
                           ]
                         },
                         "place": {
@@ -4962,6 +4963,15 @@
                           "minLength": 1,
                           "maxLength": 300,
                           "pattern": "^[^\\n\\r{}<>]*$"
+                        },
+                        "profile": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{1,39}$"
+                        },
+                        "first_message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
                         }
                       },
                       "required": [
@@ -8093,7 +8103,8 @@
                           "start_run",
                           "new_schedule",
                           "create_record",
-                          "link"
+                          "link",
+                          "start_agent"
                         ]
                       },
                       "label": {
@@ -8122,6 +8133,15 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 500
+                      },
+                      "profile": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{1,39}$"
+                      },
+                      "first_message": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
                       },
                       "$comment": {
                         "type": "string",
@@ -9845,6 +9865,270 @@
             "hosts"
           ],
           "additionalProperties": false
+        },
+        "agent_profiles": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "instructions": {
+                "type": "object",
+                "properties": {
+                  "append_system": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "on_start": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "on_resume": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9@._/:-]{1,100}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{1,40}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "budget_usd": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 500
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ceiling_usd": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_turns": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "wake_max_minutes": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 720
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tools": {
+                "type": "object",
+                "properties": {
+                  "base": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "reads",
+                          "all",
+                          "none"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "free": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+                    }
+                  },
+                  "ask": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+                    }
+                  },
+                  "hidden": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "web": {
+                "type": "object",
+                "properties": {
+                  "tools": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "fetch",
+                          "search"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "hosts": {
+                    "anyOf": [
+                      {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^(\\*\\.)?(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\\.[a-z0-9-]{1,63})+$"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "files": {
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))[A-Za-z0-9._@+-]+(?:\\/[A-Za-z0-9._@+-]+){0,7}$"
+                    },
+                    "content": {
+                      "type": "string",
+                      "maxLength": 65536
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "content"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "roles": {
+                "anyOf": [
+                  {
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "member",
+                        "billing",
+                        "owner"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,39}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          }
         },
         "landing": {
           "anyOf": [

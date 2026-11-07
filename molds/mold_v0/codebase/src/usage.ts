@@ -125,6 +125,9 @@ export async function usageReport(input: { days?: number; model?: string } = {})
   return { days, model: input.model ?? null, totals, daily };
 }
 
+/** Read the price list again on the next lookup (it is otherwise kept for a minute): a row written or removed elsewhere. */
+export const forgetPrices = () => { prices = null; };
+
 export async function setPrice(model: string, p: Partial<Price> & { input_per_mtok: number; cached_input_per_mtok: number; output_per_mtok: number; source?: string }) {
   await (await getDb()).query(
     `INSERT INTO model_prices (model, input_per_mtok, cached_input_per_mtok, output_per_mtok, long_context_threshold,

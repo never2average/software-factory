@@ -190,7 +190,9 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   "developer_surface",
   // declarative yes/no checks answered from the records (mold_v0-196, src/check-spec.ts; src/pack-manifest.ts compiles them).
   // Missing here until mold_v0-223, so a pack.json declaring checks was refused at build ("unknown field checks").
-  "checks"]);
+  "checks",
+  // the workspace agent's profiles the pack brings (mold_v0-261, src/agent-profile-spec.ts; src/pack-manifest.ts compiles them)
+  "agent_profiles"]);
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
@@ -2249,7 +2251,8 @@ for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
  * mold_v0-260: run analytics) are pages of the build only while its flag is on: off, they are left out of the routes (so
  * the proxy answers them not found) and the list is what the build wrote before them.
  */
-const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
+// mold_v0-261: the agent profiles' pages (Admin › Agent profiles and a profile's page), agent_harness's too.
+const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles", "/admin/agent-profiles/[id]"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
 const OFF_PAGES = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
 {
   // A shell segment whose every page is such a page, with its flag off, is not the shell's in this build: a pack's tab or
@@ -2788,8 +2791,12 @@ function viewsModule() {
     ...(t.empty ? { empty: t.empty } : {}),
     // The tab's primary action (mold_v0-208): what its button says and opens (the server says who may use it).
     // mold_v0-213: every list tab's, resolved (the pack's own or the shell's default from what the tab shows), labelled.
-    ...(t.action ? { action: { kind: t.action.kind, label: t.action.label ?? null, ...(t.action.job_kind ? { job_kind: t.action.job_kind } : {}), ...(t.action.area ? { area: t.action.area } : {}), ...(t.action.href ? { href: t.action.href } : {}) } } : {}),
+    ...(t.action ? { action: { kind: t.action.kind, label: t.action.label ?? null, ...(t.action.job_kind ? { job_kind: t.action.job_kind } : {}), ...(t.action.area ? { area: t.action.area } : {}), ...(t.action.href ? { href: t.action.href } : {}),
+      // mold_v0-261: a start_agent action's profile and first message (the Start a session dialog opens with them).
+      ...(t.action.profile ? { profile: t.action.profile } : {}), ...(t.action.first_message ? { first_message: t.action.first_message } : {}) } } : {}),
   }));
+  // mold_v0-261: the action's type names start_agent only in a build that declares one, so every other build's file is as it was.
+  const agentAction = tabs.some((t) => t.action?.kind === "start_agent");
   const groups = [];
   // A declared sidebar (mold_v0-133): exactly its groups and entries, in order.
   if (profileSidebar) for (const g of profileSidebar) groups.push({ label: g.label, items: g.items.map((x) => {
@@ -2836,7 +2843,7 @@ function viewsModule() {
     "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
     "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n" +
     "  /** The tab's primary action (mold_v0-208; web/src/features/tabs/tab-action.tsx, the search row's last control): a run, a schedule, a record or a link;\n   *  every list tab's by default (mold_v0-213: the shell's, from what the tab shows), unless the pack says none. */\n" +
-    "  action?: { kind: 'start_run' | 'new_schedule' | 'create_record' | 'link'; label: string | null; job_kind?: string; area?: string; href?: string };\n}\n" +
+    `  action?: { kind: 'start_run' | 'new_schedule' | 'create_record' | 'link'${agentAction ? " | 'start_agent'" : ""}; label: string | null; job_kind?: string; area?: string; href?: string${agentAction ? "; profile?: string; first_message?: string" : ""} };\n}\n` +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs, or the profile the sidebar (mold_v0-133): exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;

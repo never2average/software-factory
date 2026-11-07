@@ -69,16 +69,18 @@ export const AGENT_FLAVOURS: readonly AgentFlavour[] = [
 ];
 export const flavourOf = (id: string): AgentFlavour | null => AGENT_FLAVOURS.find((f) => f.id === id) ?? null;
 
-export interface ResolvedHook { event: HookEvent; text: string | null; source: "harness" | "session" | "unset" }
+export interface ResolvedHook { event: HookEvent; text: string | null; source: "harness" | "session" | "profile" | "unset" }
 /**
  * The hooks a session gets, resolved once at its start (frozen into its policy, written beside the agent before each
- * wake): the session's own text, else the flavour's default, else nothing. A hook the flavour does not have is refused.
+ * wake): the session's own text, else its agent profile's (mold_v0-261: the workload's own, as the reference lets a
+ * workload override a hook), else the flavour's default, else nothing. A hook the flavour does not have is refused.
  */
-export function resolveHooks(f: AgentFlavour, own: Partial<Record<HookEvent, string>> = {}): ResolvedHook[] {
-  for (const k of Object.keys(own)) if (!f.hooks.some((h) => h.event === k)) throw new Error(`${f.label} has no ${k} hook`);
+export function resolveHooks(f: AgentFlavour, own: Partial<Record<HookEvent, string>> = {}, profile: Partial<Record<HookEvent, string | null>> = {}): ResolvedHook[] {
+  for (const k of [...Object.keys(own), ...Object.keys(profile)]) if (!f.hooks.some((h) => h.event === k)) throw new Error(`${f.label} has no ${k} hook`);
   return f.hooks.map((h) => {
-    const mine = own[h.event]?.trim();
-    return mine ? { event: h.event, text: mine, source: "session" } : h.default ? { event: h.event, text: h.default, source: "harness" } : { event: h.event, text: null, source: "unset" };
+    const mine = own[h.event]?.trim(), prof = profile[h.event]?.trim();
+    return mine ? { event: h.event, text: mine, source: "session" } : prof ? { event: h.event, text: prof, source: "profile" }
+      : h.default ? { event: h.event, text: h.default, source: "harness" } : { event: h.event, text: null, source: "unset" };
   });
 }
 
@@ -111,6 +113,10 @@ export interface AgentPolicy {
    * before it (they reach nothing of the workspace).
    */
   workspace?: WorkspaceReach;
+  /** mold_v0-261: the agent profile it started with (its id, name and the version frozen), absent before profiles. */
+  profile?: { id: string; name: string; version: number };
+  /** mold_v0-261: the files its profile gives its workspace, written into the working directory at its first wake. */
+  files?: { path: string; content: string }[];
 }
 
 /**
@@ -121,22 +127,27 @@ export const WORKSPACE_SERVER = "app";
 export const workspaceToolName = (tool: string) => `mcp__${WORKSPACE_SERVER}__${tool}`;
 /** The workspace tool a harness tool name is (mcp__app__<tool>), or null. */
 export const workspaceToolOf = (name: string): string | null => (name.startsWith(`mcp__${WORKSPACE_SERVER}__`) ? name.slice(`mcp__${WORKSPACE_SERVER}__`.length) || null : null);
-export type WorkspaceToolsFree = "reads" | "reads_and_named" | "all";
+export type WorkspaceToolsFree = "reads" | "reads_and_named" | "all" | "none";
 export interface WorkspaceReach {
   server: string;
   /** Who the tools act as: the person (their role at the start; re-read on every call) or the account's key. */
   acts_as: { kind: "person" | "key"; name: string | null; role: string | null };
   free: WorkspaceToolsFree;
   named: string[];
-  /** The tools the person may call, as the server listed them to them at the start. */
+  /** The tools the person may call, as the server listed them to them at the start (its profile's hidden ones left out). */
   tools: { name: string; title: string | null; read: boolean }[];
+  /** mold_v0-261: the tools its profile hides: never listed to the session, refused by the server. */
+  hidden?: string[];
   /** The standing instructions added for the workspace (capped), and its parts' sizes for the session card. */
   context: { text: string; max_chars: number; parts: { part: "instructions" | "context"; label: string; chars: number; kept: number }[] };
 }
 
-/** Which of the workspace's tools a session may use without asking, under the setting: reads, plus the named, or all. */
-export function freeWorkspaceTools(tools: { name: string; read: boolean }[], free: WorkspaceToolsFree, named: string[]): string[] {
-  return tools.filter((t) => free === "all" || t.read || (free === "reads_and_named" && named.includes(t.name))).map((t) => t.name);
+/**
+ * Which of the workspace's tools a session may use without asking: reads (plus the named), every one, or (mold_v0-261, a
+ * profile's) none but the named; a profile's `ask` list asks first whatever the rest says.
+ */
+export function freeWorkspaceTools(tools: { name: string; read: boolean }[], free: WorkspaceToolsFree, named: string[], ask: string[] = []): string[] {
+  return tools.filter((t) => !ask.includes(t.name) && (free === "all" || (free !== "none" && t.read) || ((free === "reads_and_named" || free === "none") && named.includes(t.name)))).map((t) => t.name);
 }
 
 /** The harness's own tools a session may use without asking: the workspace's files and its shell. */

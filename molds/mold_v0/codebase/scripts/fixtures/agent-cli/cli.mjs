@@ -20,10 +20,15 @@
 //                   it against the policy, as with any tool), then the call itself over HTTP to the server --mcp-config
 //                   names, its ${...} header expanded from the environment as the real CLI does; the answer is
 //                   "MCP <tool>: <the result's text>" or "MCP <tool> refused: <why>"
+//   said            (mold_v0-261) the answer is "Said: <the whole turn as the CLI got it, lines joined by " | ">" (an agent
+//                   profile's on_start template around the person's words shows here)
+//   system          (mold_v0-261) the answer is "System: <its --append-system-prompt, lines joined by " | ">"
+//   files           (mold_v0-261) the answer is "Files: <every file under its working directory, relative, sorted>"
+//   cat <path>      (mold_v0-261) the answer is "File <path>: <its text, lines joined by " | ">" (or "File <path>: none")
 // Its answer is "Echo: <the turn's text>"; a resumed session's first answer starts "(resumed <id>) ".
 // --script <file> (the lane shots): a JSON list of {match, say, delay_ms, fetch, cost}; the first whose match (a regular
 // expression) finds the turn's text decides the turn instead: its words, how long it takes, a WebFetch it makes first.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 
 /** The workspace server's config (--mcp-config), its headers' ${VAR} expanded from the environment. */
 function workspaceServer() {
@@ -123,7 +128,14 @@ async function turn(m) {
   total = Math.round((total + cost) * 1e6) / 1e6;
   const standing = () => { const sys = arg("--append-system-prompt") ?? ""; const srv = workspaceServer();
     return `Standing: ${sys.length} characters; workspace: ${/## This workspace/.test(sys) ? "yes" : "no"}; servers: ${srv ? "app" : "none"}; token: ${process.env.RUN_WORKSPACE_TOKEN ? "set" : "unset"}`; };
-  const said = mcpSaid.length ? mcpSaid.splice(0).join("\n") : /^standing$/m.test(text) ? standing() : /^pwd$/m.test(text) ? `Working in ${process.cwd()}.` : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
+  const flat = (t) => t.split("\n").map((x) => x.trim()).filter(Boolean).join(" | ");
+  const listFiles = (dir, base = "") => readdirSync(dir).flatMap((n) => { const f = path.join(dir, n), r = base ? `${base}/${n}` : n; return statSync(f).isDirectory() ? listFiles(f, r) : [r]; });
+  const cat = /^cat (\S+)$/m.exec(text);
+  const said = mcpSaid.length ? mcpSaid.splice(0).join("\n") : /^standing$/m.test(text) ? standing() : /^pwd$/m.test(text) ? `Working in ${process.cwd()}.`
+    : /^said$/m.test(text) ? `Said: ${flat(text)}` : /^system$/m.test(text) ? `System: ${flat(arg("--append-system-prompt") ?? "")}`
+    : /^files$/m.test(text) ? `Files: ${listFiles(process.cwd()).sort().join(", ")}`
+    : cat ? `File ${cat[1]}: ${existsSync(path.join(process.cwd(), cat[1])) ? flat(readFileSync(path.join(process.cwd(), cat[1]), "utf8")) : "none"}`
+    : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
   const reply = `${first && resume ? `(resumed ${resume}) ` : ""}${said}`;
   first = false;
   say({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: reply }] } });

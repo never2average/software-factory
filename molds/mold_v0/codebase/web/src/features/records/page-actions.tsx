@@ -9,6 +9,8 @@
 //   edit       the record's edit form, a full card in the page's place (?act=<id>)
 //   delete     the confirm question (the console's ConfirmDialog), then the record's list
 //   link       the record its field names; copy_link the page's address, with a toast
+//   start_agent (mold_v0-261, flag agent_harness) starts a workspace agent session with its profile, the first message
+//              filled from the record by the server, then opens the session on the agent's page
 // A disabled action stays in its place, its reason shown on hover and on focus (a tooltip on a button, a line under the
 // item in a menu) and read with it by a screen reader. The server refuses what it refuses here, whatever is sent.
 import { useRouter } from 'next/navigation';
@@ -47,7 +49,7 @@ export async function takeAction<T = unknown>(area: string, key: string, id: str
 const ICON: Record<PageAction['kind'], ReactNode> = {
   start_run: <Icons.play aria-hidden data-icon='inline-start' />, move: <Icons.arrowRight aria-hidden data-icon='inline-start' />, edit: <Icons.edit aria-hidden data-icon='inline-start' />,
   delete: <Icons.trash aria-hidden data-icon='inline-start' />, link: <Icons.externalLink aria-hidden data-icon='inline-start' />, copy_link: <Icons.link aria-hidden data-icon='inline-start' />,
-  create_record: <Icons.add aria-hidden data-icon='inline-start' />
+  create_record: <Icons.add aria-hidden data-icon='inline-start' />, start_agent: <Icons.agent aria-hidden data-icon='inline-start' />
 };
 
 /** Whether an action's form is a create or an edit (it opens in the side panel: mold_v0-256, flag side_panel_forms). */
@@ -89,6 +91,13 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
         toast.success(`${host.record.title || host.record.key} deleted`);
         if (host.deleted) host.deleted();
         else router.push(`/${host.base}/records/${host.area}`);
+        return;
+      }
+      if (a.kind === 'start_agent') {
+        // The server fills the first message from the record and links the session to it; the session opens at once.
+        const r = await takeAction<{ session: { id: string } }>(host.area, host.record.key, a.id);
+        toast.success(`${a.agent?.name ?? a.label} started`);
+        router.push(`/app/agent?session=${encodeURIComponent(r.session.id)}`);
         return;
       }
       if (a.kind === 'move') {

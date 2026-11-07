@@ -7,7 +7,9 @@
  *   GET  /api/tab-actions/<pack>/<tab>         the tab's action as this person may use it: {kind, label, allowed, ...}
  *                                              start_run: the kinds they may start, each with its arguments (typed as
  *                                              record fields), the asset areas a run may target and its environments;
- *                                              new_schedule: the kind to preset; create_record: the area and its
+ *                                              new_schedule: the kind to preset; start_agent (mold_v0-261): the
+ *                                              agent profile and the first message the Start a session dialog opens
+ *                                              with; create_record: the area and its
  *                                              fields. `allowed: false` (the button stays hidden) for a role that may
  *                                              not do it: the start tool's permission (launch, the kind withheld), manage
  *                                              for a schedule, the area's create roles and edit for a record
@@ -166,6 +168,15 @@ export function tabActionAppRouter(): Router {
       return { kind: a.kind, label: a.label ?? null, allowed: kinds.length > 0, kinds };
     }
     if (a.kind === "new_schedule") return { kind: a.kind, label: a.label ?? null, allowed: role === null || canAccount(role, "manage"), job_kind: a.job_kind ?? null };
+    // mold_v0-261 (flag agent_harness): the Start a session dialog with the action's profile and first message, for a
+    // role that may start that profile (src/agent-profiles.ts); the session's own start enforces the same.
+    if (a.kind === "start_agent") {
+      const { agentHarnessOn } = await import("./agent-harness-config.js");
+      if (!agentHarnessOn() || (role !== null && !canAccount(role, "launch"))) return { kind: a.kind, label: a.label ?? null, allowed: false, profile: null, message: null };
+      const { profileOffer } = await import("./agent-profiles.js");
+      const prof = await profileOffer(a.profile!, session(res).org, { kind: session(res).user ? "person" : "key", role });
+      return { kind: a.kind, label: a.label ?? null, allowed: !!prof && !prof.disabled, profile: prof ? { id: prof.id, name: prof.name } : null, message: a.first_message ?? null };
+    }
     return createSpec(a, res);
   }));
 

@@ -1,0 +1,70 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "$comment": "mold_v0-261 fixture: agent profiles. A pack that brings an agent profile (builder) and starts it from a record's page (Build) and from its list (Plan an application). For the agent-profile proofs and screenshots, with features.agent_harness on.",
+  "id": "fixture_agent",
+  "name": "Fixture agent",
+  "version": "0.1.0",
+  "description": "Applications a workspace asks its agent to build.",
+  "record_areas": [
+    {
+      "name": "applications",
+      "label": "Applications",
+      "role": "source",
+      "scope": "workspace",
+      "key_from_title": true,
+      "fields": [
+        { "name": "summary", "label": "Summary", "type": "text", "max_length": 500 },
+        { "name": "stack", "label": "Stack", "type": "enum", "options": [{ "value": "typescript", "label": "TypeScript" }, { "value": "python", "label": "Python" }, { "value": "go", "label": "Go" }] },
+        { "name": "status", "label": "Status", "type": "enum", "options": [{ "value": "idea", "label": "Idea" }, { "value": "building", "label": "Building" }, { "value": "live", "label": "Live" }] },
+        { "name": "owner", "label": "Owner", "type": "text" },
+        { "name": "brief", "label": "Brief", "type": "text", "max_length": 4000 }
+      ],
+      "detail": {
+        "header": {
+          "subtitle": "summary",
+          "badges": [{ "field": "status", "colors": { "idea": "neutral", "building": "info", "live": "success" } }],
+          "facts": [{ "field": "stack" }, { "field": "owner" }]
+        },
+        "tabs": [
+          { "label": "Overview", "sections": [
+            { "title": "About", "columns": 2, "fields": ["summary", "stack", "owner", "brief"] },
+            { "title": "Runs and agent sessions", "runs": {}, "empty": "Nothing has run on it yet: Build starts the agent on it." }
+          ] }
+        ],
+        "actions": [
+          { "kind": "start_agent", "place": "primary", "label": "Build", "profile": "builder",
+            "first_message": "Build the application {{title}} ({{key}}) on {{stack}}.\n\nWhat it is: {{summary}}\n\nThe brief: {{brief}}" },
+          { "kind": "edit", "place": "secondary" },
+          { "kind": "copy_link" }
+        ]
+      }
+    }
+  ],
+  "tabs": [
+    { "id": "applications", "kind": "area", "area": "applications", "icon": "rocket", "group": "Build", "charts": [], "views": ["table"],
+      "action": { "kind": "start_agent", "label": "Plan an application", "profile": "builder", "first_message": "Plan a new application with me: ask what it should do first." } }
+  ],
+  "agent_profiles": [
+    {
+      "id": "builder",
+      "name": "Build an application",
+      "description": "Builds an application from its record: plans first, then writes the code in its workspace and reports what it made.",
+      "instructions": {
+        "append_system": "You build applications for this workspace. Plan before you write code, keep the plan in PLAN.md in your working directory, and follow the build skill in .claude/skills/build/SKILL.md.",
+        "on_start": "Start with a short plan (at most ten steps), then build.\n\n{{message}}",
+        "on_resume": "You are back on the build: read PLAN.md and continue with the next step."
+      },
+      "budget_usd": 4,
+      "ceiling_usd": 12,
+      "max_turns": 80,
+      "wake_max_minutes": 45,
+      "tools": { "base": "reads", "free": ["fixture_agent_create_applications"], "ask": ["fixture_agent_update_applications"], "hidden": ["fixture_agent_export_applications"] },
+      "web": { "tools": "fetch", "hosts": ["docs.example.com", "*.example.org"] },
+      "files": [
+        { "path": ".claude/skills/build/SKILL.md", "content": "---\nname: build\ndescription: How to build an application for this workspace.\n---\n\n# Build\n\n1. Read the application's record (its summary and brief).\n2. Write PLAN.md: the steps, each one line.\n3. Build step by step; after each, say what changed.\n4. When done, update the record's status to live (ask first).\n" },
+        { "path": "templates/README.md", "content": "# {{name}}\n\nWhat it does, how to run it, how to test it.\n" }
+      ],
+      "roles": ["member", "owner"]
+    }
+  ]
+}

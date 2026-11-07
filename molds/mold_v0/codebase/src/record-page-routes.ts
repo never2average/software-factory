@@ -9,7 +9,9 @@
  *        it is), and the open tab's related lists and runs (a section the person may not read: {hidden: true})
  *   POST /api/records/_page/<area>/<key>/actions/<id>
  *        take one of them: start_run {input} (a run of the kind on this record, started as its generated start tool
- *        starts one; the run carries the record: src/runs.ts onRecord), move {to}, edit {title, data}, delete
+ *        starts one; the run carries the record: src/runs.ts onRecord), move {to}, edit {title, data}, delete,
+ *        start_agent (mold_v0-261, flag agent_harness: a workspace agent session with the action's profile, its first
+ *        message filled from the record here, never from the browser; the session links back to the record)
  *
  * Who may: an action is offered (and taken) only by a role the action's `roles` and the area's own permission allow (the
  * kind's start tool for a run, the area's move and the transition's roles for a move, its update for an edit, its delete
@@ -19,7 +21,7 @@
  * as the person (its read permission), in the workspace's own scope only.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
-import { ACCOUNT_ROLE_LABELS, type AccountRole } from "./account-roles.js";
+import { ACCOUNT_ROLE_LABELS, canAccount, type AccountRole } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
 import type { Org } from "./auth.js";
 import { dataApi, type DataCaller } from "./data-api.js";
@@ -83,6 +85,8 @@ export interface ActionView {
    * area's create form (its fields, whether its files upload, whether its Key follows its Title).
    */
   create?: { area: string; label: string; values: Record<string, unknown>; fields?: FormField[]; upload_max?: number | null; key_from_title?: boolean };
+  /** start_agent (mold_v0-261): the agent profile it starts and the first message, filled from this record. */
+  agent?: { profile: string; name: string; version: number; message: string };
 }
 
 /** The moves of `area`'s lifecycle `role` may make to `to` (any state when undefined), from any state. */
@@ -193,6 +197,18 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       case "copy_link":
         out.push({ ...base, label: x.label ?? "Copy link", disabled: unavailable });
         break;
+      case "start_agent": {
+        // mold_v0-261 (flag agent_harness): a session with the action's profile, for a role that may start it (else not shown).
+        if (area.scope !== "workspace" || !may(area, "read", actor) || opts.org === undefined) continue;
+        if (role !== null && !canAccount(role, "launch")) continue;
+        const { profileOffer } = await import("./agent-profiles.js");
+        const prof = await profileOffer(x.profile!, opts.org, { kind: actor.userId ? "person" : "key", role });
+        if (!prof) continue;
+        const { fillTemplate } = await import("./agent-profile-spec.js");
+        out.push({ ...base, label: x.label ?? `Start ${prof.name}`, disabled: unavailable ?? prof.disabled,
+          agent: { profile: prof.id, name: prof.name, version: prof.version, message: fillTemplate(x.first_message ?? "", record) } });
+        break;
+      }
       case "create_record": {
         // A new record of another workspace area: that area's create permission (its read too), never a withheld create.
         const target = findArea(x.area!);
@@ -438,7 +454,12 @@ export function recordPageRouter(): Router {
         by ??= await byWords(session(res));
         // A pack whose runs list its MCP settings withhold lists none here either (mold_v0-067).
         const shown = got.runs.filter((x) => !packOpWithheld(x.pack, "list_runs"));
-        sections[id] = { total: got.total - (got.runs.length - shown.length), runs: shown.map(({ requested_by, ...x }) => ({ ...x, by: by!(requested_by) })) };
+        // mold_v0-261 (flag agent_harness): the workspace agent sessions started from this record, beside its runs.
+        const H = await import("./harness-sessions.js");
+        const ss = await H.recordSessions(org, { area: area.name, key: record.key }, H.actorOf(session(res)), s.runs!.limit ?? 5);
+        sections[id] = { total: got.total - (got.runs.length - shown.length), runs: shown.map(({ requested_by, ...x }) => ({ ...x, by: by!(requested_by) })),
+          ...(ss.total ? { sessions: { total: ss.total, rows: ss.sessions.map((x) => ({ id: x.id, title: x.title, phase: x.phase, profile: x.profile, started_by: x.mine ? "You" : x.started_by,
+            spent_usd: x.spent_usd, budget_usd: x.budget_usd, created_at: x.created_at, last_activity_at: x.last_activity_at })) } } : {}) };
       } else if (s.history) {
         // mold_v0-256: the record's changes, read as the person (the record's own read: it read the record above).
         by ??= await byWords(session(res));
@@ -520,6 +541,15 @@ export function recordPageRouter(): Router {
       case "delete": {
         if (a.disabled) throw new PackError(a.disabled, 409);
         return { deleted: await dataApi.delete(callerOf(res), area.name, record.key) };
+      }
+      case "start_agent": {
+        // The first message is the record's, filled here (whatever the browser sends); the session carries the record.
+        if (a.disabled) throw new PackError(a.disabled, 409);
+        const s = session(res);
+        const H = await import("./harness-sessions.js");
+        const org: Org = { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole };
+        return { session: await H.startSession(s.org, H.actorOf(s), { message: a.agent!.message, profile: a.agent!.profile, title: `${a.agent!.name}: ${record.title || record.key}` }, org,
+          { record: { area: area.name, key: record.key } }) };
       }
       default:
         throw new PackError(`${a.label} happens in the browser: nothing to send`, 400);

@@ -61,6 +61,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
 | Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `app`: `src/harness-reach.ts`. See "What a session reaches" below |
 | Context (mold_v0-250) | The workspace's context and memory and the server's own instructions, appended to the standing instructions: see below |
+| Per-workload prompts and budgets (mold_v0-261) | Agent profiles (`src/agent-profiles.ts`, migration 0052): a profile is the mold's workload. It overrides `on_start`, `on_resume` and `append_system` (each hook's `source` is `profile`), and its model, budget, ceiling, turns, tools, web access, files and roles; frozen with its version at the session's start, as the reference freezes a workload's allowance at admission. See "Agent profiles" below |
 | API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
 
 ## What a session reaches (mold_v0-250)
@@ -100,6 +101,45 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
 - **Isolation.** A token opens `/mcp` only (never a URL, never another route); its workspace is the session's. The test
   proves another workspace's record is not found through it, and that its list and memory searches return only its own.
 
+## Agent profiles (mold_v0-261)
+
+The reference lets each workload override its prompts; the mold's workload is an **agent profile**, which platform staff
+configure in Admin › Agent profiles (`/api/admin/onboarding/agent-profiles`). Nothing changes with the flag off: no
+route, page, table row or action of it answers.
+
+- **What a profile sets.** Its instructions: the standing prompt (the `append_system` hook), the on-start template (the
+  `on_start` hook: `{{message}}` is the person's words, else they follow it; applied to the first message the harness is
+  given, the transcript keeping the person's own words) and the on-resume prompt (`on_resume`). Its model and provider
+  (a model with a price only: the profile is refused on save otherwise, and its start is refused when a price it named was
+  removed since), its budget and ceiling, turns per wake and longest wake; which of the app's own tools run freely, ask
+  first (an approval request of kind `tool`, even for a read) or are hidden (left out of the session's reach, of the
+  token's `tools/list` and of its context; `/mcp` refuses a call, and the harness never turns one into a request); its web
+  tools and hosts; files written into the session's working directory before its first wake (relative paths inside it,
+  at most 20 files and 256 KB; later wakes find them in the checkpoint as the agent left them); who may start it (member,
+  billing, owner; an account key only a profile owners may start); per-workspace overrides (a named workspace's own
+  budget, ceiling or model).
+- **Unset is the platform setting.** Each setting a profile leaves unset is the one in force on the Agent configuration
+  page. The **Default** profile (`default`) leaves all of them unset: the global settings are its values, a session
+  started without a profile uses it, and it is never archived.
+- **Versioned and audited.** `agent_profiles` holds the version in force; every save writes the next version to
+  `agent_profile_versions` (a save names the version it edited: one saved meanwhile refuses it, 409) and each change
+  (created, edited, archived, restored) to `agent_profile_changes` with who made it and the profile before and after,
+  beside the staff log line (`agent_profile.*`). A pack's `agent_profiles` (pack.json) are written once as version 1 by
+  `pack <id>` and are staff's from then on.
+- **A session freezes its profile.** `startSession` resolves the profile for its workspace (its override), checks the
+  person's role, applies its settings to the policy it freezes, and keeps `harness_sessions.profile_id` and
+  `profile_version`; a later edit applies to new sessions only. "How this session runs" names the profile and version,
+  the files it was given, the tools it hides and the record it was started from.
+- **Starting one.** The Start a session dialog offers the active profiles the person may start (each with its model and
+  their budget range under it; `GET /api/agent` `profiles`, `POST /api/agent` `{profile}`, the MCP's
+  `start_agent_session` `profile`). A pack's record page action and list tab action `start_agent` (`profile`,
+  `first_message`): on a record's page, a button such as Build starts the session at once with the message filled from
+  the record on the server (`{{key}}`, `{{title}}`, `{{<field>}}`), linked to the record (`record_area`, `record_key`)
+  and listed in the record's runs section; on a list, the button opens the dialog with the profile and the message.
+- **Enforced on the server.** Who may start (403, the role's words), an archived profile (409), the profile's budget and
+  ceiling (a start or a raise past them refused), its tools (the free list in the frozen policy, the hidden ones refused
+  by `/mcp` and by the request and decision steps), a price removed (409).
+
 ## Deliberately not copied
 
 - **The reference's product surfaces**: its pipelines, entities, report proposals, checklists, eval datasets and
@@ -110,9 +150,6 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
   in the MCP usage log (`mcp_events`, client `workspace-agent`) and, with `audit.data` on, the data trail.
 - **A refreshed context per wake.** The context is frozen at the session's start (as the reference freezes a run's
   hooks); a session reads anything newer through the memory and record tools.
-- **Per-workload prompts overriding hooks.** The reference lets each workload override `on_start`/`on_resume`/
-  `append_system`. The mold has no workloads: the flavour's defaults apply and the person's message is the turn. The
-  hook resolution still records each hook's `source`, so a pack-level override can be added without changing the record.
 - **A second harness flavour that runs.** The catalogue declares the contract for a stdin-to-EOF flavour (no steer),
   but only `claude-code` is pinned in the run tools' catalogue; another CLI is offered only once it is pinned with its
   checksums. The harness choice setting lists the flavours that can run.
@@ -147,7 +184,9 @@ approvals, pause / resume / stop, parking and waking, crash recovery, spend coun
 retention, the settings' audit, and what a session reaches (the context composed and capped; the tools as the person,
 reads free and writes as approvals; a wake end to end with the stand-in CLI calling the server through its MCP config;
 the token scoped, refused on another workspace's records, revoked at pause, park, stop, budget and when the person
-leaves); `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
+leaves; mold_v0-261, agent profiles: created, edited, versioned, archived and audited; role gating; per-workspace
+overrides; tools free, ask and hidden; files and instructions reaching the stand-in CLI; the frozen version; start_agent
+from a record with its message filled; the refusals); `test:features`, `test:zero-pack` (the zero-pack hash unchanged), the run tests,
 Octillion parity with the flag off, and screenshots on the example app's lane copy with the flag on.
 
 ### A real session (mold_v0-245, measured once, 2026-11-05)

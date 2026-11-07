@@ -6,7 +6,10 @@
 // the workspace: its tools, which ask first, the context it was given; mold_v0-250). The top bar's agent icon opens this
 // page, and a session is ?session=<id> on it. One exception to the console's full-card rule, the operator's (mold_v0-249):
 // Start a session opens as a modal dialog (the first message, the model, the budget, Start), then the new session's
-// full card. Nothing else here is a dialog or a side sheet.
+// full card. Nothing else here is a dialog or a side sheet. mold_v0-261: the dialog offers the agent profiles this person
+// may start (src/agent-profiles.ts; staff set them up in Admin › Agent profiles), each with its model and budget; a list's
+// start_agent action opens it with its profile and first message (?start=<profile>&message=...), and a session's card says
+// which profile and version it runs with, and the record it was started from.
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -38,13 +41,17 @@ interface Session {
   budget_usd: number; spent_usd: number; remaining_usd: number; ceiling_usd: number; reserve_usd: number; wakes: number; crashes: number; web_calls: number;
   pause_requested: boolean; stop_requested: boolean; pending_request: Request | null; created_at: string; last_activity_at: string; ended_at: string | null;
   archived_at: string | null; pruned: boolean; can: { message: boolean; pause: boolean; resume: boolean; stop: boolean; decide: boolean; raise: boolean };
+  /** mold_v0-261: the agent profile and the version it froze, and the record it was started from. */
+  profile?: { id: string; name: string; version: number } | null;
+  record?: { area: string; key: string } | null;
 }
 interface Detail extends Session {
   messages: { id: number; role: 'person' | 'agent' | 'system'; body: string; status: string | null; by: string | null; cost_usd: number | null; at: string; run_id: string | null }[];
   requests: Request[]; grants: { id: string; from_usd: number; to_usd: number; reason: string; by: string; at: string }[];
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
   hooks: { event: string; source: string; text: string | null }[];
-  policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number };
+  policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
+    files?: string[]; hidden_tools?: string[] };
   reach: Reach | null;
 }
 interface Reach {
@@ -56,7 +63,9 @@ interface Offer {
   harness: string; model: string; steerable: boolean; budget_usd: number; ceiling_usd: number; web_tools: string; park_after_minutes: number; workspace_tools?: string;
   budget?: { default_usd: number; max_usd: number; ceiling_usd: number };
 }
-interface ListAnswer { sessions: Session[]; can_start?: boolean; offer: Offer }
+/** An agent profile this person may start (mold_v0-261), with its model and their budget range under it. */
+interface StartProfile { id: string; name: string; description: string; version: number; is_default: boolean; model: string; budget: { default_usd: number; max_usd: number; ceiling_usd: number }; tools: string; web: string; files: number }
+interface ListAnswer { sessions: Session[]; can_start?: boolean; offer: Offer; profiles?: StartProfile[] }
 
 function api(area: Area) {
   return async <T,>(method: string, path = '', body?: unknown): Promise<T> => {
@@ -104,7 +113,9 @@ function AgentList({ area }: { area: Area }) {
   const [open, setOpenState] = useState<string | null>(params.get('session'));
   const [data, setData] = useState<ListAnswer | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const [starting, setStarting] = useState(false);
+  // A list's start_agent action (mold_v0-261) opens the dialog with its profile and first message: ?start=<profile>&message=.
+  const [starting, setStarting] = useState(!!params.get('start'));
+  const [preset] = useState(() => ({ profile: params.get('start'), message: params.get('message') }));
   const load = useCallback(() => call<ListAnswer>('GET').then((d) => { setData(d); setError(null); }, (e: Error) => setError(e)), [call]);
   useEffect(() => { void load(); }, [load]);
   const live = !!data?.sessions.some((s) => LIVE.includes(s.phase));
@@ -151,7 +162,10 @@ function AgentList({ area }: { area: Area }) {
         detailActions={(s) => <Controls area={area} s={s} call={call} onChange={load} />}
         detail={(s) => <SessionCard key={s.id} area={area} id={s.id} call={call} onChange={load} />}
       />
-      {area === 'app' && data && <StartDialog open={starting} offer={data.offer} call={call} onOpenChange={setStarting}
+      {area === 'app' && data && <StartDialog open={starting} offer={data.offer} profiles={data.profiles ?? []} preset={preset} call={call} onOpenChange={(o) => {
+        setStarting(o);
+        if (!o && (params.get('start') || params.get('message'))) { const u = new URL(window.location.href); u.searchParams.delete('start'); u.searchParams.delete('message'); window.history.replaceState(null, '', u.toString()); }
+      }}
         onStarted={(id) => { setStarting(false); void load().then(() => setOpen(id)); }} />}
     </PageContainer>
   );
@@ -164,14 +178,21 @@ type Call = ReturnType<typeof api>;
  * first message, the model (shown; staff choose it), the budget (this person's range), then Start; the new session then
  * opens as its full card. Focus stays inside while it is open, Esc closes it, and its title names it.
  */
-function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boolean; offer: Offer; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void }) {
-  const range = offer.budget ?? { default_usd: offer.budget_usd, max_usd: offer.budget_usd, ceiling_usd: offer.ceiling_usd };
+function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStarted }: {
+  open: boolean; offer: Offer; profiles: StartProfile[]; preset: { profile: string | null; message: string | null }; call: Call; onOpenChange: (o: boolean) => void; onStarted: (id: string) => void;
+}) {
+  // mold_v0-261: the profile chosen (the preset's when it is one this person may start, else the first: the Default).
+  const first = profiles.find((p) => p.id === preset.profile) ?? profiles[0] ?? null;
+  const [profileId, setProfileId] = useState<string | null>(first?.id ?? null);
+  const profile = profiles.find((p) => p.id === profileId) ?? null;
+  const range = profile?.budget ?? offer.budget ?? { default_usd: offer.budget_usd, max_usd: offer.budget_usd, ceiling_usd: offer.ceiling_usd };
   const [message, setMessage] = useState('');
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<'conversation' | 'task'>('conversation');
   const [budget, setBudget] = useState(String(range.default_usd));
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setMessage(''); setTitle(''); setMode('conversation'); setBudget(String(range.default_usd)); } }, [open, range.default_usd]);
+  useEffect(() => { if (open) { setMessage(preset.message ?? ''); setTitle(''); setMode('conversation'); setProfileId(first?.id ?? null); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) setBudget(String(range.default_usd)); }, [open, profileId, range.default_usd]);
   const b = Number(budget);
   const budgetWrong = !Number.isFinite(b) || b < 0.1 || b > range.max_usd + 1e-9;
   const submit = async () => {
@@ -179,7 +200,7 @@ function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boo
     if (budgetWrong) { toast.error(`The budget is between $0.10 and ${usd(range.max_usd)}`); return; }
     setBusy(true);
     try {
-      const r = await call<{ session: Session }>('POST', '', { message, title: title || undefined, mode, ...(b !== range.default_usd ? { budget_usd: b } : {}) });
+      const r = await call<{ session: Session }>('POST', '', { message, title: title || undefined, mode, ...(profile ? { profile: profile.id } : {}), ...(b !== range.default_usd ? { budget_usd: b } : {}) });
       toast.success('Started'); onStarted(r.session.id);
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
@@ -209,8 +230,17 @@ function StartDialog({ open, offer, call, onOpenChange, onStarted }: { open: boo
             <Textarea id='agent-start-message' rows={5} autoFocus value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Summarise this workspace's records and say what needs attention first." />
           </FormRow>
           <dl className='grid gap-x-4 gap-y-3 rounded-lg border p-3 text-sm sm:grid-cols-[auto_1fr]' data-agent-start-terms=''>
+            {profiles.length > 0 && <>
+              <dt className='text-muted-foreground'><label htmlFor='agent-start-profile'>Profile</label></dt>
+              <dd className='grid gap-1' data-agent-start-profile=''>
+                <NativeSelect id='agent-start-profile' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} aria-describedby='agent-start-profile-hint'>
+                  {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
+                </NativeSelect>
+                <span id='agent-start-profile-hint' className='text-muted-foreground text-xs'>{profile?.description || 'Its instructions, model, budget and tools, as the platform’s staff set them up.'}{profile && profile.files > 0 ? ` It starts with ${profile.files} file${profile.files === 1 ? '' : 's'} in its workspace.` : ''}</span>
+              </dd>
+            </>}
             <dt className='text-muted-foreground'>Model</dt>
-            <dd><span className='font-mono text-xs'>{offer.model}</span><span className='text-muted-foreground block text-xs'>Set by the platform&apos;s staff for every new session.</span></dd>
+            <dd><span className='font-mono text-xs'>{profile?.model ?? offer.model}</span><span className='text-muted-foreground block text-xs'>Set by the platform&apos;s staff{profiles.length > 1 ? ' for this profile' : ' for every new session'}.</span></dd>
             <dt className='text-muted-foreground'><label htmlFor='agent-start-budget'>Budget (USD)</label></dt>
             <dd className='grid gap-1'>
               <Input id='agent-start-budget' className='w-32' type='number' inputMode='decimal' min={0.1} max={range.max_usd} step='0.01' value={budget}
@@ -294,6 +324,7 @@ function StateLine({ d, area }: { d: Detail; area: Area }) {
       <div className='flex flex-wrap items-center gap-x-4 gap-y-2 text-sm'>
         <PhaseBadge s={d} />
         <span className='text-muted-foreground'>{d.harness.label} · <span className='font-mono text-xs'>{d.harness.model}</span></span>
+        {d.profile && <span className='text-muted-foreground' data-agent-profile=''>Profile {d.profile.name} <span className='text-xs'>(version {d.profile.version})</span></span>}
         <span className='text-muted-foreground'>{d.mode === 'task' ? 'Task' : 'Conversation'}</span>
         {area === 'admin' && d.workspace?.slug && <span className='text-muted-foreground'>Workspace <span className='font-mono text-xs'>{d.workspace.slug}</span></span>}
         <span className='text-muted-foreground'>Started by {d.mine ? 'you' : d.started_by}</span>
@@ -455,7 +486,14 @@ function Details({ d }: { d: Detail }) {
   return (
     <details className='rounded-lg border px-3 py-2 text-sm' data-agent-details=''>
       <summary className='cursor-pointer font-medium'>How this session runs</summary>
-      <h3 className='mt-3 font-medium'>What it reaches of this workspace</h3>
+      <dl className='mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]' data-agent-profile-terms=''>
+        <dt className='text-muted-foreground'>Profile</dt>
+        <dd data-agent-profile-name=''>{d.profile ? <>{d.profile.name}, version {d.profile.version}<span className='text-muted-foreground block text-xs'>Fixed when it started: a later change to the profile applies to new sessions.</span></> : <span className='text-muted-foreground'>None: it started before profiles, with the platform settings of the time</span>}</dd>
+        {d.record && <><dt className='text-muted-foreground'>Started from</dt><dd data-agent-record=''>{d.workspace ? <span className='font-mono text-xs'>{d.record.key}</span> : <a className='underline-offset-4 hover:underline' href={`/app/records/${encodeURIComponent(d.record.area)}/${encodeURIComponent(d.record.key)}`}>{d.record.key}</a>} <span className='text-muted-foreground text-xs'>({d.record.area})</span></dd></>}
+        {(d.policy.files?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Files it was given</dt><dd data-agent-files=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.files!.map((f) => <span key={f} className='font-mono text-xs'>{f}</span>)}</span></dd></>}
+        {(d.policy.hidden_tools?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Hidden from it</dt><dd data-agent-tools-hidden=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.hidden_tools!.map((t) => <span key={t} className='font-mono text-xs'>{t}</span>)}</span></dd></>}
+      </dl>
+      <h3 className='mt-4 font-medium'>What it reaches of this workspace</h3>
       {r ? (
         <dl className='mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]' data-agent-reach=''>
           <dt className='text-muted-foreground'>Acts as</dt>
@@ -479,7 +517,7 @@ function Details({ d }: { d: Detail }) {
         <dt className='text-muted-foreground'>Web</dt><dd>{d.policy.web_tools === 'off' ? 'Off' : `${d.policy.web_tools === 'search' ? 'Search and read' : 'Read'}: ${d.policy.web_hosts.join(', ') || 'asks for each host'} (${d.web_calls} of ${d.policy.web_calls_max} calls)`}</dd>
         <dt className='text-muted-foreground'>Its own tools</dt><dd>{d.policy.tools.join(', ')}</dd>
         <dt className='text-muted-foreground'>After a crash</dt><dd>{d.policy.auto_resume ? 'Continues by itself' : 'Continues at the next message'} (at most {d.policy.crash_resumes} in a row)</dd>
-        <dt className='text-muted-foreground'>Instructions</dt><dd>{d.hooks.map((h) => `${h.event === 'on_start' ? 'On start' : h.event === 'on_resume' ? 'On resume' : 'Standing'}: ${h.source === 'unset' ? 'none' : h.source === 'harness' ? "the harness's own" : "this session's"}`).join(' · ')}{r ? ', and the workspace context above' : ''}</dd>
+        <dt className='text-muted-foreground'>Instructions</dt><dd>{d.hooks.map((h) => `${h.event === 'on_start' ? 'On start' : h.event === 'on_resume' ? 'On resume' : 'Standing'}: ${h.source === 'unset' ? 'none' : h.source === 'harness' ? "the harness's own" : h.source === 'profile' ? "its profile's" : "this session's"}`).join(' · ')}{r ? ', and the workspace context above' : ''}</dd>
       </dl>
       {d.grants.length > 0 && <div className='mt-3'><p className='font-medium'>Budget raises</p><ul className='mt-1 flex flex-col gap-1'>{d.grants.map((g) => <li key={g.id}>{usd(g.from_usd)} to {usd(g.to_usd)} by {g.by}, <When d={g.at} />: {g.reason}</li>)}</ul></div>}
       {d.wakes_list.length > 0 && <div className='mt-3'><p className='font-medium'>Wakes</p><ul className='mt-1 flex flex-col gap-1'>{d.wakes_list.map((w, i) => <li key={w.run_id} className='flex flex-wrap gap-x-2'><span>Wake {i + 1}</span><span>{w.status}</span>{w.end_reason && <span className='text-muted-foreground'>{w.end_reason}</span>}<span className='tabular-nums'>{usd(w.cost_usd)}</span></li>)}</ul></div>}

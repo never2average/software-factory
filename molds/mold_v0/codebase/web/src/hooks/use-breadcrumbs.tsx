@@ -12,7 +12,7 @@ type BreadcrumbItem = {
 
 // Readable names for path segments; anything else is capitalised (a host pack's own pages: its words).
 const TITLES: Record<string, string> = {
-  admin: 'Admin', app: 'Account', requests: 'Access requests', keys: 'Key vault', agents: 'Harness mix', configuration: 'Agent configuration', accounts: 'Accounts',
+  admin: 'Admin', app: 'Account', requests: 'Access requests', keys: 'Key vault', agents: 'Harness mix', configuration: 'Agent configuration', 'agent-profiles': 'Agent profiles', accounts: 'Accounts',
   analytics: 'Analytics', health: 'Health', usage: 'Usage', context: 'Context', limits: 'Limits', team: 'Team', billing: 'Billing', profile: 'Profile', company: 'Company', users: 'Users', adoption: 'Adoption', products: 'Products', docs: 'Docs',
   'connected-apps': 'Connected apps', settings: 'Settings', 'run-analytics': 'Run analytics'
 };

@@ -374,6 +374,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     ["/admin/accounts (Accounts, Admins)", "app/admin/accounts/page.tsx", "AccountsPage",
       [["features/admin/accounts-tabs.tsx", "AccountsPage"], ["features/admin/accounts.tsx", "AdminAccounts"], ["features/admin/admins.tsx", "AdminAdmins"]]],
     ["/admin/configuration", "app/admin/configuration/page.tsx", "AdminConfiguration", [["features/admin/configuration.tsx", "AdminConfiguration"]]],
+    // mold_v0-261 (flag agent_harness): Admin › Agent profiles, the standard list.
+    ["/admin/agent-profiles", "app/admin/agent-profiles/page.tsx", "AgentProfilesPage", [["features/agent/profiles-page.tsx", "AgentProfilesPage"]]],
     ["/admin/keys", "app/admin/keys/page.tsx", "AdminKeyVault", [["features/admin/keyvault.tsx", "AdminKeyVault"]]],
     ["/admin/journeys", "app/admin/journeys/page.tsx", "AdminJourneys", [["features/journeys/admin.tsx", "AdminJourneys"]]],
   ];

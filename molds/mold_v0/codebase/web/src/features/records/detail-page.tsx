@@ -384,6 +384,8 @@ const runHref = (_pack: string, id: string) => `/app/runs/${encodeURIComponent(i
 /** The record's runs (mold_v0-254): newest first, at most its limit, each with its state, timing, cost and who started it. */
 function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page: PageLoad; data: RunsData | undefined }) {
   const runs = data?.runs ?? [];
+  // mold_v0-261 (flag agent_harness): the workspace agent sessions started from this record (its start_agent actions).
+  const sessions = data?.sessions?.rows ?? [];
   if (page.data && !data) return null;
   const tab = runs.length ? packTabs.find((x) => x.pack === runs[0]!.pack && x.kind === 'runs') : null;
   const status = (r: (typeof runs)[number]) => (
@@ -398,8 +400,9 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
       link={tab && data && data.total > runs.length ? <Button variant='outline' size='sm' nativeButton={false} render={<Link href={tab.url} />} data-all-runs=''>All runs<Icons.arrowRight aria-hidden data-icon='inline-end' /></Button> : undefined}>
       {page.error && !data ? <div className='px-6 py-4'><ErrorState error={page.error} /></div>
         : !data ? <ListLoading />
-        : !runs.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
+        : !runs.length && !sessions.length ? <ListEmpty text={s.empty ?? 'Nothing has run on this record yet.'} />
         : (<>
+          {runs.length > 0 && <>
           <div className='hidden overflow-x-auto md:block'>
             <table className='w-full text-sm' data-runs-table=''>
               <thead className='[&_tr]:border-b'>
@@ -430,10 +433,36 @@ function RunsSection({ s, id, page, data }: { s: DetailSection; id: string; page
               </li>
             ))}
           </ul>
+          </>}
+          {sessions.length > 0 && <RecordSessions rows={sessions} total={data?.sessions?.total ?? sessions.length} />}
         </>)}
     </ListCard>
   );
 }
+
+/** The workspace agent sessions started from a record (mold_v0-261): each opens on the agent's page. */
+function RecordSessions({ rows, total }: { rows: NonNullable<RunsData['sessions']>['rows']; total: number }) {
+  return (
+    <div className='border-t' data-record-sessions=''>
+      <p className='text-muted-foreground px-6 pt-3 pb-1 text-xs font-medium'>Agent sessions{total > rows.length ? ` (the newest ${rows.length} of ${total})` : ''}</p>
+      <ul className='divide-y'>
+        {rows.map((x) => (
+          <li key={x.id} className='flex flex-col gap-1 px-6 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4' data-record-session={x.id}>
+            <span className='flex min-w-0 flex-col gap-0.5'>
+              <Link href={`/app/agent?session=${encodeURIComponent(x.id)}`} className='font-medium break-words underline-offset-4 hover:underline'>{x.title}</Link>
+              <span className='text-muted-foreground text-xs'>{x.profile ? `${x.profile.name}, version ${x.profile.version}` : 'Workspace agent'} · {x.started_by ?? 'Someone'} · <DateText v={x.created_at} relative /></span>
+            </span>
+            <span className='flex shrink-0 items-center gap-3 text-xs'>
+              <ToneBadge color={x.phase === 'failed' ? 'danger' : x.phase === 'awaiting_approval' ? 'warning' : ['working', 'starting', 'waking', 'waiting'].includes(x.phase) ? 'info' : 'neutral'}>{SESSION_PHASE[x.phase] ?? x.phase}</ToneBadge>
+              <span className='tabular-nums'>{formatValue(x.spent_usd, 'usd')} <span className='text-muted-foreground'>of {formatValue(x.budget_usd, 'usd')}</span></span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+const SESSION_PHASE: Record<string, string> = { starting: 'Starting', working: 'Working', waiting: 'Waiting for you', parked: 'Parked', waking: 'Waking up', paused: 'Paused', awaiting_approval: 'Needs a decision', stopped: 'Stopped', failed: 'Failed', archived: 'Archived' };
 
 const NOTICE_ICON: Record<NoticeTone, keyof typeof Icons> = { info: 'info', success: 'circleCheck', warning: 'warning', danger: 'alertCircle' };
 /**

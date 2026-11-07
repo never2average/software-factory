@@ -136,6 +136,8 @@ export function createServer(org: Org, context = ""): McpServer {
   registerLedgerTools(server, org); // mold_v0-195: verify_audit_trail, with audit.sign on
   registerAgentTools(server, org); // mold_v0-243: the workspace agent's sessions, with agent_harness on
   registerUsageTools(server, org); // mold_v0-260: get_usage, with usage_tool on (off by default)
+  // mold_v0-261: a workspace agent session's token never lists the tools its agent profile hides (the server refuses them too).
+  for (const name of org.agentSession?.hidden ?? []) (server as unknown as { _registeredTools: Record<string, { remove(): void } | undefined> })._registeredTools[name]?.remove();
   // Slash commands after every tool: the host packs' own, then the ones the packs declare (mold_v0-137, pack.json mcp.prompts).
   for (const h of hosts()) h.mcp?.registerPrompts?.(server, org);
   registerPackPrompts(server);
