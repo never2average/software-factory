@@ -33,10 +33,12 @@ export const ACCESS_FIELD_TYPES = ["text", "long_text", "url", "email", "select"
 export type AccessFieldType = (typeof ACCESS_FIELD_TYPES)[number];
 
 export interface AccessFieldOption { value: string; label: string }
+/** A field's kind: a pack's (ACCESS_FIELD_TYPES), or `number`, which only the staff console's form editor offers (mold_v0-266). */
+export type FieldKind = AccessFieldType | "number";
 export interface AccessField {
   key: string;
   label: string;
-  type: AccessFieldType;
+  type: FieldKind;
   required?: boolean;
   options?: AccessFieldOption[];
   max_length?: number;
@@ -54,8 +56,8 @@ export const SHELL_REQUEST_FIELDS = ["email", "name", "company", "message", "sou
 export const MAX_ACCESS_FIELDS = 20;
 const MAX_OPTIONS = 30;
 const KEY = /^[a-z][a-z0-9_]{0,39}$/;
-const DEFAULT_MAX: Record<AccessFieldType, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80 };
-const MAX_LENGTH: Record<AccessFieldType, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80 };
+const DEFAULT_MAX: Record<FieldKind, number> = { text: 200, long_text: 2000, url: 500, email: 500, select: 80, multi_select: 80, number: 40 };
+const MAX_LENGTH: Record<FieldKind, number> = { text: 500, long_text: 4000, url: 1000, email: 500, select: 80, multi_select: 80, number: 40 };
 const FIELD_KEYS = ["key", "label", "type", "required", "options", "max_length", "help", "placeholder", "person"];
 
 /** Characters a plain-text line may not hold (src/landing.ts NOT_PLAIN, src/legal.ts). */
@@ -92,7 +94,7 @@ export function accessRequestProblems(spec: unknown): string[] {
     const lp = plainProblem(f.label, 80);
     if (lp) out.push(`${at}.label: ${lp}`);
     const type = f.type as AccessFieldType;
-    if (!ACCESS_FIELD_TYPES.includes(type)) { out.push(`${at}.type: one of ${ACCESS_FIELD_TYPES.join(", ")}`); return; }
+    if (!(ACCESS_FIELD_TYPES as readonly string[]).includes(type)) { out.push(`${at}.type: one of ${ACCESS_FIELD_TYPES.join(", ")}`); return; }
     if (f.required !== undefined && typeof f.required !== "boolean") out.push(`${at}.required: true or false`);
     if (f.person !== undefined && typeof f.person !== "boolean") out.push(`${at}.person: true or false`);
     else if (f.person === true && type !== "text" && type !== "select") out.push(`${at}.person: only a text or select answer (one line) says who the requester is`);
@@ -170,6 +172,8 @@ export function normalizeUrl(v: string): string | null {
   } catch { return null; }
 }
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A number as a person types it: digits, an optional minus and decimal part (12, -3, 4.5). */
+const NUMBER = /^-?\d{1,15}(\.\d{1,6})?$/;
 
 /**
  * The answers a request carries, checked against the build's fields: `body.answers[key]`, else `body[key]` (a host pack's
@@ -208,6 +212,9 @@ export function answersOf(body: unknown, fields: readonly AccessField[]): { answ
     } else if (f.type === "email") {
       if (!EMAIL.test(v)) return { answers: {}, problem: `${f.label}: enter a valid email address.` };
       answers[f.key] = v;
+    } else if (f.type === "number") {
+      if (!NUMBER.test(v)) return { answers: {}, problem: `${f.label}: enter a number, such as 12 or 4.5.` };
+      answers[f.key] = v;
     } else answers[f.key] = v;
   }
   return { answers, problem: null };
@@ -244,4 +251,293 @@ export function labelledAnswers(fields: readonly AccessField[], answers: Record<
     if (t) out.push({ key: k, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), text: t });
   }
   return out;
+}
+
+// ---------- the form and sign-in editor (mold_v0-266) ----------
+//
+// Platform staff edit the early-access form and the sign-in and sign-up pages' words in the staff console (Admin › Access
+// requests, its Request form and Sign-in page tabs; src/access-pages.ts keeps them, versioned and audited). Nothing saved:
+// every form and page is exactly what the build declares (the shell's fields, the packs' or profile.json's access_request,
+// the landing's request_page), drawn by the same code as before. Saved: the whole form, as staff left it, every field the
+// shell's own included:
+//
+//   { "fields": [{ "key": "email", "label": "Work email", "type": "email", "required": true },
+//                { "key": "company", "label": "Organisation", "type": "text", "required": false },
+//                { "key": "seats", "label": "Seats", "type": "number", "help": "Roughly is fine." }, ...],
+//     "submit": "Request access", "thanks": { "title": "Request sent", "lines": ["We will email {email}."] } }
+//
+// The shell's own fields (email, name, company, message) keep their keys and land in the request's own columns; any other
+// is stored under answers, as a pack's. Email is always asked, required and of the email kind; the others may be hidden,
+// optional, required or retyped (not to several choices: each is one column). A hidden field is not asked and an answer
+// sent for it is dropped. The defaults the editor starts from are what the build shows today (defaultRequestForm).
+
+/** Every kind the editor offers: a line, a box, an address, one choice, several choices, a number, a web address. */
+export const FORM_FIELD_TYPES = ["text", "long_text", "email", "select", "multi_select", "number", "url"] as const satisfies readonly FieldKind[];
+/** The shell's own fields, in the request's own columns: their keys are fixed, and email is always asked. */
+export const SHELL_FORM_KEYS = ["email", "name", "company", "message"] as const;
+export type ShellFormKey = (typeof SHELL_FORM_KEYS)[number];
+/** The longest each of the shell's own columns keeps (POST /api/access-requests cut them at these before mold_v0-266). */
+export const SHELL_FIELD_MAX: Record<ShellFormKey, number> = { email: 254, name: 120, company: 200, message: 4000 };
+export const MAX_FORM_FIELDS = 40;
+const MAX_THANKS_LINES = 6;
+
+export interface FormField extends AccessField {
+  /** Not asked: the field stays in the form (and its older answers keep their label), the public page leaves it out. */
+  hidden?: boolean;
+}
+export interface AccessFormConfig {
+  fields: FormField[];
+  /** The submit button's words. */
+  submit: string;
+  /** What the person reads once it is sent: a title and one to six lines; {email} and {company} are their own. */
+  thanks: { title: string; lines: string[] };
+}
+const FORM_FIELD_KEYS = [...FIELD_KEYS, "hidden"];
+const isShell = (k: string): k is ShellFormKey => (SHELL_FORM_KEYS as readonly string[]).includes(k);
+export const isShellFormKey = isShell;
+
+/** Text that may hold the named {tokens} and nothing else in braces. */
+const tokenProblem = (v: unknown, max: number, tokens: readonly string[]) =>
+  typeof v !== "string" ? "text is required" : plainProblem(tokens.reduce((t, k) => t.split(`{${k}}`).join(k), v), max + 20 * tokens.length) ?? (v.length > max ? `at most ${max} characters` : null);
+
+/** Every problem with a saved form (AccessFormConfig), as "fields[i].x: ...". */
+export function accessFormProblems(cfg: unknown): string[] {
+  const out: string[] = [];
+  if (!isObject(cfg)) return ["the form: an object with fields, submit and thanks"];
+  for (const k of Object.keys(cfg)) if (!["fields", "submit", "thanks"].includes(k)) out.push(`${k}: unknown key (known: fields, submit, thanks)`);
+  const sp = plainProblem(cfg.submit, 60);
+  if (sp) out.push(`submit: ${sp}`);
+  const th = cfg.thanks;
+  if (!isObject(th)) out.push("thanks: an object with title and lines");
+  else {
+    for (const k of Object.keys(th)) if (k !== "title" && k !== "lines") out.push(`thanks.${k}: unknown key (known: title, lines)`);
+    const tp = plainProblem(th.title, 80);
+    if (tp) out.push(`thanks.title: ${tp}`);
+    if (!Array.isArray(th.lines) || !th.lines.length || th.lines.length > MAX_THANKS_LINES) out.push(`thanks.lines: 1 to ${MAX_THANKS_LINES} lines`);
+    else th.lines.forEach((l, i) => { const p = tokenProblem(l, 300, ["email", "company"]); if (p) out.push(`thanks.lines[${i}]: ${p} ({email} and {company} are the only words in braces)`); });
+  }
+  const fields = cfg.fields;
+  if (!Array.isArray(fields) || !fields.length) return [...out, `fields: a list of 1 to ${MAX_FORM_FIELDS} fields`];
+  if (fields.length > MAX_FORM_FIELDS) out.push(`fields: at most ${MAX_FORM_FIELDS} fields`);
+  const seen = new Set<string>();
+  fields.forEach((f, i) => {
+    const at = `fields[${i}]`;
+    if (!isObject(f)) { out.push(`${at}: an object with key, label and type`); return; }
+    for (const k of Object.keys(f)) if (!FORM_FIELD_KEYS.includes(k)) out.push(`${at}.${k}: unknown key (known: ${FORM_FIELD_KEYS.join(", ")})`);
+    const key = f.key;
+    if (typeof key !== "string" || !KEY.test(key)) { out.push(`${at}.key: 1-40 lowercase letters, digits or _, starting with a letter`); return; }
+    if (key === "source") out.push(`${at}.key: source is where the request came from, never a question`);
+    if (seen.has(key)) out.push(`${at}.key: ${key} is in the form twice`);
+    seen.add(key);
+    const lp = plainProblem(f.label, 80);
+    if (lp) out.push(`${at}.label: ${lp}`);
+    const type = f.type as FieldKind;
+    if (!(FORM_FIELD_TYPES as readonly string[]).includes(type)) { out.push(`${at}.type: one of ${FORM_FIELD_TYPES.join(", ")}`); return; }
+    for (const k of ["required", "hidden", "person"] as const) if (f[k] !== undefined && typeof f[k] !== "boolean") out.push(`${at}.${k}: true or false`);
+    if (f.required === true && f.hidden === true) out.push(`${at}: a hidden field cannot be required`);
+    if (key === "email") {
+      if (type !== "email") out.push(`${at}.type: the email field is always an email address`);
+      if (f.required !== true) out.push(`${at}.required: the email field is always required`);
+      if (f.hidden === true) out.push(`${at}.hidden: the email field is always asked`);
+    } else if (isShell(key) && type === "multi_select") out.push(`${at}.type: ${key} is one answer (its own column): any kind but several choices`);
+    if (f.person === true && (type !== "text" && type !== "select" || isShell(key))) out.push(`${at}.person: only a text or select answer of your own (not the shell's ${SHELL_FORM_KEYS.join(", ")}) says who the requester is`);
+    for (const [k, max] of [["help", 200], ["placeholder", 120]] as const) {
+      if (f[k] === undefined) continue;
+      const p = plainProblem(f[k], max);
+      if (p) out.push(`${at}.${k}: ${p}`);
+    }
+    const choice = type === "select" || type === "multi_select";
+    if (choice) {
+      if (f.max_length !== undefined) out.push(`${at}.max_length: only for a field one types into`);
+      if (f.placeholder !== undefined && type === "multi_select") out.push(`${at}.placeholder: not for a field of several choices`);
+      const opts = f.options;
+      if (!Array.isArray(opts) || !opts.length || opts.length > MAX_OPTIONS) { out.push(`${at}.options: a list of 1 to ${MAX_OPTIONS} options`); return; }
+      const values = new Set<string>();
+      opts.forEach((o, j) => {
+        const oat = `${at}.options[${j}]`;
+        if (!isObject(o)) { out.push(`${oat}: an object with value and label`); return; }
+        for (const k of Object.keys(o)) if (k !== "value" && k !== "label") out.push(`${oat}.${k}: unknown key (known: value, label)`);
+        const vp = plainProblem(o.value, 80);
+        if (vp) out.push(`${oat}.value: ${vp}`);
+        else if (o.value !== (o.value as string).trim()) out.push(`${oat}.value: no space at either end`);
+        else if (values.has(o.value as string)) out.push(`${oat}.value: ${o.value} is offered twice`);
+        else values.add(o.value as string);
+        const p = plainProblem(o.label, 80);
+        if (p) out.push(`${oat}.label: ${p}`);
+      });
+    } else {
+      if (f.options !== undefined) out.push(`${at}.options: only for a field of one or several choices`);
+      const ceiling = isShell(key) ? Math.min(SHELL_FIELD_MAX[key], MAX_LENGTH[type]) : MAX_LENGTH[type];
+      if (f.max_length !== undefined && (!Number.isInteger(f.max_length) || (f.max_length as number) < 1 || (f.max_length as number) > ceiling))
+        out.push(`${at}.max_length: a whole number from 1 to ${ceiling}`);
+    }
+  });
+  if (!seen.has("email")) out.push("fields: the email field is always in the form");
+  return out;
+}
+
+/** A checked form with nothing but the known keys. */
+export function formOf(cfg: AccessFormConfig): AccessFormConfig {
+  const pick = (f: FormField) => Object.fromEntries(FORM_FIELD_KEYS.flatMap((k) => (f[k as keyof FormField] === undefined ? [] : [[k, f[k as keyof FormField]]]))) as unknown as FormField;
+  return { fields: cfg.fields.map(pick), submit: cfg.submit, thanks: { title: cfg.thanks.title, lines: [...cfg.thanks.lines] } };
+}
+
+/** The fields a form asks (not hidden), in its order. */
+export const askedFields = (cfg: AccessFormConfig) => cfg.fields.filter((f) => !f.hidden);
+
+/** A request's own facts and its answers, checked against a saved form. */
+export interface FormSubmission { email: string; name: string; company: string; message: string; answers: Record<string, AccessAnswer>; problem: string | null }
+
+/**
+ * A request checked against the form in force (mold_v0-266): email always; the shell's other fields as the form asks
+ * them (a hidden one is left empty, whatever was sent); every other field it asks, under answers (answersOf), a field it
+ * hides or never had dropped. -> what to store, or the first problem, naming the field's label.
+ */
+export function formSubmission(body: unknown, cfg: AccessFormConfig): FormSubmission {
+  const b = isObject(body) ? body : {};
+  const out: FormSubmission = { email: "", name: "", company: "", message: "", answers: {}, problem: null };
+  const fail = (problem: string) => ({ ...out, answers: {}, problem });
+  const email = typeof b.email === "string" ? b.email.trim().slice(0, 200) : "";
+  if (!EMAIL.test(email)) return fail("Please enter a valid email.");
+  out.email = email;
+  for (const key of ["name", "company", "message"] as const) {
+    const f = cfg.fields.find((x) => x.key === key);
+    if (!f || f.hidden) continue;
+    // As before mold_v0-266, a longer answer is cut at its column's length (the form's own limit is the browser's), and an
+    // empty required one is asked for in the words the API always used ("Please tell us your company.").
+    const max = Math.min(f.max_length ?? SHELL_FIELD_MAX[key], SHELL_FIELD_MAX[key]);
+    const raw = typeof b[key] === "string" ? (b[key] as string).trim().slice(0, max) : b[key];
+    if (f.required && (raw === undefined || raw === null || raw === "")) return fail(key === "company" && f.label === "Company" ? "Please tell us your company." : `${f.label} is required.`);
+    const one = answersOf({ answers: { [key]: raw } }, [{ ...f, max_length: max }]);
+    if (one.problem) return fail(one.problem);
+    out[key] = typeof one.answers[key] === "string" ? (one.answers[key] as string) : "";
+  }
+  const own = askedFields(cfg).filter((f) => !isShell(f.key));
+  const { answers, problem } = answersOf(b, own);
+  if (problem) return fail(problem);
+  out.answers = answers;
+  return out;
+}
+
+/**
+ * The fields whose labels name a stored request's answers (Admin › Access requests, list_access_requests, the alert email):
+ * a saved form's own fields (hidden ones too: their older answers keep their label), then the build's declared ones it
+ * no longer has. Without a saved form, the build's.
+ */
+export function labelFields(declared: readonly AccessField[], cfg: AccessFormConfig | null | undefined): AccessField[] {
+  if (!cfg) return [...declared];
+  const mine = cfg.fields.filter((f) => !isShell(f.key)) as AccessField[];
+  return [...mine, ...declared.filter((d) => !mine.some((f) => f.key === d.key))];
+}
+
+/** A line said once sent, with the sender's company and address in it. */
+export const thanksLine = (line: string, company: string, email: string) =>
+  line.replace(/\{company\}/g, company || "your company").replace(/\{email\}/g, email || "you");
+
+/** The words the shell's own forms say in the build's words ({product} filled by the caller: src/vocabulary.ts fill). */
+export interface FormWords {
+  /** "What would you like to use {product} for?" */
+  message: string;
+  /** /request-access: "Thank you. The {product} team will look at it". */
+  thanks: string;
+  /** The request page: "The {product} team looks at your request." */
+  first_step: string;
+}
+/** The landing's request page's form (src/landing.ts request_page.form). */
+export interface RequestPageFormSpec { submit?: string; message_label?: string; fields?: string[]; more?: { label: string; fields?: string[] }; done?: { title: string; steps?: string[] } }
+
+const own = (f: AccessField): FormField => ({ ...f });
+
+/**
+ * What the build shows today, as a form the editor starts from (and Reset to defaults returns to): the shell's
+ * /request-access form, or, when the landing has a request page, that page's form (its order, its fold's fields, the
+ * placeholders, its submit and done words; a declared field the page does not ask is there, hidden).
+ */
+export function defaultRequestForm(declared: readonly AccessField[], words: FormWords, page?: RequestPageFormSpec | null): AccessFormConfig {
+  if (!page) {
+    return {
+      fields: [
+        { key: "email", label: "Work email", type: "email", required: true, max_length: 200 },
+        { key: "name", label: "Your name", type: "text", max_length: 120 },
+        { key: "company", label: "Company", type: "text", required: true, max_length: 200 },
+        ...declared.map(own),
+        { key: "message", label: words.message, type: "long_text", max_length: 4000 },
+      ],
+      submit: "Request access",
+      thanks: { title: "Request sent", lines: [`${words.thanks} and, once it is approved, send an invitation to {email}. Nothing else is needed from you for now.`] },
+    };
+  }
+  const byKey = (keys: readonly string[]) => keys.flatMap((k) => declared.filter((f) => f.key === k));
+  const folded = byKey(page.more?.fields ?? []);
+  const shown = page.fields ? byKey(page.fields) : declared.filter((f) => !folded.includes(f));
+  const notAsked = declared.filter((f) => !shown.includes(f) && !folded.includes(f));
+  const name: FormField = { key: "name", label: "Your name", type: "text", max_length: 120 };
+  return {
+    fields: [
+      { key: "email", label: "Work email", type: "email", required: true, placeholder: "you@company.com", max_length: 254 },
+      { key: "company", label: "Company", type: "text", required: true, placeholder: "Acme", max_length: 200 },
+      ...(page.more ? [...shown.map(own), name, ...folded.map(own)] : [name, ...shown.map(own)]),
+      ...notAsked.map(({ required: _asked, ...f }): FormField => ({ ...f, hidden: true })),
+      { key: "message", label: page.message_label ?? words.message, type: "long_text", max_length: 4000 },
+    ],
+    submit: page.submit ?? "Request access",
+    thanks: { title: page.done?.title ?? "Request sent", lines: page.done?.steps ?? [words.first_step, "Once it is approved, an invitation goes to {email}."] },
+  };
+}
+
+// ---------- the sign-in and sign-up pages' words (mold_v0-266) ----------
+
+/** One page's words; each one left out is the page's own (the shell's, or Clerk's). */
+export interface AuthWords { title?: string; subtitle?: string; button?: string }
+export interface SignInConfig {
+  sign_in?: AuthWords;
+  sign_up?: AuthWords;
+  /** A sign-in provider's button, {provider} its name: "Continue with {provider}". */
+  social_button?: string;
+  /** A line under the form: {terms} and {privacy} become links to the build's Terms and Privacy (or the addresses given). */
+  legal?: { text: string; terms_url?: string; privacy_url?: string };
+  /** The sign-in methods not shown (src/access-pages.ts signInMethods: the ones that may be hidden). */
+  hidden_methods?: string[];
+}
+const AUTH_WORD_MAX = { title: 80, subtitle: 200, button: 40 } as const;
+const METHOD = /^[a-z][a-z0-9_]{0,59}$/;
+/** A link's address: a path of this site or an https:// address, with nothing a link should not hold. */
+export const legalHref = (v: unknown): v is string => typeof v === "string" && v.length <= 500 && /^[!-~]+$/.test(v) && !/["'<>\\`]/.test(v) && (/^\/(?!\/)/.test(v) || /^https:\/\/[^/]/.test(v));
+
+/** Every problem with saved sign-in words (SignInConfig). */
+export function signInProblems(cfg: unknown): string[] {
+  const out: string[] = [];
+  if (!isObject(cfg)) return ["the sign-in words: an object"];
+  const known = ["sign_in", "sign_up", "social_button", "legal", "hidden_methods"];
+  for (const k of Object.keys(cfg)) if (!known.includes(k)) out.push(`${k}: unknown key (known: ${known.join(", ")})`);
+  for (const page of ["sign_in", "sign_up"] as const) {
+    const w = cfg[page];
+    if (w === undefined) continue;
+    if (!isObject(w)) { out.push(`${page}: an object with title, subtitle and button`); continue; }
+    for (const k of Object.keys(w)) {
+      if (!(k in AUTH_WORD_MAX)) { out.push(`${page}.${k}: unknown key (known: title, subtitle, button)`); continue; }
+      const p = plainProblem(w[k], AUTH_WORD_MAX[k as keyof typeof AUTH_WORD_MAX]);
+      if (p) out.push(`${page}.${k}: ${p}`);
+    }
+  }
+  if (cfg.social_button !== undefined) { const p = tokenProblem(cfg.social_button, 60, ["provider"]); if (p) out.push(`social_button: ${p} ({provider} is the only word in braces)`); }
+  const l = cfg.legal;
+  if (l !== undefined) {
+    if (!isObject(l)) out.push("legal: an object with text");
+    else {
+      for (const k of Object.keys(l)) if (!["text", "terms_url", "privacy_url"].includes(k)) out.push(`legal.${k}: unknown key (known: text, terms_url, privacy_url)`);
+      const p = tokenProblem(l.text, 300, ["terms", "privacy"]);
+      if (p) out.push(`legal.text: ${p} ({terms} and {privacy} are the only words in braces)`);
+      for (const k of ["terms_url", "privacy_url"] as const) if (l[k] !== undefined && !legalHref(l[k])) out.push(`legal.${k}: a path of this site (/terms) or an https:// address`);
+    }
+  }
+  const h = cfg.hidden_methods;
+  if (h !== undefined && (!Array.isArray(h) || h.length > 30 || h.some((x) => typeof x !== "string" || !METHOD.test(x)) || new Set(h).size !== h.length))
+    out.push("hidden_methods: a list of up to 30 method ids, each once");
+  return out;
+}
+
+/** The legal line in parts: text, and the {terms} and {privacy} links in their places. */
+export function legalLineParts(text: string): ({ text: string } | { link: "terms" | "privacy" })[] {
+  return text.split(/(\{terms\}|\{privacy\})/).filter(Boolean).map((x) => (x === "{terms}" ? { link: "terms" as const } : x === "{privacy}" ? { link: "privacy" as const } : { text: x }));
 }

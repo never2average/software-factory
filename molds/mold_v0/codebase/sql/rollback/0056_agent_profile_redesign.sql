@@ -1,6 +1,6 @@
--- Rolling back past 0055_agent_profile_redesign (mold_v0-267), for a release from before it.
+-- Rolling back past 0056_agent_profile_redesign (mold_v0-267), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0055_agent_profile_redesign.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0056_agent_profile_redesign.sql
 -- Puts each profile back in the earlier shape as its next version: one this migration rewrote and nobody changed since
 -- gets exactly its config from before (the 'migrated' change's `before`); any other is mapped back (inference -> model and
 -- provider, workspace keys -> credentials, governance.web -> web {tools, hosts}); platform keys, uploads, the harness

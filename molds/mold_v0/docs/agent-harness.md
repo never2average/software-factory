@@ -61,7 +61,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
 | Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `app`: `src/harness-reach.ts`. See "What a session reaches" below |
 | Context (mold_v0-250) | The workspace's context and memory and the server's own instructions, appended to the standing instructions: see below |
-| Per-workload policy (mold_v0-261, mold_v0-267) | Agent profiles (`src/agent-profiles.ts`, migrations 0052 and 0055): a profile is the mold's workload: its harness, its key vault (keys injected; the primary inference provider's model and key), its uploads and its governance policy; frozen with its version at the session's start, as the reference freezes a workload's snapshot at admission. See "Agent profiles" and "Governance policy" below |
+| Per-workload policy (mold_v0-261, mold_v0-267) | Agent profiles (`src/agent-profiles.ts`, migrations 0052 and 0056): a profile is the mold's workload: its harness, its key vault (keys injected; the primary inference provider's model and key), its uploads and its governance policy; frozen with its version at the session's start, as the reference freezes a workload's snapshot at admission. See "Agent profiles" and "Governance policy" below |
 | API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
 
 ## What a session reaches (mold_v0-250)
@@ -148,7 +148,7 @@ flag off: no route, page, table row, upload or action of it answers.
 - **Versioned and audited**, as before: each save is the next version (a save names the version it edited: 409 when
   someone saved meanwhile); each change (created, edited, archived, restored, migrated) is in `agent_profile_changes`
   with who, before and after; `start_agent` and the frozen version per session stay.
-- **Migration** (`0055_agent_profile_redesign`, rollback `sql/rollback/0055_agent_profile_redesign.sql`): each profile in
+- **Migration** (`0056_agent_profile_redesign`, rollback `sql/rollback/0056_agent_profile_redesign.sql`): each profile in
   the earlier shape is rewritten as its next version: its model as the primary inference provider's, its credentials as
   workspace keys, its web access as the governance policy's web policy (20 calls, approvals on). **Dropped**, listed in
   the `migrated` change's `after.dropped` and kept in its `before`: instructions (the governance policy has no place for

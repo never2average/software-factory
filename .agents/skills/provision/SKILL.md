@@ -221,21 +221,22 @@ an app on the internet signs people in with Clerk. State still lists Clerk's nam
 what is read is the deploy target itself:
 
 - **Vercel:** the check, `--deploy` and mint.py's keys station stop with exit 3 (needs_human) until `CLERK_SECRET_KEY`
-  is on both projects, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console and `CLERK_JWT_KEY` on the `-api` project
-  (`CLERK_PUBLISHABLE_KEY` on the API is copied from the console's key at every deploy, so it is never typed). Nothing is
-  created or deployed first, and the app is not marked reverted.
-- **A server of its own (`compose_remote`):** the check is offline, so it lists `CLERK_SECRET_KEY`,
-  `CLERK_PUBLISHABLE_KEY` and `CLERK_JWT_KEY` among the values the deploy asks for at a hidden prompt (the console gets
+  is on both projects and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console (`CLERK_PUBLISHABLE_KEY` on the API is
+  copied from the console's key at every deploy, so it is never typed). Nothing is created or deployed first, and the
+  app is not marked reverted.
+- **A server of its own (`compose_remote`):** the check is offline, so it lists `CLERK_SECRET_KEY` and
+  `CLERK_PUBLISHABLE_KEY` among the values the deploy asks for at a hidden prompt (the console gets
   the publishable key under its browser name from the compose file). A deploy with nobody at a terminal stops with
   exit 3 before the release or the env file changes.
 - The ask is in plain words, in the output and in each `needs` entry: open https://dashboard.clerk.com (create a
   Clerk application for the app if it has none), click **Configure**, then **API keys**, copy the named value, and run
   `python3 .claude/scripts/provision.py <app_id> --set-secret NAME` (on a server: `--deploy-remote`) in a separate
   terminal. Pass it to the operator as written, one key at a time, and wait.
-- `CLERK_JWT_KEY` is Clerk's **PEM public key** (several lines). The hidden prompt reads a pasted block to its END line
-  and keeps it as one line, which the app reads as it is.
-- An app **already deployed on Clerk** (every other name held) keeps redeploying without `CLERK_JWT_KEY`: the check
-  prints a NOTE that it is still to set and stops for nothing. A first deploy needs all of them.
+- **Never ask for Clerk's PEM public key (`CLERK_JWT_KEY`; mold_v0-269).** The app verifies session tokens against
+  Clerk's JWKS, fetched with the secret key and cached (`codebase/src/clerk.ts`), so a first deploy needs only the
+  secret and publishable keys. `CLERK_JWT_KEY` stays an optional override (it skips the JWKS fetch): anyone who wants it
+  sets it with `--set-secret CLERK_JWT_KEY`, and the hidden prompt reads a pasted PEM block to its END line and keeps it
+  as one line. Nothing asks for it, and nothing stops without it.
 
 **AI clients signing in on `/mcp` with Clerk (mold_v0-116; `lib/clerk_mcp.py`, `mold.json` `mcp_sign_in`).** When
 the `-api` project is on Clerk (`CLERK_SECRET_KEY` set, `AUTH_PROVIDER` not `builtin`):

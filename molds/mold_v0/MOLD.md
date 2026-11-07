@@ -303,12 +303,13 @@ directory or sandbox name with a short form fails anywhere. A pack's own files a
   adapters. Details: `codebase/docs/accounts.md`, "Sign-in: built-in or Clerk".
 - Sign-in at deploy time (operator decision, mold_v0-265): every deployed app is on Clerk. `mold.json`
   `sign_in_required` names the keys each target must hold (Vercel: `CLERK_SECRET_KEY` on both projects,
-  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console, `CLERK_JWT_KEY` on the API, whose `CLERK_PUBLISHABLE_KEY` is
-  copied from the console's; a server: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and `CLERK_JWT_KEY` in its env
-  file). provision.py's check and deploy and mint.py's keys station stop for the operator (exit 3) until they are set,
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console, the API's `CLERK_PUBLISHABLE_KEY` copied from the console's; a
+  server: `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY` in its env file). provision.py's check and deploy and mint.py's keys station stop for the operator (exit 3) until they are set,
   with Clerk's dashboard steps (Configure, then API keys) and the `--set-secret` line for each. The built-in sign-in
-  stays the default of the codebase itself, so the lanes, local runs and tests run without Clerk. An app already
-  deployed on Clerk keeps redeploying without `CLERK_JWT_KEY` (said as still to set).
+  stays the default of the codebase itself, so the lanes, local runs and tests run without Clerk. Session tokens are
+  verified against Clerk's JWKS, fetched with the secret key and cached (`src/clerk.ts`), so Clerk's PEM public key is
+  never asked for (operator decision, mold_v0-269): `CLERK_JWT_KEY` stays an optional override, settable with
+  `--set-secret CLERK_JWT_KEY` (a pasted PEM block is joined to one line), never required.
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
 - Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
@@ -2984,7 +2985,7 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
     workspace's data key at `workspaces/org-<id>/.agent-icon/icon.wse`, bound to the workspace (a copy under another
     workspace's prefix does not open), gone with the workspace. Staff consoles show the app's.
 - **Agent profiles** (mold_v0-261, redesigned by mold_v0-267 to the operator's spec; `src/agent-profiles.ts`,
-  `src/agent-profile-spec.ts`, `src/agent-governance.ts`, migrations 0052 and 0055 with their rollbacks;
+  `src/agent-profile-spec.ts`, `src/agent-governance.ts`, migrations 0052 and 0056 with their rollbacks;
   [docs/agent-harness.md](docs/agent-harness.md) "Agent profiles" and "Governance policy"). Platform staff create, edit,
   version and archive named profiles in **Admin › Agent profiles** (`/admin/agent-profiles`: the standard list; a row, or
   New profile, opens **one modal** with everything a profile is, adds made inline as rows in place, Save and Cancel at the
@@ -2997,7 +2998,7 @@ is not copied. **Off by default** (`features.agent_harness`): off, nothing below
   approvals by a workspace owner, a tool allowlist with a call ceiling, time-bounded exceptions, a shorter retention).
   Budgets, turns and limits are the platform settings. Unset items are the platform setting: the **Default** profile
   sets nothing. Every save is a new version (a save names the version it edited, a newer one refuses it) and every
-  change is audited (`agent_profile_changes`, with `migrated` for 0055's rewrite of the earlier shape, which lists what it
+  change is audited (`agent_profile_changes`, with `migrated` for 0056's rewrite of the earlier shape, which lists what it
   dropped). A session freezes the profile and version it started with; `start_agent: {profile, first_message}` on a
   record page or a list tab starts one from a record. Enforced on the server and in the runner: archived (409), an
   unpinned harness, a price removed since it was saved (409), and the governance policy's rules with the reference's
@@ -3656,6 +3657,49 @@ Proof: `npm run test:teams` (scripts/teams-262-test.ts), `npm run test:record-pa
 `npm run test:migrations` (0053, 0054 and their rollbacks), and the factory's `branding.py`, `repo.py` and `packs.py`
 self-tests.
 
+## Early access and sign-in editor (mold_v0-266)
+
+Platform staff edit the early-access (request-access) form and the sign-in and sign-up pages' words in the staff console,
+live without a redeploy. No flag: with nothing saved every form and page is exactly what the build declares, drawn by the
+same code, and the API checks a request as it always did.
+
+- **Where**: Admin › Access requests, three in-page tabs held in `?section=` like Accounts': Requests (the list),
+  Request form (`?section=form`) and Sign-in page (`?section=sign-in`); `web/src/features/admin/access-pages.tsx`. Each
+  editor works on a draft beside a live preview (the public form itself, drawn from the draft, never sent), each field in
+  a side panel; Save, Discard, Reset to defaults; a History table (the standard list) of every version, who, when, what
+  changed and the config before and after. Every role reads; saving and resetting need the Operator role (`need("accounts")`).
+- **The request form** (`src/access-request.ts` `AccessFormConfig`, `accessFormProblems`, `formSubmission`): every field,
+  the shell's own included (email, name, company, message: their own columns) and the packs' or profile's
+  `access_request` fields: label, help, placeholder, required, hidden, order, kind (text, long text, email, one choice,
+  several choices, number, web address), options and length; fields of staff's own (stored under `answers`); the submit
+  button; the thank-you title and lines (`{email}`, `{company}`). Email is always asked, required and an address; a hidden
+  field is not asked and its answer dropped; the shell's columns take any kind but several choices. The editor starts
+  from `defaultRequestForm`: the build's public form as it is today (the landing's `request_page` form when it has one:
+  its order, fold fields, placeholders, submit and done words, a declared field it never asks hidden; else
+  `/request-access`'s). Pack and profile `access_request` stay those defaults; Reset to defaults saves them back (config null).
+- **The sign-in words** (`SignInConfig`, `signInProblems`): the sign-in and sign-up pages' title, subtitle and main button,
+  a provider button ("Continue with {provider}"), a legal line under the form whose `{terms}` and `{privacy}` link to the
+  addresses given or the build's own Terms and Privacy, and which provider buttons show. Under Clerk the words go to
+  `ClerkProvider`'s `localization` (the open page hands them over: `web/src/features/auth/components/auth-words.tsx`) and
+  hidden providers are its `appearance` (`socialButtonsBlockButton__<provider>`); the methods listed are the Clerk
+  instance's own (its Frontend API environment), else the shell's. The built-in sign-in (lanes, local runs) takes the same
+  words; its emailed code is never hidden.
+- **Storage** (`sql/migrations/0055_access_pages.sql` with its rollback; `src/access-pages.ts`, the only writer):
+  `access_pages` (one row per page: the version in force and its config, NULL for the defaults) and `access_page_changes`
+  (every version: edited or reset, who, when, before and after), staff tables no tenant reaches (`src/rls.ts`). A save
+  names the version it edited (a newer one: 409). Each save is also a staff log line.
+- **Live**: `GET /api/access-pages` (open to anyone) answers both configs, from an in-process copy at most 10 s old (a
+  save refreshes it); the public request pages and the auth pages read it on each request (`accessPagesLive`), the portal's
+  no-account form asks it in the browser. `POST /api/access-requests` checks each request against the form in force
+  (required, kinds, options); Admin › Access requests, `list_access_requests` and the alert email label answers by the
+  form in force (`labelFields`: its fields, then the build's it no longer has).
+
+Proof: `npm run test:access-pages` (scripts/access-pages-test.ts: the rules, the defaults against today's forms field by
+field and request by request, the API's versions, audit, staff-only writes and checks against the current form; with
+`--browser --shots <dir>` the console: defaults saved draw the same DOM as nothing saved, the editor, its preview, the
+public page before and after an edit, Access requests with the answers, the sign-in page with staff's words), `npm run
+test:migrations` (0055 and its rollback), and Octillion parity with nothing saved.
+
 ## Generic gaps (mold_v0-260)
 
 Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and
@@ -3773,8 +3817,9 @@ DNS check, key pair, hidden prompt and env file, then:
 4. copies the source into a new release directory beside the serving one;
 5. writes `DOMAIN` and `PUBLIC_URL` from state into `/etc/software-factory/<app>/env` (root, mode 600), then mints every
    name still missing (the database password and the product's keys) with the product's own `bootstrap.sh`, on the
-   server, in a private temp directory that sees names and never values. Clerk's keys (`CLERK_SECRET_KEY`,
-   `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_KEY`; mold.json `sign_in_required`, mold_v0-265) are required at every deploy:
+   server, in a private temp directory that sees names and never values. Clerk's keys (`CLERK_SECRET_KEY` and
+   `CLERK_PUBLISHABLE_KEY`; mold.json `sign_in_required`, mold_v0-265; never `CLERK_JWT_KEY`, mold_v0-269, tokens being
+   verified via Clerk's JWKS) are required at every deploy:
    the deploy asks for each the server lacks at a hidden prompt (or the operator sets it with
    `provision.py <app> --set-secret NAME` once the server has its env file), and with nobody at a terminal it stops
    with exit 3 before the release or the env file changes. Other optional keys (billing, analytics, Google sign-in) stay off until the operator sets one;
@@ -3813,7 +3858,7 @@ typed by hand, and nothing in the snapshot changes:
   never a minted key. The only other names it reads are its sign-in keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
   `CLERK_SECRET_KEY`, mold.json `operator_env`), set by the operator with `provision.py <app> --set-secret NAME`, which
   writes a name to every project that reads it (`CLERK_SECRET_KEY` to both, the publishable key to the console only).
-  Since mold_v0-265 a deploy requires them (with `CLERK_JWT_KEY` on the API; mold.json `sign_in_required`): the check
+  Since mold_v0-265 a deploy requires them (mold.json `sign_in_required`; never `CLERK_JWT_KEY`, mold_v0-269): the check
   and the deploy stop with exit 3 until both projects hold them. The codebase itself still runs the built-in sign-in
   without them (an emailed code, Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set on the API; the
   console's `src/proxy.ts` only sends a visitor without a session cookie to `/auth/sign-in`), which is what the lanes,

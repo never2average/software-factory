@@ -600,7 +600,7 @@ def operator_names(S):
 PEM_BEGIN = re.compile(r"^-----BEGIN [A-Z ]+-----")
 def pem_ask(ask, limit=80):
     """A hidden prompt that also takes a pasted PEM block (mold_v0-265: CLERK_JWT_KEY, a public key shown on several
-    lines): a first line that opens a block without closing it reads on, line by line, until its END line, and the
+    lines; never asked for since mold_v0-269, Clerk's JWKS verifying tokens, but still read whole for anyone who sets it): a first line that opens a block without closing it reads on, line by line, until its END line, and the
     lines come back joined by single spaces. One line, so an env file holds it, and the PEM readers the app uses take
     it as it is (they drop the BEGIN/END lines and every space before decoding). Any other answer is returned as typed."""
     def read(prompt):

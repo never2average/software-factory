@@ -889,19 +889,29 @@ def single_self_test():
         # mold_v0-265: Clerk on every deploy. The check's plain ask (one --set-secret line per key) makes the station the
         # operator's, each key asked for with Clerk's dashboard steps; a key let go for an app already on Clerk (its NOTE line,
         # the command closed by ")") is never asked for; with the keys set the check is ready and the station done.
-        man0 = single_service.manifest("mold_v0", ROOT); lack0 = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"]
-        ok(single_service.sign_in_typed(man0, "vercel") == lack0 and single_service.sign_in_typed(man0, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"],
-           f"mold_v0's mold.json requires Clerk's keys at every deploy, on both targets: {man0.get('sign_in_required', {}).get('targets')}")
+        # mold_v0-269: session tokens are verified with Clerk's JWKS, so the keys are the secret and publishable ones only;
+        # Clerk's PEM public key (CLERK_JWT_KEY) is never asked for, and stays an optional name --set-secret takes.
+        man0 = single_service.manifest("mold_v0", ROOT); lack0 = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
+        ok(single_service.sign_in_typed(man0, "vercel") == lack0 and single_service.sign_in_typed(man0, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"]
+           and "CLERK_JWT_KEY" not in single_service.sign_in_names(man0) and not single_service.sign_in_spec(man0).get("kept_without"),
+           f"mold_v0's mold.json requires Clerk's secret and publishable keys at every deploy, on both targets, never the JWT key: {man0.get('sign_in_required', {}).get('targets')}")
+        F0 = single_service.compose_facts(single_service.codebase("mold_v0", ROOT), man0)
+        ok("CLERK_JWT_KEY" in F0["optional_secrets"], f"...and CLERK_JWT_KEY stays an optional name, still settable: {F0['optional_secrets']}")
         ask0 = []; single_service.sign_in_ask("zz", man0, "vercel", lack0, say=ask0.append)
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, "\n".join(ask0) + "\n3 value(s) only you hold are not set yet\n", "")
         st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
         ok(st_[0] == OPERATOR and all(n_ in st_[1] for n_ in lack0) and [x["name"] for x in nd] == lack0
-           and all(x["kind"] == "secret" and "dashboard.clerk.com" in x["how"] and "API keys" in x["how"] and f"--set-secret {x['name']}" in x["how"] for x in nd),
-           f"no Clerk keys: the keys station asks for each with Clerk's dashboard steps: {st_} {nd}")
-        note0 = "  NOTE: CLERK_JWT_KEY is not set yet; zz already runs on Clerk, so it keeps deploying without it. Set it when you can (x: python3 .claude/scripts/provision.py zz --set-secret CLERK_JWT_KEY)\n"
+           and all(x["kind"] == "secret" and "dashboard.clerk.com" in x["how"] and "API keys" in x["how"] and f"--set-secret {x['name']}" in x["how"] for x in nd)
+           and "CLERK_JWT_KEY" not in st_[1] and "PEM" not in "\n".join(ask0),
+           f"no Clerk keys: the keys station asks for the two with Clerk's dashboard steps, never the JWT key: {st_} {nd}")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, "  sign-in (required at every deploy): CLERK_SECRET_KEY on zz-api and zz: set\nReady. See the plan: x\n", "")
+        MISSING_KEYS.pop("zz", None); st_ = st_keys("zz", a, i)
+        ok(st_[0] == DONE and not MISSING_KEYS.get("zz") and "CLERK_JWT_KEY" not in st_[1], f"a first deploy with the two Clerk keys set: the station is done, the JWT key never asked for: {st_}")
+        # a kept_without key (a mold that names one; its NOTE line, the command closed by ")") is never asked for either
+        note0 = "  NOTE: EXTRA_KEY is not set yet; zz already runs on Clerk, so it keeps deploying without it. Set it when you can (x: python3 .claude/scripts/provision.py zz --set-secret EXTRA_KEY)\n"
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, note0 + "Ready. See the plan: x\n", "")
         MISSING_KEYS.pop("zz", None); st_ = st_keys("zz", a, i)
-        ok(st_[0] == DONE and not MISSING_KEYS.get("zz"), f"an app already on Clerk without the JWT key: the station is done, the key never asked for: {st_}")
+        ok(st_[0] == DONE and not MISSING_KEYS.get("zz"), f"an app already on Clerk without a kept_without key: the station is done, the key never asked for: {st_}")
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, note0 + "  python3 .claude/scripts/provision.py zz --set-secret PAY_SECRET_KEY\n", "")
         st_ = st_keys("zz", a, i)
         ok(st_[0] == OPERATOR and MISSING_KEYS.get("zz") == ["PAY_SECRET_KEY"], f"...and with another key missing, only that one is asked for: {st_} {MISSING_KEYS.get('zz')}")

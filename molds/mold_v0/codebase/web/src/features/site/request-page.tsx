@@ -9,6 +9,7 @@ import { Backdrop } from './landing';
 import { LANDING_ICONS } from './landing-icons';
 import type { RequestPage } from './landing-types';
 import { RequestPageForm } from './request-page-form';
+import type { AccessFormConfig } from '@/lib/access-request.generated';
 
 /** Its title (under the public pages' title template) and description: the block's seo, else its title and lead. */
 export function requestPageMetadata(page: RequestPage): Metadata {
@@ -17,7 +18,8 @@ export function requestPageMetadata(page: RequestPage): Metadata {
   return { title, ...(description ? { description } : {}) };
 }
 
-export function RequestPageView({ page }: { page: RequestPage }) {
+/** `config`: the form in force (mold_v0-266): what staff saved, null for the page's own. */
+export function RequestPageView({ page, config }: { page: RequestPage; config?: AccessFormConfig | null }) {
   return (
     <section className='relative flex min-h-[calc(100svh-8rem)] items-center overflow-hidden'>
       <Backdrop />
@@ -44,7 +46,7 @@ export function RequestPageView({ page }: { page: RequestPage }) {
             ) : null}
           </div>
           <div className='bg-background/60 min-w-0 rounded-xl border p-5 backdrop-blur sm:p-6'>
-            <RequestPageForm form={page.form} />
+            <RequestPageForm form={page.form} config={config} />
           </div>
         </div>
       </div>

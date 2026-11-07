@@ -130,7 +130,7 @@
     }
   },
   "sign_in_required": {
-    "$comment": "Clerk is the sign-in of every deployed app of this mold (operator decision, mold_v0-265; .claude/scripts/lib/single_service.py sign_in_missing). The built-in sign-in (an emailed code, and Google) stays for the lanes, local runs and tests only. provision.py's check and its deploy, and mint.py's keys station, stop for the operator (exit 3, needs_human) until the deploy target holds every name below. targets.<target>.<NAME>: where NAME must be held (vercel: the api and web projects; compose_remote: env, the server's env file, whose values the deploy asks for at a hidden prompt when the server lacks them), or {\"from\": OTHER} when the deploy fills it from OTHER (on Vercel the API's publishable key is copied from the console's at every deploy, mold_v0-116; on a server the compose file passes CLERK_PUBLISHABLE_KEY to the console under its browser name). kept_without: the names an app ALREADY deployed on Clerk (every other name held) keeps deploying without, the check saying it is still to set; a first deploy needs them all. ask: what the operator opens (dashboard, page) and copies for each name (copy), said in the check's and the deploy's plain ask and before each hidden prompt. AUTH_PROVIDER=builtin on a deploy target does not lift the rule.",
+    "$comment": "Clerk is the sign-in of every deployed app of this mold (operator decision, mold_v0-265; .claude/scripts/lib/single_service.py sign_in_missing). The built-in sign-in (an emailed code, and Google) stays for the lanes, local runs and tests only. provision.py's check and its deploy, and mint.py's keys station, stop for the operator (exit 3, needs_human) until the deploy target holds every name below. targets.<target>.<NAME>: where NAME must be held (vercel: the api and web projects; compose_remote: env, the server's env file, whose values the deploy asks for at a hidden prompt when the server lacks them), or {\"from\": OTHER} when the deploy fills it from OTHER (on Vercel the API's publishable key is copied from the console's at every deploy, mold_v0-116; on a server the compose file passes CLERK_PUBLISHABLE_KEY to the console under its browser name). kept_without (optional; none today, mold_v0-269): the names an app ALREADY deployed on Clerk (every other name held) would keep deploying without, the check saying it is still to set; a first deploy needs them all. Session tokens are verified against Clerk's JWKS, fetched with CLERK_SECRET_KEY and cached (codebase/src/clerk.ts), so Clerk's PEM public key is never asked for (operator decision, mold_v0-269): CLERK_JWT_KEY stays an optional override that skips the JWKS fetch, settable with provision.py <app_id> --set-secret CLERK_JWT_KEY (a pasted PEM block is joined to one line) and never required or asked. ask: what the operator opens (dashboard, page) and copies for each name (copy), said in the check's and the deploy's plain ask and before each hidden prompt. AUTH_PROVIDER=builtin on a deploy target does not lift the rule.",
     "provider": "Clerk",
     "targets": {
       "vercel": {
@@ -143,10 +143,7 @@
         ],
         "CLERK_PUBLISHABLE_KEY": {
           "from": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
-        },
-        "CLERK_JWT_KEY": [
-          "api"
-        ]
+        }
       },
       "compose_remote": {
         "CLERK_SECRET_KEY": [
@@ -157,15 +154,9 @@
         ],
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": {
           "from": "CLERK_PUBLISHABLE_KEY"
-        },
-        "CLERK_JWT_KEY": [
-          "env"
-        ]
+        }
       }
     },
-    "kept_without": [
-      "CLERK_JWT_KEY"
-    ],
     "ask": {
       "dashboard": "https://dashboard.clerk.com",
       "create": "if this app has no Clerk application yet, click \"Create application\", type the app's name, leave the sign-in options as they are and click \"Create application\" again",
@@ -173,8 +164,7 @@
       "copy": {
         "CLERK_SECRET_KEY": "the Secret key, under \"Secret keys\" (click the copy button beside it; it starts with sk_live_ or sk_test_)",
         "CLERK_PUBLISHABLE_KEY": "the Publishable key (click the copy button beside it; it starts with pk_live_ or pk_test_)",
-        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "the Publishable key (click the copy button beside it; it starts with pk_live_ or pk_test_)",
-        "CLERK_JWT_KEY": "the PEM public key, under \"JWT public key\" (copy the whole block, from -----BEGIN PUBLIC KEY----- to -----END PUBLIC KEY-----; paste it as it is, the lines are joined for you)"
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "the Publishable key (click the copy button beside it; it starts with pk_live_ or pk_test_)"
       }
     }
   },
