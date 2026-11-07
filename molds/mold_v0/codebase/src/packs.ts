@@ -132,9 +132,9 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     if (to && parent && (parent.scope !== "workspace" || !pv || inheritsVisibility(pv)))
       problems.push(`pack ${p.id}: record area ${a.name} takes \`visibility\` from ${to} through ${v.inherit}, which ${parent.scope !== "workspace" ? "is shared (platform)" : !pv ? "declares no \`visibility\`" : "inherits its own"}: the parent declares its modes`);
   }
-  // mold_v0-262: the credentials a pack's agent profile gives its sessions: a pack's workspace credential of this build.
+  // mold_v0-262 (mold_v0-267: its `keys`): the credentials a pack's agent profile gives its sessions: a pack's workspace credential of this build.
   const credOf = new Map<string, { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }>(out.flatMap((p) => (p.definition.credentials ?? []).map((c) => [`${p.id}/${(c as { name: string }).name}`, c as { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }] as const)));
-  for (const p of out) for (const ap of p.definition.agentProfiles ?? []) for (const n of (ap as { credentials?: string[] }).credentials ?? []) {
+  for (const p of out) for (const ap of p.definition.agentProfiles ?? []) for (const n of ((ap as { keys?: { kind: string; name?: string }[] }).keys ?? []).flatMap((k) => (k.kind === "workspace" && k.name ? [k.name] : []))) {
     const c = credOf.get(n);
     if (!c) problems.push(`pack ${p.id}: agent profile ${(ap as { id: string }).id} gives its sessions ${n}, which is not a credential a pack of this build declares`);
     else if ((c.bound_to ?? "workspace") !== "workspace" || c.entries || c.github_app || c.oauth)

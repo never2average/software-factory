@@ -2302,8 +2302,8 @@ for (const x of ["packs", "host"]) SHELL_APP_SEGMENTS.add(x);
  * mold_v0-260: run analytics) are pages of the build only while its flag is on: off, they are left out of the routes (so
  * the proxy answers them not found) and the list is what the build wrote before them.
  */
-// mold_v0-261: the agent profiles' pages (Admin › Agent profiles and a profile's page), agent_harness's too.
-const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles", "/admin/agent-profiles/[id]"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
+// mold_v0-261: Admin › Agent profiles (one page since mold_v0-267: a profile opens in its modal), agent_harness's too.
+const FEATURE_PAGES = { agent_harness: ["/app/agent", "/admin/agent", "/admin/agent-profiles"], record_pages: ["/app/runs/[id]"], teams: ["/app/settings/teams/[id]"], run_analytics: ["/app/run-analytics", "/admin/run-analytics"] };
 const OFF_PAGES = Object.entries(FEATURE_PAGES).filter(([id]) => !FEATURE_ON[id]).flatMap(([, list]) => list);
 {
   // A shell segment whose every page is such a page, with its flag off, is not the shell's in this build: a pack's tab or

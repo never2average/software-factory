@@ -53,8 +53,9 @@ function listFiles(dir: string): string[] {
 }
 
 /** Pack a directory: the bundle (gzipped) and its manifest. */
-export function packBundle(dir: string): { bundle: Buffer; manifest: Manifest; manifest_sha256: string; bytes: number } {
-  const files = listFiles(dir);
+export function packBundle(dir: string, skip?: (relPath: string) => boolean): { bundle: Buffer; manifest: Manifest; manifest_sha256: string; bytes: number } {
+  // `skip` (mold_v0-267): files left out, such as an agent profile's uploads, written again on every wake.
+  const files = skip ? listFiles(dir).filter((f) => !skip(f)) : listFiles(dir);
   const manifest: Manifest = {};
   const bodies: Buffer[] = [];
   let total = 0;

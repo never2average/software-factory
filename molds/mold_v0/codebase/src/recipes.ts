@@ -5,11 +5,11 @@
  *
  *   a recipe    an id (lowercase words joined by -, its address /admin/recipes/<id>), a name, a description, active or
  *               archived, and its versions: each a list of files, each {path in the session's working directory, its
- *               bytes and sha256, executable or not, the upload that holds it}. A version is never changed: a change is
- *               the next version (staff's, or an agent's proposal staff accepted).
- *   an upload   one file's bytes in the object store, in parts of RECIPE_PART_BYTES (under a hosted function's 4.5 MB
- *               request limit) under recipes/uploads/<id>/<n>: started with its size, each part sent, then finished (its
- *               sha256 computed from the parts). Only a finished upload goes into a version.
+ *               bytes and sha256, executable or not, its upload's id}. A version is never changed: a change is the next
+ *               version (staff's, or an agent's proposal staff accepted).
+ *   its files   agent profile uploads (mold_v0-267, src/agent-profiles.ts: agent_profile_uploads rows, their parts under
+ *               agent-profiles/uploads/<id>/), uploaded through the same staff routes a profile's workspace upload uses
+ *               (/api/admin/onboarding/agent-profiles/uploads). One storage layer for every file a session receives.
  *   a proposal  "self-improvement": the agent of a session that started with a recipe writes its improved files into
  *               `.recipe-proposal/` in its working directory (files/<path> for each file changed or added, remove.txt
  *               for paths to drop, note.md for why); its wake sends them as it ends (src/agent-harness.ts). Kept as an
@@ -17,10 +17,11 @@
  *               the agent's session) or decline it with a reason. A proposal made against an older version than the
  *               current one is refused on accept: the recipe changed since.
  *
- * A profile picks one (src/agent-profile-spec.ts `recipe`: {id, version}, version null for the latest); a session freezes
- * the version at its start (src/harness-sessions.ts policy.recipe) and its first wake writes the files into its working
- * directory, the executable ones made executable (fetched through the worker API: src/run-routes.ts
- * /:id/agent/recipe/:n/:part). The platform's own tables (src/rls.ts NO_ACCESS): no workspace reads them.
+ * A profile names them beside its own uploads (src/agent-profile-spec.ts `recipes`: [{id, version}], version null for the
+ * latest); startSession (src/harness-sessions.ts) expands each into the same {id, path, bytes, sha256, executable}
+ * entries of the session's frozen `policy.uploads`, the profile's own file winning a path both name, and records which
+ * versions it used in `policy.recipes`. Nothing in the wake, the worker route or the runner changes for the files.
+ * The platform's own tables (src/rls.ts NO_ACCESS): no workspace reads them.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
@@ -28,23 +29,21 @@ import { asPlatform } from "./tenant-scope.js";
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
 import { agentHarnessOn } from "./agent-harness-config.js";
-import { objectStore } from "./storage.js";
+import { readUploadBytes, storeUploadBytes, uploadLimitBytes } from "./agent-profiles.js";
+import { RECIPE_ID, UPLOAD_ID } from "./agent-profile-spec.js";
 
-export const RECIPE_ID = /^[a-z][a-z0-9-]{1,39}$/;
-export const RECIPE_UPLOAD_ID = /^rup_[0-9a-f]{24}$/;
+export { RECIPE_ID };
 export const RECIPE_PROPOSAL_ID = /^rpp_[0-9a-f]{24}$/;
 /** A path inside the session's working directory: relative, no `.` or `..` segment, up to 16 deep. */
 export const RECIPE_FILE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+){0,15}$/;
-/** One part of an upload: 4 MiB, under a hosted function's request limit. */
-export const RECIPE_PART_BYTES = 4 * 1024 * 1024;
 export const RECIPE_LIMITS = { name: 80, description: 500, note: 4000, reason: 1000, files: 500, path: 400 } as const;
-/** The most bytes one file may have (AGENT_RECIPE_FILE_MAX_MB, default 512) and a version in all (four times that). */
-export const recipeFileMax = () => Math.max(1, Number(process.env.AGENT_RECIPE_FILE_MAX_MB ?? 512) || 512) * 1024 * 1024;
-export const recipeVersionMax = () => recipeFileMax() * 4;
+/** A version's files in all: at most what a session may receive (the platform's AGENT_UPLOAD_MAX_MB). */
+export const recipeVersionMax = () => uploadLimitBytes();
 /** The directory in a session's working directory an agent writes its proposed version into. */
 export const PROPOSAL_DIR = ".recipe-proposal";
 
-export interface RecipeFile { path: string; upload: string; bytes: number; sha256: string; executable: boolean }
+/** One file of a version: exactly a profile upload's entry (src/agent-profile-spec.ts ProfileUpload). */
+export interface RecipeFile { id: string; path: string; bytes: number; sha256: string; executable: boolean }
 export type RecipeStatus = "active" | "archived";
 export interface RecipeSummary {
   id: string; name: string; description: string; status: RecipeStatus; version: number; files: number; bytes: number;
@@ -71,108 +70,22 @@ const hexId = (p: string) => `${p}_${randomBytes(12).toString("hex")}`;
 export const recipesOn = () => featureOn("workspace_recipes") && agentHarnessOn();
 const needOn = () => { if (!recipesOn()) throw new PackError("Workspace recipes are not on in this app", 404); };
 
-// ---------------------------------------------------------------- uploads
-
-const partKey = (id: string, n: number) => `recipes/uploads/${id}/${String(n).padStart(5, "0")}`;
-const partsOf = (bytes: number) => Math.max(1, Math.ceil(bytes / RECIPE_PART_BYTES));
-const partSize = (bytes: number, n: number, parts: number) => (n < parts ? RECIPE_PART_BYTES : bytes - (parts - 1) * RECIPE_PART_BYTES);
-interface UploadRow { id: string; bytes: string | number; parts: number; sha256: string | null; completed_at: Date | null }
-async function uploadRow(q: Queryable, id: string): Promise<UploadRow> {
-  if (!RECIPE_UPLOAD_ID.test(id)) throw new PackError("no such upload", 404);
-  const [r] = await q.query<UploadRow>("SELECT id, bytes, parts, sha256, completed_at FROM workspace_recipe_uploads WHERE id = $1", [id]);
-  if (!r) throw new PackError("no such upload", 404);
-  return r;
-}
-
-/** Start an upload of one file of `bytes` bytes: its id and how to send it (its parts, each RECIPE_PART_BYTES but the last). */
-export async function startUpload(by: string, raw: unknown): Promise<{ id: string; bytes: number; parts: number; part_bytes: number }> {
-  needOn();
-  const bytes = Number((raw as { bytes?: unknown } | null)?.bytes);
-  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new PackError("bytes: the file's size in bytes", 400);
-  if (bytes > recipeFileMax()) throw new PackError(`a recipe's file is at most ${Math.floor(recipeFileMax() / 1048576)} MB`, 413);
-  const id = hexId("rup"), parts = partsOf(bytes);
-  await tx((q) => q.query("INSERT INTO workspace_recipe_uploads (id, bytes, parts, created_by) VALUES ($1, $2, $3, $4)", [id, bytes, parts, by]));
-  return { id, bytes, parts, part_bytes: RECIPE_PART_BYTES };
-}
-
-/** One part (1-based) of an unfinished upload: exactly its size. Sending it again replaces it. */
-export async function putUploadPart(id: string, n: number, body: Buffer): Promise<{ part: number; bytes: number }> {
-  needOn();
-  const r = await read((q) => uploadRow(q, id));
-  if (r.completed_at) throw new PackError("this upload is finished: start another to change the file", 409);
-  if (!Number.isSafeInteger(n) || n < 1 || n > r.parts) throw new PackError(`part: 1 to ${r.parts}`, 400);
-  const want = partSize(Number(r.bytes), n, r.parts);
-  if (body.length !== want) throw new PackError(`part ${n} is ${want} bytes, not ${body.length}`, 400);
-  await (await objectStore()).put(partKey(id, n), body, "application/octet-stream");
-  return { part: n, bytes: body.length };
-}
-
-/** Finish an upload: every part there and of its size; its sha256 from the parts. Finishing twice answers the same. */
-export async function finishUpload(id: string): Promise<{ id: string; bytes: number; sha256: string }> {
-  needOn();
-  const r = await read((q) => uploadRow(q, id));
-  if (r.completed_at && r.sha256) return { id, bytes: Number(r.bytes), sha256: r.sha256 };
-  const store = await objectStore();
-  const h = createHash("sha256");
-  for (let n = 1; n <= r.parts; n++) {
-    const part = await store.get(partKey(id, n));
-    if (!part) throw new PackError(`part ${n} of ${r.parts} has not been sent`, 409);
-    if (part.length !== partSize(Number(r.bytes), n, r.parts)) throw new PackError(`part ${n} is not the size it should be: send it again`, 409);
-    h.update(part);
-  }
-  const sha256 = h.digest("hex");
-  await tx((q) => q.query("UPDATE workspace_recipe_uploads SET sha256 = $2, completed_at = now() WHERE id = $1 AND completed_at IS NULL", [id, sha256]));
-  return { id, bytes: Number(r.bytes), sha256 };
-}
-
-/** Keep `data` as a finished upload in one call (an agent's proposal; tests). */
-export async function storeUpload(by: string, data: Buffer): Promise<{ id: string; bytes: number; sha256: string }> {
-  if (data.length > recipeFileMax()) throw new PackError(`a recipe's file is at most ${Math.floor(recipeFileMax() / 1048576)} MB`, 413);
-  const id = hexId("rup"), parts = partsOf(data.length);
-  await tx((q) => q.query("INSERT INTO workspace_recipe_uploads (id, bytes, parts, created_by) VALUES ($1, $2, $3, $4)", [id, data.length, parts, by]));
-  const store = await objectStore();
-  for (let n = 1; n <= parts; n++) await store.put(partKey(id, n), data.subarray((n - 1) * RECIPE_PART_BYTES, n * RECIPE_PART_BYTES), "application/octet-stream");
-  const sha256 = createHash("sha256").update(data).digest("hex");
-  await tx((q) => q.query("UPDATE workspace_recipe_uploads SET sha256 = $2, completed_at = now() WHERE id = $1", [id, sha256]));
-  return { id, bytes: data.length, sha256 };
-}
-
-/** One part of a finished upload (1-based), checked against the file's sha256 once the last part is read by readUpload. */
-export async function readUploadPart(id: string, n: number): Promise<{ body: Buffer; parts: number }> {
-  const r = await read((q) => uploadRow(q, id));
-  if (!r.completed_at) throw new PackError("this upload is not finished", 409);
-  if (!Number.isSafeInteger(n) || n < 1 || n > r.parts) throw new PackError("no such part", 404);
-  const body = await (await objectStore()).get(partKey(id, n));
-  if (!body) throw new PackError("the file's bytes are missing from the object store", 410);
-  return { body, parts: r.parts };
-}
-/** A finished upload's bytes, whole and checked against its sha256. */
-export async function readUpload(id: string): Promise<Buffer> {
-  const first = await readUploadPart(id, 1);
-  const out = [first.body];
-  for (let n = 2; n <= first.parts; n++) out.push((await readUploadPart(id, n)).body);
-  const data = Buffer.concat(out);
-  const [r] = await read((q) => q.query<{ sha256: string }>("SELECT sha256 FROM workspace_recipe_uploads WHERE id = $1", [id]));
-  if (createHash("sha256").update(data).digest("hex") !== r?.sha256) throw new PackError("the file's bytes do not match its sha256", 410);
-  return data;
-}
-
 // ---------------------------------------------------------------- versions' files
 
-/** A version's files as staff send them ({upload, path, executable}): each a finished upload, paths inside the workspace and once each. */
+/** A version's files as staff send them ({id, path, executable}): each a finished upload, paths inside the workspace and once each. */
 async function checkFiles(q: Queryable, raw: unknown): Promise<RecipeFile[]> {
-  if (!Array.isArray(raw)) throw new PackError("files: a list of {upload, path, executable}", 400);
+  if (!Array.isArray(raw)) throw new PackError("files: a list of {id, path, executable} (each an upload's id)", 400);
   if (raw.length > RECIPE_LIMITS.files) throw new PackError(`files: at most ${RECIPE_LIMITS.files}`, 400);
   const out: RecipeFile[] = [];
   const problems: string[] = [];
   for (const [i, f] of raw.entries()) {
-    const x = (f ?? {}) as { upload?: unknown; path?: unknown; executable?: unknown };
+    const x = (f ?? {}) as { id?: unknown; path?: unknown; executable?: unknown };
     const path = typeof x.path === "string" ? x.path.trim() : "";
     if (!path || path.length > RECIPE_LIMITS.path || !RECIPE_FILE_PATH.test(path) || path.startsWith(`${PROPOSAL_DIR}/`) || path === PROPOSAL_DIR) { problems.push(`files[${i}].path: a path inside the session's working directory (relative, no . or .. segment, not under ${PROPOSAL_DIR})`); continue; }
-    if (typeof x.upload !== "string" || !RECIPE_UPLOAD_ID.test(x.upload)) { problems.push(`files[${i}].upload: a finished upload's id`); continue; }
-    const [u] = await q.query<UploadRow>("SELECT id, bytes, parts, sha256, completed_at FROM workspace_recipe_uploads WHERE id = $1", [x.upload]);
+    if (typeof x.id !== "string" || !UPLOAD_ID.test(x.id)) { problems.push(`files[${i}].id: a finished upload's id`); continue; }
+    const [u] = await q.query<{ id: string; bytes: string; sha256: string | null; completed_at: Date | null }>("SELECT id, bytes, sha256, completed_at FROM agent_profile_uploads WHERE id = $1", [x.id]);
     if (!u?.completed_at || !u.sha256) { problems.push(`files[${i}] ${path}: its upload is not finished`); continue; }
-    out.push({ path, upload: u.id, bytes: Number(u.bytes), sha256: u.sha256, executable: x.executable === true });
+    out.push({ id: u.id, path, bytes: Number(u.bytes), sha256: u.sha256, executable: x.executable === true });
   }
   problems.push(...fileProblems(out));
   if (problems.length) throw new PackError(problems.join("; ").slice(0, 2000), 400);
@@ -186,7 +99,7 @@ export function fileProblems(files: readonly Pick<RecipeFile, "path" | "bytes">[
   const folder = paths.find((p) => paths.some((q) => q !== p && q.startsWith(`${p}/`)));
   if (folder) out.push(`files: ${folder} is a file and a folder`);
   const total = files.reduce((t, f) => t + f.bytes, 0);
-  if (total > recipeVersionMax()) out.push(`files: ${Math.ceil(total / 1048576)} MB in all: a version holds at most ${Math.floor(recipeVersionMax() / 1048576)} MB`);
+  if (total > recipeVersionMax()) out.push(`files: ${Math.ceil(total / 1048576)} MB in all: a version holds at most ${Math.floor(recipeVersionMax() / 1048576)} MB (the platform's AGENT_UPLOAD_MAX_MB)`);
   return out;
 }
 
@@ -344,7 +257,7 @@ export async function recipeFile(id: string, version: number, n: number): Promis
   const files = await read((q) => versionFiles(q, id, version));
   const file = files[n - 1];
   if (!file) throw new PackError("no such file", 404);
-  return { file, data: await readUpload(file.upload) };
+  return { file, data: await readUploadBytes(file.id) };
 }
 
 // ---------------------------------------------------------------- a profile's pick, a session's version
@@ -361,25 +274,30 @@ export async function pickProblem(pick: { id: string; version?: number | null })
   return null;
 }
 
-/** What a session gets of a profile's pick, frozen at its start: the recipe's name, its version and that version's files. */
-export interface SessionRecipe { id: string; name: string; version: number; files: Omit<RecipeFile, "upload">[] }
-export async function recipeForSession(pick: { id: string; version?: number | null }): Promise<SessionRecipe> {
+/** A profile's pick as a session receives it: the recipe's name, the version (its latest when none is named) and its files. */
+export async function recipeUploads(pick: { id: string; version?: number | null }): Promise<{ recipe: { id: string; name: string; version: number }; uploads: RecipeFile[] }> {
   const bad = await pickProblem(pick);
-  if (bad) throw new PackError(`This agent profile's ${bad.replace(/^recipe: /, "recipe: ")}: ask platform staff to fix the profile`, 409);
+  if (bad) throw new PackError(`This agent profile's ${bad}: ask platform staff to fix the profile`, 409);
   return read(async (q) => {
     const r = await rowOf(q, pick.id);
     const version = pick.version ?? r.version;
-    const files = await versionFiles(q, r.id, version);
-    return { id: r.id, name: r.name, version, files: files.map(({ upload: _u, ...f }) => f) };
+    return { recipe: { id: r.id, name: r.name, version }, uploads: await versionFiles(q, r.id, version) };
   });
 }
-/** One part (1-based) of file `n` (1-based) of a recipe's version, as a session's wake fetches it. */
-export async function recipeFilePart(pick: { id: string; version: number }, n: number, part: number): Promise<{ body: Buffer; parts: number; file: RecipeFile }> {
-  const files = await read((q) => versionFiles(q, pick.id, pick.version));
-  const file = files[n - 1];
-  if (!file) throw new PackError("no such file", 404);
-  const p = await readUploadPart(file.upload, part);
-  return { ...p, file };
+/**
+ * A session's uploads from its profile (src/harness-sessions.ts startSession): its own, then each recipe's files at the
+ * version frozen now, a path the profile (or an earlier recipe) already gives left out; and the versions used.
+ */
+export async function expandRecipes(own: readonly RecipeFile[], picks: readonly { id: string; version?: number | null }[]): Promise<{ uploads: RecipeFile[]; recipes: { id: string; name: string; version: number }[] }> {
+  if (!picks.length) return { uploads: [...own], recipes: [] };
+  const uploads = [...own], recipes: { id: string; name: string; version: number }[] = [];
+  const taken = new Set(own.map((u) => u.path.toLowerCase()));
+  for (const p of picks) {
+    const x = await recipeUploads(p);
+    recipes.push(x.recipe);
+    for (const u of x.uploads) if (!taken.has(u.path.toLowerCase())) { taken.add(u.path.toLowerCase()); uploads.push({ ...u }); }
+  }
+  return { uploads, recipes };
 }
 
 // ---------------------------------------------------------------- proposals (an agent's improved version)
@@ -407,8 +325,8 @@ export async function proposeRecipeVersion(origin: ProposalOrigin, input: Propos
     const before = base.find((x) => x.path === f.path);
     const sha = createHash("sha256").update(f.data).digest("hex");
     if (before && before.sha256 === sha && before.executable === f.executable) continue; // the same file: not a change
-    const u = await storeUpload(by, f.data);
-    changed.push({ path: f.path, upload: u.id, bytes: u.bytes, sha256: u.sha256, executable: f.executable });
+    const u = await storeUploadBytes(by, f.data);
+    changed.push({ id: u.id, path: f.path, bytes: u.bytes, sha256: u.sha256, executable: f.executable });
   }
   if (!changed.length && !removed.length) throw new PackError("the proposal changes nothing: its files are the version's own", 400);
   const files = [...base.filter((f) => !removed.includes(f.path) && !changed.some((c) => c.path === f.path)), ...changed].sort((a, b) => a.path.localeCompare(b.path));
@@ -470,5 +388,5 @@ export async function proposalFile(id: string, n: number): Promise<{ file: Recip
   const p = await readProposal(id);
   const file = p.files[n - 1];
   if (!file) throw new PackError("no such file", 404);
-  return { file, data: await readUpload(file.upload) };
+  return { file, data: await readUploadBytes(file.id) };
 }

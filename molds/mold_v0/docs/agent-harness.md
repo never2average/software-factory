@@ -61,7 +61,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 | Platform settings | Group `agent` ("Workspace agent") in `src/settings.ts`, `readBy: "agent_harness"`: listed by `list_settings`, editable by `update_setting` and on the staff Agent configuration page only with the flag on; each with plain words; every change is kept in `platform_setting_changes` (key, value before and after, who, when), beside the existing `settings.save` staff log line (and the platform trail's admin entry when it is on) |
 | Domain MCP tools (mold_v0-250) | The app's own customer MCP server (`/mcp`, `src/server.ts`) as the MCP server `app`: `src/harness-reach.ts`. See "What a session reaches" below |
 | Context (mold_v0-250) | The workspace's context and memory and the server's own instructions, appended to the standing instructions: see below |
-| Per-workload prompts and budgets (mold_v0-261) | Agent profiles (`src/agent-profiles.ts`, migration 0052): a profile is the mold's workload. It overrides `on_start`, `on_resume` and `append_system` (each hook's `source` is `profile`), and its model, budget, ceiling, turns, tools, web access, files and roles; frozen with its version at the session's start, as the reference freezes a workload's allowance at admission. See "Agent profiles" below |
+| Per-workload policy (mold_v0-261, mold_v0-267) | Agent profiles (`src/agent-profiles.ts`, migrations 0052 and 0056): a profile is the mold's workload: its harness, its key vault (keys injected; the primary inference provider's model and key), its uploads and its governance policy; frozen with its version at the session's start, as the reference freezes a workload's snapshot at admission. See "Agent profiles" and "Governance policy" below |
 | API and MCP | `/api/agent` (customer), `/api/admin/onboarding/agent` (staff); MCP tools `list_agent_sessions`, `start_agent_session`, `read_agent_session`, `message_agent_session`, `pause_agent_session`, `resume_agent_session`, `stop_agent_session`, `decide_agent_request`, `raise_agent_budget` (customer), `list_agent_sessions` and `stop_agent_session` (admin) |
 
 ## What a session reaches (mold_v0-250)
@@ -101,51 +101,88 @@ same way (`src/harness-reach.ts`; nothing changes with the flag off):
 - **Isolation.** A token opens `/mcp` only (never a URL, never another route); its workspace is the session's. The test
   proves another workspace's record is not found through it, and that its list and memory searches return only its own.
 
-## Agent profiles (mold_v0-261)
+## Agent profiles (mold_v0-261, redesigned by mold_v0-267)
 
-The reference lets each workload override its prompts; the mold's workload is an **agent profile**, which platform staff
-configure in Admin › Agent profiles (`/api/admin/onboarding/agent-profiles`). Nothing changes with the flag off: no
-route, page, table row or action of it answers.
+A profile is the mold's workload: what a session runs with, set up by platform staff in Admin › Agent profiles
+(`/api/admin/onboarding/agent-profiles`, `src/agent-profiles.ts`, `src/agent-profile-spec.ts`). Nothing changes with the
+flag off: no route, page, table row, upload or action of it answers.
 
-- **What a profile sets.** Its instructions: the standing prompt (the `append_system` hook), the on-start template (the
-  `on_start` hook: `{{message}}` is the person's words, else they follow it; applied to the first message the harness is
-  given, the transcript keeping the person's own words) and the on-resume prompt (`on_resume`). Its model and provider
-  (a model with a price only: the profile is refused on save otherwise, and its start is refused when a price it named was
-  removed since), its budget and ceiling, turns per wake and longest wake; which of the app's own tools run freely, ask
-  first (an approval request of kind `tool`, even for a read) or are hidden (left out of the session's reach, of the
-  token's `tools/list` and of its context; `/mcp` refuses a call, and the harness never turns one into a request); its web
-  tools and hosts; files written into the session's working directory before its first wake (relative paths inside it,
-  at most 20 files and 256 KB; later wakes find them in the checkpoint as the agent left them); who may start it (member,
-  billing, owner; an account key only a profile owners may start); per-workspace overrides (a named workspace's own
-  budget, ceiling or model).
-- **Unset is the platform setting.** Each setting a profile leaves unset is the one in force on the Agent configuration
-  page. The **Default** profile (`default`) leaves all of them unset: the global settings are its values, a session
-  started without a profile uses it, and it is never archived.
-- **Versioned and audited.** `agent_profiles` holds the version in force; every save writes the next version to
-  `agent_profile_versions` (a save names the version it edited: one saved meanwhile refuses it, 409) and each change
-  (created, edited, archived, restored) to `agent_profile_changes` with who made it and the profile before and after,
-  beside the staff log line (`agent_profile.*`). A pack's `agent_profiles` (pack.json) are written once as version 1 by
-  `pack <id>` and are staff's from then on.
-- **A session freezes its profile.** `startSession` resolves the profile for its workspace (its override), checks the
-  person's role, applies its settings to the policy it freezes, and keeps `harness_sessions.profile_id` and
-  `profile_version`; a later edit applies to new sessions only. "How this session runs" names the profile and version,
-  the files it was given, the tools it hides and the record it was started from.
-- **Starting one.** The Start a session dialog offers the active profiles the person may start (each with its model and
-  their budget range under it; `GET /api/agent` `profiles`, `POST /api/agent` `{profile}`, the MCP's
-  `start_agent_session` `profile`). A pack's record page action and list tab action `start_agent` (`profile`,
-  `first_message`): on a record's page, a button such as Build starts the session at once with the message filled from
-  the record on the server (`{{key}}`, `{{title}}`, `{{<field>}}`), linked to the record (`record_area`, `record_key`)
-  and listed in the record's runs section; on a list, the button opens the dialog with the profile and the message.
-- **Enforced on the server.** Who may start (403, the role's words), an archived profile (409), the profile's budget and
-  ceiling (a start or a raise past them refused), its tools (the free list in the frozen policy, the hidden ones refused
-  by `/mcp` and by the request and decision steps), a price removed (409).
+- **Exactly five things** (the operator's spec), each optional (unset: the platform setting in force):
+  1. **Harness**: which agent CLI runs it. Only the flavours pinned in the run tools' catalogue are offered
+     (`pinnedFlavours()`: today Claude Code); an unpinned one is refused on save and at a start.
+  2. **No model field.** The model is the primary inference provider's (item 3).
+  3. **Key vault.** The **primary inference provider**: its provider (one the harness speaks to), its model (priced,
+     mold_v0-246: refused on save, and at a start once its price is removed) and its key (a key vault entry of that
+     provider, by label; unset: the provider's key the gateway picks). The session's wakes carry it as
+     `provider_key` in their run's kind, and the gateway (`src/gateway.ts`) sends their model requests with exactly that
+     key. **Keys injected**: any key vault entry, by name: a workspace's credential (`<pack>/<field>`, delivered only to
+     a session a workspace owner starts, mold_v0-262) or a platform key (provider and label, in an environment variable of
+     the profile's choosing), delivered with the run's credentials and redacted from everything a wake writes (its run's
+     `credentials` event names `vault:<provider>/<label>`, never a value). Never injected: the object store's settings and
+     the OAuth app clients (they reach every workspace's data), and no variable the wake sets itself.
+  4. **Workspace upload.** Files and folders (a folder keeps its files' paths), runtime binaries included, uploaded in
+     parts of at most 4 MiB to the object store (`agent-profiles/uploads/<id>/`, table `agent_profile_uploads`), up to
+     the platform setting `AGENT_UPLOAD_MAX_MB` in all. Finished by the sha256 the server computes; a program (ELF,
+     Mach-O, PE, `#!`) is executable by default, and staff may switch it. Each wake fetches its session's frozen uploads
+     with its lease (`GET /api/worker/runs/:id/agent/uploads/:upload/:part`, only those its policy names), checks their
+     sha256 and writes them into its scratch's working directory, executables `0700` to the run's own user; a checkpoint
+     never carries them (it stays small) and the next wake writes them again. The run's isolation is unchanged.
+  5. **Governance policy**, ported from the reference product: below.
+- **Where workspace recipes plug in (mold_v0-271).** The storage is one layer for every file: a file's bytes are an
+  `agent_profile_uploads` row and its parts under `agent-profiles/uploads/<id>/`, and everything after a profile's save
+  reads only the session's frozen `policy.uploads` list ({id, path, bytes, sha256, executable}): `wakeStart` hands it to
+  the wake, `wakeUploadPart` serves only ids in it, the runner writes and checks it. A recipe (a named, versioned bundle
+  staff keep) should store its files as `agent_profile_uploads` rows too, and a profile should name it beside its own
+  files as `recipes: [{id, version}]` in its config. `startSession` (where it freezes `eff.uploads`) expands each named
+  recipe version into the same {id, path, bytes, sha256, executable} entries, the profile's own files winning a path
+  both name, before freezing them. Nothing in the wake, the worker route or the runner changes, a session keeps the
+  recipe version it started with, and `checkConfig` checks the recipe and version exist and the total stays within
+  `AGENT_UPLOAD_MAX_MB`.
+- **Removed**: instructions and hooks of a profile's own, model and provider fields, budget and ceiling, turns, longest
+  wake, the free / ask / hidden tool lists, inline text files, who may start it (the role's right to launch decides),
+  per-workspace overrides, and the profile's own page, tabs and side-panel editor. Budgets, turns and limits are the
+  platform settings.
+- **One modal.** The list is the standard one; a row, or New profile, opens one modal with the five items. Adding a
+  key, a file or a governance rule puts a row in place, editable and removable: no nested dialog, no other screen, no
+  Back. Save and Cancel are at the bottom (outlined, mold_v0-251), with Archive or Restore.
+- **Versioned and audited**, as before: each save is the next version (a save names the version it edited: 409 when
+  someone saved meanwhile); each change (created, edited, archived, restored, migrated) is in `agent_profile_changes`
+  with who, before and after; `start_agent` and the frozen version per session stay.
+- **Migration** (`0056_agent_profile_redesign`, rollback `sql/rollback/0056_agent_profile_redesign.sql`): each profile in
+  the earlier shape is rewritten as its next version: its model as the primary inference provider's, its credentials as
+  workspace keys, its web access as the governance policy's web policy (20 calls, approvals on). **Dropped**, listed in
+  the `migrated` change's `after.dropped` and kept in its `before`: instructions (the governance policy has no place for
+  them), budget, ceiling, turns, longest wake, tool lists, files, roles, overrides, and a web access that asked for every
+  host (a governance policy names its hosts). The rollback puts the earlier config back exactly where nobody changed it
+  since, and maps a newer one back.
 
-- **Credentials** (mold_v0-262). A profile's `credentials: ["<pack>/<field>"]` name workspace credentials its sessions
-  receive (a field bound to the workspace, a value pasted in Settings › Credentials: a hosting deploy token, so the agent
-  can deploy). Only a session a workspace owner starts freezes them; each wake fetches them with its lease as a run does
-  (its run's `credentials` event names what it was given, never a value), gets each in its env or file, and everything it
-  writes is redacted of them. A pack's profile naming a credential the build lacks, or one bound to a record, is refused
-  at build; staff's editor refuses the same.
+## Governance policy (mold_v0-267): what the reference product calls it, and where it went
+
+The reference has no single object named "governance policy": its governance of an agent run is the set of rules its
+security documents and its gateway and harness enforce on every run, frozen into the run's snapshot. Ported rule by
+rule into the profile's `governance` (`src/agent-governance.ts`, pure, read by the API and the runner alike):
+
+| Reference rule | In the profile |
+|---|---|
+| Web tools policy: off by default; enabled per workload; WebSearch and WebFetch separately; a combined call ceiling (1 to 100); validators: a disabled policy grants nothing, an enabled one allows a tool and a positive ceiling, WebFetch needs a domain, domains need WebFetch | `governance.web` {enabled, web_search_enabled, web_fetch_enabled, web_fetch_allowed_domains, max_calls}, the same validators (`webPolicyProblems`) |
+| Allowlist grammar: exact, `*.domain` (its subdomains, not the domain), or `*` alone (every **public** host: never an address, loopback or internal name); a bare URL read as its host, one with a path, port or credentials refused, never trimmed | `normalizeDomains`, `domainAllowed`, `hostIsPublic` |
+| WebFetch only https on 443, no URL credentials or fragment; immutable snapshot at queue time | the same check per call (`governToolUse`); frozen into the session at its start |
+| Runtime egress approvals: an off-list fetch, or a shell command reaching a package registry (pip, npm, yarn, pnpm; offline shapes exempt) or an explicit download URL (curl, wget, git clone; at a command position only), pauses for a decision; a host no allowlist could carry is refused outright | the same (`packageDownloadTarget`, `domainNameValid`), as a request of kind `web` with `detail.egress` website or package; `egress_approvals` switches asking off (refused instead) |
+| Approve grants exactly one domain to exactly that run; a website also to the web snapshot when WebFetch is on; a package approval grants no network | `approved_domains` (the harness stops asking), `approved_websites` (also the run's egress proxy) |
+| Deny fails the run (`egress_approval_denied`), never offered a resume back into it | the session ends, failed, `egress_approval_denied: <host>` |
+| A run paused past its window is closed (`approval_timeout`) | the sweep closes the session, failed, `approval_timeout: <host>` |
+| Approvals are a governing act: execute and govern are separate capabilities | under a governance policy only a workspace owner (who governs it) decides an egress request; the person who started it runs it |
+| Violations stop the run with their codes: `web_tool_not_allowed`, `web_fetch_domain_not_allowed`, `web_tool_call_limit_exceeded`, `mcp_tool_not_allowed`, `mcp_call_limit_exceeded` | the same codes; the wake stops and the session ends, failed, `policy: <code>` |
+| Remote MCP: an explicit, non-empty tool allowlist (no wildcard), tool discovery filtered to it, every emitted call re-authorized, a mandatory per-server call ceiling | `governance.tools` {allowed, max_calls} over the app's own MCP server: only those tools are listed to the session (the rest hidden and refused by the server), a call of any other ends it, at most max_calls a wake |
+| Exceptions: time-bounded, recorded against the workload, removed after; credentials at most 90 days | `governance.exceptions` [{domain, reason, expires_at, approved_by}]: a host allowed beyond the allowlist, a reason required, at most 90 days ahead, stamped with who saved it; past its date it grants nothing |
+| Retention: a policy version and a payload deadline on every run; tenants may choose a shorter period, never longer without a recorded basis | `governance.retention_days`, at most the platform's `AGENT_RETENTION_DAYS`; the session's deadline is the shorter |
+
+Not ported, and why: `*` opens no host of the network (the run's egress proxy names hosts; the session's isolation is
+unchanged, so `*` stops the asking, not the boundary); the governed gateway's DNS pinning, TLS and response limits
+(the run's egress proxy is the mold's boundary); remote MCP servers with their own credentials (a session reaches only
+the app's own MCP server); legal holds (a Security record with two approvers, not part of a workload's policy); the
+pipeline-governance brakes (the reference's domain feature, not an agent's policy); its infrastructure policy-as-code
+exceptions (cloud scanner findings, not a run's).
 
 ## Deliberately not copied
 
@@ -173,9 +210,6 @@ route, page, table row or action of it answers.
 Since mold_v0-250 a session does use the customer MCP server (and through it the record areas, the packs' tools and the
 memory component), the account context and the member role check: "What a session reaches" above.
 
-- **The workspace credentials vault.** A session receives no workspace credential: the reference's agent works with what
-  its platform's tools give it, and the mold has no declaration yet of which credentials a session may hold. A kind's
-  `credentials` list is the model to follow when one is wanted (the run engine already delivers and redacts them).
 - **Record clocks.** A request's window is the session's own deadline (`AGENT_APPROVAL_WINDOW_HOURS`, expired by the
   sweep), not a record's clock: sessions are not records of a declared area, so a clock has nothing to attach to.
 - **The event outbox.** The reference raises an alert row in the transaction that resumes a crash automatically. Here

@@ -331,6 +331,8 @@ export async function gatewayHandler(req: Request, res: Response) {
   let p: ProviderRow | null = await getProvider(slug);
   if (!p?.enabled || p.mode !== "gateway" || (!p.upstream_url && p.backend !== "vertex")) return gwError(res, 404, "not_found_error", `No gateway provider ${slug}`);
 
+  // mold_v0-267: the key an agent profile chose for its primary inference provider (a key vault label), for its runs.
+  let chosenLabel: string | null = null;
   if (t.kind === "run") {
     // A run (mold_v0-041): only while it is running and not asked to stop, within its budget across every attempt.
     const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number; org_id: number; pack: string; kind: string; spec: Record<string, unknown> | null }>(
@@ -343,6 +345,8 @@ export async function gatewayHandler(req: Request, res: Response) {
     const { runSpendRefusal } = await import("./run-limits.js");
     const refusal = await runSpendRefusal({ ...run, spec: run.spec as never }, u.cost_usd);
     if (refusal) return gwError(res, 429, BUDGET_EXCEEDED, refusal);
+    const pk = (run.spec as { provider_key?: { provider?: unknown; label?: unknown } } | null)?.provider_key;
+    if (pk && pk.provider === slug && typeof pk.label === "string") chosenLabel = pk.label;
   } else {
     const [used] = await db.query<{ requests: number; tokens: number; cost: number }>(
       "/* tenant: by the gateway token's own hash (budget of that token) */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost FROM gateway_usage WHERE token_hash = $1", [hash]);
@@ -370,7 +374,7 @@ export async function gatewayHandler(req: Request, res: Response) {
   try {
     cred = p.backend === "vertex"
       ? await useVertexCredential(slug, (p.backend_config as VertexConfig)?.credential_provider)
-      : await useCredential(slug, { excludeLabel: VERTEX_LABEL });
+      : chosenLabel ? await useCredential(slug, { label: chosenLabel }) : await useCredential(slug, { excludeLabel: VERTEX_LABEL });
   } catch (e) {
     // Claude with no Anthropic key: run it on Vertex AI when the vault holds a Vertex key (project from the key,
     // region from the VERTEX_REGION setting), so adding the Vertex key is all it takes.

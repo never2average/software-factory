@@ -8,18 +8,17 @@
  *   GET  /recipes/:id                          one: its versions (newest first) and its proposals
  *   POST /recipes                              {id?, name, description?, files?, note?}: a new recipe (with files: its version 1)
  *   PUT  /recipes/:id                          {name?, description?}
- *   POST /recipes/:id/versions                 {version, files: [{upload, path, executable}], note?}: the next version (409: a newer one was saved)
+ *   POST /recipes/:id/versions                 {version, files: [{id, path, executable}], note?}: the next version (409: a newer one was saved)
  *   POST /recipes/:id/archive | /restore
  *   GET  /recipes/:id/versions/:v/files/:n     one file of a version (a download)
- *   POST /recipe-uploads                       {bytes}: start an upload -> {id, parts, part_bytes}
- *   PUT  /recipe-uploads/:id/parts/:n          one part, application/octet-stream
- *   POST /recipe-uploads/:id/finish            -> {id, bytes, sha256}
+ * A version's files are uploaded through the profiles' own upload routes (/agent-profiles/uploads, mold_v0-267), then
+ * named by their upload ids: [{id, path, executable}].
  *   GET  /recipe-proposals                     the pending proposals, oldest first
  *   GET  /recipe-proposals/:id                 one, and GET /recipe-proposals/:id/files/:n one file of its version
  *   POST /recipe-proposals/:id/accept          {note?, reason?}: the recipe's next version
  *   POST /recipe-proposals/:id/decline         {reason}
  */
-import express, { type NextFunction, type Request, type RequestHandler, type Response, type Router } from "express";
+import { type NextFunction, type Request, type RequestHandler, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
 import { log } from "./admin.js";
 import * as R from "./recipes.js";
@@ -42,7 +41,7 @@ const send = (res: Response, name: string, data: Buffer) => {
 export function recipeAdminRoutes(ob: Router, need: (p: "compute") => RequestHandler, who: (req: Request, res: Response) => string) {
   if (!R.recipesOn()) return;
   const id = (req: Request) => String(req.params.id);
-  ob.get("/recipes", answer(async () => ({ recipes: await R.listRecipes(), proposals: await R.pendingProposals(), limits: { file_bytes: R.recipeFileMax(), version_bytes: R.recipeVersionMax(), part_bytes: R.RECIPE_PART_BYTES, files: R.RECIPE_LIMITS.files } })));
+  ob.get("/recipes", answer(async () => ({ recipes: await R.listRecipes(), proposals: await R.pendingProposals(), limits: { version_bytes: R.recipeVersionMax(), files: R.RECIPE_LIMITS.files } })));
   ob.get("/recipes/:id", answer(async (req) => ({ recipe: await R.readRecipe(id(req)) })));
   ob.post("/recipes", need("compute"), answer(async (req, res) => {
     const r = await R.createRecipe(who(req, res), req.body ?? {});
@@ -68,15 +67,6 @@ export function recipeAdminRoutes(ob: Router, need: (p: "compute") => RequestHan
     const f = await R.recipeFile(id(req), Number(req.params.v), Number(req.params.n));
     send(res, f.file.path, f.data);
   }));
-
-  ob.post("/recipe-uploads", need("compute"), answer(async (req, res) => R.startUpload(`staff:${who(req, res)}`, req.body ?? {}), 201));
-  ob.put("/recipe-uploads/:id/parts/:n", need("compute"),
-    (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the part's bytes as application/octet-stream" })),
-    express.raw({ type: "application/octet-stream", limit: R.RECIPE_PART_BYTES + 1024 }),
-    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
-      (err ? void res.status(err.type === "entity.too.large" ? 413 : 400).json({ error: err.type === "entity.too.large" ? `A part is at most ${R.RECIPE_PART_BYTES} bytes` : "The request body could not be read" }) : next()),
-    answer(async (req) => R.putUploadPart(id(req), Number(req.params.n), Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0))));
-  ob.post("/recipe-uploads/:id/finish", need("compute"), answer(async (req) => R.finishUpload(id(req))));
 
   ob.get("/recipe-proposals", answer(async () => ({ proposals: await R.pendingProposals() })));
   ob.get("/recipe-proposals/:id", answer(async (req) => ({ proposal: await R.readProposal(id(req)) })));

@@ -2,9 +2,8 @@
 -- "Workspace recipes"): reusable bundles of files and runtime binaries an agent works with, kept by platform staff at
 -- /admin/recipes and picked by an agent profile's workspace.
 --   workspace_recipes           one row per recipe: its name, description, active or archived, and its latest version
---   workspace_recipe_uploads    one file's bytes in the object store, in 4 MiB parts under recipes/uploads/<id>/: its
---                               size, parts, sha256 once finished, who uploaded it (staff, or an agent session's proposal)
---   workspace_recipe_versions   every version, never changed: its files ({path, upload, bytes, sha256, executable}),
+--   workspace_recipe_versions   every version, never changed: its files ({id, path, bytes, sha256, executable}, each an
+--                               agent_profile_uploads row of mold_v0-267: the one storage layer a session's files use),
 --                               its note, who made it and whether staff saved it or accepted an agent's proposal
 --   workspace_recipe_proposals  an agent's proposed next version (self-improvement): against which version, its files,
 --                               what it changed and removed and why, the workspace, session and wake it came from;
@@ -23,17 +22,6 @@ CREATE TABLE IF NOT EXISTS workspace_recipes (
   updated_by   TEXT NOT NULL,
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   archived_at  TIMESTAMPTZ
-);
-
-CREATE TABLE IF NOT EXISTS workspace_recipe_uploads (
-  id            TEXT PRIMARY KEY CHECK (id ~ '^rup_[0-9a-f]{24}$'),
-  bytes         BIGINT NOT NULL CHECK (bytes >= 0),
-  parts         INT NOT NULL CHECK (parts >= 1),
-  sha256        TEXT CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
-  created_by    TEXT NOT NULL,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  completed_at  TIMESTAMPTZ,
-  CHECK ((completed_at IS NULL) OR (sha256 IS NOT NULL))
 );
 
 CREATE TABLE IF NOT EXISTS workspace_recipe_versions (
@@ -77,7 +65,7 @@ DECLARE
   t TEXT;
 BEGIN
   -- Staff bookkeeping: no workspace's work reads them; the shell's code alone writes them.
-  FOREACH t IN ARRAY ARRAY['workspace_recipes', 'workspace_recipe_uploads', 'workspace_recipe_versions', 'workspace_recipe_proposals'] LOOP
+  FOREACH t IN ARRAY ARRAY['workspace_recipes', 'workspace_recipe_versions', 'workspace_recipe_proposals'] LOOP
     EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
   END LOOP;
 END $mig$;

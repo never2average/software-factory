@@ -2903,8 +2903,7 @@ A long-lived agent a person talks to, run through a harness, with full steering:
 [docs/agent-harness.md](docs/agent-harness.md) maps each piece of the reference's approach to its home here and lists what
 is not copied. **Off by default** (`features.agent_harness`): off, nothing below exists, the zero-pack MCP surface stays
 `4e3e14917286b00c`, and the generated files are what they were (the flag is `quiet_off`: left out of
-`features.generated.ts`, and its pages (the two agent pages, and since mold_v0-261 Admin › Agent profiles and a profile's
-page) out of `console-routes.generated.json`, so the proxy answers them not found).
+`features.generated.ts`, and its pages (the two agent pages, and since mold_v0-261 Admin › Agent profiles) out of `console-routes.generated.json`, so the proxy answers them not found).
 
 - **A session is a row, each wake a run.** `harness_sessions` (migration 0044; named apart from the session engine's own
   `agent_sessions`) holds a conversation or a task: its state, the policy frozen at its start (harness, model, provider,
@@ -2985,29 +2984,25 @@ page) out of `console-routes.generated.json`, so the proxy answers them not foun
     only at most 64 px a side (the console resizes every picture to a 64 px PNG before it sends it). Kept sealed with the
     workspace's data key at `workspaces/org-<id>/.agent-icon/icon.wse`, bound to the workspace (a copy under another
     workspace's prefix does not open), gone with the workspace. Staff consoles show the app's.
-- **Agent profiles** (mold_v0-261, `src/agent-profiles.ts`, `src/agent-profile-spec.ts`, migration 0052 with its
-  rollback; [docs/agent-harness.md](docs/agent-harness.md) "Agent profiles"). Platform staff create, edit, version and
-  archive named profiles in **Admin › Agent profiles** (`/admin/agent-profiles`: the standard list, cards, the search row
-  with New profile, the table; a row opens the profile's page `/admin/agent-profiles/<id>`, laid out as a record's page:
-  its header with facts and Edit / Archive or Restore / Copy link, then Overview, Workspaces, Versions and changes; New
-  profile and Edit open in the side panel with `side_panel_forms` on). A profile sets the standing instructions
-  (`append_system`), the on-start template (`{{message}}` the person's words) and the on-resume prompt; the model and
-  provider (a priced model only), budget and ceiling, turns per wake and longest wake; which of the app's tools run
-  freely, ask first or are hidden (never listed to the session, refused by `/mcp`); web access and its hosts; files
-  written into the session's working directory at its start (a skill at `.claude/skills/<name>/SKILL.md`, a guide);
-  who may start it (roles); and per-workspace overrides (a named workspace's own budget, ceiling or model). **Each
-  setting a profile leaves unset is the platform setting in force**: the **Default** profile leaves them all unset, so
-  the global settings are its values and a session started without a profile runs as before. Every save is a new
-  version (`agent_profile_versions`; a save names the version it edited, a newer one refuses it) and every change is
-  audited with who, the profile before and after (`agent_profile_changes`, beside the staff log line). A session freezes
-  the profile and version it started with (`harness_sessions.profile_id`, `profile_version`, its policy) and its "How this
-  session runs" names them. The **Start a session dialog** offers the profiles the person may start; a pack's page action
-  or list tab action `start_agent: {profile, first_message}` starts that profile's session from a record (its message
-  filled from the record's fields on the server: `{{key}}`, `{{title}}`, `{{<field>}}`), linked back to it
-  (`harness_sessions.record_area`, `record_key`) and listed in the record's runs section; a pack's pack.json
-  `agent_profiles` are written once as version 1 and then staff's to edit. Everything is enforced on the server: who may
-  start (403), archived (409), the profile's budget and ceiling, its tools (free, ask, hidden), a price removed since it
-  was saved (409).
+- **Agent profiles** (mold_v0-261, redesigned by mold_v0-267 to the operator's spec; `src/agent-profiles.ts`,
+  `src/agent-profile-spec.ts`, `src/agent-governance.ts`, migrations 0052 and 0056 with their rollbacks;
+  [docs/agent-harness.md](docs/agent-harness.md) "Agent profiles" and "Governance policy"). Platform staff create, edit,
+  version and archive named profiles in **Admin › Agent profiles** (`/admin/agent-profiles`: the standard list; a row, or
+  New profile, opens **one modal** with everything a profile is, adds made inline as rows in place, Save and Cancel at the
+  bottom; no profile page, tabs or side panel). A profile is exactly: (1) its **harness** (the pinned ones only); (2) no
+  model field; (3) its **key vault**: the primary inference provider's model (priced) and key (the gateway uses that key
+  for its sessions), and the keys injected into each session (a workspace credential, owner-started sessions only, or a
+  platform key in a variable), delivered and redacted as a run's; (4) its **workspace upload**: files, folders and
+  runtime binaries in the object store, up to `AGENT_UPLOAD_MAX_MB`, written into each wake's scratch, executables
+  made so; (5) its **governance policy**, ported from the reference product (web tools and their allowlist, egress
+  approvals by a workspace owner, a tool allowlist with a call ceiling, time-bounded exceptions, a shorter retention).
+  Budgets, turns and limits are the platform settings. Unset items are the platform setting: the **Default** profile
+  sets nothing. Every save is a new version (a save names the version it edited, a newer one refuses it) and every
+  change is audited (`agent_profile_changes`, with `migrated` for 0056's rewrite of the earlier shape, which lists what it
+  dropped). A session freezes the profile and version it started with; `start_agent: {profile, first_message}` on a
+  record page or a list tab starts one from a record. Enforced on the server and in the runner: archived (409), an
+  unpinned harness, a price removed since it was saved (409), and the governance policy's rules with the reference's
+  codes.
 
 Proof: `npm run test:agent-harness` (offline, with a stand-in CLI that speaks the harness's stream-json,
 `scripts/fixtures/agent-cli/cli.mjs`; mold_v0-261: section 12, agent profiles), `npm run test:agent-icon` (mold_v0-252: the upload's checks, a malicious SVG

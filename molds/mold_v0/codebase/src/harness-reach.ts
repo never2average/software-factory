@@ -78,16 +78,16 @@ export function composeContext(i: { workspace: string; who: string; role: string
 }
 
 /**
- * How a session's agent profile (mold_v0-261, src/agent-profiles.ts) has it use the app's own tools: the base (reads,
- * reads and the named, every tool, or none but the named), the named ones it uses freely, those that ask first whatever
- * the base says, and those it never sees.
+ * How a session's agent profile has it use the app's own tools (mold_v0-267): its governance policy's explicit
+ * allowlist, as the reference's: the session is shown only those tools (every other is hidden: never listed, refused by
+ * the server), each used without asking within the policy's call ceiling.
  */
-export interface ReachRules { base: WorkspaceToolsFree; free: string[]; ask: string[]; hidden: string[] }
+export interface ReachRules { only: string[] }
 
 /**
  * The reach a session started by `actor` in workspace `orgId` gets: the customer MCP server's tools and instructions as
  * that person (asked over an in-memory client, as the client skill asks: src/client-skill.ts), and the context. With a
- * profile's `rules` (mold_v0-261) its hidden tools are left out and its free and ask lists decide; without, the settings.
+ * profile's governance allowlist (mold_v0-267) only those tools, used freely; without, the settings.
  */
 export async function workspaceReach(orgId: number, actor: ReachActor, rules: ReachRules | null = null): Promise<WorkspaceReach> {
   const [o] = await read((q) => q.query<{ slug: string; name: string }>("SELECT slug, name FROM organizations WHERE id = $1", [orgId]));
@@ -106,13 +106,13 @@ export async function workspaceReach(orgId: number, actor: ReachActor, rules: Re
     instructions = client.getInstructions() ?? "";
   } finally { await client.close(); }
   const context = (await connectContext(org).catch(() => "")).trim();
-  let mode: WorkspaceToolsFree, named: string[], ask: string[] = [], hidden: string[] = [];
+  let mode: WorkspaceToolsFree, named: string[], hidden: string[] = [];
+  const ask: string[] = [];
   if (rules) {
-    hidden = [...new Set(rules.hidden)];
-    tools = tools.filter((t) => !hidden.includes(t.name));
-    named = rules.free.filter((n) => !hidden.includes(n));
-    ask = rules.ask;
-    mode = rules.base === "reads" && named.length ? "reads_and_named" : rules.base;
+    hidden = tools.filter((t) => !rules.only.includes(t.name)).map((t) => t.name);
+    tools = tools.filter((t) => rules.only.includes(t.name));
+    named = tools.map((t) => t.name);
+    mode = "none";
   } else {
     const free = settingText("AGENT_WORKSPACE_TOOLS") as WorkspaceToolsFree;
     mode = free === "all" || free === "reads_and_named" ? free : "reads";
