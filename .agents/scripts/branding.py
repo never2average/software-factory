@@ -1064,6 +1064,14 @@ def self_test_v0(ok):
         ok_(bp == {"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}, "limits": {"runs": {"budget_usd_max": 40}}} and berrs == [],
             f"mold_v0-101: the brief's ## Profile sets the sender and the notifications: {bp} {berrs}")
         ok_(app_profile.from_brief("## Profile\nemail.notifications = none\n")[0] == {"email": {"notifications": []}}, "mold_v0-101: email.notifications = none turns every group off")
+        # mold_v0-274: where the runs' sandboxes come from: a ## Profile line, checked; a spec's Freestyle sandbox key implies it.
+        ok_(app_profile.from_brief("## Profile\nrun_sandbox = freestyle\n")[:2] == ({"run_sandbox": "freestyle"}, []) and app_profile.problems({"run_sandbox": "freestyle"}, "mold_v0", ROOT) == [],
+            "mold_v0-274: run_sandbox = freestyle in ## Profile reaches the profile")
+        ok_(any("run_sandbox has no value" in e for e in app_profile.from_brief("## Profile\nrun_sandbox = cloud\n")[1]) and app_profile.problems({"run_sandbox": "cloud"}, "mold_v0", ROOT),
+            "mold_v0-274: an unknown sandbox provider is refused")
+        ok_(app_profile.effective({"app_id": "zz", "mold_id": "mold_v0", "run_keys": {"sandbox": "freestyle"}}, ROOT).get("run_sandbox") == "freestyle"
+            and "run_sandbox" not in app_profile.effective({"app_id": "zz", "mold_id": "mold_v0", "run_keys": {"sandbox": "boat"}}, ROOT),
+            "mold_v0-274: a spec whose runs' sandbox key is Freestyle's makes Freestyle the app's provider; boat's changes nothing")
         # mold_v0-119: the MCP server's instructions from the brief: a ## Profile line, or a ## MCP instructions section.
         ip, ierrs, _ = app_profile.from_brief("## Profile\nmcp_instructions = Acme Ops tracks a team's incidents. Ask before closing one.\n")
         ok_(ip == {"mcp_instructions": "Acme Ops tracks a team's incidents. Ask before closing one."} and ierrs == [], f"mold_v0-119: a mcp_instructions line in ## Profile: {ip} {ierrs}")

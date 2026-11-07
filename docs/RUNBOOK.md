@@ -643,6 +643,7 @@ Brand: <Product name>
 Brand colour: #2F3A9E
 Logo: brands/<app_id>/logo.svg
 Tagline: <one line under the name>
+Avatar colours: #2F3A9E, #0E559D, #0174A4
 Admins: you@example.com
 Domain: app.example.com
 ```
@@ -653,6 +654,8 @@ Domain: app.example.com
 - `Packs:` names an existing pack. Or describe the product in the brief's pack sections (`## Records`, `## Jobs`,
   `## Credentials`, `## Schedules`, `## Onboarding`, `## Words`, `## MCP`, …; `docs/INTAKE.md`, "mold_v0: the
   brief's pack sections") and intake writes the pack for you.
+- `Avatar colours:` (optional) the colours people's and organisations' avatars are drawn in when they have no
+  picture; without the line, five are derived from the brand colour (`branding.py`, mold_v0-275).
 - `Admins:` who may open the staff console (`/admin`). Without it nobody can, so intake asks.
 - Optional sections for the app's own settings (`## Profile`, `## Budgets`, `## MCP instructions`, the emails'
   sender, the legal pages): `docs/INTAKE.md`, "mold_v0: the app's own profile settings".

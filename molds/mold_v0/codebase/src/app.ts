@@ -18,6 +18,7 @@ import { workspaceCharges } from "./run-charges.js";
 import { z } from "zod";
 import * as admin from "./admin.js";
 import { orgForClerk, type Org } from "./auth.js";
+import { platformAccessFor } from "./platform-account.js";
 import { orgBudget } from "./billing.js";
 import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
@@ -505,6 +506,22 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   if (!m && dir.provider === "clerk") {
     const got = await acceptPendingInvitation(c.userId);
     if (got) { m = got.m; org = got.org; ms = (await dir.memberships.forUser(c.userId)).filter((x) => x.organization).sort((a, b) => a.created_at - b.created_at); }
+  }
+  // A platform admin with no account open here lands in the platform account (mold_v0-276, src/platform-account.ts): made
+  // when there is none, they are added to it, and this request goes on in it. Never the no-account page for them: when
+  // it cannot be made or joined, they are told so (503 platform_account_unavailable) and may try again.
+  if (!m) {
+    let got: Awaited<ReturnType<typeof platformAccessFor>>;
+    try { got = await platformAccessFor(c.userId); }
+    catch (err) {
+      console.error(`platform account for ${c.userId}:`, (err as Error).message);
+      return void res.status(503).json({ error: fill("Your {account} on this platform could not be opened just now. Try again in a moment."), code: "platform_account_unavailable" });
+    }
+    if (got) {
+      ms = (await dir.memberships.forUser(c.userId, true)).filter((x) => x.organization).sort((a, b) => a.created_at - b.created_at);
+      const x = ms.find((y) => y.organization!.id === got!.clerkOrgId);
+      if (x && !clerk.isSuspended(x)) { m = x; org = got.org; }
+    }
   }
   if (!m && ms.some((x) => clerk.isSuspended(x))) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
   if (!m && !ms.length) return void res.status(403).json({ error: fill("You are not in a {product} {account} yet. Ask your admin to invite you."), code: "no_account" });

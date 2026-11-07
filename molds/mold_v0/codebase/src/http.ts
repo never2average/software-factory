@@ -69,6 +69,7 @@ import { memberKeysOn, PROFILE } from "./profile.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
+import { people } from "./people.js";
 import { clerkEnabled, ClerkError, frontendApi, mcpAudience } from "./clerk.js";
 import { frontDoor, mcpUrlSetting } from "./console-url.js";
 import { StripeError } from "./billing.js";
@@ -209,6 +210,16 @@ export function createApp() {
   app.get("/api/cron/sign-in-check", async (req, res) => {
     if (!cronSecretOk(req.headers.authorization)) return void res.status(401).json({ error: "unauthorized" });
     res.set("Cache-Control", "no-store").json(await (await import("./sign-in-check.js")).signInReport({ factory: true, refresh: req.query.refresh === "1" }));
+  });
+  // The platform account (mold_v0-276, src/platform-account.ts): made when there is none, with every platform admin who
+  // has signed in before as its owner. The factory calls it after each deploy (.claude/scripts/lib/single_service.py:
+  // CRON_SECRET on Vercel, APP_WORKER_TOKEN from inside a server's container). Counts only, never an address.
+  app.post("/api/cron/platform-account", async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    if (!cronSecretOk(req.headers.authorization) && !isWorkerToken(bearer(req.headers.authorization))) return void res.status(401).json({ error: "unauthorized" });
+    if (!people().enabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)", code: "sign_in_off" });
+    try { res.json({ ok: true, ...(await (await import("./platform-account.js")).syncPlatformAccount("factory")) }); }
+    catch (err) { console.error("platform account:", (err as Error).message); res.status(500).json({ ok: false, error: (err as Error).message.slice(0, 300) }); }
   });
   app.get("/api/cron/autoscale", async (req, res) => {
     // CRON_SECRET only (Vercel sends it): no fallback to an admin credential.

@@ -525,7 +525,7 @@ const cleanEmail = (v: unknown) => {
  * A new account: the Clerk organization (public_metadata NS_KEYS.slug), the app's row joined to it, and a Stripe
  * customer set on both. Without Clerk, a local organization with a legacy API key.
  */
-async function newAccount(actor: string, nameIn: string, slugIn: string | undefined, email: string | null) {
+async function newAccount(actor: string, nameIn: string, slugIn: string | undefined, email: string | null, opts: { platform?: boolean } = {}) {
   const name = nameIn.trim().slice(0, 200);
   if (!name) throw new AdminError("name is required");
   const slug = slugify(slugIn || name);
@@ -536,15 +536,30 @@ async function newAccount(actor: string, nameIn: string, slugIn: string | undefi
   const dir = directory();
   if (dir.enabled()) {
     clerkOrgId = (await dir.organizations.create(name, slug, { [NS_KEYS.slug]: slug })).id;
-    await db.query("INSERT INTO organizations (slug, name, clerk_org_id) VALUES ($1, $2, $3)", [slug, name, clerkOrgId]);
+    // The platform account's mark goes in with the row (mold_v0-276): a second instance making it at the same moment is
+    // refused by the one-mark index, never left with a second platform account.
+    await db.query("INSERT INTO organizations (slug, name, clerk_org_id, platform_account) VALUES ($1, $2, $3, $4)", [slug, name, clerkOrgId, opts.platform === true]);
   } else {
     key = (await createOrg(name, slug)).key;
     if (email) await db.query("UPDATE api_keys SET label = $2 WHERE org_id = (SELECT id FROM organizations WHERE slug = $1)", [slug, email]);
+    if (opts.platform) await db.query("UPDATE organizations SET platform_account = true WHERE slug = $1", [slug]);
   }
   if (billing.stripeEnabled()) await ensureCustomer(actor, slug, email).catch((err) => console.error(`stripe customer for ${slug}:`, (err as Error).message));
-  log(actor, "org.create", slug, dir.provider === "clerk" ? { clerk: Boolean(clerkOrgId) } : { people: Boolean(clerkOrgId) });
+  log(actor, "org.create", slug, { ...(dir.provider === "clerk" ? { clerk: Boolean(clerkOrgId) } : { people: Boolean(clerkOrgId) }), ...(opts.platform ? { platform_account: true } : {}) });
   return { slug, name, key };
 }
+
+/**
+ * The platform account (mold_v0-276, src/platform-account.ts): made the way staff make every account (the directory's
+ * organization, the app's row with its mark, the Stripe customer as for any account), with nobody invited: its members
+ * are added there, each one logged.
+ */
+export async function createPlatformAccount(actor: string, name: string, slug: string) {
+  const made = await newAccount(actor, name, slug, null, { platform: true });
+  return { slug: made.slug, name: made.name };
+}
+/** The cached people of an account, forgotten after a membership changes outside this module (src/platform-account.ts). */
+export const forgetPeople = (clerkOrgId: string | null) => forget(clerkOrgId);
 
 /** Invite a person: a Clerk invitation (Clerk emails it), or without Clerk a legacy key labelled with their email. */
 async function invitePerson(actor: string, slug: string, email: string, role: AccountRole = "member") {

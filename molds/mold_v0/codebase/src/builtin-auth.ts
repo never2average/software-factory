@@ -236,6 +236,16 @@ export const memberships = {
     const [m] = await db.query<MemberRow>(`${MEMBER_SQL} WHERE m.org_id = $1 AND m.user_id = $2`, [o.id, String(userId)]);
     return changed(String(userId), toMembership(m!));
   }),
+  /** Adds the person with the account role Clerk's (role, metadata) pair names (src/platform-account.ts: the platform
+   *  account's members). Refused, as Clerk's, when they are already a member. */
+  add: (orgDirId: string, userId: string, role: "admin" | "member", metadata?: Record<string, unknown>) => P(async (db) => {
+    const o = await orgRow(db, orgDirId);
+    const r = await db.query("INSERT INTO auth_memberships (org_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (org_id, user_id) DO NOTHING RETURNING user_id",
+      [o.id, String(userId), roleFrom(role, metadata)]);
+    if (!r.length) throw new ClerkError("User is already a member of the organization.", 422);
+    const [m] = await db.query<MemberRow>(`${MEMBER_SQL} WHERE m.org_id = $1 AND m.user_id = $2`, [o.id, String(userId)]);
+    return changed(String(userId), toMembership(m!));
+  }),
   /** Removes the person from the workspace and ends their sessions there (src/admin.ts removeMember also revokes their keys). */
   remove: (orgDirId: string, userId: string) => P(async (db) => db.transaction(async (tx) => {
     const o = await orgRow(tx, orgDirId);

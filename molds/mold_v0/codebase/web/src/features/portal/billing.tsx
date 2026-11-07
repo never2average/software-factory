@@ -33,6 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { profile } from '@/config/profile.generated';
 import { fill } from '@/lib/vocabulary';
 import { text } from '@/lib/texts';
+import { IdentityName } from '@/components/identity-avatar';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
@@ -377,14 +378,15 @@ function People({ t, l, reload, filter = 'all', setFilter }: { t: Team | undefin
   const cols: RecordCol<PersonRow>[] = [
     { key: 'person', label: 'Person', keep: true, type: 'text', value: (r) => (r.kind === 'invite' ? r.x.email : r.m.name || r.m.email || ''),
       // Invites: when it was sent, as a second line (Joined is off by default).
-      render: (r) => r.kind === 'invite' ? (<>
+      // mold_v0-275: each person's avatar beside their name (the console's drawing in the app's avatar colours).
+      render: (r) => r.kind === 'invite' ? (<IdentityName email={r.x.email}>
         <span className='font-medium'>{r.x.email}</span>
         <div className='text-muted-foreground mt-1 text-xs leading-none'>sent <When d={r.x.created_at} /></div>
-      </>) : (<>
+      </IdentityName>) : (<IdentityName id={r.m.user_id} name={r.m.name} email={r.m.email}>
         <span className='font-medium'>{r.m.name || r.m.email}</span>
         {r.m.user_id === t.me && <span className='text-muted-foreground ml-2 text-xs'>you</span>}
         {r.m.name && <span className='text-muted-foreground ml-2 text-xs'>{r.m.email}</span>}
-      </>) },
+      </IdentityName>) },
     { key: 'role', label: 'Role', className: 'w-36', type: 'select', value: (r) => ACCOUNT_ROLE_LABEL[roleOf(r.kind === 'invite' ? r.x : r.m)],
       // The status badge under the role, only when it isn't Active (Status itself is off by default).
       render: (r) => { const x = roleOf(r.kind === 'invite' ? r.x : r.m), st = statusOf(r); return (<>

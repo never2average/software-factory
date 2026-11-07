@@ -47,6 +47,10 @@
  *                      for the kinds that need their private network (pack kinds with private_network: true); absent or
  *                      false (the default): no runner route answers, no console page or admin tab shows, enrolment is
  *                      refused and every run is hosted
+ *   run_sandbox        optional (mold_v0-274, src/run-sandboxes.ts): where each run's (and each agent wake's) sandbox comes
+ *                      from by default: auto (the default: boat when its key is in Key vault, else this server's Docker),
+ *                      boat, docker or freestyle. The default of the platform setting APP_RUN_SANDBOX: a staff member's
+ *                      choice (Admin › Agent configuration) and the server's environment win over it
  *   audit              optional (mold_v0-197, src/audit-trail.ts): the two audit trails, {"data": true, "platform": false,
  *                      "retention_days": 400, "platform_retention_days": 400}; each trail off unless true (off: nothing is
  *                      written and no page, route or tool appears); retention_days (default 400) keeps the data trail,
@@ -99,6 +103,8 @@ export interface Profile {
   audit?: ProfileAudit;
   /** On-premises runners (mold_v0-205): off unless true. Legacy for features.onprem_runners (mold_v0-219). */
   onprem_runners?: boolean;
+  /** Where runs get their sandbox by default (mold_v0-274): the platform setting APP_RUN_SANDBOX's default. */
+  run_sandbox?: "auto" | "boat" | "docker" | "freestyle";
   /** The capability flags (mold_v0-219, src/features.json): {"<id>": true|false}. */
   features?: Readonly<Record<string, boolean>>;
   /** mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's team_roles; src/teams.ts), while teams is on. */
