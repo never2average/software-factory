@@ -9,6 +9,8 @@ sys.path.insert(0, HERE)
 import single_service as SS, vm_remote as VR
 # The sign-in return addresses (mold_v0-270) are read from the providers: never here (a case below puts a reading in).
 SS.SIGN_IN = lambda *a, **k: None
+# The platform account's call after a Vercel deploy (mold_v0-276) would reach the app: never here (cases below pass their own).
+SS.PLATFORM_HTTP = lambda *a, **k: {"status": 0, "body": ""}
 
 ROOT = SS.ROOT
 COMPOSE = """name: shop
@@ -700,6 +702,56 @@ def run():
         ok(rc == 0 and said == CSAID and ran == [(bdir, "postgres://u:p@db.invalid/x", "catalogs:index")], f"vercel: the index runs from the build copy against the api project's database: {ran} {said}")
         rc, said = SS.catalogs_vercel(PVC(), cbx, bdir, "zz-shop-api", cspec, run=lambda *a, **k: (_ for _ in ()).throw(OSError("no npm")))
         ok(rc is None and said.startswith("not run"), f"vercel: an index that cannot run is said, never raised: {said}")
+        # --- 7d. the platform account after a deploy (mold_v0-276): said and recorded, never a failed deploy -------------
+        real_pa = SS.platform_account_spec(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
+        ok(real_pa and real_pa["path"] == "/api/cron/platform-account" and real_pa["vercel_secret"] == "CRON_SECRET",
+           f"mold_v0 declares the platform account's call, and its src/http.ts serves it: {real_pa}")
+        ok(SS.platform_account_spec(cb, man) is None and F.get("platform_account") is None, "a codebase that does not serve it asks for no call (the fixture)")
+        os.makedirs(os.path.join(cbx, "src"), exist_ok=True); open(os.path.join(cbx, "src", "http.ts"), "w").write('app.post("/api/cron/platform-account", h);\n')
+        PSPEC = {"path": "/api/cron/platform-account", "vercel_secret": "CRON_SECRET", "server_secret": "APP_WORKER_TOKEN", "said": "PLATFORM ACCOUNT:"}
+        pspec = SS.platform_account_spec(cbx, {"platform_account": PSPEC}); FPA = dict(FCAT, platform_account=pspec)
+        psteps = {st["id"]: st for st in SS.plan(S, FPA, cb)}; pids = list(psteps)
+        pargv = " ".join(psteps.get("platform-account", {}).get("argv") or [])
+        ok("platform-account" in pids and pids.index("platform-account") > pids.index("catalogs") and pids.index("platform-account") < pids.index("keep")
+           and "-p sf-zz-shop" in pargv and "exec -T" in pargv and "/api/cron/platform-account" in pargv and "APP_WORKER_TOKEN" in pargv
+           and "platform-account" not in [st["id"] for st in SS.plan(S, FCAT, cb)],
+           f"the plan calls the platform account inside the app's running container, after the catalogs, only when the codebase serves it: {pids}")
+        ok(not re.search(r"Bearer [A-Za-z0-9_-]{8,}", pargv), "the worker token is read inside the container: no value on the command line")
+        PBODY = json.dumps({"ok": True, "account": {"slug": "platform", "name": "Shop (platform)"}, "created": True, "staff": 2, "added": 2, "promoted": 0, "suspended": 0, "not_signed_in": 1})
+        for what, ans, want_ok, want in (("a call that worked", (0, "PLATFORM ACCOUNT: HTTP 200 " + PBODY + "\n"), True, "the platform account Shop (platform) (platform) made; 2 platform staff in it (2 added now); 1 listed address(es) join at their first sign-in"),
+                                         ("an older build", (1, "PLATFORM ACCOUNT: HTTP 404 {\"error\":\"Not found\"}\n"), False, "older than mold_v0-276"),
+                                         ("a container that is not up", (1, "service \"app\" is not running"), False, "not ensured: service")):
+            R8 = Runner(dict(R.answers, rls=(0, PASS + "\n"), catalogs=(0, CSAID), **{"platform-account": ans}))
+            res8 = SS.deploy(S, FPA, cb, runner=R8, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                             say=lambda s_: None, release="20261020T000008Z", wait=lambda s_: None)
+            ids8 = [c[0] for c in R8.calls]
+            ok(res8["platform_account"]["ok"] is want_ok and want in res8["platform_account"]["said"] and "back" not in ids8 and ids8.index("platform-account") > ids8.index("catalogs"),
+               f"compose: {what}: said and returned, never a failed deploy: {res8.get('platform_account')} {ids8}")
+        adp = os.path.join(t, "pa-app"); os.makedirs(adp); json.dump({"target": "vercel"}, open(os.path.join(adp, "infrastructure.json"), "w"))
+        SS.record_platform_account(adp, True, "the platform account Shop (platform) (platform) is there; 2 platform staff in it", "by provision.py --deploy")
+        pa = json.load(open(os.path.join(adp, "infrastructure.json")))["platform_account"]
+        ok(pa["ok"] is True and pa["said"].startswith("the platform account") and "+00:00" in pa["at"], f"the call's summary lands in infrastructure.json platform_account: {pa}")
+        pschema = json.load(open(os.path.join(ROOT, "state", "application", "app_id", "infrastructure.schema.json")))["properties"]["platform_account"]["properties"]
+        ok(set(pa) <= set(pschema), f"every field it writes is in the schema: {sorted(set(pa) - set(pschema))}")
+        mem = {"target": "vercel"}; SS.record_platform_account(adp, False, "not ensured: x", "by provision.py --deploy", infra=mem)
+        ok(mem["platform_account"] == json.load(open(os.path.join(adp, "infrastructure.json")))["platform_account"],
+           "the deploy's own copy of the state gets the record too, so its later save keeps it")
+        class PVP:
+            def __init__(self, vals): self.vals = vals
+            def pull_env(self, cb_, proj, required=False, environment="production"): return dict(self.vals)
+        seen = []
+        def phttp(url, method="GET", headers=None, body=None, timeout=12):
+            seen.append((url, method, (headers or {}).get("authorization"))); return {"status": 200, "body": PBODY}
+        pok, psaid = SS.platform_account_vercel(PVP({"CRON_SECRET": "cron-test-value"}), cbx, "zz-shop-api", "https://zz-shop-api.example.com", pspec, http=phttp)
+        ok(pok and seen == [("https://zz-shop-api.example.com/api/cron/platform-account", "POST", "Bearer cron-test-value")] and "cron-test-value" not in psaid,
+           f"vercel: POST to the api project's address with its CRON_SECRET, which is never said: {seen} {psaid}")
+        seen.clear()
+        pok, psaid = SS.platform_account_vercel(PVP({}), cbx, "zz-shop-api", "https://zz-shop-api.example.com", pspec, http=phttp)
+        ok(not pok and not seen and "CRON_SECRET could not be read back" in psaid, f"vercel: no secret read back: not called, said: {psaid}")
+        pok, psaid = SS.platform_account_vercel(PVP({"CRON_SECRET": "x"}), cbx, "zz-shop-api", "https://zz-shop-api.example.com", pspec, http=lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        ok(not pok and psaid.startswith("not ensured: OSError"), f"vercel: a call that cannot be made is said, never raised: {psaid}")
+        pok, psaid = SS.platform_account_vercel(PVP({"CRON_SECRET": "x"}), cbx, "zz-shop-api", "https://zz-shop-api.example.com", pspec, http=lambda *a, **k: {"status": 500, "body": '{"ok":false,"error":"db down"}'})
+        ok(not pok and "HTTP 500" in psaid and "db down" in psaid, f"vercel: an error answer is said: {psaid}")
         adr = os.path.join(t, "rls-app"); os.makedirs(adr); json.dump({"postgres": {"provider": "self_hosted", "rls": "fail_closed"}}, open(os.path.join(adr, "datastores.json"), "w"))
         ev = SS.record_rls(adr, spec, True, PASS, "by provision.py --deploy-remote", "enforced", "ran in a one-off container.")
         stored = json.load(open(os.path.join(adr, "datastores.json")))["postgres"]["rls_verified"]

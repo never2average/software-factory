@@ -1983,8 +1983,30 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   card in the list's place (`ActionCard`, `CardForm`; the record details card's style): a way back, the title, a short
   summary of what will happen, the fields, then the submit and Cancel. It is kept in the address (`?start=1` for a run,
   `?new=1` for a record or a schedule), so Back returns to the list; Cancel, Esc or a submit return to it, the list read
-  again and focus back on the button. A link action navigates. A row opened from any `RecordView` table is the same
-  full details card in the list's place (no peek beside a narrowed list), and a record's own page is that card too.
+  again and focus back on the button. A link action navigates. A record's own page is the details card.
+
+  **The record panel (mold_v0-278, replacing mold_v0-217's full card for an open row).** A row of any `RecordView`
+  table (every list of both consoles: record areas, tab tables, staff records, runs, accounts, access requests,
+  sessions, profiles, credentials, ...) never leaves the page: the list narrows and the record opens in an inline panel
+  at its right (`web/src/components/layout/detail-panel.tsx`, the layout pure in `web/src/lib/split-panel.ts`). No
+  backdrop and no focus trap; the table stays scrollable and clickable, another row switches the panel and the open row
+  is highlighted. A splitter between them resizes it (drag, or focus it and use ← → Home End; 40% for details and half
+  for an editor at first, at least 360 px each side, remembered per panel type in the browser; less room than both and
+  the panel takes it all). The header: the title on the left; on the right only a labelled **Expand** / **Collapse**
+  (the panel the list's whole width) and the **⋯** menu holding every other action of the record as labelled items,
+  **Open in its own page** among them when it has one (`pageHref`; a list's own items through `panelActions`, a menu
+  reading its own data through `panelMenu`). Close is a round ✕ at the card's top-right corner ("Close panel",
+  tooltip "Close (Esc)"); Esc closes it from the panel or the list and focus returns to the row; ↑ ↓ (j k) walk the
+  rows. Below `lg` the panel is a full-width layer under the top bar with **Back to list**. It is in the address:
+  `?id=<key>` opens it (a reload or a shared link reopens it; a page with its own parameter, `?session=`, `?job=`,
+  `?run=`, `?profile=`, keeps it), `&panel=full` expands it, `&panelTab=<tab>` picks a laid-out record's tab
+  (`LaidOutRecord` `tabParam`), and closing drops only those, keeping every list filter. With the flag record_pages on
+  and a layout declared, an area's panel body is the record's laid-out page (header, facts, notices, tabs, sections,
+  related lists, actions: `RecordDetailBody`); otherwise its details. One panel at a time: opening one closes any other,
+  and a create or edit form's side panel (mold_v0-256) closes it as it opens (inside the panel, a form opens in its
+  place). An editor with unsaved changes (`usePanelGuard`, or anything typed into a form in the panel) asks "Discard
+  unsaved changes?" before the panel closes or switches row. Proof: `npm run test:record-panel` (the layout, the
+  sources, and every behaviour drawn in a real browser at 1440 and 390 px).
   A json field never shows raw JSON (mold_v0-240, `web/src/features/records/json-text.ts`, `json-value.tsx`): on a
   record's page, an open row's card and a staff record's page a list of objects is one line per item (its name, then
   its meaningful fields: "Production · Hosting: AWS, ap-south-1") and an object one "Label: value" line per field;
@@ -3788,6 +3810,46 @@ shell checks each one it uses, and the factory does the same from the front door
   `provision.py <app> --sign-in-check`, in `domain.py <app> switch` (which first prints every address that changes, old
   and new; `switch --dry-run` only that) and on mint's deploy station. A failing sign-in never blocks or undoes a
   deploy: it ends as needs_human (exit 3) with the plain ask, click by click.
+
+## The platform account (mold_v0-276)
+
+A platform admin (an `APP_PLATFORM_ADMINS` address, or anyone with a platform role) who signs in to the customer
+portal (`/app`) never sees the page for someone with no account: they land in **the platform account**, the one
+account the platform's own staff use the portal in.
+
+- **One shared account, not one per admin.** Every platform owner is an owner of the same account (viewer staff join
+  it as viewers, support and operator staff as members): staff see the same portal, records and bill; the accounts
+  list, the funnel and Stripe get one row for the platform, not one per person; and adding or removing an admin is a
+  membership, never an account to make or to clean up.
+- **Named from the brand, under a stable slug** (`src/platform-account.ts`): "<profile name> (platform)", slug
+  `platform` (or the first free one after it), marked on its row (`organizations.platform_account`,
+  `0059_platform_account`, one mark at most by a partial unique index), so a rename, or a customer account that took the
+  slug first, never makes a second one. Made the way staff make an account (`src/admin.ts` `createPlatformAccount`:
+  the directory's organization under Clerk or the built-in sign-in, the app's row, the Stripe customer as for any
+  account).
+- **At sign-in** (`src/app.ts` `customerSession`): a platform admin whose request finds no account open for them gets
+  the account made when there is none and is added to it, then the request goes on in it (owner). A second sign-in
+  finds them there and makes nothing; a second admin joins the same account. Several requests at once make one account
+  and one membership (one maker per process, and the mark's index across processes). A suspended membership is left
+  alone (the suspended page). If the account cannot be made or joined, the API answers 503
+  `platform_account_unavailable` and the portal says so with Try again (`PlatformAccountProblem`), never the page for
+  no account. Non-admins are unchanged.
+- **The list.** An address added to `APP_PLATFORM_ADMINS` gets in at its next sign-in. One removed keeps its
+  membership, and the account is never deleted here: an owner or staff remove the person on its Team page, as anyone's.
+- **Audited.** The account made, each member added and each role raised are a staff log line (`src/admin.ts` `log`:
+  `platform_account.create`, `platform_account.member_add`, `platform_account.member_role`, beside the account's
+  `org.create`) and, with the platform trail on, a staff entry in the account's slice of it
+  (`/platform-account/create`, `/platform-account/member-add/<role>`).
+- **The factory** calls `POST /api/cron/platform-account` (the cron secret or the worker token; counts only, never an
+  address) after every deploy (`mold.json` `platform_account`, `.claude/scripts/lib/single_service.py`: on Vercel
+  from this machine with the api project's `CRON_SECRET`; on a server inside the app's running container with the
+  worker token it holds), so every admin who has signed in before is an owner of the account straight away and can use
+  the portal; an owner demoted there is made owner again. What it said is printed and recorded in
+  `infrastructure.json` `platform_account`; it never fails or undoes a deploy (the app makes the account itself at an
+  admin's first sign-in). Proven by `npm run test:platform-account` (both sign-ins; `--browser --shots <dir>` adds the
+  console and a screenshot).
+- **Rolling back** (`sql/rollback/0059_platform_account.sql`) drops only the mark: the account stays, an ordinary one to
+  the older release. A later release makes a new one under the next free slug.
 
 ## Generic gaps (mold_v0-260)
 

@@ -1031,6 +1031,16 @@
         "how": { "type": "string" }
       }
     },
+    "platform_account": {
+      "type": "object",
+      "description": "What the last deploy's call for the platform account said (mold_v0-276; molds/mold_v0/mold.json platform_account, lib/single_service.py record_platform_account): at, whether the app answered ok, its one-line summary (counts only) and how it was called. Never a verdict on the deploy: the app makes the account itself at a platform admin's first sign-in.",
+      "properties": {
+        "at": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "said": { "type": "string" },
+        "how": { "type": "string" }
+      }
+    },
     "configured_at": {
       "type": "string",
       "format": "date-time",
