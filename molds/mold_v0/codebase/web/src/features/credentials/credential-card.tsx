@@ -34,11 +34,12 @@ export async function credentialsCall<T>(method: string, body?: unknown, query =
 
 /** The open card, kept in the address: which credential, set or clear, and (on a record's page) which environment. */
 export function useCredentialCard() {
-  const [q, setQ] = useQueryStates({ credential: parseAsString, do: parseAsString, environment: parseAsString });
+  // mold_v0-260: &entry=<label>, one of a credential's several values (replaced or removed on its own).
+  const [q, setQ] = useQueryStates({ credential: parseAsString, do: parseAsString, environment: parseAsString, entry: parseAsString });
   return {
-    open: q.credential ? { id: q.credential, mode: (q.do === 'clear' ? 'clear' : 'set') as 'set' | 'clear', environment: q.environment ?? null } : null,
-    show: (id: string, mode: 'set' | 'clear', environment: string | null = null) => void setQ({ credential: id, do: mode, environment }, { history: 'push' }),
-    close: () => void setQ({ credential: null, do: null, environment: null }, { history: 'replace' })
+    open: q.credential ? { id: q.credential, mode: (q.do === 'clear' ? 'clear' : 'set') as 'set' | 'clear', environment: q.environment ?? null, entry: q.entry ?? null } : null,
+    show: (id: string, mode: 'set' | 'clear', environment: string | null = null, entry: string | null = null) => void setQ({ credential: id, do: mode, environment, entry }, { history: 'push' }),
+    close: () => void setQ({ credential: null, do: null, environment: null, entry: null }, { history: 'replace' })
   };
 }
 
@@ -106,17 +107,21 @@ function SecretFile({ id, label, value, set }: { id: string; label: string; valu
  * Set, replace or clear one credential: a full card in the page's place. `environments` (a record's environments, for
  * one set per environment) is picked from, never typed. `back` names where Back returns ("the list", the record).
  */
-export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record', asset, environment, environments, onEnvironment, onClose, onDone }: {
+export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record', asset, environment, environments, onEnvironment, onClose, onDone, entry = null }: {
   c: Credential; state: SlotState | null; mode: 'set' | 'clear'; back: string; forWhat: string; noun?: string;
+  /** mold_v0-260: one of a credential's labelled values (replace or remove it); null with entries: add one. */
+  entry?: string | null;
   asset: string | null; environment: string | null; environments: string[] | null; onEnvironment?: (e: string) => void;
   onClose: () => void; onDone: () => unknown;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
+  const [label, setLabel] = useState(entry ?? '');
+  const entryWord = c.entries?.label.toLowerCase() ?? '';
   const [busy, setBusy] = useState(false);
   const title = useRef<HTMLDivElement>(null);
   useEffect(() => { title.current?.focus(); }, []);
-  const set = state?.status === 'Set' || !!state?.partial;
-  const verb = mode === 'clear' ? 'Clear' : set ? 'Replace' : 'Set';
+  const set = c.entries ? !!entry : state?.status === 'Set' || !!state?.partial;
+  const verb = c.entries ? (mode === 'clear' ? 'Remove' : entry ? 'Replace' : 'Add') : mode === 'clear' ? 'Clear' : set ? 'Replace' : 'Set';
   const needsEnv = c.place === 'record-environment';
   const slot = { pack: c.pack, ...(c.place !== 'settings' ? { asset } : {}), ...(needsEnv ? { environment } : {}) };
   const missing = c.parts.filter((p) => !values[p.name]);
@@ -125,11 +130,16 @@ export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record',
     setBusy(true);
     try {
       if (mode === 'clear') {
-        await credentialsCall('DELETE', c.group ? { ...slot, group: c.group } : { ...slot, name: c.parts[0]!.name });
-        toast.success(`${c.label} cleared`);
+        await credentialsCall('DELETE', c.group ? { ...slot, group: c.group } : { ...slot, name: c.parts[0]!.name, ...(c.entries && entry ? { entry } : {}) });
+        toast.success(c.entries && entry ? `${entry} removed from ${c.label}` : `${c.label} cleared`);
       } else {
         if (missing.length) { toast.error(`${missing[0]!.label} is empty`); return; }
-        if (c.group) await credentialsCall('PUT', { ...slot, group: c.group, values });
+        if (c.entries) {
+          // mold_v0-260: one labelled value: its label (typed when it is added) and its value.
+          if (!label.trim()) { toast.error(`The ${entryWord} is empty`); return; }
+          await credentialsCall('PUT', { ...slot, name: c.parts[0]!.name, entry: label.trim(), value: values[c.parts[0]!.name] });
+          toast.success(`${label.trim()} ${entry ? 'replaced' : 'added'}`);
+        } else if (c.group) await credentialsCall('PUT', { ...slot, group: c.group, values });
         else await credentialsCall('PUT', { ...slot, name: c.parts[0]!.name, value: values[c.parts[0]!.name] });
         toast.success(`${c.label} ${set ? 'replaced' : 'set'}`);
       }
@@ -145,7 +155,7 @@ export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record',
     const put = (x: string) => setValues((o) => ({ ...o, [p.name]: x }));
     return (
       <div key={p.name} className='flex flex-col gap-1.5'>
-        <Label htmlFor={id}>{c.parts.length > 1 || !c.file(p) ? p.label : `${p.label} (the whole file)`}</Label>
+        <Label htmlFor={id}>{c.entries ? 'Value' : c.parts.length > 1 || !c.file(p) ? p.label : `${p.label} (the whole file)`}</Label>
         {c.file(p) ? <SecretFile id={id} label={p.label} value={v} set={put} />
           : <Input id={id} className='w-full max-w-md font-mono' type='password' autoComplete='new-password' spellCheck={false} placeholder='Paste it here'
               value={v} onChange={(e) => put(e.target.value)} data-secret-input='' />}
@@ -162,7 +172,7 @@ export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record',
               <Icons.chevronLeft className='size-3.5' />Back to {back}
             </Button>
           </CardDescription>
-          <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{verb} {c.label}</CardTitle>
+          <CardTitle ref={title} tabIndex={-1} className='text-lg leading-snug break-words outline-none'>{verb} {c.entries ? (entry ? `${entry} (${c.label})` : `a ${entryWord} to ${c.label}`) : c.label}</CardTitle>
           <p className='text-muted-foreground text-sm'>{forWhat}{needsEnv && environment ? ` · ${envWord(environment)}` : ''}</p>
         </CardHeader>
         <CardContent className='flex flex-col gap-5 py-4'>
@@ -180,15 +190,23 @@ export function CredentialCard({ c, state, mode, back, forWhat, noun = 'record',
               ) : <p className='text-sm'>This {noun} lists no environments yet: they appear here once it does.</p>}
             </div>
           )}
-          {state && (state.status === 'Set' || state.partial) && (
+          {state && !c.entries && (state.status === 'Set' || state.partial) && (
             <p className='text-sm' data-credential-now=''>Now: {endsIn(c, state) || 'set'}, set <When d={state.set_at} />{state.last_used_at ? <>, last used <When d={state.last_used_at} /></> : ', not used yet'}.</p>
           )}
           {mode === 'set' ? (
             <div className='flex flex-col gap-4' data-credential-inputs={c.parts.length}>
+              {c.entries && (
+                <div className='flex flex-col gap-1.5'>
+                  <Label htmlFor='credential-entry'>{c.entries.label}</Label>
+                  <Input id='credential-entry' className='w-full max-w-md' value={label} onChange={(e) => setLabel(e.target.value)} readOnly={!!entry}
+                    autoComplete='off' spellCheck={false} placeholder={`The ${entryWord} this value is for`} data-credential-entry='' />
+                </div>
+              )}
               {c.parts.map(input)}
               <p className='text-muted-foreground text-xs'>Hidden as you type, sent once and never shown again{c.parts.length > 1 ? `: both are ${set ? 'replaced' : 'set'} together` : ''}.</p>
             </div>
-          ) : <p className='text-sm'>Clearing it removes the stored value{c.parts.length > 1 ? 's' : ''} at once: nothing receives {c.parts.length > 1 ? 'them' : 'it'} from then on.</p>}
+          ) : c.entries && entry ? <p className='text-sm'>Removing it deletes the value for {entry} at once: the runs receive the others only.</p>
+            : <p className='text-sm'>Clearing it removes the stored value{c.parts.length > 1 ? 's' : ''} at once: nothing receives {c.parts.length > 1 ? 'them' : 'it'} from then on.</p>}
         </CardContent>
         <CardFooter data-card-footer='' className='gap-2 border-t py-4 [.border-t]:pt-4'>
           <Button type='submit' variant={mode === 'clear' ? 'destructive' : 'default'} disabled={busy || (mode === 'set' && missing.length > 0) || (needsEnv && !environment)}>{verb}</Button>

@@ -72,7 +72,13 @@ export interface CatalogPack { id: string; name: string; words?: Record<string, 
 export interface WithheldTool { pack: string; generated: string; op: GeneratedOp; door: "workspace" | "admin"; area?: string; kind?: string; repository?: string; reason: "exclude" | "admin_only" }
 
 /** The names a generated tool may not take: the shell's and the packs' own tools, and the admin MCP's. */
-export interface Reserved { customer?: readonly string[]; admin?: readonly string[] }
+export interface Reserved {
+  customer?: readonly string[]; admin?: readonly string[];
+  /** mold_v0-260: the flag record_run_inputs is on: a kind's input_from_record gives its start tool a `record`. */
+  record_inputs?: boolean;
+  /** mold_v0-260: the flag credential_sets is on: a kind naming a tenant-bound credential takes `target_tenant`. */
+  tenants?: boolean;
+}
 
 const MAX_NAME = 64;
 /** What one export_<area> call holds at most (src/record-export.ts EXPORT_MAX_ROWS, EXPORT_MAX_BYTES). */
@@ -367,6 +373,28 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
         if ("target_asset" in shape) problems.push(at(`job kind ${k.name} has an argument named target_asset, which its start tool uses for the target`));
         shape.target_asset = z.strictObject({ area: z.enum(assetAreas as [string, ...string[]]), key: recordKey("The record's key") }).optional()
           .describe(`The ${ws}'s record the ${run} is for (its credentials bound to that record reach the ${run})`);
+      }
+      // mold_v0-260 (flag credential_sets): the tenant whose credentials the run receives, a record of the tenant area.
+      const tenantCreds = reserved.tenants ? creds.filter((c) => k.credentials.includes(c.name) && c.bound_to === "tenant") : [];
+      if (tenantCreds.length) {
+        if ("target_tenant" in shape) problems.push(at(`job kind ${k.name} has an argument named target_tenant, which its start tool uses for the tenant`));
+        const tenantAreas = [...new Set(tenantCreds.map((c) => c.area!))] as [string, ...string[]];
+        shape.target_tenant = z.strictObject({ area: z.enum(tenantAreas), key: recordKey("The tenant record's key") }).optional()
+          .describe(`The ${ws}'s tenant record the ${run} is for (its credentials bound to that record reach the ${run})`);
+      }
+      // mold_v0-260 (flag record_run_inputs): a run on a record takes these arguments from it: they may be left out
+      // when a record is given (the handler fills them, and refuses a missing one without it).
+      const fromRecord = reserved.record_inputs ? k.input_from_record : undefined;
+      if (fromRecord) {
+        if ("record" in shape) problems.push(at(`job kind ${k.name} has an argument named record, which its start tool uses for the record it runs on`));
+        const want = Object.values(fromRecord).filter((v) => !v.startsWith("$"));
+        const onAreas = areas.filter((a) => a.scope === "workspace" && want.every((f) => a.fields.some((x) => x.name === f && !x.encrypted && x.type !== "file"))).map((a) => a.name);
+        if (!onAreas.length) problems.push(at(`job kind ${k.name}: input_from_record names ${want.join(", ")}, which no workspace area of the pack has together`));
+        else {
+          for (const arg of Object.keys(fromRecord)) if (shape[arg]) shape[arg] = (shape[arg] as z.ZodType).optional();
+          shape.record = z.strictObject({ area: z.enum(onAreas as [string, ...string[]]), key: recordKey("The record's key") }).optional()
+            .describe(`The ${ws}'s record the ${run} runs on: ${Object.entries(fromRecord).map(([a, f]) => `${a} from its ${f === "$key" ? "key" : f === "$title" ? "title" : f}`).join(", ")}`);
+        }
       }
       const envs = creds.filter((c) => k.credentials.includes(c.name) && c.bound_to === "environment");
       if (envs.length) {

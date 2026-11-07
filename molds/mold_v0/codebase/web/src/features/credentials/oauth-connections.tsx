@@ -16,7 +16,7 @@ export interface OAuthConnection {
   expires_at: string | null; connected_by: string | null; connected_at: string | null; refreshed_at: string | null;
 }
 export interface OAuthView { providers: { pack: string; name: string; label: string; scopes: string[] }[]; connections: OAuthConnection[]; can_manage: boolean }
-interface OAuthField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment'; area: string | null; environments: string[] | null; oauth?: string }
+interface OAuthField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment' | 'tenant'; area: string | null; environments: string[] | null; oauth?: string }
 
 export async function oauthCall<T>(method: string, path = '', body?: unknown): Promise<T | null> {
   const res = await fetch(`/api/credential-connections${path}`, {

@@ -66,15 +66,20 @@ try {
   {
     const reg = JSON.parse(readFileSync(path.join(ROOT, "src", "features.json"), "utf8"));
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
-      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages", "side_panel_forms", "teams"]);
-    assert.equal(reg.flags.length, 17);
+      "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages", "side_panel_forms", "teams",
+      // mold_v0-260
+      "record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool"]);
+    assert.equal(reg.flags.length, 26);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
     }
     // defaults: on for what a pack declared before the registry, off for the opt-in toggles
     const off = F.FEATURES.filter((f) => !f.default).map((f) => f.id);
-    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages", "side_panel_forms", "teams"]);
+    assert.deepEqual(off, ["audit.data", "audit.platform", "audit.sign", "onprem_runners", "agent_harness", "record_pages", "side_panel_forms", "teams",
+      "record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool"]);
+    // mold_v0-260: every one of the batch's flags is quiet while off (the generated files are what they were).
+    for (const id of off.slice(8)) assert.equal(F.featureSpec(id).quiet_off, true, `${id}: quiet while off`);
     // the profile's features over the legacy key over the default
     assert.equal(F.featureSetting("audit.data", {}), false);
     assert.equal(F.featureSetting("audit.data", { audit: { data: true } }), true);
@@ -82,13 +87,13 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 17 flags, each documented with a default; profile.features over the legacy key over the default");
+    console.log("✓ the registry: 26 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------
   {
     await installEmbedded(null);
-    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history", "agent_harness", "side_panel_forms", "teams"]);
+    assert.deepEqual(F.featureStates().filter((s) => s.requested).map((s) => s.id), ["audit.data", "audit.platform", "audit.sign", "health_history", "agent_harness", "side_panel_forms", "teams", "run_analytics", "filters_in_address", "usage_tool"]);
     assert.equal(F.featuresOnWords(), "health");
     console.log("✓ zero packs: nothing asked for but the audit toggles (profile only) and health history; on: health");
   }

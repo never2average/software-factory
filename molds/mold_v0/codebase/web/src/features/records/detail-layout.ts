@@ -252,6 +252,8 @@ export interface PageAction {
   disabled: string | null;
   confirm: string | null;
   run?: { kind: string; label: string; description: string | null; args: PageFormField[]; values: Record<string, unknown>; environments: string[] | null;
+    /** mold_v0-260 (flag record_run_inputs): the arguments the kind takes from the record (shown, never sent). */
+    from_record?: string[];
     /** mold_v0-256: the linked record it runs on. */
     target?: { area: string; key: string; title: string | null } | null };
   moves?: { to: string; label: string; disabled: string | null }[];

@@ -2852,6 +2852,15 @@ pack declared it, off for the opt-in profile toggles. The legacy keys (`audit.da
 | `record_pages` | off | an area's page layout (`detail`) or a `copyable` field | the laid-out record page (mold_v0-253, below): header, badges, facts, notices, tabs of sections, copy buttons; mold_v0-254: related lists, a record's runs, the header's actions and `/api/records/_page`; mold_v0-256: a run's own page (`/app/runs/<id>`, `/api/runs/<id>/page`), log, history, code, table and file sections, computed facts and list columns, Add <related record>, the record picker, a Key from the Title, and `record_changes`. `quiet_off`: while off the generated files leave it, the layouts and `copyable` out |
 | `side_panel_forms` | off | always (the profile alone) | create and edit forms open first in a side panel (mold_v0-256, below): an area's Add, a record page's Edit and Add <related record>, staff's New and Edit. `quiet_off`: while off the generated files leave it out |
 | `teams` | off | always (the profile alone); an area's `visibility` takes effect only with it on | teams inside a workspace and per-record visibility (mold_v0-259, below): Settings › Access › Teams, `/api/teams`, `/app/settings/teams/<id>`, each record's visibility on every read and write, the forms' visibility field, the lists' Visibility column and filter, the record page's Share. `quiet_off`: while off the generated files leave it, the Teams tab and the areas' `visibility` out |
+| `record_run_inputs` | off | a kind's `input_from_record` | a run started on a record takes its arguments from the record (mold_v0-260, below): the start tool's `record`, a record page's start_run filled on the server. `quiet_off` |
+| `private_catalogs` | off | an upstream catalog's `access` (`deploy_key`, `github_app`) | the private catalog's fetch, Admin › Key vault's Private catalogs and `/api/admin/onboarding/catalog-access`. `quiet_off` |
+| `wide_lists` | off | an area's `list_columns` or a tab's `columns` past 8 | up to 12 columns, the table scrolling sideways inside its frame with the first column kept in view; off, more than 8 is refused at build. `quiet_off` |
+| `record_rules` | off | a reference field's `where`, an area's `on_save` | the condition on a reference's target (every write, the picker) and the checks run on save; off, either is refused at build. `quiet_off` |
+| `credential_sets` | off | a credential's `entries`, a `tenant` binding | several labelled values per credential and the tenant scope; off, either is refused at build. `quiet_off` |
+| `overview_cards` | off | a home tab's fifth headline number, or its `recent_runs` or `attention` card | those three on the home page, `/api/home/recent-runs` and `/api/home/attention`; off, a fifth number, a third rail card or either card is refused at build, as before. `quiet_off` |
+| `run_analytics` | off | always (the profile alone) | `/app/run-analytics`, `/admin/run-analytics`, `/api/analytics/runs`, `/api/admin/onboarding/run-analytics`, their sidebar entries and the Activity page's link. `quiet_off` |
+| `filters_in_address` | off | always (the profile alone) | the dashboards' filters kept in the address (staff's Overview, a workspace's Activity, run analytics). `quiet_off` |
+| `usage_tool` | off | always (the profile alone) | the customer MCP's `get_usage`. `quiet_off`: off, the zero-pack surface stays `4e3e14917286b00c` |
 
 **`kind` stays the developer surface's switch** in the app spec: `kind: embedded` with its `developer_surface` block asks
 for it; `features.developer_surface` may only repeat what `kind` says (the spec check refuses true with `tool` or false
@@ -3573,6 +3582,67 @@ and update as a person; no viewer fails closed; the policy refuses a hidden inse
 a deleted team, leaving the workspace; off again), `npm run test:migrations` (0050 and its rollback), `npm run check:rls`
 (the probe above), `npm run test:features` (the flag), `npm run test:console-tabs` (a teams build's console typechecks),
 `npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_teams` (projects, notes, places).
+
+## Generic gaps (mold_v0-260)
+
+Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and
+`quiet_off` (off, the generated files and the MCP surface are what they were; Octillion turns none on). A raised limit
+is not a capability and has no flag. The fixture `scripts/fixtures/packs/fixture_gaps` declares every one.
+
+1. **A run reads its input from the record it runs on** (`record_run_inputs`). A job kind declares
+   `input_from_record: {<argument>: <field> | "$key" | "$title"}`. Its start tool then takes `record: {area, key}` (an
+   enum of the pack's workspace areas that have every field named), read as the caller in the caller's workspace;
+   the mapped arguments may be left out and come from the record; one given that disagrees is refused; an asset or a
+   tenant record is also the run's target; the run carries the record (`runs.record_area`, `record_key`, mold_v0-254).
+   A record page's start_run fills them on the server (what the browser sent for them is dropped where the record has a
+   value); its form shows them under "From this record", never as inputs (`src/mcp-tools.ts recordInputs`).
+2. **A shared catalog from a private repository** (`private_catalogs`). An upstream catalog's `access`: `deploy_key`
+   (`repo` `ssh://git@<host>/<path>`, git over SSH with that key alone, `IdentitiesOnly`, `BatchMode`,
+   `StrictHostKeyChecking=yes` against the host's own known_hosts line; the key written 0600 into the fetch's private
+   directory and removed once the commit is fetched) or `github_app` (`https://github.com/<owner>/<name>`, either
+   transport: a token of the platform's own installation for that one repository, read contents only, in a header,
+   revoked after). The key and the host line, or the installation's number, are set by the platform's owners in Admin ›
+   Key vault, Private catalogs (`src/catalog-access.ts`, the key vault's provider `catalog_access`, one sealed entry per
+   repository; staff read back a fingerprint, never the key); never in a pack. The fetch is pinned to the commit as
+   before; while the flag is off or nothing is set, the index is refused saying where to set it. The GitHub App's own
+   settings are mounted for a build whose catalog reads with it.
+3. **A sections tab holds up to 8 tabs** (6 before; `SECTIONS_MAX`). Past 6 its strip scrolls sideways on its own.
+4. **More than 8 list columns** (`wide_lists`): an area's `list_columns` or a tab's `columns`, up to 12
+   (`WIDE_LIST_MAX`); such a table keeps its columns' widths and scrolls sideways inside its frame (never the page),
+   its first column sticky.
+5. **References limited by a condition, checks on save** (`record_rules`). A reference field's
+   `where` (one test of `equals`, `in`, `not_in`, `empty`, or `all` of up to 6) on its target's fields: every write
+   (the data API, the forms, the MCP tools, an import's preview) refuses a key whose record it does not keep, read in
+   the writer's workspace ("acme-old is not a Endpoints record whose status is live"); the record picker lists only the
+   records it keeps and says so under the field. An area's `on_save`: a declarative check (mold_v0-196) with inputs from
+   the record being saved (`@field`, `$key`, `$title`, a literal), on create or update; a no is refused (409) with the
+   declared message. The build checks the fields, the enum values, the check, its inputs (`gapBuildProblems`).
+6. **Credential sets and tenants** (`credential_sets`, migration 0051). A credential's `entries: {label, max}`: several
+   labelled values (a host and its token), each its own row (`workspace_credentials.entry`, sealed with its label bound
+   in), set, replaced and removed one by one by owners, delivered to a run as one JSON object `{"<label>": "<value>"}`
+   (each value redacted from its output on its own). `bound_to: "tenant"` with `area` a record area declared
+   `tenant: true`: set on that record's page (its Credentials card), listed on Settings › Credentials' rows like an
+   asset's, delivered to a run whose `targets.tenant` names it (the start tool's `target_tenant`, or a run started on the
+   tenant's record). The record page's Credentials card is full width and each row's Set, Replace, Clear (or Add) sits
+   at its top right.
+7. **The home page's cards** (`overview_cards`): a fifth headline number (a home tab's `sparklines`, 5 across on a wide
+   screen), and its rail's `recent_runs` (the workspace's latest runs of packs whose runs list is not withheld) and
+   `attention` (the records whose page notices of tone warning or danger hold now, danger first, read as the person).
+   While the flag is off the build refuses them (and a rail past 2 cards), as it always did.
+8. **Run analytics** (`run_analytics`, `src/run-analytics.ts`): a period's runs (at most 5,000) by record, person,
+   model, tool and failure reason, tokens by model (a run's own `agent_usage` report, else the gateway's meter by
+   provider), spend from `RUN_USD`; a workspace's billing managers and owners at `/app/run-analytics`, staff at
+   `/admin/run-analytics` across the workspaces (or one, `?workspace=`), with a breakdown by workspace.
+9. **Filters in the address** (`filters_in_address`, `web/src/hooks/use-dashboard-filter.ts`): staff's Overview (period,
+   search), a workspace's Activity (period) and run analytics (period, kind, status, workspace).
+10. **`get_usage` over MCP** (`usage_tool`, `src/usage-tool.ts`): spend, runs by status and tokens by model for a period
+    (default the last 30 days), of the caller's workspace: its billing managers and owners (and an account key) the
+    whole of it, anyone else their own runs (`scope`). Off unless the profile turns it on.
+
+Proof: `npm run test:generic-gaps` (each item, its permissions and two workspaces; off, every route and tool absent),
+`npm run test:migrations` (0051 and its rollback), `npm run test:features`, `npm run test:record-pages`,
+`npm run test:credentials`, `npm run test:mcp-tools`, `npm run test:zero-pack` (`4e3e14917286b00c`), the factory's
+`lib/features.py` self-test; the fixture drawn in a lane world in light and dark at 1440 and 390 px.
 
 ## How the factory runs it
 

@@ -29,7 +29,7 @@ export interface PackGuideData {
     tools: string[];
   }[];
   kinds: { label: string; description: string | null; credentials: string[]; report: string | null; start: string; approval: string | null }[];
-  credentials: { label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment'; area: string | null }[];
+  credentials: { label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment' | 'tenant'; area: string | null }[];
   schedules: { label: string; kind: string; cron: string; area: string | null; enabled: boolean }[];
   tools: { name: string; op: string; area: string | null }[];
   record_tools: string[];
@@ -196,6 +196,8 @@ function runsMarkdown(d: PackGuideData): string {
     : '';
   const BOUND: Record<string, (a: string | null) => string> = {
     workspace: () => fill('one for the whole {workspace}'), asset: (a) => `one for each record of ${a}`, environment: (a) => `one for each record of ${a} and environment`,
+    // mold_v0-260 (flag credential_sets): bound to a tenant record.
+    tenant: (a) => `one for each record of ${a}, on that record's page`,
   };
   const credentials = d.credentials.length
     ? fill(`## Credentials\n\nA {run} reaches your own systems only with what you give it on **Settings › Credentials**. A value is stored encrypted (only its last 4 characters are ever shown again) and given only to the {runs} that use it.\n\n`) +

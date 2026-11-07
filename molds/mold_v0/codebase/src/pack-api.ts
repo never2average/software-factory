@@ -283,6 +283,8 @@ export class PackError extends Error {
 // ---------- declared now, wired by later tickets ----------
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "lowercase letters, digits and _, starting with a letter");
+/** mold_v0-260: a list's columns: 8, up to 12 with the flag wide_lists (WIDE_LIST_MAX); a sections tab's in-page tabs, up to 8. */
+export const LIST_COLUMNS_MAX = 8, WIDE_LIST_MAX = 12, SECTIONS_MAX = 8;
 /**
  * A record key (mold_v0-047; ( and ) since mold_v0-066): 1-200 of letters, digits and . _ : ( ) -, starting with a letter
  * or digit. Keys are stored and compared as they are; wherever the shell puts one inside a larger string (a paging
@@ -345,6 +347,36 @@ export const ENCRYPTABLE_TYPES = ["text", "number", "date", "boolean", "json", "
  *               (isFieldUrl); `preview: "document"` makes the record's card fetch and preview its document
  * `required` refuses a write that leaves it empty.
  */
+/**
+ * mold_v0-260 (flag record_rules): which records of its target area a reference field may name, a condition on the
+ * target's own fields: one test (`equals`, `in`, `not_in`, `empty`) of one field, or `all` of up to 6 such tests. The
+ * console's record picker lists only the records it keeps, and every write (the data API, the forms, the MCP tools, an
+ * import) refuses a key whose record it does not keep, as the writer reads that record. Evaluated by conditionHolds.
+ */
+const refScalar = z.union([z.string().min(1).max(200), z.number().finite(), z.boolean()]);
+const ReferenceWhereLeafSchema = z.object({
+  field: z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a field of the area it refers to"),
+  equals: refScalar.optional(),
+  in: z.array(refScalar).min(1).max(20).optional(),
+  not_in: z.array(refScalar).min(1).max(20).optional(),
+  empty: z.boolean().optional(),
+}).strict().refine((c) => [c.equals, c.in, c.not_in, c.empty].filter((x) => x !== undefined).length === 1, "one test: equals, in, not_in or empty");
+export const ReferenceWhereSchema = z.union([ReferenceWhereLeafSchema, z.object({ all: z.array(ReferenceWhereLeafSchema).min(1).max(6) }).strict()]);
+export type ReferenceWhere = z.output<typeof ReferenceWhereSchema>;
+/** The fields a reference's `where` tests. */
+export const referenceWhereFields = (w: ReferenceWhere): string[] => ("all" in w ? w.all.map((c) => c.field) : [w.field]);
+/** In words, what a reference's `where` keeps ("whose Status is active"), for a refusal and the picker. */
+export function referenceWhereWords(w: ReferenceWhere, label: (field: string) => string = (f) => f): string {
+  const one = (c: z.output<typeof ReferenceWhereLeafSchema>) => {
+    const l = label(c.field);
+    if (c.equals !== undefined) return `whose ${l} is ${String(c.equals)}`;
+    if (c.in) return `whose ${l} is ${c.in.map(String).join(" or ")}`;
+    if (c.not_in) return `whose ${l} is not ${c.not_in.map(String).join(" or ")}`;
+    return c.empty ? `with no ${l}` : `with a ${l}`;
+  };
+  return "all" in w ? w.all.map(one).join(" and ") : one(w);
+}
+
 export const RecordFieldSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -384,6 +416,8 @@ export const RecordFieldSchema = z.object({
    * or file field (the page never holds the value) or a json one (no one line to copy).
    */
   copyable: z.boolean().optional(),
+  /** mold_v0-260 (flag record_rules): a reference field's condition on the records it may name (ReferenceWhereSchema). */
+  where: ReferenceWhereSchema.optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -398,6 +432,7 @@ export const RecordFieldSchema = z.object({
   }
   if (f.type === "reference" && !f.to) bad("a reference field names the area it refers to (to)", "to");
   if (f.type !== "reference" && f.to) bad("to is for a reference field only", "to");
+  if (f.where && f.type !== "reference") bad("where is for a reference field only (the records it may name)", "where");
   if (f.multiple && !["enum", "person", "reference", "file"].includes(f.type)) bad("multiple is for enum, person, reference and file fields", "multiple");
   if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
@@ -517,6 +552,14 @@ const jobKindBase = {
    */
   credentials: z.array(name).max(20).default([]),
   /**
+   * mold_v0-260 (flag record_run_inputs): a run started on a record takes these arguments from that record, each
+   * argument -> a field of the record, `$key` or `$title`. Its start tool then takes `record` ({area, key}: one of the
+   * workspace's records of an area that has every field named) and a record page's start_run action fills them on the
+   * server; an argument given beside a record that disagrees with the record is refused.
+   */
+  input_from_record: z.record(name, z.string().regex(/^(\$key|\$title|[a-z][a-z0-9_]{1,62})$/, "a field of the record, $key or $title"))
+    .refine((m) => Object.keys(m).length >= 1 && Object.keys(m).length <= 30, "1 to 30 arguments").optional(),
+  /**
    * Credentials the platform's operators hold (mold_v0-075; the pack's `operatorCredentials`, values in the platform's
    * key vault, provider "pack_credentials", label "<pack>.<name>"), by name; none by default. Delivered to the run as the
    * field declares, like a workspace's, and never shown to the workspace: no console lists them, no workspace sets or
@@ -586,6 +629,8 @@ const jobKindBase = {
 const OP_EGRESS = "a kind with operator_credentials cannot take company_egress (a host the workspace chose would reach the operator's credential)";
 /** mold_v0-184: a credential_egress entry names the kind's own workspace credentials. */
 const CRED_EGRESS = "credential_egress names a credential that is not one of the kind's credentials";
+/** mold_v0-260: input_from_record names the kind's own arguments. */
+const INPUT_FROM_RECORD = "input_from_record names an argument the kind does not declare (args)";
 /** A gated write runs once per approval (mold_v0-079 review: a retried attempt would write again on one yes). */
 const ONE_ATTEMPT = "a kind that waits for an approval runs once per approval: max_attempts must be 1";
 export const JobKindSchema = z.object({
@@ -600,7 +645,8 @@ export const JobKindSchema = z.object({
   .refine((k) => !(k.operator_credentials.length && k.company_egress), { message: OP_EGRESS, path: ["company_egress"] })
   .refine((k) => k.credential_egress.every((r) => r.credentials.every((c) => k.credentials.includes(c))), { message: CRED_EGRESS, path: ["credential_egress"] })
   .refine((k) => !k.approval || k.max_attempts === 1, { message: ONE_ATTEMPT, path: ["max_attempts"] })
-  .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] });
+  .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] })
+  .refine((k) => Object.keys(k.input_from_record ?? {}).every((a) => (k.args ?? []).some((x) => x.name === a)), { message: INPUT_FROM_RECORD, path: ["input_from_record"] });
 
 /**
  * A job kind for the built-in agent-workspace runner (mold_v0-061: an agent repository at a pinned commit, a declared
@@ -617,6 +663,7 @@ export const AgentJobKindSchema = z.object({
   agent: AgentWorkspaceSchema,
 }).strict().superRefine((k, ctx) => {
   if (new Set((k.args ?? []).map((a) => a.name)).size !== (k.args ?? []).length) ctx.addIssue({ code: "custom", message: "an argument is declared twice", path: ["args"] });
+  for (const a of Object.keys(k.input_from_record ?? {})) if (!(k.args ?? []).some((x) => x.name === a)) ctx.addIssue({ code: "custom", message: `${a}: ${INPUT_FROM_RECORD}`, path: ["input_from_record", a] });
   if (k.report && !k.agent.write_back.some((w) => k.report!.path === w || k.report!.path.startsWith(`${w.replace(/\/+$/, "")}/`)))
     ctx.addIssue({ code: "custom", message: "the report must be under one of agent.write_back (only those paths are kept in the workspace)", path: ["report", "path"] });
   if (k.agent.timeout_seconds > k.token_lifetime_seconds)
@@ -1525,7 +1572,8 @@ export const RecordAreaSchema = z.object({
   role: z.enum(["source", "check", "asset"]),
   scope: z.enum(["platform", "workspace"]),
   fields: z.array(field).min(1).max(60),
-  list_columns: z.array(name).max(8).optional(),
+  /** Up to 8 fields the list shows; up to 12 with the flag wide_lists (mold_v0-260; refused past 8 while it is off). */
+  list_columns: z.array(name).max(WIDE_LIST_MAX).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
   lifecycle: LifecycleSchema.optional(),
   /**
@@ -1533,6 +1581,26 @@ export const RecordAreaSchema = z.object({
    * (lowercase words joined by -, until the person types a key of their own). Off (the default) the Key is typed.
    */
   key_from_title: z.boolean().optional(),
+  /**
+   * mold_v0-260 (flag credential_sets): the area's records are the workspace's tenants (its customers, sites or
+   * accounts): a credential may be bound to one of them (`bound_to: "tenant"`), shown and set on that record's page and
+   * delivered to a run that targets it (its start tool's target_tenant, or a run started on the record). Workspace
+   * scope, the shell's own tables; at most one tenant area in a build.
+   */
+  tenant: z.boolean().optional(),
+  /**
+   * mold_v0-260 (flag record_rules): checks run when a record is saved: each names one of the build's declarative checks
+   * (mold_v0-196, pack.json checks), its inputs taken from the record being saved (`@<field>`, `$key`, `$title` or a
+   * literal), and the words a refusal says. A create or change for which the check answers no is refused (409) with
+   * `message`, through every door (the data API, the console's forms, the MCP tools, an import). `on` narrows it to
+   * creates or changes (default both).
+   */
+  on_save: z.array(z.object({
+    check: name,
+    inputs: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,62}$/), z.union([z.string().max(200), z.number().finite(), z.boolean()])).default({}),
+    message: z.string().trim().min(1).max(300).regex(/^[^\n\r{}<>]*$/, "plain text on one line: no braces or angle brackets"),
+    on: z.array(z.enum(["create", "update"])).min(1).max(2).optional(),
+  }).strict()).min(1).max(10).optional(),
   permissions: PermissionsSchema.optional(),
   /**
    * Where the area's rows come from (mold_v0-059; src/data-repositories.ts): one of the pack's `repositories`. Absent,
@@ -1631,6 +1699,13 @@ export const RecordAreaSchema = z.object({
   if (a.sealed && a.scope === "platform") bad("a shared (platform) area has no workspace key to seal it with: sealed is for workspace areas", "sealed");
   if (a.sealed === false && a.role === "asset") bad("an asset area is always sealed", "sealed");
   if (a.chain && !a.append_only) bad("chain needs append_only: true (a chained record is never changed)", "chain");
+  // mold_v0-260: a tenant area is a workspace's own records in the shell's tables; checks on save are for areas written through the record store.
+  if (a.tenant && (a.scope !== "workspace" || a.repository)) bad("a tenant area is a workspace's own records in the shell's tables (workspace scope, no repository)", "tenant");
+  if (a.on_save && a.repository) bad("checks on save are for an area written through the record store (no repository)", "on_save");
+  for (const [i, r] of (a.on_save ?? []).entries()) for (const [k, v] of Object.entries(r.inputs)) {
+    if (typeof v === "string" && v.startsWith("@") && !a.fields.some((f) => f.name === v.slice(1))) bad(`${v.slice(1)} is not one of the area's fields`, "on_save", i, "inputs", k);
+    if (typeof v === "string" && v.startsWith("@") && a.fields.some((f) => f.name === v.slice(1) && f.encrypted)) bad(`${v.slice(1)} is encrypted: a check never reads it`, "on_save", i, "inputs", k);
+  }
   if (a.append_only && a.scope !== "workspace") bad("append_only is for a workspace's own records (a shared area is written by staff)", "append_only");
   if (a.append_only && a.lifecycle) bad("an append-only area has no lifecycle: a move changes a record", "append_only");
   if (a.append_only && a.repository) bad("an append-only area keeps its records in the shell's own tables, not a repository's", "append_only");
@@ -1768,7 +1843,8 @@ export type RowMap = z.output<typeof RowMapSchema>;
 export type FieldValue = z.output<typeof FieldValueSchema>;
 /** An upstream project pinned by commit: a full commit id, never a branch or a tag. */
 export const UpstreamSchema = z.object({
-  repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (file:// only in tests)"),
+  // mold_v0-260: ssh://git@<host>/<path> only for a private catalog read with a deploy key (UpstreamCatalogSchema access).
+  repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|ssh:\/\/git@[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (ssh://git@ for a deploy key; file:// only in tests)"),
   commit: z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/, "a full commit id (40 or 64 hex characters): never a branch or a tag"),
   /** Its licence, as an SPDX id or expression ("AGPL-3.0-only", "MIT OR Apache-2.0"): shown in the build's source offer. */
   license: z.string().regex(/^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/, "an SPDX licence id or expression (letters, digits, . + - ( ) and spaces)").optional(),
@@ -1819,7 +1895,22 @@ const UpstreamCatalogSchema = z.object({
    * at any time; "manual" staff only (the admin MCP's admin_sync_<repository>, the console's Repositories page).
    */
   index: z.enum(["automatic", "manual"]).optional(),
-}).catchall(z.unknown());
+  /**
+   * mold_v0-260 (flag private_catalogs): how a private upstream is read. "public" (the default) as before;
+   * "deploy_key" over git and SSH (`repo` ssh://git@<host>/<path>) with an SSH deploy key; "github_app" over HTTPS
+   * (`repo` https://github.com/<owner>/<name>, either transport) with a token of the platform's own GitHub App
+   * installation. The key, its host's public key and the installation are set by platform staff in Admin › Key vault
+   * (Private catalogs), never in a pack; the fetch is pinned to the commit as before.
+   */
+  access: z.enum(["public", "deploy_key", "github_app"]).optional(),
+}).catchall(z.unknown()).superRefine((r, ctx) => {
+  const repo = typeof r.upstream === "object" ? r.upstream.repo : null;
+  const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
+  if (r.access === "deploy_key" && r.transport === "github") bad("a deploy key is read over git (transport git)", "transport");
+  if (repo && r.access === "deploy_key" && !repo.startsWith("ssh://git@")) bad("a deploy key reads an ssh://git@<host>/<path> repository", "upstream");
+  if (repo && r.access !== "deploy_key" && repo.startsWith("ssh://")) bad("an ssh:// repository is read with a deploy key (access: deploy_key)", "access");
+  if (repo && r.access === "github_app" && !/^https:\/\/github\.com\//.test(repo)) bad("the GitHub App reads https://github.com/<owner>/<name> repositories", "upstream");
+});
 /**
  * An external HTTP API, read live and read only: `base_url` (its host among `egress`, the only hosts it may reach; a
  * redirect is refused), the workspace's `credential` field (mold_v0-034, bound to the workspace) sent in `auth.header`,
@@ -2067,7 +2158,11 @@ export const TAB_INCLUDES = ["setup", "notices"] as const;
  *                  the other charts (another overview tab of the pack listing it), when there is one
  * Left out: the journey picker (the Setup page's own layout: every build has Get set up, mold_v0-175).
  */
-export const TAB_RAIL = /^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$/;
+export const TAB_RAIL = /^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62})$/;
+/** mold_v0-260 (flag overview_cards): the home tab's own cards: the workspace's latest runs, the records that need attention. */
+export const HOME_CARDS = ["recent_runs", "attention"] as const;
+/** A home tab's rail past this many cards, a fifth headline number or one of HOME_CARDS asks for overview_cards (mold_v0-260). */
+export const RAIL_MAX = 2, HOME_HEADLINE_MAX = 4;
 /**
  * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
  * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
@@ -2202,24 +2297,28 @@ export const TabSchema = z.object({
   area: name.optional(),
   areas: z.array(TabAreaSchema).min(2).max(4).optional(),
   // mold_v0-256 (flag record_pages): a column may be computed from the records that point back to each row (TabRelatedColumnSchema).
-  columns: z.array(z.union([name, TabRelatedColumnSchema])).min(1).max(8).optional(),
+  // mold_v0-260: up to 12 with the flag wide_lists (refused past 8 while it is off).
+  columns: z.array(z.union([name, TabRelatedColumnSchema])).min(1).max(WIDE_LIST_MAX).optional(),
   views: z.array(z.enum(TAB_VIEWS)).min(1).max(4).optional(),
   board_by: name.optional(),
   timeline_by: point.optional(),
   charts: z.array(name).max(12).optional(),
   include: z.array(z.enum(TAB_INCLUDES)).min(1).max(TAB_INCLUDES.length).optional(),
-  rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL) or chart:<one of the pack's number charts>")).min(1).max(2).optional(),
+  // mold_v0-260 (flag overview_cards): also recent_runs and attention, up to 4 cards.
+  rail: z.array(z.string().regex(TAB_RAIL, "one of the shell's cards (TAB_RAIL) or chart:<one of the pack's number charts>")).min(1).max(4).optional(),
   /** An area tab's own narrowing of its one area's rows (mold_v0-175): a list filter, {field: value} or {field: {op: value}}. */
   filter: z.record(z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/, "a field of the area (or key, title, updated_at)"), z.unknown())
     .refine((f) => Object.keys(f).length > 0 && Object.keys(f).length <= 10, "1 to 10 conditions").optional(),
   /** A sections tab's in-page tabs (mold_v0-175): the ids of the pack's tabs it shows, in order. */
-  sections: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a tab id of this pack")).min(2).max(6).optional(),
+  /** mold_v0-260: up to 8 (6 before). */
+  sections: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "a tab id of this pack")).min(2).max(SECTIONS_MAX).optional(),
   /**
    * The four cards below a list's toolbar (mold_v0-181): exactly 4 of the pack's metrics, each a label, its value and a
    * sparkline of its last SPARK_WEEKS weeks (src/sparklines.ts). Absent: the shell's four for the tab's kind.
    * On a home tab (mold_v0-203): 1 to 4 of them, the headline row above its columns. Absent there: no row.
    */
-  sparklines: z.array(name).min(1, "1 to 4 metric names").max(4, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab").optional(),
+  // mold_v0-260 (flag overview_cards): a home tab may name a fifth, its headline row's fifth number.
+  sparklines: z.array(name).min(1, "1 to 4 metric names").max(5, "exactly 4 metric names on a list tab (its four cards), up to 4 on a home tab (5 with overview_cards)").optional(),
   /** A home tab's heading above its charts (mold_v0-175); accepted, not drawn since mold_v0-207 (no charts on the home page). */
   charts_title: z.string().trim().min(1).max(60).regex(/^[^{}<>\n]*$/, "plain text on one line: no braces or angle brackets").optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
@@ -2259,6 +2358,7 @@ export const TabSchema = z.object({
   const home = t.kind === "overview" && (t.include ?? []).includes("setup");
   if (t.sparklines && !home && !(SPARK_KINDS as readonly string[]).includes(t.kind)) bad(`sparklines are for a list tab: ${SPARK_KINDS.join(", ")}, or a home tab (an overview that includes setup)`, "sparklines");
   else if (t.sparklines && !home && t.sparklines.length !== 4) bad("exactly 4 metric names: the tab's four cards", "sparklines");
+  if (t.rail?.some((x) => (HOME_CARDS as readonly string[]).includes(x)) && !home) bad("recent_runs and attention are a home tab's cards", "rail");
   if (t.sparklines && new Set(t.sparklines).size !== t.sparklines.length) bad("a metric is listed twice", "sparklines");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
@@ -2325,8 +2425,9 @@ export const CredentialSchema = z.object({
   name,
   label: z.string().min(1).max(80),
   help: z.string().max(500).optional(),
-  bound_to: z.enum(["workspace", "asset", "environment"]),
-  /** The asset area (asset and environment bindings): one of this pack's own areas with role "asset". */
+  /** mold_v0-260 (flag credential_sets): also `tenant`, a record of the build's tenant area (`tenant: true`). */
+  bound_to: z.enum(["workspace", "asset", "environment", "tenant"]),
+  /** The asset area (asset and environment bindings): one of this pack's own areas with role "asset"; the tenant area (a tenant binding). */
   area: name.optional(),
   environments: z.array(envLabel).min(1).max(20).optional(),
   deliver_as: deliverAs,
@@ -2373,6 +2474,16 @@ export const CredentialSchema = z.object({
    * typing) and a value is accepted only for one of them. Not with `environments`, the fixed list.
    */
   environments_from: z.object({ field: name, key: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,62}$/, "a key of the field's objects").optional() }).strict().optional(),
+  /**
+   * mold_v0-260 (flag credential_sets): several labelled values in one credential (a list of hosts, each with its token):
+   * `label` names what each value's label is ("Host"), `max` how many (default 20, at most 50), `pattern` what a label
+   * may be (default: letters, digits and . _ : / @ -). Each value is sealed on its own; the run receives them as one JSON
+   * object, {"<label>": "<value>", ...}, as the field delivers it (a variable or a file).
+   */
+  entries: z.object({
+    label: z.string().trim().min(1).max(40),
+    max: z.number().int().min(1).max(50).default(20),
+  }).strict().optional(),
 }).strict()
   .refine((c) => !(c.github_app && c.oauth), "a field is either github_app or oauth, not both")
   .refine((c) => c.without === undefined || c.optional, "without is for an optional field only (optional: true)")
@@ -2381,7 +2492,8 @@ export const CredentialSchema = z.object({
   .refine((c) => c.environments_from === undefined || c.bound_to === "environment", "environments_from is for an environment binding only")
   .refine((c) => !(c.environments_from && c.environments), "environments_from or environments, not both")
   .refine((c) => c.adds === undefined || c.optional, "adds is for an optional field only (optional: true)")
-  .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
+  .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding, the tenant area for a tenant binding (and only then)")
+  .refine((c) => !c.entries || !(c.group || c.github_app || c.oauth), "a credential with entries is one credential of its own: no group, GitHub App or OAuth")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
 
 /**
@@ -2830,7 +2942,10 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   // two fields never deliver to the same environment variable or file.
   const creds = new Map((p.credentials ?? []).map((c) => [c?.name, c]));
   for (const c of p.credentials ?? []) {
-    if (c?.area !== undefined && !(p.recordAreas ?? []).some((a) => a?.name === c.area && a.role === "asset"))
+    // mold_v0-260: a tenant binding names this pack's own tenant area.
+    if (c?.area !== undefined && c.bound_to === "tenant" && !(p.recordAreas ?? []).some((a) => a?.name === c.area && (a as { tenant?: boolean }).tenant === true))
+      problems.push(at(`credential ${c.name} is bound to area ${c.area}, which is not one of this pack's tenant areas (tenant: true)`));
+    else if (c?.area !== undefined && c.bound_to !== "tenant" && !(p.recordAreas ?? []).some((a) => a?.name === c.area && a.role === "asset"))
       problems.push(at(`credential ${c.name} is bound to area ${c.area}, which is not one of this pack's asset areas`));
     // mold_v0-014: an OAuth field names one of this pack's own providers.
     if (c?.oauth !== undefined && !(p.oauthProviders ?? []).some((o) => o?.name === c.oauth))

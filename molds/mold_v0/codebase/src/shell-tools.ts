@@ -23,6 +23,9 @@ export const AGENT_TOOL_NAMES = ["list_agent_sessions", "start_agent_session", "
   "resume_agent_session", "stop_agent_session", "decide_agent_request", "raise_agent_budget"] as const;
 export const ADMIN_AGENT_TOOL_NAMES = ["list_agent_sessions", "stop_agent_session"] as const;
 
+/** The MCP tool the shell adds when the flag usage_tool is on (src/usage-tool.ts, mold_v0-260): off by default. */
+export const USAGE_TOOL_NAMES = ["get_usage"] as const;
+
 /** The MCP tools the shell adds when at least one record area is declared (src/record-areas.ts). */
 export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
 /** The MCP tool the shell adds when at least one record area declares clocks (mold_v0-191, src/record-clocks.ts). */

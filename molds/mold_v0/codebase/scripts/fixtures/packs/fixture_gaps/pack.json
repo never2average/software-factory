@@ -1,0 +1,832 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_gaps",
+  "name": "Fixture gaps",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-260; scripts/generic-gaps-test.ts): a run that takes its input from the record it runs on, two private shared catalogs, a sections tab of 8 tabs, a 12-column list, references limited by a condition on their target and a check run on save, a credential of several labelled values bound to a tenant, a home tab with a fifth number and the Recent runs and Needs attention cards. Never shipped.",
+  "upstream": {
+    "repo": "ssh://git@git.example.com/acme/runbooks.git",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "record_areas": [
+    {
+      "name": "customers",
+      "label": "Customers",
+      "role": "source",
+      "scope": "workspace",
+      "tenant": true,
+      "icon": "building",
+      "fields": [
+        {
+          "name": "plan",
+          "label": "Plan",
+          "type": "enum",
+          "options": [
+            {
+              "value": "starter",
+              "label": "Starter"
+            },
+            {
+              "value": "growth",
+              "label": "Growth"
+            },
+            {
+              "value": "enterprise",
+              "label": "Enterprise"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "options": [
+            {
+              "value": "active",
+              "label": "Active"
+            },
+            {
+              "value": "paused",
+              "label": "Paused"
+            }
+          ]
+        },
+        {
+          "name": "region",
+          "label": "Region"
+        }
+      ],
+      "list_columns": [
+        "plan",
+        "status",
+        "region"
+      ],
+      "detail": {
+        "header": {
+          "badges": [
+            {
+              "field": "status",
+              "colors": {
+                "active": "success",
+                "paused": "warning"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "plan"
+            },
+            {
+              "field": "region"
+            }
+          ]
+        },
+        "notices": [
+          {
+            "when": {
+              "field": "status",
+              "equals": "paused"
+            },
+            "tone": "warning",
+            "title": "Paused",
+            "text": "This customer is paused: new incidents are not opened for it."
+          }
+        ],
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "Account",
+                "fields": [
+                  "plan",
+                  "status",
+                  "region"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "endpoints",
+      "label": "Endpoints",
+      "role": "source",
+      "scope": "workspace",
+      "icon": "plug",
+      "fields": [
+        {
+          "name": "customer",
+          "label": "Customer",
+          "type": "reference",
+          "to": "customers"
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "options": [
+            {
+              "value": "live",
+              "label": "Live"
+            },
+            {
+              "value": "retired",
+              "label": "Retired"
+            }
+          ]
+        },
+        {
+          "name": "address",
+          "label": "Address",
+          "type": "url"
+        }
+      ],
+      "list_columns": [
+        "customer",
+        "status",
+        "address"
+      ]
+    },
+    {
+      "name": "incidents",
+      "label": "Incidents",
+      "role": "check",
+      "scope": "workspace",
+      "icon": "warning",
+      "fields": [
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            {
+              "value": "critical",
+              "label": "Critical"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "enum",
+          "options": [
+            {
+              "value": "open",
+              "label": "Open"
+            },
+            {
+              "value": "mitigated",
+              "label": "Mitigated"
+            },
+            {
+              "value": "resolved",
+              "label": "Resolved"
+            }
+          ]
+        },
+        {
+          "name": "customer",
+          "label": "Customer",
+          "type": "reference",
+          "to": "customers",
+          "required": true,
+          "where": {
+            "field": "status",
+            "equals": "active"
+          }
+        },
+        {
+          "name": "endpoint",
+          "label": "Endpoint",
+          "type": "reference",
+          "to": "endpoints",
+          "where": {
+            "field": "status",
+            "equals": "live"
+          }
+        },
+        {
+          "name": "opened",
+          "label": "Opened",
+          "type": "date"
+        },
+        {
+          "name": "owner",
+          "label": "Owner"
+        },
+        {
+          "name": "region",
+          "label": "Region"
+        },
+        {
+          "name": "impact",
+          "label": "Impact"
+        },
+        {
+          "name": "detected_by",
+          "label": "Detected by"
+        },
+        {
+          "name": "affected",
+          "label": "Affected users",
+          "type": "number",
+          "min": 0
+        },
+        {
+          "name": "ticket",
+          "label": "Ticket"
+        },
+        {
+          "name": "eta",
+          "label": "Fix by",
+          "type": "date"
+        },
+        {
+          "name": "runbook",
+          "label": "Runbook",
+          "type": "url"
+        }
+      ],
+      "list_columns": [
+        "severity",
+        "status",
+        "customer",
+        "endpoint",
+        "opened",
+        "owner",
+        "region",
+        "impact",
+        "detected_by",
+        "affected",
+        "ticket",
+        "eta"
+      ],
+      "lifecycle": {
+        "field": "status",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "mitigated"
+          },
+          {
+            "from": [
+              "open",
+              "mitigated"
+            ],
+            "to": "resolved"
+          }
+        ]
+      },
+      "on_save": [
+        {
+          "check": "customer_supported",
+          "inputs": {
+            "customer": "@customer"
+          },
+          "message": "Incidents are opened for customers on a support plan only (growth or enterprise).",
+          "on": [
+            "create"
+          ]
+        }
+      ],
+      "detail": {
+        "header": {
+          "badges": [
+            {
+              "field": "severity",
+              "colors": {
+                "critical": "danger",
+                "high": "warning",
+                "medium": "info",
+                "low": "neutral"
+              }
+            },
+            {
+              "field": "status",
+              "colors": {
+                "open": "danger",
+                "mitigated": "warning",
+                "resolved": "success"
+              }
+            }
+          ],
+          "facts": [
+            {
+              "field": "customer"
+            },
+            {
+              "field": "endpoint"
+            },
+            {
+              "field": "opened"
+            },
+            {
+              "field": "affected"
+            }
+          ]
+        },
+        "notices": [
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "severity",
+                  "equals": "critical"
+                },
+                {
+                  "field": "status",
+                  "equals": "open"
+                }
+              ]
+            },
+            "tone": "danger",
+            "title": "Critical and open",
+            "text": "A critical incident is still open."
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "field": "eta",
+                  "before": "today"
+                },
+                {
+                  "field": "status",
+                  "not_in": [
+                    "resolved"
+                  ]
+                }
+              ]
+            },
+            "tone": "warning",
+            "title": "Past its fix-by date",
+            "text": "The fix-by date has passed."
+          }
+        ],
+        "tabs": [
+          {
+            "label": "Overview",
+            "sections": [
+              {
+                "title": "Incident",
+                "columns": 3,
+                "fields": [
+                  "customer",
+                  "endpoint",
+                  "owner",
+                  "region",
+                  "impact",
+                  "ticket"
+                ]
+              },
+              {
+                "title": "Runs",
+                "runs": {
+                  "kinds": [
+                    "diagnose"
+                  ],
+                  "limit": 5
+                },
+                "empty": "Nothing has run on it yet."
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "start_run",
+            "place": "primary",
+            "label": "Diagnose",
+            "job_kind": "diagnose"
+          },
+          {
+            "kind": "edit",
+            "place": "secondary"
+          },
+          {
+            "kind": "move"
+          }
+        ]
+      }
+    },
+    {
+      "name": "runbooks",
+      "label": "Runbooks",
+      "role": "source",
+      "scope": "platform",
+      "repository": "runbooks",
+      "icon": "book",
+      "fields": [
+        {
+          "name": "service",
+          "label": "Service"
+        },
+        {
+          "name": "summary",
+          "label": "Summary"
+        }
+      ],
+      "list_columns": [
+        "service",
+        "summary"
+      ]
+    },
+    {
+      "name": "standards",
+      "label": "Standards",
+      "role": "source",
+      "scope": "platform",
+      "repository": "standards",
+      "icon": "shield",
+      "fields": [
+        {
+          "name": "family",
+          "label": "Family"
+        },
+        {
+          "name": "summary",
+          "label": "Summary"
+        }
+      ],
+      "list_columns": [
+        "family",
+        "summary"
+      ]
+    }
+  ],
+  "repositories": {
+    "runbooks": {
+      "kind": "upstream_catalog",
+      "label": "Runbooks",
+      "upstream": "pack.json#upstream",
+      "transport": "git",
+      "access": "deploy_key",
+      "index": "manual",
+      "files": {
+        "runbooks": "runbooks.json"
+      },
+      "map": {
+        "runbooks": {
+          "from": "runbooks",
+          "key": "{id}",
+          "title": "{title}",
+          "fields": {
+            "service": "service",
+            "summary": "summary"
+          }
+        }
+      }
+    },
+    "standards": {
+      "kind": "upstream_catalog",
+      "label": "Standards",
+      "upstream": {
+        "repo": "https://github.com/example-org/standards",
+        "commit": "89abcdef0123456789abcdef0123456789abcdef"
+      },
+      "access": "github_app",
+      "index": "manual",
+      "files": {
+        "standards": "standards.json"
+      },
+      "map": {
+        "standards": {
+          "from": "standards",
+          "key": "{id}",
+          "title": "{title}",
+          "fields": {
+            "family": "family",
+            "summary": "summary"
+          }
+        }
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "customer_supported",
+      "label": "Is this customer on a support plan?",
+      "inputs": {
+        "customer": "string"
+      },
+      "rule": {
+        "area": "customers",
+        "match": {
+          "key": "$customer"
+        },
+        "latest_by": "updated_at",
+        "require": [
+          {
+            "field": "plan",
+            "in": [
+              "growth",
+              "enterprise"
+            ],
+            "label": "The customer is on a support plan"
+          }
+        ]
+      }
+    }
+  ],
+  "credentials": [
+    {
+      "name": "host_tokens",
+      "label": "Host tokens",
+      "bound_to": "tenant",
+      "area": "customers",
+      "entries": {
+        "label": "Host",
+        "max": 10
+      },
+      "deliver_as": {
+        "file": "hosts.json",
+        "path_env": "HOST_TOKENS_FILE"
+      },
+      "purpose": "Lets a diagnosis read each of this customer's hosts.",
+      "steps": [
+        "Open https://console.example.com/tokens and sign in.",
+        "Make a read-only token for each host.",
+        "Add each host here with its token."
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "open_incidents",
+      "label": "Open incidents",
+      "over": "incidents",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "open"
+        }
+      ]
+    },
+    {
+      "name": "critical_open",
+      "label": "Critical and open",
+      "over": "incidents",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "open"
+        },
+        {
+          "field": "severity",
+          "op": "eq",
+          "value": "critical"
+        }
+      ]
+    },
+    {
+      "name": "mitigated",
+      "label": "Mitigated",
+      "over": "incidents",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "mitigated"
+        }
+      ]
+    },
+    {
+      "name": "active_customers",
+      "label": "Active customers",
+      "over": "customers",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "active"
+        }
+      ]
+    },
+    {
+      "name": "live_endpoints",
+      "label": "Live endpoints",
+      "over": "endpoints",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "live"
+        }
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "id": "home",
+      "kind": "overview",
+      "label": "Home",
+      "include": [
+        "setup"
+      ],
+      "icon": "rocket",
+      "sparklines": [
+        "open_incidents",
+        "critical_open",
+        "mitigated",
+        "active_customers",
+        "live_endpoints"
+      ],
+      "rail": [
+        "recent_runs",
+        "attention",
+        "journeys"
+      ]
+    },
+    {
+      "id": "operations",
+      "kind": "sections",
+      "label": "Operations",
+      "icon": "dashboard",
+      "group": "Operations",
+      "sections": [
+        "incidents",
+        "open-incidents",
+        "customers",
+        "endpoints",
+        "runbooks",
+        "standards",
+        "diagnoses",
+        "reports"
+      ]
+    },
+    {
+      "id": "incidents",
+      "kind": "area",
+      "area": "incidents",
+      "icon": "warning",
+      "views": [
+        "table"
+      ],
+      "charts": []
+    },
+    {
+      "id": "open-incidents",
+      "kind": "area",
+      "area": "incidents",
+      "label": "Open",
+      "icon": "warning",
+      "views": [
+        "table"
+      ],
+      "charts": [],
+      "filter": {
+        "status": "open"
+      },
+      "sparklines": [
+        "open_incidents",
+        "critical_open",
+        "mitigated",
+        "active_customers"
+      ]
+    },
+    {
+      "id": "customers",
+      "kind": "area",
+      "area": "customers",
+      "icon": "building",
+      "views": [
+        "table"
+      ],
+      "charts": []
+    },
+    {
+      "id": "endpoints",
+      "kind": "area",
+      "area": "endpoints",
+      "icon": "plug",
+      "views": [
+        "table"
+      ],
+      "charts": []
+    },
+    {
+      "id": "runbooks",
+      "kind": "area",
+      "area": "runbooks",
+      "icon": "book",
+      "views": [
+        "table"
+      ],
+      "charts": [],
+      "action": false,
+      "reason": "Runbooks come from the private catalog."
+    },
+    {
+      "id": "standards",
+      "kind": "area",
+      "area": "standards",
+      "icon": "shield",
+      "views": [
+        "table"
+      ],
+      "charts": [],
+      "action": false,
+      "reason": "Standards come from the private catalog."
+    },
+    {
+      "id": "diagnoses",
+      "kind": "runs",
+      "label": "Diagnoses",
+      "icon": "play"
+    },
+    {
+      "id": "reports",
+      "kind": "reports",
+      "label": "Reports",
+      "icon": "page"
+    },
+    {
+      "id": "activity",
+      "kind": "usage",
+      "label": "Activity",
+      "icon": "chartLine",
+      "group": "Insights"
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "diagnose",
+      "label": "Diagnose an incident",
+      "runner": "agent-workspace",
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "args": [
+        {
+          "name": "incident",
+          "label": "Incident",
+          "required": true
+        },
+        {
+          "name": "severity",
+          "label": "Severity"
+        },
+        {
+          "name": "customer",
+          "label": "Customer"
+        },
+        {
+          "name": "focus",
+          "label": "Focus",
+          "help": "What to look at first (optional)."
+        }
+      ],
+      "input_from_record": {
+        "incident": "$key",
+        "severity": "severity",
+        "customer": "customer"
+      },
+      "credentials": [
+        "host_tokens"
+      ],
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-responder.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "diagnose.mjs",
+          "--incident",
+          "{incident}"
+        ],
+        "args": {
+          "incident": {
+            "from": "scope.incident"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "timeout_seconds": 1200,
+        "write_back": [
+          "results"
+        ]
+      }
+    }
+  ]
+}
