@@ -1332,6 +1332,33 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} agent profiles redesigned (an earlier profile rewritten as its next version in the five items' shape, what had no place listed; the uploads' table, no tenant grant); its rollback puts the earlier config back exactly, leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Freestyle as a run sandbox provider (mold_v0-274, freestyle_vault, found by name): its key vault provider (direct, the
+  // server's own key, FREESTYLE_API_KEY imported once); its rollback is refused while the runs' sandboxes come from
+  // Freestyle or the vault holds a Freestyle key, then leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "freestyle_vault")!.version;
+    const d = await shellAt(kind, v);
+    const [p] = await d.query<{ mode: string; upstream_url: string; env_vars: string[] }>("SELECT mode, upstream_url, env_vars FROM vault_providers WHERE slug = 'freestyle'");
+    assert.deepEqual(p, { mode: "direct", upstream_url: "https://api.freestyle.sh", env_vars: ["FREESTYLE_API_KEY"] }, "the provider: the server's own key");
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_freestyle_vault.sql`), "utf8");
+    await d.query("INSERT INTO platform_settings (key, value, updated_by) VALUES ('APP_RUN_SANDBOX', '\"freestyle\"', 'staff')");
+    await assert.rejects(d.exec(rb), /come from Freestyle/, "refused while the runs' sandboxes come from Freestyle");
+    await d.query("UPDATE platform_settings SET value = '\"boat\"' WHERE key = 'APP_RUN_SANDBOX'");
+    await d.query("INSERT INTO vault_credentials (provider, label, ciphertext, iv, tag, key_id, hint) VALUES ('freestyle', 'default', 'x', 'x', 'x', 'x', 'fs…1')");
+    await assert.rejects(d.exec(rb), /holds a Freestyle key/, "refused while the vault holds a Freestyle key");
+    assert.equal((await d.query("SELECT 1 FROM vault_providers WHERE slug = 'freestyle'")).length, 1, "nothing changed");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    assert.equal((await r.query("SELECT 1 FROM vault_providers WHERE slug = 'freestyle'")).length, 0, "the provider row goes");
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_freestyle_vault")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} Freestyle's key vault provider (direct, FREESTYLE_API_KEY imported once); its rollback refused while the runs' sandboxes come from Freestyle or the vault holds its key, then leaves exactly what ${v - 1} left, and it applies again`);
+
   // The workspace recipes (mold_v0-271, workspace_recipes, found by name): three staff tables the tenant role cannot
   // reach; a recipe's id, a version once per recipe, a version from an agent naming its proposal, a proposal's decision
   // and its accepted version checked; its rollback drops them, leaves exactly what the migration before left (the

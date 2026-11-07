@@ -8,8 +8,9 @@
 // 1. /api/auth/config says who may open an account: invite_only (the shell's default).
 // 2. Signed in with no account open is a 403 no_account:
 //    nobody's member (Clerk: anyone who signed up; built-in: someone removed from their workspace), a member of a
-//    directory organization that is not an account (Clerk), and platform staff with no account of their own, whom
-//    /admin/session names as staff. A member of an account gets 200 from GET /api/app/access.
+//    directory organization that is not an account (Clerk). Platform staff with no account of their own, whom
+//    /admin/session names as staff, never are: they are put in the platform account (mold_v0-276,
+//    scripts/platform-account-test.ts). A member of an account gets 200 from GET /api/app/access.
 // 3. The request (POST /api/access-requests) is stored with the address, company, message and where it came from; a bad
 //    address is refused.
 // 4. Built-in: an invitation to the person's address is listed and accepted, and the account opens.
@@ -17,7 +18,7 @@
 // lane stand-in for @clerk/nextjs, molds/mold_v0/testing/console/clerk-standin, which reads the mock's session):
 // 5. Every portal route (/app, /app/usage) shows the page for no account: who they are signed in as, the form with their
 //    address filled in; sending it shows the confirmation and stores the request (source: /app).
-// 6. Platform staff see "Open the admin console" (and no request form). Clerk: someone whose active organization is one
+// 6. Platform staff land in the portal, never on this page (mold_v0-276). Clerk: someone whose active organization is one
 //    they made (no account) gets the page. Built-in, last: an invitation shows as "Join <account>" (the portal's
 //    invitation dialog's buttons, web/src/features/portal/invitation-landing.tsx) and opens the account in one click.
 // 7. Invite-only: the landing page's calls to action lead to /request-access, whose form sends; sign-up says so.
@@ -152,8 +153,9 @@ try {
   assert.equal(s1.status, 403, JSON.stringify(s1.body)); assert.equal(s1.body.code, "no_account");
   assert.equal((await call("GET", "/api/app/me", await stranger.h())).body.code, "no_account", "every portal call says the same");
   assert.equal((await call("GET", "/admin/session", await stranger.h())).body.is_platform_admin, false);
+  // Platform staff are put in the platform account instead (mold_v0-276): the portal opens.
   const s2 = await call("GET", "/api/app/access", await staff.h());
-  assert.equal(s2.status, 403); assert.equal(s2.body.code, "no_account");
+  assert.equal(s2.status, 200, JSON.stringify(s2.body));
   const ss = await call("GET", "/admin/session", await staff.h());
   assert.equal(ss.body.is_platform_admin, true, JSON.stringify(ss.body)); assert.equal(ss.body.email, STAFF);
   if (selfMade) {
@@ -161,7 +163,7 @@ try {
     assert.equal(s3.status, 403, JSON.stringify(s3.body)); assert.equal(s3.body.code, "no_account", "an organization they made themselves is no account");
     assert.equal((await call("GET", "/api/app/access", await alsoInA!.h())).status, 200, "in an account too: the server uses it");
   }
-  ok(`no account open: 403 no_account (${PROVIDER === "clerk" ? "nobody's member, an organization that is not an account" : "someone removed from their workspace"}); staff are named by /admin/session`);
+  ok(`no account open: 403 no_account (${PROVIDER === "clerk" ? "nobody's member, an organization that is not an account" : "someone removed from their workspace"}); staff, named by /admin/session, are never refused (the platform account)`);
 
   // ---------- 3. the request ----------
   const req1 = await call("POST", "/api/access-requests", {}, { email: stranger.email, company: "Example Co", name: "Sam", message: "We would like to try it.", source: { landing: "/app" } });
@@ -361,12 +363,11 @@ async function browserChecks(w: { owner: any; stranger: any; staff: any; selfMad
     const c = await ctxFor(w.staff);
     const p = await c.newPage();
     await p.goto("/app", { waitUntil: "networkidle" });
-    await p.waitForSelector('[data-testid="open-admin"]', { timeout: 20000 });
-    assert.equal(await p.locator('[data-testid="open-admin"]').getAttribute("href"), "/admin");
-    assert.match(await p.locator("#no-account-admin").innerText(), /platform staff/i);
-    assert.equal(await p.locator('[data-testid="request-access-form"]').count(), 0, "staff open accounts themselves: no request form");
+    await p.waitForSelector("#main-content", { timeout: 20000 });
+    assert.equal(await p.locator('[data-testid="no-account"]').count(), 0, "staff never get the page for no account");
+    assert.equal(await p.locator('[data-testid="request-access-form"]').count(), 0, "and no request form");
     await c.close();
-    ok("platform staff see “Open the admin console” and why");
+    ok("platform staff land in the portal (the platform account), never on the page for no account");
     if (w.selfMade) {
       const c2 = await ctxFor(w.selfMade);
       const p2 = await c2.newPage();
@@ -403,7 +404,6 @@ async function browserChecks(w: { owner: any; stranger: any; staff: any; selfMad
   // 8. axe, light and dark, and three widths.
   const notes = [
     ...(await grade(w.stranger, "/app", "app no account", '[data-testid="request-access-form"]')),
-    ...(await grade(w.staff, "/app", "app staff", '[data-testid="open-admin"]')),
     ...(w.selfMade ? await grade(w.selfMade, "/app", "app own org", '[data-testid="request-access-form"]') : []),
     ...(await grade(null, "/request-access", "request access", '[data-testid="request-access-form"]')),
     ...(await grade(null, "/", "landing", "#landing-hero")),

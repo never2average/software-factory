@@ -1,6 +1,6 @@
--- Rolling back past 0058_workspace_recipes (mold_v0-271), for a release from before it.
+-- Rolling back past 0060_workspace_recipes (mold_v0-271), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0058_workspace_recipes.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0060_workspace_recipes.sql
 -- Drops the workspace recipes, their versions and proposals: the older release has no recipes, and an agent profile that
 -- named one starts its sessions with its own uploads only (the older release does not read `recipes`). Their files'
 -- agent_profile_uploads rows and bytes stay (0056's), as unused uploads. Found by

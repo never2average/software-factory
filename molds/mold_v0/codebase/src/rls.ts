@@ -114,7 +114,7 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "agent_profile_uploads",
   // Health › Sign-in's last report and the callbacks it saw (mold_v0-270, 0057_sign_in_checks): platform bookkeeping.
   "sign_in_checks",
-  // The workspace recipes, their versions and agents' proposals (mold_v0-271, 0058_workspace_recipes): staff bookkeeping.
+  // The workspace recipes, their versions and agents' proposals (mold_v0-271, 0060_workspace_recipes): staff bookkeeping.
   "workspace_recipes", "workspace_recipe_versions", "workspace_recipe_proposals"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {

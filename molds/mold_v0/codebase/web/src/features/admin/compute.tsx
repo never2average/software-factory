@@ -458,7 +458,7 @@ function RunLimits({ s }: { s: Summary }) {
   );
 }
 /** APP_RUN_SANDBOX in words. */
-const RUN_MODE: Record<string, string> = { auto: 'boat, else Docker', boat: 'boat.dev', docker: 'Docker on this server', off: 'Nowhere (off)', process: 'No sandbox (tests)' };
+const RUN_MODE: Record<string, string> = { auto: 'boat, else Docker', boat: 'boat.dev', docker: 'Docker on this server', freestyle: 'Freestyle', off: 'Nowhere (off)', process: 'No sandbox (tests)' };
 
 /** A capacity setting in its Limits row: saves on Enter, on leaving the field, or on choosing an option. */
 function LimitInput({ s, onSave, onDirty, disabled }: { s: Setting; onSave: (v: string) => void; onDirty: (on: boolean) => void; disabled?: boolean }) {

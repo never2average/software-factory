@@ -124,6 +124,19 @@
           "x-hint": "brands/acme/agent-dark.svg",
           "description": "The agent icon's dark-theme variant (optional; needs agent_icon): a file as agent_icon. Unset: agent_icon in both themes.",
           "markdownDescription": "The agent icon's variant for the dark theme (optional; needs `agent_icon`), a file as `agent_icon`. Unset: `agent_icon` serves both themes (an icon in the text colour needs none)."
+        },
+        "avatar_colors": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          },
+          "x-hint": "3 to 8 #RRGGBB colours, dark enough for white initials",
+          "description": "The colours people's and organisations' avatars are drawn in when they have no picture (optional): 3 to 8 #RRGGBB, each dark enough for white initials (4.5:1). Unset: five derived from the brand colour.",
+          "markdownDescription": "The colours the console draws people's and organisations' avatars in when they have not uploaded a picture (a soft gradient of two of them, chosen from the id, with white initials): 3 to 8 `#RRGGBB`, each dark enough for white initials at 4.5:1 (optional). Unset: five derived from `colour` (its hue and its neighbours, never purple unless the brand is). `branding.py <app> set --avatar-colors`."
         }
       },
       "allOf": [
@@ -501,8 +514,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "title": "Profile settings",
-      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners, features, team_roles (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
-      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`, `features`, `team_roles`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
+      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners, run_sandbox, features, team_roles (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
+      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`, `run_sandbox`, `features`, `team_roles`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
       "properties": {
         "email": {
           "type": "object",
@@ -655,6 +668,19 @@
           "description": "true: the app's workspaces may install an on-premises runner inside their own network for the kinds that need it (a pack's job kind with private_network: true); false (the default): no runner routes, pages, tabs or enrolment, and every run is hosted.",
           "markdownDescription": "**On-premises runners**, off unless `true` (mold_v0-205, the shell's `src/onprem-runners.ts`).\n\n- `true`: a workspace's owners add a runner on **Credentials** and install it inside their network; the runs of a kind with `private_network: true` then go to it when the workspace chooses so.\n- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`."
         },
+        "run_sandbox": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "boat",
+            "docker",
+            "freestyle"
+          ],
+          "default": "auto",
+          "title": "Where the runs' sandboxes come from (mold_v0-274)",
+          "description": "auto (boat when its key is in Key vault, else the server's Docker), boat, docker or freestyle (a Freestyle VM per run and per agent wake). The default of the app's Sandbox provider setting: a staff member's choice and the server's APP_RUN_SANDBOX win over it.",
+          "markdownDescription": "**Where each run's sandbox comes from** (mold_v0-274, the shell's `src/run-sandboxes.ts`): the default of the app's **Sandbox provider** platform setting (Admin › Agent configuration), which a staff member's choice and the server's `APP_RUN_SANDBOX` win over.\n\n- `auto` (the default): boat when its key is in Key vault, else the server's Docker.\n- `boat`: a boat.dev sandbox per run.\n- `docker`: a container on the app's own server.\n- `freestyle`: a Freestyle VM per run and per agent wake; its API key goes in the app's Key vault (Admin › Key vault, Freestyle), never in the repository or a pack.\n\nBrief line: `run_sandbox = freestyle` in `## Profile`. `run_keys.sandbox = freestyle` implies it."
+        },
         "features": {
           "not": {},
           "x-not-supported": "say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219)",
@@ -727,7 +753,7 @@
       "additionalProperties": false,
       "title": "Keys the runs need (names, never values)",
       "description": "Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
-      "markdownDescription": "Where the keys the packs' **job runs** need come from. **Never a value here**: the operator puts each key in the app's **Key vault** (`/admin` → Key vault), or in the server's environment.\n\n- `model`: `anthropic` (an Anthropic API key) or `vertex` (a Vertex AI service-account key: Claude then runs on Vertex AI).\n- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), `r2_env` (R2_* on the server) or `storage_dir` (APP_STORAGE_DIR, a server of its own).\n\nWhether each is set: `provision.py <app> --operator vault-status --dry-run`.",
+      "markdownDescription": "Where the keys the packs' **job runs** need come from. **Never a value here**: the operator puts each key in the app's **Key vault** (`/admin` → Key vault), or in the server's environment.\n\n- `model`: `anthropic` (an Anthropic API key) or `vertex` (a Vertex AI service-account key: Claude then runs on Vertex AI).\n- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel) or `freestyle` (Freestyle VMs, on Vercel or a server; its key in the Key vault; it also makes Freestyle the app's sandbox provider, `profile.run_sandbox`).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), `r2_env` (R2_* on the server) or `storage_dir` (APP_STORAGE_DIR, a server of its own).\n\nWhether each is set: `provision.py <app> --operator vault-status --dry-run`.",
       "properties": {
         "model": {
           "type": "string",
@@ -741,10 +767,11 @@
         "sandbox": {
           "type": "string",
           "enum": [
-            "boat"
+            "boat",
+            "freestyle"
           ],
-          "description": "boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds).",
-          "markdownDescription": "boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds)."
+          "description": "boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds). freestyle: the Freestyle key (mold_v0-274); the runs' sandboxes are then Freestyle VMs.",
+          "markdownDescription": "boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds). freestyle: the Freestyle key (mold_v0-274); the runs' sandboxes are then Freestyle VMs."
         },
         "object_storage": {
           "type": "string",
@@ -1131,7 +1158,7 @@
       }
     },
     {
-      "x-rule": "job runs on Vercel run in boat.dev sandboxes",
+      "x-rule": "job runs on Vercel run in hosted sandboxes (boat.dev or Freestyle), whose key run_keys.sandbox names",
       "if": {
         "allOf": [
           {

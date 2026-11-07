@@ -22,11 +22,11 @@ export const PROVIDER_NAME: Record<string, string> = {
   anthropic: "Anthropic", openai: "OpenAI", google: "Google Gemini", cloudflare: "Cloudflare Workers AI", dashscope: "Alibaba DashScope",
   vertex: "Vertex AI (Google Cloud)", boat: "boat.dev", exa: "Exa", libraries_io: "Libraries.io", resend: "Resend", amp: "Amp", cursor: "Cursor",
   factory: "Factory", github_copilot: "GitHub Copilot", oauth_clients: "OAuth app clients", pack_credentials: "Staff-held run credentials",
-  object_storage: "Object storage (R2 / S3)",
+  object_storage: "Object storage (R2 / S3)", freestyle: "Freestyle",
 };
 export const PROVIDER_CATEGORY: Record<string, string> = {
   anthropic: "Inference", openai: "Inference", google: "Inference", cloudflare: "Inference", dashscope: "Inference", vertex: "Inference",
-  boat: "Sandbox", exa: "Search", libraries_io: "Search", resend: "Email",
+  boat: "Sandbox", freestyle: "Sandbox", exa: "Search", libraries_io: "Search", resend: "Email",
   amp: "Coding agent", cursor: "Coding agent", factory: "Coding agent", github_copilot: "Coding agent",
   oauth_clients: "Connection", pack_credentials: "Run credential", object_storage: "Storage",
 };
@@ -54,7 +54,9 @@ export const storeOutsideVault = () => Boolean((ENV.R2_BUCKET && ENV.R2_ENDPOINT
  * (boatForRuns); object storage with the engine (its trace archive) or a pack whose runs keep a workspace store; the
  * engine's when the build has the engine; the private catalogs' access (catalog_access, mold_v0-260) only when a pack
  * reads an upstream catalog with a deploy key or the GitHub App (src/catalog-access.ts privateCatalogs: it has its own
- * card, Private catalogs, like the GitHub App; mold_v0-264); a provider staff added by hand.
+ * card, Private catalogs, like the GitHub App; mold_v0-264); Freestyle (mold_v0-274) only when the runs' sandboxes come
+ * from it (the platform setting APP_RUN_SANDBOX, the profile's run_sandbox: src/run-sandboxes.ts runSandboxMode), so a
+ * build that never uses it is not asked for its key; a provider staff added by hand.
  */
 export async function providerInBuild(slug: string, keys: number): Promise<boolean> {
   if (keys > 0 || SHELL_PROVIDERS.has(slug)) return true;
@@ -63,6 +65,7 @@ export async function providerInBuild(slug: string, keys: number): Promise<boole
   if (slug === "oauth_clients") return (await import("./oauth-connections.js")).oauthProviders().length > 0;
   const kinds = (await import("./runs.js")).jobKinds();
   if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
+  if (slug === "freestyle") return (await import("./run-sandboxes.js")).RUN_SANDBOXES.mode() === "freestyle";
   if (slug === OBJECT_STORAGE) return sessionEngine() || (await storeKinds()).length > 0;
   if (slug === "catalog_access") return (await import("./catalog-access.js")).privateCatalogs().length > 0;
   if (kinds.some((k) => k.providers.includes(slug))) return true;
@@ -97,7 +100,8 @@ export function optionalAdds(c: { label: string; help?: string | null; adds?: st
 /**
  * What the build's run kinds need from the vault, by the same rules the console uses: each kind's gateway `providers`,
  * its `operator_credentials` (provider pack_credentials, label `<pack>.<name>`), and boat when the runs get their
- * sandbox there (src/run-sandboxes.ts boatForRuns, with the deployment's APP_RUN_SANDBOX, default auto), and object
+ * sandbox there (src/run-sandboxes.ts boatForRuns, with the deployment's APP_RUN_SANDBOX, default auto), freestyle when
+ * they get it there (mold_v0-274: APP_RUN_SANDBOX freestyle, chosen by staff, the server or the profile), and object
  * storage when kinds keep a workspace store and the deployment's settings seen here give it no bucket (no R2_*, no
  * APP_STORAGE_DIR). An operator credential declared optional (mold_v0-186) is not a need: it is listed in `optional`.
  */
@@ -129,6 +133,9 @@ export async function runNeeds(): Promise<{ kinds: number; packs: string[]; sand
     }
   }
   if (boat) need("boat").sandbox = true;
+  // mold_v0-274: the runs' sandboxes from Freestyle (the workspace agent's wakes are runs too).
+  const agents = (await import("./feature-flags.js")).featureSetting("agent_harness");
+  if (mode === "freestyle" && (kinds.length > 0 || agents)) need("freestyle").sandbox = true;
   // The workspace store's snapshots go to the bucket: from the vault when the environment names none (mold_v0-181).
   const stores = await storeKinds();
   if (stores.length && !storeOutsideVault()) { const n = need(OBJECT_STORAGE); n.store = true; n.kinds.push(...stores); }

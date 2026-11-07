@@ -283,6 +283,17 @@ export function auditStaff(actor: string, role: string, tool: string, status: nu
 }
 
 /**
+ * The platform account's changes (mold_v0-276, src/platform-account.ts): the account made, a member added or their role
+ * raised, done by the system for a platform admin at their sign-in or for the factory after a deploy. One staff entry
+ * each, in the account's slice, its path naming what was done (never an address).
+ */
+export function auditPlatformAccount(actor: string, what: string, orgId: number | null, orgSlug: string | null) {
+  if (!platformTrailOn()) return;
+  platformEntry({ kind: "staff", channel: "system", method: "SYSTEM", path: `/platform-account/${what}`.slice(0, 300), status: 200, latency_ms: null, ip: null,
+    actor: { kind: "staff", id: actor.slice(0, 120), scopes: ["staff", "platform_account"] }, org_id: orgId, org_slug: orgSlug });
+}
+
+/**
  * Staff rows written by one console request that are not a request each (mold_v0-221: an import into a shared area,
  * src/record-routes.ts): one staff entry per row, its path naming the area, the key and what was done (never a value).
  */

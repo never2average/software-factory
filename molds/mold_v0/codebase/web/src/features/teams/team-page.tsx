@@ -29,6 +29,7 @@ import { ActionCard, CardForm } from '@/features/tabs/tab-action';
 import { httpError } from '@/features/status/from-error';
 import { settingsTabUrl } from '@/config/settings';
 import { personWords, sendJson, type Person, type TeamSummary } from './visibility';
+import { IdentityName } from '@/components/identity-avatar';
 
 interface TeamPerson { user_id: string; role: 'member' | 'lead'; added_at: string; added_by: string | null; name: string | null; email: string | null;
   /** mold_v0-262: the role in the app's words. */
@@ -187,7 +188,7 @@ export function TeamPage({ id }: { id: string }) {
                 <TableBody>
                   {people.map((p) => (
                     <TableRow key={p.user_id} data-team-person={p.user_id}>
-                      <TableCell><span className='font-medium'>{name(p)}</span>{p.email && p.name && <span className='text-muted-foreground block text-xs'>{p.email}</span>}</TableCell>
+                      <TableCell><IdentityName id={p.user_id} name={p.name} email={p.email}><span className='font-medium'>{name(p)}</span>{p.email && p.name && <span className='text-muted-foreground block text-xs'>{p.email}</span>}</IdentityName></TableCell>
                       <TableCell data-team-role={p.role_id ?? p.role}>{p.role === 'lead' ? <ToneBadge color='info'>{p.role_label ?? 'Lead'}</ToneBadge> : p.role_label ?? 'Member'}</TableCell>
                       <TableCell className='max-sm:hidden'>{day(p.added_at)}</TableCell>
                       {can_manage && (
