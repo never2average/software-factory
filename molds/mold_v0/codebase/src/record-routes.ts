@@ -190,7 +190,6 @@ export function recordAdminRouter(): Router {
     }));
   r.delete("/:area/:key/files/:field", need("library"), open("admin_create", "admin_update"), answer(async (req) => {
     await discardSharedFile(platformArea(String(req.params.area)).name, String(req.params.key), String(req.params.field), req.body);
-    return {};
   }));
   r.get("/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
     const a = platformArea(String(req.params.area));

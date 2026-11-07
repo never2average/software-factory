@@ -22,6 +22,13 @@
 //    declared and picked (none repeats another staff entry's); an area's icon is the same in the staff sidebar, the
 //    customer sidebar and its spec; its own icon, else its customer tab's, else a fallback from its name; two areas
 //    declaring one icon is a build warning; an icon outside the set is refused.
+// 9. The staff Records group from config (mold_v0-271, console.admin_records in a pack.json or profile.json): exactly
+//    its entries in its order (shared areas by name, relabelled where it says, and the shell's staff pages by id);
+//    Journeys placed there leaves its Engagement group, at the same address, lit there; a shared area left out is not in
+//    the staff sidebar but keeps its spec (its page, list and record), its customer Records entry, and lights nothing
+//    (no wrong entry) when opened by link; the profile's wins over a pack's; the Recipes page with the workspace agent
+//    on asks for workspace_recipes; refused: an unknown name, a workspace area, a page the build lacks (Recipes without
+//    the workspace agent), an entry twice, two packs declaring it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -290,7 +297,8 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
     };
     // Pages a build has only with a feature it lacks here (a mailbox, the developer surface, a workspace store, the
     // account context, a data repository, an audit trail): each is not found in such a build; with the feature it has its own entry.
-    const ABSENT = /^\/app\/(settings|settings\/\[group\]|files|context)$|^\/admin\/(repositories|access-log)$/;
+    // mold_v0-271: Recipes (and a recipe's page) is a page only with workspace_recipes on.
+    const ABSENT = /^\/app\/(settings|settings\/\[group\]|files|context)$|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\])$/;
     expect("tabs", walk(copy), {
       "/app": "/app/overview", "/app?journey=first-audit": "/app/overview", "/app/journeys": "/app/overview",
       "/app/workbench?tab=fixes": "/app/workbench", "/app/workbench?tab=applications": "/app/workbench",
@@ -309,7 +317,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ portal: walk('portal', portalN
       "/app/settings/access": "/app/settings/access", "/app/settings/access?tab=api_keys": "/app/settings/access",
       "/app/settings/connections?tab=webhooks": "/app/settings/connections", "/app/settings/automation": "/app/settings/automation",
       "/app/settings/data-trust": "/app/settings/data-trust",
-    }, /^\/app\/(files|context|schedules|vulnerabilities)(\?|$)|^\/admin\/(repositories|access-log)$/); // pages this fixture lacks; the staff access log has no sidebar entry (as on main)
+    }, /^\/app\/(files|context|schedules|vulnerabilities)(\?|$)|^\/admin\/(repositories|access-log|recipes|recipes\/\[id\])$/); // pages this fixture lacks; the staff access log has no sidebar entry (as on main)
     // How it is lit (mold_v0-216): the brand's tint behind it and its words in the brand's colour, light and dark, the
     // phone's sheet the same component; no bar at its edge.
     const side = readFileSync(path.join(ROOT, "web", "src", "components", "layout", "app-sidebar.tsx"), "utf8");
@@ -411,6 +419,86 @@ process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: re
     assert.deepEqual(recordAreaIcons([{ name: "a" }], { staffIcons: ["page"], avoidIcons: ["post"], fallback: ["page", "post"] }).a, "post", "a staff entry's icon is never picked while another is free, even one the customer sidebar shows");
     assert.deepEqual(recordIconDuplicates([{ name: "a", icon: "page" }, { name: "b", icon: "page" }, { name: "c", icon: "post" }, { name: "d" }]), [{ icon: "page", areas: ["a", "b"] }]);
     console.log("✓ record icons, the rule: distinct while the list lasts; a staff entry's icon last of all; duplicates named");
+  }
+  // ---------- 9. the staff Records group from config (mold_v0-271) ----------
+  {
+    const NAV_PROBE = `import { adminNav, portalNav } from '@/config/nav-config';
+import { recordAreas } from '@/config/pack-nav.generated';
+import { features } from '@/config/features.generated';
+import { activeNavUrl, navOptions, navUrls } from '@/lib/active-nav';
+const urls = navUrls(adminNav, []);
+const lit = (u: string) => activeNavUrl(u, urls, navOptions('admin'));
+process.stdout.write('\\u0001' + JSON.stringify({ adminNav, portalNav, areas: recordAreas.map((a) => a.name), features,
+  lit: { regulators: lit('/admin/records/regulators'), regulator: lit('/admin/records/regulators/rbi'), controls: lit('/admin/records/controls'), journeys: lit('/admin/journeys'), recipes: lit('/admin/recipes') } }));
+`;
+    type Probe = { adminNav: any[]; portalNav: any[]; areas: string[]; features: Record<string, boolean>; lit: Record<string, string | null> };
+    const navProbe = (c: string): Probe => {
+      const web = path.join(c, "web"), file = path.join(web, "probe-records-group.tsx");
+      writeFileSync(file, NAV_PROBE);
+      try {
+        const r = spawnSync(TSX, ["--tsconfig", path.join(web, "tsconfig.json"), file], { cwd: web, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        assert.equal(r.status, 0, `records group probe: ${r.stderr.slice(0, 2000)}`);
+        return JSON.parse(r.stdout.slice(r.stdout.indexOf("\u0001") + 1));
+      } finally { rmSync(file, { force: true }); }
+    };
+    const group = (p: Probe, label: string) => (p.adminNav.find((g: any) => g.label === label)?.items ?? []).map((i: any) => `${i.title} ${i.url}`);
+    const everywhere = (p: Probe, url: string) => p.adminNav.flatMap((g: any) => g.items.filter((i: any) => i.url === url).map(() => g.label));
+    const PACKS = ["fixture_catalog", "fixture_journeys"];
+    const declare = (show: unknown[]) => (id: string, j: any) => { if (id === "fixture_catalog") j.console = { ...(j.console ?? {}), admin_records: { show } }; };
+
+    // a. Undeclared: every shared area, Journeys in its own Engagement group (as before).
+    const base = navProbe(built("records-default", PACKS));
+    assert.deepEqual(group(base, "Records"), ["Regulators /admin/records/regulators", "Controls /admin/records/controls"], "undeclared: every shared area, in pack order");
+    assert.deepEqual(everywhere(base, "/admin/journeys"), ["Engagement"], "undeclared: Journeys in its Engagement group");
+
+    // b. A pack declares it: exactly its entries, a shell page among them, an area relabelled; Journeys moved, at its address.
+    const p = navProbe(built("records-declared", PACKS, declare(["journeys", { id: "controls", label: "Control library" }])));
+    assert.deepEqual(group(p, "Records"), ["Journeys /admin/journeys", "Control library /admin/records/controls"], "exactly the declared entries, in order, relabelled where it says");
+    assert.deepEqual(everywhere(p, "/admin/journeys"), ["Records"], "Journeys left Engagement for Records (once, at the same address)");
+    assert.ok(!p.adminNav.some((g: any) => g.label === "Engagement"), "a group left empty goes");
+    assert.equal(p.lit.journeys, "/admin/journeys", "Journeys is lit in its new place");
+    assert.equal(p.lit.controls, "/admin/records/controls");
+    // A shared area left out: not in the staff sidebar, still a page of the build and still in the customer's Records.
+    assert.deepEqual(everywhere(p, "/admin/records/regulators"), [], "a shared area left out is not in the staff sidebar");
+    assert.ok(p.areas.includes("regulators"), "its spec stays: its staff list and record pages, its API and MCP tools are the build's as before");
+    assert.ok(p.portalNav.flatMap((g: any) => g.items).some((i: any) => i.url === "/app/records/regulators"), "and the customer sidebar keeps it");
+    assert.equal(p.lit.regulators, null, "opened by link, it lights no other entry");
+    assert.equal(p.lit.regulator, null, "nor does one of its records");
+    // The rest of the staff sidebar is as it was.
+    assert.deepEqual(p.adminNav.filter((g: any) => !["Records", "Engagement"].includes(g.label)), base.adminNav.filter((g: any) => !["Records", "Engagement"].includes(g.label)), "every other group unchanged");
+
+    // c. The profile's wins over a pack's.
+    const prof = navProbe(built("records-profile", PACKS, declare(["journeys"]), { console: { admin_records: { show: ["regulators"] } } }));
+    assert.deepEqual(group(prof, "Records"), ["Regulators /admin/records/regulators"], "the profile's list over the pack's");
+    assert.deepEqual(everywhere(prof, "/admin/journeys"), ["Engagement"], "Journeys stays where it was when the group does not list it");
+
+    // d. The Recipes page: with the workspace agent on it asks for workspace_recipes (quiet otherwise).
+    assert.ok(!("workspace_recipes" in base.features), "undeclared: workspace_recipes is not in the console's flags (quiet while off)");
+    const rec = navProbe(built("records-recipes", PACKS, declare(["recipes", "journeys", "controls"]), { features: { agent_harness: true } }));
+    assert.deepEqual(group(rec, "Records"), ["Recipes /admin/recipes", "Journeys /admin/journeys", "Controls /admin/records/controls"]);
+    assert.equal(rec.features.workspace_recipes, true, "listed, with the workspace agent on: workspace_recipes is on");
+    assert.equal(rec.lit.recipes, "/admin/recipes");
+
+    // e. Refused, each with its reason.
+    const refused: [string, unknown[], RegExp, unknown?][] = [
+      ["unknown", ["journeys", "nothing_here"], /no shared record area is named nothing_here/],
+      ["recipes-no-agent", ["recipes"], /the workspace agent is off/],
+      ["twice", ["controls", "controls"], /listed twice/],
+      ["profiles-no-agent", ["agent-profiles"], /workspace agent is off/],
+      ["bad-label", [{ id: "controls", label: "{x}" }], /label|Invalid/],
+    ];
+    for (const [name, show, re] of refused) {
+      const b = buildCopy(`records-${name}`, PACKS, declare(show));
+      assert.notEqual(b.status, 0, `${name}: refused`);
+      assert.match(b.out, re, `${name}: ${b.out.slice(-800)}`);
+    }
+    const ws = buildCopy("records-ws-area", ["fixture_catalog", "fixture_vulns"], (id, j) => { if (id === "fixture_catalog") j.console = { admin_records: { show: ["controls", "audit_apps"] } }; });
+    assert.notEqual(ws.status, 0);
+    assert.match(ws.out, /audit_apps: holds each workspace's own records/, ws.out.slice(-800));
+    const two = buildCopy("records-two-packs", ["fixture_catalog", "fixture_vulns"], (_id, j) => { j.console = { ...(j.console ?? {}), admin_records: { show: ["controls"] } }; });
+    assert.notEqual(two.status, 0);
+    assert.match(two.out, /both declare the staff Records group/, two.out.slice(-800));
+    console.log("✓ the staff Records group from config: exactly its entries in its order (areas relabelled, Journeys and Recipes placed there and lit there, gone from their own group); a shared area left out keeps its page, spec and customer entry and lights nothing; the profile's over a pack's; refusals (unknown, a workspace area, a page the build lacks, twice, two packs)");
   }
   console.log("CONSOLE SIDEBAR TEST PASS");
 } finally {

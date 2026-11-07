@@ -751,7 +751,8 @@ try {
         "the Default (nothing set): the platform settings");
       for (const old of [{ model: "claude-sonnet-5-5" }, { budget_usd: 2 }, { max_turns: 3 }, { instructions: { append_system: "x" } }, { roles: ["owner"] }, { tools: { free: ["a"] } }, { files: [] }, { overrides: [] }])
         assert.ok(!S.ProfileConfigSchema.safeParse(old).success, `${Object.keys(old)[0]}: not part of a profile any more`);
-      assert.deepEqual(Object.keys(S.ProfileConfigSchema.shape).sort(), ["governance", "harness", "inference", "keys", "uploads"], "a profile is exactly its harness, key vault, uploads and governance");
+      // mold_v0-271: `recipes` is part of the workspace upload (item 4: workspace recipes expanded into its uploads at a start).
+      assert.deepEqual(Object.keys(S.ProfileConfigSchema.shape).sort(), ["governance", "harness", "inference", "keys", "recipes", "uploads"], "a profile is exactly its harness, key vault, uploads (its own files and recipes) and governance");
       // The web policy: its domains read as hosts, its rules.
       assert.deepEqual(G.normalizeDomains(["https://Docs.Example.com/", "docs.example.com", "*.example.org"]), { domains: ["*.example.org", "docs.example.com"], problems: [] }, "a bare address is read as its host, once");
       assert.equal(G.normalizeDomains(["https://example.com/private"]).problems.length, 1, "an address with a path is refused, never trimmed (that would widen it)");
