@@ -54,6 +54,13 @@ through the same check `factory.py validate` and the build use.
   (or `--agent-icon-name <name>`, `--agent-icon-dark <file>`, `--agent-icon none`). Unset, the default icon stays. A
   workspace owner may still upload the workspace's own in Settings › Workspace agent, over the app's for that workspace.
 
+- mold_v0 also takes `avatar_colors` (mold_v0-275): the colours the console draws people's and organisations' avatars
+  in when they have not uploaded a picture (a soft gradient of two of them, chosen from the id, with white initials;
+  never the sign-in provider's generated pictures). 3 to 8 `#RRGGBB`, each dark enough for white initials at 4.5:1.
+  Optional: unset, `branding.py` derives five from `colour` (its hue and its neighbours 18 and 36 degrees either side,
+  never a purple one unless the brand is purple). Brief line `Avatar colours: #RRGGBB, #RRGGBB, ...`; on an app,
+  `branding.py <app> set --avatar-colors "#RRGGBB,..."` (`auto` derives them again; a new `--color` does too).
+
 - `kind` is `tool` (default) or `embedded`. **embedded** needs `developer_surface` (events it emits, SDK languages, client
   sessions, optional inbound receivers `webhooks_in` and `api_version`) and `audit.platform: true`. mold_v0 builds it
   (mold_v0-193: the REST API at `/v1`, `/openapi.json`, scoped keys, client sessions, Standard Webhooks out and in, the

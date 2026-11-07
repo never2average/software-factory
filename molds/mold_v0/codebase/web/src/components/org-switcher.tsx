@@ -2,7 +2,7 @@
 
 import { useAuth, useOrganizationList } from '@/lib/auth';
 import { Icons } from '@/components/icons';
-import Image from 'next/image';
+import { IdentityAvatar } from '@/components/identity-avatar';
 import { useRouter } from 'next/navigation';
 
 import {
@@ -139,19 +139,9 @@ export function OrgSwitcher() {
               />
             }
           >
-            <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'>
-              {displayOrganization.hasImage && displayOrganization.imageUrl ? (
-                <Image
-                  src={displayOrganization.imageUrl}
-                  alt={displayOrganization.name}
-                  width={32}
-                  height={32}
-                  className='size-full object-cover'
-                />
-              ) : (
-                <Icons.galleryVerticalEnd className='size-4' />
-              )}
-            </div>
+            {/* The workspace's own picture when it uploaded one, else the console's drawing in the app's avatar colours (mold_v0-275). */}
+            <IdentityAvatar kind='org' className='size-8 shrink-0 rounded-lg' textClassName='text-xs' id={displayOrganization.id} name={displayOrganization.name}
+              imageUrl={displayOrganization.imageUrl} hasImage={displayOrganization.hasImage} />
             <div
               className={`grid flex-1 text-left text-sm leading-tight transition-all duration-200 ease-in-out ${
                 state === 'collapsed'
@@ -193,19 +183,8 @@ export function OrgSwitcher() {
                     onClick={() => handleOrganizationSwitch(membership.organization.id)}
                     className='gap-2 p-2'
                   >
-                    <div className='bg-sidebar-primary text-sidebar-primary-foreground flex size-6 items-center justify-center overflow-hidden rounded-md'>
-                      {membership.organization.hasImage && membership.organization.imageUrl ? (
-                        <Image
-                          src={membership.organization.imageUrl}
-                          alt={membership.organization.name}
-                          width={24}
-                          height={24}
-                          className='size-full object-cover'
-                        />
-                      ) : (
-                        <Icons.galleryVerticalEnd className='size-3.5 shrink-0' />
-                      )}
-                    </div>
+                    <IdentityAvatar kind='org' className='size-6 shrink-0 rounded-md' textClassName='text-[0.625rem]' id={membership.organization.id} name={membership.organization.name}
+                      imageUrl={membership.organization.imageUrl} hasImage={membership.organization.hasImage} />
                     {membership.organization.name}
                     {isActive && <Icons.check className='ml-auto size-4' />}
                     {!isActive && <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>}

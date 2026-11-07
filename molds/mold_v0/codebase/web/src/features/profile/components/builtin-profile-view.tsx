@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { IdentityAvatar } from '@/components/identity-avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,13 +34,12 @@ export function BuiltinProfileViewPage() {
     .catch(fail);
   const everywhere = () => authPost('/sign-out/everywhere').then(() => { window.location.href = '/auth/sign-in'; }).catch(fail);
   const email = user.email ?? '—';
-  const initials = (full || email).split(/[\s@]+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
 
   return (
     <PageContainer pageTitle='Profile'>
       <div className='flex max-w-xl flex-col gap-6'>
         <div className='flex items-center gap-4'>
-          <Avatar className='size-16'><AvatarFallback>{initials}</AvatarFallback></Avatar>
+          <IdentityAvatar className='size-16' textClassName='text-xl' id={user.id} name={full} email={user.email} />
           <div className='min-w-0 flex-1 space-y-1.5'>
             <Input value={value} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
               placeholder='Your name' aria-label='Your name' maxLength={120} disabled={busy} className='h-9 text-base font-medium' />
