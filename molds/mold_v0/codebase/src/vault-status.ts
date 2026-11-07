@@ -11,6 +11,7 @@
  *    display form and its key's metadata are never selected, so no value, prefix, length or digest of one can be printed.
  */
 import { providerCategory, providerInBuild, providerName, runNeeds, sandboxModeSet } from "./vault-providers.js";
+import { ENV } from "./env-names.js";
 
 /** One connection of the caller's own (a pg Client, or PGlite): plain queries, no pooling between them. */
 export interface RawConn { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }> }
@@ -145,7 +146,7 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
     providers: shown,
     hidden: list.filter((p) => !shown.includes(p) && p.slug !== "github_app").map((p) => p.slug),
     runs: { kinds: rn.kinds, packs: rn.packs, sandbox_mode: rn.sandbox_mode,
-            sandbox_mode_from: chosen.length && !["off", "process"].includes(String(process.env.APP_RUN_SANDBOX ?? "").toLowerCase()) ? "setting" : sandboxModeSet() ? "deployment" : "default",
+            sandbox_mode_from: chosen.length && !["off", "process"].includes(String(ENV.APP_RUN_SANDBOX ?? "").toLowerCase()) ? "setting" : sandboxModeSet() ? "deployment" : "default",
             boat_for_runs: rn.boat_for_runs, needs, missing: needs.filter((n) => n.set === "no").map((n) => n.slug),
             optional: rn.optional.map((o) => ({ ...o, set: bySlug.get("pack_credentials")?.enabled && on("pack_credentials", o.label) ? "yes" as const : "no" as const })) },
     queued: qd,
