@@ -16,7 +16,9 @@ import Link from 'next/link';
 import { featureOn } from '@/config/features';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { RecordView, type RecordCol } from '@/components/layout/record-view';
+import { RecordView, type RecordCol, type RowAction } from '@/components/layout/record-view';
+import { PanelMenu } from '@/components/layout/detail-panel';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { StatStrip } from '@/components/layout/section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -163,7 +165,7 @@ function AgentList({ area }: { area: Area }) {
         toolbarAction={area === 'app' && data?.can_start ? <div className='ml-auto flex shrink-0 gap-2'><ToolbarAction label='Start a session' icon={<Icons.add />} onClick={() => setStarting(true)} /></div> : undefined}
         empty={<p className='text-muted-foreground text-sm'>{area === 'app' ? (data?.can_start ? 'No sessions yet: Start a session gives the agent its first message.' : 'No sessions yet. A member of this workspace can start one.') : 'No workspace has started a session yet.'}</p>}
         detailTitle={(s) => s.title}
-        detailActions={(s) => <Controls area={area} s={s} call={call} onChange={load} />}
+        panelMenu={(s, items) => <Controls area={area} s={s} call={call} onChange={load} extra={items} />}
         detail={(s) => <SessionCard key={s.id} area={area} id={s.id} call={call} onChange={load} />}
       />
       {area === 'app' && data && <StartDialog open={starting} offer={data.offer} profiles={data.profiles ?? []} preset={preset} call={call} onOpenChange={(o) => {
@@ -274,7 +276,8 @@ function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStar
 }
 
 /** Pause, Resume, Stop: on the card's top line. Stop asks once more in place (no dialog). */
-function Controls({ area, s, call, onChange }: { area: Area; s: Session; call: Call; onChange: () => unknown }) {
+/** mold_v0-278: the session panel's ⋯ menu: Pause, Resume, Stop (asked first), then the panel's own items. */
+function Controls({ area, s, call, onChange, extra = [] }: { area: Area; s: Session; call: Call; onChange: () => unknown; extra?: RowAction[] }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const act = (what: 'pause' | 'resume' | 'stop') => async () => {
@@ -282,20 +285,26 @@ function Controls({ area, s, call, onChange }: { area: Area; s: Session; call: C
     try { await call('POST', `/${s.id}/${what}`); toast.success(what === 'pause' ? 'Pausing' : what === 'resume' ? 'Resuming' : 'Stopping'); setConfirm(false); await onChange(); window.dispatchEvent(new Event('agent-session-changed')); }
     catch (e) { fail(e); } finally { setBusy(false); }
   };
-  if (confirm) return (
-    <div className='flex flex-wrap items-center gap-2' role='group' aria-label='Stop this session'>
-      <span className='text-sm'>Stop for good? It finishes its step and becomes read only.</span>
-      <Button size='sm' variant='destructive' disabled={busy} onClick={act('stop')}>Stop session</Button>
-      <Button size='sm' variant='ghost' onClick={() => setConfirm(false)}>Keep it</Button>
-    </div>
-  );
-  return (
-    <div className='flex flex-wrap items-center gap-1'>
-      {s.can.pause && <Button size='sm' variant='outline' disabled={busy} onClick={act('pause')}><Icons.pause />Pause</Button>}
-      {area === 'app' && s.can.resume && <Button size='sm' variant='outline' disabled={busy} onClick={act('resume')}><Icons.play />Resume</Button>}
-      {s.can.stop && <Button size='sm' variant='outline' disabled={busy} onClick={() => setConfirm(true)}><Icons.stop />Stop</Button>}
-    </div>
-  );
+  const items: RowAction[] = [
+    ...(s.can.pause ? [{ label: 'Pause', icon: <Icons.pause />, disabled: busy, onSelect: () => void act('pause')() }] : []),
+    ...(area === 'app' && s.can.resume ? [{ label: 'Resume', icon: <Icons.play />, disabled: busy, onSelect: () => void act('resume')() }] : []),
+    ...(s.can.stop ? [{ label: 'Stop', icon: <Icons.stop />, destructive: true, disabled: busy, onSelect: () => setConfirm(true) }] : []),
+  ];
+  return (<>
+    <PanelMenu name={s.title} items={[...items, ...extra.map((a, i) => (i === 0 && items.length ? { ...a, separator: true } : a))]} />
+    <AlertDialog open={confirm} onOpenChange={setConfirm}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Stop this session for good?</AlertDialogTitle>
+          <AlertDialogDescription>It finishes its step and becomes read only.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep it</AlertDialogCancel>
+          <AlertDialogAction variant='destructive' disabled={busy} onClick={() => void act('stop')()}>Stop session</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>);
 }
 
 /** One session, full card: its state and spend, what it asks for, the transcript, the composer, its details. */

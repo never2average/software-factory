@@ -536,7 +536,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     const row = p.locator("tr", { hasText: "Browser Co" });
     await row.waitFor({ timeout: 20000 });
     await row.click();
-    const peek = p.locator('[data-record-card][aria-label="Record"]');
+    const peek = p.locator('[data-slot="detail-panel"]');
     await peek.waitFor({ timeout: 10000 });
     const text = await peek.innerText();
     for (const re of [/Company website\s*browser\.example/, /Seats\s*12/, /Team size\s*11 to 50/, /Tools you use\s*Spreadsheets/]) assert.match(text, re, `the open request: ${re}`);

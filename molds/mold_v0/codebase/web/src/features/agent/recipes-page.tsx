@@ -3,12 +3,11 @@
 // /api/admin/onboarding/recipes, src/recipes.ts): reusable agent workspace recipes, each a named bundle of files and
 // runtime binaries kept in versions, which an agent profile's workspace upload names (Agent profiles › Workspace upload ›
 // Recipes). The list is the standard one (four cards, the search row with New recipe, the table) under the proposals that
-// wait for a decision; a row opens the recipe's own page: its header, then tabs for its files, its versions and the
+// wait for a decision; a row opens the recipe in the panel beside the list (mold_v0-278; Open in its own page: /admin/recipes/<id>): its header, then tabs for its files, its versions and the
 // agents' proposals (self-improvement: an agent proposes the next version of a recipe its session used; staff accept it
 // as a new version or decline it). New recipe, New version and Edit open one modal each; files upload in parts through
 // the agent profiles' own upload routes (one storage layer for every file a session receives).
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { useQueryClient } from '@tanstack/react-query';
@@ -53,8 +52,9 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString
 /** Admin › Recipes: the proposals waiting, the four cards, the search row with New recipe, the table; a row opens its page. */
 export function RecipesPage() {
   const { data, error, isLoading } = useAdmin<ListAnswer>(BASE);
-  const router = useRouter();
   const [creating, setCreating] = useQueryState('new');
+  // mold_v0-278: a row opens its recipe in the panel beside the list (?recipe=<id>); its own page stays a link away.
+  const [open, setOpen] = useQueryState('recipe');
   const rows = data?.recipes ?? [];
   const cols: RecordCol<Summary>[] = [
     { key: 'name', label: 'Recipe', title: true, keep: true, type: 'text', className: 'min-w-60', value: (r) => r.name,
@@ -73,7 +73,9 @@ export function RecipesPage() {
       {pending.length > 0 && <ProposalsWaiting proposals={pending} />}
       <RecordView<Summary>
         id='admin-recipes' noun={rows.length === 1 ? 'recipe' : 'recipes'} loading={isLoading}
-        rows={rows} rowKey={(r) => r.id} cols={cols} openKey={null} onOpenChange={(k) => { if (k) router.push(`${PAGE}/${encodeURIComponent(k)}`); }} detail={() => null}
+        rows={rows} rowKey={(r) => r.id} cols={cols} detailTitle={(r) => r.name}
+        openKey={open} onOpenChange={(k) => void setOpen(k)} detail={(r) => <RecipeView key={r.id} id={r.id} tabParam='panelTab' />}
+        pageHref={(r) => `${PAGE}/${encodeURIComponent(r.id)}`}
         defaultSort={[{ key: 'name', dir: 'asc' }]}
         summary={<StatStrip quad items={[
           { label: 'Active recipes', value: active.length, said: `${active.length} active recipes` },
@@ -86,7 +88,7 @@ export function RecipesPage() {
         exportName='recipes'
         empty={<p className='text-muted-foreground text-sm'>No recipes yet. A recipe is a bundle of files and programs an agent works with: add one, then pick it in an agent profile&apos;s workspace upload.</p>}
       />
-      {data && creating && <RecipeModal recipe={null} limits={data.limits} onClose={() => void setCreating(null)} onSaved={(id) => router.push(`${PAGE}/${encodeURIComponent(id)}`)} />}
+      {data && creating && <RecipeModal recipe={null} limits={data.limits} onClose={() => void setCreating(null)} onSaved={(id) => void setOpen(id)} />}
     </PageContainer>
   );
 }
@@ -106,7 +108,7 @@ function ProposalsWaiting({ proposals }: { proposals: Proposal[] }) {
         {proposals.map((p) => (
           <div key={p.id} className='flex flex-col gap-1 px-6 py-3 sm:flex-row sm:items-center sm:justify-between'>
             <span className='min-w-0'>
-              <Link href={`${PAGE}/${encodeURIComponent(p.recipe)}?tab=proposals`} className='font-medium underline-offset-4 hover:underline'>{p.recipe_name}</Link>
+              <Link href={`${PAGE}?recipe=${encodeURIComponent(p.recipe)}&panelTab=proposals`} className='font-medium underline-offset-4 hover:underline'>{p.recipe_name}</Link>
               <span className='text-muted-foreground block truncate text-xs'>{p.note}</span>
             </span>
             <span className='text-muted-foreground shrink-0 text-xs'>{changeWords(p)} · from {p.workspace ?? 'a workspace'} · <When d={p.at} /></span>
@@ -121,22 +123,27 @@ const changeWords = (p: Pick<Proposal, 'changed' | 'removed' | 'base_version'>) 
 
 // ---------------------------------------------------------------- one recipe's page
 
-/** A recipe's page: its header (name, status, facts, actions), then Files, Versions and Proposals. */
+/** A recipe's own page (/admin/recipes/<id>). */
 export function RecipePage({ id }: { id: string }) {
+  return <PageContainer><RecipeView id={id} /></PageContainer>;
+}
+
+/** A recipe: its header (name, status, facts, actions), then Files, Versions and Proposals (its page, or the list's panel). */
+function RecipeView({ id, tabParam = 'tab' }: { id: string; tabParam?: string }) {
   const { data, error, isLoading } = useAdmin<{ recipe: Detail }>(`${BASE}/${encodeURIComponent(id)}`);
   const limits = useAdmin<ListAnswer>(BASE).data?.limits ?? { version_bytes: 0, files: 500 };
   const { can } = useAdminRole();
-  const [tab, setTab] = useQueryState('tab');
+  const [tab, setTab] = useQueryState(tabParam);
   const [modal, setModal] = useState<'version' | 'edit' | null>(null);
   const archive = useAdminAction((on: boolean) => adminApi('POST', `${BASE}/${encodeURIComponent(id)}/${on ? 'archive' : 'restore'}`), { success: (r: { recipe: Detail }) => (r.recipe.status === 'archived' ? 'Archived: no profile may pick it' : 'Restored') });
-  if (error) return <PageContainer><ErrorBox error={error} /></PageContainer>;
-  if (isLoading || !data) return <PageContainer><LoadingCards count={3} /></PageContainer>;
+  if (error) return <ErrorBox error={error} />;
+  if (isLoading || !data) return <LoadingCards count={3} />;
   const r = data.recipe;
   const current = r.versions.find((v) => v.version === r.version) ?? null;
   const pending = r.proposals.filter((p) => p.status === 'pending');
   const editable = can('compute') && r.status === 'active';
   return (
-    <PageContainer>
+    <>
       <div className='flex w-full flex-col gap-4 md:gap-6' data-recipe-page={r.id}>
         <Card className='w-full gap-0 py-0' data-record-header=''>
           <CardContent className='flex flex-col gap-5 py-5'>
@@ -198,7 +205,7 @@ export function RecipePage({ id }: { id: string }) {
         </Tabs>
       </div>
       {modal && <RecipeModal recipe={r} mode={modal} limits={limits} onClose={() => setModal(null)} />}
-    </PageContainer>
+    </>
   );
 }
 

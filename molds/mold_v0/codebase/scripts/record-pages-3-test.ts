@@ -301,10 +301,11 @@ const note = (id: string, text: string) => { const p = document.createElement('p
   assert.match(dp, /\[overflow-wrap:normal\] \[word-break:normal\]/, "never broken inside a word");
   assert.doesNotMatch((/export function LinkText\b[\s\S]*?\n\}\n/.exec(dp)?.[0] ?? "").replace(/<TooltipContent[^>]*>/, ""), /break-all|break-words/, "no breaking inside a word on a fact's address (its tooltip shows it whole)");
   assert.match(dp, /const runHref = \(_pack: string, id: string\) => `\/app\/runs\/\$\{encodeURIComponent\(id\)\}`;/, "a record's runs link to the run's own page");
-  assert.match(strip(src("features/tabs/runs.tsx")), /featureOn\('record_pages'\) && <Button variant='outline' size='sm' render=\{<Link href=\{`\/app\/runs\/\$\{encodeURIComponent\(r\.id\)\}`\} \/>\} data-open-run/, "a runs list's open run: Open run, only with the flag");
+  // mold_v0-278: the run's page is its record panel's Open in its own page, only with the flag.
+  assert.match(strip(src("features/tabs/runs.tsx")), /pageHref=\{featureOn\('record_pages'\) \? \(r\) => `\/app\/runs\/\$\{encodeURIComponent\(r\.id\)\}` : undefined\}/, "a runs list's open run: Open in its own page, only with the flag");
   // The side panel.
   const host = /export function FormHost\b[\s\S]*?\n\}\n/.exec(sp)?.[0] ?? "";
-  assert.match(host, /const inPanel = open && panel && featureOn\('side_panel_forms'\) && !expanded;/, "a panel only with the flag, for a create or edit form, until expanded");
+  assert.match(host, /const inPanel = open && panel && featureOn\('side_panel_forms'\) && !expanded && !inRecordPanel;/, "a panel only with the flag, for a create or edit form, until expanded");
   assert.match(host, /\{card\}\s*\{!open \|\| inPanel \? children : null\}/, "the card first, always in one place (expanding keeps it mounted: the typed values stay); the list stays beneath the panel");
   const panel = /function SidePanelForm\b[\s\S]*?\n\}\n/.exec(sp)?.[0] ?? "";
   assert.doesNotMatch(ta, /fixed|<Sheet|Dialog|Popover/, "the list actions' module stays free of anything fixed or a dialog (mold_v0-217): the panel is its own module");

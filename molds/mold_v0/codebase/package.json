@@ -37,6 +37,7 @@
     "test:declarative-packs": "tsx scripts/declarative-packs-test.ts",
     "test:row-maps": "tsx scripts/row-maps-test.ts",
     "test:record-areas": "tsx scripts/record-areas-test.ts",
+    "test:record-panel": "tsx scripts/record-panel-test.ts",
     "test:record-pages": "tsx scripts/record-pages-test.ts && tsx scripts/record-pages-3-test.ts && tsx scripts/record-page-actions-test.ts && tsx scripts/record-pages-262-test.ts",
     "test:run-page": "tsx scripts/run-page-test.ts && tsx scripts/run-page-wake-test.ts",
     "test:generic-gaps": "tsx scripts/generic-gaps-test.ts",

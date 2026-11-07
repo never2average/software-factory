@@ -87,7 +87,10 @@ export function AgentProfilesPage() {
       <ErrorBox error={error} />
       <RecordView<Summary>
         id='admin-agent-profiles' noun={rows.length === 1 ? 'profile' : 'profiles'} loading={isLoading}
-        rows={rows} rowKey={(p) => p.id} cols={cols} openKey={null} onOpenChange={(k) => { if (k) void setOpen(k); }} detail={() => null}
+        rows={rows} rowKey={(p) => p.id} cols={cols} panelKind='editor' detailTitle={(p) => p.name}
+        // mold_v0-278: a row opens its profile's editor in the panel beside the list (?profile=<id>); New profile stays the modal.
+        openKey={open && open !== 'new' ? open : null} onOpenChange={(k) => void setOpen(k)}
+        detail={(p) => data ? <ProfileEditor key={p.id} id={p.id} facts={data} onClose={() => void setOpen(null)} /> : null}
         defaultSort={[{ key: 'name', dir: 'asc' }]}
         summary={<StatStrip quad items={[
           { label: 'Active profiles', value: active.length, said: `${active.length} active profiles` },
@@ -100,7 +103,7 @@ export function AgentProfilesPage() {
         exportName='agent-profiles'
         empty={<p className='text-muted-foreground text-sm'>No profiles yet: the Default profile appears once the workspace agent is used.</p>}
       />
-      {data && open && <ProfileModal key={open} id={open === 'new' ? null : open} facts={data} onClose={() => void setOpen(null)} />}
+      {data && open === 'new' && <ProfileModal key={open} id={open === 'new' ? null : open} facts={data} onClose={() => void setOpen(null)} />}
     </PageContainer>
   );
 }
@@ -130,6 +133,15 @@ const next = () => ++seq;
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
 
 /** One profile (or a new one) in one modal: its five items, inline rows, Save and Cancel at the bottom. */
+/** A profile's editor in its list's record panel (mold_v0-278). */
+function ProfileEditor({ id, facts, onClose }: { id: string; facts: Facts; onClose: () => void }) {
+  const { data, error } = useAdmin<{ profile: Detail }>(`${BASE}/${encodeURIComponent(id)}`);
+  const p = data?.profile ?? null;
+  if (error) return <ErrorBox error={error} />;
+  if (!p) return <p className='text-muted-foreground text-sm'>Loading the profile…</p>;
+  return <div data-agent-profile-panel={id}><ProfileForm key={`${p.id}@${p.version}`} profile={p} facts={facts} onClose={onClose} /></div>;
+}
+
 function ProfileModal({ id, facts, onClose }: { id: string | null; facts: Facts; onClose: () => void }) {
   const { data, error } = useAdmin<{ profile: Detail }>(id ? `${BASE}/${encodeURIComponent(id)}` : null);
   const p = data?.profile ?? null;

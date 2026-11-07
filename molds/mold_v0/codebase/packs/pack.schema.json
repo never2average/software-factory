@@ -6680,7 +6680,7 @@
       }
     },
     "tabs": {
-      "maxItems": 40,
+      "maxItems": 80,
       "type": "array",
       "items": {
         "type": "object",
@@ -6707,7 +6707,8 @@
               "keys",
               "page",
               "files",
-              "sections"
+              "sections",
+              "agent"
             ]
           },
           "label": {
@@ -15672,7 +15673,8 @@
               "notices",
               "files",
               "connected-apps",
-              "keys"
+              "keys",
+              "agent"
             ]
           }
         },

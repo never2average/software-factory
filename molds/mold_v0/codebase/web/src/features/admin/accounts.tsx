@@ -143,7 +143,8 @@ export function AdminAccounts({ tabs }: { tabs?: ReactNode } = {}) {
         ]}
         actions={(o) => accountActions(o, ctl)}
         empty='No accounts yet. Approve an access request or create one.'
-        detailActions={(o) => <AccountPeekActions org={o} ctl={ctl} />}
+        pageHref={(o) => `/admin/accounts/${encodeURIComponent(o.slug)}`}
+        panelMenu={(o, items) => <AccountPeekActions org={o} ctl={ctl} extra={items} />}
         detail={(o) => <AccountPeek org={o} ctl={ctl} />}
       />
       </div>
