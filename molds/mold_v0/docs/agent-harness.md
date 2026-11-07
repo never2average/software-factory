@@ -128,6 +128,16 @@ flag off: no route, page, table row, upload or action of it answers.
      sha256 and writes them into its scratch's working directory, executables `0700` to the run's own user; a checkpoint
      never carries them (it stays small) and the next wake writes them again. The run's isolation is unchanged.
   5. **Governance policy**, ported from the reference product: below.
+- **Where workspace recipes plug in (mold_v0-271).** The storage is one layer for every file: a file's bytes are an
+  `agent_profile_uploads` row and its parts under `agent-profiles/uploads/<id>/`, and everything after a profile's save
+  reads only the session's frozen `policy.uploads` list ({id, path, bytes, sha256, executable}): `wakeStart` hands it to
+  the wake, `wakeUploadPart` serves only ids in it, the runner writes and checks it. A recipe (a named, versioned bundle
+  staff keep) should store its files as `agent_profile_uploads` rows too, and a profile should name it beside its own
+  files as `recipes: [{id, version}]` in its config. `startSession` (where it freezes `eff.uploads`) expands each named
+  recipe version into the same {id, path, bytes, sha256, executable} entries, the profile's own files winning a path
+  both name, before freezing them. Nothing in the wake, the worker route or the runner changes, a session keeps the
+  recipe version it started with, and `checkConfig` checks the recipe and version exist and the total stays within
+  `AGENT_UPLOAD_MAX_MB`.
 - **Removed**: instructions and hooks of a profile's own, model and provider fields, budget and ceiling, turns, longest
   wake, the free / ask / hidden tool lists, inline text files, who may start it (the role's right to launch decides),
   per-workspace overrides, and the profile's own page, tabs and side-panel editor. Budgets, turns and limits are the

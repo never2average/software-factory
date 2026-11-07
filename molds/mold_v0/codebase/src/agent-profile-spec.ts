@@ -69,6 +69,9 @@ export const InferenceSchema = z.object({
 }).strict();
 
 // ---------------------------------------------------------------- 4. uploads
+// One storage layer for every file (agent_profile_uploads, src/agent-profiles.ts): a session freezes a flat list of
+// these entries and nothing downstream reads anything else. Workspace recipes (mold_v0-271) plug in by expanding a
+// named recipe version into the same entries when a session starts (docs/agent-harness.md "Agent profiles").
 
 export const ProfileUploadSchema = z.object({
   id: z.string().regex(UPLOAD_ID, "an upload's id"),
