@@ -886,6 +886,25 @@ def single_self_test():
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, "  console sign-in name CLERK_SECRET_KEY (optional): set on zz\nReady. See the plan: x\n", "")
         st_ = st_keys("zz", a, i)
         ok(st_[0] == DONE and "LEDGER" not in st_[1] and not GENERATED_KEYS.get("zz"), f"audit.sign off: the station is done and never asks for the ledger key: {st_}")
+        # mold_v0-265: Clerk on every deploy. The check's plain ask (one --set-secret line per key) makes the station the
+        # operator's, each key asked for with Clerk's dashboard steps; a key let go for an app already on Clerk (its NOTE line,
+        # the command closed by ")") is never asked for; with the keys set the check is ready and the station done.
+        man0 = single_service.manifest("mold_v0", ROOT); lack0 = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"]
+        ok(single_service.sign_in_typed(man0, "vercel") == lack0 and single_service.sign_in_typed(man0, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"],
+           f"mold_v0's mold.json requires Clerk's keys at every deploy, on both targets: {man0.get('sign_in_required', {}).get('targets')}")
+        ask0 = []; single_service.sign_in_ask("zz", man0, "vercel", lack0, say=ask0.append)
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, "\n".join(ask0) + "\n3 value(s) only you hold are not set yet\n", "")
+        st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
+        ok(st_[0] == OPERATOR and all(n_ in st_[1] for n_ in lack0) and [x["name"] for x in nd] == lack0
+           and all(x["kind"] == "secret" and "dashboard.clerk.com" in x["how"] and "API keys" in x["how"] and f"--set-secret {x['name']}" in x["how"] for x in nd),
+           f"no Clerk keys: the keys station asks for each with Clerk's dashboard steps: {st_} {nd}")
+        note0 = "  NOTE: CLERK_JWT_KEY is not set yet; zz already runs on Clerk, so it keeps deploying without it. Set it when you can (x: python3 .claude/scripts/provision.py zz --set-secret CLERK_JWT_KEY)\n"
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, note0 + "Ready. See the plan: x\n", "")
+        MISSING_KEYS.pop("zz", None); st_ = st_keys("zz", a, i)
+        ok(st_[0] == DONE and not MISSING_KEYS.get("zz"), f"an app already on Clerk without the JWT key: the station is done, the key never asked for: {st_}")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, note0 + "  python3 .claude/scripts/provision.py zz --set-secret PAY_SECRET_KEY\n", "")
+        st_ = st_keys("zz", a, i)
+        ok(st_[0] == OPERATOR and MISSING_KEYS.get("zz") == ["PAY_SECRET_KEY"], f"...and with another key missing, only that one is asked for: {st_} {MISSING_KEYS.get('zz')}")
         MISSING_KEYS.pop("zz", None)
         i["target"] = "compose_remote"
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, f"Still to do:\n  - supply the server and the domain: x\n  - {single_service.admin_todo('zz')}\n", "")
@@ -1046,7 +1065,10 @@ def needs_for(app, name, why):
     """What a person must give at an OPERATOR station, as `needs` entries with plain instructions."""
     if name == "keys":
         gen = set(GENERATED_KEYS.get(app) or [])   # made here with a yes, never typed (mold_v0-227)
-        keys = [{"kind": "approval", "name": k, "how": ledger_key.how(app, k)} if k in gen else {"kind": "secret", "name": k, "how": AR.secret_how(app, k)}
+        a_, i_ = docs(app) if MISSING_KEYS.get(app) else ({}, {})
+        ss = single_service.applies(a_ or {}, ROOT)   # its sign-in provider's keys asked for with the provider's own steps (mold_v0-265)
+        keys = [{"kind": "approval", "name": k, "how": ledger_key.how(app, k)} if k in gen else
+                {"kind": "secret", "name": k, "how": single_service.secret_how_for(app, k, a_, i_, ROOT) if ss else AR.secret_how(app, k)}
                 for k in MISSING_KEYS.get(app) or []]
         adm = [{"kind": "approval", "name": "platform administrator address", "how": single_service.admin_ask(app, (docs(app)[0] or {}))}] if MISSING_ADMIN.get(app) else []
         rest = "; ".join(x for x in (why or "").split("; ") if single_service.ADMIN_MARK not in x)   # anything else the server check still lists

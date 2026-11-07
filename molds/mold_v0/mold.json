@@ -47,7 +47,7 @@
     },
     "dockerfile": "Dockerfile",
     "console": {
-      "$comment": "The web console on a server of its own (mold_v0-020): the compose service built from web/Dockerfile (Next.js standalone output) behind the stack's Caddy, which sends the API's own paths to the API service and everything else to the console. Health: the API's health path answers 200 ok THROUGH the console (so its API-address variable reaches the API), and these pages answer without following a redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing). operator_env: the names in the server's env file the console needs from the operator (its sign-in; the API reads the same two), asked for at a hidden prompt during the deploy when the server lacks them. Optional since mold_v0-004: without them the console and the API run the built-in sign-in (an emailed code, and Google when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set); an app whose state lists them keeps Clerk.",
+      "$comment": "The web console on a server of its own (mold_v0-020): the compose service built from web/Dockerfile (Next.js standalone output) behind the stack's Caddy, which sends the API's own paths to the API service and everything else to the console. Health: the API's health path answers 200 ok THROUGH the console (so its API-address variable reaches the API), and these pages answer without following a redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing). operator_env: the names in the server's env file the console needs from the operator (its sign-in; the API reads the same two), asked for at a hidden prompt during the deploy when the server lacks them. Optional in state since mold_v0-004 (the built-in sign-in, an emailed code and Google, runs the lanes, local runs and tests), but every deploy requires Clerk since mold_v0-265: see sign_in_required.",
       "service": "console",
       "proxied_health": "/healthz",
       "pages": [
@@ -73,7 +73,7 @@
     ]
   },
   "vercel": {
-    "$comment": "TWO projects on Vercel (operator's decision 2026-10-20, ticket mold_v0-029): <project>-api is the API and MCP function from the root vercel.json, the only one with the app's own Neon Postgres and the product's minted keys; <project> is the web console (web/, a server-rendered Next.js app behind a middleware) as its own Next.js project, given the API's address through the one variable its next.config reads (found there at plan time, never named here) and only the sign-in names below: optional since mold_v0-004, as the console signs people in with the built-in emailed code (and Google) unless Clerk's keys are set; an app whose state already lists them in secrets_user keeps Clerk, and AUTH_PROVIDER (builtin or clerk) overrides the rule. Deployed api first; both rolled back if either fails its health.",
+    "$comment": "TWO projects on Vercel (operator's decision 2026-10-20, ticket mold_v0-029): <project>-api is the API and MCP function from the root vercel.json, the only one with the app's own Neon Postgres and the product's minted keys; <project> is the web console (web/, a server-rendered Next.js app behind a middleware) as its own Next.js project, given the API's address through the one variable its next.config reads (found there at plan time, never named here) and only the sign-in names below: optional in state since mold_v0-004 (the built-in emailed code and Google run the lanes, local runs and tests), required on the projects at every deploy since mold_v0-265 (sign_in_required). Deployed api first; both rolled back if either fails its health.",
     "cron_secret": "CRON_SECRET",
     "projects": {
       "api": {
@@ -126,6 +126,55 @@
       "publishable": {
         "api": "CLERK_PUBLISHABLE_KEY",
         "web": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+      }
+    }
+  },
+  "sign_in_required": {
+    "$comment": "Clerk is the sign-in of every deployed app of this mold (operator decision, mold_v0-265; .claude/scripts/lib/single_service.py sign_in_missing). The built-in sign-in (an emailed code, and Google) stays for the lanes, local runs and tests only. provision.py's check and its deploy, and mint.py's keys station, stop for the operator (exit 3, needs_human) until the deploy target holds every name below. targets.<target>.<NAME>: where NAME must be held (vercel: the api and web projects; compose_remote: env, the server's env file, whose values the deploy asks for at a hidden prompt when the server lacks them), or {\"from\": OTHER} when the deploy fills it from OTHER (on Vercel the API's publishable key is copied from the console's at every deploy, mold_v0-116; on a server the compose file passes CLERK_PUBLISHABLE_KEY to the console under its browser name). kept_without: the names an app ALREADY deployed on Clerk (every other name held) keeps deploying without, the check saying it is still to set; a first deploy needs them all. ask: what the operator opens (dashboard, page) and copies for each name (copy), said in the check's and the deploy's plain ask and before each hidden prompt. AUTH_PROVIDER=builtin on a deploy target does not lift the rule.",
+    "provider": "Clerk",
+    "targets": {
+      "vercel": {
+        "CLERK_SECRET_KEY": [
+          "api",
+          "web"
+        ],
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": [
+          "web"
+        ],
+        "CLERK_PUBLISHABLE_KEY": {
+          "from": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+        },
+        "CLERK_JWT_KEY": [
+          "api"
+        ]
+      },
+      "compose_remote": {
+        "CLERK_SECRET_KEY": [
+          "env"
+        ],
+        "CLERK_PUBLISHABLE_KEY": [
+          "env"
+        ],
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": {
+          "from": "CLERK_PUBLISHABLE_KEY"
+        },
+        "CLERK_JWT_KEY": [
+          "env"
+        ]
+      }
+    },
+    "kept_without": [
+      "CLERK_JWT_KEY"
+    ],
+    "ask": {
+      "dashboard": "https://dashboard.clerk.com",
+      "create": "if this app has no Clerk application yet, click \"Create application\", type the app's name, leave the sign-in options as they are and click \"Create application\" again",
+      "page": "click \"Configure\" at the top, then \"API keys\" in the left-hand column",
+      "copy": {
+        "CLERK_SECRET_KEY": "the Secret key, under \"Secret keys\" (click the copy button beside it; it starts with sk_live_ or sk_test_)",
+        "CLERK_PUBLISHABLE_KEY": "the Publishable key (click the copy button beside it; it starts with pk_live_ or pk_test_)",
+        "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "the Publishable key (click the copy button beside it; it starts with pk_live_ or pk_test_)",
+        "CLERK_JWT_KEY": "the PEM public key, under \"JWT public key\" (copy the whole block, from -----BEGIN PUBLIC KEY----- to -----END PUBLIC KEY-----; paste it as it is, the lines are joined for you)"
       }
     }
   },

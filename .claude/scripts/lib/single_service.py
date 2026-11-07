@@ -96,7 +96,9 @@ the console (mold_v0's web/, a server-rendered Next.js app, from its own web/Doc
 with no published port, behind the stack's Caddy, which sends the API's own paths to the API service and everything
 else to the console. Its sign-in names (compose.console.operator_env) are the operator's values, like the Vercel
 console's, asked for at the deploy's hidden prompt when the server lacks them; a state that does not list them in
-secrets_user is refused before contact. Build arguments carry public values only (the API's address inside the
+secrets_user is refused before contact. Clerk's keys (mold.json sign_in_required, mold_v0-265) join those values on every
+deploy, whatever the state lists: with nobody at a terminal the deploy stops for them (exit 3) before the release or the
+env file changes. Build arguments carry public values only (the API's address inside the
 network, the publishable key, the public address); the console's secret is given at run time.
 
 The database is the stack's own Postgres container on the compose network (no published port). Its password and the
@@ -559,7 +561,13 @@ def settings(app_id, app, infra, root=None):
          "compose_file": (cr.get("compose") or {}).get("file") or (man.get("compose") or {}).get("file", ""),
          "health_path": man.get("health_path", "/"), "secrets_user": list(infra.get("secrets_user") or []),
          "secrets_optional": list(infra.get("secrets_optional") or []), "email": "", "admins": admins_of(app),
-         "generated": LK.names_needed(app, root, man)}   # made by the deploy when the server lacks them (mold_v0-227)
+         "generated": LK.names_needed(app, root, man),   # made by the deploy when the server lacks them (mold_v0-227)
+         # Clerk on every deploy (mold_v0-265): its names are the operator's values, asked for at the deploy's hidden prompt
+         "sign_in": sign_in_typed(man, "compose_remote"), "sign_in_keep": list(sign_in_spec(man).get("kept_without") or []),
+         "sign_in_man": {"sign_in_required": sign_in_spec(man)} if sign_in_spec(man) else {},
+         "deployed": bool(infra.get("deployed_at"))}
+    S["secrets_user"] += [n for n in S["sign_in"] if n not in S["secrets_user"]]
+    S["secrets_optional"] = [n for n in S["secrets_optional"] if n not in S["secrets_user"]]
     S["host_shown"] = S["ssh_host"] or S["host"] or VR.NO_HOST; S["domain_shown"] = S["domain"] or VR.NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"; S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/single_service.py"
@@ -986,6 +994,12 @@ def check(app_id, app, infra, adir, say=print, root=None):
     say("a deploy will, in order:")
     for i, st in enumerate(plan(S, F, source_for(app_id, app, root)), 1): say(f"  {i:2d}. {st['title']}")
     say(f"values only you hold, asked for at a hidden prompt during the deploy if the server lacks them: {', '.join(S['secrets_user']) or 'none'}")
+    if S.get("sign_in"):   # Clerk on every deploy (mold_v0-265); offline, so what the server holds is read by the deploy
+        prov = sign_in_spec(S["sign_in_man"]).get("provider") or "the sign-in provider"
+        say(f"sign-in (required at every deploy): {prov}, {', '.join(S['sign_in'])} in the server's env file; the deploy asks for each the server "
+            f"lacks at a hidden prompt, and stops for you (exit 3) when nobody is at a terminal to type it"
+            + (f" ({', '.join(S['sign_in_keep'])} is let go for an app already on {prov})" if S.get("sign_in_keep") else ""))
+        if not S.get("deployed"): sign_in_ask(app_id, S["sign_in_man"], "compose_remote", S["sign_in"], say=say)
     say(f"minted on the server by the mold's own {F['mint']} (not yours to set): {', '.join(n for n in F['required'] if n not in F['config'])}")
     for n in S.get("generated") or []:
         say(f"required by this app's profile (audit.sign is on): {n}, made on this machine by the deploy when the server lacks it (never typed, "
@@ -1066,7 +1080,22 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         for sid in ("bundle", "packages", "firewall"): run(sid)
         have = set((run("names").stdout or "").split())
         missing = [n for n in S["secrets_user"] if not has_value(n, have, F.get("aliases"))]
-        vals = (secrets_for or (lambda m: VR.collect_secrets(S["app_id"], m)))(missing) if missing else {}
+        si = [n for n in missing if n in (S.get("sign_in") or [])]
+        if S.get("deployed") and si and all(n in (S.get("sign_in_keep") or []) for n in si):   # already on Clerk (mold_v0-265)
+            for n in si: say(f"    NOTE: {n} is not on the server yet; {S['app_id']} already runs on Clerk, so it is deployed without it "
+                             f"(set it when you can: python3 .claude/scripts/provision.py {S['app_id']} --set-secret {n})")
+            missing = [n for n in missing if n not in si]; si = []
+        sman = S.get("sign_in_man") or {}
+        typed = [n for n in si if not (os.environ.get(n) or "").strip()]   # collect_secrets takes a value this shell holds first
+        if typed and not secrets_for and not sys.stdin.isatty():   # nobody at a terminal: the plain ask, then exit 3 (never reverted)
+            sign_in_ask(S["app_id"], sman, "compose_remote", typed, say=say); sign_in_need(S["app_id"], sman, "compose_remote", typed)
+        try: vals = (secrets_for or (lambda m: VR.collect_secrets(S["app_id"], m, explain=lambda n: sign_in_explain(sman, n, say=say),
+                                                                  ask=VR.pem_ask(getpass.getpass))))(missing) if missing else {}
+        except NeedsHuman: raise
+        except Stop as e:
+            import agent_result as AR
+            if AR.NOTES["needs"]: raise NeedsHuman(str(e))   # only the operator can type them: nothing on the server changed yet
+            raise
         made = {}   # the profile's keys (mold_v0-227): made here when the server lacks them, never overwritten
         for n in [n for n in S.get("generated") or [] if not has_value(n, have, F.get("aliases"))]:
             vals[n] = LK.for_deploy(made, n, say=say)
@@ -1152,14 +1181,15 @@ def _ready_to_contact(S, app_id):
     for tool in ("ssh", "rsync"):
         if not shutil.which(tool): raise Stop(f"this VM has no `{tool}` command, which the deploy needs. Nothing was contacted.")
 
-def _hidden_value(app_id, name, P):
+def _hidden_value(app_id, name, P, man=None):
     """One value at a hidden prompt, from the operator's own terminal; never from a pipe (exit 3 instead)."""
     import agent_result as AR
     if sys.stdin.isatty():
-        P.explain(name); v = getpass.getpass(f"{name} (input hidden): ").strip(); v = P.strip_pasted_name(name, v)
+        if not sign_in_explain(man or {}, name): P.explain(name)   # a sign-in name (mold_v0-265): the provider's own steps
+        v = VR.pem_ask(getpass.getpass)(f"{name} (input hidden): ").strip(); v = P.strip_pasted_name(name, v)
     elif P.trusted_stdin(): v = sys.stdin.readline().strip()
     else:
-        AR.need("secret", name, AR.secret_how(app_id, name))
+        AR.need("secret", name, sign_in_how(app_id, name, man, "vercel") if name in sign_in_names(man or {}) else AR.secret_how(app_id, name))
         P.stop_for_human(f"This window cannot hide what you type, so nothing was read and nothing was saved. The operator runs this "
                          f"themselves, in a separate terminal on this machine:\n  python3 .claude/scripts/provision.py {app_id} --set-secret {name}")
     AR.forbid(v)
@@ -1172,7 +1202,7 @@ def set_secret_remote(app_id, S, name, P, runner=None, value=None, say=print):
         raise Stop(f"{name} is not a name this app reads from its operator (it reads: {', '.join(sorted(declared)) or 'none'}). The NAME goes on the "
                    f"command line and the value is asked for afterwards. Nothing was stored.")
     _ready_to_contact(S, app_id)
-    v = value if value is not None else _hidden_value(app_id, name, P)
+    v = value if value is not None else _hidden_value(app_id, name, P, S.get("sign_in_man"))
     why = VR.env_check(name, v) or ("it contains a $ sign, which the compose env file would read as a variable" if "$" in v else None)
     if why: raise Stop(f"{why}. Nothing was stored.")
     st = {"id": "set-secret", "argv": VR.ssh_argv(S, VR.guarded(S, f"python3 {S['vr_tool']} env-merge --file {S['env_file']}")), "timeout": 60}
@@ -1714,8 +1744,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     now_names = vercel_projects(vercel_project(infra))
     held = {r: (P.vercel_env_names(cb, n) if project_exists(P, n, cb) else set()) for r, n in now_names.items()}
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, held[r], F.get("aliases")) for r in project_for(F, K, n))]
+    missing = sign_in_gate(app_id, infra, man, F, held, missing, P, say)   # Clerk on every deploy (mold_v0-265)
     gap = admin_gap(man, app, held["api"])     # names only: an administrator variable already on the api project is kept
-    if missing: P.ask_nicely_for(app_id, missing)
     gen = generated_missing(app, F, man, held["api"], root)   # the profile's keys (mold_v0-227): never deployed without them
     if gen:
         import agent_result as AR
@@ -1733,8 +1763,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         raise Stop(f"{web} holds the API's own names ({', '.join(stray)}), so it is not a console project; nothing was deployed. "
                    "Move the app to new project names, or remove those names from it, first.")
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
-    if missing:
-        P.ask_nicely_for(app_id, missing); raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
+    missing = sign_in_gate(app_id, infra, man, F, present, missing, P, say, quiet_waived=True)
+    if missing: raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
     # /mcp's sign-in (mold_v0-116): with member keys off and the API on Clerk with no way to find it (no publishable key
     # anywhere), nothing would let an AI client in: asked for before anything is deployed. Clerk's own registration
     # setting is the check's to report (the deploy says it at the end), never a reason to stop a deploy here.
@@ -1856,6 +1886,97 @@ def clerk_reading(app_id, app, man, cb, names, exists, P, root=None, read_json=N
     keys_off = clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)
     return clerk_mcp.judge(app_id, man, vals.get("api") or {}, vals.get("web") or {}, keys_off, read_json)
 
+# ---------------------------------------------------------------------------------------------------------
+# Clerk on every deploy (mold_v0-265; mold.json sign_in_required)
+# ---------------------------------------------------------------------------------------------------------
+def sign_in_spec(man):
+    """mold.json sign_in_required, or {} when the mold requires no sign-in provider at deploy time."""
+    s = (man or {}).get("sign_in_required") or {}
+    return s if isinstance(s, dict) and isinstance(s.get("targets"), dict) else {}
+
+def sign_in_where(man, target):
+    """{NAME: [roles] or {"from": OTHER}} for one target (vercel: api, web; compose_remote: env)."""
+    return {n: w for n, w in ((sign_in_spec(man).get("targets") or {}).get(target) or {}).items() if not n.startswith("$")}
+
+def sign_in_typed(man, target):
+    """The names the operator gives for a target, in mold.json order (not those the deploy fills from another)."""
+    return [n for n, w in sign_in_where(man, target).items() if isinstance(w, list)]
+
+def sign_in_names(man):
+    """Every name the rule covers, on any target."""
+    return list(dict.fromkeys(n for t in (sign_in_spec(man).get("targets") or {}) for n in sign_in_where(man, t)))
+
+def sign_in_missing(man, target, held, deployed=False, aliases=None):
+    """(missing, waived) for a deploy: the names the operator gives that the target does not hold (held: {role: set of
+    names}; a name filled from another counts as held when that one is), and the kept_without names an app already
+    deployed on the provider (every other name held) may still lack, said and never a reason to stop. Both [] when the
+    mold has no rule for this target."""
+    where = sign_in_where(man, target)
+    lack = [n for n in sign_in_typed(man, target) if not all(has_value(n, held.get(r) or set(), aliases) for r in where[n])]
+    keep = [n for n in lack if n in (sign_in_spec(man).get("kept_without") or [])]
+    if deployed and keep and len(keep) == len(lack): return [], keep
+    return lack, []
+
+def sign_in_copy(man, name):
+    """What the operator copies for NAME on the provider's page, or ''."""
+    ask = sign_in_spec(man).get("ask") or {}
+    return (ask.get("copy") or {}).get(name) or ""
+
+def sign_in_how(app_id, name, man, target):
+    """The plain ask for one sign-in name (a `needs` entry's how): where to click, what to copy, the one command to run."""
+    s = sign_in_spec(man); ask = s.get("ask") or {}; prov = s.get("provider") or "the sign-in provider"
+    run = (f"python3 .claude/scripts/provision.py {app_id} --deploy-remote (it asks for {name} at a hidden prompt and keeps it only on the app's server)"
+           if target == "compose_remote" else f"python3 .claude/scripts/provision.py {app_id} --set-secret {name} (it asks for it at a hidden prompt)")
+    return (f"{prov} signs people in to {app_id} once it is on the internet, and only you can open {prov}'s dashboard. "
+            f"1. Open {ask.get('dashboard') or prov} and sign in; {ask.get('create') or 'pick the application for this app'}. "
+            f"2. In that application, {ask.get('page') or 'open its API keys'}. "
+            f"3. Copy {sign_in_copy(man, name) or name}. "
+            f"4. In a separate terminal on the factory machine (a second SSH session, not this chat), run: {run}, paste it and press Enter. "
+            f"The screen stays blank while you paste; the value is never shown, stored here or sent to the chat. Then tell me it is done.")
+
+def sign_in_ask(app_id, man, target, lack, say=print):
+    """The check's and the deploy's plain ask for the missing sign-in names: what, why, the clicks, one line per name."""
+    if not lack: return
+    s = sign_in_spec(man); ask = s.get("ask") or {}; prov = s.get("provider") or "the sign-in provider"
+    say(f"  {prov} is the sign-in of every app of this mold on the internet (the built-in emailed code is for tests and local runs only), "
+        f"and {app_id} needs {len(lack)} value(s) from {prov} that only you can copy: {', '.join(lack)}. About five minutes:")
+    say(f"    1. Open {ask.get('dashboard') or prov} and sign in; {ask.get('create') or 'pick the application for this app'}.")
+    say(f"    2. In that application, {ask.get('page') or 'open its API keys'}.")
+    if target == "compose_remote":
+        say(f"    3. In a separate terminal on this machine (a second SSH session, not this chat), run the deploy yourself; it asks for each value at a hidden prompt:")
+        say(f"         python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+        for n in lack: say(f"       {n}: {sign_in_copy(man, n) or n}")
+    else:
+        say(f"    3. In a separate terminal on this machine (a second SSH session, not this chat), run each line below, one at a time, and paste what it names:")
+        for n in lack:
+            say(f"         python3 .claude/scripts/provision.py {app_id} --set-secret {n}")
+            say(f"           ({n}: {sign_in_copy(man, n) or n})")
+    say(f"    The screen stays blank while you paste: the value is never shown, stored here or sent to the chat.")
+
+def sign_in_need(app_id, man, target, lack):
+    """Each missing sign-in name as a `needs` entry with the plain ask (exit 3 through provision.py)."""
+    import agent_result as AR
+    for n in lack: AR.need("secret", n, sign_in_how(app_id, n, man, target))
+
+def sign_in_explain(man, name, say=print):
+    """Before a hidden prompt for a sign-in name: what to copy and where. False when NAME is not one."""
+    if name not in sign_in_names(man): return False
+    s = sign_in_spec(man); ask = s.get("ask") or {}; prov = s.get("provider") or "the sign-in provider"
+    say(f"\nHi! {prov} signs people in to this app, so it needs {name}: {sign_in_copy(man, name) or name}.")
+    say(f"  1. Open {ask.get('dashboard') or prov} and sign in; {ask.get('create') or 'pick the application for this app'}.")
+    say(f"  2. In that application, {ask.get('page') or 'open its API keys'}.")
+    say(f"  3. Copy it and paste it at the prompt below. The screen stays blank while you paste; that is on purpose, so the value is "
+        f"never shown, saved here or sent to chat. Then press Enter.\n")
+    return True
+
+def secret_how_for(app_id, name, app, infra, root=None):
+    """The plain ask for one key of a single-service app (mint.py's needs): the sign-in provider's own steps for its
+    names, else the one generic way a person hands over a secret."""
+    import agent_result as AR
+    man = manifest((app or {}).get("mold_id"), root) or {}
+    t = (infra or {}).get("target") or "vercel"
+    return sign_in_how(app_id, name, man, t) if name in sign_in_names(man) else AR.secret_how(app_id, name)
+
 def clerk_block(app_id, P, reading):
     """Note what the operator must do for a blocking reading (exit 3 through provision.py), and the sentence for it."""
     import agent_result as AR
@@ -1863,6 +1984,18 @@ def clerk_block(app_id, P, reading):
     if kind == "secret": AR.need("secret", name, AR.secret_how(app_id, name)); P.ask_nicely_for(app_id, [name])
     else: AR.need(kind, name, how)
     return msg
+
+def sign_in_gate(app_id, infra, man, F, held, missing, P, say=print, quiet_waived=False):
+    """A Vercel deploy's missing names with the sign-in names mold.json requires (mold_v0-265) added, each asked for in
+    plain words (the provider's steps for its names, ask_nicely_for for the rest). Returns every missing name."""
+    lack, waived = sign_in_missing(man, "vercel", held, bool(infra.get("deployed_at")), F.get("aliases"))
+    for n in ([] if quiet_waived else waived):
+        say(f"  NOTE: {n} is not set yet; {app_id} already runs on {sign_in_spec(man).get('provider') or 'its sign-in provider'}, so it is deployed without it "
+            f"(set it when you can: python3 .claude/scripts/provision.py {app_id} --set-secret {n})")
+    if lack: sign_in_ask(app_id, man, "vercel", lack, say=say); sign_in_need(app_id, man, "vercel", lack)
+    rest = [n for n in missing if n not in lack]
+    if rest: P.ask_nicely_for(app_id, rest)
+    return list(dict.fromkeys(missing + lack))
 
 def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type unless the console's sign-in
@@ -1879,8 +2012,9 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     say(f"  database ({names['api']} only): {'DATABASE_URL is on the project (kept as it is: written once)' if 'DATABASE_URL' in present['api'] else 'the app gets its own Postgres at the first deploy (an empty free Neon database, proven empty before it is connected)'}")
     say(f"  minted at the deploy if absent ({names['api']} only): {', '.join(n for n in infra.get('secrets_derived') or [] if not has_value(n, present['api'], F.get('aliases')) and n != 'DATABASE_URL') or 'nothing (all present)'}")
     say(f"  console: pointed at the API through {K['api_env'] or '(no single API-address variable found)'} ({K['config'] or 'no next.config'}); never DATABASE_URL or a minted key")
+    si = sign_in_names(man)
     for n in K["required"] + K["optional"]:
-        say(f"  console sign-in name {n} ({'required' if n in K['required'] else 'optional'}): {'set' if n in present['web'] else 'not set'} on {names['web']}")
+        say(f"  console sign-in name {n} ({'required' if n in K['required'] or n in si else 'optional'}): {'set' if n in present['web'] else 'not set'} on {names['web']}")
     if infra.get("secrets_optional"): say(f"  optional, off while empty (set one with --set-secret NAME): {', '.join(infra['secrets_optional'])}")
     an, adm, held_a = admin_env_names(man), admins_of(app), admin_held(man, present["api"])
     gap = admin_gap(man, app, present["api"])
@@ -1899,12 +2033,24 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     pre = console_preflight(K)
     for p in pre: say("  not ready: " + p)
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
+    # Clerk on every deploy (mold_v0-265): the names mold.json sign_in_required lists, read from the projects themselves.
+    lack_si, waived_si = sign_in_missing(man, "vercel", present, bool(infra.get("deployed_at")), F.get("aliases"))
+    for n, w in sign_in_where(man, "vercel").items():
+        if isinstance(w, list):
+            say(f"  sign-in (required at every deploy): {n} on {' and '.join(names[r] for r in w)}: {'not set' if n in lack_si + waived_si else 'set'}")
+        else: say(f"  sign-in (required at every deploy): {n} on {names['api']}: copied from {names['web']}'s {w.get('from')} at each deploy")
+    for n in waived_si:   # the command ends in ")" so mint.py's keys station never reads it as a key still to set
+        say(f"  NOTE: {n} is not set yet; {app_id} already runs on {sign_in_spec(man).get('provider') or 'its sign-in provider'}, so it keeps deploying without it. "
+            f"Set it when you can ({sign_in_copy(man, n) or n}: python3 .claude/scripts/provision.py {app_id} --set-secret {n})")
+    if lack_si: sign_in_ask(app_id, man, "vercel", lack_si, say=say); sign_in_need(app_id, man, "vercel", lack_si)
+    missing = list(dict.fromkeys(missing + lack_si))
     gen = generated_missing(app, F, man, present["api"], root)
     for n in LK.names_needed(app, root, man):
         say(f"  required by this app's profile (audit.sign is on): {n} on {names['api']}: {'not set' if n in gen else 'set'} (made on this machine, never typed)")
     if missing:
         for n in missing:
-            say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
+            if n not in lack_si: say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}")
+            AR.need("secret", n, AR.secret_how(app_id, n))   # a sign-in name keeps the plain ask noted above (the first need wins)
     for n in gen:
         say(f"  {LK.command(app_id, n)}"); AR.need("approval", n, LK.how(app_id, n))
     if missing or gen:
@@ -1977,13 +2123,14 @@ def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=N
     is one of its sign-in names, both when both do. Never DATABASE_URL, and nothing the console does not read."""
     cb = codebase(app["mold_id"], root); man = manifest(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
     declared = set(infra.get("secrets_user") or []) | set(infra.get("secrets_optional") or []) | set(infra.get("secrets_derived") or []) | set(K["required"]) | set(K["optional"])
-    roles = project_for(F, K, name)
+    declared |= set(sign_in_typed(man, "vercel"))   # Clerk on every deploy (mold_v0-265), whatever an older state lists
+    roles = project_for(F, K, name) or [r for r in (sign_in_where(man, "vercel").get(name) or []) if isinstance(r, str)]
     o = other_spelling(name, F.get("aliases"))      # mold_v0-045: a state may name the key in the other spelling
     if (name not in declared and o not in declared) or not roles: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
     if name == "DATABASE_URL": raise Stop(f"{app_id}: DATABASE_URL is written by the database integration at the first deploy and never by hand. Nothing was stored.")
     refuse_project(app_id, infra, P, root)
     names = choose_names(app_id, infra, cb, P, adir=None, say=say, root=root); team = (infra.get("vercel") or {}).get("team", "")
-    v = value if value is not None else _hidden_value(app_id, name, P)
+    v = value if value is not None else _hidden_value(app_id, name, P, man)
     if adir: save(os.path.join(adir, "infrastructure.json"), infra)   # the name choice is recorded once a value is in hand, before any project is made
     for r in roles:
         if ensure_project(names[r], team, cb, P): print(f"  (created {names[r]} empty to hold {name}: free, no deployment)")
@@ -2100,6 +2247,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
         _ready_to_contact(S, app_id)
         src = build_source(app_id, app, root, say=say)     # the codebase, or build/<app_id>/ afresh (packs, brand); NotBuilt: not reverted
         try: res = deploy(S, F, src, say=say)
+        except NeedsHuman: raise   # a value only the operator holds (mold_v0-265): nothing on the server changed, so nothing is reverted
         except Stop as e:
             r_ = getattr(e, "rls", None)
             if r_ and not r_["passed"]:   # the deployed database was measured failing: never leave an older pass standing

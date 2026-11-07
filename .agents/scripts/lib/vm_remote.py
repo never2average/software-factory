@@ -597,6 +597,24 @@ def operator_names(S):
     """The names only the operator can supply. One client id feeds both Google names."""
     return [n for n in S["secrets_user"] if n != "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
 
+PEM_BEGIN = re.compile(r"^-----BEGIN [A-Z ]+-----")
+def pem_ask(ask, limit=80):
+    """A hidden prompt that also takes a pasted PEM block (mold_v0-265: CLERK_JWT_KEY, a public key shown on several
+    lines): a first line that opens a block without closing it reads on, line by line, until its END line, and the
+    lines come back joined by single spaces. One line, so an env file holds it, and the PEM readers the app uses take
+    it as it is (they drop the BEGIN/END lines and every space before decoding). Any other answer is returned as typed."""
+    def read(prompt):
+        v = ask(prompt)
+        first = v.strip()
+        if not PEM_BEGIN.match(first) or "-----END " in first[10:]: return v
+        lines = [first]
+        for _ in range(limit):
+            nxt = (ask("") or "").strip()
+            if nxt: lines.append(nxt)
+            if nxt.startswith("-----END "): break
+        return " ".join(lines)
+    return read
+
 def collect_secrets(app_id, missing, environ=None, ask=None, tty=None, explain=None, shape=None, say=print):
     """Values for the missing operator names: a named environment value if this shell has one, else a hidden
     prompt. Returns {name: value}. Nothing is echoed, logged or returned to any caller but the stdin of ONE

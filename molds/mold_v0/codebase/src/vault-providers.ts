@@ -52,7 +52,9 @@ export const storeOutsideVault = () => Boolean((ENV.R2_BUCKET && ENV.R2_ENDPOINT
  * shell's own; a gateway provider some pack's job kind names; the packs' operator credentials and OAuth clients only when
  * a pack declares them; boat when the session engine runs orchestrators on it or the packs' runs may go there
  * (boatForRuns); object storage with the engine (its trace archive) or a pack whose runs keep a workspace store; the
- * engine's when the build has the engine; a provider staff added by hand.
+ * engine's when the build has the engine; the private catalogs' access (catalog_access, mold_v0-260) only when a pack
+ * reads an upstream catalog with a deploy key or the GitHub App (src/catalog-access.ts privateCatalogs: it has its own
+ * card, Private catalogs, like the GitHub App; mold_v0-264); a provider staff added by hand.
  */
 export async function providerInBuild(slug: string, keys: number): Promise<boolean> {
   if (keys > 0 || SHELL_PROVIDERS.has(slug)) return true;
@@ -62,6 +64,7 @@ export async function providerInBuild(slug: string, keys: number): Promise<boole
   const kinds = (await import("./runs.js")).jobKinds();
   if (slug === "boat") { const rs = await import("./run-sandboxes.js"); return sessionEngine() || rs.boatForRuns(rs.RUN_SANDBOXES.mode(), kinds.length > 0); }
   if (slug === OBJECT_STORAGE) return sessionEngine() || (await storeKinds()).length > 0;
+  if (slug === "catalog_access") return (await import("./catalog-access.js")).privateCatalogs().length > 0;
   if (kinds.some((k) => k.providers.includes(slug))) return true;
   return ENGINE_PROVIDERS.has(slug) ? sessionEngine() : true;
 }
