@@ -6680,7 +6680,7 @@
       }
     },
     "tabs": {
-      "maxItems": 40,
+      "maxItems": 80,
       "type": "array",
       "items": {
         "type": "object",
