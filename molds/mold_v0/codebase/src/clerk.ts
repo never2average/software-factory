@@ -150,6 +150,9 @@ export const memberships = {
       { public_metadata: { suspended } })),
   remove: async (orgId: string, userId: string) => changed(userId,
     await call<ClerkMembership>("DELETE", `/organizations/${encodeURIComponent(orgId)}/memberships/${encodeURIComponent(userId)}`)),
+  /** Adds the person with Clerk's role and the membership's public_metadata (the account role, src/account-roles.ts
+   *  clerkRoleFor): the platform account's members (src/platform-account.ts). Refused when they are already a member. */
+  add: (orgId: string, userId: string, role: "admin" | "member", metadata?: Record<string, unknown>) => createMembership(orgId, userId, roleKey(role), metadata),
 };
 
 const userCache = new Map<string, { at: number; user: ClerkUser }>();

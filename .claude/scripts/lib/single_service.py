@@ -192,6 +192,68 @@ def record_catalogs(adir, said, rc, how, save_fn=None):
     infra["catalog_index"] = {"at": now(), "exit": rc, "said": said, "how": how}
     (save_fn or save)(ip, infra)
 
+def platform_account_spec(cb, man):
+    """mold.json "platform_account" (mold_v0-276) when the codebase really serves that path (its src/http.ts names it), else None."""
+    spec = (man or {}).get("platform_account")
+    if not isinstance(spec, dict) or not spec.get("path"): return None
+    try: served = spec["path"] in open(os.path.join(cb, "src", "http.ts")).read()
+    except OSError: return None
+    return dict(spec, said_text=spec.get("said") or "PLATFORM ACCOUNT:") if served else None
+
+def platform_account_said(status, body):
+    """One plain line from the app's answer (counts only: the endpoint never names a person)."""
+    try: j = json.loads(body or "")
+    except (ValueError, TypeError): j = None
+    if status == 200 and isinstance(j, dict) and j.get("ok") and isinstance(j.get("account"), dict):
+        a = j["account"]; said = f"the platform account {a.get('name')} ({a.get('slug')}) " + ("made" if j.get("created") else "is there")
+        said += f"; {j.get('staff', 0)} platform staff in it" + (f" ({j['added']} added now)" if j.get("added") else "") + (f", {j['promoted']} made owner again" if j.get("promoted") else "")
+        if j.get("suspended"): said += f"; {j['suspended']} suspended there, left as they are"
+        if j.get("not_signed_in"): said += f"; {j['not_signed_in']} listed address(es) join at their first sign-in"
+        return True, said
+    if status == 404: return False, "not ensured: the app's build has no platform account yet (it is older than mold_v0-276; a deploy brings it)"
+    why = (j or {}).get("error") if isinstance(j, dict) else None
+    return False, VR.redact(f"not ensured: the app answered HTTP {status or 'nothing'}" + (f" ({str(why)[:200]})" if why else "") + "; it makes the account itself at an admin's first sign-in")
+
+def platform_account_cmd(S, F, spec):
+    """On the server: the app's own endpoint, called from inside its running container with the worker token the
+    container already holds (never on a command line, never sent here). Prints one `<said> HTTP <status> <body>` line."""
+    port = re.sub(r"\D", "", str(F.get("port") or "")) or "3333"
+    js = ("const t=process.env.APP_WORKER_TOKEN||process.env.CRON_SECRET;if(!t){console.log(%s+' HTTP 0 {\"error\":\"no worker token in the container\"}');process.exit(1)}"
+          "fetch('http://127.0.0.1:'+(process.env.PORT||%s)+%s,{method:'POST',headers:{authorization:'Bearer '+t}})"
+          ".then(async r=>{console.log(%s+' HTTP '+r.status+' '+(await r.text()).slice(0,2000));process.exit(r.ok?0:1)})"
+          ".catch(e=>{console.log(%s+' HTTP 0 '+JSON.stringify({error:String(e&&e.message||e)}));process.exit(1)})"
+          ) % (json.dumps(spec["said_text"]), port, json.dumps(spec["path"]), json.dumps(spec["said_text"]), json.dumps(spec["said_text"]))
+    return (f"{S['sudo']}docker compose -p {shlex.quote(S['project'])} -f {S['current']}/{S['compose_file']} --env-file {shlex.quote(S['env_file'])} "
+            f"exec -T {shlex.quote(F['service'])} node -e {shlex.quote(js)}")
+
+def platform_account_parse(out, spec):
+    """(ok, said) from the server step's output line."""
+    m = re.search(re.escape(spec["said_text"]) + r" HTTP (\d+) (.*)", out or "")
+    if not m: return False, VR.redact("not ensured: " + (" | ".join([l.strip() for l in (out or "").splitlines() if l.strip()][-2:]) or "the step said nothing"))[:400]
+    return platform_account_said(int(m.group(1)), m.group(2))
+
+def record_platform_account(adir, ok_, said, how, save_fn=None):
+    """infrastructure.json platform_account: what the deploy's call said (mold_v0-276). Never a verdict on the deploy."""
+    ip = os.path.join(adir, "infrastructure.json")
+    try: infra = load(ip)
+    except (OSError, ValueError): return
+    infra["platform_account"] = {"at": now(), "ok": bool(ok_), "said": said, "how": how}
+    (save_fn or save)(ip, infra)
+
+def platform_account_vercel(P, cb, api, api_url, spec, http=None):
+    """Vercel: POST <api>/<path> with the api project's CRON_SECRET (pulled, held in memory, never printed). -> (ok, said).
+    Never raises: what it could not do is said, and the app makes the account itself at an admin's first sign-in."""
+    import services
+    if services.REHEARSAL: return False, "not called in a rehearsal"
+    try:
+        sec = P.pull_env(cb, api, required=False).get(spec.get("vercel_secret") or "CRON_SECRET")
+        if not sec or sec == "[SENSITIVE]": return False, f"not ensured: {spec.get('vercel_secret') or 'CRON_SECRET'} could not be read back from {api}; the app makes the account itself at an admin's first sign-in"
+        a = (http or SIC.real_http)(api_url.rstrip("/") + spec["path"], method="POST", headers={"authorization": f"Bearer {sec}", "accept": "application/json", "content-type": "application/json"}, body="{}", timeout=60)
+        return platform_account_said(a.get("status") or 0, a.get("body"))
+    except Exception as e:
+        return False, f"not ensured: {type(e).__name__}; the app makes the account itself at an admin's first sign-in"
+PLATFORM_HTTP = None   # the Vercel call's HTTP (lib/single_service_selftest.py puts a stand-in here)
+
 def catalogs_vercel(P, cb, build, api, spec, say=print, run=None):
     """Vercel: the index from the app's build copy (its packs) against the api project's production database, once, after
     the deploy. -> (exit, said). Never raises: what it could not do is said."""
@@ -389,7 +451,7 @@ def compose_facts(cb, man):
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
             "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)),
             "dockerfile_sources": dockerfile_sources(dtext) + [x for x in (K["dockerfile_sources"] if K else []) if x not in dockerfile_sources(dtext)],
-            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "catalogs": catalogs_spec(cb, man), "console": K, "aliases": env_aliases(man)}
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "catalogs": catalogs_spec(cb, man), "platform_account": platform_account_spec(cb, man), "console": K, "aliases": env_aliases(man)}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -816,7 +878,11 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
         {"id": "catalogs", "title": f"the upstream catalogs indexed at their pins: the product's own `npm run {F['catalogs']['script']}` in a one-off "
                                     f"container of the new release, with the server's env file (said, never a failed deploy)",
          "argv": ssh(script_cmd(S, F, F["catalogs"]["script"])), "timeout": 900},
-    ] if F.get("catalogs") else []) + [
+    ] if F.get("catalogs") else []) + ([
+        {"id": "platform-account", "title": f"the platform account (mold_v0-276): the app's own POST {F['platform_account']['path']}, called inside its running container "
+                                            f"with the worker token the container holds, so every platform admin can open the portal (said, never a failed deploy)",
+         "argv": ssh(platform_account_cmd(S, F, F["platform_account"])), "timeout": 120},
+    ] if F.get("platform_account") else []) + [
         {"id": "keep", "title": "every release but the serving and the previous one removed", "argv": ssh(g(f"bash {S['factory_dir']}/keep.sh")), "timeout": 300},
         {"id": "back", "title": "ONLY if the health step or the public read fails: back to the release that served before (up.sh --back --drop)",
          "argv": ssh(g(f"bash {S['factory_dir']}/up.sh --back --drop")), "timeout": UP_WAIT_S * 2 + 600},
@@ -1136,11 +1202,15 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         if F.get("catalogs"):   # the upstream catalogs at their pins (mold_v0-128): said, never a reason to go back
             r = run("catalogs", check=False); catalogs = {"exit": r.returncode, "said": catalogs_said((r.stdout or "") + "\n" + (r.stderr or ""), F["catalogs"])}
             say(f"    {catalogs['said'] or 'the catalogs index said nothing'}" + (f" (exit {r.returncode}; the server indexes them by itself)" if r.returncode else ""))
+        platform = None
+        if F.get("platform_account"):   # every platform admin in the platform account (mold_v0-276): said, never a reason to go back
+            r = run("platform-account", check=False); pok, psaid = platform_account_parse((r.stdout or "") + "\n" + (r.stderr or ""), F["platform_account"])
+            platform = {"ok": pok, "said": psaid}; say(f"    {psaid}")
         run("keep", check=False)
         health = {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
                   "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}
         if F.get("console"): health.update(console=kv.get("CONSOLE_STATE", ""), console_uid=kv.get("CONSOLE_UID", ""), pages={p: c[0] for p, c in pages.items()})
-        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs, "ledger_keys": made.get("ledger_keys") or []}
+        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs, "platform_account": platform, "ledger_keys": made.get("ledger_keys") or []}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1867,6 +1937,11 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         rc, said = catalogs_vercel(P, cb, build, api, F["catalogs"], say, catalogs_run)
         say(f"  {api}: {said}" + (f" (exit {rc}; the server indexes them by itself)" if rc else ""))
         record_catalogs(adir, said, rc, "by provision.py --deploy, on this machine against the api project's production database")
+    pspec = platform_account_spec(cb, man)
+    if pspec:   # every platform admin in the platform account (mold_v0-276): after the deploy, said and recorded, never a reason to go back
+        pok, psaid = platform_account_vercel(P, cb, api, api_url, pspec, http=PLATFORM_HTTP)
+        say(f"  {api}: {psaid}")
+        record_platform_account(adir, pok, psaid, f"by provision.py --deploy, POST {pspec['path']} on the api project with its {pspec.get('vercel_secret') or 'CRON_SECRET'}")
     fr = ((ck or {}).get("facts") or {}).get("frontend")
     if fr:    # Clerk's own setting (mold_v0-116): said after the deploy, never a reason to roll it back
         reg = clerk_mcp.registration(fr, read_json)
@@ -2315,6 +2390,8 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                        "enforced", "ran in a one-off container of the serving release's image, with the env file its containers read (the same database and login).")
         if res.get("catalogs"):
             record_catalogs(adir, res["catalogs"]["said"], res["catalogs"]["exit"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}")
+        if res.get("platform_account"):
+            record_platform_account(adir, res["platform_account"]["ok"], res["platform_account"]["said"], f"by provision.py --deploy-remote, inside the app's container of release {res['release']}")
         say(f"{app_id}: deployed release {res['release']} to {S['url']}; health {S['health_path']} answered 200 ok. Next: python3 .claude/scripts/lanes.py {app_id}")
         return 0
     except Stop as e:
