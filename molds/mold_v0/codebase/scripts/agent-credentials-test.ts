@@ -1,4 +1,4 @@
-// Credentials for workspace agent sessions (mold_v0-262, flag agent_harness; src/agent-profile-spec.ts `credentials`,
+// Credentials for workspace agent sessions (mold_v0-262, flag agent_harness; src/agent-profile-spec.ts `keys` (mold_v0-267),
 // src/harness-sessions.ts, src/agent-harness.ts, src/credentials.ts), offline: an embedded database, the run engine in
 // this process and the stand-in CLI (scripts/fixtures/agent-cli/cli.mjs). `npm run test:agent-harness`, after
 // agent-harness-test.
@@ -46,12 +46,12 @@ try {
 
   // ---------- 1. declared and refused ----------
   {
-    assert.ok(S.ProfileConfigSchema.safeParse({ credentials: ["fixture_deploy/deploy_token"] }).success, "a profile names a credential");
-    assert.ok(!S.ProfileConfigSchema.safeParse({ credentials: ["deploy_token"] }).success, "as <pack>/<field>");
-    assert.match(S.configProblems({ credentials: ["a_b/c_d", "a_b/c_d"] }).join(), /listed twice/, "each once");
-    assert.throws(() => setPacksForTest(pack([{ id: "deployer", name: "Deployer", credentials: ["fixture_deploy/nope"] }]) as never), /not a credential a pack of this build declares/, "an unknown credential refused at build");
-    assert.throws(() => setPacksForTest(pack([{ id: "deployer", name: "Deployer", credentials: ["fixture_deploy/site_key"] }]) as never), /a workspace's own pasted value/, "one bound to a record refused at build");
-    setPacksForTest(pack([{ id: "deployer", name: "Deployer", description: "Deploys the app.", credentials: ["fixture_deploy/deploy_token"], roles: ["member", "owner"] }]) as never);
+    assert.ok(S.ProfileConfigSchema.safeParse({ keys: [{ kind: "workspace" as const, name: "fixture_deploy/deploy_token" }] }).success, "a profile names a credential");
+    assert.ok(!S.ProfileConfigSchema.safeParse({ keys: [{ kind: "workspace" as const, name: "deploy_token" }] }).success, "as <pack>/<field>");
+    assert.match(S.configProblems({ keys: [{ kind: "workspace" as const, name: "a_b/c_d" }, { kind: "workspace" as const, name: "a_b/c_d" }] }).join(), /listed twice/, "each once");
+    assert.throws(() => setPacksForTest(pack([{ id: "deployer", name: "Deployer", keys: [{ kind: "workspace" as const, name: "fixture_deploy/nope" }] }]) as never), /not a credential a pack of this build declares/, "an unknown credential refused at build");
+    assert.throws(() => setPacksForTest(pack([{ id: "deployer", name: "Deployer", keys: [{ kind: "workspace" as const, name: "fixture_deploy/site_key" }] }]) as never), /a workspace's own pasted value/, "one bound to a record refused at build");
+    setPacksForTest(pack([{ id: "deployer", name: "Deployer", description: "Deploys the app.", keys: [{ kind: "workspace" as const, name: "fixture_deploy/deploy_token" }] }]) as never);
     assert.match((await P.sessionCredentialProblems(["fixture_deploy/site_key", "fixture_deploy/gone"])).join(" "), /bound to a record.*not a credential/, "staff's editor refuses the same");
     ok("declared and refused: <pack>/<field>, each once; an unknown credential or one bound to a record refused at build and in staff's editor");
   }

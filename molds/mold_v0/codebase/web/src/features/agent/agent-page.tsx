@@ -53,7 +53,7 @@ interface Detail extends Session {
   wakes_list: { run_id: string; status: string; started_at: string | null; ended_at: string | null; cost_usd: number; end_reason: string | null; error: string | null }[];
   hooks: { event: string; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
-    files?: string[]; hidden_tools?: string[]; credentials?: string[] };
+    files?: string[]; hidden_tools?: string[]; credentials?: string[]; executables?: string[]; governance?: string | null };
   reach: Reach | null;
 }
 interface Reach {
@@ -66,7 +66,7 @@ interface Offer {
   budget?: { default_usd: number; max_usd: number; ceiling_usd: number };
 }
 /** An agent profile this person may start (mold_v0-261), with its model and their budget range under it. */
-interface StartProfile { id: string; name: string; description: string; version: number; is_default: boolean; model: string; budget: { default_usd: number; max_usd: number; ceiling_usd: number }; tools: string; web: string; files: number }
+interface StartProfile { id: string; name: string; description: string; version: number; is_default: boolean; model: string; budget: { default_usd: number; max_usd: number; ceiling_usd: number }; harness?: string; keys?: number; uploads: number; governance?: string }
 interface ListAnswer { sessions: Session[]; can_start?: boolean; offer: Offer; profiles?: StartProfile[] }
 
 function api(area: Area) {
@@ -238,7 +238,7 @@ function StartDialog({ open, offer, profiles, preset, call, onOpenChange, onStar
                 <NativeSelect id='agent-start-profile' value={profileId ?? ''} onChange={(e) => setProfileId(e.target.value)} aria-describedby='agent-start-profile-hint'>
                   {profiles.map((p) => <NativeSelectOption key={p.id} value={p.id}>{p.name}</NativeSelectOption>)}
                 </NativeSelect>
-                <span id='agent-start-profile-hint' className='text-muted-foreground text-xs'>{profile?.description || 'Its instructions, model, budget and tools, as the platform’s staff set them up.'}{profile && profile.files > 0 ? ` It starts with ${profile.files} file${profile.files === 1 ? '' : 's'} in its workspace.` : ''}</span>
+                <span id='agent-start-profile-hint' className='text-muted-foreground text-xs'>{profile?.description || 'Its harness, model, keys and governance policy, as the platform’s staff set them up.'}{profile && profile.uploads > 0 ? ` It starts with ${profile.uploads} file${profile.uploads === 1 ? '' : 's'} in its workspace.` : ''}</span>
               </dd>
             </>}
             <dt className='text-muted-foreground'>Model</dt>
@@ -492,8 +492,9 @@ function Details({ d }: { d: Detail }) {
         <dt className='text-muted-foreground'>Profile</dt>
         <dd data-agent-profile-name=''>{d.profile ? <>{d.profile.name}, version {d.profile.version}<span className='text-muted-foreground block text-xs'>Fixed when it started: a later change to the profile applies to new sessions.</span></> : <span className='text-muted-foreground'>None: it started before profiles, with the platform settings of the time</span>}</dd>
         {d.record && <><dt className='text-muted-foreground'>Started from</dt><dd data-agent-record=''>{d.workspace ? <span className='font-mono text-xs'>{d.record.key}</span> : <a className='underline-offset-4 hover:underline' href={`/app/records/${encodeURIComponent(d.record.area)}/${encodeURIComponent(d.record.key)}`}>{d.record.key}</a>} <span className='text-muted-foreground text-xs'>({d.record.area})</span></dd></>}
-        {(d.policy.credentials?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Credentials it receives</dt><dd data-agent-credentials=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.credentials!.map((c) => <span key={c} className='font-mono text-xs'>{c.split('/')[1] ?? c}</span>)}</span><span className='text-muted-foreground block text-xs'>Given to each wake from the workspace&apos;s credentials, hidden from what it writes.</span></dd></>}
+        {(d.policy.credentials?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Keys it receives</dt><dd data-agent-credentials=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.credentials!.map((c) => <span key={c} className='font-mono text-xs'>{c.split('/')[1] ?? c}</span>)}</span><span className='text-muted-foreground block text-xs'>Given to each wake from the key vault, hidden from what it writes.</span></dd></>}
         {(d.policy.files?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Files it was given</dt><dd data-agent-files=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.files!.map((f) => <span key={f} className='font-mono text-xs'>{f}</span>)}</span></dd></>}
+        {d.policy.governance && <><dt className='text-muted-foreground'>Governance policy</dt><dd data-agent-governance=''>{d.policy.governance}<span className='text-muted-foreground block text-xs'>Its profile&apos;s, fixed when it started: a call it refuses ends the session.</span></dd></>}
         {(d.policy.hidden_tools?.length ?? 0) > 0 && <><dt className='text-muted-foreground'>Hidden from it</dt><dd data-agent-tools-hidden=''><span className='flex flex-wrap gap-x-3 gap-y-1'>{d.policy.hidden_tools!.map((t) => <span key={t} className='font-mono text-xs'>{t}</span>)}</span></dd></>}
       </dl>
       <h3 className='mt-4 font-medium'>What it reaches of this workspace</h3>

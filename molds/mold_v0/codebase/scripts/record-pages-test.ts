@@ -246,7 +246,7 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.equal((log.match(/f\('kind', 'Kind', 'enum', \{ options: opts\(\['Platform call', 'Data access'\]\) \}\)/g) ?? []).length, 1, "Kind: Platform call or Data access, only on the merged table");
   assert.doesNotMatch(log, /function Tabs\(|variant=\{tab ===/, "no Requests / Data access switch");
   assert.match(log, /\['kind', \.\.\.\(fleet \? \['workspace'\] : \[\]\), 'action', 'actor'/, "Kind first, then Action and Actor");
-  assert.match(log, /csv=\{`\$\{api\}\/all\.csv`\}/, "Download CSV covers both trails");
+  assert.match(log, /csv: `\$\{api\}\/all\.csv`/, "Download CSV covers both trails");
   assert.match(log, /\['action', 'actor', 'area'/); assert.match(log, /'action', 'actor', 'request'/);
   assert.match(log, /action: e\.action, actor: e\.actor/, "the row's Action and Actor are the server's words (the drawer shows both)");
   const { existsSync: exists } = await import("node:fs");
@@ -340,8 +340,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     return m[0];
   };
   // What a list starts with: its cards (a summary, StatStrip, the sparklines), its table (RecordView and the components
-  // that draw one), or the in-page tab strip it sits under.
-  const LIST = /summary=|<(?:RecordView|RecordTableView|AreaRecordList|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}/;
+  // that draw one), or the in-page tab strip it sits under (drawn in place, or made beforehand and placed as {tabs}).
+  const LIST = /summary=|<(?:RecordView|RecordTableView|AreaRecordList|TrailTable|RunsTable|SchedulesBody|AreaTab|SectionsTab|CredentialsTab|EmailTab|UrlTabs|HealthTabs|HealthTab|Tabs|TabsList|StatStrip|Sparklines|TabSparklines|AdminAccounts|AdminAdmins|ComputeOrchestrators|ComputeFailures|ComputeDecisions|ComputeJobs|ComputeSessions|AdminEmails|PackRunKinds|RevenueTab|SpendTab|ComputeTab|StorageTab|ChargesTab|ExperimentsTab|RunsTab|ScheduledTab|DeliveriesTab|WebhooksTab|StatusTab|FailedRuns|KindsTable|SpendAccounts|SpendProviders)\b|\{body\}|\{tabs\}/;
   // A title or a description: a heading, the shell's Heading, a titled Section, a muted paragraph.
   const TITLE = /<h1\b|<h2\b|<Heading\b|<Section\b[^>]*\btitle=|<p className='text-muted-foreground(?: text-sm)?'>/;
   const before = (body: string) => {
@@ -375,7 +375,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
     ["/admin/health (its tabs)", "app/admin/health/page.tsx", "AdminAnalytics",
       [["features/admin/analytics.tsx", "ErrorsReport"], ["features/admin/health-tabs.tsx", "HealthTab"], ["features/admin/health-tabs.tsx", "RunsTab"], ["features/admin/health-tabs.tsx", "ScheduledTab"],
         ["features/admin/health-tabs.tsx", "DeliveriesTab"], ["features/admin/health-tabs.tsx", "WebhooksTab"]]],
-    ["/admin/requests", "app/admin/requests/page.tsx", "AdminRequests", [["features/admin/requests.tsx", "AdminRequests"]]],
+    // mold_v0-266 put the requests list behind in-page tabs (Requests, Request form, Sign-in page): the page draws
+    // AccessRequestsPage (its tab strip), which hands the Requests tab to AdminRequests, the list (mold_v0-273).
+    ["/admin/requests", "app/admin/requests/page.tsx", "AccessRequestsPage", [["features/admin/access-pages.tsx", "AccessRequestsPage"], ["features/admin/requests.tsx", "AdminRequests"]]],
     ["/admin/accounts (Accounts, Admins)", "app/admin/accounts/page.tsx", "AccountsPage",
       [["features/admin/accounts-tabs.tsx", "AccountsPage"], ["features/admin/accounts.tsx", "AdminAccounts"], ["features/admin/admins.tsx", "AdminAdmins"]]],
     ["/admin/configuration", "app/admin/configuration/page.tsx", "AdminConfiguration", [["features/admin/configuration.tsx", "AdminConfiguration"]]],

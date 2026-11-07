@@ -386,8 +386,8 @@ function findChrome(): string | null {
 }
 
 /**
- * The console's Sign-in tab (SignInTab, bundled with esbuild, its API answered in the page by `report`) under the Health
- * heading, with the console's own compiled CSS (Tailwind over web/src); the DOM back, and with SIGN_IN_SNAPSHOT_DIR the
+ * The console's Sign-in tab (SignInTab, bundled with esbuild, its API answered in the page by `report`) under Health's
+ * tab strip (no title above it, mold_v0-272), with the console's own compiled CSS (Tailwind over web/src); the DOM back, and with SIGN_IN_SNAPSHOT_DIR the
  * light theme at 1440 px and the dark one at 390 px.
  */
 async function drawTab(chrome: string, web: string, report: unknown): Promise<string> {
@@ -399,7 +399,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SignInTab } from '@/features/admin/sign-in-check';
 const qc = new QueryClient();
 createRoot(document.getElementById('root')!).render(<QueryClientProvider client={qc}><div className='flex flex-col gap-3 p-4 md:p-6'>
-  <h1 className='text-xl font-semibold'>Health</h1>
   <div role='tablist' className='text-muted-foreground flex gap-4 border-b text-sm'><span>Errors</span><span>Status</span><span className='text-foreground border-foreground border-b-2 pb-2 font-medium'>Sign-in</span></div>
   <SignInTab /></div></QueryClientProvider>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 2500);

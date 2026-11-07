@@ -1,6 +1,6 @@
--- Rolling back past 0056_sign_in_checks (mold_v0-270), for a release from before it.
+-- Rolling back past 0057_sign_in_checks (mold_v0-270), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0056_sign_in_checks.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0057_sign_in_checks.sql
 -- Drops Health › Sign-in's last report and the callbacks it saw: the older release has no such tab, and a later one
 -- checks again from nothing. Found by its name, so it also undoes it where it was recorded under another number.
 -- Refused when a later migration is applied.

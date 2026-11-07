@@ -148,20 +148,16 @@ const DATA_HIDDEN = ['target', 'pack', 'actor_kind', 'key_id'];
 const PLATFORM_HIDDEN = ['channel', 'scopes', 'actor_kind'];
 const PLATFORM_HIDDEN_FLEET = [...PLATFORM_HIDDEN, 'ip'];
 
-/** Which table a page draws: both trails as one (with Kind), or the one trail that is on. */
-function AccessTable({ api, base, fleet, idPrefix }: { api: string; base: 'app' | 'admin'; fleet: boolean; idPrefix: string }) {
+/** Which table a page draws: both trails as one (with Kind), or the one trail that is on. Props for TrailTable. */
+function useAccessTable(api: string, base: 'app' | 'admin', fleet: boolean, idPrefix: string): Parameters<typeof TrailTable>[0] {
   const both = dataTrailOn() && platformTrailOn();
   const area = useMemo(() => (both ? bothArea(fleet) : dataTrailOn() ? DATA_AREA : platformArea(fleet)), [both, fleet]);
   const load = useMemo(() => (both ? () => loadBoth(`${api}/data`, `${api}/platform`)
     : dataTrailOn() ? () => loadAll(`${api}/data`, dataRow) : () => loadAll(`${api}/platform`, platformRow)), [both, api]);
-  if (both)
-    return <TrailTable area={area} base={base} url={`${api}/all`} load={load} csv={`${api}/all.csv`} cards={`${api}/all/sparklines`}
-      hidden={[...BOTH_HIDDEN, ...(fleet ? ['ip'] : [])]} noun='entries' id={`${idPrefix}-access-log`} />;
+  if (both) return { area, base, url: `${api}/all`, load, csv: `${api}/all.csv`, cards: `${api}/all/sparklines`, hidden: [...BOTH_HIDDEN, ...(fleet ? ['ip'] : [])], noun: 'entries', id: `${idPrefix}-access-log` };
   return dataTrailOn()
-    ? <TrailTable area={area} base={base} url={`${api}/data`} load={load} csv={`${api}/data.csv`} cards={`${api}/data/sparklines`}
-        hidden={DATA_HIDDEN} noun='entries' id={`${idPrefix}-access-log-data`} />
-    : <TrailTable area={area} base={base} url={`${api}/platform`} load={load} csv={`${api}/platform.csv`} cards={`${api}/platform/sparklines`}
-        hidden={fleet ? PLATFORM_HIDDEN_FLEET : PLATFORM_HIDDEN} noun='requests' id={`${idPrefix}-access-log-platform`} />;
+    ? { area, base, url: `${api}/data`, load, csv: `${api}/data.csv`, cards: `${api}/data/sparklines`, hidden: DATA_HIDDEN, noun: 'entries', id: `${idPrefix}-access-log-data` }
+    : { area, base, url: `${api}/platform`, load, csv: `${api}/platform.csv`, cards: `${api}/platform/sparklines`, hidden: fleet ? PLATFORM_HIDDEN_FLEET : PLATFORM_HIDDEN, noun: 'requests', id: `${idPrefix}-access-log-platform` };
 }
 
 /** Billing's Access log tab (mold_v0-209): this workspace's trails, for its owners. No page title of its own (the tab
@@ -169,18 +165,20 @@ function AccessTable({ api, base, fleet, idPrefix }: { api: string; base: 'app' 
  *  addresses: /api/audit/data/sparklines, /api/audit/platform/sparklines, /api/audit/all/sparklines. */
 export function WorkspaceAccessLog() {
   const { role, loaded } = useAccountRole();
+  const table = useAccessTable('/api/audit', 'app', false, 'app');
   if (!loaded) return null;
   if (role !== 'owner') return <p className='text-muted-foreground text-sm'>Only the workspace&apos;s owners read its access log.</p>;
-  return <AccessTable api='/api/audit' base='app' fleet={false} idPrefix='app' />;
+  return <TrailTable {...table} />;
 }
 
 /** /admin/access-log: both trails across every workspace, one table (mold_v0-270). A list page (mold_v0-231): no title
  *  or description above it; the cards, the search row, the table. The trails' addresses: /api/admin/audit/platform/sparklines,
  *  /api/admin/audit/data/sparklines, /api/admin/audit/all/sparklines. */
 export function OperatorAccessLogPage() {
+  const table = useAccessTable('/api/admin/audit', 'admin', true, 'admin');
   return (
     <PageContainer>
-      <AccessTable api='/api/admin/audit' base='admin' fleet idPrefix='admin' />
+      <TrailTable {...table} />
     </PageContainer>
   );
 }

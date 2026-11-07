@@ -18,6 +18,8 @@ import { ENV } from "./env-names.js";
  *   workspaces/org-<id>/<store>/<snapshot>.wse     workspace snapshots, sealed with the org's data key (mold_v0-033)
  *   workspaces/org-<id>/.transfers/<id>.wst        a run's request or answer too large for the API (mold_v0-182), sealed
  *                                                  with a key of its own, gone once used or when the run's attempt ends
+ *   agent-profiles/uploads/<id>/<n>.part           a file staff uploaded for a workspace agent profile (mold_v0-267), the
+ *                                                  platform's own (given to the sessions of every workspace that uses it)
  *   ops/...                                        internal one-offs (ops/key-vault-test/: the Key vault's Test)
  *
  * Customer data always sits under its org's prefix, so access can be scoped per org by construction. The org id (not

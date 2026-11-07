@@ -1,5 +1,4 @@
 import React from 'react';
-import { Heading } from '../ui/heading';
 import type { InfobarContent } from '@/components/ui/infobar';
 
 function PageSkeleton() {
@@ -54,21 +53,12 @@ export default function PageContainer({
 
   const content = isLoading ? <PageSkeleton /> : children;
 
-  const hasHeader = pageTitle || pageHeaderAction;
-
+  // No visible title or description above a page (operator rule, mold_v0-272): the page's name stays for screen
+  // readers and the breadcrumb says where you are; actions keep their own row.
   return (
     <div className='flex min-w-0 w-full flex-1 flex-col px-4 pt-2 pb-4 md:px-6 md:pt-4'>
-      {hasHeader && (
-        <div className='mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4'>
-          <Heading
-            title={pageTitle ?? ''}
-            description={pageDescription ?? ''}
-            infoContent={infoContent}
-          />
-          {/* actions stack under the title on small screens and wrap, so a row of filters never pushes the page wide */}
-          {pageHeaderAction && <div className='min-w-0 sm:shrink-0 [&>div]:flex-wrap'>{pageHeaderAction}</div>}
-        </div>
-      )}
+      {pageTitle && <h1 className='sr-only'>{pageTitle}</h1>}
+      {pageHeaderAction && <div className='mb-4 flex min-w-0 justify-end [&>div]:flex-wrap'>{pageHeaderAction}</div>}
       {content}
     </div>
   );
