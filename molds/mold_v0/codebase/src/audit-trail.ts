@@ -457,8 +457,13 @@ export function platformAction(kind: string, method: string, path: string): stri
 }
 
 export interface DataTrailRow { seq: number; at: string; actor_kind: ActorKind; actor_id: string | null; key_id: number | null; action: DataAction; actor: string; target: DataTarget; pack: string | null; area: string | null; record_key: string | null; rows: number | null; channel: Channel }
-/** One workspace's data trail, newest first (under row-level security: only its own rows can come back). `before`: a seq. */
-export async function readDataTrail(orgId: number, q: TrailQuery = {}): Promise<{ entries: DataTrailRow[]; next: number | null }> {
+/**
+ * One workspace's data trail, newest first (under row-level security: only its own rows can come back), or every
+ * workspace's for platform staff (null, mold_v0-270: the merged staff Access log; each entry names its workspace).
+ * `before`: a seq.
+ */
+export async function readDataTrail(orgId: number | null, q: TrailQuery = {}): Promise<{ entries: (DataTrailRow & { workspace?: string | null })[]; next: number | null }> {
+  if (orgId === null) return readDataTrailFleet(q);
   const limit = limitOf(q), params: unknown[] = [orgId], where: string[] = [];
   const add = (sql: string, v: unknown) => { params.push(v); where.push(sql.replace("?", `$${params.length}`)); };
   if (intOf(q.before)) add("seq < ?", intOf(q.before));
@@ -471,6 +476,25 @@ export async function readDataTrail(orgId: number, q: TrailQuery = {}): Promise<
   const rows = await withTenant(orgId, async () => (await getDb()).query<DataTrailRow & { at: Date }>(
     `SELECT seq, at, actor_kind, actor_id, key_id, action, target, pack, area, record_key, rows, channel FROM audit_data_events
       WHERE org_id = $1${where.map((w) => ` AND ${w}`).join("")} ORDER BY seq DESC LIMIT $${params.length}`, params));
+  const more = rows.length > limit;
+  const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) }));
+  return { entries, next: more ? entries[entries.length - 1]!.seq : null };
+}
+
+async function readDataTrailFleet(q: TrailQuery): Promise<{ entries: (DataTrailRow & { workspace: string | null })[]; next: number | null }> {
+  const limit = limitOf(q), params: unknown[] = [], where: string[] = [];
+  const add = (sql: string, v: unknown) => { params.push(v); where.push(sql.replace("?", `$${params.length}`)); };
+  if (intOf(q.before)) add("e.seq < ?", intOf(q.before));
+  if (dayOf(q.from)) add("e.at >= ?::date", dayOf(q.from));
+  if (dayOf(q.to)) add("e.at < ?::date + 1", dayOf(q.to));
+  if (textOf(q.action)) add("e.action = ?", textOf(q.action));
+  if (textOf(q.org)) add("e.org_id = (SELECT id FROM organizations WHERE slug = ?)", textOf(q.org));
+  params.push(limit + 1);
+  const rows = await asPlatform(async () => (await getDb()).query<DataTrailRow & { at: Date; workspace: string | null }>(
+    `/* tenant: the operator's fleet-wide data trail (platform staff only) */
+     SELECT e.seq, e.at, o.slug AS workspace, e.actor_kind, e.actor_id, e.key_id, e.action, e.target, e.pack, e.area, e.record_key, e.rows, e.channel
+       FROM audit_data_events e LEFT JOIN organizations o ON o.id = e.org_id
+      WHERE ${where.length ? where.join(" AND ") : "true"} ORDER BY e.seq DESC LIMIT $${params.length}`, params));
   const more = rows.length > limit;
   const entries = rows.slice(0, limit).map((r) => ({ ...r, seq: Number(r.seq), at: new Date(r.at).toISOString(), actor: actorLabel(r.actor_kind, r.actor_id, r.key_id == null ? null : `#${r.key_id}`) }));
   return { entries, next: more ? entries[entries.length - 1]!.seq : null };
@@ -559,7 +583,6 @@ export async function trailSparklines(which: "data" | "platform", orgId: number 
   if (orgId !== null) params.push(orgId);
   const sql = `SELECT to_char(date_trunc('week', at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS week, ${cards.map((c, i) => `${c.sql}::float8 AS c${i}`).join(", ")}
                  FROM ${table} WHERE at >= $1::date${orgId !== null ? " AND org_id = $2" : ""} GROUP BY 1`;
-  if (which === "data" && orgId === null) throw new Error("the data trail's cards are one workspace's");
   const rows = orgId === null
     ? await asPlatform(async () => (await getDb()).query<Record<string, unknown>>(`/* tenant: the operator's fleet-wide trail (platform staff only) */ ${sql}`, params))
     : await withTenant(orgId, async () => (await getDb()).query<Record<string, unknown>>(sql, params));
@@ -571,6 +594,17 @@ export async function trailSparklines(which: "data" | "platform", orgId: number 
       return { id: c.id, label: c.label, unit: c.unit, mode: "latest" as const, value: series[series.length - 1] ?? null, series };
     }),
   };
+}
+
+/**
+ * Both trails' four cards, for the merged Access log (mold_v0-270): platform calls and refused-or-failed from the platform
+ * trail, entries and changes from the data trail. A workspace's, or fleet-wide for platform staff (null).
+ */
+export async function bothSparklines(orgId: number | null, now = new Date()): Promise<TrailSparklines> {
+  const [p, d] = await Promise.all([trailSparklines("platform", orgId, now), trailSparklines("data", orgId, now)]);
+  const pick = (s: TrailSparklines, which: string, id: string, label: string) => ({ ...s.cards.find((c) => c.id === id)!, id: `${which}_${id}`, label });
+  return { ...p, cards: [pick(p, "platform", "requests", "Platform calls this week"), pick(d, "data", "entries", "Data access this week"),
+    pick(d, "data", "changes", "Changes this week"), pick(p, "platform", "errors", "Refused or failed")] };
 }
 
 // ---------------------------------------------------------------- CSV
@@ -587,7 +621,7 @@ const DATA_COLS: (keyof DataTrailRow)[] = ["seq", "at", "action", "actor", "acto
 const PLATFORM_COLS: (keyof PlatformTrailRow)[] = ["seq", "at", "workspace", "action", "actor", "channel", "method", "path", "key_prefix", "actor_kind", "actor_id", "scopes", "status", "latency_ms"];
 /** A trail as CSV, newest first, paged through the readers above (at most CSV_MAX_ROWS rows). */
 export async function trailCsv(which: "data" | "platform", orgId: number | null, q: TrailQuery = {}): Promise<{ csv: string; rows: number; more: boolean }> {
-  const cols = which === "data" ? DATA_COLS : [...PLATFORM_COLS, ...(orgId === null ? ["ip" as const] : [])];
+  const cols: string[] = which === "data" ? [...(orgId === null ? ["workspace"] : []), ...DATA_COLS] : [...PLATFORM_COLS, ...(orgId === null ? ["ip"] : [])];
   let csv = csvLine(cols), rows = 0, before: unknown = q.before;
   for (;;) {
     const page = which === "data" ? await readDataTrail(orgId!, { ...q, before, limit: MAX_PAGE }) : await readPlatformTrail(orgId, { ...q, before, limit: MAX_PAGE });
@@ -595,6 +629,27 @@ export async function trailCsv(which: "data" | "platform", orgId: number | null,
     if (!page.next || rows >= CSV_MAX_ROWS) return { csv, rows, more: !!page.next };
     before = page.next;
   }
+}
+
+/** Both trails as one CSV, newest first (mold_v0-270): a Kind column (Platform call, Data access), then each trail's columns. */
+export async function bothCsv(orgId: number | null, q: TrailQuery = {}): Promise<{ csv: string; rows: number; more: boolean }> {
+  const read = async (which: "data" | "platform") => {
+    const out: Record<string, unknown>[] = []; let before: unknown = q.before, more = false;
+    for (;;) {
+      const page = which === "data" ? await readDataTrail(orgId, { ...q, before, limit: MAX_PAGE }) : await readPlatformTrail(orgId, { ...q, before, limit: MAX_PAGE });
+      out.push(...(page.entries as unknown as Record<string, unknown>[]).map((e) => ({ ...e, kind_of: which })));
+      if (!page.next || out.length >= CSV_MAX_ROWS) { more = !!page.next; break; }
+      before = page.next;
+    }
+    return { out, more };
+  };
+  const [d, p] = await Promise.all([read("data"), read("platform")]);
+  const all = [...d.out, ...p.out].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const cols = ["kind", "at", ...(orgId === null ? ["workspace"] : []), "action", "actor", "actor_kind", "actor_id", "channel", "method", "path", "key_prefix", "status", "latency_ms",
+    "target", "pack", "area", "record_key", "rows", "scopes", ...(orgId === null ? ["ip"] : [])];
+  let csv = csvLine(cols), rows = 0;
+  for (const e of all.slice(0, CSV_MAX_ROWS)) { csv += csvLine(cols.map((c) => (c === "kind" ? (e.kind_of === "data" ? "Data access" : "Platform call") : e[c]))); rows++; }
+  return { csv, rows, more: d.more || p.more || all.length > CSV_MAX_ROWS };
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -626,6 +681,10 @@ export function auditAppRouter(customerSession: RequestHandler): Router {
     r.get("/platform.csv", wrap(async (req, res) => csvOut(res, "request-log", await trailCsv("platform", org(res), req.query as TrailQuery))));
     r.get("/platform/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("platform", org(res)))));
   }
+  if (dataTrailOn() && platformTrailOn()) {   // the merged Access log (mold_v0-270): one table of both trails
+    r.get("/all.csv", wrap(async (req, res) => csvOut(res, "access-log", await bothCsv(org(res), req.query as TrailQuery))));
+    r.get("/all/sparklines", wrap(async (_req, res) => void res.json(await bothSparklines(org(res)))));
+  }
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;
 }
@@ -639,6 +698,20 @@ export function auditAdminRouter(): Router {
     r.get("/platform.csv", wrap(async (req, res) => {
       const out = await trailCsv("platform", null, req.query as TrailQuery);
       res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="platform-trail-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
+    }));
+  }
+  // Every workspace's data trail (mold_v0-270: the merged staff Access log), and both trails' cards and CSV.
+  if (dataTrailOn()) r.get("/data", wrap(async (req, res) => void res.json(await readDataTrail(null, req.query as TrailQuery))));
+  if (dataTrailOn()) r.get("/data/sparklines", wrap(async (_req, res) => void res.json(await trailSparklines("data", null))));
+  if (dataTrailOn()) r.get("/data.csv", wrap(async (req, res) => {
+    const out = await trailCsv("data", null, req.query as TrailQuery);
+    res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="data-trail-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
+  }));
+  if (dataTrailOn() && platformTrailOn()) {
+    r.get("/all/sparklines", wrap(async (_req, res) => void res.json(await bothSparklines(null))));
+    r.get("/all.csv", wrap(async (req, res) => {
+      const out = await bothCsv(null, req.query as TrailQuery);
+      res.type("text/csv; charset=utf-8").set({ "Content-Disposition": `attachment; filename="access-log-${new Date().toISOString().slice(0, 10)}.csv"` }).send(`\ufeff${out.csv}`);
     }));
   }
   if (dataTrailOn()) r.get("/data/:org", wrap(async (req, res) => {

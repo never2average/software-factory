@@ -35,7 +35,8 @@ import { ComputeJobs } from './compute-jobs';
 import { UrlTabs } from './compute-common';
 import { ComputeSessions } from './compute-sessions';
 import { sessionEngine } from './engine';
-import { HealthTab, healthTabsShell } from './health-tabs';
+import { HealthTab, healthTabsShell, NO_COLUMN_LINES } from './health-tabs';
+import { SignInTab } from './sign-in-check';
 import { W } from '@/lib/vocabulary';
 import { NS } from '@/lib/namespace';
 
@@ -248,15 +249,30 @@ function UsersPicker({ p, facets }: { p: ReturnType<typeof useReportParams>; fac
   );
 }
 
-function FiltersPopover({ p, facets }: { p: ReturnType<typeof useReportParams>; facets: Facets | undefined }) {
+/**
+ * The Filters menu. On Health (mold_v0-270) it also holds what the search row had beside it: where the errors come from
+ * (`source`, only when the build has more than one) and the people (`users`), so the row is the standard one: search,
+ * Filters, the date range, Export.
+ */
+function FiltersPopover({ p, facets, source, users }: { p: ReturnType<typeof useReportParams>; facets: Facets | undefined;
+  source?: { kind: ErrorKind; setKind: (k: ErrorKind) => void; kinds: { id: ErrorKind; label: string }[] }; users?: boolean }) {
   const opts = facetOptions(facets);
+  const active = p.active + (source && source.kind !== source.kinds[0]?.id ? 1 : 0);
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant='outline' className={cn(p.active && 'text-primary')} />}>
-        <IconFilter /> Filters {p.active > 0 && <Badge className='h-5 min-w-5 px-1.5 text-xs leading-none'>{p.active}</Badge>}
+      <PopoverTrigger render={<Button variant='outline' className={cn(active && 'text-primary')} />}>
+        <IconFilter /> {users ? 'Filter' : 'Filters'} {active > 0 && <Badge className='h-5 min-w-5 px-1.5 text-xs leading-none'>{active}</Badge>}
       </PopoverTrigger>
       <PopoverContent align='end' className='flex max-h-[75svh] w-80 flex-col gap-4 overflow-y-auto'>
-        {LISTS.filter((l) => l.key !== 'user').map((l) => <FacetList key={l.key} label={l.label} options={opts[l.key]} value={p.filters[l.key]} onChange={(v) => p.setList(l.key, v)} />)}
+        {source && source.kinds.length > 1 && (
+          <label className='flex flex-col gap-1.5 text-sm font-medium'>
+            Errors from
+            <NativeSelect aria-label='Errors from' value={source.kind} onChange={(e) => source.setKind(e.target.value as ErrorKind)}>
+              {source.kinds.map((k) => <NativeSelectOption key={k.id} value={k.id}>{k.label}</NativeSelectOption>)}
+            </NativeSelect>
+          </label>
+        )}
+        {LISTS.filter((l) => users || l.key !== 'user').map((l) => <FacetList key={l.key} label={l.label} options={opts[l.key]} value={p.filters[l.key]} onChange={(v) => p.setList(l.key, v)} />)}
         <div className='flex flex-col gap-2.5 border-t pt-3'>
           {FLAGS.map((x) => (
             <label key={x.key} className='flex cursor-pointer items-center justify-between text-sm leading-none'>
@@ -299,6 +315,8 @@ const ERROR_COLS: Record<ErrorKind, string[]> = {
   onboarding: ['at', 'account', 'slug', 'product', 'stage', 'error']
 };
 const KINDS: { id: ErrorKind; label: string }[] = [{ id: 'tool', label: 'Tool call errors' }, { id: 'session', label: 'Failed agent sessions' }, { id: 'onboarding', label: 'Failed onboardings' }];
+/** Where Health's errors come from in this build: agent sessions and onboardings only with the session engine (mold_v0-270: else no choice is offered). */
+const HEALTH_KINDS = sessionEngine() ? KINDS : KINDS.filter((k) => k.id === 'tool');
 const SECTIONS = {
   analytics: [['summary', 'Summary'], ['growth-daily', 'Growth by day'], ['growth-weekly', 'Growth by week'], ['growth-funnel', 'Activation funnel'], ['daily', 'Daily'], ['tools', 'Tool adoption'], ['clients', 'Clients'], ['accounts', 'Accounts'], ['retention', 'Retention']],
   health: [['health-summary', 'Summary'], ['errors-tool', 'Tool call errors (all)'], ['errors-session', 'Agent session failures (all)'], ['errors-onboarding', 'Onboarding failures (all)']]
@@ -414,10 +432,11 @@ export function AdminAnalytics({ view = 'analytics' }: { view?: 'analytics' | 'h
  * Health's tabs: errors (this report), and the session engine's Jobs and Sessions record tables (?section=jobs|sessions),
  * exactly as they were; in a build without it (mold_v0-204, ./health-tabs.tsx), Runs, Scheduled work, Email Delivery (only
  * when the app sends company email or has a developer surface), Webhook Delivery (mold_v0-215: only with a developer
- * surface) and Status after Errors (?section=runs|scheduled|deliveries|webhooks|status).
+ * surface) and Status after Errors (?section=runs|scheduled|deliveries|webhooks|status); Sign-in in both (mold_v0-270,
+ * ?section=signin: every sign-in's return address against the front door).
  */
 const ENGINE_HEALTH = sessionEngine();
-const HEALTH_TABS: readonly (readonly [string, string])[] = ENGINE_HEALTH ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions']] : healthTabsShell();
+const HEALTH_TABS: readonly (readonly [string, string])[] = ENGINE_HEALTH ? [['errors', 'Errors'], ['jobs', 'Jobs'], ['sessions', 'Sessions'], ['signin', 'Sign-in']] : healthTabsShell();
 /**
  * Health's runs tab moved to FinOps (mold_v0-126): its old links go there, in a build with the session engine. Without
  * it, ?section=runs is Health's own Runs tab again (mold_v0-204: failures, durations and events, beside FinOps' spend).
@@ -438,9 +457,9 @@ function Report({ view }: { view: 'analytics' | 'health' }) {
   if (tab !== 'errors') {
     return (
       <PageContainer>
-        <div className='flex min-w-0 flex-col gap-3'>
+        <div className={cn('flex min-w-0 flex-col gap-3', NO_COLUMN_LINES)}>
           <HealthTabs tab={tab} />
-          {tab === 'jobs' ? <ComputeJobs /> : <ComputeSessions />}
+          {tab === 'jobs' ? <ComputeJobs /> : tab === 'signin' ? <SignInTab /> : <ComputeSessions />}
         </div>
       </PageContainer>
     );
@@ -460,33 +479,40 @@ function ErrorsReport({ view }: { view: 'analytics' | 'health' }) {
 
   return (
     <PageContainer>
-      <div className='flex h-[calc(100svh-5.5rem)] min-h-[24rem] min-w-0 flex-col gap-3'>
+      <div className={cn('flex h-[calc(100svh-5.5rem)] min-h-[24rem] min-w-0 flex-col gap-3', view === 'health' && NO_COLUMN_LINES)}>
         {view === 'health' && <HealthTabs tab='errors' />}
+        {/* Health (mold_v0-270): the standard list's order, the four cards, then the search row, then the table. */}
+        {view === 'health' && (a ? <HealthCards a={a} /> : <LoadingCards count={4} />)}
         <div className='flex flex-wrap items-center gap-2'>
           <div className='relative min-w-48 flex-1'>
             <Icons.search className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
             <Input type='search' value={q} onChange={(e) => setQ(e.target.value)} className='h-9 pl-8'
               placeholder={view === 'health' ? 'Search errors' : 'Search accounts, products or tools'} aria-label='Search' />
           </div>
-          {view === 'health' && (
-            <NativeSelect aria-label='Errors from' value={kind} onChange={(e) => setKind(e.target.value as ErrorKind)}>
-              {KINDS.map((k) => <NativeSelectOption key={k.id} value={k.id}>{counted(k.label, a && errorCounts(a)[k.id])}</NativeSelectOption>)}
-            </NativeSelect>
+          {view === 'health' ? (
+            <>
+              <FiltersPopover p={p} facets={a?.facets} users
+                source={{ kind, setKind, kinds: HEALTH_KINDS.map((k) => ({ id: k.id, label: counted(k.label, a && errorCounts(a)[k.id]) })) }} />
+              <DateRangePicker value={p.range} onChange={p.setRange} />
+            </>
+          ) : (
+            <>
+              <DateRangePicker value={p.range} onChange={p.setRange} />
+              <UsersPicker p={p} facets={a?.facets} />
+              <FiltersPopover p={p} facets={a?.facets} />
+            </>
           )}
-          <DateRangePicker value={p.range} onChange={p.setRange} />
-          <UsersPicker p={p} facets={a?.facets} />
-          <FiltersPopover p={p} facets={a?.facets} />
           <ExportButton view={view} a={a} x={x} />
         </div>
         <FilterChipRow p={p} facets={a?.facets} />
         <ErrorBox error={error} />
         <div className='min-h-0 flex-1 overflow-y-auto'>
-          {isLoading || !a ? (
+          {isLoading || !a ? (view === 'health' ? <Skeleton className='h-72 rounded-lg' /> : (
             <div className='grid gap-4'>
               <LoadingCards count={4} />
               <div className='grid gap-8 lg:grid-cols-2 lg:gap-12'><Skeleton className='h-72 rounded-xl' /><Skeleton className='h-72 rounded-xl' /></div>
             </div>
-          ) : view === 'analytics' ? <AnalyticsBody a={a} match={match} /> : <HealthBody a={a} base={p.base} match={match} kind={kind} />}
+          )) : view === 'analytics' ? <AnalyticsBody a={a} match={match} /> : <HealthBody a={a} base={p.base} match={match} kind={kind} />}
         </div>
       </div>
     </PageContainer>
@@ -837,7 +863,22 @@ const ERROR_TABLE: Record<ErrorKind, { label: string; render: (r: ErrorRow) => R
 const errorCounts = (a: Analytics): Record<ErrorKind, number> =>
   ({ tool: a.errors_total, session: a.ops.sessions_failed ?? 0, onboarding: a.ops.onboardings_failed ?? 0 });
 
-function HealthBody({ a, base, match, kind }: { a: Analytics; base: string; match: (r: object) => boolean; kind: ErrorKind }) {
+/** Health › Errors' four cards (above the search row, mold_v0-270). */
+function HealthCards({ a }: { a: Analytics }) {
+  const series = useMemo(() => fillDays(a.daily, a.days, a.range?.from), [a]);
+  const ops = useMemo(() => fillOps(a), [a]);
+  const opsSpark = (k: keyof ReturnType<typeof fillOps>[number]) => ops.map((d) => d[k]);
+  return (
+    <StatStrip quad items={[
+      { label: 'Tool error rate', value: `${a.totals.error_pct}%`, spark: series.map((d) => d.error_pct) },
+      { label: 'Tool latency, p95', value: ms(a.totals.p95_ms), spark: series.map((d) => d.p95) },
+      { label: 'Agent sessions failed', value: pct(a.ops.sessions_failed, a.ops.sessions), spark: opsSpark('sessions_failed_pct') },
+      { label: 'Gateway error rate', value: pct(a.ops.gateway_errors, a.ops.gateway_requests), spark: opsSpark('gateway_error_pct') }
+    ]} />
+  );
+}
+
+function HealthBody({ a: _a, base, match, kind }: { a: Analytics; base: string; match: (r: object) => boolean; kind: ErrorKind }) {
   const [page, setPage] = useState(1), [size, setSize] = useState(25);
   useEffect(() => setPage(1), [base, kind, size]);
   // paged on the server: the full set can be far larger than a page
@@ -846,28 +887,17 @@ function HealthBody({ a, base, match, kind }: { a: Analytics; base: string; matc
   const rows = (fresh?.rows ?? []).filter(match);
   const total = fresh?.total ?? 0;
   const pager: Paged<ErrorRow> = { rows, page, pages: Math.max(1, Math.ceil(total / size)), size, total, setPage, setSize };
-  const series = useMemo(() => fillDays(a.daily, a.days, a.range?.from), [a]);
-  const ops = useMemo(() => fillOps(a), [a]);
-  const opsSpark = (k: keyof ReturnType<typeof fillOps>[number]) => ops.map((d) => d[k]);
   const cols = [{ label: 'When', render: (r: ErrorRow) => <When d={r.at} /> }, { label: 'Account', render: (r: ErrorRow) => <span className='leading-none'>{r.account}</span> },
     ...ERROR_TABLE[kind], { label: 'Error', render: (r: ErrorRow) => <span className='line-clamp-2 text-sm whitespace-normal' title={String(r.error ?? '')}>{r.error ?? '—'}</span>, className: 'min-w-64' }];
   return (
-    <div className='flex h-full min-h-[32rem] flex-col gap-6'>
-      <div className='flex shrink-0 flex-col gap-4'>
-        <StatStrip items={[
-          { label: 'Tool error rate', value: `${a.totals.error_pct}%`, spark: series.map((d) => d.error_pct) },
-          { label: 'Tool latency, p95', value: ms(a.totals.p95_ms), spark: series.map((d) => d.p95) },
-          { label: 'Agent sessions failed', value: pct(a.ops.sessions_failed, a.ops.sessions), spark: opsSpark('sessions_failed_pct') },
-          { label: 'Gateway error rate', value: pct(a.ops.gateway_errors, a.ops.gateway_requests), spark: opsSpark('gateway_error_pct') }
-        ]} />
-      </div>
+    <div className='flex h-full min-h-[24rem] flex-col'>
       <div className={cn('flex min-h-0 flex-1 flex-col gap-2', isFetching && 'opacity-70')}>
         <ErrorBox error={error} />
         <div className='flex min-h-[16rem] flex-1 flex-col border'>
           <div className='min-h-0 flex-1 overflow-auto'>
-            <Table className='min-w-[760px]'>
+            <Table className='min-w-[760px]' label='Errors'>
               <TableHeader className='bg-background sticky top-0 z-10 shadow-[0_1px_0_var(--border)]'>
-                <TableRow>{cols.map((c) => <TableHead key={c.label}>{c.label}</TableHead>)}</TableRow>
+                <TableRow>{cols.map((c) => <TableHead key={c.label} className='px-3'>{c.label}</TableHead>)}</TableRow>
               </TableHeader>
               <TableBody>
                 {!rows.length && (
@@ -876,15 +906,16 @@ function HealthBody({ a, base, match, kind }: { a: Analytics; base: string; matc
                   </TableCell></TableRow>
                 )}
                 {rows.map((r, i) => (
-                  <TableRow key={`${r.at}-${i}`}>
-                    {cols.map((c) => <TableCell key={c.label} className={cn('align-top', 'className' in c && c.className)}>{c.render(r)}</TableCell>)}
+                  <TableRow key={`${r.at}-${i}`} className='align-top'>
+                    {cols.map((c) => <TableCell key={c.label} className={cn('px-3 py-3.5 whitespace-normal', 'className' in c && c.className)}>{c.render(r)}</TableCell>)}
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
+          {/* The standard list's frame (components/layout/record-view.tsx): the pager inside it, under the rows. */}
+          <TablePager p={pager} noun={kind === 'tool' ? 'errors' : 'failures'} className='shrink-0 border-t px-2' />
         </div>
-        <TablePager p={pager} noun={kind === 'tool' ? 'errors' : 'failures'} className='shrink-0 py-0' />
       </div>
     </div>
   );

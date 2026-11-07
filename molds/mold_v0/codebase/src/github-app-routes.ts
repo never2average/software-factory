@@ -28,6 +28,8 @@ import { adminInstallations, appConfig, beginInstall, completeInstall, configSum
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
 import { packs } from "./packs.js";
+import { browserOrigin } from "./builtin-auth.js";
+import { noteCallback } from "./sign-in-check.js";
 
 /** mold_v0-260: a private catalog of the build is read with the platform's GitHub App. */
 const catalogsNeedApp = () => packs().some((p) => Object.values(p.definition.repositories ?? {}).some((r) => (r as { kind?: string; access?: string })?.kind === "upstream_catalog" && (r as { access?: string }).access === "github_app"));
@@ -66,6 +68,13 @@ export function githubAppRouter(): Router {
   r.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) => {
     if (!err) return next();
     res.status(err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? "The request is too large" : "The request body must be JSON" });
+  });
+  // Health › Sign-in (mold_v0-270): where GitHub sent the browser back, and whether with the person's authorization or an
+  // error, before any session (a browser on an old address has none there). Only for a state this server signed.
+  r.get("/callback", async (req, _res, next) => {
+    const q = req.query as Record<string, unknown>;
+    await noteCallback("github_app", "github_app", q, browserOrigin(req), typeof q.error === "string" ? undefined : typeof q.code === "string" && q.code.length > 0).catch(() => {});
+    next();
   });
   r.use(customerSession);
   r.use((req, res, next) => (req.method !== "GET" && req.method !== "HEAD" && res.locals.viaCookie && req.get("x-pack-request") !== "1"

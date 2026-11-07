@@ -239,9 +239,14 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.ok(body.length > 0 && !/PageContainer|pageTitle/.test(body), "no title above the tab strip: the tab has no page title of its own");
   assert.match(body, /<TrailTable /);
   // Action and Actor (mold_v0-209): both trails' tables have the two columns where the platform trail had Kind.
-  assert.equal((log.match(/f\('action', 'Action', 'enum'/g) ?? []).length, 2, "an Action column on both trails, filtered by its values");
-  assert.equal((log.match(/f\('actor', 'Actor', 'enum'\)/g) ?? []).length, 2, "an Actor column on both trails, filtered by its values");
-  assert.doesNotMatch(log, /'Kind'|'Who'/, "no Kind or Who column left");
+  assert.equal((log.match(/f\('action', 'Action', 'enum'/g) ?? []).length, 3, "an Action column on each trail and on both together, filtered by its values");
+  assert.equal((log.match(/f\('actor', 'Actor', 'enum'\)/g) ?? []).length, 3, "an Actor column on each trail and on both together, filtered by its values");
+  assert.doesNotMatch(log, /'Who'/, "no Who column left");
+  // mold_v0-270: one table, no tabs; with both trails on, a Kind column (which trail) filtered in the Filter menu.
+  assert.equal((log.match(/f\('kind', 'Kind', 'enum', \{ options: opts\(\['Platform call', 'Data access'\]\) \}\)/g) ?? []).length, 1, "Kind: Platform call or Data access, only on the merged table");
+  assert.doesNotMatch(log, /function Tabs\(|variant=\{tab ===/, "no Requests / Data access switch");
+  assert.match(log, /\['kind', \.\.\.\(fleet \? \['workspace'\] : \[\]\), 'action', 'actor'/, "Kind first, then Action and Actor");
+  assert.match(log, /csv=\{`\$\{api\}\/all\.csv`\}/, "Download CSV covers both trails");
   assert.match(log, /\['action', 'actor', 'area'/); assert.match(log, /'action', 'actor', 'request'/);
   assert.match(log, /action: e\.action, actor: e\.actor/, "the row's Action and Actor are the server's words (the drawer shows both)");
   const { existsSync: exists } = await import("node:fs");

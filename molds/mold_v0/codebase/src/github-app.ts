@@ -177,6 +177,23 @@ async function gh<T = unknown>(method: string, url: string, auth: string | null,
   try { json = text ? JSON.parse(text) : null; } catch { json = null; }
   return { status: r.status, json: json as T };
 }
+/**
+ * The webhook address GitHub holds for the platform's app (GET /app/hook/config with the app's own token), for Health ›
+ * Sign-in (mold_v0-270). null: no app set up; {url: null}: GitHub could not be asked or did not say. Never a secret.
+ */
+export async function appHookUrl(): Promise<{ url: string | null; status: number } | null> {
+  const c = await appConfig().catch(() => null);
+  if (!c) return null;
+  try {
+    const r = await gh<{ url?: unknown }>("GET", `${endpoints.api}/app/hook/config`, `Bearer ${appJwt(c)}`);
+    return { url: r.status === 200 && typeof r.json?.url === "string" ? r.json.url : null, status: r.status };
+  } catch { return { url: null, status: 0 }; }
+}
+/** The platform app's public client id and its web address (github.com), or null with no app set up. */
+export async function appPublic(): Promise<{ clientId: string; slug: string; web: string } | null> {
+  const c = await appConfig().catch(() => null);
+  return c ? { clientId: c.client_id, slug: c.slug, web: endpoints.web } : null;
+}
 const ok = (r: { status: number }, what: string) => { if (r.status < 200 || r.status >= 300) throw new GithubError(`GitHub refused ${what} (${r.status})`, 502); };
 
 interface Repo { id: number; full_name: string }

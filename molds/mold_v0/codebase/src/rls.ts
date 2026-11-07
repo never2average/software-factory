@@ -109,7 +109,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // The workspace agent's profiles, their versions and their changes (mold_v0-261, 0052_agent_profiles): staff bookkeeping.
   "agent_profiles", "agent_profile_versions", "agent_profile_changes",
   // The early-access form and the sign-in words staff edit, and their history (mold_v0-266, 0055_access_pages): staff bookkeeping.
-  "access_pages", "access_page_changes"];
+  "access_pages", "access_page_changes",
+  // Health › Sign-in's last report and the callbacks it saw (mold_v0-270, 0056_sign_in_checks): platform bookkeeping.
+  "sign_in_checks"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

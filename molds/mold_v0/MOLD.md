@@ -3038,6 +3038,12 @@ Two toggles in the app's profile, each **off unless the app turns it on** (`prof
   **Access log** tab (`/app/billing?tab=access-log`, mold_v0-209; Download CSV), `GET /api/audit/data[.csv]`, and the
   MCP tool `read_audit_trail` (owners and account keys only); platform staff through `/admin/access-log` and the admin
   MCP's `read_audit_trail` (by slug).
+- **One Access log table** (mold_v0-270). With both trails on, the Access log (staff's `/admin/access-log`, every
+  workspace; Billing's tab, the workspace's own) is one list of both, newest first, with a **Kind** column (Platform
+  call / Data access) filtered in the Filter menu, both trails' four cards (`GET .../all/sparklines`: platform calls,
+  data access, changes, refused or failed) and Download CSV of both (`GET .../all.csv`, a `kind` column first). With
+  one trail on, that trail's table, without the Kind column. Staff read every workspace's data entries
+  (`GET /api/admin/audit/data[.csv]`, each naming its workspace).
 - **`platform`, the platform usage trail.** Every API and MCP request (`/mcp` with its methods and tool names, never
   arguments) and sign-in (the built-in code check and Google's return, the MCP authorization server's token grants):
   the key's id (its prefix joined on read, never the key), the actor, the scopes it acted with (workspace key, member key
@@ -3704,6 +3710,40 @@ field and request by request, the API's versions, audit, staff-only writes and c
 `--browser --shots <dir>` the console: defaults saved draw the same DOM as nothing saved, the editor, its preview, the
 public page before and after an edit, Access requests with the answers, the sign-in page with staff's words), `npm run
 test:migrations` (0055 and its rollback), and Octillion parity with nothing saved.
+
+## Sign-in return addresses (mold_v0-270)
+
+After an app moves to its own domain, every provider that sends people back to it must hold the new address: Google
+answers `redirect_uri_mismatch`, GitHub "the redirect URL is not associated with the application", until it does. The
+shell checks each one it uses, and the factory does the same from the front door it is about to use.
+
+- **The flows** (`src/sign-in-check.ts`, each only when the build uses it): Clerk's instance holding the front door
+  (Backend API `/v1/instance`, `/v1/domains`); each social sign-in Clerk has on (its Frontend API's public
+  `/v1/environment`), returning to Clerk's own `<frontend api>/v1/oauth_callback`; the built-in Google
+  (`<front door>/api/auth/google/callback`, `GOOGLE_REDIRECT_URI` wins); the platform GitHub App (its callback
+  `<front door>/api/github-app/callback`, the install coming back with the person's authorization, the webhook address
+  GitHub holds, read with the app's own token); each credential OAuth provider with a client id in the key vault
+  (`<front door>/api/credential-connections/callback`); AI clients' sign-in (they bring their own return addresses:
+  checked that it is on the front door, or that Clerk lets them register).
+- **Pass, fail or unknown, never a guess**, from what a provider answers before anyone signs in: Google 302s to its
+  sign-in page for a listed address and to `/signin/oauth/error` naming `redirect_uri_mismatch` (or 400) for one it does
+  not list. Clerk's social sign-ins are probed with an anonymous sign-in attempt at its Frontend API (what its sign-in
+  page does on a click), whose answer is the provider's authorize address with Clerk's client id; Clerk refusing an
+  attempt from the front door is a fail. GitHub sends every anonymous request to its sign-in page (measured 2026-11-07:
+  a wrong address and an unknown client id alike), so a probe of GitHub says unknown; what GitHub sends back decides it:
+  the callback routes note, before any session, where the browser came back (an old address: fail; the front door:
+  pass) and an error GitHub sent with a state this server signed (`redirect_uri_mismatch`: fail; a forged state is
+  ignored). Never the code, the state or the person.
+- **Health › Sign-in** (`/admin/health?section=signin`, staff; `GET /api/admin/onboarding/health/sign-in`): one card per
+  flow, the exact address to register (with Copy), where to click and the steps; at most an hour old, **Check again**
+  at most once a minute (`?refresh=1`). Kept in `sign_in_checks` (`0056_sign_in_checks`, platform bookkeeping, closed to
+  tenant work). No client id on the page (a fingerprint) and never a secret.
+- **The factory** reads the same report with the cron secret (`GET /api/cron/sign-in-check`, the public client ids it
+  probes with) and asks the providers itself for the front door it is about to use
+  (`.claude/scripts/lib/sign_in_check.py`): in `provision.py <app>` (the check), after every `--deploy`, in
+  `provision.py <app> --sign-in-check`, in `domain.py <app> switch` (which first prints every address that changes, old
+  and new; `switch --dry-run` only that) and on mint's deploy station. A failing sign-in never blocks or undoes a
+  deploy: it ends as needs_human (exit 3) with the plain ask, click by click.
 
 ## Generic gaps (mold_v0-260)
 
