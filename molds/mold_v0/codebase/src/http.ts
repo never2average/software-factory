@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { platformAnalytics, platformErrors } from "./insights.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
-import { answersOf } from "./access-request.js";
+import { answersOf, formSubmission, labelFields, type AccessAnswer } from "./access-request.js";
+import * as accessPages from "./access-pages.js";
 import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
 import { proxyHops } from "./proxy-trust.js";
 import { appRouter, customerSession } from "./app.js";
@@ -23,6 +24,7 @@ import { backfillMessageFiles, intakeWired, pollIntake, startEmailIntake } from 
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { agentAdminRoutes, agentAppRouter } from "./agent-routes.js";
+import { accessPageAdminRoutes } from "./access-page-routes.js";
 import { agentHarnessOn } from "./agent-harness-config.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
 import { PackError } from "./pack-api.js";
@@ -232,15 +234,26 @@ export function createApp() {
   // questions (mold_v0-102, src/access-request.ts: the packs' pack.json access_request), checked and stored as `answers`.
   app.post("/api/access-requests", express.json({ limit: "128kb" }), endpointLimit("signup", (req) => req.ip ?? "?") as express.RequestHandler, async (req, res) => {
     const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
-    const email = s(req.body?.email, 200), company = s(req.body?.company, 200);
-    const message = s(req.body?.message, 4000), name = s(req.body?.name, 120);
+    let email = s(req.body?.email, 200), company = s(req.body?.company, 200);
+    let message = s(req.body?.message, 4000), name = s(req.body?.name, 120);
     const src = req.body?.source && typeof req.body.source === "object" ? req.body.source : {};
     const source = Object.fromEntries([...["referrer", "landing", "first_page", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"].map((k) => [k, s(src[k], 300)]),
       ["country", s(req.headers["x-vercel-ip-country"], 8)], ["city", s(decodeURIComponent(String(req.headers["x-vercel-ip-city"] ?? "")), 80)]].filter(([, v]) => v));
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return void res.status(400).json({ error: "Please enter a valid email." });
-    if (!company) return void res.status(400).json({ error: "Please tell us your company." });
-    const { answers, problem } = answersOf(req.body, GENERATED_ACCESS_FIELDS);
-    if (problem) return void res.status(400).json({ error: problem });
+    // mold_v0-266: the form staff saved (Admin › Access requests › Request form, src/access-pages.ts) is the one in force:
+    // the request is checked against it, every field the shell's own included. Nothing saved: checked as it always was.
+    const form = await accessPages.currentRequestForm();
+    let answers: Record<string, unknown>;
+    if (form) {
+      const sub = formSubmission(req.body, form);
+      if (sub.problem) return void res.status(400).json({ error: sub.problem });
+      ({ email, company, message, name, answers } = sub);
+    } else {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return void res.status(400).json({ error: "Please enter a valid email." });
+      if (!company) return void res.status(400).json({ error: "Please tell us your company." });
+      const checked = answersOf(req.body, GENERATED_ACCESS_FIELDS);
+      if (checked.problem) return void res.status(400).json({ error: checked.problem });
+      answers = checked.answers;
+    }
     const [row] = await (await getDb()).query<{ id: number }>(
       `INSERT INTO access_requests (email, company, message, name, source, answers) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [email, company, message || null, name || null, Object.keys(source).length ? JSON.stringify(source) : null, JSON.stringify(answers)],
@@ -248,7 +261,8 @@ export function createApp() {
     // A host pack's own follow-up (src/host.ts onAccessRequest; the product researches the company); kept alive on Vercel.
     for (const h of hosts()) if (h.onAccessRequest) telemetry.keepAlive(h.onAccessRequest(row.id));
     // Email after the write, never in its way (src/email.ts): "we got it" to them, an alert to the operator.
-    mail.fire(mail.requestReceived({ id: row.id, email, company, name: name || null, message: message || null, answers }));
+    mail.fire(mail.requestReceived({ id: row.id, email, company, name: name || null, message: message || null, answers: answers as Record<string, AccessAnswer>,
+      ...(form ? { fields: labelFields(GENERATED_ACCESS_FIELDS, form) } : {}) }));
     telemetry.capture({ distinctId: email.toLowerCase() }, "access_requested", { answers: Object.keys(answers).length, has_message: Boolean(message) });
     const hook = process.env.ACCESS_REQUEST_WEBHOOK_URL; // e.g. a Slack incoming webhook
     if (hook)
@@ -259,6 +273,10 @@ export function createApp() {
       }).catch((err) => console.error("access-request webhook failed:", err.message));
     res.status(201).json({ ok: true });
   });
+
+  // mold_v0-266: the early-access form and the sign-in pages' words staff saved (src/access-pages.ts), null for the build's
+  // own: what the public request pages and the sign-in and sign-up pages draw on each request. Open to anyone.
+  app.get("/api/access-pages", async (_req, res) => void res.set("Cache-Control", "no-store").json(await accessPages.publicAccessPages()));
 
   // ---------- built-in sign-in: /api/auth (src/builtin-auth.ts, mold_v0-004): an emailed code or Google, sessions,
   // sign-out (everywhere); under Clerk only /api/auth/config answers (it names the provider) ----------
@@ -890,6 +908,7 @@ export function createApp() {
   }
   onPremAdminRoutes(ob, need, adminActor);
   agentAdminRoutes(ob, need, adminActor);
+  accessPageAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
