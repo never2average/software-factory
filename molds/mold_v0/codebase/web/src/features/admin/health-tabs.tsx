@@ -1,7 +1,8 @@
 'use client';
 // Health's tabs beside Errors in a build without the session engine (mold_v0-204; GET /api/admin/onboarding/health/*,
 // src/health-tabs.ts): Runs, Scheduled work, Email Delivery (only when the app sends company email or has a developer
-// surface; emails only), Webhook Delivery (mold_v0-215: only with a developer surface) and Status. The list tabs show
+// surface; emails only), Webhook Delivery (mold_v0-215: only with a developer surface), Status and Sign-in (mold_v0-270,
+// ./sign-in-check.tsx: every sign-in's return address against the front door). The list tabs show
 // their four cards, then the search and the tab's own picker and filters, then one table (RecordView). Status is a grid
 // of graphs (mold_v0-210).
 // Staff only, read only; nothing here shows an address, a subject or a key.
@@ -22,6 +23,8 @@ import { num, usd } from '@/lib/display-format';
 import { useAdmin } from './lib';
 import { Chip, dur, PeekSection, UrlTabs } from './compute-common';
 import { ErrorBox, Mono, StatusBadge, When, type Tone } from './ui';
+import { SignInTab } from './sign-in-check';
+import { cn } from '@/lib/utils';
 
 /** Email Delivery is a tab only when the app sends mail of a workspace's own or has a developer surface (the server's deliveriesOn). */
 export const deliveriesTab = (): boolean => settingsPage.email || developerConsole.on;
@@ -31,7 +34,7 @@ export const webhooksTab = (): boolean => developerConsole.on;
 /** Health's tabs in a build without the session engine, in order (Errors first: the page's default). */
 export const healthTabsShell = (): readonly (readonly [string, string])[] => [
   ['errors', 'Errors'], ['runs', W.Runs], ['scheduled', 'Scheduled work'], ...(deliveriesTab() ? [['deliveries', 'Email Delivery'] as const] : []),
-  ...(webhooksTab() ? [['webhooks', 'Webhook Delivery'] as const] : []), ['status', 'Status']
+  ...(webhooksTab() ? [['webhooks', 'Webhook Delivery'] as const] : []), ['status', 'Status'], ['signin', 'Sign-in']
 ];
 
 const dash = <span className='text-muted-foreground'>—</span>;
@@ -41,17 +44,24 @@ const ERROR_KIND: Record<string, string> = {
 };
 const kindWord = (k: string | null) => (k ? ERROR_KIND[k] ?? k : '—');
 
+/**
+ * Health's tables draw no line between columns (mold_v0-270, the operator: the standard list look): the shared table's
+ * column lines (components/ui/table.tsx) are taken off inside Health's tabs only.
+ */
+export const NO_COLUMN_LINES = '[&_[data-slot=table-cell]]:border-r-0 [&_[data-slot=table-head]]:border-r-0';
+
 /** The tab strip and the tab under it, in the page's frame (no title above the strip). */
 export function HealthTab({ tabs, tab }: { tabs: readonly (readonly [string, string])[]; tab: string }) {
   return (
     <PageContainer>
-      <div className='flex min-w-0 flex-col gap-3'>
+      <div className={cn('flex min-w-0 flex-col gap-3', NO_COLUMN_LINES)}>
         <UrlTabs tabs={tabs} tab={tab} base='/admin/health' />
         {tab === 'runs' && <RunsTab />}
         {tab === 'scheduled' && <ScheduledTab />}
         {tab === 'deliveries' && <DeliveriesTab />}
         {tab === 'webhooks' && <WebhooksTab />}
         {tab === 'status' && <StatusTab />}
+        {tab === 'signin' && <SignInTab />}
       </div>
     </PageContainer>
   );

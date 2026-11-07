@@ -67,6 +67,12 @@ async function client(p: OAuthProvider): Promise<{ id: string; secret: string } 
   const id = get(p.client_id.vault), secret = get(p.client_secret.vault);
   return id && secret ? { id, secret } : null;
 }
+/** A provider's public client id from the key vault, or null (Health › Sign-in, mold_v0-270); never the secret. */
+export async function publicClientId(p: OAuthProvider): Promise<string | null> {
+  const rows = await asPlatform(async () => (await getDb()).query<{ label: string; ciphertext: string; iv: string; tag: string; key_id: string }>(
+    "SELECT label, ciphertext, iv, tag, key_id FROM vault_credentials WHERE provider = $1 AND label = $2 AND enabled", [OAUTH_CLIENT_PROVIDER, p.client_id.vault]));
+  try { return rows[0] ? decrypt(rows[0]) : null; } catch { return null; }
+}
 /** Which of a provider's client values the vault holds (staff view). */
 async function clientSet(p: OAuthProvider) {
   const rows = await asPlatform(async () => (await getDb()).query<{ label: string }>(

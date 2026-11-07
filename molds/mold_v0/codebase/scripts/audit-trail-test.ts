@@ -250,6 +250,41 @@ async function inner() {
       ok("tenant isolation: each owner's route and MCP tool read their own workspace's entries only; the tenant role sees none of another's and cannot write one; no field value or title in either trail");
     }
 
+    // ---------- both trails as one Access log (mold_v0-270) ----------
+    {
+      const app = await appWith({ data: true, platform: true });
+      await work(app, A);
+      await audit.flushAudit();
+      // The owner's merged cards and CSV: both trails, newest first, a Kind column.
+      const cards = await app.req("GET", "/api/audit/all/sparklines", A.owner);
+      assert.equal(cards.status, 200);
+      assert.deepEqual(cards.body.cards.map((c: any) => c.label), ["Platform calls this week", "Data access this week", "Changes this week", "Refused or failed"]);
+      assert.equal(cards.body.cards[1].value, (await dataRows(A.org.orgId)).length, "data access: A's entries");
+      assert.equal((await app.req("GET", "/api/audit/all/sparklines", A.member)).status, 403, "owners only");
+      await audit.flushAudit();
+      const platformBefore = (await db.query("SELECT 1 FROM audit_platform_events WHERE org_id = $1", [A.org.orgId])).length;
+      const csv = await app.req("GET", "/api/audit/all.csv", A.owner);
+      assert.equal(csv.status, 200);
+      const lines = csv.text.replace(/^\ufeff/, "").trim().split("\r\n");
+      assert.match(lines[0]!, /^kind,at,action,actor,/, "Kind first, then the time, Action and Actor");
+      const kinds = new Set(lines.slice(1).map((l) => l.split(",")[0]));
+      assert.deepEqual([...kinds].sort(), ["Data access", "Platform call"], "both trails in one file");
+      const ats = lines.slice(1).map((l) => l.split(",")[1]!);
+      assert.deepEqual(ats, [...ats].sort().reverse(), "newest first");
+      assert.equal(lines.length - 1, (await dataRows(A.org.orgId)).length + platformBefore, "every entry of both, up to the file's own request");
+      // Staff: every workspace's data trail, named, and the fleet's merged cards and CSV.
+      const fleet = await app.req("GET", "/api/admin/audit/data?limit=500", adminH);
+      assert.equal(fleet.status, 200);
+      assert.ok(fleet.body.entries.length >= (await dataRows(A.org.orgId)).length && fleet.body.entries.every((e: any) => "workspace" in e), "every workspace's data entries, each naming its workspace");
+      assert.ok(fleet.body.entries.some((e: any) => e.workspace === A.slug));
+      assert.equal((await app.req("GET", "/api/admin/audit/all/sparklines", adminH)).status, 200);
+      const fcsv = await app.req("GET", "/api/admin/audit/all.csv", adminH);
+      assert.match(fcsv.text.replace(/^\ufeff/, ""), /^kind,at,workspace,action,actor,/, "staff's file names the workspace");
+      assert.ok(!fcsv.text.includes(SECRET), "no value in the file");
+      await app.close();
+      ok("both trails as one Access log: the owner's and staff's cards (platform calls, data access, changes, refused), one CSV newest first with a Kind column; staff read every workspace's data entries");
+    }
+
     // ---------- the platform trail alone, staff ----------
     {
       const app = await appWith({ data: false, platform: true });

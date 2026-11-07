@@ -69,7 +69,10 @@ try {
   assert.ok(!sched.jobs.some((j) => j.id === "webhook_deliveries"), "zero packs: no developer surface, no webhook job");
   // With every condition true, every job is listed, with its row.
   const all = h.JOB_SPECS.map((j) => j.id);
-  assert.equal(new Set(all).size, 11, "eleven jobs the shell can run (mold_v0-210: health samples)");
+  // Twelve since mold_v0-243 (the workspace agent's sessions); each named, so a new job is added here on purpose.
+  assert.deepEqual(all, ["schedules", "record_clocks", "email_intake", "event_outbox", "webhook_deliveries", "ledger_checkpoints", "encrypted_fields", "audit_retention",
+    "harness_sessions", "workspace_retention", "run_charges", "health_samples"], "the twelve jobs the shell can run (mold_v0-210: health samples; mold_v0-243: agent sessions)");
+  assert.equal(new Set(all).size, all.length, "each once");
   assert.ok(sched.jobs.some((j) => j.id === "health_samples"), "zero packs (no session engine): Health samples run");
   ok(`Scheduled work: ${sched.jobs.length} job(s) in this build (${sched.jobs.map((j) => j.id).join(", ") || "none"}); the rows only for those`);
 

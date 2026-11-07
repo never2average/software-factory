@@ -15,6 +15,13 @@
                                                            through a sign-in hub, or NOT (then the steps to fix it). Reads
                                                            only; recorded as google_sign_in.check. Also run by --smoke and
                                                            after every deploy (lib/google_signin.py, mold_v1-242)
+  provision.py <app_id> --sign-in-check [--json]          every sign-in's return address (Clerk and its social sign-ins, the
+                                                           built-in Google, the platform GitHub App, credential connections,
+                                                           AI clients) against the app's front door, asked of each provider:
+                                                           pass / fail / unknown, the exact address and where to click. Reads
+                                                           only; recorded as sign_in_redirects. Also said by the check and
+                                                           after every deploy (exit 3 when one fails; never blocks a deploy)
+                                                           and by domain.py switch (lib/sign_in_check.py, mold_v0-270)
   provision.py <app_id> --google-hub <other_app>|off [--dry-run]   let <other_app>, whose Google sign-in works, do the
                                                            Google part for this app (the mold's sign-in hub). State only:
                                                            it takes effect at each app's next deploy and deploys nothing
@@ -3936,7 +3943,9 @@ def _main(a):
         real = ("--deploy-remote" in head or "--deploy" in head) and not dry and "--operator" not in head
         if real and single_service.applies(app): deploy_gate.require(app_id, app, infra, adir, a, save=save)   # only deploy what passed CI
         rc = single_service.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
-        if rc == 0 and real: repo_auto(app_id, adir, "a deploy")
+        # A deploy that stands while a sign-in needs the operator (mold_v0-270) ends as needs_human (3): still a deploy.
+        stood = rc == 0 or (rc == 3 and AR.NOTES["needs"] and all(n["name"] == "sign-in return addresses" for n in AR.NOTES["needs"]))
+        if stood and real: repo_auto(app_id, adir, "a deploy")
         sys.exit(AR.EXIT["needs_human"] if rc and AR.NOTES["needs"] else rc)
     if "--operator" in (a[:a.index("--")] if "--" in a else a):
         # One of the mold's operator:* scripts against the deployed app (lib/operator_run.py, mold_v1-230): a dry run
@@ -4286,7 +4295,7 @@ def _action(a):
     a = a[:a.index("--")] if "--" in a else a
     for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--generate-secret", "generate-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
                    ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke"),
-                   ("--google-hub", "google-hub"), ("--google-signin", "google-signin"), ("--rehearse-migrations", "rehearse-migrations")):
+                   ("--google-hub", "google-hub"), ("--google-signin", "google-signin"), ("--sign-in-check", "sign-in-check"), ("--rehearse-migrations", "rehearse-migrations")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
 
