@@ -207,7 +207,7 @@ export function RequestPageForm({ form = {}, config, preview }: {
     );
     if (f.type !== 'text' && f.type !== 'email') return ask(f);
     const own: Record<Shell, React.ComponentProps<'input'>> = {
-      email: { type: 'email', autoComplete: 'email', required: true, autoFocus: true },
+      email: { type: 'email', autoComplete: 'email', required: true, ...(preview ? {} : { autoFocus: true }) }, // the editor's preview never takes the focus
       company: { autoComplete: 'organization' },
       name: { autoComplete: 'name' },
       message: {}

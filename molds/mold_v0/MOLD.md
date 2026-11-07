@@ -3653,6 +3653,49 @@ Proof: `npm run test:teams` (scripts/teams-262-test.ts), `npm run test:record-pa
 `npm run test:migrations` (0053, 0054 and their rollbacks), and the factory's `branding.py`, `repo.py` and `packs.py`
 self-tests.
 
+## Early access and sign-in editor (mold_v0-266)
+
+Platform staff edit the early-access (request-access) form and the sign-in and sign-up pages' words in the staff console,
+live without a redeploy. No flag: with nothing saved every form and page is exactly what the build declares, drawn by the
+same code, and the API checks a request as it always did.
+
+- **Where**: Admin › Access requests, three in-page tabs held in `?section=` like Accounts': Requests (the list),
+  Request form (`?section=form`) and Sign-in page (`?section=sign-in`); `web/src/features/admin/access-pages.tsx`. Each
+  editor works on a draft beside a live preview (the public form itself, drawn from the draft, never sent), each field in
+  a side panel; Save, Discard, Reset to defaults; a History table (the standard list) of every version, who, when, what
+  changed and the config before and after. Every role reads; saving and resetting need the Operator role (`need("accounts")`).
+- **The request form** (`src/access-request.ts` `AccessFormConfig`, `accessFormProblems`, `formSubmission`): every field,
+  the shell's own included (email, name, company, message: their own columns) and the packs' or profile's
+  `access_request` fields: label, help, placeholder, required, hidden, order, kind (text, long text, email, one choice,
+  several choices, number, web address), options and length; fields of staff's own (stored under `answers`); the submit
+  button; the thank-you title and lines (`{email}`, `{company}`). Email is always asked, required and an address; a hidden
+  field is not asked and its answer dropped; the shell's columns take any kind but several choices. The editor starts
+  from `defaultRequestForm`: the build's public form as it is today (the landing's `request_page` form when it has one:
+  its order, fold fields, placeholders, submit and done words, a declared field it never asks hidden; else
+  `/request-access`'s). Pack and profile `access_request` stay those defaults; Reset to defaults saves them back (config null).
+- **The sign-in words** (`SignInConfig`, `signInProblems`): the sign-in and sign-up pages' title, subtitle and main button,
+  a provider button ("Continue with {provider}"), a legal line under the form whose `{terms}` and `{privacy}` link to the
+  addresses given or the build's own Terms and Privacy, and which provider buttons show. Under Clerk the words go to
+  `ClerkProvider`'s `localization` (the open page hands them over: `web/src/features/auth/components/auth-words.tsx`) and
+  hidden providers are its `appearance` (`socialButtonsBlockButton__<provider>`); the methods listed are the Clerk
+  instance's own (its Frontend API environment), else the shell's. The built-in sign-in (lanes, local runs) takes the same
+  words; its emailed code is never hidden.
+- **Storage** (`sql/migrations/0055_access_pages.sql` with its rollback; `src/access-pages.ts`, the only writer):
+  `access_pages` (one row per page: the version in force and its config, NULL for the defaults) and `access_page_changes`
+  (every version: edited or reset, who, when, before and after), staff tables no tenant reaches (`src/rls.ts`). A save
+  names the version it edited (a newer one: 409). Each save is also a staff log line.
+- **Live**: `GET /api/access-pages` (open to anyone) answers both configs, from an in-process copy at most 10 s old (a
+  save refreshes it); the public request pages and the auth pages read it on each request (`accessPagesLive`), the portal's
+  no-account form asks it in the browser. `POST /api/access-requests` checks each request against the form in force
+  (required, kinds, options); Admin › Access requests, `list_access_requests` and the alert email label answers by the
+  form in force (`labelFields`: its fields, then the build's it no longer has).
+
+Proof: `npm run test:access-pages` (scripts/access-pages-test.ts: the rules, the defaults against today's forms field by
+field and request by request, the API's versions, audit, staff-only writes and checks against the current form; with
+`--browser --shots <dir>` the console: defaults saved draw the same DOM as nothing saved, the editor, its preview, the
+public page before and after an edit, Access requests with the answers, the sign-in page with staff's words), `npm run
+test:migrations` (0055 and its rollback), and Octillion parity with nothing saved.
+
 ## Generic gaps (mold_v0-260)
 
 Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and

@@ -111,6 +111,9 @@ const versionOf = (v: unknown) => {
   return n;
 };
 
+/** The same value with every object's keys in order (JSONB keeps its own order), to compare two configs. */
+const stable = (v: unknown): unknown => (Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, x]) => [k, stable(x)])) : v);
+
 /** Write a new version of a page (config null: back to the build's defaults), with its change. */
 async function write(by: string, idIn: unknown, expectedIn: unknown, config: Record<string, unknown> | null, action: "edited" | "reset"): Promise<AccessPage> {
   const id = pageId(idIn), expected = versionOf(expectedIn);
@@ -119,7 +122,7 @@ async function write(by: string, idIn: unknown, expectedIn: unknown, config: Rec
     await q.query("INSERT INTO access_pages (id) VALUES ($1) ON CONFLICT (id) DO NOTHING", [id]);
     const [r] = await q.query<Row>("SELECT id, version, config, updated_by, updated_at FROM access_pages WHERE id = $1 FOR UPDATE", [id]);
     if (r!.version !== expected) throw new PackError(`Someone saved version ${r!.version} of this page while you edited version ${expected}: open it again and redo your change`, 409);
-    if (JSON.stringify(r!.config ?? null) === JSON.stringify(config)) throw new PackError(action === "reset" ? "This page already shows the defaults" : "Nothing changed: this would save the same page again", 400);
+    if (JSON.stringify(stable(r!.config ?? null)) === JSON.stringify(stable(config))) throw new PackError(action === "reset" ? "This page already shows the defaults" : "Nothing changed: this would save the same page again", 400);
     const v = r!.version + 1;
     await q.query("UPDATE access_pages SET version = $2, config = $3, updated_by = $4, updated_at = now() WHERE id = $1", [id, v, config === null ? null : JSON.stringify(config), who]);
     await q.query("INSERT INTO access_page_changes (page_id, version, action, changed_by, before, after) VALUES ($1, $2, $3, $4, $5, $6)",

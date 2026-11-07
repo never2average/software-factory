@@ -95,7 +95,9 @@ function useSavePage(id: PageId) {
   return { busy, problems, save: (version: number, config: unknown) => run('save', version, config), reset: (version: number) => run('reset', version) };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** Equal as JSON, whatever the order of an object's keys (the database stores them in its own order). */
+const stable = (v: unknown): unknown => (Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, x]) => [k, stable(x)])) : v);
+const same = (a: unknown, b: unknown) => JSON.stringify(stable(a)) === JSON.stringify(stable(b));
 
 /** Where the page stands: the version in force, who saved it and when, or the defaults. */
 function StandsLine({ page }: { page: Page<unknown> }) {

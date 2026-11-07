@@ -170,7 +170,7 @@ async function outer() {
       { cwd: copy, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, AUTH_PROVIDER: "builtin", APP_PROXY_HOPS: "1" } });
     assert.equal(r.status, 0, "the checks on the API (and the console)");
   } finally { rmSync(TMP, { recursive: true, force: true }); }
-  console.log(`access-pages: ${n} checks passed here${BROWSER ? "" : " (add --browser for the console)"}`);
+  console.log(`access-pages: ${n} checks passed on the rules and the defaults${BROWSER ? "" : " (add --browser for the console)"}`);
 }
 
 // ---------- 3: the API ----------
@@ -216,6 +216,8 @@ async function inner() {
     const company = form1.fields.find((f) => f.key === "company")!;
     Object.assign(company, { label: "Organisation", help: "Leave it empty if you are on your own." }); delete company.required;
     form1.fields.find((f) => f.key === "message")!.hidden = true;
+    // The build's own questions (the fixture pack's, in the browser's build copy) hidden: a field the form no longer asks.
+    for (const f of form1.fields) if (!R.isShellFormKey(f.key)) { f.hidden = true; delete f.required; }
     form1.fields.splice(3, 0,
       { key: "seats", label: "Seats", type: "number", required: true, help: "Roughly is fine." },
       { key: "plan", label: "Plan", type: "select", options: [{ value: "team", label: "Team" }, { value: "scale", label: "Scale" }] },
@@ -316,6 +318,7 @@ async function inner() {
     ok("the sign-in words: saved (Operator), a bad address and an empty word refused, read back by the public pages; the methods there are (the emailed code never hidden); every change in the staff list");
 
     if (BROWSER) await browserChecks({ http, db, staffEmail, STAMP, TMP, teardown, operator, call });
+    console.log(`access-pages: ${n} checks passed on the API${BROWSER ? " and the console" : ""}`);
   } finally {
     for (const f of teardown.reverse()) { try { await f(); } catch { /* best effort */ } }
     cleanup();
@@ -469,7 +472,7 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     await panel.waitFor();
     await panel.getByLabel("Label").fill("Seats");
     await panel.getByLabel("Kind").selectOption("number");
-    await panel.getByText("Required").click();
+    await panel.getByRole("checkbox", { name: "Required" }).click();
     await panel.getByLabel("Help text").fill("Roughly is fine.");
     await panel.getByRole("button", { name: "Add to the form" }).click();
     await p.getByLabel("Submit button").fill("Join the early list");
@@ -479,15 +482,15 @@ async function browserChecks(w: { http: any; db: any; staffEmail: string; STAMP:
     assert.match(await preview.innerText(), /Join the early list/);
     assert.equal(await p.locator('[data-form-field="seats"]').count(), 1);
     await p.getByRole("button", { name: "Save changes" }).click();
-    await p.getByText(/Version 1, saved by/).waitFor({ timeout: 15000 });
+    await p.getByText(/Version 4, saved by/).waitFor({ timeout: 15000 }); // after the two saves and the reset above
     await c.close();
     const saved = (await w.call("GET", "/api/access-pages")).body.request_form;
     assert.deepEqual(saved.fields.find((f: any) => f.key === "company"), { key: "company", label: "Organisation", type: "text", required: true, placeholder: "Acme", max_length: 200, help: "The team or company you work for." });
     assert.deepEqual(saved.fields.find((f: any) => f.key === "seats"), { key: "seats", label: "Seats", type: "number", required: true, help: "Roughly is fine." });
     assert.equal(saved.submit, "Join the early list");
     const [ch] = await w.db.query("SELECT version, action, changed_by FROM access_page_changes WHERE page_id = 'request_form' ORDER BY id DESC LIMIT 1");
-    assert.deepEqual([ch.version, ch.action, ch.changed_by], [1, "edited", w.staffEmail], "audited under the signed-in person");
-    ok("the editor: it starts from the page's own form; the side panel relabels the company (every kind but several choices offered) and adds a required number; the preview follows the draft; Save makes version 1 under the person's address");
+    assert.deepEqual([ch.version, ch.action, ch.changed_by], [4, "edited", w.staffEmail], "audited under the signed-in person");
+    ok("the editor: it starts from the page's own form; the side panel relabels the company (every kind but several choices offered) and adds a required number; the preview follows the draft; Save makes the next version (4) under the person's address");
   }
   // The editor and its preview, in both modes and widths (the panel open on the company at the shot).
   await shots("editor", "/admin/requests?section=form", true, async (p) => {
