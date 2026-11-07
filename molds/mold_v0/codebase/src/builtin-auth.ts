@@ -61,7 +61,7 @@ const sessionDays = () => {
  */
 export { consoleUrl };
 /** The origin the browser is on: the forwarded host when the console proxies the request (Next.js rewrites), else this host. */
-const browserOrigin = (req: Request) => {
+export const browserOrigin = (req: Request) => {
   const host = String(req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]!.trim();
   const proto = String(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0]!.trim();
   return /^[A-Za-z0-9.-]+(:\d+)?$/.test(host) && /^https?$/.test(proto) ? `${proto}://${host}` : consoleUrl();
@@ -523,6 +523,10 @@ const google = () => ({
  * Host cannot send anyone elsewhere; the same URI is kept with the state for the token exchange.
  */
 const redirectUriFor = (req: Request) => process.env.GOOGLE_REDIRECT_URI || `${browserOrigin(req)}/api/auth/google/callback`;
+/** Where Google sends people back for a sign-in started on `front` (Health › Sign-in, mold_v0-270): the same rule. */
+export const googleRedirectFor = (front: string) => process.env.GOOGLE_REDIRECT_URI || `${front}/api/auth/google/callback`;
+/** The Google client's public id and its authorization address, for the check; never the secret. */
+export const googlePublic = () => (googleConfigured() ? { clientId: google().clientId, authUrl: google().authUrl } : null);
 let googleKeys: { url: string; set: ReturnType<typeof createRemoteJWKSet> } | null = null;
 const googleJwks = (url: string) => (googleKeys?.url === url ? googleKeys.set : (googleKeys = { url, set: createRemoteJWKSet(new URL(url)) }).set);
 

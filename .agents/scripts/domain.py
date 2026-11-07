@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""domain.py <app_id> status | attach <domain> | verify | switch   |   --self-test
+"""domain.py <app_id> status | attach <domain> | verify | switch [--dry-run]   |   --self-test
 
 Give a Vercel application its own web address (research.example.com instead of <project>.vercel.app).
 
@@ -16,6 +16,11 @@ Give a Vercel application its own web address (research.example.com instead of <
   switch   only after verify passes: the domain becomes the app's front door — production_url, WEB_ORIGIN on
            the web and api projects (emailed links, the MCP origin check). Prints what still has to follow:
            a redeploy, the Google sign-in origin, and a new version of the app's agent package.
+           Sign-in return addresses (mold_v0-270, lib/sign_in_check.py): BEFORE anything is switched it prints every
+           OAuth return address made of the front door that will change (old and new, and where each is registered), so
+           the providers can be updated first; `switch --dry-run` prints only that and changes nothing. After the switch
+           it asks the providers about the new addresses; one that fails ends the run as needs_human (exit 3) with the
+           plain ask, click by click.
 
 The *.vercel.app address keeps working after a switch; nothing is taken away.
 
@@ -272,12 +277,51 @@ def verify_single(d, man, quiet):
         print(said)
     return 0 if ok else 1
 
+def redirect_changes(app_id, infra, new_url, say=print):
+    """Before a switch (mold_v0-270): every sign-in return address made of the front door that changes, old -> new, and
+    where it is registered: from the last reading (provision.py's check, deploy or --sign-in-check), else every
+    front-door address the mold has. Changes nothing."""
+    sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import sign_in_check as SIC
+    old = (infra.get("vercel") or {}).get("production_url") or ""
+    if old.rstrip("/") == new_url.rstrip("/"):
+        say(f"sign-in return addresses: {new_url} is already the front door; none change"); return []
+    flows = ((infra.get("sign_in_redirects") or {}).get("flows")) or None
+    ch = SIC.changes(old, new_url, flows)
+    say(f"sign-in return addresses that change with the front door ({old} -> {new_url}); add each new one at its provider FIRST "
+        f"(the old ones keep working until you remove them):" if ch else "sign-in return addresses: none of this app's sign-ins return to the front door")
+    for c in ch:
+        say(f"  {c['label']}:  {c['old']}  ->  {c['new']}")
+        say(f"      where: {c['where']}")
+    if not flows: say(f"  (no reading recorded yet; the exact list is in: python3 .claude/scripts/provision.py {app_id} --sign-in-check)")
+    return ch
+
+def sign_in_after(app_id, infra, cwd):
+    """After a switch (mold_v0-270): the providers asked about the new front door's addresses. None: not read."""
+    P = _provision(); sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import single_service as SS
+    names = SS.vercel_projects(SS.vercel_project(infra))
+    return SS.SIGN_IN(app_id, {}, infra, P, cwd, names, {r: True for r in names})
+
+def sign_in_said(app_id, infra, p, res):
+    """Record and print the reading after a switch; 3 (needs_human, the plain ask noted) when a sign-in fails, else 0."""
+    if not res: return 0
+    sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import sign_in_check as SIC
+    SIC.record(infra, res); save(infra, p)
+    for l in SIC.lines(res): print(l)
+    a = SIC.ask(app_id, res)
+    if not a: return 0
+    print("  " + a.replace("\n", "\n  "))
+    AR.need("approval", "sign-in return addresses", a)
+    AR.note(summary=f"{app_id} now answers on {res.get('front_door')}, but {len(SIC.failing(res))} sign-in(s) still return to the old address",
+            next=f"the operator adds the new address at the provider, then: python3 .claude/scripts/provision.py {app_id} --sign-in-check")
+    return AR.EXIT["needs_human"]
+
 def switch_single(app_id, infra, p, man):
     v = infra["vercel"]; d = v["custom_domain"]; url = f"https://{d}"
     api = (v.get("projects") or {}).get("api") or f"{v['project']}-api"
     cwd = os.path.join(ROOT, "build", app_id) if os.path.isdir(os.path.join(ROOT, "build", app_id)) else ROOT
     ok, why = console_owns(infra, url, cwd)
     if not ok: sys.exit(f"{why}\nnothing was switched: a deploy keeps {d} as the front door only when Vercel files it under the console project {v['project']}")
+    redirect_changes(app_id, infra, url)
     held = env_names(cwd, api)
     # mold_v0-045: an app deployed before then holds the old spelling (OCTILLION_CONSOLE_URL): it gets the same value, so a
     # release that still reads it (or one rolled back to) links to the new front door too.
@@ -305,7 +349,7 @@ def switch_single(app_id, infra, p, man):
         n += 1; print(f"  {n}. Clerk: a production Clerk instance is tied to one domain (its publishable key names it). For {d} the operator either moves the instance to it or adds it as a satellite domain in the Clerk dashboard, including the DNS records Clerk lists; until then Clerk sign-in may not load on the new address")
     if infra.get("agent_cli"):
         n += 1; print(f"  {n}. a new version of {infra['agent_cli']['package']} with the new address: python3 .claude/scripts/agent_cli.py {app_id} publish")
-    return 0
+    return sign_in_said(app_id, infra, p, sign_in_after(app_id, infra, cwd))
 
 def status(app_id):
     infra, _ = docs(app_id); v = infra["vercel"]; d = v.get("custom_domain")
@@ -367,11 +411,17 @@ def verify(app_id, quiet=False):
         print(f"https://{d}/api/ops/health: {'200, the app answers' if ok else 'no answer from the app yet'}")
     return 0 if ok else 1
 
-def switch(app_id):
+def switch(app_id, dry=False):
+    if dry:
+        infra, _ = docs(app_id); d = infra["vercel"].get("custom_domain")
+        if not d: sys.exit("no domain is attached yet")
+        redirect_changes(app_id, infra, f"https://{d}")
+        print("nothing was switched (--dry-run)"); return 0
     if verify(app_id, quiet=True): sys.exit("the domain does not serve the app yet, so nothing was switched")
     infra, p = docs(app_id); man = single(app_id)
     if man: return switch_single(app_id, infra, p, man)
     v = infra["vercel"]; d = v["custom_domain"]; url = f"https://{d}"
+    redirect_changes(app_id, infra, url)
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import provision
     cwd = os.path.join(ROOT, "build", app_id) if os.path.isdir(os.path.join(ROOT, "build", app_id)) else ROOT
@@ -403,7 +453,7 @@ def single_self_test():
     domain list and its env writes are stand-ins here, and socket/subprocess/urlopen refuse if anything tries the real
     thing. Returns the number of checks."""
     import contextlib, io, shutil, tempfile
-    g = globals(); keep = {k: g[k] for k in ("ROOT", "resolves", "read_health", "healthy", "console_owns", "set_env", "env_names", "vapi")}
+    g = globals(); keep = {k: g[k] for k in ("ROOT", "resolves", "read_health", "healthy", "console_owns", "set_env", "env_names", "vapi", "sign_in_after")}
     real = (socket.getaddrinfo, subprocess.run, urllib.request.urlopen)
     def refuse(*a, **k): raise AssertionError("the self-test tried to reach the network or run a command")
     sys.path.insert(0, os.path.join(SCRIPTS, "lib"))
@@ -439,6 +489,8 @@ def single_self_test():
         g["console_owns"] = lambda infra, url, cwd: (owns["ok"], "Vercel files it under mv0" if owns["ok"] else "it is not filed under mv0")
         g["set_env"] = lambda name, value, cwd, project: wrote.append((project, name, value))
         g["env_names"] = lambda cwd, project: {"OCTILLION_CONSOLE_URL", "PUBLIC_URL"}
+        si = {"res": None, "asked": []}   # the providers' reading after a switch (mold_v0-270): a stand-in
+        g["sign_in_after"] = lambda app_id, infra, cwd: si["asked"].append(infra["vercel"]["production_url"]) or si["res"]
         # Vercel's project-domain API, as measured: POST /v10 adds (verified or waiting for a TXT record), or refuses
         # with domain_not_owned for an apex another account files; GET /v9 is 404 "Project Domain not found" when the
         # domain is not on the project; POST /v9/.../verify turns verified once the owner's TXT record is there.
@@ -512,7 +564,11 @@ def single_self_test():
         assert "the MCP address is https://mv0.example.com/mcp" in out, out; n += 1
         assert i["vercel"]["production_url"] == "https://mv0.example.com" and i["vercel"]["custom_domain"] == "mv0.example.com"; n += 1
         assert "WEB_ORIGIN" not in out and "provision.py mv0 --deploy" in out and "/api/auth/google/callback" in out and "CLERK_AUTHORIZED_PARTIES" not in out, out; n += 1
-        assert out.index("redeploy") < out.index("Google"); n += 1
+        todo = out[out.index("still to do"):]; assert todo.index("redeploy") < todo.index("Google"); n += 1
+        # mold_v0-270: before anything is written, every front-door return address that changes, old -> new, and where
+        assert "sign-in return addresses that change" in out and "https://mv0.vercel.app/api/github-app/callback  ->  https://mv0.example.com/api/github-app/callback" in out \
+            and out.index("sign-in return addresses that change") < out.index("front door:"), out; n += 1
+        assert si["asked"] == ["https://mv0.example.com"], si; n += 1   # and the providers asked about the new front door
 
         # an explicit CLERK_AUTHORIZED_PARTIES on the API is named, as it overrides the origins made from the address
         g["env_names"] = lambda cwd, project: {"CLERK_AUTHORIZED_PARTIES", "GOOGLE_REDIRECT_URI"}; wrote.clear()
@@ -522,6 +578,25 @@ def single_self_test():
         g["env_names"] = lambda cwd, project: set(); wrote.clear()
         rc, out = run(switch, "mv0"); assert rc == 0 and "not the old one" in out and "satellite" in out, out; n += 1
         assert wrote == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "APP_MCP_URL", "https://mv0.example.com")], f"a new app (no old name held): the new names only: {wrote}"; n += 1
+
+        # mold_v0-270: from the last reading (only the sign-ins the app uses); a failing one after the switch: exit 3, the ask
+        sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import sign_in_check as SIC
+        i = load(ip); i["vercel"]["production_url"] = "https://mv0.vercel.app"
+        i["sign_in_redirects"] = {"flows": [{"id": "google", "label": "Google (the app's own sign-in)", "path": "/api/auth/google/callback", "where": SIC.GOOGLE_WHERE, "result": "pass"},
+                                            {"id": "clerk.oauth_google", "label": "Google (through Clerk)", "path": None, "result": "pass"}]}
+        save(i, ip)
+        nu = "https://mv0.example.com/api/auth/google/callback"
+        si["res"] = SIC.finish({"at": "t", "front_door": "https://mv0.example.com", "notes": [], "flows": [{"id": "google", "label": "Google (the app's own sign-in)", "provider": "google",
+            "redirect_uri": nu, "path": "/api/auth/google/callback", "result": "fail", "detail": "Google answered redirect_uri_mismatch", "where": SIC.GOOGLE_WHERE, "steps": SIC.google_steps(nu), "client": None}]})
+        rc, out = run(switch, "mv0", True)
+        assert rc == 0 and "nothing was switched (--dry-run)" in out and "https://mv0.vercel.app/api/auth/google/callback  ->  " + nu in out and "Clerk" not in out \
+            and load(ip)["vercel"]["production_url"] == "https://mv0.vercel.app", out; n += 1
+        AR.reset(); wrote.clear()
+        rc, out = run(switch, "mv0")
+        i = load(ip)
+        assert rc == 3 and AR.NOTES["needs"][0]["name"] == "sign-in return addresses" and nu in AR.NOTES["needs"][0]["how"] and "Authorized redirect URIs" in out \
+            and i["sign_in_redirects"]["totals"]["fail"] == 1 and i["vercel"]["production_url"] == "https://mv0.example.com", (rc, out); n += 1
+        si["res"] = None
 
         # ---- attach through the project API; nothing recorded unless Vercel holds it -------------------------------
         mp = os.path.join(tmp, "state", "application", "mv1", "infrastructure.json")
@@ -593,7 +668,7 @@ def main(a):
     if len(a) >= 2 and a[1] == "status": return status(a[0])
     if len(a) == 3 and a[1] == "attach": return attach(a[0], a[2])
     if len(a) == 2 and a[1] == "verify": return verify(a[0])
-    if len(a) == 2 and a[1] == "switch": return switch(a[0])
+    if len(a) in (2, 3) and a[1] == "switch" and (len(a) == 2 or a[2] == "--dry-run"): return switch(a[0], dry=len(a) == 3)
     sys.exit(__doc__)
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))

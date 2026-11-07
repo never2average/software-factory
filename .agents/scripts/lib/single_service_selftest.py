@@ -7,6 +7,8 @@ import json, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import single_service as SS, vm_remote as VR
+# The sign-in return addresses (mold_v0-270) are read from the providers: never here (a case below puts a reading in).
+SS.SIGN_IN = lambda *a, **k: None
 
 ROOT = SS.ROOT
 COMPOSE = """name: shop
@@ -1141,6 +1143,34 @@ def run():
             AR.reset(); said = []
             rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(api_extra={"AUTH_PROVIDER": "builtin"}), say=said.append, root=t, read_json=lambda u: ok(False, "a built-in app never asks Clerk") or (None, None, ""))
             ok(rc == 0 and not AR.NOTES["needs"] and any("built-in sign-in" in l for l in said), "check: AUTH_PROVIDER=builtin keeps Clerk out of it")
+            # mold_v0-270: the sign-in return addresses: said at the check (exit 3, ready otherwise), recorded after a deploy that stands
+            gu = "https://zz-shop.vercel.app/api/auth/google/callback"
+            bad_si = {"at": "t", "front_door": "https://zz-shop.vercel.app", "notes": [], "flows": [{"id": "google", "label": "Google (the app's own sign-in)", "provider": "google",
+                      "redirect_uri": gu, "path": "/api/auth/google/callback", "result": "fail", "detail": "Google answered redirect_uri_mismatch", "where": SS.SIC.GOOGLE_WHERE,
+                      "steps": SS.SIC.google_steps(gu), "client": None}]}
+            keep_si = SS.SIGN_IN; SS.SIGN_IN = lambda *a_, **k_: SS.SIC.finish(json.loads(json.dumps(bad_si)))
+            try:
+                AR.reset(); said = []
+                rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(), say=said.append, root=t, read_json=reg_on)
+                nd_ = AR.NOTES["needs"]
+                ok(rc == 3 and [(n_["kind"], n_["name"]) for n_ in nd_] == [("approval", "sign-in return addresses")] and "Authorized redirect URIs" in nd_[0]["how"] and gu in nd_[0]["how"]
+                   and any("FAIL" in l for l in said) and any("a deploy does not wait" in l for l in said),
+                   f"check: a sign-in that fails is said with its address and the plain ask, exit 3, the deploy still ready: {said[-3:]} {nd_}")
+                AR.reset(); said = []; vi_s = cp(vi); err = ""
+                try: rc = SS.vercel_deploy("zz_shop", dict(koff), vi_s, vdir, clerk_fp(), say=said.append, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_on)
+                except SS.Stop as e: err = str(e)
+                rec_ = json.load(open(os.path.join(vdir, "infrastructure.json")))
+                ok(not err and rc == 3 and rec_.get("deployed_at") and rec_["sign_in_redirects"]["totals"]["fail"] == 1 and "steps" not in json.dumps(rec_["sign_in_redirects"])
+                   and AR.NOTES["needs"] and any("deployed." in l for l in said),
+                   f"deploy: done and recorded, the failing sign-in recorded and asked for (exit 3), never a rollback: {err[:200]} {said[-2:]}")
+                st_ = SS.station("deploy", "zz_shop", dict(koff, status="stamped", mold_commit=SS.mold_commit(koff["mold_id"], t)), rec_, t)
+                ok(st_ and "needs you: Google" in st_[1], f"mint's deploy station names it: {st_}")
+                good = json.loads(json.dumps(bad_si)); good["flows"][0]["result"] = "pass"
+                SS.SIGN_IN = lambda *a_, **k_: SS.SIC.finish(json.loads(json.dumps(good)))
+                AR.reset(); said = []
+                rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(), say=said.append, root=t, read_json=reg_on)
+                ok(rc == 0 and not AR.NOTES["needs"] and any("1 pass, 0 fail" in l for l in said), f"check: every sign-in passing: ready: {said[-2:]}")
+            finally: SS.SIGN_IN = keep_si
             # the deploy: the console's key copied onto the API before its first deploy; a proxy address kept; the end says Clerk's setting
             AR.reset(); fpc = clerk_fp(); said = []; err = ""
             try: SS.vercel_deploy("zz_shop", dict(koff), cp(vi), vdir, fpc, say=said.append, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_off)

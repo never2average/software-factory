@@ -111,6 +111,7 @@ sys.path.insert(0, HERE)
 import vm_remote as VR   # the host probe, SSH/rsync argv, DNS check, key pair, hidden prompt, env file, firewall rules
 import clerk_mcp         # Clerk as the sign-in AI clients use on /mcp (mold_v0-116)
 import ledger_key as LK  # keys the factory makes because of the profile: APP_LEDGER_SIGNING_KEY with audit.sign (mold_v0-227)
+import sign_in_check as SIC  # every sign-in's return address against the front door, at the providers (mold_v0-270)
 
 SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
@@ -1888,7 +1889,15 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
             say(f"  NOTE: Clerk ({clerk_mcp.host_of(fr)}) lets no AI client register itself ({reg['said']}), so AI clients cannot sign in on /mcp yet.")
             for l in clerk_mcp.ask(app_id, fr, clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)).splitlines(): say("    " + l)
     say(f"{app_id}: deployed. The console {url} ({web}; {K['proxied_health']} reaches the API, {', '.join(f'{p} {c}' for p, c in h['pages'].items())}); "
-        f"the API {api_url} ({api}; {man['health_path']} 200 ok)"); return 0
+        f"the API {api_url} ({api}; {man['health_path']} 200 ok)")
+    # Every sign-in's return address at the front door it now serves (mold_v0-270): recorded; a failure never undoes the
+    # deploy, it ends as needs_human with the plain ask.
+    try: si = SIGN_IN(app_id, app, infra, P, cb, names, {r: True for r in names})
+    except Exception as e: si = None; say(f"  sign-in return addresses: not checked ({type(e).__name__})")
+    if si:
+        SIC.record(infra, si); save(ipath, infra)
+        if sign_in_said(app_id, si, say): return 3
+    return 0
 
 def clerk_reading(app_id, app, man, cb, names, exists, P, root=None, read_json=None, api_held=None):
     """The /mcp sign-in reading for a Vercel app (mold_v0-116; lib/clerk_mcp.py judge), from the two projects' values
@@ -1900,6 +1909,46 @@ def clerk_reading(app_id, app, man, cb, names, exists, P, root=None, read_json=N
     vals = {r: (P.pull_env(cb, n, required=False) if exists.get(r) else {}) for r, n in names.items()}
     keys_off = clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)
     return clerk_mcp.judge(app_id, man, vals.get("api") or {}, vals.get("web") or {}, keys_off, read_json)
+
+# ---------------------------------------------------------------------------------------------------------
+# Sign-in return addresses (mold_v0-270; lib/sign_in_check.py): at the check, after every deploy, with --sign-in-check
+# ---------------------------------------------------------------------------------------------------------
+def real_sign_in(app_id, app, infra, P, cb, names, exists):
+    """Every sign-in's return address for the app's CURRENT front door (its own domain after domain.py switch), asked of
+    the providers; the two projects' values pulled and held in memory, never printed. None: no address yet. In a
+    rehearsal nobody is asked: FACTORY_SIGN_IN_CHECK may script the reading (a JSON result), as provision.py's self-test does."""
+    import services
+    v = infra.get("vercel") or {}
+    if not v.get("production_url") or not infra.get("deployed_at"): return None
+    if services.REHEARSAL:
+        try: scripted = json.loads(os.environ.get("FACTORY_SIGN_IN_CHECK") or "null")
+        except ValueError: scripted = None
+        return SIC.finish(dict(scripted, at=SIC._now())) if isinstance(scripted, dict) and isinstance(scripted.get("flows"), list) else None
+    vals = {r: (P.pull_env(cb, n, required=False) if exists.get(r) else {}) for r, n in names.items()}
+    return SIC.check(app_id, v["production_url"], v.get("api_url"), vals.get("api") or {}, vals.get("web") or {})
+SIGN_IN = real_sign_in   # what reads it (lib/single_service_selftest.py puts a stand-in here: it would ask the providers)
+
+def sign_in_said(app_id, res, say):
+    """Print the reading; when a sign-in fails, the plain ask and its needs_human (a failing check never blocks a deploy).
+    -> True when the operator is needed."""
+    if not res: return False
+    for l in SIC.lines(res): say(l)
+    a = SIC.ask(app_id, res)
+    if not a: return False
+    import agent_result as AR
+    say("  " + a.replace("\n", "\n  "))
+    AR.need("approval", "sign-in return addresses", a)
+    return True
+
+def sign_in_only(app_id, app, infra, adir, P, say=print, root=None):
+    """`provision.py <app> --sign-in-check`: the reading alone, recorded in infrastructure.json sign_in_redirects. Reads
+    the providers and the deploy target only. Exit 0 nothing fails, 3 a sign-in needs the operator."""
+    cb = codebase(app["mold_id"], root); names = vercel_projects(vercel_project(infra))
+    res = SIGN_IN(app_id, app, infra, P, cb, names, {r: bool(P._project_meta(n, cb).get("id")) for r, n in names.items()})
+    if not res: say(f"{app_id}: not deployed yet, so it has no address to check sign-ins against."); return 0
+    SIC.record(infra, res)
+    if adir: save(os.path.join(adir, "infrastructure.json"), infra)
+    return 3 if sign_in_said(app_id, res, say) else 0
 
 # ---------------------------------------------------------------------------------------------------------
 # Clerk on every deploy (mold_v0-265; mold.json sign_in_required)
@@ -2042,6 +2091,8 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
         say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
     ck = clerk_reading(app_id, app, man, cb, names, {r: bool(meta[r].get("id")) for r in names}, P, root, read_json, api_held=present["api"])
     for l in (ck or {}).get("lines") or []: say(l)
+    si = SIGN_IN(app_id, app, infra, P, cb, names, {r: bool(meta[r].get("id")) for r in names})
+    si_needed = sign_in_said(app_id, si, say)
     say_run_needs(app_id, app, "vercel", say=say, root=root)
     say("a deploy will:")
     for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
@@ -2082,6 +2133,9 @@ def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     pg = os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json"))
     if "DATABASE_URL" not in present["api"] and not pg:
         say(f"  - install the mold's dependencies first (the database emptiness check uses its own `pg` client): npm --prefix {os.path.relpath(cb, root or ROOT)} ci"); return 1
+    if si_needed:
+        say(f"Ready to deploy, but a sign-in needs you first (above); a deploy does not wait for it. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
+        return 3
     say(f"Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
     return 0
 
@@ -2224,6 +2278,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                 except (NeedsHuman, NotBuilt): raise          # nothing was tried, so nothing is reverted
                 except Stop as e: revert(adir, app, str(e)); raise
             if "--verify-rls" in a: return verify_rls(app_id, app, infra, adir, P, say=say, root=root)
+            if "--sign-in-check" in a: return sign_in_only(app_id, app, infra, adir, P, say=say, root=root)
             for f in ("--rollback", "--smoke", "--verify-db"):
                 if f in a: raise Stop(f"{app_id}: {f} belongs to mold_v1's three-project deploy; this app's --deploy checks both of its projects and rolls both back itself, and its lanes do the rest.")
             return vercel_check(app_id, app, infra, P, say=say, root=root)
@@ -2311,7 +2366,8 @@ def station(name, app_id, a, i, root=None):
         if a.get("status") == "reverted": return (TODO, "a lane failed or a deploy stopped; redeploy once the cause is fixed")
         now_c = mold_commit(a["mold_id"], root); was = a.get("mold_commit")
         if was and now_c and was != now_c: return (TODO, f"the mold moved ({was[:7]} -> {now_c[:7]}); redeploy to pick it up")
-        return (DONE, f"{url} (deployed {i['deployed_at'][:16]})")
+        si = SIC.recorded_line(i)
+        return (DONE, f"{url} (deployed {i['deployed_at'][:16]})" + (f"; {si}" if si else ""))
     if name == "tests":
         tt = a.get("testing") or {}; dep = i.get("deployed_at") or ""
         if any((tt.get(l) or {}).get("status") == "fail" for l in tt): return (FAILED, "a lane failed; its report is named in application.json testing")

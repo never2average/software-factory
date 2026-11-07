@@ -421,6 +421,8 @@ def show(app, rows=None):
     print("  " + repository_line(app))
     g = google_line(app)
     if g: print("  " + g)
+    si = sign_in_line(app)
+    if si: print("  " + si)
     print("\n" + (f"finished: nothing is left to do." if not nxt else
                   f"next: {nxt[0]} — {'this one needs the operator. ' if nxt[1] == OPERATOR else ''}{nxt[2]}" + ("" if nxt[1] != TODO else f"\n      python3 .claude/scripts/mint.py {app} run")))
     return rows
@@ -430,6 +432,15 @@ def google_line(app):
     try:
         sys.path.insert(0, os.path.join(S, "lib")); import google_signin
         return google_signin.recorded_line(docs(app)[1])
+    except Exception: return ""
+
+def sign_in_line(app):
+    """The last reading of every sign-in's return address (lib/sign_in_check.py, mold_v0-270), or "" before any. A
+    failing one never blocks a station: the deploy stands; the operator adds the address at the provider."""
+    try:
+        sys.path.insert(0, os.path.join(S, "lib")); import sign_in_check
+        line = sign_in_check.recorded_line(docs(app)[1])
+        return line + (f" (the steps: python3 .claude/scripts/provision.py {app} --sign-in-check)" if "needs you" in line else "")
     except Exception: return ""
 
 def repository_line(app):
@@ -453,7 +464,12 @@ def do(app, name):
         return py(*args).returncode in (0,)
     if name == "deploy" and single_service.applies(a, ROOT):
         # Its own compose stack on its own server, or two Vercel projects (the API and the console): no sign-in, no smoke chat (mold_v0-028/029).
-        return py(os.path.join(S, "provision.py"), app, "--deploy-remote" if i.get("target") == "compose_remote" else "--deploy").returncode == 0
+        was = (i or {}).get("deployed_at")
+        rc = py(os.path.join(S, "provision.py"), app, "--deploy-remote" if i.get("target") == "compose_remote" else "--deploy").returncode
+        # 3 after a deploy that stands, when a sign-in's return address needs the operator (mold_v0-270): the deploy is
+        # done; the deploy station says which sign-in, and provision.py <app> --sign-in-check gives the steps again.
+        _, i2 = docs(app)
+        return rc == 0 or (rc == 3 and (i2 or {}).get("deployed_at") != was and ((i2 or {}).get("sign_in_redirects") or {}).get("totals", {}).get("fail", 0) > 0)
     if name == "deploy" and (i or {}).get("target") == "vercel" and st_deploy(app, a, i)[1] == SMOKE_PENDING:
         return py(os.path.join(S, "provision.py"), app, "--smoke").returncode == 0
     if name == "deploy":
@@ -740,6 +756,19 @@ def self_test():
         assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # the surface changed in state: written again
     finally:
         globals()["adir"] = real_adir; shutil.rmtree(tmp, ignore_errors=True)
+    # mold_v0-270: the last sign-in reading is one printed line; a failing one names the sign-in and the command with the steps
+    real_docs = globals()["docs"]
+    try:
+        globals()["docs"] = lambda app: ({}, {"sign_in_redirects": {"at": "2026-11-07T10:00:00+00:00", "totals": {"pass": 2, "fail": 1, "unknown": 1},
+                                                                    "flows": [{"label": "Google (through Clerk)", "result": "fail"}]}})
+        line = sign_in_line("x")
+        assert line.startswith("sign-in return addresses (2026-11-07T10:00): 2 pass, 1 fail, 1 unknown; needs you: Google (through Clerk)") and "provision.py x --sign-in-check" in line, line
+        globals()["docs"] = lambda app: ({}, {})
+        assert sign_in_line("x") == ""
+    finally: globals()["docs"] = real_docs
+    import inspect as _insp
+    src = _insp.getsource(do)
+    assert 'rc == 3 and (i2 or {}).get("deployed_at") != was' in src and '"fail", 0) > 0' in src, "a deploy that stands while a sign-in needs the operator counts as deployed"
     # the repository is one printed line, never a station, and nothing is pushed unless state says auto_push is true
     import repo
     assert repo.status_line({}, "x") == "repository: none (ask for one: repo.py x publish --provider github|gitlab --dry-run)"

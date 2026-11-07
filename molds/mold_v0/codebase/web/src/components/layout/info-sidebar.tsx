@@ -14,26 +14,12 @@ import {
   useInfobar
 } from '@/components/ui/infobar';
 
-// Default/fallback data when no content is set
-const defaultData = {
-  title: 'Documentation',
-  sections: [
-    {
-      title: 'Getting Started',
-      description: 'Learn how to get started with this application.',
-      links: [
-        {
-          title: 'Installation Guide',
-          url: '#'
-        }
-      ]
-    }
-  ]
-};
-
+// No placeholder (mold_v0-270): the panel shows only the help a page gives it (Heading's infoContent, through
+// InfoButton). A page with none has no panel and no rail, never "Getting Started / Installation Guide #".
 export function InfoSidebar({ ...props }: React.ComponentProps<typeof Infobar>) {
   const { content } = useInfobar();
-  const data = content || defaultData;
+  if (!content) return null;
+  const data = content;
 
   return (
     <Infobar {...props}>
