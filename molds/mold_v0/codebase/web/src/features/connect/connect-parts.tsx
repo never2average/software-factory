@@ -125,8 +125,9 @@ export function SetupEmail({ clients, current, preview, actions, note }: {
             const on = chosen.includes(c.id), id = `${uid}-${c.id}`;
             return (
               <label key={c.id} htmlFor={id} className={cn('flex min-w-0 items-center gap-2 text-sm', !on && chosen.length >= MAX_EMAIL_CLIENTS && 'opacity-50')}>
+                {/* A visible box while unticked too: the theme's input line is too faint on a white card. */}
                 <Checkbox id={id} checked={on} disabled={!on && chosen.length >= MAX_EMAIL_CLIENTS} onCheckedChange={(v) => toggle(c.id, Boolean(v))}
-                  data-client={c.id} data-client-name={c.client} />
+                  className='border-muted-foreground/60 bg-background dark:border-muted-foreground/70' data-client={c.id} data-client-name={c.client} />
                 <span className='truncate'>{c.client}</span>
               </label>
             );
