@@ -32,7 +32,7 @@ Only recognised lines change state; a sentence of description never does, whatev
 - **`Key: value` lines**, and sentences that start with one ("Customer: internal. Owner: ops@example.com."):
   `Customer:`, `Owner:` (or `Operator:`), `Members:`, `Domain:`, `Server address:`, `Product:`, `Packs:`,
   `Brand colour:`, `Primary context:`, `Multiplayer:`, `Workflows:`. `Product name:`, `Mold:`, `Workspace:`, `Brand:`,
-  `Logo:`, `Tagline:`, `Admins:`, `Speech model:`, `Speech language:`, `Kind:` and `Run keys:` count only at the very
+  `Logo:`, `Tagline:`, `Avatar colours:`, `Admins:`, `Speech model:`, `Speech language:`, `Kind:` and `Run keys:` count only at the very
   start of a line. A
   line's value is read for its own setting only: "Tagline: one workspace for every shared desk" changes nothing else.
 - **Setting sentences**: a sentence, or a comma clause, that starts with one of the phrases above: "Deploy on vercel.",

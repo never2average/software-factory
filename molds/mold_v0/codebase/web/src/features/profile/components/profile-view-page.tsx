@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { useSession, useUser } from '@clerk/nextjs';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { IdentityAvatar } from '@/components/identity-avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,14 +44,13 @@ function ClerkProfileViewPage() {
     .then((done) => toast.success(done.length ? `Signed out of ${done.length} other device${done.length === 1 ? '' : 's'}` : 'No other devices were signed in'))
     .catch(fail);
   const email = user.primaryEmailAddress?.emailAddress ?? '—';
-  const initials = (full || email).split(/[\s@]+/).map((x) => x[0]).slice(0, 2).join('').toUpperCase();
 
   return (
     <PageContainer pageTitle='Profile'>
       <div className='flex max-w-xl flex-col gap-6'>
         <div className='flex items-center gap-4'>
           <button type='button' onClick={() => file.current?.click()} className='group border-border relative rounded-full border p-0.5' aria-label='Change photo' title='Change photo'>
-            <Avatar className='size-16'><AvatarImage src={user.imageUrl} alt='' /><AvatarFallback>{initials}</AvatarFallback></Avatar>
+            <IdentityAvatar className='size-16' textClassName='text-xl' id={user.id} name={full} email={user.primaryEmailAddress?.emailAddress} imageUrl={user.imageUrl} hasImage={user.hasImage} />
             <span className='bg-background/70 absolute inset-0 hidden items-center justify-center rounded-full text-xs group-hover:flex'>Change</span>
           </button>
           <input ref={file} type='file' accept='image/png,image/jpeg,image/webp,image/gif' className='hidden' onChange={upload} />

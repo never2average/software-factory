@@ -7,6 +7,9 @@
   branding.py <app_id> set --agent-icon <file.svg|.png|.jpg|.webp> | --agent-icon-name <name> [--agent-icon-dark <file>]
                                             the workspace agent's icon (mold_v0-252; the top bar's agent button and the
                                             agent pages' heading); --agent-icon none goes back to the console's default
+  branding.py <app_id> set --avatar-colors "#RRGGBB,#RRGGBB,..." | auto
+                                            the colours people's and organisations' avatars are drawn in (mold_v0-275);
+                                            derived from --color unless given; auto derives them again
   branding.py <app_id> share-image <file.png>|none
                                             the brand's own share image (what a shared link shows; mold_v0-093), for a
                                             mold whose rules take one: recorded with its sha256, copied by `prepare`
@@ -53,6 +56,17 @@ and kept as a PNG, never wrapped in an SVG as base64 (the favicon rule below). `
 web/public/agent-icon/ and the profile's `agent_icon` (their addresses, and whether the console paints it in the text
 colour) before the mold's generator runs; `check` finds a copy without them. Unset, the console's default icon stays, and a
 workspace owner may still bring their own in Settings › Workspace agent (the workspace's, over the app's).
+
+THE AVATAR COLOURS (mold_v0-275). A mold whose rules.json has `avatar_palette` (mold_v0) draws every person and
+organisation without an uploaded picture itself: a soft gradient of two of these colours with their initials in white,
+the pair chosen from the person's or organisation's id so it never changes; an uploaded picture is shown as it is. `set`
+derives five colours from the brand colour (its hue and its neighbours 18 and 36 degrees either side, never a purple one
+unless the brand is purple, each dark enough for white initials at 4.5:1 in light and dark) and keeps them in the brand
+(`avatar_colors`); `--avatar-colors "#RRGGBB,..."` pins 3 to 8 of the app's own (refused when white initials would not
+read on one), `--avatar-colors auto` derives them again, and a new --color derives them again too (like pinned tokens).
+`prepare` writes them into the profile file's `avatar_palette` before the mold's generator runs (a brand set before
+this has them derived from its colour then); `check` finds a copy without them. A brand with no colour has none: the
+console's default is five shades of its theme's primary colour (the theme's --avatar-* tokens).
 
 THE SHARE IMAGE (mold_v0-093). A mold whose rules.json has `share_image` draws the picture a shared link shows from
 the app's words and brand. A brand may bring its own instead: `share-image brands/<name>/share-image.png` checks it is a
@@ -185,6 +199,116 @@ def palette(brand_hex, neutral_chroma=0.006):
     pal = {"light": light, "dark": dark}
     contrast_guard(pal)
     return pal
+
+# --------------------------------------------------------- avatar colours ----
+# mold_v0-275: people and organisations without an uploaded picture are drawn by the console itself (a soft gradient
+# with their initials in white), in colours from the brand: never the sign-in provider's generated pictures. `set`
+# derives them from the brand colour; `--avatar-colors` pins the app's own.
+AVATAR_MIN, AVATAR_MAX = 3, 8
+AVATAR_WHITE = "oklch(1 0 0)"
+AVATAR_TEXT_CONTRAST = 4.5           # white initials on every colour: WCAG AA for small text
+AVATAR_PURPLE = (278, 335)           # oklch hues that read as violet or purple (at a chroma of 0.04 or more)
+
+def _raw_srgb(L, C, H):
+    """oklch -> linear-light sRGB, NOT clipped (to tell whether the colour is inside sRGB)."""
+    import math
+    a, b = C * math.cos(math.radians(H)), C * math.sin(math.radians(H))
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l, m, s3 = l_ ** 3, m_ ** 3, s_ ** 3
+    return (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s3,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s3,
+            -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s3)
+
+def _hex_of(L, C, H):
+    r, g, b = _oklch_to_srgb(oklch(L, C, H))
+    return "#" + "".join(f"{round(x * 255):02X}" for x in (r, g, b))
+
+def avatar_contrast(hex_colour):
+    """WCAG contrast of white initials on this colour."""
+    return contrast(hex_to_oklch(hex_colour), AVATAR_WHITE)
+
+def avatar_palette(brand_colour):
+    """Five colours for the drawn avatars, from one brand colour: the brand's hue and four neighbours (18 and 36 degrees
+    either side, so they sit together; never a purple one unless the brand is purple), at lightnesses that keep white
+    initials at 4.5:1 or more, chroma capped so the colours stay soft and inside sRGB. A grey brand gives greys."""
+    L, C, H = parse_oklch(brand_colour if str(brand_colour).startswith("oklch") else hex_to_oklch(brand_colour))
+    c0 = min(C, 0.15)
+    purple = lambda h: AVATAR_PURPLE[0] <= h % 360 <= AVATAR_PURPLE[1]
+    # A neighbour that would be purple is skipped unless the brand itself is purple (an indigo brand's warm-side
+    # neighbours are violet): the next one on the list, further round the other side, is taken instead. The brand's own
+    # hue always stays (a grey brand's hue is only a trace).
+    brand_purple = purple(H) and C >= 0.04
+    offsets = [d for d in (0, -18, 18, -36, 36, -54, 54, -72, 72) if d == 0 or brand_purple or not purple(H + d)][:5]
+    out = []
+    for dh, (lightness, cf) in zip(offsets, ((0.50, 1.0), (0.45, 0.9), (0.53, 0.8), (0.42, 0.75), (0.48, 0.7))):
+        h, c, l = (H + dh) % 360, c0 * cf, lightness
+        while c > 0.002 and any(x < -1e-4 or x > 1 + 1e-4 for x in _raw_srgb(l, c, h)): c -= 0.002
+        hx = _hex_of(l, c, h)
+        while avatar_contrast(hx) < AVATAR_TEXT_CONTRAST + 0.1 and l > 0.2:
+            l -= 0.01; hx = _hex_of(l, c, h)
+        out.append(hx)
+    return out
+
+def avatar_colors_problem(colours):
+    """A sentence when these cannot be the avatar colours (3 to 8 #RRGGBB, each carrying white initials at 4.5:1), else ''."""
+    if not isinstance(colours, list) or not AVATAR_MIN <= len(colours) <= AVATAR_MAX:
+        return f"give {AVATAR_MIN} to {AVATAR_MAX} colours, comma-separated, like \"#1F6F5C,#2A5D7A,#4B6B3A\""
+    bad = [c for c in colours if not isinstance(c, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", c)]
+    if bad: return f"each avatar colour is #RRGGBB, not {', '.join(map(repr, bad))}"
+    if len({c.upper() for c in colours}) != len(colours): return "each avatar colour once"
+    low = [f"{c} ({avatar_contrast(c):.1f}:1)" for c in colours if avatar_contrast(c) < AVATAR_TEXT_CONTRAST]
+    if low: return f"white initials must read at {AVATAR_TEXT_CONTRAST}:1 on every avatar colour; too light: {', '.join(low)}. Choose darker ones"
+    return ""
+
+def parse_avatar_colors(arg):
+    """--avatar-colors "#RRGGBB,#RRGGBB,..." -> the list (upper-cased), or exits with the reason. "auto": None (derive)."""
+    if arg.strip().lower() == "auto": return None
+    cs = [x.strip().upper() for x in arg.split(",") if x.strip()]
+    why = avatar_colors_problem(cs)
+    if why: sys.exit(f"--avatar-colors: {why}. Nothing was written.")
+    return cs
+
+def mold_draws_avatars(mold_id):
+    """Whether this mold's console draws avatars in the brand's colours (its branding/rules.json has avatar_palette)."""
+    p = os.path.join(ROOT, "molds", str(mold_id or ""), "branding", "rules.json")
+    try: return bool(load(p).get("avatar_palette")) if os.path.isfile(p) else False
+    except ValueError: return False
+
+def brand_avatar_colors(b):
+    """The avatar colours a build of this brand gets: its own (pinned or derived at set), else derived from its colour now
+    (a brand set before mold_v0-275), else None (the console's default, shades of its theme's primary colour)."""
+    if b.get("avatar_colors"): return list(b["avatar_colors"])
+    if b.get("brand_color"): return avatar_palette(b["brand_color"])
+    return None
+
+def apply_avatar_palette(build_dir, b, rules):
+    """The avatar colours into the build copy's profile file (rules avatar_palette), before the mold's generator runs."""
+    spec = rules.get("avatar_palette"); cs = brand_avatar_colors(b)
+    if not spec or not cs: return []
+    why = avatar_colors_problem(cs)
+    if why: sys.exit(f"the brand's avatar colours: {why}; set them again: branding.py <app_id> set --avatar-colors ...")
+    p = os.path.join(build_dir, spec["profile_file"])
+    doc = load(p) if os.path.isfile(p) else {}
+    doc[spec["profile_field"]] = cs
+    if os.path.lexists(p): os.remove(p)                       # never write through a hard link into the mold
+    with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    return ["avatar_palette"]
+
+def avatar_palette_problems(build_dir, b, rules):
+    """What is wrong with a prepared copy's avatar colours ([] when right, or when the mold or the brand has none)."""
+    spec = rules.get("avatar_palette"); cs = brand_avatar_colors(b)
+    if not spec or not cs: return []
+    bad = []
+    p = os.path.join(build_dir, spec["profile_file"])
+    have = (load(p) if os.path.isfile(p) else {}).get(spec["profile_field"])
+    if have != cs: bad.append(f"{spec['profile_file']} {spec['profile_field']} is {have!r}, not the brand's {cs!r} (run prepare)")
+    for g in spec.get("generated") or []:
+        gp = os.path.join(build_dir, g); txt = open(gp).read() if os.path.isfile(gp) else ""
+        if f"{json.dumps(spec['profile_field'])}: " not in txt or any(json.dumps(c) not in txt for c in cs):
+            bad.append(f"{g} does not carry the brand's avatar colours (the generator was not re-run)")
+    return bad
 
 # ----------------------------------------------------------------- brand ----
 def resolve(app):
@@ -363,12 +487,14 @@ def agent_icon_block(icon, dark=None, mold_id="mold_v0"):
     if dark: out["dark_source"], out["dark"] = one(dark)
     return out
 
-def normalize(b, name=None, color=None, logo=None, tagline=None, agent_icon=None, agent_icon_dark=None, mold_id="mold_v0"):
+def normalize(b, name=None, color=None, logo=None, tagline=None, agent_icon=None, agent_icon_dark=None, mold_id="mold_v0", avatar_colors=None):
     """The complete brand block from the inputs (name, colour, logo, tagline), with every DERIVED field
     recomputed from them: description, icon colours, neutral tint, the inlined mark. Inputs the caller
     does not name keep their current value. Pinned tokens survive only while the colour is unchanged:
     they were tuned for that colour, and a pin left behind under a new one is how a brand ends up
-    with a grey primary in dark mode (seen on the first trial of this command)."""
+    with a grey primary in dark mode (seen on the first trial of this command). The avatar colours (mold_v0-275) follow
+    the same rule: derived from the colour, pinned by `avatar_colors` (a list, or "#RRGGBB,..." text; "auto" derives
+    them again), and a pin is dropped when the colour changes."""
     b = dict(b or {}); old_color = b.get("brand_color")
     if name: b["product_name"] = name.strip()
     if not b.get("product_name"): sys.exit("a brand needs a name: --name \"Acme Ops\"")
@@ -393,6 +519,17 @@ def normalize(b, name=None, color=None, logo=None, tagline=None, agent_icon=None
     elif not b.get("logo") and (color or name or not b.get("icon_svg")):
         b.pop("icon_svg", None); b["icon_svg"] = read_mark(b)[0]     # a fresh monogram in the new colours
     if b.get("brand_color"): palette(b["brand_color"], b.get("neutral_chroma", 0.006))   # contrast guard
+    # mold_v0-275: the avatar colours, derived from the brand colour unless the brand pins its own
+    if isinstance(avatar_colors, str): avatar_colors = parse_avatar_colors(avatar_colors) or "auto"
+    if avatar_colors == "auto": b.pop("avatar_colors", None)
+    elif avatar_colors:
+        if not mold_draws_avatars(mold_id): sys.exit(f"mold {mold_id} does not draw avatars in a brand's colours (its branding/rules.json has no avatar_palette). Nothing was written.")
+        why = avatar_colors_problem([str(c).upper() for c in avatar_colors])
+        if why: sys.exit(f"avatar colours: {why}. Nothing was written.")
+        b["avatar_colors"] = [str(c).upper() for c in avatar_colors]
+    elif b.get("brand_color") != old_color: b.pop("avatar_colors", None)
+    if not b.get("avatar_colors") and str(b.get("brand_color", "")).startswith(("#", "oklch")) and mold_draws_avatars(mold_id):
+        b["avatar_colors"] = avatar_palette(b["brand_color"])
     # mold_v0-252: the workspace agent's icon, kept whole (cleaned SVG or fitted PNG per theme); "none" takes it out
     if agent_icon == "none": b.pop("agent_icon", None)
     elif agent_icon: b["agent_icon"] = agent_icon_block(agent_icon, agent_icon_dark, mold_id)
@@ -420,7 +557,7 @@ def set_brand(target, args):
         if (icon or icon_dark) and icon != "none":
             rp = os.path.join(ROOT, "molds", str(doc.get("mold_id")), "branding", "rules.json")
             if not os.path.isfile(rp) or not load(rp).get("agent_icon"): sys.exit(f"{ident}: mold {doc.get('mold_id')} has no workspace agent icon to set (its branding/rules.json has no agent_icon). Nothing was written.")
-        nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark, doc.get("mold_id"))
+        nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark, doc.get("mold_id"), opt("--avatar-colors"))
         why = name_problem(nb["product_name"], doc.get("mold_id"))
         if why: sys.exit(why + ". Nothing was written.")
         doc["surface"]["branding"] = nb
@@ -437,13 +574,14 @@ def set_brand(target, args):
         p = os.path.join(ST, "products.json"); doc = load(p)
         prods = [x for x in doc["products"] if x["product_id"] == ident]
         if not prods: sys.exit(f"no product {ident!r} in state/products.json")
-        prods[0]["brand"] = nb = normalize(prods[0].get("brand") or {}, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark)
+        prods[0]["brand"] = nb = normalize(prods[0].get("brand") or {}, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark, avatar_colors=opt("--avatar-colors"))
     json.dump(doc, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
     mark = "logo file " + nb["logo"] if nb.get("logo") else "a monogram"
     ai = nb.get("agent_icon")
     agent = (f", agent icon {ai['source']}" + (f" (dark: {ai['dark_source']})" if ai.get("dark_source") else "")
              + (" in the text colour" if ai["light"].get("follows_color") else "")) if ai else ""
-    print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}{agent}.")
+    av = f", avatar colours {','.join(nb['avatar_colors'])}" if nb.get("avatar_colors") else ""
+    print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}{agent}{av}.")
     print(f"  see it: python3 .claude/scripts/branding.py {ident} preview" if kind == "app" else "  stamps of this product from now on carry it; existing apps keep theirs")
 
 def preview(app_id, b, node_cwd=None):
@@ -533,6 +671,7 @@ def apply_overlay(build_dir, b, rules):
     # A mold whose names come from a profile FILE the codebase reads (rules "profile"; mold_v0's profile.json, which
     # scripts/gen-packs.mjs merges into the generated profile modules): the brand's name and words are written into
     # that file's fields and the mold's own generator is re-run. No source file is rewritten for the name.
+    applied += apply_avatar_palette(build_dir, b, rules)      # mold_v0-275: into the profile file, before its generator runs
     if rules.get("profile"):
         applied += write_profile(build_dir, b, rules["profile"])
 
@@ -701,6 +840,7 @@ def check_build(build_dir, b, rules):
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
     if b.get("agent_icon"):
         bad += agent_icon_lib().problems(build_dir, b["agent_icon"], rules["agent_icon"]) if rules.get("agent_icon") else ["this mold has no workspace agent icon, but the brand sets one"]
+    bad += avatar_palette_problems(build_dir, b, rules)        # mold_v0-275
     if not name: return bad + share_image_problems(build_dir, b, rules)     # a brand that is only a share image (mold_v0-093)
     bad += share_image_problems(build_dir, b, rules)
     gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
@@ -962,6 +1102,66 @@ def self_test_v0(ok):
         r14 = subprocess.run([sys.executable, me, "zz_brand", "set", "--agent-icon", "none"], capture_output=True, text=True)
         ok_(r13.returncode != 0 and "not both" in r13.stdout + r13.stderr and r14.returncode == 0 and load(appf)["surface"]["branding"] == brand,
             "mold_v0-252: a file and a name together are refused; --agent-icon none goes back to the default icon")
+        # mold_v0-275: the avatar colours. Derived from the brand colour (readable with white initials, the brand's hue and
+        # its neighbours, never purple unless the brand is), pinned by --avatar-colors, written into the build's profile
+        # (the console's module only) and checked there.
+        hue = lambda c: parse_oklch(hex_to_oklch(c))[2]
+        def hue_gap(a, b): d = abs(a - b) % 360; return min(d, 360 - d)
+        for colour in ("#1F6F5C", "#2F3A9E", "#C2410C", "#E11D48", "#52525B", "#FACC15", "#3ECF8E", "#000000", "#FFFFFF"):
+            pal = avatar_palette(colour)
+            ok_(len(pal) == 5 and len(set(pal)) == 5 and all(re.fullmatch(r"#[0-9A-F]{6}", c) for c in pal) and avatar_colors_problem(pal) == ""
+                and all(avatar_contrast(c) >= 4.5 for c in pal) and pal == avatar_palette(colour),
+                f"mold_v0-275: {colour} derives five distinct colours, the same every time, each carrying white initials at 4.5:1: {[(c, round(avatar_contrast(c), 1)) for c in pal]}")
+        for colour in ("#1F6F5C", "#C2410C", "#2F3A9E"):
+            pal = avatar_palette(colour)
+            ok_(hue_gap(hue(pal[0]), hue(colour)) < 3 and all(hue_gap(hue(c), hue(colour)) <= 73 for c in pal) and parse_oklch(hex_to_oklch(pal[0]))[1] > 0.06,
+                f"mold_v0-275: {colour}'s avatar colours are its own hue first and its neighbours (no hue far from it): {[round(hue(c)) for c in pal]}")
+        is_purple = lambda c: parse_oklch(hex_to_oklch(c))[1] >= 0.04 and AVATAR_PURPLE[0] <= hue(c) <= AVATAR_PURPLE[1]
+        ok_(not any(is_purple(c) for c in avatar_palette("#2F3A9E") + avatar_palette("#2563EB") + avatar_palette("#1F6F5C") + avatar_palette("#E11D48")) and any(is_purple(c) for c in avatar_palette("#7C3AED")),
+            f"mold_v0-275: an indigo, blue, green or red brand gets no purple avatar colour; a purple brand keeps its purples: {avatar_palette('#2F3A9E')} {avatar_palette('#7C3AED')}")
+        ok_(all(parse_oklch(hex_to_oklch(c))[1] < 0.03 for c in avatar_palette("#52525B")), f"mold_v0-275: a grey brand gets greys: {avatar_palette('#52525B')}")
+        ok_(brand.get("avatar_colors") == avatar_palette(brand["brand_color"]), "mold_v0-275: set derives the avatar colours into the brand")
+        own = "#1F6F5C, #2A5D7A,#4B6B3A"
+        pinned = normalize(brand, avatar_colors=own)
+        ok_(pinned["avatar_colors"] == ["#1F6F5C", "#2A5D7A", "#4B6B3A"] and normalize(pinned, tagline="Other words.")["avatar_colors"] == pinned["avatar_colors"]
+            and normalize(pinned, color="#C2410C")["avatar_colors"] == avatar_palette("#C2410C") and normalize(pinned, avatar_colors="auto")["avatar_colors"] == avatar_palette(brand["brand_color"]),
+            "mold_v0-275: --avatar-colors pins the brand's own (kept by a later set), a new colour derives them again, auto derives them again")
+        for bad, why in (("#FFFFFF,#1F6F5C,#2A5D7A", "too light"), ("#1F6F5C,#2A5D7A", "3 to 8"), ("#1F6F5C,#2A5D7A,teal", "#RRGGBB"), ("#1F6F5C,#1f6f5c,#2A5D7A", "once"),
+                         (",".join(["#1F6F5C", "#2A5D7A", "#4B6B3A", "#23725F", "#2F6143", "#387875", "#3D5534", "#33676F", "#0E559D"]), "3 to 8")):
+            try: normalize(brand, avatar_colors=bad); ok_(False, f"avatar colours {bad}")
+            except SystemExit as e: ok_(why in str(e) and "Nothing was written" in str(e), f"mold_v0-275: avatar colours {bad!r} are refused ({why}): {e}")
+        try: normalize({"product_name": "X"}, avatar_colors=own, mold_id="mold_v1"); ok_(False, "avatar colours on mold_v1")
+        except SystemExit as e: ok_("does not draw avatars" in str(e), "mold_v0-275: a mold that does not draw avatars refuses avatar colours")
+        ok_("avatar_colors" not in normalize({}, name="Acme Ops", color="#1F6F5C", mold_id="mold_v1") and "avatar_colors" not in normalize({}, name="Plain"),
+            "mold_v0-275: no avatar colours for a mold that does not draw them, nor for a brand with no colour (the theme's default)")
+        a3 = os.path.join(t, "avatarcopy"); subprocess.run(["rsync", "-a", "--exclude", "node_modules", code + "/", a3 + "/"], check=True)
+        os.symlink(os.path.join(code, "node_modules"), os.path.join(a3, "node_modules"))
+        ok_(avatar_palette_problems(a3, pinned, rules) and "run prepare" in avatar_palette_problems(a3, pinned, rules)[0], "mold_v0-275: check finds a copy without the brand's avatar colours")
+        av_applied = apply_overlay(a3, pinned, rules)
+        webp = open(os.path.join(a3, "web", "src", "config", "profile.generated.ts")).read(); srvp = open(os.path.join(a3, "src", "profile.generated.ts")).read()
+        ok_("avatar_palette" in av_applied and load(os.path.join(a3, "profile.json")).get("avatar_palette") == pinned["avatar_colors"]
+            and '"avatar_palette": [' in webp and all(f'"{c}"' in webp for c in pinned["avatar_colors"]) and "avatar_palette" not in srvp
+            and check_build(a3, pinned, rules) == [],
+            f"mold_v0-275: prepare writes the avatar colours into profile.json, the generator into the console's profile module only (never the API's), check passes: {av_applied} {check_build(a3, pinned, rules)}")
+        legacy_brand = {k: v for k, v in brand.items() if k != "avatar_colors"}
+        ok_(brand_avatar_colors(legacy_brand) == avatar_palette(brand["brand_color"]) and brand_avatar_colors(normalize({}, name="Plain")) is None,
+            "mold_v0-275: a brand set before the avatar colours has them derived from its colour at prepare; a brand with no colour has none")
+        pj = load(os.path.join(a3, "profile.json")); pj["avatar_palette"] = ["#FFFFFF", "#1F6F5C", "#2A5D7A"]; json.dump(pj, open(os.path.join(a3, "profile.json"), "w"))
+        rg = subprocess.run(rules["profile"]["generator"], cwd=a3, capture_output=True, text=True)
+        ok_(rg.returncode != 0 and "avatar_palette" in rg.stdout + rg.stderr and "too light" in rg.stdout + rg.stderr,
+            f"mold_v0-275: the mold's generator refuses avatar colours white initials cannot be read on: {(rg.stdout + rg.stderr)[-300:]}")
+        r18 = subprocess.run([sys.executable, me, "zz_brand", "set", "--avatar-colors", own], capture_output=True, text=True)
+        r19 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
+        r20 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
+        r21 = subprocess.run([sys.executable, me, "zz_brand", "show"], capture_output=True, text=True)
+        zprof = load(os.path.join(f, "build", "zz_brand", "profile.json")) if os.path.isfile(os.path.join(f, "build", "zz_brand", "profile.json")) else {}
+        ok_(r18.returncode == 0 and load(appf)["surface"]["branding"].get("avatar_colors") == pinned["avatar_colors"] and r19.returncode == 0 and r20.returncode == 0
+            and zprof.get("avatar_palette") == pinned["avatar_colors"] and "the brand's own" in r21.stdout,
+            f"mold_v0-275: branding.py <app> set --avatar-colors, then prepare and check through the command line: {(r18.stdout + r18.stderr + r19.stderr + r20.stdout + r21.stdout)[-500:]}")
+        r22 = subprocess.run([sys.executable, me, "zz_brand", "set", "--avatar-colors", "#FFFFFF,#EEEEEE,#DDDDDD"], capture_output=True, text=True)
+        r23 = subprocess.run([sys.executable, me, "zz_brand", "set", "--avatar-colors", "auto"], capture_output=True, text=True)
+        ok_(r22.returncode != 0 and "Nothing was written" in r22.stdout + r22.stderr and r23.returncode == 0 and load(appf)["surface"]["branding"] == brand,
+            "mold_v0-275: light avatar colours are refused with nothing written; --avatar-colors auto goes back to the derived ones")
         # mold_v0-262: `set` on an app with no workspace block writes none (validation refuses a partial one), takes out
         # the tile-only block an earlier `set` left, and still moves the tile of an app that has its workspace
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import factory as _factory
@@ -1141,6 +1341,9 @@ def main(a):
             pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006))
             for scheme in ("light", "dark"):
                 print(f"  {scheme}: " + " ".join(f"{k}={v}" for k, v in list(pal[scheme].items())[:4]))
+        cs = brand_avatar_colors(b)
+        print("  avatars: " + (", ".join(f"{c} ({avatar_contrast(c):.1f}:1 with white)" for c in cs) + (" (derived from the brand colour)" if b.get("brand_color") and cs == avatar_palette(b["brand_color"]) else " (the brand's own)")
+                              if cs else "the console's default: shades of the theme's primary colour"))
     elif step == "prepare": prepare(app_id, app, mold_dir, force="--force" in a)
     elif step == "check": check(app_id, app, mold_dir)
     else: sys.exit(__doc__)

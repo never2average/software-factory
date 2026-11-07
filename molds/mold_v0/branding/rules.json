@@ -64,6 +64,12 @@
     "profile_file": "profile.json",
     "profile_field": "agent_icon"
   },
+  "avatar_palette": {
+    "$comment": "mold_v0-275: the colours the console draws people's and organisations' avatars in when they have no uploaded picture (a soft gradient of two of them, chosen from the id, with white initials; web/src/components/identity-avatar.tsx). branding.py derives five from the brand colour at `set` (or the brand pins 3 to 8 of its own: set --avatar-colors), and `prepare` writes them as a list of #RRGGBB into the profile file's `profile_field` before the mold's generator runs; scripts/gen-packs.mjs checks them and writes them into the console's profile module only (`generated`). Without them (a brand with no colour, no brand) the console draws shades of its theme's primary colour (the theme's --avatar-1 to --avatar-5).",
+    "profile_file": "profile.json",
+    "profile_field": "avatar_palette",
+    "generated": ["web/src/config/profile.generated.ts"]
+  },
   "favicon": {
     "app": "web/src/app",
     "public": "web/public"

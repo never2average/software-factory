@@ -1232,6 +1232,13 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         const bad = agentIconProblem(v); if (bad) fail(rel(PROFILE_FILE), `agent_icon: ${bad}`); else profile[k] = v;
         continue;
       }
+      // The avatar colours (mold_v0-275): written by the factory's branding step (molds/mold_v0/branding/rules.json
+      // avatar_palette); the colours the console draws people and organisations without a picture in. Console module only.
+      if (k === "avatar_palette") {
+        if (hostProfiles[0]?.host.profile?.avatar_palette !== undefined) { fail(`packs/${hostProfiles[0].id}`, "host.profile may not set avatar_palette: it is the app's brand (branding.py set --avatar-colors)"); continue; }
+        const bad = avatarPaletteProblem(v); if (bad) fail(rel(PROFILE_FILE), `avatar_palette: ${bad}`); else profile[k] = v.map((c) => c.toUpperCase());
+        continue;
+      }
       // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
@@ -1255,7 +1262,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       }
       // mold_v0-262: a workspace's team roles in the app's words (src/teams.ts), over a pack's; only while teams is on (below).
       if (k === "team_roles") { const bad = teamRolesProblem(v); if (bad) fail(rel(PROFILE_FILE), `team_roles: ${bad}`); else profileTeamRoles = v; continue; }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, run_sandbox, audit, features, agent_icon, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, run_sandbox, audit, features, agent_icon, avatar_palette, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1766,6 +1773,20 @@ function agentIconProblem(v) {
     if (m[2] === "svg") { const bad = svgProblem(buf.toString("utf8")); if (bad) return `${theme}: ${bad}`; }
     else if (!(buf.length > 24 && buf.subarray(1, 4).toString("latin1") === "PNG" && buf.readUInt32BE(16) <= 64 && buf.readUInt32BE(20) <= 64)) return `${theme}: not a PNG of at most 64 px a side`;
   }
+  return null;
+}
+/**
+ * profile.json `avatar_palette` (mold_v0-275): 3 to 8 colours #RRGGBB, each once, each dark enough for white initials
+ * (WCAG 4.5:1, as branding.py derives and checks them).
+ */
+function avatarPaletteProblem(v) {
+  if (!Array.isArray(v) || v.length < 3 || v.length > 8) return "a list of 3 to 8 colours #RRGGBB, as the factory's branding step writes it (branding.py set --avatar-colors)";
+  const bad = v.filter((c) => typeof c !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(c));
+  if (bad.length) return `each colour is #RRGGBB (not ${bad.map((c) => JSON.stringify(c)).join(", ").slice(0, 120)})`;
+  if (new Set(v.map((c) => c.toUpperCase())).size !== v.length) return "each colour once";
+  const lum = (c) => { const [r, g, b] = [1, 3, 5].map((i) => { const x = parseInt(c.slice(i, i + 2), 16) / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const light = v.filter((c) => 1.05 / (lum(c) + 0.05) < 4.5);
+  if (light.length) return `white initials must read at 4.5:1 on every colour; too light: ${light.join(", ")}`;
   return null;
 }
 function svgProblem(text) {
@@ -2510,7 +2531,7 @@ files.set(path.join(OUT, "web", "src", "lib", "shell-texts.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/shell-texts.ts (a copy, so the console has the shell's texts)") + readFileSync(path.join(HERE, "..", "src", "shell-texts.ts"), "utf8"));
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
-  `export const GENERATED_PROFILE = ${json((({ agent_icon: _ai, ...p }) => p)(profile))} as const;\n`);
+  `export const GENERATED_PROFILE = ${json((({ agent_icon: _ai, avatar_palette: _ap, ...p }) => p)(profile))} as const;\n`);
 // The emails' pitch (mold_v0-101): the landing block's hero subheadline, in a module of its own so the landing block
 // never reaches the profile modules (the MCP surface and the console's names).
 files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
@@ -2697,6 +2718,7 @@ files.set(path.join(OUT, "web", "src", "config", "features.generated.ts"), HEADE
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   // agent_icon (mold_v0-252), the brand's agent icon, is here only when the app has one: the console's default otherwise.
+  // avatar_palette (mold_v0-275), the brand's avatar colours, likewise: the theme's --avatar-* shades otherwise.
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
 
 /**

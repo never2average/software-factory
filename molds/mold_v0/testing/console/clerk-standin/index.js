@@ -43,7 +43,11 @@ function snapshot() {
         email: who.email ?? 'lane@example.org',
         firstName: who.first ?? 'Lane',
         lastName: who.last ?? 'Check',
-        orgName: who.org ?? 'Lane workspace'
+        orgName: who.org ?? 'Lane workspace',
+        // Optional (mold_v0-275): the person's other workspaces [{id, name, slug}] and an uploaded picture (a data: URL),
+        // so a harness can show a person in several workspaces, or one with a picture of their own, as Clerk would.
+        otherOrgs: Array.isArray(who.orgs) ? who.orgs : [],
+        image: typeof who.image === 'string' && who.image.startsWith('data:image/') ? who.image : null
       }
     : { signedOut: true };
   cached = { raw, value };
@@ -62,8 +66,8 @@ function userOf(s) {
     lastName: s.lastName,
     fullName: `${s.firstName} ${s.lastName}`,
     username: null,
-    imageUrl: '',
-    hasImage: false,
+    imageUrl: s.image ?? '',
+    hasImage: !!s.image,
     primaryEmailAddress: email,
     primaryEmailAddressId: email.id,
     emailAddresses: [email],
@@ -114,7 +118,8 @@ export function useOrganization() {
 
 export function useOrganizationList() {
   const s = useLane();
-  const mine = s && !s.signedOut && s.orgId ? [{ id: 'mem_lane', role: s.orgRole, permissions: [], organization: orgOf(s) }] : [];
+  const mine = s && !s.signedOut && s.orgId ? [{ id: 'mem_lane', role: s.orgRole, permissions: [], organization: orgOf(s) },
+    ...s.otherOrgs.map((o, i) => ({ id: `mem_lane_${i + 1}`, role: 'org:member', permissions: [], organization: { id: o.id, name: o.name, slug: o.slug ?? null, imageUrl: '', hasImage: false, membersCount: 1 } }))] : [];
   return { isLoaded: !!s, setActive: noop, createOrganization: noop, userMemberships: list(mine), userInvitations: list([]), userSuggestions: list([]) };
 }
 
