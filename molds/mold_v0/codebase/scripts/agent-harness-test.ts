@@ -852,7 +852,7 @@ try {
       if (s0.status !== 201) return s0;
       const u = s0.body.upload as { id: string; parts: number; part_bytes: number };
       for (let n = 0; n < u.parts; n++) {
-        const r = await fetch(`${http.base}/api/admin/onboarding/agent-profiles/uploads/${u.id}/parts/${n}`, { method: "PUT", body: bytes.subarray(n * u.part_bytes, (n + 1) * u.part_bytes),
+        const r = await fetch(`${http.base}/api/admin/onboarding/agent-profiles/uploads/${u.id}/parts/${n}`, { method: "PUT", body: new Uint8Array(bytes.subarray(n * u.part_bytes, (n + 1) * u.part_bytes)),
           headers: { authorization: `Bearer ${tok}`, "content-type": "application/octet-stream", "x-app-admin": "1", "x-pack-request": "1" } });
         assert.equal(r.status, 200, `part ${n}: ${await r.text()}`);
       }

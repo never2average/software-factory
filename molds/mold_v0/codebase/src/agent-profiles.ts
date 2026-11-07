@@ -457,7 +457,7 @@ export async function completeUpload(id: string, input: { sha256?: unknown }): P
   const u = await uploadRow(id);
   const store = await (await import("./storage.js")).objectStore();
   const h = createHash("sha256");
-  let head = Buffer.alloc(0);
+  let head: Buffer = Buffer.alloc(0);
   for (let n = 0; n < u.parts; n++) {
     const b = await store.get(partKey(u.id, n));
     if (!b) throw new PackError(`part ${n} of this upload was never sent`, 409);
