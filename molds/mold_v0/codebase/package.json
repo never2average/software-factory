@@ -62,6 +62,7 @@
     "test:access-pages": "tsx scripts/access-pages-test.ts",
     "test:share-image": "tsx scripts/share-image-test.ts",
     "test:no-account": "tsx scripts/no-account-test.ts builtin && tsx scripts/no-account-test.ts clerk",
+    "test:platform-account": "tsx scripts/platform-account-test.ts builtin && tsx scripts/platform-account-test.ts clerk",
     "test:legal": "tsx scripts/legal-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
     "test:mcp-oauth": "tsx scripts/mcp-oauth-test.ts builtin && tsx scripts/mcp-oauth-test.ts clerk",

@@ -3789,6 +3789,46 @@ shell checks each one it uses, and the factory does the same from the front door
   and new; `switch --dry-run` only that) and on mint's deploy station. A failing sign-in never blocks or undoes a
   deploy: it ends as needs_human (exit 3) with the plain ask, click by click.
 
+## The platform account (mold_v0-276)
+
+A platform admin (an `APP_PLATFORM_ADMINS` address, or anyone with a platform role) who signs in to the customer
+portal (`/app`) never sees the page for someone with no account: they land in **the platform account**, the one
+account the platform's own staff use the portal in.
+
+- **One shared account, not one per admin.** Every platform owner is an owner of the same account (viewer staff join
+  it as viewers, support and operator staff as members): staff see the same portal, records and bill; the accounts
+  list, the funnel and Stripe get one row for the platform, not one per person; and adding or removing an admin is a
+  membership, never an account to make or to clean up.
+- **Named from the brand, under a stable slug** (`src/platform-account.ts`): "<profile name> (platform)", slug
+  `platform` (or the first free one after it), marked on its row (`organizations.platform_account`,
+  `0059_platform_account`, one mark at most by a partial unique index), so a rename, or a customer account that took the
+  slug first, never makes a second one. Made the way staff make an account (`src/admin.ts` `createPlatformAccount`:
+  the directory's organization under Clerk or the built-in sign-in, the app's row, the Stripe customer as for any
+  account).
+- **At sign-in** (`src/app.ts` `customerSession`): a platform admin whose request finds no account open for them gets
+  the account made when there is none and is added to it, then the request goes on in it (owner). A second sign-in
+  finds them there and makes nothing; a second admin joins the same account. Several requests at once make one account
+  and one membership (one maker per process, and the mark's index across processes). A suspended membership is left
+  alone (the suspended page). If the account cannot be made or joined, the API answers 503
+  `platform_account_unavailable` and the portal says so with Try again (`PlatformAccountProblem`), never the page for
+  no account. Non-admins are unchanged.
+- **The list.** An address added to `APP_PLATFORM_ADMINS` gets in at its next sign-in. One removed keeps its
+  membership, and the account is never deleted here: an owner or staff remove the person on its Team page, as anyone's.
+- **Audited.** The account made, each member added and each role raised are a staff log line (`src/admin.ts` `log`:
+  `platform_account.create`, `platform_account.member_add`, `platform_account.member_role`, beside the account's
+  `org.create`) and, with the platform trail on, a staff entry in the account's slice of it
+  (`/platform-account/create`, `/platform-account/member-add/<role>`).
+- **The factory** calls `POST /api/cron/platform-account` (the cron secret or the worker token; counts only, never an
+  address) after every deploy (`mold.json` `platform_account`, `.claude/scripts/lib/single_service.py`: on Vercel
+  from this machine with the api project's `CRON_SECRET`; on a server inside the app's running container with the
+  worker token it holds), so every admin who has signed in before is an owner of the account straight away and can use
+  the portal; an owner demoted there is made owner again. What it said is printed and recorded in
+  `infrastructure.json` `platform_account`; it never fails or undoes a deploy (the app makes the account itself at an
+  admin's first sign-in). Proven by `npm run test:platform-account` (both sign-ins; `--browser --shots <dir>` adds the
+  console and a screenshot).
+- **Rolling back** (`sql/rollback/0059_platform_account.sql`) drops only the mark: the account stays, an ordinary one to
+  the older release. A later release makes a new one under the next free slug.
+
 ## Generic gaps (mold_v0-260)
 
 Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and

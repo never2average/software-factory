@@ -6,8 +6,9 @@
  *   - who they are signed in as, and signing out to use another address;
  *   - the invitations waiting for their address (and a Clerk invitation ticket in the address), the same choices as the
  *     portal's invitation dialog (./invitation-landing.tsx), and, with no organization active, the ones they are in;
- *   - platform staff: the admin console, where an account is made first;
- *   - everyone else (staff open accounts themselves): the request form (POST /api/access-requests), their address and name filled in, then a confirmation.
+ *   - the request form (POST /api/access-requests), their address and name filled in, then a confirmation.
+ * Never platform staff (mold_v0-276): the API puts them in the platform account (src/platform-account.ts), and when that
+ * could not be done the portal shows PlatformAccountProblem below instead.
  * Accounts are made by the platform's staff (invite-only) or, under Clerk with self-serve on, from an organization.
  */
 import { useState } from 'react';
@@ -25,10 +26,9 @@ export interface NoAccountProps {
   reason: 'no_account' | 'choose';
   /** The address the server knows them by (/admin/session), until the browser's sign-in has loaded. */
   email?: string | null;
-  platformAdmin?: boolean;
 }
 
-export function NoAccount({ reason, email: serverEmail = null, platformAdmin = false }: NoAccountProps) {
+export function NoAccount({ reason, email: serverEmail = null }: NoAccountProps) {
   const { user } = useUser();
   const { isLoaded, setActive, userMemberships } = useOrganizationList({ userMemberships: true });
   // The pending invitations (and a Clerk invitation ticket in the address), as the portal's invitation dialog offers them.
@@ -76,7 +76,7 @@ export function NoAccount({ reason, email: serverEmail = null, platformAdmin = f
                 <Button type='button' variant='outline' size='sm' className='align-baseline'>Sign out and use another address</Button>
               </SignOutButton>
             </p>
-            {!choosing && !platformAdmin ? (
+            {!choosing ? (
               <p className='text-muted-foreground break-words'>
                 {fill('{product} {accounts} are opened by invitation. If someone you work with already uses {product}, ask them to invite')}{' '}
                 {email ? <span className='text-foreground break-all'>{email}</span> : 'you'}. Otherwise, ask for access below.
@@ -85,18 +85,6 @@ export function NoAccount({ reason, email: serverEmail = null, platformAdmin = f
           </div>
 
           {problem ? <p role='alert' className='text-destructive text-sm'>{problem}</p> : null}
-
-          {platformAdmin ? (
-            <section aria-labelledby='no-account-admin' className='bg-card flex flex-col gap-3 rounded-xl border p-5'>
-              <h2 id='no-account-admin' className='flex items-center gap-2 text-lg font-semibold'><Icons.shield aria-hidden='true' className='text-primary size-5 shrink-0' /> You are platform staff</h2>
-              <p className='text-muted-foreground text-sm break-words'>
-                {fill('The admin console works without an {account}. To use this portal yourself, create an {account} there first and invite your own address to it; then come back here.')}
-              </p>
-              <div>
-                <a href='/admin' className={cn(buttonVariants(), 'h-10 px-4')} data-testid='open-admin'>Open the admin console <Icons.arrowRight aria-hidden='true' /></a>
-              </div>
-            </section>
-          ) : null}
 
           {choosing ? (
             <section aria-labelledby='no-account-yours' className='flex flex-col gap-3'>
@@ -124,7 +112,7 @@ export function NoAccount({ reason, email: serverEmail = null, platformAdmin = f
 
           {pending ? <p role='status'><Icons.spinner aria-hidden='true' className='text-muted-foreground size-5 animate-spin' /><span className='sr-only'>{fill('Loading your {accounts}')}</span></p> : null}
 
-          {!choosing && !pending && !platformAdmin ? (
+          {!choosing && !pending ? (
             <section aria-labelledby='no-account-request' className='flex flex-col gap-4'>
               <div className='flex flex-col gap-1'>
                 <h2 id='no-account-request' className='text-lg font-semibold'>Ask for access</h2>
@@ -149,6 +137,36 @@ export function NoAccountNotice() {
       <p className='font-semibold'>{fill('You are not in a {product} {account} here')}</p>
       <p className='text-muted-foreground text-sm'>{fill('Open one of your {accounts}, accept an invitation, or ask for access.')}</p>
       <div><a href='/app' className={cn(buttonVariants(), 'h-10 px-4')}>See your options <Icons.arrowRight aria-hidden='true' /></a></div>
+    </div>
+  );
+}
+
+/**
+ * Platform staff whose platform account could not be opened just now (mold_v0-276: the API's 503
+ * platform_account_unavailable, or any other refusal for staff): never the page for no account. Try again reloads the
+ * portal, which asks the API again; the admin console works meanwhile.
+ */
+export function PlatformAccountProblem({ message = null }: { message?: string | null }) {
+  return (
+    <div className='flex min-h-screen flex-col'>
+      <header className='border-b'>
+        <div className='mx-auto flex min-h-16 w-full max-w-3xl items-center justify-between gap-3 px-4 py-3 sm:px-6'>
+          <BrandLogo className='min-w-0' />
+          <SignOutButton redirectUrl='/auth/sign-in'>
+            <Button variant='ghost' className='h-10'><Icons.logout aria-hidden='true' /> Sign out</Button>
+          </SignOutButton>
+        </div>
+      </header>
+      <main id='main' className='flex-1'>
+        <div role='alert' className='mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-10 sm:px-6 sm:py-14' data-testid='platform-account-problem'>
+          <h1 className='text-2xl font-semibold tracking-tight text-balance break-words sm:text-3xl'>{fill('Your {account} could not be opened just now')}</h1>
+          <p className='text-muted-foreground break-words'>{message || fill('Something went wrong while opening the platform {account}. Try again in a moment.')}</p>
+          <div className='flex flex-wrap gap-3'>
+            <a href='/app' className={cn(buttonVariants(), 'h-10 px-4')} data-testid='platform-account-retry'>Try again <Icons.arrowRight aria-hidden='true' /></a>
+            <a href='/admin' className={cn(buttonVariants({ variant: 'outline' }), 'h-10 px-4')} data-testid='open-admin'>Open the admin console</a>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
