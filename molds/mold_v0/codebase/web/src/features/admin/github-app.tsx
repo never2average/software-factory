@@ -61,7 +61,7 @@ export function AdminGithubApp() {
             <FormRow id='gh-csecret' label={<>Client secret {a.set.client_secret && <StatusBadge tone='ok'>set</StatusBadge>}</>}><Input id='gh-csecret' type='password' autoComplete='new-password' value={f.client_secret} onChange={set('client_secret')} /></FormRow>
             <FormRow id='gh-wsecret' label={<>Webhook secret {a.set.webhook_secret && <StatusBadge tone='ok'>set</StatusBadge>}</>}><Input id='gh-wsecret' type='password' autoComplete='new-password' value={f.webhook_secret} onChange={set('webhook_secret')} /></FormRow>
             <FormRow id='gh-key' label={<>Private key (.pem) {a.set.private_key && <StatusBadge tone='ok'>set</StatusBadge>}</>} hint={a.private_key_fingerprint ? <>Held: <Mono>{a.private_key_fingerprint}</Mono> (GitHub shows the same beside the key)</> : 'Open the downloaded .pem file and paste all of it.'}>
-              <Textarea id='gh-key' rows={3} spellCheck={false} className='font-mono text-xs [-webkit-text-security:disc]' placeholder='-----BEGIN RSA PRIVATE KEY-----' value={f.private_key} onChange={set('private_key')} />
+              <Textarea id='gh-key' rows={3} spellCheck={false} className='font-mono text-xs [-webkit-text-security:disc]' placeholder='Paste the whole .pem file the GitHub App gave you' value={f.private_key} onChange={set('private_key')} />
             </FormRow>
             <div><Gate need='keys'><Button type='submit' size='sm' disabled={save.isPending || !Object.values(f).some((v) => v.trim())}>Save</Button></Gate></div>
           </form>

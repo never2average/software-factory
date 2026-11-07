@@ -60,7 +60,8 @@ export function teamAppRouter(): Router {
   r.get("/", answer(async (_req, res) => {
     const s = S(res);
     const [teams, mine, people] = await Promise.all([T.listTeams(s.org), s.user ? T.teamsOf(s.org, s.user) : [], workspacePeople(s)]);
-    return { teams, mine, people, me: s.user, can_manage: manages(res) };
+    // mold_v0-262: the roles in the app's words (each with the level it stands for).
+    return { teams, mine, people, me: s.user, can_manage: manages(res), roles: T.teamRoles() };
   }));
   r.post("/", owners, answer(async (req, res) => ({ team: await T.createTeam(S(res).org, who(res), req.body ?? {}) }), 201));
   r.get("/:id", answer(async (req, res) => {
@@ -70,7 +71,7 @@ export function teamAppRouter(): Router {
       recordsSharedWith(s.org, team.id, actor(res)), workspacePeople(s)]);
     const named = (u: string | null) => (u ? everyone.find((p) => p.user_id === u) ?? null : null);
     return {
-      team, can_manage: manages(res), me: s.user,
+      team, can_manage: manages(res), me: s.user, roles: T.teamRoles(),
       people: people.map((p) => ({ ...p, name: named(p.user_id)?.name ?? null, email: named(p.user_id)?.email ?? null })),
       records, changes: { ...changes, changes: changes.changes.map((c) => ({ ...c, by_name: named(c.by)?.name ?? named(c.by)?.email ?? null, user_name: named(c.user_id)?.name ?? named(c.user_id)?.email ?? null })) },
       // Who may be added: the workspace's people not in it yet.

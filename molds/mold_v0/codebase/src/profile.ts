@@ -101,6 +101,8 @@ export interface Profile {
   onprem_runners?: boolean;
   /** The capability flags (mold_v0-219, src/features.json): {"<id>": true|false}. */
   features?: Readonly<Record<string, boolean>>;
+  /** mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's team_roles; src/teams.ts), while teams is on. */
+  team_roles?: readonly { id: string; label: string; level: "lead" | "member" }[];
 }
 
 /** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */

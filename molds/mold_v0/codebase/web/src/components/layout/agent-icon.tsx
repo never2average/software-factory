@@ -1,6 +1,7 @@
 'use client';
 // The workspace agent's icon (mold_v0-252): the top bar's agent button and the agent pages' heading draw it. In order:
-//   1. the workspace's own (Settings › Workspace agent; GET /api/agent/icon, src/agent-icon.ts), in the customer console;
+//   1. the workspace's own (set by platform staff on the account's page since mold_v0-262; GET /api/agent/icon,
+//      src/agent-icon.ts), in the customer console;
 //   2. the app's (its brand, written by the factory's branding step: profile.generated.ts `agent_icon`, light and dark);
 //   3. the console's default (Icons.agent).
 // An icon drawn in currentColor (an icon of the set, a one-colour SVG) is painted in the text colour, as a mask, so it

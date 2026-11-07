@@ -140,6 +140,13 @@ route, page, table row or action of it answers.
   ceiling (a start or a raise past them refused), its tools (the free list in the frozen policy, the hidden ones refused
   by `/mcp` and by the request and decision steps), a price removed (409).
 
+- **Credentials** (mold_v0-262). A profile's `credentials: ["<pack>/<field>"]` name workspace credentials its sessions
+  receive (a field bound to the workspace, a value pasted in Settings › Credentials: a hosting deploy token, so the agent
+  can deploy). Only a session a workspace owner starts freezes them; each wake fetches them with its lease as a run does
+  (its run's `credentials` event names what it was given, never a value), gets each in its env or file, and everything it
+  writes is redacted of them. A pack's profile naming a credential the build lacks, or one bound to a record, is refused
+  at build; staff's editor refuses the same.
+
 ## Deliberately not copied
 
 - **The reference's product surfaces**: its pipelines, entities, report proposals, checklists, eval datasets and
@@ -228,7 +235,7 @@ Its three findings were fixed in mold_v0-246:
 ## The agent's icon (mold_v0-252)
 
 Everyone brings their own. The top bar's agent button (the shared outline button) and the agent pages' heading show, in
-order: the workspace's own (an owner uploads it in Settings › Workspace agent: an SVG, PNG, JPG or WebP of at most 256 KB;
+order: the workspace's own (platform staff upload it on the account's page, Admin › Accounts › <account>, since mold_v0-262: an SVG, PNG, JPG or WebP of at most 256 KB;
 `src/agent-icon.ts` sanitises an SVG and resizes a picture, and keeps it sealed under the workspace's prefix), the app's
 (its brand: `branding.py <app> set --agent-icon <file>` or `--agent-icon-name <name>`, light and dark), else the default.
 An icon drawn in one colour follows the theme's text colour. Reset goes back to the app's. See MOLD.md "Workspace agent".

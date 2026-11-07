@@ -192,7 +192,30 @@ const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "
   // Missing here until mold_v0-223, so a pack.json declaring checks was refused at build ("unknown field checks").
   "checks",
   // the workspace agent's profiles the pack brings (mold_v0-261, src/agent-profile-spec.ts; src/pack-manifest.ts compiles them)
-  "agent_profiles"]);
+  "agent_profiles",
+  // a workspace's team roles in the pack's words (mold_v0-262, src/teams.ts); the app's profile.json team_roles wins
+  "team_roles"]);
+/**
+ * mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's pack.json `team_roles`; src/teams.ts):
+ * 2 to 6 roles, each an id, a label and the level it stands for (lead: also changes who sees the team's records;
+ * member: sees them), with at least one of each; ids and labels each once. -> what is wrong, or "".
+ */
+function teamRolesProblem(v) {
+  if (!Array.isArray(v) || v.length < 2 || v.length > 6) return "a list of 2 to 6 roles, each {id, label, level: lead|member}";
+  for (const r of v) {
+    if (!r || typeof r !== "object" || Array.isArray(r)) return "each role is {id, label, level}";
+    const extra = Object.keys(r).filter((k) => !["id", "label", "level", "$comment"].includes(k));
+    if (extra.length) return `a role has no ${extra[0]} (it is {id, label, level})`;
+    if (typeof r.id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(r.id)) return `role id ${JSON.stringify(r.id)}: lowercase letters, digits and _, up to 24, starting with a letter`;
+    if (typeof r.label !== "string" || !r.label.trim() || r.label.length > 40 || /[<>{}\r\n]/.test(r.label)) return `role ${r.id}: its label is one line of plain text, up to 40 characters`;
+    if (r.level !== "lead" && r.level !== "member") return `role ${r.id}: level is lead or member`;
+  }
+  if (new Set(v.map((r) => r.id)).size !== v.length) return "a role id is listed twice";
+  if (new Set(v.map((r) => r.label.trim().toLowerCase())).size !== v.length) return "two roles have one label";
+  if (!v.some((r) => r.level === "lead") || !v.some((r) => r.level === "member")) return "at least one role of each level (lead and member)";
+  return "";
+}
+let profileTeamRoles = null;
 /** pack.json `engine`: a host pack's `config` (mold_v0-137); a config pack's engine and what it says of it (mold_v0-145). */
 const ENGINE_KEYS = new Set(["$comment", "config", "pack", "profile", "labels", "migrations_recorded_as"]);
 /** What an engine pack's own pack.json may say when a config pack configures it (mold_v0-145): its code, never a product's words. */
@@ -1227,7 +1250,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, agent_icon, landing, legal, console, access_request, client_skill, words)`);
+      // mold_v0-262: a workspace's team roles in the app's words (src/teams.ts), over a pack's; only while teams is on (below).
+      if (k === "team_roles") { const bad = teamRolesProblem(v); if (bad) fail(rel(PROFILE_FILE), `team_roles: ${bad}`); else profileTeamRoles = v; continue; }
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, agent_icon, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1513,7 +1538,7 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
     no_engine: () => !["products", "scenarios", "simulations", "agent_sessions"].every((t) => owned.has(t)),
     documents: () => areas.some((a) => (a.fields ?? []).some((x) => x.type === "file" || x.preview === "document")),
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
-    layouts: () => areas.some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((x) => x.copyable === true))
+    layouts: () => areas.some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((x) => x.copyable === true || x.display === "chips"))
       || jsons.some((j) => (j.tabs ?? []).some((t) => (t.columns ?? []).some((c) => c && typeof c === "object"))),
     // mold_v0-260 (src/features.ts gapAsks says the same for the server, lib/features.py for the factory).
     record_inputs: () => kinds.some((k) => !!k.input_from_record),
@@ -1527,6 +1552,14 @@ const FEATURE_SETTING = {}, FEATURE_REQUESTED = {}, FEATURE_ON = {};
   for (const f of FEATURE_REGISTRY) {
     FEATURE_REQUESTED[f.id] = asks[f.requested_by]();
     FEATURE_ON[f.id] = FEATURE_SETTING[f.id] && FEATURE_REQUESTED[f.id];
+  }
+  // mold_v0-262: the team roles (the app's profile.json, else the one pack that declares them), only while teams is on.
+  {
+    const declaring = jsons.filter((j) => j.team_roles !== undefined);
+    if (declaring.length > 1 && !profileTeamRoles) fail("packs", `team_roles: ${declaring.map((j) => j.id).join(" and ")} both declare them: declare them once (a pack, or the app's profile.json)`);
+    for (const j of declaring) { const bad = teamRolesProblem(j.team_roles); if (bad) fail(`packs/${j.id}`, `team_roles: ${bad}`); }
+    const roles = profileTeamRoles ?? declaring[0]?.team_roles ?? null;
+    if (roles && FEATURE_ON.teams && !teamRolesProblem(roles)) profile.team_roles = roles.map((r) => ({ id: r.id, label: r.label.trim(), level: r.level }));
   }
   // What a flag may not do (the factory's lib/features.py says the same before a build).
   // mold_v0-260: a list past 8 columns, a reference's where or a check on save, a credential's entries or a tenant
@@ -2554,22 +2587,22 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   // mold_v0-253: a record page's layout, only while record_pages is on (off, this file is what it was before the flag).
   (FEATURE_ON.record_pages ? "  /** Its record page's layout (mold_v0-253, flag record_pages; web/src/features/records/detail-layout.ts). */\n  detail?: import('@/features/records/detail-layout').DetailLayout;\n" : "") +
   // mold_v0-259: who may see its records, only while teams is on (off, this file is what it was before the flag).
-  (FEATURE_ON.teams ? "  /** Who sees each record (mold_v0-259, flag teams): the modes it takes, a new record's, and whether it names collaborators. */\n  visibility?: { modes: ('workspace' | 'team' | 'private')[]; default: 'workspace' | 'team' | 'private'; collaborators?: boolean };\n" : "") +
+  (FEATURE_ON.teams ? "  /** Who sees each record (mold_v0-259, flag teams): the modes it takes, a new record's, and whether it names collaborators. */\n  visibility?: { modes: ('workspace' | 'team' | 'private')[]; default: 'workspace' | 'team' | 'private'; collaborators?: boolean } | { inherit: string };\n" : "") +
   "}\n\n" +
   "/** A field of a record area (typed by mold_v0-057). */\n" +
   "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
   "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n" +
   "  /** Encrypted at rest (mold_v0-194): every read shows \"[encrypted]\"; an explicit reveal returns the value. */\n  encrypted?: boolean;\n  reveal_roles?: string[];\n  searchable?: 'equality';\n  /** A URL whose document the record's card previews (mold_v0-220). */\n  preview?: 'document';\n" +
-  (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n" : "") +
+  (FEATURE_ON.record_pages ? "  /** A copy button beside its value on the record's page (mold_v0-253). */\n  copyable?: boolean;\n  /** mold_v0-262: a json list of strings shown as chips. */\n  display?: 'chips';\n" : "") +
   (FEATURE_ON.record_rules ? "  /** mold_v0-260: a reference's condition on the records it may name. */\n  where?: unknown;\n" : "") + "}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, icon: areaIcons[a.name], role: a.role,
     // mold_v0-253: copyable and the page's layout reach the console only while record_pages is on.
-    scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
+    scope: a.scope, fields: FEATURE_ON.record_pages ? a.fields : a.fields.map(({ copyable: _c, display: _d, ...f }) => f), list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null,
     ...(FEATURE_ON.record_clocks && a.clocks?.length ? { clocks: a.clocks.map((c) => ({ name: c.name, label: c.label })) } : {}),
     // The action of its own lists (mold_v0-237); a reason for none is shown nowhere (listed below for a Settings tab).
     ...(packViews.areaActions?.[a.name]?.action ? { action: packViews.areaActions[a.name].action } : {}), ...contractRoles(a),
     ...(FEATURE_ON.record_pages && a.detail ? { detail: a.detail } : {}),
-    ...(FEATURE_ON.teams && a.visibility && a.scope === "workspace" ? { visibility: { modes: a.visibility.modes, default: a.visibility.default, ...(a.visibility.collaborators ? { collaborators: true } : {}) } } : {}) })))};\n\n` +
+    ...(FEATURE_ON.teams && a.visibility && a.scope === "workspace" ? { visibility: typeof a.visibility.inherit === "string" ? { inherit: a.visibility.inherit } : { modes: a.visibility.modes, default: a.visibility.default, ...(a.visibility.collaborators ? { collaborators: true } : {}) } } : {}) })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name) && !a.settings) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name) && !a.settings).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, icon: areaIcons[a.name], items: [] })) }] : [])};\n\n` +
   "/** The areas whose export_<area> tool a pack withholds (mold_v0-108, mold_v0-067): their console pages offer no Export CSV. */\n" +

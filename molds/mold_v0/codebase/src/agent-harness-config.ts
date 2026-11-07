@@ -117,6 +117,11 @@ export interface AgentPolicy {
   profile?: { id: string; name: string; version: number };
   /** mold_v0-261: the files its profile gives its workspace, written into the working directory at its first wake. */
   files?: { path: string; content: string }[];
+  /**
+   * mold_v0-262: the workspace credentials each wake receives ("<pack>/<field>"), frozen from its profile when a workspace
+   * owner started it (anyone else's session receives none). Delivered and redacted as a run's (src/credentials.ts).
+   */
+  credentials?: string[];
 }
 
 /**
@@ -209,7 +214,8 @@ export function agentKind(policy?: AgentPolicy): JobKind {
     budget_usd: p.budget_ceiling_usd,
     concurrency_per_workspace: settingNumber("AGENT_SESSIONS_PER_WORKSPACE"),
     month_budget_usd: settingNumber("AGENT_MONTH_BUDGET_USD"),
-    workspace: false, args: {}, credentials: [],
+    // mold_v0-262: the credentials its profile gave the session (a workspace owner's), as "<pack>/<field>".
+    workspace: false, args: {}, credentials: [...(p.credentials ?? [])],
   } as unknown as JobKind;
 }
 

@@ -73,7 +73,7 @@ export async function setCatalogAccess(pack: unknown, name: unknown, input: Reco
   let stored: Stored;
   if (c.access === "deploy_key") {
     const key = typeof input.private_key === "string" ? input.private_key.replace(/\r\n/g, "\n").trim() + "\n" : "";
-    if (key.length > 16 * 1024 || !KEY.test(key)) throw new PackError("private_key: the deploy key's private part, the whole file (-----BEGIN OPENSSH PRIVATE KEY----- ... -----END OPENSSH PRIVATE KEY-----)", 400);
+    if (key.length > 16 * 1024 || !KEY.test(key)) throw new PackError("private_key: the deploy key's private part, the whole file, from its BEGIN line to its END line", 400);
     if (/ENCRYPTED|Proc-Type: 4,ENCRYPTED/.test(key)) throw new PackError("private_key: the key has a passphrase: make one without (ssh-keygen -N '')", 400);
     const kh = typeof input.known_hosts === "string" ? input.known_hosts.trim() : "";
     const m = KNOWN.exec(kh);

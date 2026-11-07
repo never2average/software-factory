@@ -30,10 +30,16 @@ import { httpError } from '@/features/status/from-error';
 import { settingsTabUrl } from '@/config/settings';
 import { personWords, sendJson, type Person, type TeamSummary } from './visibility';
 
-interface TeamPerson { user_id: string; role: 'member' | 'lead'; added_at: string; added_by: string | null; name: string | null; email: string | null }
+interface TeamPerson { user_id: string; role: 'member' | 'lead'; added_at: string; added_by: string | null; name: string | null; email: string | null;
+  /** mold_v0-262: the role in the app's words. */
+  role_id?: string; role_label?: string }
+/** A team role in the app's words (mold_v0-262: profile.json or a pack's team_roles; else Lead and Member). */
+export interface TeamRoleDef { id: string; label: string; level: 'lead' | 'member' }
+const BUILT_IN_ROLES: TeamRoleDef[] = [{ id: 'member', label: 'Member', level: 'member' }, { id: 'lead', label: 'Lead', level: 'lead' }];
+const LEVEL_WORDS = { lead: 'also changes who sees them', member: "sees the team's records" } as const;
 interface TeamChange { id: number; action: string; user_id: string | null; detail: string | null; by: string | null; at: string; by_name: string | null; user_name: string | null }
 interface TeamPageData {
-  team: TeamSummary & { created_by: string | null }; can_manage: boolean; me: string | null;
+  team: TeamSummary & { created_by: string | null }; can_manage: boolean; me: string | null; roles?: TeamRoleDef[];
   people: TeamPerson[]; candidates: Person[];
   records: { area: string; label: string; key: string; title: string | null; updated_at: string }[];
   changes: { changes: TeamChange[]; more: boolean };
@@ -60,6 +66,7 @@ function changeWords(c: TeamChange, me: string | null) {
     case 'member_removed': return `took ${who} out`;
     case 'lead_set': return `made ${who} a lead`;
     case 'lead_unset': return `made ${who} a member`;
+    case 'role_set': return `made ${who}${c.detail ? ` ${c.detail.replace(/^as /, '')}` : ' another role'}`;
     default: return c.action;
   }
 }
@@ -85,7 +92,7 @@ export function TeamPage({ id }: { id: string }) {
   if (act === 'add' && can_manage) return (
     <PageContainer>
       <ActionCard open onOpenChange={(o) => { if (!o) close(); }} title={`Add people to ${team.name}`} description='Each sees the records shared with the team. A lead may also change who sees them.' back='Back to the team'>
-        <AddPeopleForm id={team.id} candidates={data.candidates} me={me} onDone={() => { close(); changed(); }} />
+        <AddPeopleForm id={team.id} candidates={data.candidates} me={me} roles={data.roles?.length ? data.roles : BUILT_IN_ROLES} onDone={() => { close(); changed(); }} />
       </ActionCard>
     </PageContainer>
   );
@@ -103,8 +110,9 @@ export function TeamPage({ id }: { id: string }) {
       router.push(back);
     } catch (e) { toast.error((e as Error).message); }
   };
-  const setRole = async (p: TeamPerson, role: 'member' | 'lead') => {
-    try { await sendJson('POST', `${url}/people/${encodeURIComponent(p.user_id)}`, { role }); toast.success(role === 'lead' ? 'Made a lead' : 'Made a member'); changed(); }
+  const roles = data.roles?.length ? data.roles : BUILT_IN_ROLES;
+  const setRole = async (p: TeamPerson, role: TeamRoleDef) => {
+    try { await sendJson('POST', `${url}/people/${encodeURIComponent(p.user_id)}`, { role: role.id }); toast.success(`Made ${role.label}`); changed(); }
     catch (e) { toast.error((e as Error).message); }
   };
   const takeOut = async (p: TeamPerson) => {
@@ -180,7 +188,7 @@ export function TeamPage({ id }: { id: string }) {
                   {people.map((p) => (
                     <TableRow key={p.user_id} data-team-person={p.user_id}>
                       <TableCell><span className='font-medium'>{name(p)}</span>{p.email && p.name && <span className='text-muted-foreground block text-xs'>{p.email}</span>}</TableCell>
-                      <TableCell>{p.role === 'lead' ? <ToneBadge color='info'>Lead</ToneBadge> : 'Member'}</TableCell>
+                      <TableCell data-team-role={p.role_id ?? p.role}>{p.role === 'lead' ? <ToneBadge color='info'>{p.role_label ?? 'Lead'}</ToneBadge> : p.role_label ?? 'Member'}</TableCell>
                       <TableCell className='max-sm:hidden'>{day(p.added_at)}</TableCell>
                       {can_manage && (
                         <TableCell className='text-right'>
@@ -188,7 +196,8 @@ export function TeamPage({ id }: { id: string }) {
                             <DropdownMenuTrigger render={<Button type='button' variant='ghost' size='sm' aria-label={`Actions for ${name(p)}`} />}><Icons.ellipsis aria-hidden /></DropdownMenuTrigger>
                             <DropdownMenuContent align='end' className='w-48'>
                               <DropdownMenuGroup>
-                                {p.role === 'member' ? <DropdownMenuItem onClick={() => void setRole(p, 'lead')}>Make a lead</DropdownMenuItem> : <DropdownMenuItem onClick={() => void setRole(p, 'member')}>Make a member</DropdownMenuItem>}
+                                {/* mold_v0-262: every other role, in the app's words */}
+                                {roles.filter((r) => r.id !== (p.role_id ?? p.role)).map((r) => <DropdownMenuItem key={r.id} onClick={() => void setRole(p, r)} data-set-role={r.id}>Make {r.label}</DropdownMenuItem>)}
                                 <DropdownMenuItem variant='destructive' onClick={() => void takeOut(p)}>Take out of the team</DropdownMenuItem>
                               </DropdownMenuGroup>
                             </DropdownMenuContent>
@@ -260,9 +269,9 @@ function Section({ title, id, empty, children }: { title: string; id: string; em
   );
 }
 
-function AddPeopleForm({ id, candidates, me, onDone }: { id: number; candidates: Person[]; me: string | null; onDone: () => void }) {
+function AddPeopleForm({ id, candidates, me, roles, onDone }: { id: number; candidates: Person[]; me: string | null; roles: TeamRoleDef[]; onDone: () => void }) {
   const [chosen, setChosen] = useState<Set<string>>(new Set());
-  const [role, setRole] = useState<'member' | 'lead'>('member');
+  const [role, setRole] = useState<string>((roles.find((r) => r.level === 'member') ?? roles[0]!).id);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -293,9 +302,8 @@ function AddPeopleForm({ id, candidates, me, onDone }: { id: number; candidates:
       </fieldset>
       <div className='flex flex-col gap-1.5'>
         <Label htmlFor='team-add-role'>As</Label>
-        <NativeSelect id='team-add-role' value={role} onChange={(e) => setRole(e.target.value as 'member' | 'lead')}>
-          <NativeSelectOption value='member'>Members: see the team&apos;s records</NativeSelectOption>
-          <NativeSelectOption value='lead'>Leads: also change who sees them</NativeSelectOption>
+        <NativeSelect id='team-add-role' value={role} onChange={(e) => setRole(e.target.value)}>
+          {roles.map((r) => <NativeSelectOption key={r.id} value={r.id}>{r.label}: {r.level === 'lead' ? `sees the team's records and ${LEVEL_WORDS.lead}` : LEVEL_WORDS.member}</NativeSelectOption>)}
         </NativeSelect>
       </div>
     </CardForm>

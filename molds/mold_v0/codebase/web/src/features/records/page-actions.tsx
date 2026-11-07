@@ -49,7 +49,8 @@ export async function takeAction<T = unknown>(area: string, key: string, id: str
 const ICON: Record<PageAction['kind'], ReactNode> = {
   start_run: <Icons.play aria-hidden data-icon='inline-start' />, move: <Icons.arrowRight aria-hidden data-icon='inline-start' />, edit: <Icons.edit aria-hidden data-icon='inline-start' />,
   delete: <Icons.trash aria-hidden data-icon='inline-start' />, link: <Icons.externalLink aria-hidden data-icon='inline-start' />, copy_link: <Icons.link aria-hidden data-icon='inline-start' />,
-  create_record: <Icons.add aria-hidden data-icon='inline-start' />, start_agent: <Icons.agent aria-hidden data-icon='inline-start' />
+  create_record: <Icons.add aria-hidden data-icon='inline-start' />, start_agent: <Icons.agent aria-hidden data-icon='inline-start' />,
+  open_url: <Icons.externalLink aria-hidden data-icon='inline-start' />
 };
 
 /** Whether an action's form is a create or an edit (it opens in the side panel: mold_v0-256, flag side_panel_forms). */
@@ -113,6 +114,8 @@ export function usePageActions(host: ActionHost, actions: readonly PageAction[])
     if (a.kind === 'start_run' || a.kind === 'edit' || a.kind === 'create_record') return open(a);
     if (a.kind === 'copy_link') return host.copy(window.location.href.replace(/([?&])act=[^&]*&?/, '$1').replace(/[?&]$/, ''), 'Link copied');
     if (a.kind === 'link') return a.target && router.push(`/${host.base}/records/${a.target.area}/${encodeURIComponent(a.target.key)}`);
+    // mold_v0-262: a web address from the record, in a new tab (never this one: the record stays open).
+    if (a.kind === 'open_url') return void (a.url && window.open(a.url, '_blank', 'noopener,noreferrer'));
     if (a.kind === 'delete' || a.confirm) return setConfirming({ a, to });
     void run(a, to);
   };
@@ -217,7 +220,8 @@ export function usePageActionsBar(host: ActionHost, actions: readonly PageAction
   return {
     card, panel,
     bar: (
-      <div className='flex shrink-0 flex-wrap items-center gap-2' data-page-actions='' aria-busy={loading || undefined}>
+      // mold_v0-262: wraps inside the header at any width (it never keeps its one-line width, which clipped More at 390 px).
+      <div className='flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end' data-page-actions='' aria-busy={loading || undefined}>
         {primary && <ActionButton a={primary} primary busy={busy === primary.id} take={take} />}
         {secondary.map((a) => <ActionButton key={a.id} a={a} busy={busy === a.id} take={take} />)}
         <DropdownMenu>
@@ -247,7 +251,8 @@ export function RowActions({ host, actions, href }: { host: ActionHost; actions:
   // A row's form opens on its own page (its card needs the page's place).
   const row = (a: PageAction, to?: string) => (a.kind === 'create_record' ? createHref(a) && router.push(createHref(a)!)
     : a.kind === 'start_run' || a.kind === 'edit' ? router.push(`${href}?act=${encodeURIComponent(a.id)}`)
-    : a.kind === 'copy_link' ? host.copy(new URL(href, window.location.origin).toString(), 'Link copied') : take(a, to));
+    : a.kind === 'copy_link' ? host.copy(new URL(href, window.location.origin).toString(), 'Link copied')
+    : a.kind === 'open_url' ? void (a.url && window.open(a.url, '_blank', 'noopener,noreferrer')) : take(a, to));
   const shown = actions.filter((a) => a.kind !== 'link' || a.target);
   return (
     <>

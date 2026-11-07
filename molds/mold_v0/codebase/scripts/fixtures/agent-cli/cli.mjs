@@ -131,9 +131,12 @@ async function turn(m) {
   const flat = (t) => t.split("\n").map((x) => x.trim()).filter(Boolean).join(" | ");
   const listFiles = (dir, base = "") => readdirSync(dir).flatMap((n) => { const f = path.join(dir, n), r = base ? `${base}/${n}` : n; return statSync(f).isDirectory() ? listFiles(f, r) : [r]; });
   const cat = /^cat (\S+)$/m.exec(text);
+  // mold_v0-262: what the wake's environment holds under a name (a delivered credential is redacted on its way out).
+  const envName = /^env ([A-Z][A-Z0-9_]{0,63})$/m.exec(text);
   const said = mcpSaid.length ? mcpSaid.splice(0).join("\n") : /^standing$/m.test(text) ? standing() : /^pwd$/m.test(text) ? `Working in ${process.cwd()}.`
     : /^said$/m.test(text) ? `Said: ${flat(text)}` : /^system$/m.test(text) ? `System: ${flat(arg("--append-system-prompt") ?? "")}`
     : /^files$/m.test(text) ? `Files: ${listFiles(process.cwd()).sort().join(", ")}`
+    : envName ? `Env ${envName[1]}: ${process.env[envName[1]] ?? "unset"}`
     : cat ? `File ${cat[1]}: ${existsSync(path.join(process.cwd(), cat[1])) ? flat(readFileSync(path.join(process.cwd(), cat[1]), "utf8")) : "none"}`
     : `Echo: ${text.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`;
   const reply = `${first && resume ? `(resumed ${resume}) ` : ""}${said}`;

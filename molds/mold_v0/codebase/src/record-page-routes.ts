@@ -31,7 +31,7 @@ import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { packs } from "./packs.js";
 import { ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
-import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
+import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
 import { withTenant } from "./tenant-scope.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
@@ -87,6 +87,8 @@ export interface ActionView {
   create?: { area: string; label: string; values: Record<string, unknown>; fields?: FormField[]; upload_max?: number | null; key_from_title?: boolean };
   /** start_agent (mold_v0-261): the agent profile it starts and the first message, filled from this record. */
   agent?: { profile: string; name: string; version: number; message: string };
+  /** open_url (mold_v0-262): the web address it opens in a new tab (null: the field holds none). */
+  url?: string | null;
 }
 
 /** The moves of `area`'s lifecycle `role` may make to `to` (any state when undefined), from any state. */
@@ -197,6 +199,15 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
       case "copy_link":
         out.push({ ...base, label: x.label ?? "Copy link", disabled: unavailable });
         break;
+      case "open_url": {
+        // mold_v0-262: a web address from the record (an http or https one only), opened in a new tab by the page.
+        const f = area.fields.find((y) => y.name === x.field);
+        if (!f || f.encrypted) continue;
+        const v = record.data[x.field!];
+        const url = typeof v === "string" && /^https?:\/\/[^\s]+$/i.test(v.trim()) && URL.canParse(v.trim()) ? v.trim() : null;
+        out.push({ ...base, label: x.label ?? `Open ${f.label.toLowerCase()}`, disabled: unavailable ?? (url ? null : `No ${f.label.toLowerCase()} is set on this record.`), url });
+        break;
+      }
       case "start_agent": {
         // mold_v0-261 (flag agent_harness): a session with the action's profile, for a role that may start it (else not shown).
         if (area.scope !== "workspace" || !may(area, "read", actor) || opts.org === undefined) continue;
@@ -441,10 +452,11 @@ export function recordPageRouter(): Router {
         const sort = `${(s.related.sort?.direction ?? (s.related.sort ? "asc" : "desc")) === "desc" ? "-" : ""}${sortField}`;
         if (matchOn == null || matchOn === "" || typeof matchOn === "object") { sections[id] = { area: target.name, via, match: null, more: false, records: [] }; continue; }
         const page = await listFor(org, target.name, { filter: s.related.match_field !== undefined ? { [via]: matchOn } : pointingAt(target, via, record.key), sort, limit: limit + 1 }, actor);
-        const rows = page.records.slice(0, limit);
+        // mold_v0-262: each row's references' titles (its cells show them, linked).
+        const rows = await withRefTitles(org, target, page.records.slice(0, limit), actor);
         sections[id] = {
           area: target.name, via, match: String(matchOn), more: page.records.length > limit,
-          records: await Promise.all(rows.map(async (row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at,
+          records: await Promise.all(rows.map(async (row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at, ...(row.ref_titles ? { ref_titles: row.ref_titles } : {}),
             actions: await pageActions(target, row, actor, { withForms: false, org }) }))),
         };
       } else if (s.runs) {

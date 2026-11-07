@@ -158,6 +158,12 @@ its people, each a member or a lead), managed by its owners in Settings › Team
 | `default` | The one a new record takes when its writer does not say (one of `modes`). A `team` default takes the writer's team when they are in exactly one; else the writer chooses. |
 | `collaborators` | `true`: people may be named on a record, each seeing it whatever its mode. Default `false`. |
 
+Or, for a child area (mold_v0-262), `"visibility": { "inherit": "<reference field>" }`: each record is seen by whoever
+sees the record that single reference names (a task by whoever sees its project), by the same database policy; the
+parent area declares its own `modes`; a record with an empty reference is open to the workspace; it takes no visibility of
+its own and offers no Share. A workspace's team roles may be named too (`team_roles` in pack.json or profile.json:
+`[{id, label, level: "lead" | "member"}]`, 2 to 6, one of each level at least).
+
 A workspace area of the shell's own tables only (never a shared area, nor one fed by a repository). Off, or not
 declared, every record is open to its whole workspace, exactly as before; records written before the flag (or before the
 area declared it) stay open to the workspace.

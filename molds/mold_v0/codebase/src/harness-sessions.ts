@@ -88,7 +88,9 @@ export interface SessionDetail extends SessionView {
   hooks: { event: HookEvent; source: string; text: string | null }[];
   policy: { max_turns: number; wake_max_minutes: number; park_after_minutes: number; web_tools: string; web_hosts: string[]; web_calls_max: number; tools: string[]; auto_resume: boolean; crash_resumes: number;
     /** mold_v0-261: the files its profile gave its workspace (their paths), and the tools its profile hides. */
-    files: string[]; hidden_tools: string[] };
+    files: string[]; hidden_tools: string[];
+    /** mold_v0-262: the workspace credentials each wake receives (their names, never a value). */
+    credentials: string[] };
   /** What it reaches of its workspace (mold_v0-250): null for a session started before (it reaches nothing of it). */
   reach: ReachView | null;
 }
@@ -285,6 +287,8 @@ export async function startSession(orgId: number, actor: Actor, input: StartInpu
     hooks: resolveHooks(flavour, {}, eff.instructions),
     profile: { id: prof.id, name: prof.name, version: prof.version },
     ...(eff.files.length ? { files: eff.files } : {}),
+    // mold_v0-262: its profile's workspace credentials, for a session a workspace owner starts (anyone else's: none).
+    ...(eff.credentials.length && actor.kind === "person" && actor.role === "owner" ? { credentials: [...eff.credentials] } : {}),
   });
   const limits = await startBudgetMax(orgId, actor, eff);
   let budget = limits.default_usd;
@@ -432,7 +436,7 @@ export async function readSession(orgId: number | null, id: string, actor: Actor
       hooks: (p?.hooks ?? []).map((h) => ({ event: h.event, source: h.source, text: h.text })),
       policy: { max_turns: p?.max_turns ?? 0, wake_max_minutes: Math.round((p?.wake_max_seconds ?? 0) / 60), park_after_minutes: Math.round((p?.park_after_seconds ?? 0) / 60),
         web_tools: p?.web?.tools ?? "off", web_hosts: p?.web?.hosts ?? [], web_calls_max: p?.web?.calls_max ?? 0, tools: (p?.tools ?? []).filter((t) => !workspaceToolOf(t)),
-        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: (p?.files ?? []).map((f) => f.path), hidden_tools: p?.workspace?.hidden ?? [] },
+        auto_resume: !!p?.auto_resume, crash_resumes: p?.crash_resumes ?? 0, files: (p?.files ?? []).map((f) => f.path), hidden_tools: p?.workspace?.hidden ?? [], credentials: p?.credentials ?? [] },
       reach: reachView(p),
     };
   });

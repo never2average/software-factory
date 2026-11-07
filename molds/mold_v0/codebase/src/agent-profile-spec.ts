@@ -16,12 +16,14 @@ export const DEFAULT_PROFILE = "default";
 export const PROFILE_ID = /^[a-z][a-z0-9-]{1,39}$/;
 /** The roles that may start a session (a viewer is read only in the platform). */
 export const PROFILE_ROLES = ["member", "billing", "owner"] as const;
+/** A workspace credential a profile names (mold_v0-262): its pack's id and its field's name. */
+export const PROFILE_CREDENTIAL = /^[a-z][a-z0-9_]{1,30}\/[a-z][a-z0-9_]{1,62}$/;
 /** How the app's own tools are used without asking: reads (and the free list), every tool, or none (only the free list). */
 export const PROFILE_TOOL_BASES = ["reads", "all", "none"] as const;
 export const PROFILE_WEB_TOOLS = ["off", "fetch", "search"] as const;
 export const PROFILE_LIMITS = {
   name: 80, description: 500, instruction: 20_000, files: 20, file_bytes: 64 * 1024, files_bytes: 256 * 1024, tools: 200, hosts: 100, overrides: 200,
-  budget: { min: 0.5, max: 500 }, ceiling: { min: 1, max: 1000 }, turns: { min: 1, max: 1000 }, wake: { min: 5, max: 720 },
+  credentials: 20, budget: { min: 0.5, max: 500 }, ceiling: { min: 1, max: 1000 }, turns: { min: 1, max: 1000 }, wake: { min: 5, max: 720 },
 } as const;
 
 /** A tool name as the app's MCP server lists it. */
@@ -77,6 +79,13 @@ export const ProfileConfigSchema = z.object({
   }).strict().optional(),
   files: z.array(ProfileFileSchema).max(PROFILE_LIMITS.files, `at most ${PROFILE_LIMITS.files} files`).optional(),
   roles: z.array(z.enum(PROFILE_ROLES, { error: () => "a role that may start sessions: member, billing or owner (a viewer is read only)" })).min(1).max(3).nullable().optional(),
+  /**
+   * mold_v0-262: the workspace credentials its sessions may receive ("<pack>/<field>", a field bound to the workspace: a
+   * hosting deploy token, so the agent can deploy), delivered to each wake as a run receives its kind's (its env or
+   * file) and redacted from everything the wake writes. Only a session a workspace owner starts receives them; each
+   * delivery is a wake's credentials event (the names, never a value).
+   */
+  credentials: z.array(z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>")).max(PROFILE_LIMITS.credentials).optional(),
   overrides: z.array(ProfileOverrideSchema).max(PROFILE_LIMITS.overrides).optional(),
 }).strict();
 export type ProfileConfig = z.output<typeof ProfileConfigSchema>;
@@ -103,6 +112,7 @@ export function configProblems(c: ProfileConfig): string[] {
   if (bytes > PROFILE_LIMITS.files_bytes) out.push(`files: ${Math.ceil(bytes / 1024)} KB in all: at most ${PROFILE_LIMITS.files_bytes / 1024} KB`);
   if (c.budget_usd != null && c.ceiling_usd != null && c.budget_usd > c.ceiling_usd) out.push(`budget_usd: $${c.budget_usd} is over its ceiling ($${c.ceiling_usd})`);
   if (c.roles && new Set(c.roles).size !== c.roles.length) out.push("roles: a role is listed twice");
+  if (c.credentials && new Set(c.credentials).size !== c.credentials.length) out.push("credentials: a credential is listed twice");
   const ws = (c.overrides ?? []).map((o) => o.workspace);
   if (new Set(ws).size !== ws.length) out.push("overrides: a workspace is named twice");
   for (const o of c.overrides ?? []) {

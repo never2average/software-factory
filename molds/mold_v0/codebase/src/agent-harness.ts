@@ -338,6 +338,24 @@ export async function runAgentHarness(client: RunnerClient, claim: Claim, opts: 
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_HOOKS_DIR: hooksDir, DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1",
       ...claim.gateway.env, ...(proxy?.env ?? {}), ...(w.workspace ? { [WORKSPACE_TOKEN_ENV]: w.workspace.token, ENABLE_TOOL_SEARCH: "false" } : {}),
     };
+    // mold_v0-262: the workspace credentials its profile gives the session (a workspace owner's), fetched with the lease
+    // as a run's are (the engine records which were delivered): each in its env (never over one the wake sets itself) or
+    // its file, and redacted from everything the wake writes.
+    if (policy.credentials?.length) {
+      const got = await client.credentials(run.id, lease);
+      const dir = path.join(scratch, "credentials");
+      for (const c of got.credentials) {
+        secrets.push({ name: c.name, value: c.value });
+        if ("env" in c && c.env && !(c.env in env)) env[c.env] = c.value;
+        else if ("file" in c && c.file && /^[A-Za-z0-9._-]{1,100}$/.test(c.file)) {
+          mkdirSync(dir, { recursive: true, mode: 0o700 });
+          const f = path.join(dir, c.file);
+          writeFileSync(f, c.value, { mode: 0o600 });
+          if (as) chownTree(dir, as.uid, as.gid);
+          if (c.path_env && !(c.path_env in env)) env[c.path_env] = f;
+        }
+      }
+    }
     // A resumed session's running total restarts from its saved figure: reports are reduced by min(saved, charged).
     const baseline = w.resume ? resumedBaseline(savedSessionCost(path.join(home, ".claude"), w.resume), w.charged_usd) : 0;
 

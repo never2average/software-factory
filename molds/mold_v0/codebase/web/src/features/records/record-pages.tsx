@@ -41,6 +41,8 @@ import { ShareButton, VisibilityBadge, visibilityColumn, visibilityOf, visibilit
 
 /** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; version?: string | null; updated_at: string; areas?: string[]; clocks?: Record<string, ClockView>;
+  /** mold_v0-262 (flag record_pages): the titles of the records its references name, {field: {key: title}}. */
+  ref_titles?: Record<string, Record<string, string>>;
   /** A shared row on the staff pages (mold_v0-221, src/record-areas.ts Provenance): staff's or its repository's, and what a staff override stands over. */
   provenance?: Provenance;
   /** mold_v0-259 (flag teams): who sees it, on an area that declares visibility. */
@@ -131,7 +133,7 @@ export interface RecordSource {
 }
 
 /** The list's columns: the record (its title, its key under it), then the area's list columns, typed by their fields. */
-function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] = []): RecordCol<RecordRow>[] {
+function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] = [], base: 'app' | 'admin' = 'app'): RecordCol<RecordRow>[] {
   const record: RecordCol<RecordRow> = {
     key: '_record', label: source?.title?.label ?? 'Record', title: true, keep: true, type: source?.title?.type ?? 'text', className: 'min-w-56',
     value: source?.title?.value ?? ((r) => r.title || r.key),
@@ -154,9 +156,18 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
         if (v == null) return null;
         if (type === 'number') return typeof v === 'number' ? v : Number(v);
         if (type === 'boolean') return Boolean(v);
+        if (refTarget(area, f) && r.ref_titles?.[name]) return refWords(v, r.ref_titles[name]);
         return type === 'select' || type === 'date' ? String(v) : fieldText(f, v, r.key);
       },
       render: (r) => {
+        // mold_v0-262 (flag record_pages): a reference shows the record's title, linked; a chips field its chips.
+        const to = refTarget(area, f), titles = r.ref_titles?.[name];
+        if (to && titles && findRecordArea(base, to)) {
+          const keys = (Array.isArray(r.data[name]) ? r.data[name] as unknown[] : [r.data[name]]).filter((k): k is string => typeof k === 'string' && k !== '');
+          if (keys.length) return <span className='line-clamp-2' data-ref-cell={name}>{keys.map((k, i) => <span key={k}>{i > 0 && ', '}<Link href={`/${base}/records/${to}/${encodeURIComponent(k)}`} className='underline-offset-4 hover:underline' onClick={(e) => e.stopPropagation()}>{titles[k] ?? k}</Link></span>)}</span>;
+        }
+        const chips = chipValues(f, r.data[name]);
+        if (chips) return <Chips values={chips} max={4} />;
         const t = fieldText(f, r.data[name], r.key);
         return t ? <span className={cn('line-clamp-2', type === 'number' && 'tabular-nums')}>{t}</span> : dash;
       }
@@ -169,19 +180,42 @@ function columnsOf(area: RecordAreaSpec, source?: RecordSource, extra: string[] 
   return [record, ...fields, ...clockColumns<RecordRow>(area), ...overdue, ...(source?.updated === false ? [] : [updated])];
 }
 
+/** The area a reference or link field names (mold_v0-262: its cells link to the record, by its title). */
+export const refTarget = (area: RecordAreaSpec, f: RecordFieldSpec | undefined) => (!f ? undefined : f.type === 'reference' ? f.to : area.links.find((l) => l.field === f.name)?.area);
+/** A reference's words: the named records' titles where the row has them, else their keys (mold_v0-262). */
+export const refWords = (v: unknown, titles?: Record<string, string>) => (Array.isArray(v) ? v : [v]).filter((k) => typeof k === 'string' && k !== '').map((k) => titles?.[k as string] ?? String(k)).join(', ');
+/** A json field declared `display: "chips"` holding a list of strings or numbers: its values (mold_v0-262), else null. */
+export const chipValues = (f: RecordFieldSpec | undefined, v: unknown): string[] | null =>
+  f && f.type === 'json' && (f as RecordFieldSpec & { display?: string }).display === 'chips' && featureOn('record_pages') && Array.isArray(v) && v.length
+    && v.every((x) => typeof x === 'string' || typeof x === 'number') ? v.map(String) : null;
+/** A list of short strings as chips (mold_v0-262, a json field with `display: chips`). */
+export function Chips({ values, max }: { values: string[]; max?: number }) {
+  const shown = max ? values.slice(0, max) : values;
+  return (
+    <span className='flex flex-wrap gap-1' data-chips=''>
+      {shown.map((x, i) => <span key={`${x}-${i}`} className='bg-muted text-foreground inline-flex max-w-full items-center truncate rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-border ring-inset' data-chip=''>{x}</span>)}
+      {max && values.length > max && <span className='text-muted-foreground px-1 text-xs' data-chip-more=''>+{values.length - max}</span>}
+    </span>
+  );
+}
+
 /**
  * A field's value in the peek and on a record's page: a reference to a record this page can show links to it; a json
  * value readable (mold_v0-240, ./json-value.tsx: a list of objects one line per item, an object one line per field,
  * bookkeeping and `recordKey` repeated hidden, common short values in words).
  */
-export function FieldValue({ area, base, f, v, recordKey }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown; recordKey?: string }) {
-  const to = f.type === 'reference' ? f.to : area.links.find((l) => l.field === f.name)?.area;
+export function FieldValue({ area, base, f, v, recordKey, titles }: { area: RecordAreaSpec; base: 'app' | 'admin'; f: RecordFieldSpec; v: unknown; recordKey?: string;
+  /** mold_v0-262: the named records' titles (the row's ref_titles of this field): shown in place of their keys. */
+  titles?: Record<string, string> }) {
+  const to = refTarget(area, f);
   const keys = (Array.isArray(v) ? v : [v]).filter((k): k is string => typeof k === 'string' && k !== '');
   if (to && keys.length && findRecordArea(base, to)) return (
     <span className='flex flex-wrap gap-x-3 gap-y-1'>
-      {keys.map((k) => <Link key={k} className='underline-offset-4 hover:underline' href={`/${base}/records/${to}/${encodeURIComponent(k)}`}>{k}</Link>)}
+      {keys.map((k) => <Link key={k} className='underline-offset-4 hover:underline' title={titles?.[k] ? k : undefined} data-ref-key={k} href={`/${base}/records/${to}/${encodeURIComponent(k)}`}>{titles?.[k] ?? k}</Link>)}
     </span>
   );
+  const chips = chipValues(f, v);
+  if (chips) return <Chips values={chips} />;
   // A url field (mold_v0-238): its address as a link, opened in a new tab (only an http or https address).
   if (f.type === 'url' && typeof v === 'string' && isWebAddress(v)) return (
     <a className='break-all underline-offset-4 hover:underline' href={v} target='_blank' rel='noopener noreferrer nofollow'>{v}</a>
@@ -244,7 +278,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   // mold_v0-259 (flag teams): an area that declares visibility lists who sees each record, a column the Filter menu filters.
   const visible = base === 'app' && !source && !!visibilityOf(area);
   const cols = useMemo(() => {
-    const plain = columnsOf(area, source, linked ? [linked.field] : []);
+    const plain = columnsOf(area, source, linked ? [linked.field] : [], base);
     const own = visible ? [...plain, visibilityColumn<RecordRow>(data?.records ?? [])] : plain;
     if (!related) return own;
     // A count reads as a number; a latest value as the related area's own cell (an enum's label, a date, ...).
@@ -266,7 +300,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
       };
     });
     return placeColumns(own, extra);
-  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error, visible, data]);
+  }, [area, source, linked?.field, related, relatedValues.data, relatedValues.error, visible, data, base]);
   // The Overdue filter (mold_v0-191): an area with a clock lists its overdue records alone when it is on. Kept in the
   // address (?overdue=1, mold_v0-207): the home page's Due soon card links to a list with it on. mold_v0-217: a rule of
   // the Filter menu (Overdue is Yes) rather than a toggle with a count above the table; removing it drops ?overdue.
@@ -323,7 +357,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
           {visible && r.visibility && <Field label='Who sees it'><VisibilityBadge v={r.visibility} /></Field>}
           {r.version && <Field label='Version'>{r.version}</Field>}
           {area.fields.filter((f) => !area.list_columns.includes(f.name) && !source?.hidden?.includes(f.name) && !isStoredFile(f, r.data[f.name])).map((f) => (
-            <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} recordKey={r.key} /></Field>
+            <Field key={f.name} label={f.label}><FieldValue area={area} base={base} f={f} v={r.data[f.name]} titles={r.ref_titles?.[f.name]} recordKey={r.key} /></Field>
           ))}
         </dl>
         {/* mold_v0-220: its files and documents as cards (a merged tab's row: the first of its areas). */}
@@ -411,7 +445,7 @@ export function RecordDetailPage({ area, recordKey, base }: { area: RecordAreaSp
                 </Field>
               )}
               {area.fields.filter((f) => !isStoredFile(f, data.record.data[f.name])).map((f) => (
-                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} recordKey={data.record.key} /></span></Field>
+                <Field key={f.name} label={f.label}><span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={data.record.data[f.name]} titles={data.record.ref_titles?.[f.name]} recordKey={data.record.key} /></span></Field>
               ))}
             </dl>
             <RecordDocuments area={area} base={base} recordKey={data.record.key} />

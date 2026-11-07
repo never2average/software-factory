@@ -1201,6 +1201,61 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} the workspace agent's profiles (staff tables, no tenant grant; ids and actions checked; a session's profile both or neither); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Inherited visibility (mold_v0-262, inherited_visibility, found by name): a record may follow its parent's visibility
+  // ('inherit' with its parent's area and key, both or neither); its rollback makes those private to their owners (open to
+  // the workspace without one), leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "inherited_visibility")!.version;
+    const d = await shellAt(kind, v);
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Inherit', 'inherit-migration') RETURNING id");
+    const put = (key: string, vis: string | null, area: string | null, k: string | null, owner: string | null = null) =>
+      d.query("INSERT INTO workspace_records (org_id, pack, area, key, title, data, visibility, inherit_area, inherit_key, owner_id) VALUES ($1, 'p', 'tasks', $2, $2, '{}', $3, $4, $5, $6)", [org, key, vis, area, k, owner]);
+    await put("t1", "inherit", "projects", "p1", "u1"); await put("t2", "workspace", null, null); await put("t3", null, null, null);
+    await assert.rejects(put("t4", "inherit", null, null), /check constraint/, "an inherited record names its parent");
+    await assert.rejects(put("t5", "private", "projects", "p1"), /check constraint/, "only an inherited record names a parent");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const [{ id: org2 }] = await r.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Inherit 2', 'inherit-migration-2') RETURNING id");
+    await r.query("INSERT INTO workspace_records (org_id, pack, area, key, title, data, visibility, inherit_area, inherit_key, owner_id) VALUES ($1, 'p', 'tasks', 'a', 'a', '{}', 'inherit', 'projects', 'p1', 'u1'), ($1, 'p', 'tasks', 'b', 'b', '{}', 'inherit', 'projects', 'p1', NULL)", [org2]);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_inherited_visibility.sql`), "utf8");
+    await r.exec(rb);
+    assert.deepEqual((await r.query<{ key: string; visibility: string }>("SELECT key, visibility FROM workspace_records WHERE org_id = $1 ORDER BY key", [org2])).map((x) => [x.key, x.visibility]),
+      [["a", "private"], ["b", "workspace"]], "the rollback makes an inherited record private to its owner, or open to the workspace without one");
+    await r.query("DELETE FROM workspace_records WHERE org_id = $1", [org2]);
+    await r.query("DELETE FROM organizations WHERE id = $1", [org2]);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_inherited_visibility")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} inherited visibility (a record follows its parent's, both of its parent's names or neither); its rollback keeps them private to their owners, leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
+  // Team roles in the app's words (mold_v0-262, team_role_names, found by name): a membership's role name beside its
+  // level, a role changed within its level kept as a change; its rollback drops both (the levels stay), leaves exactly
+  // what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "team_role_names")!.version;
+    const d = await shellAt(kind, v);
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Roles', 'roles-migration') RETURNING id");
+    const [{ id: team }] = await d.query<{ id: number }>("INSERT INTO workspace_teams (org_id, name) VALUES ($1, 'Core') RETURNING id", [org]);
+    await d.query("INSERT INTO workspace_team_members (org_id, team_id, user_id, role, role_name) VALUES ($1, $2, 'u1', 'member', 'dev'), ($1, $2, 'u2', 'lead', NULL)", [org, team]);
+    await assert.rejects(d.query("INSERT INTO workspace_team_members (org_id, team_id, user_id, role, role_name) VALUES ($1, $2, 'u3', 'member', 'Bad Name')", [org, team]), /check constraint/, "a role name is an id");
+    await d.query("INSERT INTO workspace_team_changes (org_id, team_id, team_name, action, user_id) VALUES ($1, $2, 'Core', 'role_set', 'u1')", [org, team]);
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_team_role_names.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_team_role_names")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} team roles in the app's words (a role name beside its level, a change within a level kept); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

@@ -401,6 +401,12 @@ def normalize(b, name=None, color=None, logo=None, tagline=None, agent_icon=None
         cur = b["agent_icon"]; b["agent_icon"] = agent_icon_block(cur["source"] if cur["source"].startswith("icon:") else cur["source"][5:], agent_icon_dark, mold_id)
     return b
 
+def workspace_tile_only(ws):
+    """A workspace block that holds nothing but the tile's generated mark: what `set` wrote into an app with no workspace
+    before mold_v0-262 (an org with only a monogram logo_url), never an app's own workspace."""
+    if not isinstance(ws, dict) or set(ws) != {"org"} or not isinstance(ws["org"], dict): return False
+    return set(ws["org"]) <= {"logo_url"} and str(ws["org"].get("logo_url", "data:image/svg+xml")).startswith("data:image/svg+xml")
+
 def set_brand(target, args):
     """`set` for an app (state/application/<id>/application.json) or a product (state/products.json)."""
     opt = lambda k: (args[args.index(k) + 1] if k in args and args.index(k) + 1 < len(args) else None)
@@ -418,10 +424,15 @@ def set_brand(target, args):
         why = name_problem(nb["product_name"], doc.get("mold_id"))
         if why: sys.exit(why + ". Nothing was written.")
         doc["surface"]["branding"] = nb
-        # the workspace tile follows the mark, unless the source deployment already had one
-        org = doc.setdefault("workspace", {}).setdefault("org", {})
-        if not org.get("logo_url") or org["logo_url"].startswith("data:image/svg+xml"):
-            org["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(nb["icon_svg"].encode()).decode()
+        # the workspace tile follows the mark, unless the source deployment already had one. Only in an app whose state
+        # has its workspace (a mold that seeds one: its org, its members); never a block of its own, which validation
+        # refuses (mold_v0-262: a mold_v0 app has none, and `set` used to leave {"workspace": {"org": {"logo_url"}}}).
+        ws = doc.get("workspace")
+        if workspace_tile_only(ws): doc.pop("workspace")         # what an earlier `set` left: taken out again
+        org = ws.get("org") if isinstance(ws, dict) and "workspace" in doc else None
+        if isinstance(org, dict) and org.get("org_id"):
+            if not org.get("logo_url") or org["logo_url"].startswith("data:image/svg+xml"):
+                org["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(nb["icon_svg"].encode()).decode()
     else:
         p = os.path.join(ST, "products.json"); doc = load(p)
         prods = [x for x in doc["products"] if x["product_id"] == ident]
@@ -951,6 +962,24 @@ def self_test_v0(ok):
         r14 = subprocess.run([sys.executable, me, "zz_brand", "set", "--agent-icon", "none"], capture_output=True, text=True)
         ok_(r13.returncode != 0 and "not both" in r13.stdout + r13.stderr and r14.returncode == 0 and load(appf)["surface"]["branding"] == brand,
             "mold_v0-252: a file and a name together are refused; --agent-icon none goes back to the default icon")
+        # mold_v0-262: `set` on an app with no workspace block writes none (validation refuses a partial one), takes out
+        # the tile-only block an earlier `set` left, and still moves the tile of an app that has its workspace
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import factory as _factory
+        app_schema = load(os.path.join(ROOT, "state", "application", "app_id", "application.schema.json"))
+        r15 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        d15 = load(appf)
+        ok_(r15.returncode == 0 and "workspace" not in d15 and _factory._check(d15, app_schema, "application") == [],
+            f"mold_v0-262: set on an app with no workspace writes none, and the state still validates: {_factory._check(d15, app_schema, 'application')} {(r15.stdout + r15.stderr)[-200:]}")
+        d15["workspace"] = {"org": {"logo_url": "data:image/svg+xml;base64,AAAA"}}; json.dump(d15, open(appf, "w"))
+        r16 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        ok_(r16.returncode == 0 and "workspace" not in load(appf), "mold_v0-262: the tile-only workspace block an earlier set wrote is taken out")
+        full = {"org": {"org_id": "acme", "name": "Acme"}, "members": [{"email": "owner@example.com", "role": "owner"}], "operator_self": {"email": "owner@example.com", "name": "Owner"}}
+        d16 = load(appf); d16["workspace"] = json.loads(json.dumps(full)); json.dump(d16, open(appf, "w"))
+        r17 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        w17 = load(appf).get("workspace") or {}
+        ok_(r17.returncode == 0 and str(w17.get("org", {}).get("logo_url", "")).startswith("data:image/svg+xml;base64,") and w17.get("members") == full["members"]
+            and _factory._check(load(appf), app_schema, "application") == [], "mold_v0-262: an app with its own workspace still gets the tile from the mark, the rest kept")
+        d17 = load(appf); d17.pop("workspace"); json.dump(d17, open(appf, "w"))
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import app_profile
         zb = os.path.join(f, "build", "zz_brand"); zp = load(os.path.join(zb, "profile.json")) if os.path.isfile(os.path.join(zb, "profile.json")) else {}
         ok_(zp.get("limits") == lim["limits"] and zp.get("name") == "Acme Ops" and app_profile.check(zb, {"mold_id": "mold_v0", "profile": lim}, f) == []

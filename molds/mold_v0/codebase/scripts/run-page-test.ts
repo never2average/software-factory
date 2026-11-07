@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
+import { anthropicShaped } from "./lib/fake-secrets.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ok = (m: string) => console.log(`✓ ${m}`);
@@ -48,7 +49,7 @@ try {
   assert.equal(started.status, 200, JSON.stringify(started.body));
   const id: string = started.body.run.id;
   // The runner's side, as it would write it: claimed, running, its events, its spend, a result, a record it created.
-  const SECRET = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX";
+  const SECRET = anthropicShaped();
   await asPlatform(async () => {
     await db.query("UPDATE runs SET status = 'running', attempt = 1, started_at = now() - interval '90 seconds' WHERE id = $1", [id]);
     const ev = (type: string, data: unknown) => db.query("INSERT INTO run_events (run_id, org_id, attempt, type, data) VALUES ($1, $2, 1, $3, $4)", [id, A.orgId, type, JSON.stringify(data)]);

@@ -62,6 +62,8 @@ export interface Effective {
   roles: AccountRole[];
   instructions: { append_system: string | null; on_start: string | null; on_resume: string | null };
   files: { path: string; content: string }[];
+  /** mold_v0-262: the workspace credentials its sessions may receive ("<pack>/<field>"; only a workspace owner's sessions do). */
+  credentials: string[];
   from: Record<"model" | "provider" | "budget_usd" | "ceiling_usd" | "max_turns" | "wake_max_minutes" | "web" | "tools" | "roles", From>;
   /** The workspace whose override applied, or null. */
   workspace: string | null;
@@ -96,6 +98,7 @@ export function effectiveOf(c: ProfileConfig, slug: string | null = null): Effec
     roles: (c.roles?.length ? c.roles : [...PROFILE_ROLES]) as AccountRole[],
     instructions: { append_system: c.instructions?.append_system?.trim() || null, on_start: c.instructions?.on_start?.trim() || null, on_resume: c.instructions?.on_resume?.trim() || null },
     files: (c.files ?? []).map((f) => ({ path: f.path, content: f.content })),
+    credentials: [...new Set(c.credentials ?? [])],
     from: { model: mf, provider: pf, budget_usd: bf, ceiling_usd: cf, max_turns: tf, wake_max_minutes: wf, web: webOwn || hostsOwn ? "profile" : "setting",
       tools: c.tools?.base || c.tools?.free?.length || c.tools?.ask?.length || c.tools?.hidden?.length ? "profile" : "setting", roles: c.roles?.length ? "profile" : "setting" },
     workspace: o ? o.workspace : null,
@@ -227,6 +230,23 @@ export async function profileVersion(id: string, version: number): Promise<{ id:
 
 // ---------------------------------------------------------------- writing (staff)
 
+/**
+ * mold_v0-262: what is wrong with a profile's credentials: each "<pack>/<field>" is a credential a pack of this build
+ * declares, bound to the workspace (a session targets no record or environment), a value pasted in Settings (not a
+ * credential set, a GitHub App's or an OAuth connection's).
+ */
+export async function sessionCredentialProblems(names: readonly string[]): Promise<string[]> {
+  const { credentialSpecs, findCredential } = await import("./credentials.js");
+  const out: string[] = [];
+  for (const n of names) {
+    const [p, f] = n.split("/");
+    const declared = credentialSpecs().find((x) => x.pack === p && x.name === f);
+    if (!declared) out.push(`credentials: ${n} is not a credential a pack of this build declares`);
+    else if (!findCredential("_agent", n)) out.push(`credentials: ${n} is ${declared.bound_to !== "workspace" ? `bound to ${declared.bound_to === "asset" ? "a record" : `its ${declared.bound_to}`}` : "not a value pasted in Settings"}: a session receives a workspace's own value`);
+  }
+  return out;
+}
+
 export interface ProfileInput { id?: unknown; name?: unknown; description?: unknown; config?: unknown; version?: unknown; copy_of?: unknown }
 
 /** A config as staff send it, checked: its shape, what its shape cannot say, priced models, provider, the named workspaces. */
@@ -237,6 +257,7 @@ export async function checkConfig(raw: unknown): Promise<ProfileConfig> {
   const problems = configProblems(c);
   const providers = [...new Set(AGENT_FLAVOURS.flatMap((f) => f.providers))];
   if (c.provider && !providers.includes(c.provider)) problems.push(`provider: ${c.provider} is not one the harness speaks to (${providers.join(", ")})`);
+  problems.push(...(await sessionCredentialProblems(c.credentials ?? [])));
   const { hasPrice } = await import("./usage.js");
   const { unpricedModel } = await import("./gateway.js");
   for (const m of [...new Set([c.model, ...(c.overrides ?? []).map((o) => o.model)].filter((x): x is string => !!x))])

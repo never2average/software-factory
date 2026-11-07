@@ -11,11 +11,12 @@
  *     POST   /:id/pause | /resume | /stop
  *     POST   /:id/requests/:rid     {decision: approve | decline, reason?}
  *     POST   /:id/budget            {to_usd | by_usd, reason} a billing manager or owner; never while it works
- *     GET    /icon                  the workspace's own agent icon (mold_v0-252; src/agent-icon.ts) or null, and whether
- *                                    this person may change it (an owner)
- *     PUT    /icon                  an owner: the icon's bytes (application/octet-stream, at most 256 KB; its declared
- *                                    type in X-File-Type), checked by what they are, sealed with the workspace's key
- *     DELETE /icon                  an owner: back to the app's icon
+ *     GET    /icon                  the workspace's own agent icon (mold_v0-252; src/agent-icon.ts) or null
+ *     PUT    /icon, DELETE /icon    refused (403): since mold_v0-262 platform staff set it, on the account's page
+ *
+ *   staff, an account's agent icon (mold_v0-262): GET /api/admin/onboarding/agent-icon/<slug>; PUT (the icon's bytes,
+ *   application/octet-stream, at most 256 KB, its declared type in X-File-Type: checked by what they are, sealed with
+ *   the workspace's key) and DELETE (back to the app's icon) for the accounts role, each in the staff log.
  *
  *   staff (/api/admin/agent, agentAdminRoutes): GET / (every workspace's), GET /:id, POST /:id/pause, /:id/stop,
  *   /:id/budget ("accounts"), /:id/requests/:rid (decline only). Staff never message a session: it acts for the
@@ -81,19 +82,13 @@ export function agentAppRouter(): Router {
   r.get("/", answer(async (_req, res) => ({ sessions: await H.listSessions(S(res).org, actor(res)), can_start: canAccount(S(res).accountRole, "launch"),
     offer: { ...agentOffer(), budget: await H.startBudgetMax(S(res).org, actor(res)) },
     profiles: canAccount(S(res).accountRole, "launch") || !S(res).user ? await P.startableProfiles(S(res).slug, actor(res), (eff) => H.startBudgetMax(S(res).org, actor(res), eff)) : [] })));
-  // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it; its owners change it.
-  const owner = (_req: Request, res: Response, next: NextFunction) =>
-    (canAccount(S(res).accountRole, "manage") ? next() : void res.status(403).json({ error: "Only the workspace's owners change its agent icon." }));
-  r.get("/icon", answer(async (_req, res) => ({ icon: await readAgentIcon(S(res).org), can_change: canAccount(S(res).accountRole, "manage"), max_bytes: AGENT_ICON_MAX_BYTES })));
-  r.put("/icon", owner, (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the icon's bytes as application/octet-stream" })),
-    express.raw({ type: "application/octet-stream", limit: AGENT_ICON_MAX_BYTES }),
-    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
-      (err ? void res.status(err.type === "entity.too.large" ? 413 : err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? `An icon is at most ${AGENT_ICON_MAX_BYTES / 1024} KB` : "The request body could not be read" }) : next()),
-    answer(async (req, res) => {
-      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      return { icon: await saveAgentIcon(S(res).org, S(res).email ?? S(res).user, data, String(req.get("x-file-type") ?? "")) };
-    }));
-  r.delete("/icon", owner, answer(async (_req, res) => { await resetAgentIcon(S(res).org); return { icon: null }; }));
+  // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it. mold_v0-262: only
+  // platform staff set or reset it (Admin › Accounts › <account>, agentAdminRoutes below): the workspace's PUT and DELETE
+  // are gone, and say where it is set.
+  r.get("/icon", answer(async (_req, res) => ({ icon: await readAgentIcon(S(res).org), can_change: false, max_bytes: AGENT_ICON_MAX_BYTES })));
+  const staffOnly = (_req: Request, res: Response) => void res.status(403).json({ error: "The agent icon is set by the platform's staff, on the account's page." });
+  r.put("/icon", staffOnly);
+  r.delete("/icon", staffOnly);
   r.post("/", answer(async (req, res) => { res.status(201); return { session: await H.startSession(S(res).org, actor(res), req.body ?? {}, org(res)) }; }));
   r.get("/:id", answer(async (req, res) => ({ session: await H.readSession(S(res).org, id(req), actor(res)) })));
   r.post("/:id/messages", answer(async (req, res) => H.messageSession(S(res).org, id(req), actor(res), (req.body ?? {}).message, org(res))));
@@ -132,6 +127,34 @@ export function agentAdminRoutes(admin: Router, need: Need, who: (req: Request, 
     const s = await H.decideRequest(null, id(req), String(req.params.rid), actor(req, res), (req.body ?? {}).decision, (req.body ?? {}).reason);
     log(who(req, res), "agent.request_declined", s.workspace?.slug ?? null, { session: s.id, request: String(req.params.rid).slice(0, 40) });
     return { session: s };
+  }));
+
+  // ---------- an account's agent icon (mold_v0-262: staff only, audited; src/agent-icon.ts validates and seals it) ----------
+  const orgOf = async (slug: string): Promise<{ id: number; slug: string }> => {
+    const [o] = await asPlatform(async () => (await getDb()).query<{ id: number; slug: string }>("SELECT id, slug FROM organizations WHERE slug = $1", [slug.slice(0, 120)]));
+    if (!o) throw new PackError("Not found", 404);
+    return o;
+  };
+  admin.get("/agent-icon/:slug", answer(async (req) => {
+    const o = await orgOf(String(req.params.slug));
+    return { icon: await readAgentIcon(o.id), max_bytes: AGENT_ICON_MAX_BYTES };
+  }));
+  admin.put("/agent-icon/:slug", need("accounts"), (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the icon's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: AGENT_ICON_MAX_BYTES }),
+    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
+      (err ? void res.status(err.type === "entity.too.large" ? 413 : err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? `An icon is at most ${AGENT_ICON_MAX_BYTES / 1024} KB` : "The request body could not be read" }) : next()),
+    answer(async (req, res) => {
+      const o = await orgOf(String(req.params.slug));
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const icon = await saveAgentIcon(o.id, `staff:${who(req, res)}`, data, String(req.get("x-file-type") ?? ""));
+      log(who(req, res), "agent.icon_set", o.slug, { sha256: icon.sha256, content_type: icon.content_type });
+      return { icon };
+    }));
+  admin.delete("/agent-icon/:slug", need("accounts"), answer(async (req, res) => {
+    const o = await orgOf(String(req.params.slug));
+    await resetAgentIcon(o.id);
+    log(who(req, res), "agent.icon_reset", o.slug, {});
+    return { icon: null };
   }));
 
   // ---------- agent profiles (mold_v0-261) ----------

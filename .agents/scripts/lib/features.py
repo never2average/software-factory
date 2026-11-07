@@ -69,7 +69,7 @@ def requested(flag, docs, settings_on=None, kind=None):
     if by == "checks": return any(d.get("checks") for d in docs)
     if by == "encrypted": return any(isinstance(f, dict) and f.get("encrypted") is True for a in _areas(docs) for f in a.get("fields") or [])
     if by == "documents": return any(isinstance(f, dict) and (f.get("type") == "file" or f.get("preview") == "document") for a in _areas(docs) for f in a.get("fields") or [])
-    if by == "layouts": return (any(isinstance(a.get("detail"), dict) or a.get("key_from_title") is True or any(isinstance(f, dict) and f.get("copyable") is True for f in a.get("fields") or []) for a in _areas(docs))
+    if by == "layouts": return (any(isinstance(a.get("detail"), dict) or a.get("key_from_title") is True or any(isinstance(f, dict) and (f.get("copyable") is True or f.get("display") == "chips") for f in a.get("fields") or []) for a in _areas(docs))
                                 or any(isinstance(c, dict) for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict) for c in (t.get("columns") or [])))
     # mold_v0-260 (the shell's src/features.ts gapAsks and gen-packs say the same)
     tabs = [t for d in docs for t in (d.get("tabs") or []) if isinstance(t, dict)]

@@ -13,7 +13,7 @@ import { errorClass, jsonBytes, recordMcpEvent } from "./analytics.js";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { encryptedFieldProblems } from "./encrypted-fields.js";
-import { areaLinks, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
+import { areaLinks, inheritsVisibility, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
 import { mergePack, type DeclaredPack } from "./pack-manifest.js";
 import { generateCatalog } from "./mcp-catalog.js";
 import { registerGeneratedTools } from "./mcp-tools.js";
@@ -121,6 +121,24 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     if (!areaOwner.has(l.area)) problems.push(`pack ${p.id}: record area ${a.name} links field ${l.field} to area ${l.area}, which no pack declares`);
     else if (a.scope === "platform" && scopeOf.get(l.area) === "workspace")
       problems.push(`pack ${p.id}: record area ${a.name} is shared (platform) and its field ${l.field} refers to ${l.area}, a workspace's own area: a shared area may refer to shared areas only`);
+  }
+  // mold_v0-262: an area that inherits its visibility follows a workspace area that declares its own modes (one level).
+  const declOf = new Map(out.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => [a.name, a] as const)));
+  for (const p of out) for (const a of p.definition.recordAreas ?? []) {
+    const v = (a as { visibility?: unknown }).visibility;
+    if (!inheritsVisibility(v)) continue;
+    const to = a.fields.find((f) => f.name === v.inherit)?.to, parent = to ? declOf.get(to) : undefined;
+    const pv = (parent as { visibility?: unknown } | undefined)?.visibility;
+    if (to && parent && (parent.scope !== "workspace" || !pv || inheritsVisibility(pv)))
+      problems.push(`pack ${p.id}: record area ${a.name} takes \`visibility\` from ${to} through ${v.inherit}, which ${parent.scope !== "workspace" ? "is shared (platform)" : !pv ? "declares no \`visibility\`" : "inherits its own"}: the parent declares its modes`);
+  }
+  // mold_v0-262: the credentials a pack's agent profile gives its sessions: a pack's workspace credential of this build.
+  const credOf = new Map<string, { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }>(out.flatMap((p) => (p.definition.credentials ?? []).map((c) => [`${p.id}/${(c as { name: string }).name}`, c as { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }] as const)));
+  for (const p of out) for (const ap of p.definition.agentProfiles ?? []) for (const n of (ap as { credentials?: string[] }).credentials ?? []) {
+    const c = credOf.get(n);
+    if (!c) problems.push(`pack ${p.id}: agent profile ${(ap as { id: string }).id} gives its sessions ${n}, which is not a credential a pack of this build declares`);
+    else if ((c.bound_to ?? "workspace") !== "workspace" || c.entries || c.github_app || c.oauth)
+      problems.push(`pack ${p.id}: agent profile ${(ap as { id: string }).id} gives its sessions ${n}: a session receives a workspace's own pasted value (bound to the workspace, no entries, no GitHub App or OAuth)`);
   }
   // A reference is checked on write against stored rows: never into an area read live from an API (mold_v0-059).
   const liveAreas = new Set(out.flatMap((p) => (p.definition.recordAreas ?? []).filter((a) => a.repository && (p.definition.repositories?.[a.repository] as { kind?: string } | undefined)?.kind === "http_api").map((a) => a.name)));

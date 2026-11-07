@@ -12,7 +12,11 @@ export interface RunHead {
   id: string; pack: string; kind: string; label: string; status: string; attempt: number; max_attempts: number; error_kind: string | null; error: string | null; cancel_requested: boolean;
   cost_usd: number; budget_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string;
   record: (Ref & { title: string | null }) | null; target: Ref | null;
+  /** mold_v0-262: a workspace agent's wake: its session (the page links to it). */
+  session?: { id: string; title: string } | null;
 }
+/** A session's page on the agent's page (?session=<id>). */
+export const sessionHref = (id: string) => `/app/agent?session=${encodeURIComponent(id)}`;
 /** What GET /api/runs/<id>/page answers (src/run-page.ts runPage). */
 export interface RunPageData {
   run: RunHead;

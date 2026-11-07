@@ -25,6 +25,7 @@ import { createHash, createHmac, generateKeyPairSync, randomBytes } from "node:c
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
 import { startGithubStandin } from "./lib/github-standin.js";
+import { pemBlock } from "./lib/fake-secrets.js";
 
 const logged: string[] = [];
 for (const stream of [process.stdout, process.stderr]) {
@@ -165,7 +166,7 @@ try {
       assert.deepEqual(g0.body.setup.permissions, { contents: "read", metadata: "read" });
       const put = (tok: string, body: unknown) => req("PUT", "/api/admin/onboarding/github-app", bearer(tok), body);
       assert.equal((await put(operator, { app_id: String(GH_APP_ID) })).status, 403, "only the key vault's owners set it");
-      const badKey = `-----BEGIN RSA PRIVATE KEY-----\n${CLIENT_SECRET}\n-----END RSA PRIVATE KEY-----\n`;
+      const badKey = pemBlock(CLIENT_SECRET, "RSA");
       const bk = await put(owner, { private_key: badKey });
       assert.equal(bk.status, 400);
       assert.equal(secretHits(JSON.stringify(bk.body)), 0, "a refused key is not quoted");

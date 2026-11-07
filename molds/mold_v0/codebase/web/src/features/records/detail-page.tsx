@@ -41,7 +41,7 @@ import { ClockSection, type ClockEvent } from './clocks';
 import { RecordDocuments, isStoredFile } from './documents';
 import {
   BADGE_CLASS, LOG_POLL_MS, NOTICE_CLASS, RUN_STATUS_COLOR, badgeColor, columnUnit, columnsClass, copyText, countWords, dateWords, declaresActions, declaresCopyLink, isEmptyValue,
-  isTimeUnit, linkPieces, logLive, numberWords, openTab, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
+  isTimeUnit, linkedShown, linkPieces, logLive, numberWords, sectionShown, openTab, optionWords, readsComputed, readsHistory, relatedColumns, sectionEmpty, sectionGroups, sectionKey, showAllHref,
   shownNotices, tabId, unplacedFields,
   type BadgeColor, type ComputedFact, type DetailFact, type DetailLayout, type DetailSection, type HistoryData, type LaidOutField, type NoticeTone, type PageData,
   type RelatedData, type RunsData
@@ -55,8 +55,8 @@ import { linesOf } from './log-lines';
 import { LogViewer } from './log-viewer';
 import { FormHost } from '@/features/tabs/tab-action';
 import { areaFieldLabel, findRecordArea } from './registry';
-import { FieldValue, fieldText, type RecordRow } from './record-pages';
-import { ShareButton, VisibilityBadge, visibilityOf } from '@/features/teams/visibility';
+import { Chips, chipValues, FieldValue, fieldText, refTarget, type RecordRow } from './record-pages';
+import { inheritedVisibility, ShareButton, VisibilityBadge, visibilityOf } from '@/features/teams/visibility';
 
 type Links = { field: string; area: string; records: { key: string; title: string | null }[] }[];
 
@@ -113,8 +113,10 @@ export function DateText({ v, relative }: { v: unknown; relative: boolean }) {
 }
 
 /** A field's value on the laid-out page: by its type, an enum as its badge, a date and a number in words, the rest as everywhere. */
-function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, unit }: {
+function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, unit, titles }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; f: RecordFieldSpec; v: unknown; recordKey: string; relative?: boolean; unit?: string;
+  /** mold_v0-262: a reference's records' titles (the record's ref_titles of this field). */
+  titles?: Record<string, string>;
 }) {
   if (isEmptyValue(v)) return <span className='text-muted-foreground'>—</span>;
   if (f.encrypted) return <FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} />;
@@ -129,7 +131,7 @@ function LaidOutValue({ area, base, layout, f, v, recordKey, relative = false, u
     : <span className='tabular-nums'>{numberWords(v, unit)}</span>;
   // mold_v0-256: an address in a fact wraps at its slashes (never inside a word), a piece too long for its box truncated.
   if (relative && f.type === 'url' && typeof v === 'string') return <LinkText href={v} />;
-  return <span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} /></span>;
+  return <span className='whitespace-pre-wrap'><FieldValue area={area} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
 }
 
 /**
@@ -187,7 +189,7 @@ function SectionCard({ s, area, base, layout, record, id }: { s: DetailSection; 
                     const v = record.data[n];
                     return (
                       <FieldCell key={n} label={f.label} copy={copyOf(f, v)} className={f.type === 'json' && s.columns !== 1 ? 'sm:col-span-full' : undefined}>
-                        <LaidOutValue area={area} base={base} layout={layout} f={f} v={v} recordKey={record.key} unit={layout.header?.facts?.find((x) => x.field === n)?.unit} />
+                        <LaidOutValue area={area} base={base} layout={layout} f={f} v={v} recordKey={record.key} unit={layout.header?.facts?.find((x) => x.field === n)?.unit} titles={record.ref_titles?.[n]} />
                       </FieldCell>
                     );
                   })}
@@ -212,6 +214,8 @@ function AnySection({ s, id, pageKey, area, base, layout, record, page, data, ch
 }) {
   // Staff pages read no workspace's lists or runs: those sections are a workspace's.
   if ((s.related || s.runs) && base !== 'app') return null;
+  // mold_v0-262: a section shown only while its condition holds on the record.
+  if (!sectionShown(s, record.data, record.clocks)) return null;
   if (s.related) return <RelatedSection s={s} id={id} base={base} record={record} page={page} data={data as RelatedData | undefined} changed={changed} />;
   if (s.runs) return <RunsSection s={s} id={id} page={page} data={data as RunsData | undefined} />;
   // mold_v0-256: a log, the change history, a code view, a table, a file browser.
@@ -290,8 +294,12 @@ const TH = 'text-muted-foreground h-9 px-3 text-left align-middle text-xs font-m
 const TD = 'px-3 py-2.5 align-middle first:pl-6 last:pr-6';
 
 /** A cell of a related list: as the area's list shows it (an enum its layout colours as a badge). */
-function RelatedCell({ target, f, v, recordKey }: { target: RecordAreaSpec; f: RecordFieldSpec; v: unknown; recordKey: string }) {
+function RelatedCell({ target, f, v, recordKey, titles, base = 'app' }: { target: RecordAreaSpec; f: RecordFieldSpec; v: unknown; recordKey: string; titles?: Record<string, string>; base?: 'app' | 'admin' }) {
   if (isEmptyValue(v)) return <span className='text-muted-foreground'>—</span>;
+  // mold_v0-262: a reference column shows the named records' titles, each linked to its record.
+  if (refTarget(target, f)) return <span className='line-clamp-2'><FieldValue area={target} base={base} f={f} v={v} recordKey={recordKey} titles={titles} /></span>;
+  const chips = chipValues(f, v);
+  if (chips) return <Chips values={chips} max={4} />;
   const tl = (target as RecordAreaSpec & { detail?: DetailLayout }).detail ?? null;
   if (f.type === 'enum' && !f.encrypted) return (
     <span className='flex flex-wrap gap-1'>{(Array.isArray(v) ? v : [v]).map((x) => <ToneBadge key={String(x)} color={badgeColor(tl, f.name, x)}>{optionWords(f, x)}</ToneBadge>)}</span>
@@ -341,7 +349,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
                       <Link href={href(r.key)} className='font-medium underline-offset-4 hover:underline'>{r.title || r.key}</Link>
                       {r.title && r.title !== r.key && <span className='text-muted-foreground block font-mono text-xs break-all'>{r.key}</span>}
                     </td>
-                    {cols.map((f) => <td key={f.name} className={cn(TD, f.type === 'number' && 'text-right')}><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} /></td>)}
+                    {cols.map((f) => <td key={f.name} className={cn(TD, f.type === 'number' && 'text-right')}><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} titles={r.ref_titles?.[f.name]} base={base} /></td>)}
                     <td className={cn(TD, 'w-10 text-right')}><RowActions host={hostOf(r)} actions={r.actions} href={href(r.key)} /></td>
                   </tr>
                 ))}
@@ -357,7 +365,7 @@ function RelatedSection({ s, id, base, record, page, data, changed }: {
                     {cols.map((f) => (
                       <div key={f.name} className='flex min-w-0 flex-col gap-0.5'>
                         <dt className='text-muted-foreground'>{f.label}</dt>
-                        <dd className='min-w-0 text-sm break-words'><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} /></dd>
+                        <dd className='min-w-0 text-sm break-words'><RelatedCell target={target} f={f} v={r.data[f.name]} recordKey={r.key} titles={r.ref_titles?.[f.name]} base={base} /></dd>
                       </div>
                     ))}
                   </dl>
@@ -559,10 +567,10 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
   page: PageLoad & { data: PageData | null }; changed: () => void; withActions: boolean; bar: ReactNode; setAsked: (v: string | null) => unknown; canShare: boolean;
 }) {
   // mold_v0-259 (flag teams): who sees it, in the header, with Share for the people who may change it.
-  const visibility = base === 'app' && visibilityOf(area) ? record.visibility ?? null : null;
+  const visibility = base === 'app' && (visibilityOf(area) || inheritedVisibility(area)) ? record.visibility ?? null : null;
   const share = visibility ? <ShareButton area={area} recordKey={record.key} visibility={visibility} canShare={canShare} onShared={changed} /> : null;
   // Share sits beside the declared actions, ahead of them.
-  const bar = share && canShare ? <div className='flex shrink-0 flex-wrap items-start gap-2'>{share}{actionsBar}</div> : actionsBar;
+  const bar = share && canShare ? <div className='flex max-w-full min-w-0 flex-wrap items-start gap-2 sm:justify-end'>{share}{actionsBar}</div> : actionsBar;
   const h = layout.header ?? {};
   const field = (n?: string) => (n ? area.fields.find((f) => f.name === n) : undefined);
   const titleField = field(h.title);
@@ -582,7 +590,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
       <Card className='w-full gap-0 py-0' data-record-header=''>
         <CardContent className='flex flex-col gap-5 py-5'>
           <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
-            <div className='flex min-w-0 flex-col gap-2'>
+            <div className='flex min-w-0 flex-1 flex-col gap-2'>
               <p className='text-muted-foreground text-xs'>{area.label} · {where}</p>
               <h1 className='text-xl leading-tight font-semibold tracking-tight break-words md:text-2xl'>{title}</h1>
               {subtitle && !isEmptyValue(record.data[subtitle.name]) && (
@@ -618,7 +626,7 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
                 </FieldCell>
               ) : (
                 <FieldCell key={x.field} label={x.label ?? x.f!.label} copy={copyOf(x.f!, record.data[x.field!])}>
-                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} relative unit={x.unit} /></span>
+                  <span className='font-medium'><LaidOutValue area={area} base={base} layout={layout} f={x.f!} v={record.data[x.field!]} recordKey={record.key} relative unit={x.unit} titles={record.ref_titles?.[x.field!]} /></span>
                 </FieldCell>
               ))}
             </dl>
@@ -671,7 +679,9 @@ function LaidOutBody({ area, base, layout, record, links, clockEvents, provenanc
 function FirstTabRest({ area, base, layout, record, rest, links, clockEvents, credentials }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; rest: RecordFieldSpec[]; links: Links; clockEvents?: ClockEvent[]; credentials: ReactNode;
 }) {
-  const linked = links.filter((l) => l.records.length);
+  // mold_v0-262: none with linked: false; else only the links the page does not show already (as a fact or a section's field).
+  const listed = new Set(linkedShown(layout, links.map((l) => l.field)));
+  const linked = links.filter((l) => l.records.length && listed.has(l.field));
   return (
     <>
       {!!rest.length && (
