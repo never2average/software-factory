@@ -31,7 +31,7 @@
       "short_description": "Connect an MCP client, run agents and read their results."
     },
     "refuse": "[<>\"\\r\\n]",
-    "app_settable": ["limits", "email", "email_from_address", "member_keys", "source_offer.upstreams", "legal", "mcp_instructions", "landing", "audit", "onprem_runners", "features", "team_roles"],
+    "app_settable": ["limits", "email", "email_from_address", "member_keys", "source_offer.upstreams", "legal", "mcp_instructions", "landing", "audit", "onprem_runners", "run_sandbox", "features", "team_roles"],
     "member_keys_off": {
       "$comment": "mold_v0-116 (.claude/scripts/lib/app_profile.py): member_keys: false leaves signing in as the only way an AI client reaches /mcp, so it is refused at validation unless the codebase has one of these sign-ins for /mcp (the built-in OAuth server, or Clerk's). Whether the deployed app's sign-in actually works (Clerk's key on the API, Clerk letting clients register) is provision.py's check (mold.json mcp_sign_in).",
       "mcp_sign_in_any": ["src/mcp-oauth.ts", "src/clerk.ts"]

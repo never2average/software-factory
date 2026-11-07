@@ -410,6 +410,12 @@ python3 .claude/scripts/provision.py <app_id> --operator new-org --yes -- --name
   python3 .claude/scripts/provision.py <app_id> --operator vault-status --yes [-- --json] # only after the person's yes
   ```
 
+- **Freestyle sandboxes** (mold_v0-274): an app whose runs' sandboxes are Freestyle VMs (`run_sandbox = freestyle` in its
+  brief's `## Profile`, or `Run keys: sandbox = freestyle`) needs Freestyle's API key, and the check says so. It is a **Key vault**
+  key, not a deploy secret: a platform owner adds it in the app's own console (Admin › Key vault, the Freestyle row, Add a key),
+  never `--set-secret`. Ask for it as for any key the person holds in an account: their Freestyle dashboard's API keys page, then
+  the app's Key vault page. Health says it in plain words while it is missing.
+
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
 machine and is the user's to approve. If the tunnel is ever down, give the user `docs/RUNBOOK.md` §9, "If the factory cannot reach the

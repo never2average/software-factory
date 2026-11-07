@@ -15,7 +15,7 @@ import { launchFailure, recordComputeEvent } from "./compute-events.js";
 import { pruneComputeHistory, recordTick } from "./autoscaler-ticks.js";
 import { keepAlive } from "./telemetry.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
-import { RunScaler, runSandboxStatus, type RunTick } from "./run-sandboxes.js";
+import { missingSandboxKey, RUN_SANDBOXES, RunScaler, runSandboxStatus, type RunTick } from "./run-sandboxes.js";
 import { queuedRunsByKind } from "./runs.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import { ENV } from "./env-names.js";
@@ -222,7 +222,12 @@ export class Autoscaler {
 
   private async boatKey() {
     if (BOAT.apiKey && Date.now() - this.keyAt < 10 * 60_000) return;
-    BOAT.apiKey = (await useCredential("boat")).secret;
+    try { BOAT.apiKey = (await useCredential("boat")).secret; }
+    catch (e) {
+      // mold_v0-274: a build without the session engine reads boat only for its runs' sandboxes: say which key, and where.
+      if (!sessionEngine() && /no boat credential/i.test(String((e as Error).message))) throw new Error(`no run can start: ${missingSandboxKey("boat")}`);
+      throw e;
+    }
     this.keyAt = Date.now();
   }
 
@@ -255,6 +260,11 @@ export class Autoscaler {
     st.leader = true;
     const db = await getDb();
     try {
+      // mold_v0-274: a build without the session engine has no orchestrators. Unless its runs' sandboxes come from boat
+      // (APP_RUN_SANDBOX boat, or auto with boat's key: this tick's runs provider) it never reads a boat key, so nothing
+      // here is asked of boat.dev and no "no boat credential" is said where boat is not used (freestyle, docker, off).
+      orchestrators: {
+      if (!sessionEngine() && RUN_SANDBOXES.mode() !== "boat" && st.runs?.provider !== "boat") { st.note ??= `no orchestrators: the runs' sandboxes come from ${st.runs?.provider ?? RUN_SANDBOXES.mode()}`; break orchestrators; }
       await this.boatKey();
       // Sessions queued in the last FRESH_MS before an idle exit (or after it) were never ignored by a live orchestrator,
       // so they are new work, not stuck work: they must not wait out the relaunch cooldown below.
@@ -384,6 +394,7 @@ export class Autoscaler {
         this.imageBuild = lib.buildImage({ root: this.opts.root, log: (m) => this.log(m) })
           .catch((e) => this.log(`image build failed: ${(e as Error).message}`))
           .finally(() => { this.imageBuild = null; });
+      }
       }
     } catch (e) {
       st.error = (e as Error).message;

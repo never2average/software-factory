@@ -387,6 +387,17 @@ def schema_v0(root):
                                     "with `private_network: true` then go to it when the workspace chooses so.\n"
                                     "- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners "
                                     "appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`.")}
+        elif k == "run_sandbox":
+            profile_props[k] = {"type": "string", "enum": list(app_profile.RUN_SANDBOXES), "default": "auto", "title": "Where the runs' sandboxes come from (mold_v0-274)",
+                                **D("auto (boat when its key is in Key vault, else the server's Docker), boat, docker or freestyle (a Freestyle VM per run and per agent wake). "
+                                    "The default of the app's Sandbox provider setting: a staff member's choice and the server's APP_RUN_SANDBOX win over it.",
+                                    "**Where each run's sandbox comes from** (mold_v0-274, the shell's `src/run-sandboxes.ts`): the default of the app's "
+                                    "**Sandbox provider** platform setting (Admin › Agent configuration), which a staff member's choice and the server's "
+                                    "`APP_RUN_SANDBOX` win over.\n\n- `auto` (the default): boat when its key is in Key vault, else the server's Docker.\n"
+                                    "- `boat`: a boat.dev sandbox per run.\n- `docker`: a container on the app's own server.\n"
+                                    "- `freestyle`: a Freestyle VM per run and per agent wake; its API key goes in the app's Key vault (Admin › Key vault, Freestyle), "
+                                    "never in the repository or a pack.\n\nBrief line: `run_sandbox = freestyle` in `## Profile`. "
+                                    "`run_keys.sandbox = freestyle` implies it.")}
         elif k == "source_offer.upstreams":
             profile_props["source_offer"] = {"type": "object", "additionalProperties": False, "required": ["upstreams"], **D("Only its upstreams part is the app's."), "properties": {
                 "upstreams": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": pid}, "additionalProperties": {"const": "licensor_owned"},
@@ -424,12 +435,13 @@ def schema_v0(root):
       **D("Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
           "Where the keys the packs' **job runs** need come from. **Never a value here**: the operator puts each key in the app's **Key vault** (`/admin` → Key vault), "
           "or in the server's environment.\n\n- `model`: `anthropic` (an Anthropic API key) or `vertex` (a Vertex AI service-account key: Claude then runs on Vertex AI).\n"
-          "- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), "
+          "- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel) or `freestyle` (Freestyle VMs, on Vercel or a server; its key in the Key vault; "
+          "it also makes Freestyle the app's sandbox provider, `profile.run_sandbox`).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), "
           "`r2_env` (R2_* on the server) or `storage_dir` (APP_STORAGE_DIR, a server of its own).\n\n"
           "Whether each is set: `provision.py <app> --operator vault-status --dry-run`."),
       "properties": {
         "model": {"type": "string", "enum": ["anthropic", "vertex"], **D("anthropic: an Anthropic API key in the Key vault. vertex: a Vertex AI service-account key; Claude then runs on Vertex AI.")},
-        "sandbox": {"type": "string", "enum": ["boat"], **D("boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds).")},
+        "sandbox": {"type": "string", "enum": ["boat", "freestyle"], **D("boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds). freestyle: the Freestyle key (mold_v0-274); the runs' sandboxes are then Freestyle VMs.")},
         "object_storage": {"type": "string", "enum": ["vault", "r2_env", "storage_dir"],
                            **D("Where workspace snapshots of agent runs go: vault (the Key vault's Object storage), r2_env (R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY on the server), storage_dir (APP_STORAGE_DIR on a server of its own).")}}}
     s = _base("mold_v0", root, "mold_v0 application spec",
@@ -486,7 +498,7 @@ def schema_v0(root):
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["model", "object_storage"]}}}),
         _rule("a pack has job kinds that keep a workspace between runs", pk(ws_kind),
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["object_storage"]}}}),
-        _rule("job runs on Vercel run in boat.dev sandboxes",
+        _rule("job runs on Vercel run in hosted sandboxes (boat.dev or Freestyle), whose key run_keys.sandbox names",
               {"allOf": [pk(has_kinds), {"properties": {"deploy": {"properties": {"target": {"const": "vercel"}}, "required": ["target"]}}, "required": ["deploy"]}]},
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["sandbox"]}}}),
         _rule("an app on a server of its own is reached at its own domain",
@@ -846,6 +858,7 @@ def _profile_lines(spec):
     for k, v in prof.items():
         if k == "member_keys": lines.append(f"member_keys = {'true' if v else 'false'}")
         elif k == "onprem_runners": lines.append(f"onprem_runners = {'true' if v else 'false'}")
+        elif k == "run_sandbox": lines.append(f"run_sandbox = {v}")
         elif k == "email_from_address": lines.append(f"email_from_address = {v}")
         elif k == "email":
             for kk, vv in v.items(): lines.append(f"email.{kk} = {', '.join(vv) if isinstance(vv, list) else vv}" if vv != [] else f"email.{kk} = none")
@@ -1160,6 +1173,9 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
             ok("audit.data = true" in lines and not any("platform" in l for l in lines)
                and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
+            rl, _ = _profile_lines({"profile": {"run_sandbox": "freestyle"}})   # mold_v0-274
+            ok(rl == ["run_sandbox = freestyle"] and (_ap.from_brief("## Profile\n" + "\n".join(rl) + "\n")[0] or {}).get("run_sandbox") == "freestyle",
+               f"{m}: run_sandbox is written to the profile through the brief")
             lines, _ = _profile_lines({"profile": {"onprem_runners": True}})   # mold_v0-205
             ok(lines == ["onprem_runners = true"] and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("onprem_runners") is True
                and _ap.from_brief("## Profile\nonprem_runners = false\n")[0] == {"onprem_runners": False}, f"{m}: onprem_runners is written to the profile through the brief")

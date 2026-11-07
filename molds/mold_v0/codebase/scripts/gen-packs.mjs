@@ -1211,6 +1211,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "audit") { const bad = auditProblem(v); if (bad) fail(rel(PROFILE_FILE), `audit: ${bad}`); else profile[k] = v; continue; }
       // On-premises runners (mold_v0-205, src/onprem-runners.ts): true turns them on; absent or false, none (no route, page or tab).
       if (k === "onprem_runners") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "onprem_runners: true or false (true: workspaces may install on-premises runners for the kinds that need their private network; default false)"); else profile[k] = v; continue; }
+      // Where the packs' runs and the workspace agent's wakes get their sandbox by default (mold_v0-274, src/run-sandboxes.ts):
+      // the platform setting APP_RUN_SANDBOX's default (a staff member's choice, then the server's environment, win over it).
+      if (k === "run_sandbox") { if (!["auto", "boat", "docker", "freestyle"].includes(v)) fail(rel(PROFILE_FILE), "run_sandbox: auto, boat, docker or freestyle (where each run's sandbox comes from; default auto)"); else profile[k] = v; continue; }
       // The capability flags (mold_v0-219, src/features.json): {"<flag>": true|false}, checked with the packs below.
       if (k === "features") {
         const known = FEATURE_REGISTRY.map((f) => f.id);
@@ -1259,7 +1262,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       }
       // mold_v0-262: a workspace's team roles in the app's words (src/teams.ts), over a pack's; only while teams is on (below).
       if (k === "team_roles") { const bad = teamRolesProblem(v); if (bad) fail(rel(PROFILE_FILE), `team_roles: ${bad}`); else profileTeamRoles = v; continue; }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, audit, features, agent_icon, avatar_palette, landing, legal, console, access_request, client_skill, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, team_roles, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, sign_up_subtitle, install_clients, source_offer, member_keys, onprem_runners, run_sandbox, audit, features, agent_icon, avatar_palette, landing, legal, console, access_request, client_skill, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
