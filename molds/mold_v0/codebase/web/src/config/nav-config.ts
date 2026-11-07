@@ -1,4 +1,3 @@
-import { featureOn } from './features';
 import { isSettingsUrl, settingsNavItem, SETTINGS_URL, type SettingsTabSpec } from './settings';
 import { settingsTabs } from './pack-nav.generated';
 import { NavGroup } from '@/types';
