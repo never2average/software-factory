@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { fill } from '@/lib/vocabulary';
 import { RequestAccessForm } from '@/features/site/request-access-form';
+import { accessPagesLive } from '@/features/site/access-pages-live';
 
 export const metadata: Metadata = {
   title: 'Request access',
@@ -13,7 +14,9 @@ export const metadata: Metadata = {
  * The public request form (mold_v0-098): where the landing page's "get started" leads when accounts are invite-only
  * (web/src/features/site/accounts-mode.ts). The request goes to the platform's staff (/admin, Requests).
  */
-export default function RequestAccessPage() {
+export default async function RequestAccessPage() {
+  // mold_v0-266: the form staff saved (Admin › Access requests › Request form), read on each request; else the build's own.
+  const { request_form } = await accessPagesLive();
   return (
     <div className='mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12 sm:px-6 sm:py-16'>
       <div className='flex flex-col gap-3'>
@@ -27,7 +30,7 @@ export default function RequestAccessPage() {
           with the address the invitation went to.
         </p>
       </div>
-      <RequestAccessForm from='/request-access' />
+      <RequestAccessForm from='/request-access' config={request_form} />
     </div>
   );
 }

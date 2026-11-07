@@ -1,0 +1,16 @@
+{
+  "phase": "mold_v0-266: the early-access form and sign-in editor, with nothing saved (the defaults). What Octillion's people see (the landing, /early-access, /request-access, sign-in and sign-up, every customer page, the MCP surface) is unchanged; the staff console gains the editor's tabs and routes, and the shell's rules module copy gains the editor's rules",
+  "allow": [
+    { "key": "generated::web/src/lib/access-request.generated.ts", "reason": "the console's copy of src/access-request.ts, which now holds the editor's rules (the saved form, its check, its defaults, the sign-in words); the declared fields files are unchanged" },
+    { "key": "api::routes::GET /api/access-pages", "reason": "the public read of the saved form and words (null and null with nothing saved)" },
+    { "key": "api::routes::GET /api/admin/onboarding/access-pages", "reason": "the editor's read (staff)" },
+    { "key": "api::routes::GET /api/admin/onboarding/access-pages/:id/changes", "reason": "a page's history (staff)" },
+    { "key": "api::routes::POST /api/admin/onboarding/access-pages/:id/reset", "reason": "Reset to defaults (Operator)" },
+    { "key": "api::routes::PUT /api/admin/onboarding/access-pages/:id", "reason": "Save (Operator)" },
+    { "key": "api::/api/admin/onboarding/access-pages", "reason": "the editor's read, newly recorded by the snapshot's GET sweep" },
+    { "key": "api::/api/admin/onboarding/health/status::body::release::**", "reason": "the schema is at 0055_access_pages" },
+    { "key": "api::/api/admin/onboarding/spend/storage::**", "reason": "one more admin_access_log row: the snapshot's own GET of /api/admin/onboarding/access-pages, logged before storage is read" },
+    { "key": "pages::/admin/requests::text", "reason": "Access requests' in-page tabs: Requests, Request form, Sign-in page" },
+    { "key": "pages::/admin/requests::links", "reason": "the same tabs' links (?section=form, ?section=sign-in)" }
+  ]
+}

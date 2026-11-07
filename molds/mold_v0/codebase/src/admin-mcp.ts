@@ -47,7 +47,7 @@ import type { AdminShellToolName, SameNames } from "./shell-tools.js";
 import { labelledAnswers } from "./access-request.js";
 import { auditAdminTools, auditStaff, withAuditActor } from "./audit-trail.js";
 import { agentAdminTools } from "./agent-tools.js";
-import { GENERATED_ACCESS_FIELDS } from "./access-request.generated.js";
+import { answerLabelFields } from "./access-pages.js";
 
 /** update_setting's example key: a shell setting, or in a build with the session engine (a host pack's tables) the
  * session engine's own spelling, as its admins have always seen it (the stored key prefix, src/settings.ts). */
@@ -121,7 +121,9 @@ export const ADMIN_TOOLS = {
     run: async (a) => {
       const rows = await onboarding.listRequests(a.status);
       // Each request's answers to the build's own questions under their labels (mold_v0-102, src/access-request.ts).
-      const requests = rows.slice(0, a.limit ?? 50).map((r: any) => ({ ...r, answers: Object.fromEntries(labelledAnswers(GENERATED_ACCESS_FIELDS, r.answers).map((x) => [x.label, x.text])) }));
+      // mold_v0-266: labelled by the form in force (a form staff saved, src/access-pages.ts), else the build's fields.
+      const fields = await answerLabelFields();
+      const requests = rows.slice(0, a.limit ?? 50).map((r: any) => ({ ...r, answers: Object.fromEntries(labelledAnswers(fields, r.answers).map((x) => [x.label, x.text])) }));
       return { total: rows.length, pending: rows.filter((r: any) => r.status === "pending").length, requests };
     },
     summary: (d) => `${d.total} request(s), ${d.pending} pending.`,

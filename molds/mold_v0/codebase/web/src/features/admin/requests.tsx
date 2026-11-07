@@ -4,7 +4,7 @@
 // What a request asks besides the shell's own fields is the build's (mold_v0-102, src/access-request.ts): its answers are
 // shown under the labels the packs declare (pack.json access_request.fields), an answer no field declares under its key.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { IconCopy } from '@tabler/icons-react';
 import PageContainer from '@/components/layout/page-container';
@@ -26,7 +26,9 @@ import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
 import { accessFields } from '@/config/access-request.generated';
-import { answerText, labelledAnswers, personText, type AccessAnswer } from '@/lib/access-request.generated';
+import { answerText, labelFields, labelledAnswers, personText, type AccessAnswer, type AccessField, type FormField } from '@/lib/access-request.generated';
+import type { LiveAccessPages } from '@/features/site/access-form';
+import { ACCESS_PAGES_KEY } from './access-pages-keys';
 import { text } from '@/lib/texts';
 
 interface Req {
@@ -68,15 +70,26 @@ export function matchOrg(req: Req, orgs: readonly OrgRow[] | undefined): OrgRow 
   if (!orgs || !d || !isWork(req)) return null;
   return orgs.find((o) => domainOf(o.contact || '') === d) ?? null;
 }
-/** The build's first web-address question (src/access-request.ts type url): the request's site, shown under the company. */
-const SITE_FIELD = accessFields.find((f) => f.type === 'url') ?? null;
-const siteOf = (q: Req) => { const v = SITE_FIELD ? q.answers?.[SITE_FIELD.key] : null; return typeof v === 'string' && v ? v : null; };
-const link = (q: Req) => { const v = siteOf(q); return v ? (/^https?:\/\//.test(v) ? v : `https://${v}`) : null; };
-const host = (q: Req) => { const u = link(q); try { return u ? new URL(u).host.replace(/^www\./, '') : null; } catch { return siteOf(q); } };
-/** What the requester said of themselves (the fields declared `person`, such as their role; mold_v0-171), or null. */
-const personOf = (q: Req) => personText(accessFields, q.answers) || null;
-/** Every answer as text, for the search box. */
-const answersText = (q: Req) => labelledAnswers(accessFields, q.answers).map((a) => a.text).join(' ');
+/**
+ * What a request's answers say, by the fields in force (mold_v0-266: a form staff saved, then the build's fields it no
+ * longer has; else the build's own, src/access-request.ts labelFields): its site (the first web-address question, shown
+ * under the company), what the requester said of themselves (the fields declared `person`, mold_v0-171) and every answer
+ * as text, for the search box.
+ */
+function answerHelpers(fields: readonly AccessField[]) {
+  const SITE_FIELD = fields.find((f) => f.type === 'url') ?? null;
+  const siteOf = (q: Req) => { const v = SITE_FIELD ? q.answers?.[SITE_FIELD.key] : null; return typeof v === 'string' && v ? v : null; };
+  const link = (q: Req) => { const v = siteOf(q); return v ? (/^https?:\/\//.test(v) ? v : `https://${v}`) : null; };
+  const host = (q: Req) => { const u = link(q); try { return u ? new URL(u).host.replace(/^www\./, '') : null; } catch { return siteOf(q); } };
+  const personOf = (q: Req) => personText(fields, q.answers) || null;
+  const answersText = (q: Req) => labelledAnswers(fields, q.answers).map((a) => a.text).join(' ');
+  return { fields, SITE_FIELD, link, host, personOf, answersText };
+}
+/** The fields in force (GET /api/access-pages; the editor refreshes it when it saves). */
+export function useAnswerFields(): readonly AccessField[] {
+  const { data } = useQuery({ queryKey: ACCESS_PAGES_KEY, queryFn: async () => (await fetch('/api/access-pages', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)) as LiveAccessPages | null });
+  return useMemo(() => labelFields(accessFields, data?.request_form ?? null), [data]);
+}
 const FIT = { strong: 'text-primary font-medium', possible: 'text-foreground', weak: 'text-muted-foreground', unknown: 'text-muted-foreground' } as const;
 const TONE = { pending: 'info', approved: 'ok', declined: 'neutral' } as const;
 // Days a request waited: still waiting when pending, else until it was decided.
@@ -98,8 +111,10 @@ const VIEWS: RecordViewDef<Req>[] = [
   { id: 'declined', label: 'Declined', match: (q) => q.status === 'declined', sort: [{ key: 'decided_at', dir: 'desc' }] },
 ];
 
-export function AdminRequests() {
+export function AdminRequests({ tabs }: { tabs?: ReactNode } = {}) {
   const { lock } = useAdminRole();
+  const answerFields = useAnswerFields();
+  const { SITE_FIELD, link, host, personOf, answersText } = useMemo(() => answerHelpers(answerFields), [answerFields]);
   const [polling, setPolling] = useState(false);
   const { data, error, isLoading } = useAdmin<{ requests: Req[] }>('/requests', { refetchInterval: polling ? 5000 : undefined });
   const running = (data?.requests ?? []).some((q) => q.research_status === 'running' || q.deep?.status === 'running' || q.deep?.status === 'queued');
@@ -201,8 +216,10 @@ export function AdminRequests() {
   return (
     <PageContainer>
       <ErrorBox error={error} />
+      <div className='flex min-w-0 flex-col gap-3'>
+      {tabs}
       <RecordView<Req>
-        id='admin-requests-v3' noun='requests' exportName='access-requests' views={VIEWS} defaultSort={[{ key: 'created_at', dir: 'desc' }]}
+        id='admin-requests-v3' noun='requests' exportName='access-requests' views={VIEWS} defaultSort={[{ key: 'created_at', dir: 'desc' }]} compact={!!tabs}
         rows={rows} rowKey={(q) => String(q.id)} cols={cols} actions={actions} bulk={bulk} loading={isLoading || !data}
         searchText={(q) => `${q.company} ${q.email} ${q.name ?? ''} ${answersText(q)} ${q.message ?? ''} ${q.status} ${q.org_name ?? ''} ${q.research?.category ?? ''} ${q.research?.fit ?? ''}`}
         searchPlaceholder='Search access requests'
@@ -215,8 +232,9 @@ export function AdminRequests() {
           {q.status === 'pending' && <Gate need='requests'><Button size='sm' onClick={() => setApproving(q)}><Icons.check /> Approve</Button></Gate>}
           <ActionsMenu items={[...statusActions(q), copyEmail(q)]} />
         </>)}
-        detail={(q) => <RequestPeek q={q} match={matches.get(q.id) ?? null} onResearch={() => runResearch(q)} />}
+        detail={(q) => <RequestPeek q={q} fields={answerFields} match={matches.get(q.id) ?? null} onResearch={() => runResearch(q)} />}
       />
+      </div>
       {approving && (
         <ApproveDialog
           req={approving}
@@ -344,7 +362,8 @@ const Label2 = ({ children }: { children: ReactNode }) => <div className='text-m
 const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
 
 /** What they told us, where they came from, then the AI's research on the company. */
-function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; onResearch: () => void }) {
+function RequestPeek({ q, fields, match, onResearch }: { q: Req; fields: readonly AccessField[]; match: string | null; onResearch: () => void }) {
+  const { personOf } = answerHelpers(fields);
   const src = q.source ?? {};
   const came = [src.utm_source && `${src.utm_source}${src.utm_medium ? ` / ${src.utm_medium}` : ''}${src.utm_campaign ? ` · ${src.utm_campaign}` : ''}`,
     src.referrer && `via ${hostOf(src.referrer)}`, src.landing && `landed on ${src.landing}`,
@@ -359,7 +378,8 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
           <Field label='Company'>{q.company}</Field>
           {/* The build's own questions, in the order it declares them; one it asks but they left empty says so. An answer
               about the person (`person`) is on the Person line above. */}
-          {accessFields.filter((f) => !f.person).map((f) => {
+          {/* mold_v0-266: a field the form in force hides is listed only where the request answered it. */}
+          {fields.filter((f) => !f.person && (!(f as FormField).hidden || q.answers?.[f.key] !== undefined)).map((f) => {
             const v = q.answers?.[f.key];
             const text = answerText(f, v);
             const href = f.type === 'url' && typeof v === 'string' && /^https?:\/\//.test(v) ? v : null;
@@ -372,7 +392,7 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
               </Field>
             );
           })}
-          {labelledAnswers(accessFields, q.answers).filter((a) => !a.field).map((a) => (
+          {labelledAnswers(fields, q.answers).filter((a) => !a.field).map((a) => (
             <Field key={a.key} label={a.label}><span className='break-words whitespace-pre-wrap'>{a.text}</span></Field>
           ))}
           <Field label='Came from'>{came || <span className='text-muted-foreground'>Unknown</span>}</Field>

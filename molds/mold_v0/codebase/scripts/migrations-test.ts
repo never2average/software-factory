@@ -1256,6 +1256,34 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} team roles in the app's words (a role name beside its level, a change within a level kept); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // The early-access form and sign-in words staff edit (mold_v0-266, access_pages, found by name): two staff tables the
+  // tenant role cannot reach, a page id and an action checked; its rollback drops both, leaves exactly what the migration
+  // before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "access_pages")!.version;
+    const d = await shellAt(kind, v);
+    await d.query("INSERT INTO access_pages (id, version, config, updated_by) VALUES ('request_form', 1, '{\"fields\": []}', 'staff'), ('sign_in', 0, NULL, NULL)");
+    await d.query("INSERT INTO access_page_changes (page_id, version, action, changed_by, before, after) VALUES ('request_form', 1, 'edited', 'staff', NULL, '{\"fields\": []}')");
+    await assert.rejects(d.query("INSERT INTO access_pages (id) VALUES ('landing')"), /check constraint/, "only the two pages");
+    await assert.rejects(d.query("INSERT INTO access_page_changes (page_id, version, action, changed_by) VALUES ('request_form', 2, 'deleted', 's')"), /check constraint/, "an unknown action refused");
+    await assert.rejects(d.query("INSERT INTO access_page_changes (page_id, version, action, changed_by) VALUES ('request_form', 1, 'reset', 's')"), /duplicate key|unique/, "a version once per page");
+    for (const t of ["access_pages", "access_page_changes"]) {
+      const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t]);
+      assert.equal(grants.length, 0, `${t}: the tenant role has no grant on it`);
+    }
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_access_pages.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_access_pages")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} the early-access form and sign-in words (two staff tables the tenant role cannot read, a version once per page); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

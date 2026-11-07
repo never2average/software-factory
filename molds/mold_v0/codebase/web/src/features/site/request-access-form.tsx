@@ -8,18 +8,19 @@
  *
  * Besides the shell's own fields it asks the build's own questions (mold_v0-102, src/access-request.ts): the packs' pack.json
  * `access_request.fields` (or the app's profile.json), after the company and before the message, each sent under `answers`.
+ * mold_v0-266: every field, its words and order, the button and the thank-you words are the form in force (./access-form.ts):
+ * what staff saved in Admin › Access requests › Request form, else the build's own (the form exactly as it was).
  */
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
-import { fill } from '@/lib/vocabulary';
-import { accessFields } from '@/config/access-request.generated';
 import { UTM, visitSource } from './visit-source';
-import { maxLengthOf, type AccessAnswer, type AccessField } from '@/lib/access-request.generated';
+import { askedFields, isShellFormKey, maxLengthOf, thanksLine, type AccessAnswer, type AccessField, type AccessFormConfig, type FormField, type ShellFormKey } from '@/lib/access-request.generated';
+import { requestAccessDefaults, useLiveRequestForm } from './access-form';
 
 export interface RequestAccessDefaults { email?: string; name?: string; company?: string }
 
@@ -37,33 +38,42 @@ const sourceOf = (from: string) => {
   return { landing: from, ...(external ? { referrer: document.referrer } : {}), ...visit, ...utm };
 };
 
-export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: RequestAccessDefaults; from: string; onSent?: (email: string) => void }) {
+export function RequestAccessForm({ defaults = {}, from, onSent, config, preview }: {
+  defaults?: RequestAccessDefaults; from: string; onSent?: (email: string) => void;
+  /** The form in force (mold_v0-266, ./access-form.ts): a saved form, null for the build's own; left out, it is asked for. */
+  config?: AccessFormConfig | null;
+  /** The staff editor's preview: drawn the same, never sent. */
+  preview?: boolean;
+}) {
   const id = useId();
-  const [email, setEmail] = useState(defaults.email ?? '');
-  const [name, setName] = useState(defaults.name ?? '');
-  const [company, setCompany] = useState(defaults.company ?? '');
-  const [message, setMessage] = useState('');
+  const live = useLiveRequestForm(config);
+  const form = useMemo(() => live ?? requestAccessDefaults(), [live]);
+  const [shell, setShellValues] = useState<Record<ShellFormKey, string>>({ email: defaults.email ?? '', name: defaults.name ?? '', company: defaults.company ?? '', message: '' });
+  const setShell = (k: ShellFormKey, v: string) => setShellValues((s) => ({ ...s, [k]: v }));
   const [answers, setAnswers] = useState<Record<string, AccessAnswer>>({});
   const answer = (key: string, v: AccessAnswer) => setAnswers((a) => ({ ...a, [key]: v }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
+  const asked = askedFields(form);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     // A required choice of several has no check of the browser's own: say so here (the server checks every field again).
-    const missing = accessFields.find((f) => f.required && f.type === 'multi_select' && !((answers[f.key] as string[] | undefined)?.length));
+    const missing = asked.find((f) => f.required && f.type === 'multi_select' && !((answers[f.key] as string[] | undefined)?.length));
     if (missing) { setError(`${missing.label}: choose at least one.`); return; }
+    if (preview) { setError(null); setSent(shell.email.trim() || 'you@example.com'); return; }
     setBusy(true); setError(null);
     try {
+      const own = Object.fromEntries(Object.entries(answers).filter(([k]) => asked.some((f) => f.key === k && !isShellFormKey(k))));
       const r = await fetch('/api/access-requests', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), name: name.trim(), company: company.trim(), message: message.trim(), answers, source: sourceOf(from) })
+        body: JSON.stringify({ email: shell.email.trim(), name: shell.name.trim(), company: shell.company.trim(), message: shell.message.trim(), answers: live ? own : answers, source: sourceOf(from) })
       });
       const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j.error || (r.status === 429 ? 'Too many requests from this network. Try again in an hour.' : `The request did not go through (${r.status}). Try again.`));
-      setSent(email.trim());
-      onSent?.(email.trim());
+      setSent(shell.email.trim());
+      onSent?.(shell.email.trim());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -74,44 +84,60 @@ export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: 
   if (sent) {
     return (
       <div role='status' className='bg-card flex flex-col gap-2 rounded-xl border p-5' data-testid='request-access-sent'>
-        <p className='flex items-center gap-2 font-semibold'><Icons.circleCheck aria-hidden='true' className='text-primary size-5 shrink-0' /> Request sent</p>
-        <p className='text-muted-foreground text-sm break-words'>
-          {fill('Thank you. The {product} team will look at it')} and, once it is approved, send an invitation to <span className='text-foreground font-medium break-all'>{sent}</span>. Nothing else is needed from you for now.
-        </p>
+        <p className='flex items-center gap-2 font-semibold'><Icons.circleCheck aria-hidden='true' className='text-primary size-5 shrink-0' /> {form.thanks.title}</p>
+        {form.thanks.lines.map((line, i) => (
+          <p key={i} className='text-muted-foreground text-sm break-words'>{withEmail(thanksLine(line.replace(/\{email\}/g, '\u0000'), shell.company.trim(), ''), sent)}</p>
+        ))}
       </div>
     );
   }
 
+  /** One of the shell's own fields (its own column), drawn as the form always drew it; another kind as a question is. */
+  const shellField = (f: FormField) => {
+    const k = f.key as ShellFormKey;
+    const fid = `${id}-${k}`;
+    const lineKind = f.type === 'text' || f.type === 'email' || (f.type === 'long_text' && k === 'message');
+    if (!lineKind) return <AccessFieldInput key={k} id={fid} field={f} value={shell[k]} onChange={(v) => setShell(k, String(v))} disabled={busy} />;
+    const help = f.help ? <p id={`${fid}-help`} className='text-muted-foreground text-xs break-words'>{f.help}</p> : null;
+    const common = {
+      id: fid, name: k, required: f.required || undefined, maxLength: maxLengthOf(f), placeholder: f.placeholder, value: shell[k], disabled: busy,
+      'aria-describedby': f.help ? `${fid}-help` : undefined
+    };
+    return (
+      <div key={k} className='grid gap-1.5'>
+        <Label htmlFor={fid}>{shellLabel(f)}</Label>
+        {f.type === 'long_text' ? <Textarea {...common} rows={3} onChange={(e) => setShell(k, e.target.value)} />
+          : <Input {...common} {...(f.type === 'email' ? { type: 'email' } : {})} autoComplete={AUTOCOMPLETE[k]} onChange={(e) => setShell(k, e.target.value)} className='h-10' />}
+        {help}
+      </div>
+    );
+  };
+  const draw = (f: FormField) => (isShellFormKey(f.key) ? shellField(f) : <AccessFieldInput key={f.key} id={`${id}-f-${f.key}`} field={f} value={answers[f.key]} onChange={(v) => answer(f.key, v)} disabled={busy} />);
+  // The address and the name side by side, as the form began before mold_v0-266, while they still come first.
+  const pair = asked[0]?.key === 'email' && asked[1]?.key === 'name' && asked[1].type === 'text';
+
   return (
     <form onSubmit={submit} className='flex flex-col gap-4' aria-describedby={error ? `${id}-error` : undefined} data-testid='request-access-form'>
       {error ? <p id={`${id}-error`} role='alert' className='text-destructive text-sm'>{error}</p> : null}
-      <div className='grid gap-4 sm:grid-cols-2'>
-        <div className='grid gap-1.5'>
-          <Label htmlFor={`${id}-email`}>Work email</Label>
-          <Input id={`${id}-email`} name='email' type='email' autoComplete='email' required maxLength={200} value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} className='h-10' />
-        </div>
-        <div className='grid gap-1.5'>
-          <Label htmlFor={`${id}-name`}>Your name <span className='text-muted-foreground font-normal'>(optional)</span></Label>
-          <Input id={`${id}-name`} name='name' autoComplete='name' maxLength={120} value={name} onChange={(e) => setName(e.target.value)} disabled={busy} className='h-10' />
-        </div>
-      </div>
-      <div className='grid gap-1.5'>
-        <Label htmlFor={`${id}-company`}>Company</Label>
-        <Input id={`${id}-company`} name='company' autoComplete='organization' required maxLength={200} value={company} onChange={(e) => setCompany(e.target.value)} disabled={busy} className='h-10' />
-      </div>
-      {accessFields.map((f) => <AccessFieldInput key={f.key} id={`${id}-f-${f.key}`} field={f} value={answers[f.key]} onChange={(v) => answer(f.key, v)} disabled={busy} />)}
-      <div className='grid gap-1.5'>
-        <Label htmlFor={`${id}-message`}>{fill('What would you like to use {product} for?')} <span className='text-muted-foreground font-normal'>(optional)</span></Label>
-        <Textarea id={`${id}-message`} name='message' maxLength={4000} rows={3} value={message} onChange={(e) => setMessage(e.target.value)} disabled={busy} />
-      </div>
+      {pair ? <div className='grid gap-4 sm:grid-cols-2'>{asked.slice(0, 2).map(draw)}</div> : null}
+      {(pair ? asked.slice(2) : asked).map(draw)}
       <div>
         <Button type='submit' disabled={busy} className='h-10 px-4'>
-          {busy ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.send aria-hidden='true' />} {busy ? 'Sending…' : 'Request access'}
+          {busy ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.send aria-hidden='true' />} {busy ? 'Sending…' : form.submit}
         </Button>
       </div>
     </form>
   );
 }
+
+const AUTOCOMPLETE: Record<ShellFormKey, string | undefined> = { email: 'email', name: 'name', company: 'organization', message: undefined };
+/** A label with "(optional)" after it unless the field is required. */
+const shellLabel = (f: FormField) => (f.required ? f.label : <>{`${f.label} `}{optional}</>);
+/** A thank-you line with the address in its place (\u0000), as the form showed it. */
+const withEmail = (line: string, email: string) => {
+  const parts = line.split('\u0000');
+  return parts.length === 1 ? line : parts.flatMap((p, i) => (i ? [<span key={i} className='text-foreground font-medium break-all'>{email}</span>, p] : [p]));
+};
 
 const optional = <span className='text-muted-foreground font-normal'>(optional)</span>;
 
@@ -151,7 +177,7 @@ function AccessFieldInput({ id, field: f, value, onChange, disabled }: { id: str
         <Textarea id={id} name={f.key} required={f.required} maxLength={maxLengthOf(f)} rows={3} placeholder={f.placeholder} value={text} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-describedby={described} />
       ) : (
         <Input id={id} name={f.key} required={f.required} maxLength={maxLengthOf(f)} placeholder={f.placeholder} value={text} onChange={(e) => onChange(e.target.value)} disabled={disabled} aria-describedby={described} className='h-10'
-          {...(f.type === 'email' ? { type: 'email' } : f.type === 'url' ? { type: 'text', inputMode: 'url' as const, autoComplete: 'url' } : {})} />
+          {...(f.type === 'email' ? { type: 'email' } : f.type === 'url' ? { type: 'text', inputMode: 'url' as const, autoComplete: 'url' } : f.type === 'number' ? { type: 'text', inputMode: 'decimal' as const } : {})} />
       )}
       {help}
     </div>
