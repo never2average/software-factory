@@ -301,7 +301,10 @@ function ActionFormCard({ host, a, onClose }: { host: ActionHost; a: PageAction;
 
 /** A run of the action's kind on the record: its arguments, pre-filled from the record; its environment when it takes one. */
 function RecordRunForm({ host, a, onDone }: { host: ActionHost; a: PageAction; onDone: () => void }) {
-  const fields = (a.run?.args ?? []) as FormField[];
+  // mold_v0-260 (flag record_run_inputs): what the kind takes from the record is the server's: shown, never typed or sent.
+  const fixed = a.run?.from_record ?? [];
+  const all = (a.run?.args ?? []) as FormField[];
+  const fields = all.filter((f) => !fixed.includes(f.name));
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(a.run?.values ?? {}).map(([k, v]) => [k, asInput(v)])));
   const envs = a.run?.environments ?? null;
   const [env, setEnv] = useState(envs?.[0] ?? '');
@@ -311,14 +314,28 @@ function RecordRunForm({ host, a, onDone }: { host: ActionHost; a: PageAction; o
     if (problem) return void toast.error(problem);
     setBusy(true);
     try {
-      await takeAction(host.area, host.record.key, a.id, { input: { ...input, ...(envs && env ? { target_environment: env } : {}) } });
+      await takeAction(host.area, host.record.key, a.id, { input: { ...Object.fromEntries(Object.entries(input).filter(([k]) => !fixed.includes(k))), ...(envs && env ? { target_environment: env } : {}) } });
       toast.success(`${a.run?.label ?? a.label} started`);
       onDone();
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   return (
     <CardForm onSubmit={submit} submit={<Button type='submit' disabled={busy} data-start-run=''><Icons.play /> {busy ? 'Starting…' : a.label}</Button>}>
-      {!fields.length && !envs && <p className='text-muted-foreground text-sm'>It takes nothing more: start it.</p>}
+      {fixed.length > 0 && (
+        <div className='flex flex-col gap-1.5' data-from-record=''>
+          <p className='text-sm font-medium'>From this record</p>
+          <dl className='grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md border p-3 text-sm'>
+            {fixed.map((n) => (
+              <div key={n} className='contents'>
+                <dt className='text-muted-foreground'>{all.find((f) => f.name === n)?.label ?? n}</dt>
+                <dd className='min-w-0 truncate font-medium' title={String(a.run?.values[n] ?? '')}>{String(a.run?.values[n] ?? '')}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className='text-muted-foreground text-xs'>Read from the record when the run starts.</p>
+        </div>
+      )}
+      {!fields.length && !envs && !fixed.length && <p className='text-muted-foreground text-sm'>It takes nothing more: start it.</p>}
       <FieldsForm fields={fields} values={values} set={(n, v) => setValues((s) => ({ ...s, [n]: v }))} idPrefix='run-field' />
       {envs && (
         <div className='flex flex-col gap-1.5'>

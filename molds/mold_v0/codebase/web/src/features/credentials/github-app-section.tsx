@@ -15,7 +15,7 @@ import { httpError } from '@/features/status/from-error';
 import { singular } from '@/features/tabs/run-rows';
 import { recordAreas } from '@/config/pack-nav.generated';
 
-interface GhField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment'; area: string | null }
+interface GhField { pack: string; name: string; label: string; bound_to: 'workspace' | 'asset' | 'environment' | 'tenant'; area: string | null }
 interface Installation {
   account: string; account_type: string; repository_selection: 'all' | 'selected'; repositories: string[];
   asset_repositories: Record<string, string[]>; suspended: boolean; connected_at: string | null; connected_by: string | null;

@@ -1,7 +1,7 @@
--- Rolling back past 0051_agent_profiles (mold_v0-261), for a release from before it (and before rolling back
--- 0050_teams_and_visibility, whose rollback refuses while this one is applied).
+-- Rolling back past 0052_agent_profiles (mold_v0-261), for a release from before it (and before rolling back
+-- 0051_credential_sets, whose rollback refuses while this one is applied).
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0051_agent_profiles.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0052_agent_profiles.sql
 -- Drops the agent profiles, their versions and their change history, and what a session carried of them (its profile,
 -- version and record). The sessions themselves stay, with their frozen policy, spend and transcript: the older release
 -- runs each as it was started (the frozen policy holds the profile's instructions, model and limits). Found by its name,

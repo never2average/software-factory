@@ -53,7 +53,7 @@ const MAX_REPOS = 500;
 
 // ---------- the packs' fields ----------
 
-export interface GithubAppField { pack: string; name: string; label: string; bound_to: "workspace" | "asset" | "environment"; area: string | null }
+export interface GithubAppField { pack: string; name: string; label: string; bound_to: "workspace" | "asset" | "environment" | "tenant"; area: string | null }
 let fieldCache: { from: unknown; list: GithubAppField[] } | null = null;
 /** Every credential field the packs declare with `github_app: true`. None: nothing of this module is mounted. */
 export function githubAppFields(): GithubAppField[] {
@@ -183,7 +183,7 @@ interface Repo { id: number; full_name: string }
 interface MintedToken { token: string; expires_at: string; permissions: Record<string, string>; repositories: Repo[] }
 
 /** An installation token: the permissions and repositories asked for, checked against what GitHub answered. */
-async function mintToken(c: GithubAppConfig, installationId: number, ask: { repository_ids?: number[]; permissions: Record<string, string> }): Promise<MintedToken> {
+async function mintToken(c: GithubAppConfig, installationId: number, ask: { repository_ids?: number[]; repositories?: string[]; permissions: Record<string, string> }): Promise<MintedToken> {
   const r = await gh<{ token?: string; expires_at?: string; permissions?: Record<string, string>; repositories?: Repo[] }>(
     "POST", `${endpoints.api}/app/installations/${installationId}/access_tokens`, `Bearer ${appJwt(c)}`, ask);
   ok(r, "an installation token");
@@ -198,6 +198,9 @@ async function mintToken(c: GithubAppConfig, installationId: number, ask: { repo
     throw new GithubError(`GitHub gave a token with more than was asked (${extra.map(([k, v]) => `${k}:${v}`).join(", ").slice(0, 120)}): revoked, not used`, 502);
   }
   const repos = Array.isArray(t.repositories) ? t.repositories.filter((x) => Number.isSafeInteger(x?.id) && typeof x?.full_name === "string").map((x) => ({ id: x.id, full_name: x.full_name })) : [];
+  // mold_v0-260: a token asked for repositories by name reaches exactly those.
+  if (ask.repositories && repos.some((x) => !ask.repositories!.some((n) => x.full_name.toLowerCase().endsWith(`/${n.toLowerCase()}`))))
+    { await gh("DELETE", `${endpoints.api}/installation/token`, `token ${t.token}`).catch(() => null); throw new GithubError("GitHub gave a token for repositories that were not asked for: revoked, not used", 502); }
   if (ask.repository_ids && repos.some((x) => !ask.repository_ids!.includes(x.id)))
     { await gh("DELETE", `${endpoints.api}/installation/token`, `token ${t.token}`).catch(() => null); throw new GithubError("GitHub gave a token for repositories that were not asked for: revoked, not used", 502); }
   return { token: t.token, expires_at: new Date(t.expires_at).toISOString(), permissions: perms, repositories: repos };
@@ -540,6 +543,20 @@ export async function installationTokenForServer(orgId: number): Promise<string 
   const t = await mintToken(c, i.installation_id, { repository_ids: i.repositories.map((r) => r.id), permissions: { ...TOKEN_PERMISSIONS } });
   memo.set(orgId, { token: t.token, expires: Date.parse(t.expires_at), installation: i.installation_id });
   return t.token;
+}
+
+/**
+ * mold_v0-260 (flag private_catalogs; src/catalog-access.ts): a token of the platform's own installation `installationId`
+ * for one private catalog's fetch: read contents of repository `repo` alone, revoked by `revoke` once the fetch is done.
+ * Refused (409) while the platform has no GitHub App; never a token in a message.
+ */
+export async function installationTokenForCatalog(installationId: number, repo: string): Promise<{ token: string; revoke: () => Promise<void> }> {
+  const c = await appConfig();
+  if (!c) throw new PackError("the platform's GitHub App is not set: Admin › Key vault, GitHub App", 409);
+  let t: MintedToken;
+  try { t = await mintToken(c, installationId, { repositories: [repo], permissions: { ...TOKEN_PERMISSIONS } }); }
+  catch (e) { throw new PackError(e instanceof Error && !/token [a-z0-9_]{8,}/i.test(e.message) ? `GitHub refused a token for the catalog: ${e.message.slice(0, 200)}` : "GitHub refused a token for the catalog", 502); }
+  return { token: t.token, revoke: async () => { await revokeOnGithub(t.token).catch(() => false); } };
 }
 
 // ---------- staff ----------

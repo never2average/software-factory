@@ -1474,7 +1474,7 @@
           "properties": {
             "repo": {
               "type": "string",
-              "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
+              "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|ssh:\\/\\/git@[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
             },
             "commit": {
               "type": "string",
@@ -1938,6 +1938,166 @@
                     },
                     "copyable": {
                       "type": "boolean"
+                    },
+                    "where": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "equals": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "not_in": {
+                              "minItems": 1,
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              }
+                            },
+                            "empty": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "field"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "all": {
+                              "minItems": 1,
+                              "maxItems": 6,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "field"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "all"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -1948,7 +2108,7 @@
                 }
               },
               "list_columns": {
-                "maxItems": 8,
+                "maxItems": 12,
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -2052,6 +2212,68 @@
               },
               "key_from_title": {
                 "type": "boolean"
+              },
+              "tenant": {
+                "type": "boolean"
+              },
+              "on_save": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "check": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "inputs": {
+                      "default": {},
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300,
+                      "pattern": "^[^\\n\\r{}<>]*$"
+                    },
+                    "on": {
+                      "minItems": 1,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "create",
+                          "update"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "check",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "permissions": {
                 "type": "object",
@@ -4978,6 +5200,17 @@
                       "pattern": "^[a-z][a-z0-9_]{1,62}$"
                     }
                   },
+                  "input_from_record": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "pattern": "^(\\$key|\\$title|[a-z][a-z0-9_]{1,62})$"
+                    }
+                  },
                   "operator_credentials": {
                     "default": [],
                     "maxItems": 10,
@@ -5174,6 +5407,166 @@
                         },
                         "copyable": {
                           "type": "boolean"
+                        },
+                        "where": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                },
+                                "equals": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                },
+                                "in": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "not_in": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "empty": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "all": {
+                                  "minItems": 1,
+                                  "maxItems": 6,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "field": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      },
+                                      "equals": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      },
+                                      "in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "not_in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "empty": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "field"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "all"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -5371,6 +5764,17 @@
                       "pattern": "^[a-z][a-z0-9_]{1,62}$"
                     }
                   },
+                  "input_from_record": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "pattern": "^(\\$key|\\$title|[a-z][a-z0-9_]{1,62})$"
+                    }
+                  },
                   "operator_credentials": {
                     "default": [],
                     "maxItems": 10,
@@ -5567,6 +5971,166 @@
                         },
                         "copyable": {
                           "type": "boolean"
+                        },
+                        "where": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                },
+                                "equals": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                },
+                                "in": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "not_in": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "empty": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "all": {
+                                  "minItems": 1,
+                                  "maxItems": 6,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "field": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                      },
+                                      "equals": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      },
+                                      "in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "not_in": {
+                                        "minItems": 1,
+                                        "maxItems": 20,
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "empty": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "field"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "all"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -6364,7 +6928,8 @@
                 "enum": [
                   "workspace",
                   "asset",
-                  "environment"
+                  "environment",
+                  "tenant"
                 ]
               },
               "area": {
@@ -6476,6 +7041,26 @@
                 },
                 "required": [
                   "field"
+                ],
+                "additionalProperties": false
+              },
+              "entries": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "max": {
+                    "default": 20,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50
+                  }
+                },
+                "required": [
+                  "label"
                 ],
                 "additionalProperties": false
               }
@@ -7323,7 +7908,7 @@
               },
               "columns": {
                 "minItems": 1,
-                "maxItems": 8,
+                "maxItems": 12,
                 "type": "array",
                 "items": {
                   "anyOf": [
@@ -7415,11 +8000,11 @@
               },
               "rail": {
                 "minItems": 1,
-                "maxItems": 2,
+                "maxItems": 4,
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "pattern": "^(journeys|notices|chart:[a-z][a-z0-9_]{1,62})$"
+                  "pattern": "^(journeys|notices|recent_runs|attention|chart:[a-z][a-z0-9_]{1,62})$"
                 }
               },
               "filter": {
@@ -7432,7 +8017,7 @@
               },
               "sections": {
                 "minItems": 2,
-                "maxItems": 6,
+                "maxItems": 8,
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -7441,7 +8026,7 @@
               },
               "sparklines": {
                 "minItems": 1,
-                "maxItems": 4,
+                "maxItems": 5,
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -7960,7 +8545,7 @@
                         "properties": {
                           "repo": {
                             "type": "string",
-                            "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
+                            "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|ssh:\\/\\/git@[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
                           },
                           "commit": {
                             "type": "string",
@@ -8251,6 +8836,14 @@
                     "enum": [
                       "automatic",
                       "manual"
+                    ]
+                  },
+                  "access": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "deploy_key",
+                      "github_app"
                     ]
                   }
                 },
@@ -17188,6 +17781,69 @@
           "title": "Teams and record visibility (mold_v0-259)",
           "description": "Teams inside a workspace, each with a name, members and leads, managed by the workspace's owners in Settings › Teams (each team's page lists its people, records and changes; every membership change is kept). A record area that declares visibility gives each record its own: open to the workspace, shared with one team, or private to its owner, with named collaborators where the area allows them. The database enforces it on every read and write (lists, record pages, related lists, computed facts and columns, the record picker, exports, metrics and charts, the MCP tools, the workspace agent's tools, the data and developer APIs): a person sees a record that is open to the workspace, theirs, one they collaborate on, or their team's; the workspace's owners see every record. Create and edit forms get a visibility field, lists a Visibility column and filter, record pages a Visibility line and Share. Asked for when the app's profile (no pack declares it; a record area's visibility, record_areas[].visibility, takes effect only with it on). Default false. Off: No Teams tab, no /api/teams, no visibility field, column, filter or Share; every record is open to its whole workspace, as before, and the generated files leave the flag out.",
           "markdownDescription": "**Teams and record visibility** (mold_v0-259; board name `teams`). Teams inside a workspace, each with a name, members and leads, managed by the workspace's owners in Settings › Teams (each team's page lists its people, records and changes; every membership change is kept). A record area that declares visibility gives each record its own: open to the workspace, shared with one team, or private to its owner, with named collaborators where the area allows them. The database enforces it on every read and write (lists, record pages, related lists, computed facts and columns, the record picker, exports, metrics and charts, the MCP tools, the workspace agent's tools, the data and developer APIs): a person sees a record that is open to the workspace, theirs, one they collaborate on, or their team's; the workspace's owners see every record. Create and edit forms get a visibility field, lists a Visibility column and filter, record pages a Visibility line and Share.\n\n- **Asked for** when the app's profile (no pack declares it; a record area's visibility, record_areas[].visibility, takes effect only with it on).\n- **Default** `false`.\n- **Off**: No Teams tab, no /api/teams, no visibility field, column, filter or Share; every record is open to its whole workspace, as before, and the generated files leave the flag out.\n\nBrief line: `features.teams = true` in `## Profile`."
+        },
+        "record_run_inputs": {
+          "type": "boolean",
+          "default": false,
+          "title": "Run inputs from a record (mold_v0-260)",
+          "description": "A run started on a record takes its arguments from that record's fields (input_from_record: argument -> field, $key or $title): a record page's start_run action fills them on the server, and the kind's start tool takes record {area, key}, read as the caller in the caller's workspace; the run carries the record (runs.record_area, record_key). Asked for when a job kind takes arguments from the record it runs on (job_kinds[].input_from_record). Default false. Off: The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked.",
+          "markdownDescription": "**Run inputs from a record** (mold_v0-260; board name `inputs`). A run started on a record takes its arguments from that record's fields (input_from_record: argument -> field, $key or $title): a record page's start_run action fills them on the server, and the kind's start tool takes record {area, key}, read as the caller in the caller's workspace; the run carries the record (runs.record_area, record_key).\n\n- **Asked for** when a job kind takes arguments from the record it runs on (job_kinds[].input_from_record).\n- **Default** `false`.\n- **Off**: The start tools take no record and a record page's action sends only what its own input maps, as before; the declarations stay checked.\n\nBrief line: `features.record_run_inputs = true` in `## Profile`."
+        },
+        "private_catalogs": {
+          "type": "boolean",
+          "default": false,
+          "title": "Private catalogs (mold_v0-260)",
+          "description": "A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack. Asked for when an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access). Default false. Off: A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out.",
+          "markdownDescription": "**Private catalogs** (mold_v0-260; board name `private`). A shared catalog indexed from a private repository, pinned to its commit as before: over git and SSH with a deploy key, or over HTTPS with a token of the platform's own GitHub App installation. Staff set the key (and its host's public key) or the installation in Admin › Key vault, Private catalogs; never in a pack.\n\n- **Asked for** when an upstream catalog read with a deploy key or the platform's GitHub App (repositories.<name>.access).\n- **Default** `false`.\n- **Off**: A private catalog is not fetched (its index is refused, saying the flag is off), and Admin › Key vault has no Private catalogs card; the generated files leave the flag out.\n\nBrief line: `features.private_catalogs = true` in `## Profile`."
+        },
+        "wide_lists": {
+          "type": "boolean",
+          "default": false,
+          "title": "Wide lists (mold_v0-260)",
+          "description": "A list of up to 12 columns: its table scrolls sideways inside its card only (the page never does) with the first column kept in view. Asked for when an area's list_columns or a tab's columns past 8. Default false. Off: A list has at most 8 columns: more is refused at build; every table is as before.",
+          "markdownDescription": "**Wide lists** (mold_v0-260; board name `wide`). A list of up to 12 columns: its table scrolls sideways inside its card only (the page never does) with the first column kept in view.\n\n- **Asked for** when an area's list_columns or a tab's columns past 8.\n- **Default** `false`.\n- **Off**: A list has at most 8 columns: more is refused at build; every table is as before.\n\nBrief line: `features.wide_lists = true` in `## Profile`."
+        },
+        "record_rules": {
+          "type": "boolean",
+          "default": false,
+          "title": "Record rules (mold_v0-260)",
+          "description": "A reference field's where: the record picker lists only the target's records it keeps, and every write refuses one it does not. An area's on_save: declarative checks (mold_v0-196) run on each create or change with inputs from the record, refusing with their message. Asked for when a reference field limited by a condition on its target (where), or an area's checks on save (on_save). Default false. Off: Refused at build while a pack declares either (an unchecked rule would let records through that the pack says may not be saved).",
+          "markdownDescription": "**Record rules** (mold_v0-260; board name `rules`). A reference field's where: the record picker lists only the target's records it keeps, and every write refuses one it does not. An area's on_save: declarative checks (mold_v0-196) run on each create or change with inputs from the record, refusing with their message.\n\n- **Asked for** when a reference field limited by a condition on its target (where), or an area's checks on save (on_save).\n- **Default** `false`.\n- **Off**: Refused at build while a pack declares either (an unchecked rule would let records through that the pack says may not be saved).\n\nBrief line: `features.record_rules = true` in `## Profile`."
+        },
+        "credential_sets": {
+          "type": "boolean",
+          "default": false,
+          "title": "Credential sets and tenants (mold_v0-260)",
+          "description": "A credential holding several labelled values (a list of hosts, each with its token), each sealed on its own and delivered to a run as one JSON object; and a tenant scope beside workspace, asset and environment: a credential bound to a record of the build's tenant area, set on that record's page and delivered to a run that targets it. Asked for when a credential with several labelled values (entries), or bound to a record of a tenant area (bound_to: tenant). Default false. Off: Refused at build while a pack declares either (no value of them could be set or delivered).",
+          "markdownDescription": "**Credential sets and tenants** (mold_v0-260; board name `credsets`). A credential holding several labelled values (a list of hosts, each with its token), each sealed on its own and delivered to a run as one JSON object; and a tenant scope beside workspace, asset and environment: a credential bound to a record of the build's tenant area, set on that record's page and delivered to a run that targets it.\n\n- **Asked for** when a credential with several labelled values (entries), or bound to a record of a tenant area (bound_to: tenant).\n- **Default** `false`.\n- **Off**: Refused at build while a pack declares either (no value of them could be set or delivered).\n\nBrief line: `features.credential_sets = true` in `## Profile`."
+        },
+        "overview_cards": {
+          "type": "boolean",
+          "default": false,
+          "title": "Overview cards (mold_v0-260)",
+          "description": "The home page's headline row takes a fifth number; its rail takes a Recent runs card (the workspace's latest runs, as the person may read them) and a Needs attention card (the records whose page notices of tone warning or danger hold, from each area's detail.notices): GET /api/home/recent-runs and /api/home/attention. Asked for when a home tab naming a fifth headline number, or the recent_runs or attention card in its rail. Default false. Off: The home page is as before: a fifth headline number, a third rail card and the two cards are refused at build, as they always were; the routes answer not found; the generated files leave the flag out.",
+          "markdownDescription": "**Overview cards** (mold_v0-260; board name `overview`). The home page's headline row takes a fifth number; its rail takes a Recent runs card (the workspace's latest runs, as the person may read them) and a Needs attention card (the records whose page notices of tone warning or danger hold, from each area's detail.notices): GET /api/home/recent-runs and /api/home/attention.\n\n- **Asked for** when a home tab naming a fifth headline number, or the recent_runs or attention card in its rail.\n- **Default** `false`.\n- **Off**: The home page is as before: a fifth headline number, a third rail card and the two cards are refused at build, as they always were; the routes answer not found; the generated files leave the flag out.\n\nBrief line: `features.overview_cards = true` in `## Profile`."
+        },
+        "run_analytics": {
+          "type": "boolean",
+          "default": false,
+          "title": "Run analytics (mold_v0-260)",
+          "description": "Runs broken down by record, person, model, tool and failure reason, with tokens by model, from the runs' spend and their events: a workspace's own at /app/run-analytics (GET /api/analytics/runs, its billing managers and owners) and staff's across the workspaces at /admin/run-analytics (GET /api/admin/onboarding/run-analytics). Asked for when always (the profile alone). Default false. Off: No page, sidebar entry or route; the generated files leave the flag out.",
+          "markdownDescription": "**Run analytics** (mold_v0-260; board name `analytics`). Runs broken down by record, person, model, tool and failure reason, with tokens by model, from the runs' spend and their events: a workspace's own at /app/run-analytics (GET /api/analytics/runs, its billing managers and owners) and staff's across the workspaces at /admin/run-analytics (GET /api/admin/onboarding/run-analytics).\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: No page, sidebar entry or route; the generated files leave the flag out.\n\nBrief line: `features.run_analytics = true` in `## Profile`."
+        },
+        "filters_in_address": {
+          "type": "boolean",
+          "default": false,
+          "title": "Filters in the address (mold_v0-260)",
+          "description": "The dashboards' filters are kept in the page's address (staff's Overview: its period and search; a workspace's Activity: its period; run analytics: period, kind, status and workspace), so a link reproduces the view and Back steps through the filters. Asked for when always (the profile alone). Default false. Off: The filters live in the page only, as before: a link opens the default view.",
+          "markdownDescription": "**Filters in the address** (mold_v0-260; board name `filters`). The dashboards' filters are kept in the page's address (staff's Overview: its period and search; a workspace's Activity: its period; run analytics: period, kind, status and workspace), so a link reproduces the view and Back steps through the filters.\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: The filters live in the page only, as before: a link opens the default view.\n\nBrief line: `features.filters_in_address = true` in `## Profile`."
+        },
+        "usage_tool": {
+          "type": "boolean",
+          "default": false,
+          "title": "Usage over MCP (mold_v0-260)",
+          "description": "The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs). Asked for when always (the profile alone). Default false. Off: No get_usage tool is listed (the customer MCP's surface is as before).",
+          "markdownDescription": "**Usage over MCP** (mold_v0-260; board name `usage`). The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs).\n\n- **Asked for** when always (the profile alone).\n- **Default** `false`.\n- **Off**: No get_usage tool is listed (the customer MCP's surface is as before).\n\nBrief line: `features.usage_tool = true` in `## Profile`."
         }
       }
     }

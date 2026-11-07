@@ -116,7 +116,7 @@ export function CredentialsTab() {
   const rows = [...rowsOf(creds, data, oauth, github, runners), ...recordRowsOf(records)];
   const opened = card.open ? creds.find((c) => c.id === card.open!.id) : null;
   if (opened && data.can_manage) return <CredentialCard c={opened} state={stateIn(opened, data.values, null, null)} mode={card.open!.mode} back='the list' forWhat='For the whole workspace'
-    asset={null} environment={null} environments={null} onClose={card.close} onDone={reload} />;
+    asset={null} environment={null} environments={null} onClose={card.close} onDone={reload} entry={card.open!.entry} />;
   // The cards count credentials, not rows: a record's row counts each of its credentials (each environment's apart).
   const n = settingsCounts(rows.flatMap((r) => r.units ?? [{ status: r.status, required: r.required, changed_at: r.changed_at }]));
   const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -138,7 +138,7 @@ export function CredentialsTab() {
       detailTitle={(r) => r.name}
       detail={(r) => r.kind === 'record' ? null : r.kind === 'github' ? <GithubAppSection bare onChanged={reloadGithub} />
         : r.kind === 'runner' ? <RunnersSection bare onChanged={reloadRunners} />
-        : <CredentialDetails key={r.key} c={r.credential!} state={r.state!} canManage={data.can_manage} open={(mode) => card.show(r.credential!.id, mode)}
+        : <CredentialDetails key={r.key} c={r.credential!} state={r.state!} canManage={data.can_manage} open={(mode, entry) => card.show(r.credential!.id, mode, null, entry ?? null)}
             oauth={r.credential!.oauth && oauth ? <OAuthConnections f={r.credential!.parts[0]!} view={oauth} onChanged={reloadOAuth} /> : null} />}
     />
   );
@@ -155,8 +155,32 @@ const COLUMNS: RecordCol<Row>[] = [
 ];
 
 /** A workspace credential's details card: its facts, then Set or Replace and Clear (owners), each a full card. */
-function CredentialDetails({ c, state, canManage, open, oauth }: { c: Credential; state: SlotState; canManage: boolean; open: (mode: 'set' | 'clear') => void; oauth?: ReactNode }) {
+function CredentialDetails({ c, state, canManage, open, oauth }: { c: Credential; state: SlotState; canManage: boolean; open: (mode: 'set' | 'clear', entry?: string) => void; oauth?: ReactNode }) {
   const set = state.status === 'Set' || state.partial;
+  // mold_v0-260 (flag credential_sets): several labelled values, each replaced or removed on its own.
+  if (c.entries) {
+    const entries = state.values.filter((v) => !!v.entry).sort((a, b) => a.entry!.localeCompare(b.entry!));
+    return (
+      <div className='flex min-w-0 flex-col gap-4'>
+        <CredentialFacts c={c} state={state} />
+        {entries.length > 0 && (
+          <ul className='flex flex-col divide-y rounded-md border' data-credential-entries=''>
+            {entries.map((v) => (
+              <li key={v.entry} className='flex items-center justify-between gap-3 px-3 py-2 text-sm' data-credential-entry={v.entry}>
+                <span className='flex min-w-0 flex-1 flex-col'><span className='truncate font-medium'>{v.entry}</span>{v.last4 && <span className='text-muted-foreground font-mono text-xs'>ends in ••••{v.last4}</span>}</span>
+                {canManage && <span className='flex shrink-0 gap-2'>
+                  <Button size='sm' variant='outline' onClick={() => open('set', v.entry!)} aria-label={`Replace ${v.entry}`}>Replace</Button>
+                  <Button size='sm' variant='ghost' onClick={() => open('clear', v.entry!)} aria-label={`Remove ${v.entry}`}>Remove</Button>
+                </span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {canManage ? <div className='flex flex-wrap gap-2'><Button size='sm' disabled={entries.length >= c.entries.max} onClick={() => open('set')} data-credential-open='add'>Add {c.entries.label.toLowerCase()}</Button></div>
+          : <p className='text-sm'>An owner of this workspace sets these.</p>}
+      </div>
+    );
+  }
   return (
     <div className='flex min-w-0 flex-col gap-4'>
       <CredentialFacts c={c} state={state} />

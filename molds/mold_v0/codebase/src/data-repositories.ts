@@ -27,7 +27,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
@@ -42,6 +42,7 @@ import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTO
 import { pageInMemory, type Parsed } from "./record-query.js";
 import { asPlatform } from "./tenant-scope.js";
 import { ENV } from "./env-names.js";
+import type { CatalogAuth } from "./catalog-access.js";
 
 void SYSTEM_ACTOR;
 const run = promisify(execFile);
@@ -122,17 +123,31 @@ const allowPrivate = () => ENV.APP_DATA_ALLOW_PRIVATE === "1";
  * tags, no submodules, no hooks, no credential helper, no redirects, https only), the fetched commit must be the pin,
  * and files are read from the commit's own tree (never a working tree: nothing is checked out).
  */
-export async function gitSource(up: { repo: string; commit: string }): Promise<FileSource> {
+export async function gitSource(up: { repo: string; commit: string }, auth: CatalogAuth | null = null): Promise<FileSource> {
   const commit = up.commit;
   if (!/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new PackError("an upstream is pinned by a full commit id", 400);
+  // mold_v0-260 (flag private_catalogs): a deploy key reads ssh://git@<host>/<path> over SSH with that key alone and the
+  // host's own public key (never trusted on first use); the GitHub App's token goes in a header, never in the address.
+  const isSsh = auth?.kind === "deploy_key";
+  if (isSsh !== up.repo.startsWith("ssh://")) throw new PackError(isSsh ? "a deploy key reads an ssh://git@<host>/<path> repository" : "an ssh:// repository is read with a deploy key", 400);
+  if (isSsh && !/^ssh:\/\/git@[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+$/.test(up.repo)) throw new PackError("a deploy key reads an ssh://git@<host>/<path> repository", 400);
   const isFile = up.repo.startsWith("file:///");
   // Tests only (the same switch as file://): plain http to this machine, to prove a redirect is refused.
   const isLocalHttp = /^http:\/\/127\.0\.0\.1:\d{1,5}\/[A-Za-z0-9._~/-]+$/.test(up.repo);
   if ((isFile || isLocalHttp) && !allowFileUpstream()) throw new PackError("a file:// or http:// upstream is for tests only", 400);
-  if (!isFile && !isLocalHttp && !/^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+$/.test(up.repo)) throw new PackError("an upstream is an https:// repository", 400);
+  if (!isSsh && !isFile && !isLocalHttp && !/^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+$/.test(up.repo)) throw new PackError("an upstream is an https:// repository", 400);
   const dir = await mkdtemp(path.join(tmpdir(), "upstream-"));
-  const proto = isFile ? "file" : isLocalHttp ? "http" : "https";
-  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LANG: "C", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_ALLOW_PROTOCOL: proto, GIT_ASKPASS: "/bin/false", SSH_ASKPASS: "/bin/false" };
+  const proto = isSsh ? "ssh" : isFile ? "file" : isLocalHttp ? "http" : "https";
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LANG: "C", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_ALLOW_PROTOCOL: proto, GIT_ASKPASS: "/bin/false", SSH_ASKPASS: "/bin/false" };
+  const keyFile = path.join(dir, ".deploy-key"), knownFile = path.join(dir, ".known-hosts");
+  if (auth?.kind === "deploy_key") {
+    await writeFile(keyFile, auth.private_key, { mode: 0o600 });
+    await writeFile(knownFile, `${auth.known_hosts}\n`, { mode: 0o600 });
+    env.GIT_SSH_COMMAND = `ssh -F /dev/null -i ${keyFile} -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${knownFile} -o GlobalKnownHostsFile=/dev/null`;
+  } else if (auth?.kind === "github_app") {
+    // A header from the environment (git's own config, never on the command line or in the address).
+    Object.assign(env, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${auth.token}`).toString("base64")}` });
+  }
   const cfg = ["-c", "protocol.allow=never", "-c", `protocol.${proto}.allow=always`, "-c", "http.followRedirects=false", "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "-c", "transfer.fsckObjects=true", "-c", "fetch.recurseSubmodules=false"];
   const git = async (args: string[], opts: { timeout?: number; maxBuffer?: number } = {}) =>
     (await run("git", [...cfg, "-C", dir, ...args], { env, timeout: opts.timeout ?? 60_000, maxBuffer: opts.maxBuffer ?? MAX_FILE_BYTES, encoding: "utf8" })).stdout;
@@ -147,6 +162,9 @@ export async function gitSource(up: { repo: string; commit: string }): Promise<F
     const got = (await git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"])).trim();
     if (got !== commit) throw new PackError(`the upstream gave ${got.slice(0, 12)}, not the pinned commit ${commit}: refused`, 502);
   } catch (e) { await close(); throw e; }
+  // The commit is here: the key and the header are not needed to read it, so they go now.
+  if (auth?.kind === "deploy_key") { await rm(keyFile, { force: true }); await rm(knownFile, { force: true }); delete env.GIT_SSH_COMMAND; }
+  if (auth?.kind === "github_app") { delete env.GIT_CONFIG_COUNT; delete env.GIT_CONFIG_KEY_0; delete env.GIT_CONFIG_VALUE_0; }
   return {
     version: commit, describe: `${up.repo} at ${commit} (git)`,
     read: async (rel) => {
@@ -172,14 +190,15 @@ export async function gitSource(up: { repo: string; commit: string }): Promise<F
  * itself (the API's answer names it), files come from raw.githubusercontent.com/<owner>/<name>/<commit>/<path>
  * (content-addressed by the commit) and directories from the commit's tree. Every request refuses a redirect.
  */
-export async function githubSource(up: { repo: string; commit: string }, fetcher: typeof fetch = fetch): Promise<FileSource> {
+export async function githubSource(up: { repo: string; commit: string }, fetcher: typeof fetch = fetch, token: string | null = null): Promise<FileSource> {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(\.git)?$/.exec(up.repo);
   if (!m) throw new PackError("the github transport reads https://github.com/<owner>/<name> repositories", 400);
   if (!/^[0-9a-f]{40}$/.test(up.commit)) throw new PackError("an upstream is pinned by a full commit id", 400);
   const [owner, name, commit] = [m[1]!, m[2]!, up.commit];
   const get = async (url: string) => {
     let r: Response;
-    try { r = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(30_000), headers: { accept: "application/vnd.github+json, */*" } }); }
+    // mold_v0-260: a private catalog's token (the GitHub App's, for that one repository) in a header.
+    try { r = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(30_000), headers: { accept: "application/vnd.github+json, */*", ...(token ? { authorization: `token ${token}` } : {}) } }); }
     catch { throw new PackError("GitHub could not be reached, or it redirected (refused)", 502); }
     if (r.status >= 300 && r.status < 400) throw new PackError("GitHub redirected: refused", 502);
     return r;
@@ -609,12 +628,17 @@ export async function syncUpstreamCatalog(pack: string, name: string, opts: { fo
   if (typeof s.upstream !== "object") throw new PackError(`repository ${name}: its upstream pin is not resolved (pack.json upstream)`, 400);
   if (!repo.areas.length) throw new PackError(`repository ${name} feeds no area`, 400);
   const transport = s.transport ?? (s.upstream.repo.startsWith("https://github.com/") ? "github" : "git");
-  const src = transport === "github" ? await githubSource(s.upstream, opts.fetcher) : await gitSource(s.upstream);
+  // mold_v0-260 (flag private_catalogs): a private catalog's access, from the key vault (src/catalog-access.ts).
+  const access = (s as { access?: string }).access;
+  const auth = access === "deploy_key" || access === "github_app" ? await (await import("./catalog-access.js")).catalogAuth(pack, name) : null;
   try {
-    if (src.version !== s.upstream.commit) throw new PackError("the source is not at the pinned commit: refused", 502);
-    const rows = await repositoryRows(pack, name, src);
-    return await asPlatform(() => applyIndex(null, pack, repo, rows, { force: opts.force, describe: src.describe, version: src.version }));
-  } finally { await src.close(); }
+    const src = transport === "github" ? await githubSource(s.upstream, opts.fetcher, auth?.kind === "github_app" ? auth.token : null) : await gitSource(s.upstream, auth);
+    try {
+      if (src.version !== s.upstream.commit) throw new PackError("the source is not at the pinned commit: refused", 502);
+      const rows = await repositoryRows(pack, name, src);
+      return await asPlatform(() => applyIndex(null, pack, repo, rows, { force: opts.force, describe: src.describe, version: src.version }));
+    } finally { await src.close(); }
+  } finally { if (auth?.kind === "github_app") await auth.revoke(); }
 }
 
 /**

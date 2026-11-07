@@ -4,6 +4,7 @@ import { settingsTabs } from './pack-nav.generated';
 import { NavGroup } from '@/types';
 import { hiddenConsoleUrls, repositoryCount, workspacePortalNav, packAdminNav, packPortalNav, packTabs, recordAdminNav, recordPortalNav, tabPortalNav, usagePortalNav } from './pack-nav.generated';
 import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
+import { featureOn } from './features';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -24,6 +25,8 @@ export const adminNav: NavGroup[] = [
       label: 'Insights',
       items: [
         { title: 'Analytics', url: '/admin/analytics', icon: 'chartBar', shortcut: ['g', 'n'], items: [] },
+        // mold_v0-260 (flag run_analytics): the runs across the workspaces, broken down.
+        ...(featureOn('run_analytics') ? [{ title: 'Run analytics', url: '/admin/run-analytics', icon: 'trendingUp' as const, items: [] }] : []),
         { title: 'Health', url: '/admin/health', icon: 'gauge', shortcut: ['g', 'h'], items: [] }
       ]
     },
@@ -78,7 +81,9 @@ const shellPortalNav: NavGroup[] = mergeNav(withoutHidden([
     {
       label: 'Insights',
       items: [
-        { title: 'Usage', url: '/app/usage', icon: 'chartLine', shortcut: ['g', 'u'], items: [] }
+        { title: 'Usage', url: '/app/usage', icon: 'chartLine', shortcut: ['g', 'u'], items: [] },
+        // mold_v0-260 (flag run_analytics): the workspace's runs broken down (a declared sidebar reaches it from Activity).
+        ...(featureOn('run_analytics') ? [{ title: 'Run analytics', url: '/app/run-analytics', icon: 'trendingUp' as const, items: [] }] : [])
       ]
     },
     {

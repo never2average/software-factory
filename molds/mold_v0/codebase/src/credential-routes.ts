@@ -22,7 +22,7 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { accountRefusal, canAccount } from "./account-roles.js";
 import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
-import { areaCredentials, credentialAreas, deleteCredential, deleteCredentialGroup, listCredentials, recordCredentials, setCredential, setCredentialGroup } from "./credentials.js";
+import { areaCredentials, credentialAreasNow, deleteCredential, deleteCredentialGroup, listCredentials, recordCredentials, setCredential, setCredentialGroup } from "./credentials.js";
 import { findArea, may } from "./record-areas.js";
 import { featureOn } from "./features.js";
 import { PackError } from "./pack-api.js";
@@ -98,7 +98,7 @@ export function credentialAppRouter(): Router {
   };
   const manage = (res: Response) => { if (!canAccount(S(res).accountRole, "manage")) throw new PackError(accountRefusal("manage").message, 403); };
   const who = (res: Response) => `customer:${S(res).email ?? S(res).user ?? S(res).slug}`;
-  const slotOf = (b: Record<string, unknown>) => ({ pack: b.pack, ...(b.group !== undefined ? { group: b.group } : { name: b.name }), asset: b.asset ?? null, environment: b.environment ?? null });
+  const slotOf = (b: Record<string, unknown>) => ({ pack: b.pack, ...(b.group !== undefined ? { group: b.group } : { name: b.name }), asset: b.asset ?? null, environment: b.environment ?? null, ...(b.entry ? { entry: b.entry } : {}) });
 
   // The last 4 characters go to those who manage the values (owners); everyone else sees which are set.
   r.get("/", answer(async (req, res) => {
@@ -111,7 +111,7 @@ export function credentialAppRouter(): Router {
     const v = q.area !== undefined || q.key !== undefined ? await recordCredentials(S(res).org, q.area, q.key, actor)
       : await listCredentials(S(res).org, { scope: q.scope === "workspace" ? "workspace" : "all" });
     // Settings › Credentials then asks for the rows of each area whose records have credentials and the person may read.
-    const areas = q.scope === "workspace" ? { record_areas: credentialAreas().filter((a) => { const x = findArea(a); return !!x && may(x, "read", actor); }) } : {};
+    const areas = q.scope === "workspace" ? { record_areas: (await credentialAreasNow()).filter((a) => { const x = findArea(a); return !!x && may(x, "read", actor); }) } : {};
     return { ...v, ...areas, values: can ? v.values : v.values.map((x) => ({ ...x, last4: null })), can_manage: can };
   }));
   r.put("/", answer(async (req, res) => {
@@ -123,7 +123,7 @@ export function credentialAppRouter(): Router {
       return { values: out };
     }
     const out = await setCredential(S(res).org, who(res), b);
-    log(who(res), "credential.set", S(res).slug, { pack: out.pack, name: out.name, asset: out.asset, environment: out.environment });
+    log(who(res), "credential.set", S(res).slug, { pack: out.pack, name: out.name, asset: out.asset, environment: out.environment, ...(out.entry ? { entry: out.entry } : {}) });
     return out;
   }));
   r.delete("/", answer(async (req, res) => {

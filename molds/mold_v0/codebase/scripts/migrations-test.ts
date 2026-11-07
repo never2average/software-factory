@@ -1139,6 +1139,38 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} teams and per-record visibility (records from before stay open; tenant reads only; a restrictive policy); its rollback leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // Credential sets and tenants (mold_v0-260, credential_sets, found by name): a labelled value (entry) per row, a tenant
+  // binding, the slot's unique index taking the entry; the key vault's catalog_access provider. Its rollback removes
+  // the labelled and tenant values (the rest stay), leaves exactly what the migration before left, and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "credential_sets")!.version;
+    const d = await shellAt(kind, v);
+    const [{ id: org }] = await d.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Sets', 'sets-credential-sets') RETURNING id");
+    const put = (bound: string, asset: string | null, entry: string | null) => d.query("INSERT INTO workspace_credentials (org_id, pack, name, bound_to, asset_area, asset_key, entry, sealed, last4) VALUES ($1, 'p', 'hosts', $2, $3, $4, $5, 'x', 'abcd')", [org, bound, asset ? "tenants" : null, asset, entry]);
+    await put("tenant", "acme", "a.example.com"); await put("tenant", "acme", "b.example.com");
+    await assert.rejects(put("tenant", "acme", "a.example.com"), /duplicate key|unique/, "one value per label of a slot");
+    await put("workspace", null, null);
+    await assert.rejects(put("galaxy", "acme", null), /check constraint/, "an unknown binding refused");
+    const [{ n: provider }] = await d.query<{ n: number }>("SELECT count(*)::int AS n FROM vault_providers WHERE slug = 'catalog_access'");
+    assert.equal(provider, 1, "the key vault's provider for private catalogs");
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const [{ id: org2 }] = await r.query<{ id: number }>("INSERT INTO organizations (name, slug) VALUES ('Sets 2', 'sets-credential-sets-2') RETURNING id");
+    await r.query("INSERT INTO workspace_credentials (org_id, pack, name, bound_to, asset_area, asset_key, entry, sealed, last4) VALUES ($1, 'p', 'hosts', 'tenant', 'tenants', 'acme', 'a.example.com', 'x', 'abcd'), ($1, 'p', 'token', 'workspace', NULL, NULL, NULL, 'x', 'wxyz')", [org2]);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_credential_sets.sql`), "utf8");
+    await r.exec(rb);
+    assert.deepEqual((await r.query<{ name: string }>("SELECT name FROM workspace_credentials WHERE org_id = $1", [org2])).map((x) => x.name), ["token"], "the rollback removes the labelled and tenant values, the rest stay");
+    await r.query("DELETE FROM workspace_credentials WHERE org_id = $1", [org2]);
+    await r.query("DELETE FROM organizations WHERE id = $1", [org2]);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_credential_sets")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} credential sets and tenants (a value per label, a tenant binding, the catalogs' provider); its rollback keeps the other values, leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The workspace agent's profiles (mold_v0-261, agent_profiles, found by name): three staff tables the tenant role
   // never reaches, a profile and a session's record both or neither; its rollback drops them and the session columns,
   // the sessions staying, leaves exactly what the migration before left, and it applies again.

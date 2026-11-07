@@ -28,7 +28,8 @@ import { dataApi, type DataCaller } from "./data-api.js";
 import { featureOn } from "./features.js";
 import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
+import { packs } from "./packs.js";
+import { ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
 import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { withTenant } from "./tenant-scope.js";
@@ -97,6 +98,16 @@ const movesFor = (area: RecordArea, role: AccountRole | null, to?: string) =>
  * labelled, with why it is disabled when it is. `withForms: false` (a related list's rows) leaves the edit form's fields
  * out: a row's edit opens the record's own page.
  */
+/** mold_v0-260: whether a start tool's `record` takes records of this area (its enum of areas). */
+function recordAreaAllowed(tool: { input: Record<string, unknown> }, area: string): boolean {
+  const r = tool.input.record as unknown as { safeParse?: (v: unknown) => { success: boolean } } | undefined;
+  return !!r?.safeParse && r.safeParse({ area, key: "k" }).success;
+}
+const findKindSync = (pack: string, kind: string) => {
+  const p = packs().find((x) => x.id === pack);
+  return ([...(p?.definition.jobKinds ?? []), ...(p?.definition.agentJobKinds ?? [])] as { name: string; input_from_record?: Record<string, string> }[]).find((k) => k.name === kind) ?? null;
+};
+
 export async function pageActions(area: RecordArea, record: RecordRow, actor: Actor, opts: { withForms?: boolean; org?: number } = {}): Promise<ActionView[]> {
   const layout = layoutOf(area);
   if (!layout?.actions?.length) return [];
@@ -117,9 +128,13 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         if (!k) continue;
         const label = (k as { label?: string }).label ?? k.name;
         const values: Record<string, unknown> = {};
-        for (const [arg, from] of Object.entries(x.input ?? {})) {
+        // mold_v0-260 (flag record_run_inputs): the kind's own input_from_record first, then the action's input over it;
+        // the arguments the record gives are the server's (from_record: the form shows them, never sends them).
+        const fromKind = tool.input.record ? ((k as { input_from_record?: Record<string, string> }).input_from_record ?? {}) : {};
+        const fromRecord: string[] = [];
+        for (const [arg, from] of [...Object.entries(fromKind), ...Object.entries(x.input ?? {})]) {
           const v = from === "$key" ? record.key : from === "$title" ? record.title : record.data[from];
-          if (v !== undefined && v !== null && v !== "") values[arg] = v;
+          if (v !== undefined && v !== null && v !== "") { values[arg] = v; if (arg in fromKind && !fromRecord.includes(arg)) fromRecord.push(arg); }
         }
         const { environmentsOf } = await import("./tab-actions.js");
         // mold_v0-256: a run on the record a link field names (the finding's application), found in the area it belongs to.
@@ -132,7 +147,7 @@ export async function pageActions(area: RecordArea, record: RecordRow, actor: Ac
         }
         out.push({ ...base, label: x.label ?? `Start ${label.charAt(0).toLowerCase()}${label.slice(1)}`, disabled: unavailable ?? noTarget,
           run: { kind: k.name, label, description: (k as { description?: string }).description ?? null, args: ((k as { args?: unknown[] }).args ?? []).map(formField), values,
-            environments: environmentsOf(tool.input), ...(x.target ? { target: target ?? null } : {}) } });
+            environments: environmentsOf(tool.input), ...(x.target ? { target: target ?? null } : {}), ...(fromRecord.length ? { from_record: fromRecord } : {}) } });
         break;
       }
       case "move": {
@@ -365,12 +380,22 @@ export function recordPageRouter(): Router {
     const actor = actorOf(res);
     if (!may(area, "read", actor)) throw new PackError(`Your role can't read ${area.label}.`, 403);
     const words = String(req.query.q ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+    // mold_v0-260 (flag record_rules): a reference's where narrows the list (only ever narrows: every write checks it too).
+    let where: ReferenceWhere | null = null;
+    if (req.query.where !== undefined && featureOn("record_rules")) {
+      let raw: unknown = null;
+      try { raw = JSON.parse(String(req.query.where)); } catch { raw = null; }
+      const w = ReferenceWhereSchema.safeParse(raw);
+      if (!w.success) throw new PackError("where: a reference's condition", 400);
+      where = w.data;
+    }
+    const keeps = (x: { data?: Record<string, unknown> }) => !where || conditionHolds(where as DetailCondition, x.data ?? {});
     const out: { key: string; title: string | null }[] = [];
     let after: string | undefined, read = 0, more = false;
     while (read < PICK_SCAN) {
       const page = await listFor(session(res).org, area.name, { sort: "-updated_at", limit: 200, ...(after ? { after } : {}) }, actor);
       read += page.records.length;
-      for (const x of page.records) if (words.every((w) => x.key.toLowerCase().includes(w) || (x.title ?? "").toLowerCase().includes(w))) out.push({ key: x.key, title: x.title });
+      for (const x of page.records) if (keeps(x) && words.every((w) => x.key.toLowerCase().includes(w) || (x.title ?? "").toLowerCase().includes(w))) out.push({ key: x.key, title: x.title });
       if (out.length > PICK_MAX || !page.next) { more = out.length > PICK_MAX || (!!page.next && read >= PICK_SCAN); break; }
       after = page.next;
     }
@@ -474,6 +499,19 @@ export function recordPageRouter(): Router {
         // An asset area's record is also the run's target, as the start tool's target_asset names one; mold_v0-256: or the
         // record its target's link field names (never one sent from the browser).
         if ("target_asset" in tool.input && area.role === "asset") input.target_asset = { area: area.name, key: record.key };
+        // mold_v0-260: a tenant area's record is the run's tenant (its credentials bound to it reach the run).
+        if ("target_tenant" in tool.input && (area as { tenant?: boolean }).tenant) input.target_tenant = { area: area.name, key: record.key };
+        // mold_v0-260 (flag record_run_inputs): the arguments the kind takes from the record come from it here, on the
+        // server, never from the browser (what the browser sent for them is dropped where the record has a value).
+        const rec = tool.input.record as unknown as { def?: unknown } | undefined;
+        if (rec && recordAreaAllowed(tool, area.name)) {
+          const fromKind = (findKindSync(area.pack, declared.job_kind!)?.input_from_record ?? {}) as Record<string, string>;
+          for (const [arg, f] of Object.entries(fromKind)) {
+            const v = f === "$key" ? record.key : f === "$title" ? record.title : record.data[f];
+            if (v !== undefined && v !== null && v !== "") delete input[arg];
+          }
+          input.record = { area: area.name, key: record.key };
+        }
         if (declared.target) {
           if (!a.run?.target || !("target_asset" in tool.input)) throw new PackError(`${a.label} has no record to run on.`, 409);
           input.target_asset = { area: a.run.target.area, key: a.run.target.key };

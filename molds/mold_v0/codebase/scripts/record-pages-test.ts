@@ -450,7 +450,8 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(tab, /label: 'Bound to'/, "no Bound to column");
   assert.match(tab, /if \(opened && data\.can_manage\) return <CredentialCard /, "Set, Replace and Clear: the full card in the list's place");
   const detail = /export function RecordDetailPage\b[\s\S]*?\n\}\n/.exec(pages)?.[0] ?? "";
-  assert.match(detail, /const credentials = useRecordCredentials\(area, recordKey, base === 'app' && area\.role === 'asset'\);/, "a record's page reads its credentials (a workspace's page only)");
+  // mold_v0-260: also a tenant area's record while credential_sets is on (off: an asset's alone, as before); the card as wide as the page's others.
+  assert.match(detail, /const credentials = useRecordCredentials\(area, recordKey, base === 'app' && \(area\.role === 'asset' \|\| featureOn\('credential_sets'\)\), featureOn\('record_pages'\) && !!layoutOf\(area\)\);/, "a record's page reads its credentials (a workspace's page only)");
   assert.match(detail, /if \(credentials\.card\) return <PageContainer>\{credentials\.card\}<\/PageContainer>;/, "the set card takes the page's place");
   assert.match(detail, /<\/Card>\s*\{credentials\.section\}/, "its Credentials card below the details card");
   assert.match(rc, /'\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}'|`\?area=\$\{encodeURIComponent\(area\.name\)\}&key=\$\{encodeURIComponent\(recordKey\)\}`/, "the record's own credentials");

@@ -29,7 +29,7 @@ const notFound = (e: unknown) => (e as { status?: number } | null)?.status === 4
  * The record's credentials: `section`, its Credentials card for the page, and `card`, the full set or clear card while
  * one is open (the page draws it in its own place). Nothing for staff pages or an area with no credential.
  */
-export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on: boolean): { section: ReactNode; card: ReactNode } {
+export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on: boolean, laidOut = false): { section: ReactNode; card: ReactNode } {
   const q = `?area=${encodeURIComponent(area.name)}&key=${encodeURIComponent(recordKey)}`;
   const { data, reload } = useOrgLoad(() => (on ? credentialsCall<RecordVault>('GET', undefined, q).catch((e) => { if (notFound(e)) return null; throw e; }) : Promise.resolve(null)), [q, on]);
   const needsOAuth = !!data?.fields.some((f) => f.oauth);
@@ -59,7 +59,7 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
     const takes = data.field_environments[`${c.pack}/${c.parts[0]!.name}`] ?? data.environments;
     card = (
       <div className='flex w-full max-w-4xl flex-col gap-4'>
-        <CredentialCard c={c} state={c.place === 'record-environment' && !env ? null : stateIn(c, data.values, recordKey, env)} mode={open.open!.mode}
+        <CredentialCard c={c} state={c.place === 'record-environment' && !env ? null : stateIn(c, data.values, recordKey, env)} mode={open.open!.mode} entry={open.open!.entry}
           back={title} forWhat={`For ${noun} ${title}`} noun={noun} asset={recordKey} environment={env}
           environments={c.place === 'record-environment' ? takes : null} onEnvironment={(e) => open.show(c.id, open.open!.mode, e)}
           onClose={open.close} onDone={reload} />
@@ -72,7 +72,8 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
     );
   }
   const section = (
-    <Card id={CREDENTIALS_ANCHOR} ref={anchor} className='w-full max-w-4xl scroll-mt-20 gap-0 py-0' data-record-credentials=''>
+    // As wide as the page's other cards: full width on a laid-out page (mold_v0-260), the details card's width otherwise.
+    <Card id={CREDENTIALS_ANCHOR} ref={anchor} className={laidOut ? 'w-full scroll-mt-20 gap-0 py-0' : 'w-full max-w-4xl scroll-mt-20 gap-0 py-0'} data-record-credentials=''>
       <CardHeader className='border-b py-4 [.border-b]:pb-4'>
         {/* No count line under the heading (mold_v0-240): each credential says its own status. */}
         <CardTitle className='text-base'>Credentials</CardTitle>
@@ -82,7 +83,7 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
           <section className='flex flex-col gap-2' data-credential-group='record'>
             <h3 className='text-sm font-medium'>For this {noun}</h3>
             <ul className='flex flex-col divide-y rounded-md border'>
-              {sections.record.map(({ c, state }) => <Item key={c.id} c={c} state={state} canManage={data.can_manage} open={(m) => open.show(c.id, m)} />)}
+              {sections.record.map(({ c, state }) => <Item key={c.id} c={c} state={state} canManage={data.can_manage} open={(m, entry) => open.show(c.id, m, null, entry ?? null)} />)}
             </ul>
           </section>
         )}
@@ -109,22 +110,47 @@ export function useRecordCredentials(area: RecordAreaSpec, recordKey: string, on
 }
 
 /** One credential in one place: its name and purpose, its status and dates, what works without it, how to get it. */
-function Item({ c, state, canManage, open }: { c: Credential; state: SlotState; canManage: boolean; open: (mode: 'set' | 'clear') => void }) {
+function Item({ c, state, canManage, open }: { c: Credential; state: SlotState; canManage: boolean; open: (mode: 'set' | 'clear', entry?: string) => void }) {
   const set = state.status === 'Set' || state.partial;
+  const entries = c.entries ? state.values.filter((v) => !!v.entry).sort((a, b) => a.entry!.localeCompare(b.entry!)) : [];
+  const full = !!c.entries && entries.length >= c.entries.max;
+  // Its actions in one place on every row (mold_v0-260): at the row's top right, beside its name, never wrapped under it.
   return (
     <li className='flex flex-col gap-2 p-3' data-credential={c.id} data-credential-place={c.place}>
-      <div className='flex flex-wrap items-start justify-between gap-2'>
-        <div className='flex min-w-0 flex-col gap-1'>
-          <span className='leading-snug font-medium'>{c.label}</span>
+      <div className='flex items-start justify-between gap-3'>
+        <div className='flex min-w-0 flex-1 flex-col gap-1'>
+          <span className='leading-snug font-medium break-words'>{c.label}</span>
           {c.purpose && <span className='text-muted-foreground text-sm leading-snug'>{c.purpose}</span>}
         </div>
         {canManage && (
-          <div className='flex shrink-0 gap-2'>
-            <Button size='sm' variant={set ? 'outline' : 'default'} onClick={() => open('set')} data-credential-open='set'>{set ? 'Replace' : 'Set'}</Button>
-            {set && <Button size='sm' variant='ghost' onClick={() => open('clear')} data-credential-open='clear'>Clear</Button>}
+          <div className='flex shrink-0 justify-end gap-2' data-credential-actions=''>
+            {c.entries ? <Button size='sm' variant={entries.length ? 'outline' : 'default'} disabled={full} title={full ? `At most ${c.entries.max}` : undefined}
+              onClick={() => open('set')} data-credential-open='add'>Add {c.entries.label.toLowerCase()}</Button> : (<>
+              <Button size='sm' variant={set ? 'outline' : 'default'} onClick={() => open('set')} data-credential-open='set'>{set ? 'Replace' : 'Set'}</Button>
+              {set && <Button size='sm' variant='ghost' onClick={() => open('clear')} data-credential-open='clear'>Clear</Button>}
+            </>)}
           </div>
         )}
       </div>
+      {c.entries && entries.length > 0 && (
+        // mold_v0-260 (flag credential_sets): each labelled value, its last 4 characters (owners), Replace and Remove at its right.
+        <ul className='flex flex-col divide-y rounded-md border' aria-label={`${c.label}: ${c.entries.label.toLowerCase()} values`} data-credential-entries=''>
+          {entries.map((v) => (
+            <li key={v.entry} className='flex items-center justify-between gap-3 px-3 py-2 text-sm' data-credential-entry={v.entry}>
+              <span className='flex min-w-0 flex-1 flex-col'>
+                <span className='font-medium break-all'>{v.entry}</span>
+                <span className='text-muted-foreground text-xs'>{v.last4 ? <span className='font-mono'>ends in ••••{v.last4} · </span> : null}set <When d={v.updated_at} />{v.last_used_at ? <>, last used <When d={v.last_used_at} /></> : ', not used yet'}</span>
+              </span>
+              {canManage && (
+                <span className='flex shrink-0 gap-2'>
+                  <Button size='sm' variant='outline' onClick={() => open('set', v.entry!)} aria-label={`Replace ${v.entry}`}>Replace</Button>
+                  <Button size='sm' variant='ghost' onClick={() => open('clear', v.entry!)} aria-label={`Remove ${v.entry}`}>Remove</Button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       <p className='flex flex-wrap gap-x-4 gap-y-1 text-sm'>
         <span>Status: <StatusText state={state} /></span>
         <span>Set: {state.set_at ? <When d={state.set_at} /> : 'not yet'}</span>

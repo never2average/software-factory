@@ -31,7 +31,7 @@
  */
 import { canonical } from "./data-repositories.js";
 import { PackError, RECORD_KEY } from "./pack-api.js";
-import { adminRecords, asWriterUnlessSet, assertMayImport, checkRecord, isReadOnlyArea, may, platformStored, SYSTEM_ACTOR, workspaceRecords, workspaceStored, type Actor, type RecordArea } from "./record-areas.js";
+import { adminRecords, asWriterUnlessSet, assertMayImport, checkRecord, onSaveChecks, isReadOnlyArea, may, platformStored, SYSTEM_ACTOR, workspaceRecords, workspaceStored, type Actor, type RecordArea } from "./record-areas.js";
 
 /** At most this many rows per import (the record store's batch). */
 export const IMPORT_MAX_ROWS = 1000;
@@ -182,7 +182,11 @@ export async function importWorkspaceRecords(orgId: number, actor: Actor, area: 
     if (life) delete kept[life.field];
     const merged = { ...kept, ...fields };
     const t = titleOf(title, before?.title);
-    try { await checkRecord(area, merged, orgId, actor, `row ${n}`, life ? [life.field] : []); }
+    try {
+      await checkRecord(area, merged, orgId, actor, `row ${n}`, life ? [life.field] : []);
+      // mold_v0-260 (flag record_rules): the area's checks on save, in the preview as at the write.
+      await onSaveChecks(orgId, area, key, t, life ? { ...merged, [life.field]: before ? before.data[life.field] : life.initial } : merged, before ? "update" : "create", actor);
+    }
     catch (e) { if (!(e instanceof PackError)) throw e; errors.push(...e.message.split("; ")); report("invalid"); continue; }
     if (before && before.title === t && canonical(kept) === canonical(merged)) { report("unchanged"); continue; }
     report(before ? "update" : "create");

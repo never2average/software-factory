@@ -6,7 +6,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import PageContainer from '@/components/layout/page-container';
 import { StatStrip } from '@/components/layout/section';
 import { Box, RankBars, top } from '@/components/layout/chart-grid';
-import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
+import { DateRangePicker, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
+import { useDashboardRange } from '@/hooks/use-dashboard-filter';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Icons } from '@/components/icons';
+import { featureOn } from '@/config/features';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiClient } from '@/lib/api-client';
 import { num, usd } from '@/lib/display-format';
@@ -87,12 +92,19 @@ function CallFigures({ r, extra }: { r: Calls; extra?: ReactNode }) {
 
 /** /app/activity: the workspace's members and runs. */
 export function WorkspaceActivityPage() {
-  const [range, setRange] = useState<DateRange>(last30);
+  // mold_v0-260 (flag filters_in_address): the period kept in the address while it is on.
+  const [range, setRange] = useDashboardRange();
   const { data, error } = useReport((q) => apiClient<WorkspaceReport>(`/usage?${q}`), range);
   const w = data?.words;
   return (
     <PageContainer pageTitle='Activity' pageDescription={w ? `${cap(plural(w.tool_call))} and ${w.run} spend in this ${w.workspace}, per ${w.member} and per ${w.run}.` : 'Tool calls and run spend.'}
-      pageHeaderAction={<DateRangePicker value={range} onChange={setRange} />}>
+      pageHeaderAction={featureOn('run_analytics') ? (
+        // mold_v0-260 (flag run_analytics): the runs broken down, for the same period.
+        <div className='flex flex-wrap items-center justify-end gap-2'>
+          <Button variant='outline' size='sm' render={<Link href={`/app/run-analytics?${rangeQuery(range)}`} />}><Icons.chartBar /> Run analytics</Button>
+          <DateRangePicker value={range} onChange={setRange} />
+        </div>
+      ) : <DateRangePicker value={range} onChange={setRange} />}>
       {error ? <p className='text-destructive text-sm'>{error.message}</p> : !data ? <p className='text-muted-foreground text-sm'>Loading…</p> : (
         <CallFigures r={data} extra={<>
           <Box title={`Per ${data.words.member}`} description={`${cap(plural(data.words.tool_call))}, errors, ${plural(data.words.run)} and their spend.`}>

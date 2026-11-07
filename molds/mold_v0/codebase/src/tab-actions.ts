@@ -34,7 +34,7 @@ import { buildViews } from "./metrics.js";
 import { areaListAction, tabAction, tabRoles, type SpecTab } from "./metric-spec.js";
 import { areaOpWithheld } from "./mcp-withheld.js";
 import { generatedTools, permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
-import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema, type TabAction } from "./pack-api.js";
+import { AgentJobKindSchema, JobKindSchema, PackError, RecordFieldSchema, referenceWhereWords, type TabAction } from "./pack-api.js";
 import { fill } from "./vocabulary.js";
 import { packs } from "./packs.js";
 import { findArea, may, recordAreas } from "./record-areas.js";
@@ -56,7 +56,9 @@ export const formField = (raw: unknown): FormField => {
   const f = RecordFieldSchema.parse(raw);
   return { name: f.name, label: f.label, type: f.type, help: f.help ?? null, required: f.required === true,
     options: f.options ? f.options.map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })) : null,
-    multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null, ...(f.preview ? { preview: f.preview } : {}) };
+    multiple: f.multiple === true, min: f.min ?? null, max: f.max ?? null, max_length: f.max_length ?? null, to: f.to ?? null, ...(f.preview ? { preview: f.preview } : {}),
+    // mold_v0-260 (flag record_rules): the records a reference may name, for the picker to narrow its list (the write enforces it).
+    ...(f.where && featureOn("record_rules") ? { where: f.where, where_words: referenceWhereWords(f.where, (n) => (findArea(f.to!)?.fields.find((x) => x.name === n)?.label ?? n).toLowerCase()) } : {}) };
 };
 
 /** The pack's job kinds, parsed (the declared ones; a malformed one was refused when the packs were installed). */
