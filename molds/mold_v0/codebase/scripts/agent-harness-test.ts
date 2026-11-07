@@ -40,20 +40,17 @@
 //     d. the token, directly: scoped to its session's workspace (another workspace's record refused), reads free,
 //        writes refused by the server, no other door opens with it; revoked at pause, park, stop and budget, and when
 //        the person is no longer a member; a newer wake's token works while the older one does not
-// 12. Agent profiles (mold_v0-261; src/agent-profiles.ts):
-//     a. pure: what a profile resolves to (unset: the platform setting; a workspace's override), the first message from
-//        a record and the on_start template, what its shape cannot say, a hidden tool never asked for
-//     b. CRUD, versioning and audit: the Default (the global settings) and a pack's profile written once; created,
-//        edited (a new version; an older one refused), archived and restored by staff, each change with who, before and
-//        after; refusals (an unpriced model, a path out of the workspace, a tool in two lists, an unknown workspace, a
-//        viewer, a budget over its ceiling, a staff viewer)
-//     c. role gating: offered and started only by its roles, on the server too
-//     d. per-workspace overrides: a named workspace's budget and model; budgets and the ceiling held
-//     e. tools free, ask and hidden; files written into the workspace; its instructions and on_start reaching the
-//        stand-in CLI; the version frozen while staff change the profile
-//     f. start_agent from a record: the message filled from the record on the server, the session linked back and in
-//        the record's runs section; the list's action; archived and unpriced refusals
-//     g. off: nothing of it
+// 12. Agent profiles (mold_v0-261, redesigned by mold_v0-267; src/agent-profiles.ts, src/agent-governance.ts):
+//     a. pure: exactly five items; the governance policy's rules (the web policy, matching, a download command, every
+//        call decided with the reference's codes, exceptions until their date)
+//     b. CRUD, versioning and audit; the editor's choices; the refusals
+//     c. uploads: in parts to the object store, finished by sha256, within AGENT_UPLOAD_MAX_MB
+//     d. a session end to end: uploads in its workspace (the binary runs), keys injected and redacted, the allowlisted
+//        tool free and another ending it; the version frozen
+//     e. the primary inference provider's key used by the gateway
+//     f. governance enforced on egress: owner approvals, exactly one host, a package host never widening the network,
+//        a decline ending it, refusals outright, approval_timeout
+//     g. start_agent from a record; h. off: nothing of it
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
@@ -741,50 +738,84 @@ try {
     setPacksForTest(null); setPackConfigsForTest([]);
   }
 
-  // ---------- 12. agent profiles (mold_v0-261; src/agent-profiles.ts, src/agent-profile-spec.ts) ----------
+  // ---------- 12. agent profiles (mold_v0-261, redesigned by mold_v0-267; src/agent-profiles.ts, src/agent-profile-spec.ts,
+  //            src/agent-governance.ts) ----------
   {
     const P = await import("../src/agent-profiles.js");
     const S = await import("../src/agent-profile-spec.js");
-    // a. pure: what a profile resolves to (each unset setting the platform's; a workspace's override over the profile),
-    //    the first message from a record and the on_start template, what its shape cannot say, a hidden tool never asked for.
+    const G = await import("../src/agent-governance.js");
+    // a. pure: the five items and nothing else; the governance policy's rules as the reference states and enforces them.
     {
       const d = P.effectiveOf({});
-      assert.deepEqual([d.model, d.budget_usd, d.from.model, d.from.budget_usd], [settings.settingText("AGENT_MODEL"), Math.min(settings.settingNumber("AGENT_SESSION_BUDGET_USD"), settings.settingNumber("AGENT_BUDGET_CEILING_USD")), "setting", "setting"],
+      assert.deepEqual([d.harness, d.model, d.provider, d.key, d.from.model, d.governance], [settings.settingText("AGENT_HARNESS"), settings.settingText("AGENT_MODEL"), settings.settingText("AGENT_PROVIDER"), null, "setting", null],
         "the Default (nothing set): the platform settings");
-      assert.deepEqual(d.roles, ["member", "billing", "owner"]);
-      const c = { model: "claude-sonnet-5-5", budget_usd: 2, ceiling_usd: 3, overrides: [{ workspace: "acme", budget_usd: 2.5, model: "claude-haiku-5-5" }] };
-      const e = P.effectiveOf(c, "acme"), f = P.effectiveOf(c, "elsewhere");
-      assert.deepEqual([e.model, e.budget_usd, e.from.model, e.workspace], ["claude-haiku-5-5", 2.5, "workspace", "acme"], "a named workspace's override");
-      assert.deepEqual([f.model, f.budget_usd, f.from.budget_usd, f.workspace], ["claude-sonnet-5-5", 2, "profile", null], "any other workspace: the profile");
-      assert.equal(P.effectiveOf({ budget_usd: 9, ceiling_usd: 4 }).budget_usd, 4, "a budget is never over its ceiling");
-      const t = P.effectiveOf({ tools: { base: "reads", free: ["a"], ask: ["b"], hidden: ["c", "a"] } }).tools;
-      assert.deepEqual(t, { base: "reads", free: [], ask: ["b"], hidden: ["c", "a"] }, "hidden wins over free");
-      assert.equal(S.fillTemplate("Build {{title}} ({{key}}) on {{stack}}: {{summary}}{{missing}}", { key: "shop", title: "Shop", data: { stack: ["ts", "pg"], summary: "A shop" } }), "Build Shop (shop) on ts, pg: A shop");
-      assert.equal(S.applyOnStart("Plan first.\n\n{{message}}\n\nThen build.", "ship it"), "Plan first.\n\nship it\n\nThen build.");
-      assert.equal(S.applyOnStart("Plan first.", "ship it"), "Plan first.\n\nship it", "without {{message}}: the words follow it");
-      assert.equal(S.applyOnStart(null, "ship it"), "ship it");
-      assert.deepEqual(S.configProblems({ tools: { free: ["x"], hidden: ["x"] }, files: [{ path: "a.md", content: "1" }, { path: "A.md", content: "2" }], budget_usd: 5, ceiling_usd: 2 }).length, 3);
-      for (const bad of ["../x.md", "/etc/x", "a/../b", "a/./b", ""]) assert.ok(!S.ProfileFileSchema.safeParse({ path: bad, content: "" }).success, `${bad || "(empty)"}: a path outside the working directory is refused`);
-      for (const good of [".claude/skills/build/SKILL.md", "notes/brief.md", "a.txt"]) assert.ok(S.ProfileFileSchema.safeParse({ path: good, content: "" }).success, good);
-      const pol = { ...C.currentPolicy(), workspace: { server: "app", acts_as: { kind: "person" as const, name: null, role: null }, free: "reads" as const, named: [], tools: [], hidden: ["fx_drop"], context: { text: "", max_chars: 0, parts: [] } } };
-      assert.deepEqual(A.checkToolUse({ id: "1", name: "mcp__app__fx_drop", input: {} }, pol, 0), { ok: false, hidden: true }, "a hidden tool is never asked for");
-      assert.deepEqual(A.checkToolUse({ id: "1", name: "mcp__app__fx_peek", input: {} }, pol, 0), { ok: false, request: { kind: "tool", subject: "mcp__app__fx_peek" } });
-      ok("profiles, pure: each unset setting the platform's, a workspace's override over the profile, a budget within its ceiling, hidden over free; a first message filled from a record and the on_start template; paths inside the working directory only; a hidden tool never asked for");
+      for (const old of [{ model: "claude-sonnet-5-5" }, { budget_usd: 2 }, { max_turns: 3 }, { instructions: { append_system: "x" } }, { roles: ["owner"] }, { tools: { free: ["a"] } }, { files: [] }, { overrides: [] }])
+        assert.ok(!S.ProfileConfigSchema.safeParse(old).success, `${Object.keys(old)[0]}: not part of a profile any more`);
+      assert.deepEqual(Object.keys(S.ProfileConfigSchema.shape).sort(), ["governance", "harness", "inference", "keys", "uploads"], "a profile is exactly its harness, key vault, uploads and governance");
+      // The web policy: its domains read as hosts, its rules.
+      assert.deepEqual(G.normalizeDomains(["https://Docs.Example.com/", "docs.example.com", "*.example.org"]), { domains: ["*.example.org", "docs.example.com"], problems: [] }, "a bare address is read as its host, once");
+      assert.equal(G.normalizeDomains(["https://example.com/private"]).problems.length, 1, "an address with a path is refused, never trimmed (that would widen it)");
+      assert.equal(G.normalizeDomains(["*", "example.com"]).problems.length, 1, "* only on its own");
+      assert.equal(G.normalizeDomains(["10.0.0.1"]).problems.length, 1, "an address is no domain");
+      const wp = (x: Partial<import("../src/agent-governance.js").WebPolicy>) => G.webPolicyProblems({ enabled: false, web_search_enabled: false, web_fetch_enabled: false, web_fetch_allowed_domains: [], max_calls: 0, ...x });
+      assert.match(wp({ web_fetch_enabled: true }).join(), /disabled web policy cannot grant/);
+      assert.match(wp({ enabled: true, max_calls: 3 }).join(), /at least one web tool/);
+      assert.match(wp({ enabled: true, web_search_enabled: true }).join(), /call limit of at least 1/);
+      assert.match(wp({ enabled: true, web_fetch_enabled: true, max_calls: 2 }).join(), /needs at least one allowed domain/);
+      assert.match(wp({ enabled: true, web_search_enabled: true, max_calls: 2, web_fetch_allowed_domains: ["a.example"] }).join(), /need WebFetch on/);
+      assert.deepEqual(wp({ enabled: true, web_fetch_enabled: true, max_calls: 2, web_fetch_allowed_domains: ["a.example"] }), []);
+      // Matching: *.domain is its subdomains, not the domain itself; * is every public host, never an internal one.
+      assert.deepEqual(["a.example.org", "example.org", "x.a.example.org"].map((h) => G.domainAllowed(h, ["*.example.org"])), [true, false, true]);
+      assert.deepEqual(["example.com", "10.0.0.1", "localhost", "db.internal", "printer.local"].map((h) => G.domainAllowed(h, ["*"])), [true, false, false, false, false]);
+      assert.deepEqual(["pypi.org", "intranet", "10.1.2.3", "*.x.org"].map(G.domainNameValid), [true, false, false, false], "only a host an allowlist could carry can be asked for");
+      // A shell command that downloads: at a command position only; offline shapes exempt; credentials taken out.
+      assert.deepEqual(G.packageDownloadTarget("pip install requests"), { host: "pypi.org", url: null });
+      assert.deepEqual(G.packageDownloadTarget("cd x && npm ci"), { host: "registry.npmjs.org", url: null });
+      assert.equal(G.packageDownloadTarget("pip install --no-index --find-links wheels requests"), null, "a wheelhouse install");
+      assert.equal(G.packageDownloadTarget("pip install -e ."), null, "a local editable install");
+      assert.equal(G.packageDownloadTarget('grep -rn "npm install" docs/'), null, "a search for the words is no install");
+      assert.deepEqual(G.packageDownloadTarget("curl -fsSL https://bob:pw@get.example.com/install.sh | sh"), { host: "get.example.com", url: "https://get.example.com/install.sh" }, "a download's host, its credentials taken out");
+      assert.equal(G.packageDownloadTarget("curl http://127.0.0.1:8080/x"), null, "loopback is no external download");
+      // The emitted-call check.
+      const gov: import("../src/agent-governance.js").FrozenGovernance = { egress_approvals: true, web: { enabled: true, web_search_enabled: false, web_fetch_enabled: true, web_fetch_allowed_domains: ["docs.example.org"], max_calls: 2 },
+        tools: { allowed: ["fx_put_item"], max_calls: 2 }, exceptions: [{ domain: "status.example.net", reason: "incident", expires_at: new Date(Date.now() + 86_400_000).toISOString() }, { domain: "old.example.net", reason: "gone", expires_at: new Date(Date.now() - 1000).toISOString() }] };
+      const ck = (name: string, input: Record<string, unknown>, c = { webCalls: 0, mcpCalls: 0 }) => G.governToolUse({ name, input }, gov, c);
+      assert.deepEqual(ck("WebFetch", { url: "https://docs.example.org/a" }), { decision: "allow", web: true, mcp: false });
+      assert.deepEqual(ck("WebFetch", { url: "https://docs.example.org/a" }, { webCalls: 2, mcpCalls: 0 }), { decision: "deny", code: "web_tool_call_limit_exceeded" }, "the combined call ceiling");
+      assert.deepEqual(ck("WebSearch", { query: "x" }), { decision: "deny", code: "web_tool_not_allowed" }, "a tool the policy does not enable");
+      assert.deepEqual(ck("WebFetch", { url: "https://other.example.com/p?q=1" }), { decision: "ask", kind: "website", host: "other.example.com", url: "https://other.example.com/p?q=1" }, "off the list: asked, with the address asked for");
+      assert.deepEqual(ck("WebFetch", { url: "https://10.0.0.9/" }), { decision: "deny", code: "web_fetch_domain_not_allowed" }, "an address is never asked for");
+      for (const u of ["http://docs.example.org/a", "https://docs.example.org:8443/a", "https://u:p@docs.example.org/a", "https://docs.example.org/a#f"])
+        assert.deepEqual(ck("WebFetch", { url: u }), { decision: "deny", code: "web_fetch_domain_not_allowed" }, `${u}: https on 443, no credentials or fragment`);
+      assert.equal(ck("WebFetch", { url: "https://status.example.net/" }).decision, "allow", "an exception in force");
+      assert.equal(ck("WebFetch", { url: "https://old.example.net/" }).decision, "ask", "an exception past its date grants nothing");
+      assert.deepEqual(ck("Bash", { command: "pip install requests" }), { decision: "ask", kind: "package", host: "pypi.org", url: null });
+      assert.deepEqual(ck("Bash", { command: "ls -la" }), { decision: "pass" });
+      assert.deepEqual(ck("mcp__app__fx_put_item", {}), { decision: "allow", web: false, mcp: true });
+      assert.deepEqual(ck("mcp__app__fx_drop", {}), { decision: "deny", code: "mcp_tool_not_allowed" }, "a tool off the allowlist");
+      assert.deepEqual(ck("mcp__app__fx_put_item", {}, { webCalls: 0, mcpCalls: 2 }), { decision: "deny", code: "mcp_call_limit_exceeded" });
+      assert.deepEqual(G.governToolUse({ name: "WebFetch", input: { url: "https://other.example.com/" } }, { ...gov, egress_approvals: false }, { webCalls: 0, mcpCalls: 0 }), { decision: "deny", code: "web_fetch_domain_not_allowed" }, "approvals off: refused");
+      assert.deepEqual(G.governedEgressHosts({ ...gov, web: { ...gov.web!, web_fetch_allowed_domains: ["*"] } }), ["status.example.net"], "* opens no host of the network: the run's isolation is unchanged");
+      // The runner's check: a violation, an egress request, or the session's other rules.
+      const pol = { ...C.currentPolicy(), governance: gov };
+      assert.deepEqual(A.checkToolUse({ id: "1", name: "mcp__app__fx_drop", input: {} }, pol, 0), { ok: false, violation: "mcp_tool_not_allowed" });
+      assert.deepEqual(A.checkToolUse({ id: "1", name: "Bash", input: { command: "npm install left-pad" } }, pol, 0), { ok: false, request: { kind: "web", subject: "registry.npmjs.org", egress: "package", url: null } });
+      assert.deepEqual(A.checkToolUse({ id: "1", name: "Bash", input: { command: "ls" } }, pol, 0), { ok: true, web: false });
+      assert.match(S.configProblems({ keys: [{ kind: "platform", provider: "exa", label: "a", env: "X_KEY" }, { kind: "platform", provider: "exa", label: "b", env: "X_KEY" }] }).join(), /one environment variable/);
+      assert.match(S.configProblems({ governance: { tools: { allowed: ["a", "a"], max_calls: 1 } } }).join(), /listed twice/);
+      ok("profiles, pure: exactly five items (no model, budget, turns, instructions, roles, tools, files or overrides of their own); the governance policy ported: domains read as hosts and checked, the web policy's rules, *.domain and * matched as the reference does, a download command found at a command position only (offline shapes exempt, credentials taken out), every call decided (allowed, asked for, refused with the reference's code), exceptions in force only until their date, * opening no network host");
     }
 
     // The world: a pack that brings a profile ("builder") and a record page whose Build button starts it.
     const { setPacksForTest } = await import("../src/packs.js");
     const { definePack, defineTool, z } = await import("../src/pack-api.js");
     const ra = await import("../src/record-areas.js");
+    const kv = await import("../src/keyvault.js");
     F.setFeatureForTest("record_pages", true);
     const BUILDER = {
       id: "builder", name: "Build an application", description: "Builds an application from its record.",
-      instructions: { append_system: "You build applications. PROFILE-MARK", on_start: "Plan first, then build.\n\n{{message}}", on_resume: "Back to the build." },
-      budget_usd: 2, ceiling_usd: 3, max_turns: 12, wake_max_minutes: 20,
-      tools: { base: "reads" as const, free: ["fx_put_item"], ask: ["fx_peek"], hidden: ["fx_drop"] },
-      web: { tools: "fetch" as const, hosts: ["docs.example.org"] },
-      files: [{ path: ".claude/skills/build/SKILL.md", content: "# Build skill\nSKILL-MARK" }, { path: "notes/brief.md", content: "Brief: BRIEF-MARK" }],
-      roles: ["member" as const, "owner" as const],
+      harness: "claude-code", inference: { provider: "anthropic", model: "claude-sonnet-5-5" },
+      governance: { egress_approvals: true, web: { enabled: true, web_search_enabled: false, web_fetch_enabled: true, web_fetch_allowed_domains: ["docs.example.org"], max_calls: 5 }, tools: { allowed: ["fx_put_item", "list_records"], max_calls: 5 } },
     };
     setPacksForTest([{ manifest: { id: "fixture_profiles", name: "fixture_profiles", version: "1", entry: "index.ts", migrations: null, words: {} }, definition: definePack({
       id: "fixture_profiles",
@@ -815,179 +846,267 @@ try {
       const r = await http.req(method, p, h(tok), body);
       return { status: r.status, body: await r.json().catch(() => ({})) as any };
     };
-    const [priced, priced2] = (await db.query<{ model: string }>("SELECT model FROM model_prices WHERE model IN ('claude-sonnet-5-5', 'claude-haiku-5-5') ORDER BY model DESC")).map((x) => x.model);
-    assert.ok(priced && priced2, "two priced models");
+    /** Upload bytes as the console does: start, its parts, finish. */
+    const upload = async (bytes: Buffer, tok = staffTok) => {
+      const s0 = await adm("POST", "/uploads", { bytes: bytes.length }, tok);
+      if (s0.status !== 201) return s0;
+      const u = s0.body.upload as { id: string; parts: number; part_bytes: number };
+      for (let n = 0; n < u.parts; n++) {
+        const r = await fetch(`${http.base}/api/admin/onboarding/agent-profiles/uploads/${u.id}/parts/${n}`, { method: "PUT", body: bytes.subarray(n * u.part_bytes, (n + 1) * u.part_bytes),
+          headers: { authorization: `Bearer ${tok}`, "content-type": "application/octet-stream", "x-app-admin": "1", "x-pack-request": "1" } });
+        assert.equal(r.status, 200, `part ${n}: ${await r.text()}`);
+      }
+      return adm("POST", `/uploads/${u.id}/complete`, {}, tok);
+    };
+    const [priced] = (await db.query<{ model: string }>("SELECT model FROM model_prices WHERE model = 'claude-sonnet-5-5'")).map((x) => x.model);
+    assert.ok(priced, "a priced model");
+    // The key vault: two Anthropic keys (the default one, and the one a profile names) and a platform key to inject.
+    const PRIMARY = `sk-primary-${STAMP}-0123456789`, DEFAULT_KEY = `sk-default-${STAMP}-0123456789`, TOOL_KEY = `exa-tool-${STAMP}-0123456789`;
+    await kv.setCredential("anthropic", DEFAULT_KEY, { label: "default", priority: 10 });
+    await kv.setCredential("anthropic", PRIMARY, { label: "primary", priority: 0 });
+    await kv.setCredential("exa", TOOL_KEY, { label: "agent" });
 
-    // b. CRUD, versioning and audit
+    // b. CRUD, versioning and audit; the refusals
     {
       let r = await adm("GET", "");
       assert.equal(r.status, 200);
       const byId = new Map((r.body.profiles as { id: string }[]).map((x) => [x.id, x as any]));
-      assert.deepEqual([byId.get("default")?.version, byId.get("default")?.source, byId.get("default")?.is_default], [1, "platform", true], "the Default profile: the global settings, version 1");
-      assert.deepEqual([byId.get("builder")?.source, byId.get("builder")?.pack, byId.get("builder")?.version], ["pack", "fixture_profiles", 1], "the pack's own, written once as version 1");
-      assert.ok(r.body.models.includes(priced) && !r.body.models.includes("claude-test-model"), "the editor offers the priced models only");
-      assert.ok(["fx_put_item", "fx_peek", "fx_drop"].every((n) => r.body.tools.some((t: { name: string }) => t.name === n)) && !r.body.tools.some((t: { name: string }) => /agent_session/.test(t.name)), "the app's own tools, no agent session tool");
-      assert.ok(r.body.workspaces.some((w: { slug: string }) => w.slug === W2.slug));
-      const [changes0] = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM agent_profile_changes WHERE profile_id = 'builder' AND action = 'created' AND changed_by = 'pack fixture_profiles'");
-      assert.equal(changes0!.n, 1, "the pack's profile's creation is audited");
-      // Seeding again (another process start) writes nothing new, and keeps staff's edits.
+      assert.deepEqual([byId.get("default")?.version, byId.get("default")?.source, byId.get("default")?.is_default], [1, "platform", true], "the Default profile, version 1");
+      assert.deepEqual([byId.get("builder")?.source, byId.get("builder")?.pack, byId.get("builder")?.version, byId.get("builder")?.model], ["pack", "fixture_profiles", 1, priced], "the pack's own, written once as version 1");
+      assert.deepEqual(r.body.harnesses.map((x: { id: string }) => x.id), ["claude-code"], "the harness selector offers the pinned harnesses only");
+      assert.ok(r.body.models.includes(priced) && !r.body.models.includes("claude-test-model"), "the priced models only");
+      assert.deepEqual(r.body.providers.find((x: { id: string }) => x.id === "anthropic").keys.map((k: { label: string }) => k.label).sort(), ["default", "primary"], "the provider's key vault entries, by label");
+      assert.ok(r.body.keys.platform.some((k: { provider: string; label: string }) => k.provider === "exa" && k.label === "agent") && !r.body.keys.platform.some((k: { provider: string }) => k.provider === "object_storage"), "platform keys a session may be given");
+      assert.ok(["fx_put_item", "fx_peek", "fx_drop"].every((n) => r.body.tools.some((t: { name: string }) => t.name === n)), "the app's own tools, for an allowlist");
+      assert.ok(r.body.upload_max_bytes > 0 && r.body.part_bytes === 4 * 1024 * 1024);
       P.resetProfileSeedForTest(); await P.ensureProfiles();
       assert.equal((await db.query("SELECT 1 FROM agent_profile_versions WHERE profile_id = 'builder'")).length, 1, "written once");
-      const body = { name: "Release notes writer", description: "Writes release notes.", config: { model: priced, budget_usd: 1, ceiling_usd: 2, overrides: [{ workspace: W2.slug, budget_usd: 1.5, model: priced2 }] } };
+      const body = { name: "Release notes writer", description: "Writes release notes.", config: { harness: "claude-code", inference: { provider: "anthropic", model: priced, key: "primary" },
+        keys: [{ kind: "platform", provider: "exa", label: "agent", env: "SEARCH_KEY" }],
+        governance: { web: { enabled: true, web_search_enabled: true, web_fetch_enabled: true, web_fetch_allowed_domains: ["https://Docs.Example.com/"], max_calls: 4 }, retention_days: 7,
+          exceptions: [{ domain: "status.example.net", reason: "an incident page", expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), approved_by: "someone else" }] } } };
       r = await adm("POST", "", body, readerTok);
       assert.equal(r.status, 403, "a staff viewer cannot create one");
       r = await adm("POST", "", body);
       assert.equal(r.status, 201, JSON.stringify(r.body));
-      assert.deepEqual([r.body.profile.id, r.body.profile.version, r.body.profile.changes[0].action, r.body.profile.changes[0].before, r.body.profile.changes[0].after.config.budget_usd],
-        ["release-notes-writer", 1, "created", null, 1], "created as version 1, audited with what it was");
+      const made = r.body.profile;
+      assert.deepEqual([made.id, made.version, made.changes[0].action, made.changes[0].before], ["release-notes-writer", 1, "created", null], "created as version 1, audited");
+      assert.deepEqual(made.config.governance.web.web_fetch_allowed_domains, ["docs.example.com"], "its domains stored as hosts");
+      assert.ok(made.config.governance.exceptions[0].approved_by !== "someone else" && made.config.governance.exceptions[0].approved_by.length > 0, "an exception is stamped with who saved it, whatever was sent");
+      const exp = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
       for (const [why, b, re] of [
-        ["an unpriced model", { name: "X1", config: { model: "no-such-model" } }, /no price/],
-        ["a path out of the working directory", { name: "X2", config: { files: [{ path: "../x", content: "" }] } }, /working directory/],
-        ["a tool in two lists", { name: "X3", config: { tools: { free: ["fx_drop"], hidden: ["fx_drop"] } } }, /free and in hidden/],
-        ["a workspace that does not exist", { name: "X4", config: { overrides: [{ workspace: "no-such-workspace", budget_usd: 1 }] } }, /no workspace is called/],
-        ["a viewer", { name: "X5", config: { roles: ["viewer"] } }, /viewer is read only/],
-        ["a budget over its ceiling", { name: "X6", config: { budget_usd: 5, ceiling_usd: 2 } }, /over its ceiling/],
+        ["an unpriced model", { name: "X1", config: { inference: { provider: "anthropic", model: "no-such-model" } } }, /no price/],
+        ["a harness that is not pinned", { name: "X2", config: { harness: "codex" } }, /not a harness this platform runs/],
+        ["a provider the harness does not speak to", { name: "X3", config: { inference: { provider: "openai", model: priced } } }, /speaks to anthropic/],
+        ["an inference key not in the vault", { name: "X4", config: { inference: { provider: "anthropic", model: priced, key: "nope" } } }, /no anthropic key labelled nope/],
+        ["a platform key not in the vault", { name: "X5", config: { keys: [{ kind: "platform", provider: "exa", label: "nope", env: "A_KEY" }] } }, /no exa key labelled nope/],
+        ["a key that reaches every workspace", { name: "X6", config: { keys: [{ kind: "platform", provider: "object_storage", label: "default", env: "A_KEY" }] } }, /never given one/],
+        ["a variable the session sets itself", { name: "X7", config: { keys: [{ kind: "platform", provider: "exa", label: "agent", env: "ANTHROPIC_API_KEY" }] } }, /sets itself/],
+        ["WebFetch with no domain", { name: "X8", config: { governance: { web: { enabled: true, web_search_enabled: false, web_fetch_enabled: true, web_fetch_allowed_domains: [], max_calls: 2 } } } }, /at least one allowed domain/],
+        ["an exception past 90 days", { name: "X9", config: { governance: { web: { enabled: true, web_search_enabled: false, web_fetch_enabled: true, web_fetch_allowed_domains: ["a.example"], max_calls: 2 }, exceptions: [{ domain: "b.example", reason: "r", expires_at: exp(120) }] } } }, /time-bounded/],
+        ["an exception with no reason", { name: "X10", config: { governance: { web: { enabled: true, web_search_enabled: false, web_fetch_enabled: true, web_fetch_allowed_domains: ["a.example"], max_calls: 2 }, exceptions: [{ domain: "b.example", reason: " ", expires_at: exp(3) }] } } }, /say why/],
+        ["a retention longer than the platform's", { name: "X11", config: { governance: { retention_days: 365 } } }, /never longer/],
+        ["a tool allowlist with no ceiling", { name: "X12", config: { governance: { tools: { allowed: ["fx_peek"], max_calls: 0 } } } }, /call limit of at least 1/],
+        ["an upload never made", { name: "X13", config: { uploads: [{ id: "upl_aaaaaaaaaaaaaaaaaaaaaaaa", path: "bin/x", bytes: 1, sha256: "0".repeat(64), executable: true }] } }, /was not uploaded/],
+        ["the old shape (instructions)", { name: "X14", config: { instructions: { append_system: "x" } } }, /Unrecognized key|unrecognized/i],
         ["no name", { name: " ", config: {} }, /give the profile a name/],
       ] as const) { const x = await adm("POST", "", b); assert.ok(x.status === 400 && re.test(x.body.error), `${why}: ${x.status} ${x.body.error}`); }
       assert.equal((await adm("POST", "", body)).status, 409, "a second profile with one id refused");
-      r = await adm("PUT", "/release-notes-writer", { version: 1, config: { ...body.config, budget_usd: 1.25 } });
+      const c2 = { ...made.config, governance: { ...made.config.governance, retention_days: 5 } };
+      r = await adm("PUT", "/release-notes-writer", { version: 1, config: c2 });
       assert.equal(r.status, 200, JSON.stringify(r.body));
       const p2 = r.body.profile;
-      assert.equal(p2.version, 2);
-      assert.deepEqual([p2.changes[0].action, p2.changes[0].version, p2.changes[0].before.config.budget_usd, p2.changes[0].after.config.budget_usd, p2.changes[0].changed], ["edited", 2, 1, 1.25, ["budget_usd"]],
-        "an edit: a new version, audited with who, before and after");
-      assert.ok(p2.changes[0].by.length > 0 && p2.versions.map((v: { version: number }) => v.version).join() === "2,1");
-      assert.equal((await adm("GET", "/release-notes-writer/versions/1")).body.version.config.budget_usd, 1, "version 1 kept as it was");
-      r = await adm("PUT", "/release-notes-writer", { version: 1, config: { ...body.config, budget_usd: 1.5 } });
+      assert.deepEqual([p2.version, p2.changes[0].action, p2.changes[0].changed, p2.config.governance.exceptions[0].approved_by], [2, "edited", ["governance"], made.config.governance.exceptions[0].approved_by],
+        "an edit: a new version, audited with what changed; an unchanged exception keeps who approved it");
+      assert.equal((await adm("GET", "/release-notes-writer/versions/1")).body.version.config.governance.retention_days, 7, "version 1 kept as it was");
+      r = await adm("PUT", "/release-notes-writer", { version: 1, config: c2 });
       assert.ok(r.status === 409 && /saved version 2/.test(r.body.error), "an edit of an older version refused, never overwritten");
-      assert.equal((await adm("PUT", "/release-notes-writer", { version: 2, config: { ...body.config, budget_usd: 1.25 } })).status, 400, "nothing changed: refused");
+      assert.equal((await adm("PUT", "/release-notes-writer", { version: 2, config: c2 })).status, 400, "nothing changed: refused");
       assert.ok((await adm("POST", "/default/archive")).status === 409, "the Default is never archived");
       r = await adm("POST", "/release-notes-writer/archive");
-      assert.deepEqual([r.status, r.body.profile.status, r.body.profile.changes[0].action], [200, "archived", "archived"]);
-      assert.equal((await adm("PUT", "/release-notes-writer", { version: 2, config: { ...body.config, budget_usd: 1.75 } })).status, 409, "an archived profile is not edited");
-      const listed = (await app(mem.token, "GET", "/api/agent")).body.profiles.map((x: { id: string }) => x.id);
-      assert.ok(!listed.includes("release-notes-writer"), "an archived profile is not offered");
+      assert.deepEqual([r.status, r.body.profile.status], [200, "archived"]);
+      assert.ok(!(await app(mem.token, "GET", "/api/agent")).body.profiles.some((x: { id: string }) => x.id === "release-notes-writer"), "an archived profile is not offered");
       r = await app(own.token, "POST", "/api/agent", { message: "x", profile: "release-notes-writer" });
       assert.ok(r.status === 409 && /archived/.test(r.body.error), "nor started");
-      r = await adm("POST", "/release-notes-writer/restore");
-      assert.deepEqual([r.status, r.body.profile.status], [200, "active"]);
+      assert.equal((await adm("POST", "/release-notes-writer/restore")).status, 200);
       const trail = await db.query<{ action: string; version: number; changed_by: string }>("SELECT action, version, changed_by FROM agent_profile_changes WHERE profile_id = 'release-notes-writer' ORDER BY id");
       assert.deepEqual(trail.map((x) => `${x.action}@${x.version}`), ["created@1", "edited@2", "archived@2", "restored@2"], "every change in the audit trail");
-      assert.ok(trail.every((x) => x.changed_by === trail[0]!.changed_by && x.changed_by.length > 0), "each with who made it");
-      ok("profiles: listed (the Default, version 1; the pack's, written once), created, edited as new versions, archived and restored by staff, each change audited with who, before and after; refused: an unpriced model, a path out of the workspace, a tool in two lists, an unknown workspace, a viewer, a budget over its ceiling, a staff viewer, an older version, an archived profile");
+      assert.ok(trail.every((x) => x.changed_by.length > 0), "each with who made it");
+      // A viewer is offered nothing; budgets are the platform's.
+      assert.deepEqual((await app(view.token, "GET", "/api/agent")).body.profiles, [], "a viewer: none");
+      const started = await app(mem.token, "POST", "/api/agent", { message: "x", profile: "release-notes-writer" });
+      assert.equal(started.status, 201, JSON.stringify(started.body));
+      assert.deepEqual([started.body.session.budget_usd, started.body.session.ceiling_usd, started.body.session.harness.model], [1, 5, priced], "the platform's budget and ceiling; the profile's model");
+      await app(mem.token, "POST", `/api/agent/${started.body.session.id}/stop`, {});
+      ok("profiles: listed with the harnesses this platform runs, the providers' key vault entries, the priced models, the keys a session may be given and the app's tools; created, edited as new versions, archived and restored, every change audited; refused: an unpriced model, an unpinned harness, a provider the harness does not speak to, a key not in the vault, a key that reaches every workspace, a variable the session sets itself, the web policy's rules, an exception past 90 days or without a reason, a longer retention, a tool allowlist without a ceiling, an upload never made, the old shape, a staff viewer, an older version; budgets are the platform's");
     }
 
-    // c. role gating, d. per-workspace overrides
+    // c. uploads: in parts to the object store, finished by their sha256, within the platform's limit
+    let tool: { id: string; sha256: string; bytes: number; executable: boolean }, blob: typeof tool, skill: typeof tool;
     {
-      const offered = async (tok: string) => (await app(tok, "GET", "/api/agent")).body;
-      assert.deepEqual((await offered(mem.token)).profiles.map((x: { id: string }) => x.id), ["default", "builder", "release-notes-writer"], "a member: every active profile for members");
-      assert.deepEqual((await offered(view.token)).profiles, [], "a viewer: none");
+      const script = Buffer.from("#!/bin/sh\necho \"HELLO-$1 from $(basename \"$0\")\"\n");
+      let r = await upload(script);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      tool = r.body.upload;
+      assert.deepEqual([tool.bytes, tool.executable], [script.length, true], "a script is a program: executable by default");
+      const big = Buffer.alloc(5 * 1024 * 1024 + 17);
+      for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) % 251;
+      r = await upload(big);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      blob = r.body.upload;
+      assert.deepEqual([blob.bytes, blob.executable, blob.sha256], [big.length, false, (await import("node:crypto")).createHash("sha256").update(big).digest("hex")], "a large binary file in two parts, its sha256 the server's");
+      skill = (await upload(Buffer.from("# Build skill\nSKILL-MARK\n"))).body.upload;
+      assert.equal((await upload(Buffer.from("x"), readerTok)).status, 403, "a staff viewer uploads nothing");
+      await saveSettingValues("test-staff", { AGENT_UPLOAD_MAX_MB: 5 });
+      r = await adm("POST", "/uploads", { bytes: 6 * 1024 * 1024 });
+      assert.ok(r.status === 413 && /AGENT_UPLOAD_MAX_MB/.test(r.body.error), `past the platform's limit: refused (${r.body.error})`);
+      r = await adm("POST", "", { name: "Too big", config: { uploads: [{ id: blob.id, path: "data/blob.bin", bytes: blob.bytes, sha256: blob.sha256, executable: false }] } });
+      assert.ok(r.status === 400 && /at most 5\.0 MB/.test(r.body.error), `a profile past the limit refused (${r.body.error})`);
+      await saveSettingValues("test-staff", { AGENT_UPLOAD_MAX_MB: 200 });
+      r = await adm("POST", "", { name: "Lies", config: { uploads: [{ id: tool.id, path: "bin/x", bytes: tool.bytes, sha256: "f".repeat(64), executable: true }] } });
+      assert.ok(r.status === 400 && /not the file that was uploaded/.test(r.body.error), "an upload named with another sha256 refused");
+      ok("uploads: a file in parts of at most 4 MiB to the object store (a 5 MB binary in two), finished by the sha256 the server computes, programs recognised as executable; refused past the platform's AGENT_UPLOAD_MAX_MB, to a staff viewer, and when a profile names it with another sha256");
+    }
+
+    // d. a profile's session end to end with the stand-in CLI: its harness, its keys injected and redacted, its uploads in
+    //    the workspace (the binary runs), its allowlisted tool free and any other refused; the version frozen.
+    let builder: any;
+    {
       const b0 = (await adm("GET", "/builder")).body.profile;
-      let r = await adm("PUT", "/builder", { version: b0.version, config: { ...b0.config, roles: ["owner"] } });
-      assert.equal(r.status, 200);
-      assert.ok(!(await offered(mem.token)).profiles.some((x: { id: string }) => x.id === "builder"), "for owners only: not offered to a member");
-      r = await app(mem.token, "POST", "/api/agent", { message: "x", profile: "builder" });
-      assert.ok(r.status === 403 && /for owners/.test(r.body.error), `refused to a member on the server too: ${r.body.error}`);
-      r = await app(own.token, "POST", "/api/agent", { message: "x", profile: "builder" });
-      assert.equal(r.status, 201, "an owner starts it");
-      await app(own.token, "POST", `/api/agent/${r.body.session.id}/stop`, {});
-      const b1 = (await adm("GET", "/builder")).body.profile;
-      assert.equal((await adm("PUT", "/builder", { version: b1.version, config: { ...b1.config, roles: ["member", "owner"] } })).status, 200);
-      await assert.rejects(H.startSession(W.orgId, { kind: "person", user: "user_billing", name: "billing@example.org", role: "billing" }, { message: "x", profile: "builder" }), /for members and owners/, "a billing manager is not one of its roles");
-      assert.equal((await adm("POST", "", { name: "Members only", config: { roles: ["member"] } })).status, 201);
-      await assert.rejects(H.startSession(W.orgId, H.actorOf(null, true), { message: "x", profile: "members-only" }), /an account key starts only a profile owners may start/, "an account key: only a profile owners may start");
-      await adm("POST", "/members-only/archive");
-      assert.equal((await app(mem.token, "POST", "/api/agent", { message: "x", profile: "no-such-profile" })).status, 404, "an unknown profile");
-      // d. A named workspace's override: its own budget and model; every other workspace the profile's.
-      const inW = await app(own.token, "POST", "/api/agent", { message: "x", profile: "release-notes-writer" });
-      const inW2 = await app(own2.token, "POST", "/api/agent", { message: "x", profile: "release-notes-writer" });
-      assert.deepEqual([inW.body.session.budget_usd, inW.body.session.harness.model], [1.25, priced], "this workspace: the profile's budget and model");
-      assert.deepEqual([inW2.body.session.budget_usd, inW2.body.session.harness.model], [1.5, priced2], "the named workspace: its override");
-      assert.deepEqual([inW.body.session.ceiling_usd, inW2.body.session.ceiling_usd], [2, 2], "the profile's ceiling");
-      r = await app(mem.token, "POST", "/api/agent", { message: "x", profile: "release-notes-writer", budget_usd: 1.9 });
-      assert.ok(r.status === 400 && /at most \$1\.25/.test(r.body.error), "a member cannot start over the profile's budget");
-      await app(own.token, "POST", `/api/agent/${inW.body.session.id}/stop`, {});
-      // A raise stays within the profile's ceiling.
-      const parkedId = inW2.body.session.id;
-      await db.query("UPDATE harness_sessions SET state = 'parked' WHERE id = $1", [parkedId]);
-      await db.query("UPDATE runs SET status = 'cancelled' WHERE harness_session_id = $1", [parkedId]);
-      await db.query("UPDATE harness_sessions SET current_run_id = NULL WHERE id = $1", [parkedId]);
-      r = await app(own2.token, "POST", `/api/agent/${parkedId}/budget`, { to_usd: 2.5, reason: "more" });
-      assert.ok(r.status === 400 && /at most \$2\.00/.test(r.body.error), `a raise past the profile's ceiling refused (${r.body.error})`);
-      await app(own2.token, "POST", `/api/agent/${parkedId}/stop`, {});
-      ok("role gating: a profile is offered and started only by its roles (a member refused an owners' profile on the server too, a billing manager not among them, a viewer none, an unknown profile not found); per-workspace overrides: the named workspace's budget and model, every other the profile's; the profile's budget and ceiling hold");
-    }
-
-    // e. tools free, ask and hidden; files written into the workspace; instructions; the frozen version; a stand-in CLI end to end
-    let builtSid = "";
-    {
+      const config = { ...b0.config, inference: { provider: "anthropic", model: priced, key: "primary" },
+        keys: [{ kind: "platform", provider: "exa", label: "agent", env: "SEARCH_KEY" }],
+        uploads: [{ id: tool.id, path: "bin/hello", bytes: tool.bytes, sha256: tool.sha256, executable: true }, { id: blob.id, path: "data/blob.bin", bytes: blob.bytes, sha256: blob.sha256, executable: false },
+          { id: skill.id, path: ".claude/skills/build/SKILL.md", bytes: skill.bytes, sha256: skill.sha256, executable: false }] };
+      const r = await adm("PUT", "/builder", { version: b0.version, config });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      builder = r.body.profile;
       const owner = { kind: "person" as const, user: own.userId, name: "owner@example.org", role: "owner" as const };
-      const s = await H.startSession(W.orgId, owner, { message: "said\nship it", profile: "builder" });
-      builtSid = s.id;
+      const s = await H.startSession(W.orgId, owner, { message: "files", profile: "builder" });
       const rd = () => H.readSession(W.orgId, s.id, owner);
       const said = async (re: RegExp) => (await rd()).messages.some((m) => m.role === "agent" && re.test(m.body));
       const last = async () => (await rd()).messages.filter((m) => m.role === "agent").at(-1)?.body ?? "";
       let d = await rd();
-      const version = d.profile!.version;
-      assert.deepEqual([d.profile?.id, d.profile?.name], ["builder", "Build an application"]);
-      const tool = (n: string) => d.reach!.tools.find((t) => t.name === n);
-      assert.equal(tool("fx_put_item")?.asks, false, "free: a change that runs freely");
-      assert.equal(tool("fx_peek")?.asks, true, "ask: a read that asks first");
-      assert.equal(tool("list_records")?.asks, false, "a read the base leaves free");
-      assert.equal(tool("fx_drop"), undefined, "hidden: not among its tools");
-      assert.deepEqual(d.policy.hidden_tools, ["fx_drop"]);
-      assert.deepEqual(d.policy.files, [".claude/skills/build/SKILL.md", "notes/brief.md"]);
-      assert.deepEqual([d.policy.max_turns, d.policy.wake_max_minutes, d.policy.web_tools, d.policy.web_hosts, d.budget_usd, d.ceiling_usd], [12, 20, "fetch", ["docs.example.org"], 2, 3], "its limits and web access");
-      assert.deepEqual(d.hooks.map((x) => [x.event, x.source]), [["on_start", "profile"], ["on_resume", "profile"], ["append_system", "profile"]], "its instructions, from the profile");
-      const [row] = await db.query<{ profile_id: string; profile_version: number }>("SELECT profile_id, profile_version FROM harness_sessions WHERE id = $1", [s.id]);
-      assert.deepEqual([row!.profile_id, row!.profile_version], ["builder", version], "the version frozen with the session");
+      assert.deepEqual([d.profile?.id, d.profile?.version, d.harness.model], ["builder", builder.version, priced]);
+      assert.deepEqual(d.policy.files, ["bin/hello", "data/blob.bin", ".claude/skills/build/SKILL.md"]);
+      assert.deepEqual([d.policy.executables, d.policy.credentials], [["bin/hello"], ["exa/agent"]]);
+      assert.match(String(d.policy.governance), /fetch 1 host, 5 calls · 2 tools/);
+      assert.deepEqual(d.reach!.tools.map((t) => t.name).sort(), ["fx_put_item", "list_records"], "the allowlist: the only tools it is shown");
       // Staff change the profile while it runs: the session keeps the version it started with.
-      const b = (await adm("GET", "/builder")).body.profile;
-      assert.equal((await adm("PUT", "/builder", { version: b.version, config: { ...b.config, instructions: { ...b.config.instructions, append_system: "You build applications. V2-MARK" } } })).status, 200);
+      assert.equal((await adm("PUT", "/builder", { version: builder.version, config: { ...config, governance: { ...config.governance, retention_days: 3 } } })).status, 200);
       const w = await wake(s.id);
-      await until("the first turn", () => said(/^Said: /));
-      assert.equal(await last(), "Said: Plan first, then build. | said | ship it", "the first message: its on_start template around the person's words");
-      assert.equal((await rd()).messages.find((m) => m.role === "person")!.body, "said\nship it", "the transcript keeps the person's own words");
-      await H.messageSession(W.orgId, s.id, owner, "system");
-      await until("its standing instructions", () => said(/^System: /));
-      assert.ok((await last()).includes("You build applications. PROFILE-MARK") && !(await last()).includes("V2-MARK") && (await last()).includes("## This workspace"), "its profile's standing instructions, as frozen, then the workspace's");
-      await H.messageSession(W.orgId, s.id, owner, "files");
       await until("its files", () => said(/^Files: /));
-      assert.equal(await last(), "Files: .claude/skills/build/SKILL.md, notes/brief.md", "the profile's files in its working directory");
-      await H.messageSession(W.orgId, s.id, owner, "cat .claude/skills/build/SKILL.md");
-      await until("a file", () => said(/^File \.claude/));
-      assert.equal(await last(), "File .claude/skills/build/SKILL.md: # Build skill | SKILL-MARK");
-      // The hidden tool: never asked for; the server refuses the call. The free write runs; the read that asks stops it.
-      await H.messageSession(W.orgId, s.id, owner, "mcp fx_drop {}");
-      await until("the hidden tool", () => said(/^MCP fx_drop/));
-      assert.match(await last(), /^MCP fx_drop refused: This session's agent profile does not give it fx_drop/, "hidden: refused by the server");
-      assert.equal((await rd()).pending_request, null, "and never asked for");
+      assert.equal(await last(), "Files: .claude/skills/build/SKILL.md, bin/hello, data/blob.bin", "its uploads in the working directory, folders kept");
+      await H.messageSession(W.orgId, s.id, owner, "run ./bin/hello world");
+      await until("the binary", () => said(/^Ran: /));
+      assert.equal(await last(), "Ran: 0 HELLO-world from hello", "the uploaded binary is executable in the scratch workspace and runs");
+      await H.messageSession(W.orgId, s.id, owner, "run wc -c < data/blob.bin && test ! -x data/blob.bin && echo not-executable");
+      await until("the blob", () => said(/^Ran: 0 5242897/));
+      assert.equal(await last(), "Ran: 0 5242897 | not-executable", "the large binary arrived whole, and only executables are executable");
+      await H.messageSession(W.orgId, s.id, owner, "env SEARCH_KEY");
+      await until("the key", () => said(/^Env SEARCH_KEY/));
+      assert.equal(await last(), "Env SEARCH_KEY: [credential vault:exa/agent]", "the platform key in its variable, redacted on its way out");
+      assert.ok(!(await rd()).messages.some((m) => m.body.includes(TOOL_KEY)), "the value never leaves the wake");
+      const ev = await db.query<{ type: string; data: any }>("SELECT type, data FROM run_events WHERE run_id = $1 ORDER BY id", [w.claim.run.id]);
+      assert.deepEqual(ev.find((e) => e.type === "credentials")?.data.delivered, ["vault:exa/agent"], "its run records the key's name, never its value");
+      assert.ok(!JSON.stringify(ev).includes(TOOL_KEY));
       await H.messageSession(W.orgId, s.id, owner, `mcp fx_put_item {"key":"made-by-agent","summary":"free ${STAMP}"}`);
-      await until("the free write", () => said(/^MCP fx_put_item/));
-      assert.ok(!/refused|error/.test(await last()), await last());
-      assert.equal((await ra.workspaceRecords("fixture_profiles", W.orgId).get("fx_apps", "made-by-agent"))?.data.summary, `free ${STAMP}`, "free: it wrote without asking");
-      await H.messageSession(W.orgId, s.id, owner, "mcp fx_peek {}");
+      await until("the allowed tool", () => said(/^MCP fx_put_item/));
+      assert.equal((await ra.workspaceRecords("fixture_profiles", W.orgId).get("fx_apps", "made-by-agent"))?.data.summary, `free ${STAMP}`, "an allowlisted tool runs without asking");
+      await H.messageSession(W.orgId, s.id, owner, "mcp fx_drop {}");
       await w.done;
       d = await rd();
-      assert.deepEqual([d.phase, d.pending_request?.subject], ["awaiting_approval", "mcp__app__fx_peek"], "ask: a read the profile asks first for stops the wake with a request");
-      await H.stopSession(W.orgId, s.id, owner);
-      // The token, directly: tools/list leaves the hidden tool out; a request for it is refused.
-      const s2 = await H.startSession(W.orgId, owner, { message: "x", profile: "builder" });
-      assert.equal((await H.readSession(W.orgId, s2.id, owner)).profile!.version, version + 1, "a new session starts with the newer version");
-      const c = (await client.claim([`${C.AGENT_PACK}/${C.AGENT_KIND}`]))!;
-      const ws = await client.agent!.start(c.run.id, c.lease_token);
-      assert.ok(ws.policy.files?.length === 2, "the wake is told its files");
-      const res = await http.req("POST", "/mcp", { authorization: `Bearer ${ws.workspace!.token}`, accept: "application/json, text/event-stream" }, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
-      const tt = await res.text();
-      const listed = (tt.trim().startsWith("{") ? JSON.parse(tt) : JSON.parse((tt.split("\n").find((l) => l.startsWith("data:")) ?? "data: {}").slice(5))).result.tools.map((x: { name: string }) => x.name);
-      assert.ok(listed.includes("fx_put_item") && listed.includes("fx_peek") && !listed.includes("fx_drop"), `the hidden tool is not listed to the session (${listed.join(",")})`);
-      await assert.rejects(client.agent!.request(c.run.id, c.lease_token, { kind: "tool", subject: "mcp__app__fx_drop" }), /does not give it fx_drop/, "a request for a hidden tool refused");
-      await client.agent!.end(c.run.id, c.lease_token, { reason: "stopped" });
-      await client.complete(c.run.id, c.lease_token, { outcome: "succeeded", results: [] });
-      ok("a profile's session: free, ask and hidden tools (a change runs freely, a read asks first, the hidden one is never listed, asked for or served); its files in the working directory and its standing instructions reach the stand-in CLI, its on_start around the person's words; the version frozen while staff change the profile, the next session on the newer one");
+      assert.deepEqual([d.phase, d.reason, d.pending_request], ["failed", "policy: mcp_tool_not_allowed", null], "a tool off the allowlist ends the session (the reference's mcp_tool_not_allowed), never asked for");
+      assert.ok(d.messages.some((m) => /Stopped by this session's governance policy: an app tool its governance policy does not allow \(mcp_tool_not_allowed/.test(m.body)));
+      assert.equal((await ra.workspaceRecords("fixture_profiles", W.orgId).get("fx_apps", "made-by-agent"))?.title, "App made-by-agent", "and nothing was dropped");
+      const [row] = await db.query<{ profile_version: number; retention_until: Date }>("SELECT profile_version, retention_until FROM harness_sessions WHERE id = $1", [s.id]);
+      assert.equal(row!.profile_version, builder.version, "the version frozen with the session");
+      assert.ok(new Date(row!.retention_until).getTime() <= Date.now() + 60 * 86_400_000 + 60_000, "kept for the platform's retention (the profile's frozen version set none)");
+      ok("a profile's session with the stand-in CLI: its uploads written into its workspace (a folder's paths kept), the uploaded binary executable and running there, a 5 MB file whole and not executable; its platform key in its variable and redacted, its run recording only the name; its allowlisted tool free, another tool ending it with mcp_tool_not_allowed; the version frozen while staff changed the profile");
     }
 
-    // f. start_agent from a record: the template filled from the record on the server, the session linked back, its runs section
+    // e. the primary inference provider: the gateway sends the session's requests with the key the profile chose.
+    {
+      const { createServer } = await import("node:http");
+      const seen: string[] = [];
+      const upstream = createServer((req, res) => { seen.push(String(req.headers["x-api-key"] ?? "")); req.resume(); req.on("end", () => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", content: [], usage: { input_tokens: 3, output_tokens: 2 } })); }); });
+      await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", () => r()));
+      const before = await kv.getProvider("anthropic");
+      await kv.upsertProvider({ ...before!, upstream_url: `http://127.0.0.1:${(upstream.address() as import("node:net").AddressInfo).port}` });
+      const owner = { kind: "person" as const, user: own.userId, name: "owner@example.org", role: "owner" as const };
+      const call = async (token: string) => (await fetch(`${http.base}/gw/anthropic/v1/messages`, { method: "POST", headers: { "x-api-key": token, "content-type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: priced, max_tokens: 5, messages: [{ role: "user", content: "hi" }] }) })).status;
+      for (const [profile, want] of [["builder", PRIMARY], ["default", DEFAULT_KEY]] as const) {
+        const s = await H.startSession(W.orgId, owner, { message: "x", profile });
+        const c = (await client.claim([`${C.AGENT_PACK}/${C.AGENT_KIND}`]))!;
+        assert.equal(await call(c.gateway.token!), 200);
+        assert.equal(seen.at(-1), want, `${profile}: the gateway used ${want === PRIMARY ? "the profile's chosen key" : "the provider's default key"}`);
+        await client.agent!.end(c.run.id, c.lease_token, { reason: "stopped" });
+        await client.complete(c.run.id, c.lease_token, { outcome: "succeeded", results: [] });
+        await H.stopSession(W.orgId, s.id, owner).catch(() => null);
+      }
+      await kv.upsertProvider(before!);
+      upstream.close();
+      ok("the primary inference provider: a session of a profile that names its key sends its model requests with that key (the gateway's), one without uses the provider's default");
+    }
+
+    // f. governance enforced on egress, as the reference enforces it: approvals by a workspace owner, exactly one host to
+    //    exactly that session (a package host never widening the network), a decline ending it, a refusal outright.
+    {
+      const owner = { kind: "person" as const, user: own.userId, name: "owner@example.org", role: "owner" as const };
+      const member = { kind: "person" as const, user: mem.userId, name: "member@example.org", role: "member" as const };
+      const s = await H.startSession(W.orgId, member, { message: "fetch https://docs.example.org/guide", profile: "builder" });
+      const rd = () => H.readSession(W.orgId, s.id, member);
+      const said = async (re: RegExp) => (await rd()).messages.some((m) => m.role === "agent" && re.test(m.body));
+      let w = await wake(s.id);
+      assert.deepEqual(await H.wakeEgressHosts(w.claim.run.id), ["docs.example.org"], "its run's egress: the hosts its policy names");
+      await until("a listed website", () => said(/^Read docs\.example\.org/));
+      await H.messageSession(W.orgId, s.id, member, "fetch https://other.example.com/page");
+      await w.done;
+      let d = await rd();
+      assert.deepEqual([d.phase, d.pending_request?.kind, d.pending_request?.subject, d.pending_request?.detail.egress], ["awaiting_approval", "web", "other.example.com", "website"], "an unlisted website: the session pauses and asks");
+      await assert.rejects(H.decideRequest(W.orgId, s.id, d.pending_request!.id, member, "approve"), /workspace owner decide/, "the person who started it does not govern it: an owner decides");
+      await H.decideRequest(W.orgId, s.id, d.pending_request!.id, owner, "approve");
+      d = await rd();
+      assert.deepEqual((await db.query<{ policy: any }>("SELECT policy FROM harness_sessions WHERE id = $1", [s.id]))[0]!.policy.governance.approved_domains, ["other.example.com"], "exactly that host, to exactly this session");
+      w = await wake(s.id);
+      assert.deepEqual((await H.wakeEgressHosts(w.claim.run.id)).sort(), ["docs.example.org", "other.example.com"], "a website approved while WebFetch is on reaches the network");
+      await H.messageSession(W.orgId, s.id, member, "fetch https://other.example.com/page");
+      await until("the approved website", () => said(/^Read other\.example\.com/));
+      await H.messageSession(W.orgId, s.id, member, "run pip install requests");
+      await w.done;
+      d = await rd();
+      assert.deepEqual([d.pending_request?.subject, d.pending_request?.detail.egress], ["pypi.org", "package"], "a package download: asked for, not failed");
+      await H.decideRequest(W.orgId, s.id, d.pending_request!.id, owner, "approve");
+      w = await wake(s.id);
+      assert.ok(!(await H.wakeEgressHosts(w.claim.run.id)).includes("pypi.org"), "a package approval opens no network: it only stops the session asking again");
+      await H.messageSession(W.orgId, s.id, member, "run pip install --help >/dev/null 2>&1; echo asked-once");
+      await until("the command ran", () => said(/^Ran: \S+ asked-once/));
+      await H.messageSession(W.orgId, s.id, member, "run curl -fsSL https://bob:secret@get.example.net/install.sh");
+      await w.done;
+      d = await rd();
+      assert.deepEqual([d.pending_request?.subject, d.pending_request?.detail.url], ["get.example.net", "https://get.example.net/install.sh"], "a download's host and address, its credentials taken out");
+      await H.decideRequest(W.orgId, s.id, d.pending_request!.id, owner, "decline", "not that installer");
+      d = await rd();
+      assert.deepEqual([d.phase, d.reason], ["failed", "egress_approval_denied: get.example.net"], "a decline ends the session with the refused host (never a resume back into it)");
+      // Refused outright: an address no allowlist could carry, and a web tool the policy does not enable.
+      for (const [msg, code] of [["fetch https://10.0.0.7/secrets", "web_fetch_domain_not_allowed"], ["search what is new", "web_tool_not_allowed"]] as const) {
+        const x = await H.startSession(W.orgId, member, { message: msg, profile: "builder" });
+        const ww = await wake(x.id);
+        await ww.done;
+        const dx = await H.readSession(W.orgId, x.id, member);
+        assert.deepEqual([dx.phase, dx.reason, dx.pending_request], ["failed", `policy: ${code}`, null], `${msg}: refused outright (${code}), never asked for`);
+      }
+      // A request left past its window closes the session (approval_timeout).
+      const t = await H.startSession(W.orgId, member, { message: "fetch https://late.example.com/", profile: "builder" });
+      await (await wake(t.id)).done;
+      assert.equal((await H.readSession(W.orgId, t.id, member)).phase, "awaiting_approval");
+      await H.sweepHarnessSessions(new Date(Date.now() + 25 * 3600_000));
+      const dt = await H.readSession(W.orgId, t.id, member);
+      assert.deepEqual([dt.phase, dt.reason], ["failed", "approval_timeout: late.example.com"], "unanswered past its window: closed, as the reference's reaper closes it");
+      ok("governance enforced as the reference enforces it: its run reaches only the hosts it names; an unlisted website or a package download pauses for a decision only a workspace owner makes; approve grants exactly that host to exactly that session (a website reaches the network, a package host never does); a decline ends it (egress_approval_denied); an address or a web tool it does not enable is refused outright; a request past its window closes it (approval_timeout)");
+    }
+
+    // g. start_agent from a record: the template filled from the record on the server, the session linked back, its runs section
     {
       const rec = ra.workspaceRecords("fixture_profiles", W.orgId);
       await ra.asWriter({ by: "people", id: own.userId }, () => rec.put("fx_apps", "shop", { title: "Shop", data: { summary: "An online shop", stack: "typescript" } }));
@@ -1004,52 +1123,41 @@ try {
       assert.deepEqual([sess.profile.id, sess.record, sess.title], ["builder", { area: "fx_apps", key: "shop" }, "Build an application: Shop"], "the action's profile, linked back to the record");
       assert.equal(sess.messages.find((m: { role: string }) => m.role === "person").body, "Build the application Shop (shop) on typescript: An online shop", "its first message from the record, not from the browser");
       p = await page(mem.token);
-      const runs = p.body.sections["0-1"];
-      assert.deepEqual(runs.sessions.rows.map((x: { id: string }) => x.id), [sess.id], "the record's runs section lists the session");
-      assert.equal(runs.sessions.rows[0].profile.name, "Build an application");
-      const other = await app(own2.token, "GET", "/api/records/_page/fx_apps/shop");
-      assert.equal(other.status, 404, "another workspace never sees the record or its sessions");
+      assert.deepEqual(p.body.sections["0-1"].sessions.rows.map((x: { id: string }) => x.id), [sess.id], "the record's runs section lists the session");
+      assert.equal((await app(own2.token, "GET", "/api/records/_page/fx_apps/shop")).status, 404, "another workspace never sees the record or its sessions");
       await H.stopSession(W.orgId, sess.id, H.actorOf({ user: mem.userId, email: "m@example.org", accountRole: "member" }));
-      // The list tab's action: the Start a session dialog with the profile and its message.
       const t = await app(mem.token, "GET", "/api/tab-actions/fixture_profiles/apps");
       assert.deepEqual([t.body.kind, t.body.allowed, t.body.profile?.id, t.body.message], ["start_agent", true, "builder", "Plan a new application."], "the tab's action opens the dialog with its profile");
-      assert.equal((await app(view.token, "GET", "/api/tab-actions/fixture_profiles/apps")).body.allowed, false, "not for a viewer");
-      // Archived: the button stays, disabled with why; the server refuses it.
-      const b = (await adm("POST", "/builder/archive")).body.profile;
-      assert.equal(b.status, "archived");
-      const dis = (await page(mem.token)).body.actions.find((x: { id: string }) => x.id === "start_agent.builder");
-      assert.match(String(dis?.disabled), /archived/, "archived: disabled, with why");
+      assert.equal((await adm("POST", "/builder/archive")).body.profile.status, "archived");
+      assert.match(String((await page(mem.token)).body.actions.find((x: { id: string }) => x.id === "start_agent.builder")?.disabled), /archived/, "archived: disabled, with why");
       assert.equal((await app(mem.token, "POST", "/api/records/_page/fx_apps/shop/actions/start_agent.builder", {})).status, 409, "and refused");
-      assert.equal((await app(mem.token, "GET", "/api/tab-actions/fixture_profiles/apps")).body.allowed, false);
       await adm("POST", "/builder/restore");
-      // A price removed since the profile was saved: the start is refused, in words.
       await db.query("INSERT INTO model_prices (model, input_per_mtok, cached_input_per_mtok, output_per_mtok, source) VALUES ('claude-temp-261', 1, 0.1, 2, 'test') ON CONFLICT DO NOTHING");
       const { forgetPrices } = await import("../src/usage.js");
       forgetPrices();
-      assert.equal((await adm("POST", "", { name: "Temporary", config: { model: "claude-temp-261" } })).status, 201);
+      assert.equal((await adm("POST", "", { name: "Temporary", config: { inference: { provider: "anthropic", model: "claude-temp-261" } } })).status, 201);
       await db.query("DELETE FROM model_prices WHERE model = 'claude-temp-261'");
       forgetPrices();
       const gone = await app(own.token, "POST", "/api/agent", { message: "x", profile: "temporary" });
       assert.ok(gone.status === 409 && /no price/.test(gone.body.error), `a model whose price was removed refused at the start (${gone.body.error})`);
-      ok("start_agent from a record: the Build button offered to the roles that may start its profile, its first message filled from the record on the server (never the browser's), the session linked back and listed in the record's runs section, never another workspace's; the list's action opens the dialog with its profile; archived: disabled with why and refused; a model whose price went: refused");
+      ok("start_agent from a record: the Build button, its first message filled from the record on the server, the session linked back and listed in the record's runs section, never another workspace's; the list's action; archived: disabled with why and refused; a model whose price went: refused");
     }
 
-    // g. off: nothing of it
+    // h. off: nothing of it
     {
       F.setFeatureForTest("agent_harness", false);
       const p = await app(mem.token, "GET", "/api/records/_page/fx_apps/shop");
       assert.ok(!p.body.actions.some((x: { kind: string }) => x.kind === "start_agent"), "flag off: no start_agent action");
       assert.equal(p.body.sections["0-1"].sessions, undefined, "and no sessions in the runs section");
       await assert.rejects(P.listProfiles(), /not on/);
+      assert.equal((await adm("POST", "/uploads", { bytes: 1 })).status, 404, "no upload route");
       F.setFeatureForTest("agent_harness", true);
-      ok("off: no profile is read or written, no start_agent action, no session in a record's runs");
+      ok("off: no profile is read or written, no upload taken, no start_agent action, no session in a record's runs");
     }
-    void builtSid;
     await http.close();
     setPacksForTest(null);
     F.setFeatureForTest("record_pages", null);
   }
-
   F.setFeaturesForTest(null);
   console.log("\nagent harness: all checks passed");
   cleanup();

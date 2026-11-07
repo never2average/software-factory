@@ -392,7 +392,7 @@ export interface RunCredentials {
 }
 
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
-export interface RunForCredentials { id?: string; org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[] } | null; targets: Record<string, unknown> | null }
+export interface RunForCredentials { id?: string; org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[]; vault_keys?: { provider: string; label: string; env: string }[] } | null; targets: Record<string, unknown> | null }
 
 /** The asset (its key, and the area when the run names one) and environment a run targets. */
 const targetOf = (targets: Record<string, unknown> | null) => {
@@ -417,6 +417,7 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
   const names = Array.isArray(run.spec?.credentials) ? run.spec!.credentials.filter((n): n is string => typeof n === "string") : [];
   const out: RunCredentials = { credentials: [], missing: [] };
   await operatorCredentials(run, out, opts);
+  await vaultKeys(run, out, opts);
   if (!names.length) return out;
   const { asset, area, environment, tenant } = targetOf(run.targets);
   const sets = names.some((n) => { const sp = findCredential(run.pack, n); return !!sp && (sp.bound_to === "tenant" || !!sp.entries); }) ? await setsOn() : false;
@@ -585,9 +586,34 @@ async function operatorCredentials(run: RunForCredentials, out: RunCredentials, 
   }
 }
 
+/**
+ * mold_v0-267: the platform key vault entries an agent session's profile gives each wake (frozen into its run's kind as
+ * `vault_keys`: provider, label, variable), each from the vault, delivered in its variable. Missing ones are listed (as
+ * "vault:<provider>/<label>"). Only the workspace agent's built-in kind carries them (a pack's kind cannot name them).
+ */
+async function vaultKeys(run: RunForCredentials, out: RunCredentials, opts: { strict?: boolean }) {
+  const list = Array.isArray(run.spec?.vault_keys) && run.pack === "_agent" ? run.spec!.vault_keys : [];
+  if (!list.length) return;
+  const { decrypt } = await import("./keyvault.js");
+  for (const k of list) {
+    const name = `vault:${k.provider}/${k.label}`;
+    if (["object_storage", "oauth_clients"].includes(k.provider) || !/^[A-Z][A-Z0-9_]{1,63}$/.test(String(k.env))) { out.missing.push(name); continue; }
+    const [r] = await asPlatform(async () => (await getDb()).query<{ ciphertext: string; iv: string; tag: string; key_id: string }>(
+      "SELECT ciphertext, iv, tag, key_id FROM vault_credentials WHERE provider = $1 AND label = $2 AND enabled LIMIT 1", [k.provider, k.label]));
+    if (!r) { out.missing.push(name); continue; }
+    let value: string;
+    try { value = decrypt(r); }
+    catch {
+      if (opts.strict) throw new PackError("the run's key vault entries cannot be opened now (the key vault is locked?): try again", 503);
+      out.missing.push(name); continue;
+    }
+    out.credentials.push({ name, env: k.env, operator: true, value });
+  }
+}
+
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
-  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length) return [];
+  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length && !run.spec?.vault_keys?.length) return [];
   const pasted = (await runCredentials(run, { strict: true, mint: false })).credentials.flatMap((c) => [{ name: c.name, value: c.value }, ...(c.entries ?? []).map((v) => ({ name: c.name, value: v }))]);
   // mold_v0-014: and every GitHub App token minted for the run (expired or revoked ones too: the run may have printed them).
   const fields = (run.spec?.credentials ?? []).map((n) => findCredential(run.pack, n));

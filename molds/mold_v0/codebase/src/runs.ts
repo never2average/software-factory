@@ -533,7 +533,7 @@ export const leasedRun = (runId: string, leaseToken: string) => asPlatform(async
 export async function runCredentialsForLease(runId: string, leaseToken: string): Promise<RunCredentials> {
   const r = await leasedRun(runId, leaseToken);
   const out = await runCredentials(r);
-  if (r.spec?.credentials?.length || r.spec?.operator_credentials?.length)
+  if (r.spec?.credentials?.length || r.spec?.operator_credentials?.length || (r.spec as { vault_keys?: unknown[] } | null)?.vault_keys?.length)
     await event(r.id, r.org_id, r.attempt, "credentials", { delivered: out.credentials.map((c) => c.name), missing: out.missing,
       // mold_v0-014: which were GitHub App installation tokens (their repositories and expiry, never a token), and why not.
       ...(out.github_app ? { github_app: out.github_app } : {}), ...(out.github_app_missing ? { github_app_missing: out.github_app_missing } : {}),

@@ -23,8 +23,11 @@
  *   person who started it. Every staff call is in the staff console's log (and the platform trail when it is on).
  *
  *   agent profiles (mold_v0-261; src/agent-profiles.ts), staff at /api/admin/agent-profiles:
- *     GET    /                      every profile, and what the editor offers: the priced models, the app's tools (read
- *                                    or not), the workspaces an override may name, the platform settings a profile inherits
+ *     GET    /                      every profile, and what the editor offers (mold_v0-267): the harnesses this platform
+ *                                    runs, the providers and their key vault entries, the priced models, the keys a session
+ *                                    may be given, the app's tools (for a governance allowlist), the upload limit
+ *     POST   /uploads               {bytes} start an upload ("compute"): its id and its parts (4 MiB each)
+ *     PUT    /uploads/:id/parts/:n  a part's bytes (application/octet-stream); POST /uploads/:id/complete {sha256?}
  *     GET    /:id                   one profile: its config, what it resolves to, its versions and its changes
  *     GET    /:id/versions/:v       one version as it was saved
  *     POST   /                      {name, id?, description?, config? | copy_of?} a new profile ("compute")
@@ -81,7 +84,7 @@ export function agentAppRouter(): Router {
   // mold_v0-261: the agent profiles this person may start, each with its model and their budget range under it.
   r.get("/", answer(async (_req, res) => ({ sessions: await H.listSessions(S(res).org, actor(res)), can_start: canAccount(S(res).accountRole, "launch"),
     offer: { ...agentOffer(), budget: await H.startBudgetMax(S(res).org, actor(res)) },
-    profiles: canAccount(S(res).accountRole, "launch") || !S(res).user ? await P.startableProfiles(S(res).slug, actor(res), (eff) => H.startBudgetMax(S(res).org, actor(res), eff)) : [] })));
+    profiles: canAccount(S(res).accountRole, "launch") || !S(res).user ? await P.startableProfiles(actor(res), () => H.startBudgetMax(S(res).org, actor(res))) : [] })));
   // The workspace's own agent icon (mold_v0-252), ahead of /:id. Every person of the workspace sees it. mold_v0-262: only
   // platform staff set or reset it (Admin › Accounts › <account>, agentAdminRoutes below): the workspace's PUT and DELETE
   // are gone, and say where it is set.
@@ -159,6 +162,22 @@ export function agentAdminRoutes(admin: Router, need: Need, who: (req: Request, 
 
   // ---------- agent profiles (mold_v0-261) ----------
   admin.get("/agent-profiles", answer(async () => ({ profiles: await P.listProfiles(), ...(await profileEditorFacts()) })));
+  // mold_v0-267: uploads into a profile's workspace, in parts (ahead of /:id).
+  admin.post("/agent-profiles/uploads", need("compute"), answer(async (req, res) => {
+    const u = await P.startUpload(who(req, res), req.body ?? {});
+    res.status(201);
+    return { upload: u };
+  }));
+  admin.put("/agent-profiles/uploads/:upload/parts/:n", need("compute"), (req: Request, res: Response, next: NextFunction) => (req.is("application/octet-stream") ? next() : void res.status(415).json({ error: "Send the part's bytes as application/octet-stream" })),
+    express.raw({ type: "application/octet-stream", limit: P.UPLOAD_PART_BYTES }),
+    (err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) =>
+      (err ? void res.status(err.type === "entity.too.large" ? 413 : 400).json({ error: err.type === "entity.too.large" ? `A part is at most ${P.UPLOAD_PART_BYTES / 1024 / 1024} MiB` : "The part could not be read" }) : next()),
+    answer(async (req) => ({ part: await P.putUploadPart(String(req.params.upload), Number(req.params.n), Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)) })));
+  admin.post("/agent-profiles/uploads/:upload/complete", need("compute"), answer(async (req, res) => {
+    const u = await P.completeUpload(String(req.params.upload), req.body ?? {});
+    log(who(req, res), "agent_profile.upload", null, { upload: u.id, bytes: u.bytes, sha256: u.sha256 });
+    return { upload: u };
+  }));
   admin.get("/agent-profiles/:id", answer(async (req) => ({ profile: await P.readProfile(id(req)) })));
   admin.get("/agent-profiles/:id/versions/:v", answer(async (req) => ({ version: await P.profileVersion(id(req), Number(req.params.v)) })));
   admin.post("/agent-profiles", need("compute"), answer(async (req, res) => {
@@ -180,14 +199,10 @@ export function agentAdminRoutes(admin: Router, need: Need, who: (req: Request, 
 }
 
 /**
- * What the profile editor offers (mold_v0-261): the priced models (a profile takes only those), the app's own tools as an
- * owner is offered them (each a read or not), the workspaces an override may name, and the platform settings a profile
- * inherits where it leaves a setting unset.
+ * What the profile editor offers (mold_v0-267): src/agent-profiles.ts editorChoices, and the app's own tools as a
+ * workspace's owner is offered them (each a read or not), for a governance policy's tool allowlist.
  */
 async function profileEditorFacts() {
-  const db = await asPlatform(() => getDb());
-  const models = (await asPlatform(() => db.query<{ model: string }>("SELECT model FROM model_prices ORDER BY model"))).map((m) => m.model);
-  const workspaces = await asPlatform(() => db.query<{ slug: string; name: string }>("/* tenant: platform staff, every workspace's slug and name (an override's picker) */ SELECT slug, name FROM organizations ORDER BY lower(name), slug LIMIT 1000"));
   let tools: { name: string; title: string | null; read: boolean }[] = [];
   try {
     const [{ createServer }, { Client }, { InMemoryTransport }] = await Promise.all([
@@ -200,7 +215,5 @@ async function profileEditorFacts() {
     try { tools = (await client.listTools()).tools.map((t) => ({ name: t.name, title: t.title ?? t.annotations?.title ?? null, read: t.annotations?.readOnlyHint === true })); }
     finally { await client.close(); }
   } catch (e) { console.error(`agent profiles: the app's tools could not be listed (${(e as Error).message})`); }
-  const s = P.effectiveOf({});
-  return { models, tools, workspaces, roles: ["member", "billing", "owner"], settings: { model: s.model, provider: s.provider, budget_usd: s.budget_usd, ceiling_usd: s.ceiling_usd,
-    max_turns: s.max_turns, wake_max_minutes: s.wake_max_minutes, web: s.web, tools: { base: s.tools.base, free: s.tools.free } } };
+  return { ...(await P.editorChoices()), tools };
 }

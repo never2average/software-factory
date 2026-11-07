@@ -1,124 +1,187 @@
 /**
- * Workspace agent profiles (mold_v0-261; molds/mold_v0/docs/agent-harness.md "Agent profiles"): what a profile is, as
- * staff edit it in Admin › Agent profiles (src/agent-profiles.ts keeps them, versioned and audited) and as a pack declares
- * its defaults (pack.json `agent_profiles`), and the pure helpers both sides use: the shape, its limits, a first message's
- * template filled from a record. No database and no settings here: pack-api.ts and pack-manifest.ts import it.
+ * Workspace agent profiles (mold_v0-261, redesigned by mold_v0-267; molds/mold_v0/docs/agent-harness.md "Agent
+ * profiles"): what a profile is, as staff edit it in Admin › Agent profiles (src/agent-profiles.ts keeps it, versioned
+ * and audited) and as a pack declares its defaults (pack.json `agent_profiles`), and the pure helpers both sides use. No
+ * database and no settings here: pack-api.ts and pack-manifest.ts import it.
  *
- * A profile's every setting may be left unset (null, or absent in pack.json): a session then takes the platform setting
- * in force (src/settings.ts, group "agent"), as every session did before profiles. The Default profile leaves them all
- * unset, so a session started without a profile runs exactly as before.
+ * A profile is exactly five things, each optional (unset: the platform setting in force, src/settings.ts group "agent"):
+ *   1. harness     which agent CLI runs it (a flavour pinned in the run tools' catalogue; today Claude Code)
+ *   2. (no model field: the model is the primary inference provider's, item 3)
+ *   3. keys        the key vault entries injected into its sessions (a workspace's credential "<pack>/<field>", or a
+ *                  platform key by provider and label, in an environment variable), delivered and redacted as a run's;
+ *                  and `inference`, the primary inference provider: its model (a priced one) and its key (a key vault
+ *                  entry of that provider, the one the gateway uses for the session's requests)
+ *   4. uploads     files and folders written into the session's workspace (runtime binaries too: kept in the object
+ *                  store, made executable in its scratch), up to the platform's size limit (AGENT_UPLOAD_MAX_MB)
+ *   5. governance  its governance policy (src/agent-governance.ts: web tools, egress approvals, a tool allowlist,
+ *                  exceptions, retention), ported from the reference product's
+ * Budgets, turns and every other limit are the platform settings, never a profile's.
  */
 import { z } from "zod";
+import { ALLOW_ALL_DOMAINS, GOVERNANCE_LIMITS, normalizeDomains, webPolicyProblems, type Governance } from "./agent-governance.js";
 
 /** The profile every session uses unless another is chosen: the platform settings, as they are. Never archived. */
 export const DEFAULT_PROFILE = "default";
-/** A profile's id: lowercase words joined by -, as its address (/admin/agent-profiles/<id>). */
+/** A profile's id: lowercase words joined by -. */
 export const PROFILE_ID = /^[a-z][a-z0-9-]{1,39}$/;
-/** The roles that may start a session (a viewer is read only in the platform). */
-export const PROFILE_ROLES = ["member", "billing", "owner"] as const;
 /** A workspace credential a profile names (mold_v0-262): its pack's id and its field's name. */
 export const PROFILE_CREDENTIAL = /^[a-z][a-z0-9_]{1,30}\/[a-z][a-z0-9_]{1,62}$/;
-/** How the app's own tools are used without asking: reads (and the free list), every tool, or none (only the free list). */
-export const PROFILE_TOOL_BASES = ["reads", "all", "none"] as const;
-export const PROFILE_WEB_TOOLS = ["off", "fetch", "search"] as const;
-export const PROFILE_LIMITS = {
-  name: 80, description: 500, instruction: 20_000, files: 20, file_bytes: 64 * 1024, files_bytes: 256 * 1024, tools: 200, hosts: 100, overrides: 200,
-  credentials: 20, budget: { min: 0.5, max: 500 }, ceiling: { min: 1, max: 1000 }, turns: { min: 1, max: 1000 }, wake: { min: 5, max: 720 },
-} as const;
+/** A key vault provider's slug and a key's label (src/keyvault.ts). */
+export const VAULT_PROVIDER = /^[a-z][a-z0-9_-]{1,40}$/;
+export const VAULT_LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._:@/-]{0,79}$/;
+/** An environment variable a platform key is delivered in. */
+export const KEY_ENV = /^[A-Z][A-Z0-9_]{1,63}$/;
+/** An upload's id (src/agent-profiles.ts makes them). */
+export const UPLOAD_ID = /^upl_[A-Za-z0-9]{20,40}$/;
+export const PROFILE_LIMITS = { name: 80, description: 500, keys: 30, uploads: 2000 } as const;
 
 /** A tool name as the app's MCP server lists it. */
 const toolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,99}$/, "a tool name (letters, digits, _ . -)");
-/** A host the web tools may read without asking: exact, or *.domain (the domain and everything under it). */
-const hostRule = z.string().regex(/^(\*\.)?(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/, "a host name (example.com, *.example.com)")
-  .refine((h) => !/^(\*\.)?\d+(\.\d+)+$/.test(h), "a host name, not an address");
 /** A model id as a provider names it. */
 const modelId = z.string().regex(/^[A-Za-z0-9@._/:-]{1,100}$/, "a model id (letters, digits, @ . _ / : -)");
 /**
- * A file given to a session's workspace (a skill, a guide, a template): its path inside the working directory (relative,
- * no `..`, no leading dot-dot or slash; `.claude/skills/<name>/SKILL.md` is a skill) and its text.
+ * A path inside the session's working directory (relative, no `..`, no leading slash; `.claude/skills/<name>/SKILL.md`
+ * is a skill): an uploaded file's place, a folder's files keeping theirs.
  */
-export const PROFILE_FILE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+){0,7}$/;
-export const ProfileFileSchema = z.object({
-  path: z.string().max(200).regex(PROFILE_FILE_PATH, "a path inside the session's working directory (relative, no ..)"),
-  content: z.string().max(PROFILE_LIMITS.file_bytes, `at most ${PROFILE_LIMITS.file_bytes / 1024} KB a file`),
+export const PROFILE_FILE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+){0,15}$/;
+
+// ---------------------------------------------------------------- 3. keys
+
+export const ProfileKeySchema = z.discriminatedUnion("kind", [
+  /** A workspace's own credential (mold_v0-262): delivered only to a session a workspace owner starts. */
+  z.object({ kind: z.literal("workspace"), name: z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>") }).strict(),
+  /** A platform key from the key vault, in an environment variable of the session's. */
+  z.object({
+    kind: z.literal("platform"),
+    provider: z.string().regex(VAULT_PROVIDER, "a key vault provider"),
+    label: z.string().regex(VAULT_LABEL, "a key's label"),
+    env: z.string().regex(KEY_ENV, "an environment variable (A-Z, digits, _)"),
+  }).strict(),
+], { error: () => "a key: {kind: workspace, name} or {kind: platform, provider, label, env}" });
+export type ProfileKey = z.output<typeof ProfileKeySchema>;
+export const keyName = (k: ProfileKey) => (k.kind === "workspace" ? k.name : `${k.provider}/${k.label}`);
+
+/** The primary inference provider: its model (priced) and its key (unset: the provider's key the gateway picks). */
+export const InferenceSchema = z.object({
+  provider: z.string().regex(VAULT_PROVIDER, "a provider"),
+  model: modelId,
+  key: z.string().regex(VAULT_LABEL, "a key's label").nullable().optional(),
 }).strict();
-/** A named workspace's own budget, ceiling or model (staff only: a pack names no workspace). */
-export const ProfileOverrideSchema = z.object({
-  workspace: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "a workspace's slug"),
-  budget_usd: z.number().min(PROFILE_LIMITS.budget.min).max(PROFILE_LIMITS.budget.max).optional(),
-  ceiling_usd: z.number().min(PROFILE_LIMITS.ceiling.min).max(PROFILE_LIMITS.ceiling.max).optional(),
-  model: modelId.optional(),
+
+// ---------------------------------------------------------------- 4. uploads
+
+export const ProfileUploadSchema = z.object({
+  id: z.string().regex(UPLOAD_ID, "an upload's id"),
+  path: z.string().max(400).regex(PROFILE_FILE_PATH, "a path inside the session's working directory (relative, no ..)"),
+  bytes: z.number().int().min(0),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  /** Made executable in the session's scratch (a runtime binary, a script). */
+  executable: z.boolean(),
 }).strict();
-const text = (max: number) => z.string().max(max, `at most ${max.toLocaleString("en")} characters`);
+export type ProfileUpload = z.output<typeof ProfileUploadSchema>;
+
+// ---------------------------------------------------------------- 5. governance
+
+const hostEntry = z.string().max(300);
+export const WebPolicySchema = z.object({
+  enabled: z.boolean(),
+  web_search_enabled: z.boolean(),
+  web_fetch_enabled: z.boolean(),
+  web_fetch_allowed_domains: z.array(hostEntry).max(GOVERNANCE_LIMITS.domains, `at most ${GOVERNANCE_LIMITS.domains} domains`),
+  max_calls: z.number().int().min(0).max(GOVERNANCE_LIMITS.max_calls),
+}).strict();
+export const ExceptionSchema = z.object({
+  domain: z.string().max(260),
+  reason: z.string().trim().min(1, "say why (it is kept with the exception)").max(GOVERNANCE_LIMITS.reason),
+  expires_at: z.string().refine((s) => Number.isFinite(Date.parse(s)), "a date and time"),
+  /** Who saved it (the server writes it; anything sent is replaced). */
+  approved_by: z.string().max(200).optional(),
+}).strict();
+export const GovernanceSchema = z.object({
+  web: WebPolicySchema.optional(),
+  egress_approvals: z.boolean().optional(),
+  tools: z.object({
+    allowed: z.array(toolName).min(1, "an allowlist names at least one tool").max(GOVERNANCE_LIMITS.tools),
+    max_calls: z.number().int().min(1, "a tool allowlist needs a call limit of at least 1").max(GOVERNANCE_LIMITS.tool_calls),
+  }).strict().nullable().optional(),
+  exceptions: z.array(ExceptionSchema).max(GOVERNANCE_LIMITS.exceptions).optional(),
+  retention_days: z.number().int().min(1).max(GOVERNANCE_LIMITS.retention_days).nullable().optional(),
+}).strict();
+
+// ---------------------------------------------------------------- the profile
 
 /** What a profile sets (each unset: the platform setting). The stored config and pack.json's body share it. */
 export const ProfileConfigSchema = z.object({
-  instructions: z.object({
-    /** Added to the harness's system prompt on every wake (the append_system hook). */
-    append_system: text(PROFILE_LIMITS.instruction).nullable().optional(),
-    /** The first message's template: {{message}} is the person's own words (absent: they follow it). */
-    on_start: text(PROFILE_LIMITS.instruction).nullable().optional(),
-    /** Said when the session is continued without a message (after a pause, a park, a crash). */
-    on_resume: text(PROFILE_LIMITS.instruction).nullable().optional(),
-  }).strict().optional(),
-  model: modelId.nullable().optional(),
-  provider: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/).nullable().optional(),
-  budget_usd: z.number().min(PROFILE_LIMITS.budget.min).max(PROFILE_LIMITS.budget.max).nullable().optional(),
-  ceiling_usd: z.number().min(PROFILE_LIMITS.ceiling.min).max(PROFILE_LIMITS.ceiling.max).nullable().optional(),
-  max_turns: z.number().int().min(PROFILE_LIMITS.turns.min).max(PROFILE_LIMITS.turns.max).nullable().optional(),
-  wake_max_minutes: z.number().int().min(PROFILE_LIMITS.wake.min).max(PROFILE_LIMITS.wake.max).nullable().optional(),
-  tools: z.object({
-    base: z.enum(PROFILE_TOOL_BASES).nullable().optional(),
-    free: z.array(toolName).max(PROFILE_LIMITS.tools).optional(),
-    ask: z.array(toolName).max(PROFILE_LIMITS.tools).optional(),
-    hidden: z.array(toolName).max(PROFILE_LIMITS.tools).optional(),
-  }).strict().optional(),
-  web: z.object({
-    tools: z.enum(PROFILE_WEB_TOOLS).nullable().optional(),
-    hosts: z.array(hostRule).max(PROFILE_LIMITS.hosts).nullable().optional(),
-  }).strict().optional(),
-  files: z.array(ProfileFileSchema).max(PROFILE_LIMITS.files, `at most ${PROFILE_LIMITS.files} files`).optional(),
-  roles: z.array(z.enum(PROFILE_ROLES, { error: () => "a role that may start sessions: member, billing or owner (a viewer is read only)" })).min(1).max(3).nullable().optional(),
-  /**
-   * mold_v0-262: the workspace credentials its sessions may receive ("<pack>/<field>", a field bound to the workspace: a
-   * hosting deploy token, so the agent can deploy), delivered to each wake as a run receives its kind's (its env or
-   * file) and redacted from everything the wake writes. Only a session a workspace owner starts receives them; each
-   * delivery is a wake's credentials event (the names, never a value).
-   */
-  credentials: z.array(z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>")).max(PROFILE_LIMITS.credentials).optional(),
-  overrides: z.array(ProfileOverrideSchema).max(PROFILE_LIMITS.overrides).optional(),
+  /** 1. Which agent CLI runs it (a pinned flavour, src/agent-harness-config.ts). */
+  harness: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/).nullable().optional(),
+  /** 3. The primary inference provider: model and key. */
+  inference: InferenceSchema.nullable().optional(),
+  /** 3. The keys injected into its sessions. */
+  keys: z.array(ProfileKeySchema).max(PROFILE_LIMITS.keys, `at most ${PROFILE_LIMITS.keys} keys`).optional(),
+  /** 4. What is uploaded into its sessions' workspace. */
+  uploads: z.array(ProfileUploadSchema).max(PROFILE_LIMITS.uploads, `at most ${PROFILE_LIMITS.uploads} files`).optional(),
+  /** 5. Its governance policy. */
+  governance: GovernanceSchema.nullable().optional(),
 }).strict();
 export type ProfileConfig = z.output<typeof ProfileConfigSchema>;
+export const PROFILE_KEYS = ["harness", "inference", "keys", "uploads", "governance"] as const;
 
-/** A profile a pack declares (pack.json `agent_profiles`): its id, name and description, and what it sets. Staff may edit it. */
-export const PackAgentProfileSchema = ProfileConfigSchema.omit({ overrides: true }).extend({
+/**
+ * A profile a pack declares (pack.json `agent_profiles`): its id, name and description, and what it sets. A pack names
+ * no platform key and uploads nothing (staff do, in the console): its keys are workspace credentials only.
+ */
+export const PackAgentProfileSchema = z.object({
   id: z.string().regex(PROFILE_ID, "an id: lowercase letters, digits and -, 2 to 40, starting with a letter").refine((x) => x !== DEFAULT_PROFILE, "default is the platform's own profile"),
-  name: z.string().trim().min(1).max(PROFILE_LIMITS.name),
-  description: z.string().max(PROFILE_LIMITS.description).optional(),
+  name: z.string().trim().min(1).max(80),
+  description: z.string().max(500).optional(),
+  harness: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/).optional(),
+  inference: InferenceSchema.omit({ key: true }).optional(),
+  keys: z.array(z.object({ kind: z.literal("workspace"), name: z.string().regex(PROFILE_CREDENTIAL, "a workspace credential, <pack>/<field>") }).strict()).max(PROFILE_LIMITS.keys).optional(),
+  governance: GovernanceSchema.omit({ exceptions: true }).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict();
 export type PackAgentProfile = z.output<typeof PackAgentProfileSchema>;
 
-/** What a config says wrongly that its shape cannot: a tool in two lists, two files at one path, too many bytes, a budget over its ceiling. */
+/** A governance policy as stored: its web policy's domains normalized (each read as its host, once, sorted). */
+export function normalizeGovernance(g: Governance | null | undefined): { governance: Governance | null; problems: string[] } {
+  if (!g) return { governance: null, problems: [] };
+  const problems: string[] = [];
+  const out: Governance = { ...g };
+  if (g.web) {
+    const n = normalizeDomains(g.web.web_fetch_allowed_domains);
+    problems.push(...n.problems.map((p) => `governance.web: ${p}`));
+    out.web = { ...g.web, web_fetch_allowed_domains: n.domains };
+    problems.push(...webPolicyProblems(out.web).map((p) => `governance.${p}`));
+  }
+  if (g.tools) {
+    if (new Set(g.tools.allowed).size !== g.tools.allowed.length) problems.push("governance.tools: a tool is listed twice");
+    if (g.tools.allowed.some((t) => t.includes("*"))) problems.push("governance.tools: name each tool (no wildcard)");
+  }
+  const seen = new Set<string>();
+  out.exceptions = (g.exceptions ?? []).map((e) => {
+    const n = normalizeDomains([e.domain]);
+    const d = n.domains[0] ?? e.domain;
+    if (n.problems.length || d === ALLOW_ALL_DOMAINS) problems.push(`governance.exceptions: ${e.domain.slice(0, 100)} is not a host an exception can name (a host name, or *.domain)`);
+    if (seen.has(d)) problems.push(`governance.exceptions: ${d} has two exceptions`);
+    seen.add(d);
+    return { ...e, domain: d };
+  });
+  if (!out.exceptions.length) delete out.exceptions;
+  if (out.exceptions?.length && !out.web?.web_fetch_enabled) problems.push("governance.exceptions: an exception allows a host for WebFetch: turn WebFetch on");
+  return { governance: out, problems };
+}
+
+/** What a config says wrongly that its shape cannot: a key twice, an environment variable twice, two uploads at one path. */
 export function configProblems(c: ProfileConfig): string[] {
   const out: string[] = [];
-  const lists = { free: c.tools?.free ?? [], ask: c.tools?.ask ?? [], hidden: c.tools?.hidden ?? [] };
-  for (const [a, b] of [["free", "ask"], ["free", "hidden"], ["ask", "hidden"]] as const)
-    for (const t of lists[a]) if (lists[b].includes(t)) out.push(`tools: ${t} is in ${a} and in ${b}: a tool runs freely, asks first or is hidden`);
-  for (const [k, l] of Object.entries(lists)) if (new Set(l).size !== l.length) out.push(`tools.${k}: a tool is listed twice`);
-  const paths = (c.files ?? []).map((f) => f.path.toLowerCase());
-  if (new Set(paths).size !== paths.length) out.push("files: two files have one path");
-  const bytes = (c.files ?? []).reduce((t, f) => t + Buffer.byteLength(f.content, "utf8"), 0);
-  if (bytes > PROFILE_LIMITS.files_bytes) out.push(`files: ${Math.ceil(bytes / 1024)} KB in all: at most ${PROFILE_LIMITS.files_bytes / 1024} KB`);
-  if (c.budget_usd != null && c.ceiling_usd != null && c.budget_usd > c.ceiling_usd) out.push(`budget_usd: $${c.budget_usd} is over its ceiling ($${c.ceiling_usd})`);
-  if (c.roles && new Set(c.roles).size !== c.roles.length) out.push("roles: a role is listed twice");
-  if (c.credentials && new Set(c.credentials).size !== c.credentials.length) out.push("credentials: a credential is listed twice");
-  const ws = (c.overrides ?? []).map((o) => o.workspace);
-  if (new Set(ws).size !== ws.length) out.push("overrides: a workspace is named twice");
-  for (const o of c.overrides ?? []) {
-    if (o.budget_usd === undefined && o.ceiling_usd === undefined && o.model === undefined) out.push(`overrides: ${o.workspace} changes nothing (a budget, a ceiling or a model)`);
-    if (o.budget_usd !== undefined && o.ceiling_usd !== undefined && o.budget_usd > o.ceiling_usd) out.push(`overrides: ${o.workspace}'s budget is over its ceiling`);
-  }
+  const names = (c.keys ?? []).map(keyName);
+  if (new Set(names).size !== names.length) out.push("keys: a key is listed twice");
+  const envs = (c.keys ?? []).flatMap((k) => (k.kind === "platform" ? [k.env] : []));
+  if (new Set(envs).size !== envs.length) out.push("keys: two keys go into one environment variable");
+  const paths = (c.uploads ?? []).map((f) => f.path.toLowerCase());
+  if (new Set(paths).size !== paths.length) out.push("uploads: two files have one path");
+  for (const p of paths) if (paths.some((q) => q !== p && q.startsWith(`${p}/`))) { out.push(`uploads: ${p} is a file and a folder`); break; }
+  out.push(...normalizeGovernance(c.governance).problems);
   return out;
 }
 
@@ -136,7 +199,7 @@ const asWords = (v: unknown): string => (v == null ? "" : Array.isArray(v) ? v.m
 export function fillTemplate(t: string, r: { key: string; title: string | null; data: Record<string, unknown> }): string {
   return t.replace(TEMPLATE_NAME, (_m, n: string) => asWords(n === "key" ? r.key : n === "title" ? (r.title ?? r.key) : r.data[n])).slice(0, 20_000);
 }
-/** The first message a profile's on_start template makes of the person's words: {{message}} replaced, else they follow it. */
+/** The first message an on_start template makes of the person's words: {{message}} replaced, else they follow it. */
 export function applyOnStart(template: string | null | undefined, message: string): string {
   const t = template?.trim();
   if (!t) return message;

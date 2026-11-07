@@ -9,6 +9,8 @@
 import { featureSetting } from "./feature-flags.js";
 import { settingNumber, settingText } from "./settings.js";
 import type { JobKind } from "./runs.js";
+import type { FrozenGovernance } from "./agent-governance.js";
+import { RUN_TOOL_CATALOG } from "./run-tools.js";
 
 /** The built-in kind's pack and name: a wake of a session is a run of `_agent/session`. No pack may take the id (it starts with _). */
 export const AGENT_PACK = "_agent";
@@ -68,6 +70,13 @@ export const AGENT_FLAVOURS: readonly AgentFlavour[] = [
   },
 ];
 export const flavourOf = (id: string): AgentFlavour | null => AGENT_FLAVOURS.find((f) => f.id === id) ?? null;
+/**
+ * The flavours a profile may choose (mold_v0-267, the harness selector): those whose program is pinned in the run tools'
+ * catalogue (src/run-tools.ts RUN_TOOL_CATALOG). Today Claude Code; another is offered once pinned.
+ */
+export function pinnedFlavours(): AgentFlavour[] {
+  return AGENT_FLAVOURS.filter((f) => f.tool in RUN_TOOL_CATALOG);
+}
 
 export interface ResolvedHook { event: HookEvent; text: string | null; source: "harness" | "session" | "profile" | "unset" }
 /**
@@ -122,6 +131,17 @@ export interface AgentPolicy {
    * owner started it (anyone else's session receives none). Delivered and redacted as a run's (src/credentials.ts).
    */
   credentials?: string[];
+  /**
+   * mold_v0-267: the platform key vault entries each wake receives, each in its environment variable, delivered with the
+   * run's credentials (src/credentials.ts) and redacted from everything the wake writes.
+   */
+  vault_keys?: { provider: string; label: string; env: string }[];
+  /** mold_v0-267: the primary inference provider's key (its vault label): the gateway uses it for this session's requests. */
+  inference_key?: string | null;
+  /** mold_v0-267: the files uploaded into its workspace (written into the scratch on every wake; executables made so). */
+  uploads?: { id: string; path: string; bytes: number; sha256: string; executable: boolean }[];
+  /** mold_v0-267: its profile's governance policy, frozen (src/agent-governance.ts), with what was approved since. */
+  governance?: FrozenGovernance;
 }
 
 /**
@@ -216,6 +236,9 @@ export function agentKind(policy?: AgentPolicy): JobKind {
     month_budget_usd: settingNumber("AGENT_MONTH_BUDGET_USD"),
     // mold_v0-262: the credentials its profile gave the session (a workspace owner's), as "<pack>/<field>".
     workspace: false, args: {}, credentials: [...(p.credentials ?? [])],
+    // mold_v0-267: its profile's platform keys (delivered with the credentials) and its primary provider's key label.
+    ...(p.vault_keys?.length ? { vault_keys: p.vault_keys.map((k) => ({ ...k })) } : {}),
+    ...(p.inference_key ? { provider_key: { provider: p.provider, label: p.inference_key } } : {}),
   } as unknown as JobKind;
 }
 

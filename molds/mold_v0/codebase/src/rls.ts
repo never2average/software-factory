@@ -107,7 +107,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // The workspace agent's tool tokens (mold_v0-250, 0048_harness_session_tokens): minted and checked by the shell's code only.
   "harness_session_tokens",
   // The workspace agent's profiles, their versions and their changes (mold_v0-261, 0052_agent_profiles): staff bookkeeping.
-  "agent_profiles", "agent_profile_versions", "agent_profile_changes"];
+  "agent_profiles", "agent_profile_versions", "agent_profile_changes",
+  // An agent profile's uploads (mold_v0-267, 0055_agent_profile_redesign): staff bookkeeping.
+  "agent_profile_uploads"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
