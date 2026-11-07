@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
+import { useQueryClient } from '@tanstack/react-query';
 import PageContainer from '@/components/layout/page-container';
 import { RecordView, type RecordCol } from '@/components/layout/record-view';
 import { StatStrip } from '@/components/layout/section';
@@ -289,6 +290,7 @@ function RecipeModal({ recipe, mode = 'version', limits, onClose, onSaved }: { r
   const [files, setFiles] = useState<Row[]>(() => (current?.files ?? []).map((f) => ({ ...f, row: next(), progress: null, error: null })));
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null), folderInput = useRef<HTMLInputElement>(null);
   const total = files.reduce((t, f) => t + f.bytes, 0);
   const uploading = files.some((f) => f.progress !== null);
@@ -311,11 +313,14 @@ function RecipeModal({ recipe, mode = 'version', limits, onClose, onSaved }: { r
     try {
       if (!recipe) {
         const r = await adminApi<{ recipe: Detail }>('POST', BASE, { name, description, note, ...(list.length ? { files: list } : {}) });
+        onClose();
         onSaved?.(r.recipe.id);
-      } else if (mode === 'edit') await adminApi('PUT', `${BASE}/${encodeURIComponent(recipe.id)}`, { name, description });
+        return;
+      }
+      if (mode === 'edit') await adminApi('PUT', `${BASE}/${encodeURIComponent(recipe.id)}`, { name, description });
       else await adminApi('POST', `${BASE}/${encodeURIComponent(recipe.id)}/versions`, { version: recipe.version, files: list, note });
       onClose();
-      window.location.reload();
+      await qc.invalidateQueries({ queryKey: ['admin'] });
     } catch (e) { setProblem((e as Error).message); } finally { setBusy(false); }
   };
   const title = !recipe ? 'New recipe' : mode === 'edit' ? `Edit ${recipe.name}` : `New version of ${recipe.name}`;
