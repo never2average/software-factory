@@ -20,6 +20,7 @@ import { packConfigs } from "./host.js";
 import { sessionEngine } from "./host-tables.js";
 import { packs } from "./packs.js";
 import { FEATURES, featureSetting, featureSpec, type FeatureId } from "./feature-flags.js";
+import { PROFILE } from "./profile.js";
 
 export { FEATURES, FEATURE_IDS, featureSetting, featureSpec, setFeaturesForTest, setFeatureForTest } from "./feature-flags.js";
 export type { FeatureId, FeatureSettings, FeatureSpec } from "./feature-flags.js";
@@ -47,6 +48,12 @@ export const gapAsks = {
     && ((t.sparklines?.length ?? 0) > 4 || (t.rail ?? []).some((x) => x === "recent_runs" || x === "attention"))),
 };
 
+let adminRecordsTest: readonly string[] | null = null;
+/** mold_v0-271: the staff Records group's entries by id (console.admin_records, as gen-packs resolved it); [] when undeclared. */
+export const adminRecordsShown = (): readonly string[] => adminRecordsTest ?? PROFILE.admin_records?.show ?? [];
+/** Tests only: the Records group's entries as a build would declare them (null: the profile's own). */
+export function setAdminRecordsForTest(show: readonly string[] | null) { adminRecordsTest = show; }
+
 /** Whether something in this build asks for the capability (the pack signal), whatever its flag says. */
 export function featureRequested(id: FeatureId): boolean {
   const defs = () => packs().map((p) => p.definition);
@@ -65,6 +72,8 @@ export function featureRequested(id: FeatureId): boolean {
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
     case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true || f.display === "chips"))
       || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
+    // mold_v0-271: the staff Records group lists the recipes page (console.admin_records, resolved into the profile by gen-packs).
+    case "recipes": return adminRecordsShown().includes("recipes");
     case "record_inputs": case "private_catalogs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];
       return defs().some((d) => ask(d));

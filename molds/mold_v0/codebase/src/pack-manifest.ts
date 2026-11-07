@@ -503,6 +503,15 @@ export const PackJsonSchema = z.object({
     $comment: z.string().max(2000).optional(),
     hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
       .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+    /**
+     * The staff sidebar's Records group (mold_v0-271; src/console-pages.ts adminRecordsProblems): exactly these entries,
+     * in this order: shared record areas by name and the shell's staff pages by id (journeys, recipes, agent-profiles,
+     * repositories), each optionally relabelled ({"id", "label"}). A shared area left out stays reachable by link, API and MCP.
+     */
+    admin_records: z.object({
+      $comment: z.string().max(2000).optional(),
+      show: z.array(z.union([z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), z.object({ id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/), label: z.string().trim().min(1).max(40).regex(/^[^{}<>]*$/) }).strict()])).min(1).max(30),
+    }).strict().optional(),
     /** The shell's console sections shown from the start, not only once they hold something (mold_v0-171; src/console-pages.ts SHOWABLE_SECTIONS). */
     show: z.array(z.enum(SHOWABLE_SECTIONS)).max(SHOWABLE_SECTIONS.length).refine((h) => new Set(h).size === h.length, "each section once").optional(),
     /**

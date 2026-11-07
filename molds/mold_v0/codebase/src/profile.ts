@@ -58,7 +58,7 @@
  *                      record_clocks, audit.data, audit.platform, audit.sign, onprem_runners, developer_surface,
  *                      declarative_checks, encrypted_fields, health_history, document_preview, agent_harness, record_pages, side_panel_forms,
  *                      record_run_inputs, private_catalogs, wide_lists, record_rules, credential_sets, overview_cards, run_analytics,
- *                      filters_in_address, usage_tool (mold_v0-260). A capability is on only when something asks
+ *                      filters_in_address, usage_tool (mold_v0-260), workspace_recipes (mold_v0-271). A capability is on only when something asks
  *                      for it (a pack's declaration; the audit toggles always) and its flag is not false; absent, the
  *                      registry's default (the legacy keys audit.* and onprem_runners still read, and must agree)
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
@@ -103,6 +103,11 @@ export interface Profile {
   features?: Readonly<Record<string, boolean>>;
   /** mold_v0-262: a workspace's team roles in the app's words (profile.json or a pack's team_roles; src/teams.ts), while teams is on. */
   team_roles?: readonly { id: string; label: string; level: "lead" | "member" }[];
+  /**
+   * mold_v0-271: the entries of the staff sidebar's Records group, by id (profile.json or a pack's console.admin_records,
+   * resolved by scripts/gen-packs.mjs); absent when none declares it. The server reads which staff pages it lists.
+   */
+  admin_records?: { show: readonly string[] };
 }
 
 /** The audit trails (mold_v0-197, src/audit-trail.ts): each off unless true; entries kept retention_days (default 400). */

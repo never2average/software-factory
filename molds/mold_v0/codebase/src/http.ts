@@ -24,6 +24,7 @@ import { backfillMessageFiles, intakeWired, pollIntake, startEmailIntake } from 
 import { githubAppAdminRoutes, githubAppRouter } from "./github-app-routes.js";
 import { onPremAdminRoutes, onPremAppRouter, onPremRunnerRouter } from "./onprem-runner-routes.js";
 import { agentAdminRoutes, agentAppRouter } from "./agent-routes.js";
+import { recipeAdminRoutes } from "./recipe-routes.js";
 import { accessPageAdminRoutes } from "./access-page-routes.js";
 import { agentHarnessOn } from "./agent-harness-config.js";
 import { oauthAdminRoutes, oauthRouter } from "./oauth-routes.js";
@@ -908,6 +909,8 @@ export function createApp() {
   }
   onPremAdminRoutes(ob, need, adminActor);
   agentAdminRoutes(ob, need, adminActor);
+  // mold_v0-271: the workspace recipes (flag workspace_recipes with agent_harness): staff's, at /api/admin/onboarding/recipes.
+  recipeAdminRoutes(ob, need, adminActor);
   accessPageAdminRoutes(ob, need, adminActor);
   oauthAdminRoutes(ob, need, adminActor);
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.

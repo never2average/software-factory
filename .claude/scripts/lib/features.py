@@ -60,6 +60,8 @@ def requested(flag, docs, settings_on=None, kind=None):
     """Whether something in the app asks for the capability (its packs' pack.json docs)."""
     by = flag.get("requested_by")
     if by == "always": return True
+    # mold_v0-271: the staff Records group (a pack's console.admin_records; the app's profile says it in its own console) lists the recipes page
+    if by == "recipes": return any("recipes" in [x if isinstance(x, str) else (x or {}).get("id") for x in (((d.get("console") or {}).get("admin_records") or {}).get("show") or [])] for d in docs)
     if by == "credentials": return any(d.get("credentials") for d in docs)
     if by == "email": return any(isinstance(d.get("email"), dict) and ((d["email"].get("sender") or {}).get("allow") is True or d["email"].get("intake")) for d in docs)
     if by == "clocks": return any(a.get("scope") == "workspace" and a.get("clocks") for a in _areas(docs))
@@ -92,7 +94,9 @@ def effective(profile, docs, root, kind=None):
     if rc: on["record_clocks"] = setting(rc, profile, kind)[0] and requested(rc, docs, on, kind)
     for f in registry(root):
         v, where = setting(f, profile, kind)
-        r = requested(f, docs, on, kind)
+        # mold_v0-271: the profile's own console.admin_records asks for recipes as a pack's does
+        own = [{"console": profile.get("console")}] if f.get("requested_by") == "recipes" and isinstance(profile, dict) and isinstance(profile.get("console"), dict) else []
+        r = requested(f, docs + own, on, kind)
         on[f["id"]] = v and r
         out.append({"id": f["id"], "short": f["short"], "label": f["label"], "setting": v, "from": where, "requested": r, "on": v and r})
     return out
