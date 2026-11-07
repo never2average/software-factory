@@ -1358,6 +1358,7 @@ async function suite(kind: "pglite" | "postgres") {
     assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_freestyle_vault")).length, 1, "and it applies again");
     await r.drop(); await prior.drop();
     log(`  ✓ ${kind}: ${v} Freestyle's key vault provider (direct, FREESTYLE_API_KEY imported once); its rollback refused while the runs' sandboxes come from Freestyle or the vault holds its key, then leaves exactly what ${v - 1} left, and it applies again`);
+  }
 
   // The workspace recipes (mold_v0-271, workspace_recipes, found by name): three staff tables the tenant role cannot
   // reach; a recipe's id, a version once per recipe, a version from an agent naming its proposal, a proposal's decision
