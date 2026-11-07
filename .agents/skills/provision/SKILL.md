@@ -193,6 +193,12 @@ new, and where each is registered (`switch --dry-run` prints only that): give th
 After the switch it asks each provider about the new addresses (lib/sign_in_check.py, mold_v0-270); one still missing
 ends the run as needs_human (exit 3) with the plain ask. The same reading is printed by the check and after every
 deploy (exit 3 when one fails; the deploy stands), and `provision.py <app_id> --sign-in-check` gives the steps again.
+After every deploy of a mold_v0 app the deploy also ensures **the platform account** (mold_v0-276): it calls the app's
+`POST /api/cron/platform-account` (Vercel: with the api project's `CRON_SECRET`, never printed; a server: inside the
+app's container with its worker token), which makes the account the platform's staff use the portal in and makes every
+platform admin who has signed in before an owner of it, so the operator can open `/app` right away. It prints one line
+(counts only) and records it in `infrastructure.json` `platform_account`; it never fails a deploy. An admin who signs in
+later is put in the account by the app itself.
 
 **Keys the app's profile needs (mold_v0-227; `lib/ledger_key.py`, `mold.json` `profile_secrets`).** With
 `audit.sign` on in the app's profile (chain and sign, mold_v0-195), the app needs `APP_LEDGER_SIGNING_KEY`, an Ed25519
@@ -409,6 +415,12 @@ python3 .claude/scripts/provision.py <app_id> --operator new-org --yes -- --name
   python3 .claude/scripts/provision.py <app_id> --operator vault-status --dry-run          # what would run; nothing contacted
   python3 .claude/scripts/provision.py <app_id> --operator vault-status --yes [-- --json] # only after the person's yes
   ```
+
+- **Freestyle sandboxes** (mold_v0-274): an app whose runs' sandboxes are Freestyle VMs (`run_sandbox = freestyle` in its
+  brief's `## Profile`, or `Run keys: sandbox = freestyle`) needs Freestyle's API key, and the check says so. It is a **Key vault**
+  key, not a deploy secret: a platform owner adds it in the app's own console (Admin › Key vault, the Freestyle row, Add a key),
+  never `--set-secret`. Ask for it as for any key the person holds in an account: their Freestyle dashboard's API keys page, then
+  the app's Key vault page. Health says it in plain words while it is missing.
 
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this

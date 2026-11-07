@@ -18,6 +18,7 @@ import { copyText, StageDots, StatusBadge, SubBadge, When } from './ui';
 import { Gate } from './role';
 import { sessionEngine } from './engine';
 import { tipsOn } from '@/features/journeys/config';
+import { IdentityName } from '@/components/identity-avatar';
 
 interface Orgs { orgs: Org[]; stages: { id: string; label: string; next: string }[]; stripe_error?: string }
 
@@ -69,7 +70,8 @@ export function AdminAccounts({ tabs }: { tabs?: ReactNode } = {}) {
   const sel = (vs: string[]) => vs.map((v) => ({ value: v }));
   const cols: RecordCol<Org>[] = [
     { key: 'name', label: 'Account', name: 'Account', className: 'min-w-64', type: 'text', title: true, keep: true, value: (o) => o.name, render: (o) => (
-      <span className='leading-none font-medium'>{o.name}</span>
+      // mold_v0-275: the account's avatar, keyed like the account switcher's (its Clerk organisation's id, else its own).
+      <IdentityName kind='org' id={o.clerk_org_id || String(o.id)} name={o.name}><span className='leading-none font-medium'>{o.name}</span></IdentityName>
     ) },
     { key: 'contact', label: 'Contact', hidden: true, type: 'text', value: (o) => o.contact, render: (o) => o.contact ?? dash },
     { key: 'stage', label: 'Stage', className: 'w-48', type: 'select', keep: true, value: (o) => o.stage, options: (data?.stages ?? []).map((s) => ({ value: s.id, label: s.label })),

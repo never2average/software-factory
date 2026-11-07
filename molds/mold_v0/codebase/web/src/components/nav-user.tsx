@@ -2,7 +2,7 @@
 
 import { Icons } from '@/components/icons';
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { IdentityAvatar } from '@/components/identity-avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,9 +23,12 @@ export function NavUser({
   user
 }: {
   user: {
+    id?: string;
     name: string;
     email: string;
     avatar: string;
+    /** Whether `avatar` is a picture they uploaded (Clerk's hasImage); otherwise the console draws one (mold_v0-275). */
+    hasImage?: boolean;
   };
 }) {
   const { isMobile } = useSidebar();
@@ -42,10 +45,7 @@ export function NavUser({
               />
             }
           >
-            <Avatar className='h-8 w-8 rounded-lg'>
-              <AvatarImage src={user.avatar} alt={user.name} />
-              <AvatarFallback className='rounded-lg'>CN</AvatarFallback>
-            </Avatar>
+            <IdentityAvatar className='h-8 w-8 rounded-lg' id={user.id} name={user.name} email={user.email} imageUrl={user.avatar} hasImage={user.hasImage} />
             <div className='grid flex-1 text-left text-sm leading-tight'>
               <span className='truncate font-semibold'>{user.name}</span>
               <span className='truncate text-xs'>{user.email}</span>
@@ -61,10 +61,7 @@ export function NavUser({
             <DropdownMenuGroup>
               <DropdownMenuLabel className='p-0 font-normal'>
                 <div className='flex items-center gap-2 px-1 py-1.5 text-left text-sm'>
-                  <Avatar className='h-8 w-8 rounded-lg'>
-                    <AvatarImage src={user.avatar} alt={user.name} />
-                    <AvatarFallback className='rounded-lg'>CN</AvatarFallback>
-                  </Avatar>
+                  <IdentityAvatar className='h-8 w-8 rounded-lg' id={user.id} name={user.name} email={user.email} imageUrl={user.avatar} hasImage={user.hasImage} />
                   <div className='grid flex-1 text-left text-sm leading-tight'>
                     <span className='truncate font-semibold'>{user.name}</span>
                     <span className='truncate text-xs'>{user.email}</span>

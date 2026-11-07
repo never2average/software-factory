@@ -32,7 +32,7 @@ Only recognised lines change state; a sentence of description never does, whatev
 - **`Key: value` lines**, and sentences that start with one ("Customer: internal. Owner: ops@example.com."):
   `Customer:`, `Owner:` (or `Operator:`), `Members:`, `Domain:`, `Server address:`, `Product:`, `Packs:`,
   `Brand colour:`, `Primary context:`, `Multiplayer:`, `Workflows:`. `Product name:`, `Mold:`, `Workspace:`, `Brand:`,
-  `Logo:`, `Tagline:`, `Admins:`, `Speech model:`, `Speech language:`, `Kind:` and `Run keys:` count only at the very
+  `Logo:`, `Tagline:`, `Avatar colours:`, `Admins:`, `Speech model:`, `Speech language:`, `Kind:` and `Run keys:` count only at the very
   start of a line. A
   line's value is read for its own setting only: "Tagline: one workspace for every shared desk" changes nothing else.
 - **Setting sentences**: a sentence, or a comma clause, that starts with one of the phrases above: "Deploy on vercel.",
@@ -45,7 +45,8 @@ Only recognised lines change state; a sentence of description never does, whatev
 - **The app spec's kind, run keys and developer surface** (mold_v0-228, `.claude/scripts/lib/spec_fields.py`), written
   to `application.json` `kind`, `run_keys` and `developer_surface` so `factory.py spec apps` reads them back:
   `Kind: tool` or `Kind: embedded`; `Run keys: model = anthropic, sandbox = boat, object_storage = vault` (mold_v0 only;
-  places, never a value); a `## Developer surface` section holding the block as one ```json fenced block (kind embedded
+  places, never a value; `sandbox = freestyle`, mold_v0-274, makes the runs' sandboxes Freestyle VMs, as `run_sandbox =
+  freestyle` in `## Profile` does); a `## Developer surface` section holding the block as one ```json fenced block (kind embedded
   only, and kind embedded needs it). `mint.py new --spec` writes all three from the spec. A wrong value is refused and
   nothing is written; a brief that stops saying one takes it out of state. An app without them reads as a tool.
 

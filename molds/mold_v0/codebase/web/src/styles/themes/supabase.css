@@ -36,6 +36,15 @@
   --sidebar-accent-foreground: oklch(0.2435 0 0);
   --sidebar-border: oklch(0.9037 0 0);
   --sidebar-ring: oklch(0.48 0.11 160.908);
+  /* The drawn avatars' colours when the brand brings none (mold_v0-275, web/src/lib/avatar.ts): five shades of the primary
+     colour, its hue only, each dark enough for white initials (4.5:1 or more). A branded build draws the brand's own
+     (branding.py, profile.generated.ts avatar_palette). --avatar-base is the primary in light, darkened in dark. */
+  --avatar-base: var(--primary);
+  --avatar-1: color-mix(in oklch, var(--avatar-base) 92%, oklch(0.3 0 0));
+  --avatar-2: color-mix(in oklch, var(--avatar-base) 70%, oklch(0.25 0 0));
+  --avatar-3: color-mix(in oklch, var(--avatar-base) 55%, oklch(0.56 0 0));
+  --avatar-4: color-mix(in oklch, var(--avatar-base) 80%, oklch(0.18 0 0));
+  --avatar-5: color-mix(in oklch, var(--avatar-base) 40%, oklch(0.4 0 0));
   --font-sans: Outfit, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -94,6 +103,8 @@
   --sidebar-accent-foreground: oklch(0.9851 0 0);
   --sidebar-border: oklch(0.2809 0 0);
   --sidebar-ring: oklch(0.7624 0.1544 159.36);
+  /* The dark theme's primary is light (it is text on dark surfaces): the avatars take it darkened to the light theme's depth. */
+  --avatar-base: color-mix(in oklch, var(--primary) 63%, oklch(0 0 0));
   --font-sans: Outfit, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -375,9 +375,10 @@ export function RecordView<T>({
                     return (
                       <TableHead key={c.key} className={cn('px-3', c.className)} aria-sort={d === 'asc' ? 'ascending' : d === 'desc' ? 'descending' : undefined}>
                         {typed(c) ? (
-                          <Button variant='ghost' size='xs' onClick={() => cycle(c.key)} className='text-muted-foreground hover:text-foreground -ml-2 font-medium'>
+                          // A column heading is plain text that sorts on click, never an outlined button (operator rule, mold_v0-250).
+                          <button type='button' data-column-header='' onClick={() => cycle(c.key)} className='text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded-sm font-medium focus:outline-none focus-visible:ring-1'>
                             {c.label}{d === 'asc' ? <IconArrowUp className='size-3' /> : d === 'desc' ? <IconArrowDown className='size-3' /> : null}
-                          </Button>
+                          </button>
                         ) : c.label}
                       </TableHead>
                     );

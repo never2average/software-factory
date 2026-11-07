@@ -39,6 +39,11 @@ each one the factory can check. Today (mold_v0):
                              workspaces install on-premises runners for its kinds that need their private network
                              (today's behaviour); absent or false (the default): no runner route, console page, admin tab
                              or enrolment, and every run is hosted. From the brief: `onprem_runners = true` in ## Profile
+  run_sandbox                auto, boat, docker or freestyle (mold_v0-274, the shell's src/run-sandboxes.ts): where the
+                             app's runs (and its workspace agent's wakes) get their sandbox by default, the default of
+                             the platform setting APP_RUN_SANDBOX (a staff member's choice and the server's environment
+                             win over it); boat and freestyle need their key in the app's Key vault. From the brief:
+                             `run_sandbox = freestyle` in ## Profile
   features                   {"<flag>": true|false} (mold_v0-219, the shell's src/features.json and src/features.ts; the
                              factory's lib/features.py): one on/off flag per optional capability (customer_key_vault,
                              company_email, scheduled_alerts, record_clocks, audit.data, audit.platform, audit.sign,
@@ -358,8 +363,13 @@ def email_defaults(app, root, build_dir=None):
     return out
 
 def effective(app, root, build_dir=None):
-    """The settable fields the build copy carries: the app's own over the email defaults."""
-    return {**email_defaults(app, root, build_dir), **(app.get("profile") or {})}
+    """The settable fields the build copy carries: the app's own over the email defaults. An app whose spec says its runs'
+    sandbox key is Freestyle's (run_keys.sandbox = freestyle, mold_v0-274) gets run_sandbox freestyle unless its profile
+    names a provider itself (lib/spec_fields.py problems says when the two disagree)."""
+    own = app.get("profile") or {}
+    rk = app.get("run_keys") if isinstance(app.get("run_keys"), dict) else {}
+    implied = {"run_sandbox": "freestyle"} if rk.get("sandbox") == "freestyle" and "run_sandbox" not in own else {}
+    return {**email_defaults(app, root, build_dir), **implied, **own}
 
 PACK = re.compile(r"[a-z][a-z0-9_-]{1,40}")                     # application.schema.json packs[] items
 OWNED = "licensor_owned"
@@ -453,6 +463,8 @@ def problems(profile, mold_id, root, packs=None):
         elif k == "audit": errs += audit_problems(v, "profile.audit")
         elif k == "onprem_runners":
             if not isinstance(v, bool): errs.append(f"profile.onprem_runners must be true or false (got {json.dumps(v)[:40]})")
+        elif k == "run_sandbox":
+            if v not in RUN_SANDBOXES: errs.append(f"profile.run_sandbox must be one of {', '.join(RUN_SANDBOXES)} (got {json.dumps(v)[:40]})")
         elif k == "features": errs += _features.block_problems(v, root, "profile.features")
         elif k == "team_roles": errs += team_roles_problems(v, "profile.team_roles")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
@@ -513,7 +525,9 @@ LANDING_FENCE = re.compile(r"^[ \t]*```[ \t]*json[ \t]*\n(.*?)^[ \t]*```[ \t]*$"
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
-WORDSET = re.compile(r"(?<![\w.])(member_keys|onprem_runners|audit\.(?:data|platform|sign)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+WORDSET = re.compile(r"(?<![\w.])(member_keys|onprem_runners|run_sandbox|audit\.(?:data|platform|sign)|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+# Where the runs' sandboxes come from (mold_v0-274; the shell's src/run-sandboxes.ts RUN_SANDBOX_CHOICES).
+RUN_SANDBOXES = ("auto", "boat", "docker", "freestyle")
 # The capability flags (mold_v0-219): `features.<flag> = true|false`, the flag a registry id (lib/features.py).
 FEATURE_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?features\.([a-z_]+(?:\.[a-z_]+)?)`?[ \t]*(?:=|:)[ \t]*`?([A-Za-z_]*)`?[ \t]*(?:[,;.][ \t]*)?(?:\([^)\n]*\))?[ \t]*$", re.M)
 WORD = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*([A-Za-z_]+)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
@@ -540,7 +554,7 @@ def from_brief(text):
     a `## MCP instructions` section (mold_v0-119); `email_from_address = <address>`,
     `email.notifications = <group>, <group>` (or `none`) and `email.provider = resend|none` (mold_v0-101); `member_keys =
     false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `onprem_runners = true` (or
-    false; mold_v0-205); `features.<flag> = true|false` (mold_v0-219: lib/features.py); `legal.<field> = <text>`
+    false; mold_v0-205); `run_sandbox = freestyle` (or auto, boat, docker; mold_v0-274); `features.<flag> = true|false` (mold_v0-219: lib/features.py); `legal.<field> = <text>`
     (mold_v0-109: company_name, contact_email, jurisdiction, effective_date, terms_url, privacy_url). A setting written twice with two
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
@@ -563,7 +577,11 @@ def from_brief(text):
             d[path[-1]] = n
         for m in WORDSET.finditer(body):
             name, w = m.group(1), WORD.match(body, m.end())
-            if name in ("member_keys", "onprem_runners") or name.startswith("audit."):
+            if name == "run_sandbox":
+                val = w.group(1).lower() if w and w.group(1).lower() in RUN_SANDBOXES else None
+                if val is None: errs.append(f"{head}: run_sandbox has no value I can read; write it as `run_sandbox = freestyle` (or {', '.join(x for x in RUN_SANDBOXES if x != 'freestyle')})"); continue
+                path = ["run_sandbox"]
+            elif name in ("member_keys", "onprem_runners") or name.startswith("audit."):
                 val = {"true": True, "false": False}.get(w.group(1).lower()) if w else None
                 if val is None: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {'false' if name == 'member_keys' else 'true'}` (or {'true' if name == 'member_keys' else 'false'})"); continue
                 path = name.split(".")   # member_keys; onprem_runners (mold_v0-205); audit.data, audit.platform (mold_v0-197)

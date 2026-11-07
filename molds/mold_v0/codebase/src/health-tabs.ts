@@ -316,6 +316,9 @@ export async function healthStatus() {
   checks.push({ id: "vault", label: "Key vault", state: !vaultUnlocked() ? "bad" : vault?.runs.missing.length ? "warn" : vault ? "ok" : "bad",
     value: !vaultUnlocked() ? "locked" : vault ? (vault.runs.missing.length ? `${vault.runs.missing.length} needed key${vault.runs.missing.length > 1 ? "s" : ""} missing` : "unlocked") : "could not be read",
     detail: vaultError ?? (vault?.runs.missing.length ? `missing: ${vault.runs.missing.join(", ")}` : null) });
+  // mold_v0-274: the runs' sandbox provider's key, when it is missing, in plain words (which key, and where it is set).
+  const sbxNeed = (vault?.runs.needs ?? []).find((x) => (x.slug === "boat" || x.slug === "freestyle") && x.set === "no" && /sandboxes/.test(x.why));
+  const sandboxMissing = sbxNeed ? { provider: sbxNeed.slug, name: sbxNeed.name, text: (await import("./run-sandboxes.js")).missingSandboxKeyText(sbxNeed.slug as "boat" | "freestyle") } : null;
   const claude = vault?.providers.find((p) => p.slug === "anthropic") ?? null;
   checks.push({ id: "claude", label: "Claude provider", state: !claude ? "off" : claude.set === "yes" ? "ok" : "warn",
     value: !claude ? "not used by this build" : claude.set === "yes" ? (claude.backend === "vertex" || /Vertex/.test(claude.note ?? "") ? "set (through Vertex AI)" : "set (Anthropic)") : "missing",
@@ -329,6 +332,7 @@ export async function healthStatus() {
     providers: (vault?.providers ?? []).map((p) => ({ slug: p.slug, name: p.name, category: p.category, set: p.set, enabled: p.enabled, backend: p.backend, note: p.note,
       keys: p.keys, last_changed_at: p.last_changed_at, last_used_at: p.last_used_at })),
     needs: (vault?.runs.needs ?? []).map((x) => ({ slug: x.slug, name: x.name, set: x.set, why: x.why })),
+    sandbox_missing: sandboxMissing,
     release: {
       runtime: onVercel() ? "vercel" : "server",
       commit,

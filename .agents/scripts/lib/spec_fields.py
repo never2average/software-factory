@@ -24,7 +24,9 @@ Standard library only.
 import json, os, re, sys
 
 KINDS = ("tool", "embedded")
-RUN_KEYS = {"model": ("anthropic", "vertex"), "sandbox": ("boat",), "object_storage": ("vault", "r2_env", "storage_dir")}
+# sandbox: whose key the runs' sandboxes use, in the app's Key vault (boat.dev's, or Freestyle's: mold_v0-274; freestyle
+# also makes Freestyle the app's sandbox provider, profile run_sandbox, lib/app_profile.py effective).
+RUN_KEYS = {"model": ("anthropic", "vertex"), "sandbox": ("boat", "freestyle"), "object_storage": ("vault", "r2_env", "storage_dir")}
 RUN_KEYS_MOLDS = ("mold_v0",)          # mold_v1 has no job runs: its keys are the inference provider's
 KEYS = ("kind", "run_keys", "developer_surface")
 
@@ -145,6 +147,10 @@ def problems(app, mold_id, root):
             for k, v in rk.items():
                 if k not in RUN_KEYS: errs.append(f"run_keys.{k} is not a run key ({', '.join(RUN_KEYS)})")
                 elif v not in RUN_KEYS[k]: errs.append(f"run_keys.{k} is {json.dumps(v)}: one of {', '.join(RUN_KEYS[k])}")
+            # mold_v0-274: the sandbox's key and the provider the profile names say the same place.
+            ps = (app.get("profile") or {}).get("run_sandbox") if isinstance(app.get("profile"), dict) else None
+            if rk.get("sandbox") in RUN_KEYS["sandbox"] and ps in ("boat", "freestyle", "docker") and ps != rk["sandbox"]:
+                errs.append(f"run_keys.sandbox is {rk['sandbox']} but profile.run_sandbox is {ps}: the runs' sandboxes come from one provider; make them agree")
     ds = app.get("developer_surface")
     if "developer_surface" in app:
         if kind != "embedded": errs.append("developer_surface is for an app of kind embedded only: set kind to embedded, or take it out")
@@ -189,6 +195,10 @@ def self_test():
     ok(any("run_keys.model" in m for m in msgs) and any(m.startswith("developer_surface:") for m in msgs), f"a wrong run key value and a malformed developer surface are said ({msgs[:3]})")
     ok(any("embedded" in m for m in problems({"developer_surface": ds}, "mold_v0", root)), "a developer surface on a tool is refused")
     ok(any("no job runs" in m for m in problems({"run_keys": {"model": "anthropic"}}, "mold_v1", root)), "run keys on mold_v1 are refused")
+    ok(from_brief("Run keys: sandbox = freestyle\n")[0] == {"run_keys": {"sandbox": "freestyle"}} and problems({"run_keys": {"sandbox": "freestyle"}}, "mold_v0", root) == [],
+       "mold_v0-274: the runs' sandbox key may be Freestyle's")
+    ok(any("make them agree" in m for m in problems({"run_keys": {"sandbox": "freestyle"}, "profile": {"run_sandbox": "boat"}}, "mold_v0", root)),
+       "mold_v0-274: a sandbox key and a profile provider that disagree are said")
     print(f"spec_fields: {len(checks)} checks passed")
     return 0
 
