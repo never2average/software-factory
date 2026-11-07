@@ -89,6 +89,14 @@ function rowItems({ area, form, row, edit, removed }: { area: RecordAreaSpec; fo
   ];
 }
 
+/** The same on a staff record's own page: its header's buttons. */
+function RowActions(props: { area: RecordAreaSpec; form: StaffForm | null; row: RecordRow; edit: () => void; removed: () => void }) {
+  return (<>{rowItems(props).map((a) => (
+    <Button key={a.label} variant='outline' size='sm' onClick={a.onSelect} data-row-edit={a.icon && !a.destructive ? (a.label === 'Override' ? 'override' : 'edit') : undefined}
+      data-row-remove={a.destructive ? '' : undefined}>{a.icon} {a.label}</Button>
+  ))}</>);
+}
+
 /** Where a shared row comes from (mold_v0-221): staff or its repository; an override marked, with what it stands over. */
 function ProvenanceFields({ row, form }: { row: RecordRow; form: StaffForm | null }) {
   const p = row.provenance;

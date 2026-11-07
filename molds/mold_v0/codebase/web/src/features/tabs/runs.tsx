@@ -11,6 +11,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useQueryState } from 'nuqs';
 import { featureOn } from '@/config/features';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Icons } from '@/components/icons';
 import { Field, RecordView, type RecordCol } from '@/components/layout/record-view';
 import { recordAreas, type PackTabSpec } from '@/config/pack-nav.generated';
 import { findRecordArea } from '@/features/records/registry';

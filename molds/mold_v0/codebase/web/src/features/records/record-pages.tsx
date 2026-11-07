@@ -324,7 +324,7 @@ export function RecordTableView({ area, base, url, rows, id, empty, open = true,
   if (error) return <ErrorState error={error} />;
   return (
     <RecordView<RecordRow>
-      id={id} compact={compact} noun={source?.noun ?? 'records'} properties summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
+      id={id} compact={compact} noun={source?.noun ?? 'records'} summary={summary} toolbarAction={toolbarAction} defaultSort={source?.defaultSort}
       initialRules={initialRules} onRulesChange={(r) => {
         if (overdueParam && !r.some(overdueRule)) void setOverdueParam(null);
         if (linked && !r.some((x) => x.id === 'linked')) void setLinkedParam(null);

@@ -487,7 +487,9 @@ ok("a list tab's cards: a number and its trend in words (running total or week b
   assert.doesNotMatch(tab, /\?area=|useRecordCredentials|RecordCredentials/, "never one request per record, and the record's Credentials card is not drawn here");
   assert.match(tab, /const rows = \[\.\.\.rowsOf\(creds, data, oauth, github, runners\), \.\.\.recordRowsOf\(records\)\];/, "the workspace's own rows first, then one per record");
   assert.match(tab, /const n = settingsCounts\(rows\.flatMap\(\(r\) => r\.units \?\? /, "the cards count each record's credentials one by one");
-  assert.match(tab, /if \(href\) router\.push\(href\)/, "a record's row opens its page");
+  // mold_v0-278: a record's row opens its panel beside the list, its page through Open in its own page (never a navigation).
+  assert.match(tab, /pageHref=\{\(r\) => r\.href \?\? null\}/, "a record's row: its page from the panel");
+  assert.doesNotMatch(tab, /router\.push/, "a row never navigates");
   assert.match(tab, /\{r\.words \?\? r\.status\}/, "its status in words, plain text");
   assert.match(tab, /searchText=\{\(r\) => `\$\{r\.name\} /, "searched by its name");
   assert.match(rc, /<Card id=\{CREDENTIALS_ANCHOR\} ref=\{anchor\}/, "the record page's Credentials card is the #credentials anchor");

@@ -62,7 +62,8 @@ const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
   assert.match(controls, /\{menu \?\? <PanelMenu /);
   assert.equal((controls.match(/<Button\b/g) ?? []).length, 1, "the header's right: only Expand (and the ⋯ menu)");
   assert.match(dp, /aria-label='Close panel' title='Close \(Esc\)'/);
-  assert.doesNotMatch(dp, /aria-modal|backdrop|onKeyDown=\{trap/i, "no backdrop, no focus trap");
+  const dpCode = dp.replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  assert.doesNotMatch(dpCode, /aria-modal|backdrop|focus-trap|tabbables/i, "no backdrop, no focus trap");
   assert.match(sp, /closeRecordPanel\(\);/, "a form's side panel closes the record panel (one panel at a time)");
   assert.match(sp, /&& !inRecordPanel;/, "a form inside the record panel opens in its place");
   // No list keeps the old header buttons, and none sends a row to a page.
@@ -180,9 +181,9 @@ try {
   const w0 = await width('[data-slot="detail-panel-host"]');
   await sep.focus(); await p.keyboard.press("ArrowLeft"); await p.keyboard.press("ArrowLeft"); await settle();
   const w1 = await width('[data-slot="detail-panel-host"]');
-  check(Math.round(w1 - w0) === 32, `← widens it by 16 px a press (${Math.round(w0)} → ${Math.round(w1)})`);
+  check(Math.abs(w1 - w0 - 32) <= 2, `← widens it by 16 px a press (the share kept to 3 decimals: ±1 px) (${Math.round(w0)} → ${Math.round(w1)})`);
   await p.keyboard.press("ArrowRight"); await settle();
-  check(Math.round(w1 - (await width('[data-slot="detail-panel-host"]'))) === 16, "→ narrows it");
+  check(Math.abs(w1 - (await width('[data-slot="detail-panel-host"]')) - 16) <= 2, "→ narrows it");
   await p.keyboard.press("Home"); await settle();
   check(Math.round(await width('[data-slot="detail-panel-host"]')) === 360, "Home: its narrowest (360 px)");
   await p.keyboard.press("End"); await settle();
@@ -237,12 +238,12 @@ try {
   check(!(await panel.isVisible()), "Esc with focus on the list closes it too");
 
   // Closing keeps every list filter.
-  await p.getByRole("searchbox").fill("Record 1"); await settle();
-  await row("R-110").click(); await settle();
+  await p.getByRole("searchbox").fill("Record 12"); await settle();
+  await row("R-112").click(); await settle();
   await p.getByTestId("detail-panel-expand").click(); await settle(); await p.getByTestId("detail-panel-expand").click(); await settle();
   await p.getByRole("button", { name: "Close panel" }).click(); await settle();
   check((await qs()) === "?view=open", `closing drops only the panel's parameters (${await qs()})`);
-  check((await p.getByRole("searchbox").inputValue()) === "Record 1" && (await row("R-102").count()) === 0, "and keeps the search typed");
+  check((await p.getByRole("searchbox").inputValue()) === "Record 12" && (await row("R-102").count()) === 0, "and keeps the search typed");
   await p.getByRole("searchbox").fill(""); await settle();
 
   // Unsaved changes.
