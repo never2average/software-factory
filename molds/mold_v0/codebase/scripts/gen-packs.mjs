@@ -2020,7 +2020,6 @@ const SETTINGS_TABS = (() => {
     { id: "integrations", label: "Integrations", group: "connections", kind: "integrations", on: !!developerFacts?.webhooks_in?.length },
     { id: "alerts", label: "Alerts", group: "automation", kind: "alerts", on: FEATURE_ON.scheduled_alerts },
     // mold_v0-252: the workspace agent's icon, a workspace owner's own over the app's (src/agent-icon.ts)
-    { id: "agent", label: "Workspace agent", group: "automation", kind: "agent", on: !!FEATURE_ON.agent_harness },
     // mold_v0-259: a workspace's teams (src/team-routes.ts), in Access after its shell tabs' credentials
     { id: "teams", label: "Teams", group: "access", kind: "teams", on: !!FEATURE_ON.teams },
     { id: "signing", label: "Signing", group: "data_trust", kind: "signing", on: FEATURE_ON["audit.sign"] },

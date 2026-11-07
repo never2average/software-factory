@@ -1,7 +1,7 @@
 'use client';
 // Settings (mold_v0-218; assembled from the features registry since mold_v0-219, web/src/config/settings.ts): the tabs
 // each capability that is on contributes (Credentials, API keys, Allowed origins, Email, Webhooks, Integrations,
-// Alerts, Workspace agent, Signing) and the packs' record areas declared as settings, in four groups. Up to 5 tabs one page,
+// Alerts, Signing) and the packs' record areas declared as settings, in four groups. Up to 5 tabs one page,
 // /app/settings, with one strip (one tab: that table alone, no strip); past 5 a page per group, /app/settings/<group>,
 // each with its own strip. The open tab is in the address (?tab=<id>; the page's first has none), as every in-page
 // tab: no title above the strip. Every tab is the standard full-area table (cards, search row with its primary action,
@@ -20,15 +20,12 @@ import { AreaRecordList } from '@/features/records/record-pages';
 import { findRecordArea } from '@/features/records/registry';
 import { AlertsTab } from './alerts-tab';
 import { SigningTab } from './signing-tab';
-import { AgentTab } from './agent-tab';
 import { TeamsTab } from '@/features/teams/teams-tab';
 
 /** The tabs this build's Settings has, in order (every group's). */
 export const settingsTabIds = (tabs: readonly SettingsTabSpec[] = ALL): string[] => tabs.map((t) => t.id);
 
 function TabBody({ tab }: { tab: SettingsTabSpec }) {
-  // Workspace agent (mold_v0-252): a kind of the generated list only while agent_harness is on.
-  if ((tab.kind as SettingsTabSpec['kind'] | 'agent') === 'agent') return <AgentTab />;
   // Teams (mold_v0-259): a kind of the generated list only while the teams flag is on.
   if ((tab.kind as SettingsTabSpec['kind'] | 'teams') === 'teams') return <TeamsTab />;
   switch (tab.kind) {
