@@ -965,8 +965,16 @@ def pack_json(app_id, app, pid, root=None):
         except (OSError, ValueError): continue
     return None
 
+def run_sandbox_of(app):
+    """Where the app's runs get their sandbox by default (mold_v0-274): its profile's run_sandbox, else freestyle when its
+    spec's run key says the sandbox key is Freestyle's (lib/app_profile.py effective), else None (auto). A staff member's
+    choice in the app's Agent configuration wins over it at runtime; this check reads state only."""
+    prof = app.get("profile") if isinstance(app.get("profile"), dict) else {}
+    rk = app.get("run_keys") if isinstance(app.get("run_keys"), dict) else {}
+    return prof.get("run_sandbox") or ("freestyle" if rk.get("sandbox") == "freestyle" else None)
+
 def run_needs(app_id, app, target, root=None):
-    """{"kinds": n, "needs": {slug: [<pack>.<kind>, ...]}, "boat": bool, "unread": [pack ids]} from the job kinds the
+    """{"kinds": n, "needs": {slug: [<pack>.<kind>, ...]}, "boat": bool, "freestyle": bool, "unread": [pack ids]} from the job kinds the
     packs' pack.json declare: each kind's gateway `providers`, its `operator_credentials` (the vault's pack_credentials),
     and boat for their sandboxes on Vercel (APP_RUN_SANDBOX auto, the only hosted sandbox there; src/run-sandboxes.ts
     boatForRuns). "store": the kinds that keep a workspace store between runs (workspace: true, or runner agent-workspace),
@@ -984,8 +992,12 @@ def run_needs(app_id, app, target, root=None):
             for slug in k.get("providers") or []: needs.setdefault(slug, []).append(kid)
             if [n for n in k.get("operator_credentials") or [] if n not in optional]: needs.setdefault("pack_credentials", []).append(kid)
             if k.get("workspace") is True or k.get("runner") == "agent-workspace": store.append(kid)
-    boat = target == "vercel" and n > 0
-    return {"kinds": n, "needs": needs, "boat": boat, "unread": unread, "store": store}
+    sandbox = run_sandbox_of(app)
+    agents = ((app.get("profile") or {}).get("features") or {}).get("agent_harness") is True if isinstance(app.get("profile"), dict) else False
+    boat = target == "vercel" and n > 0 and sandbox in (None, "auto", "boat")
+    # mold_v0-274: Freestyle VMs for the runs (and the workspace agent's wakes), wherever the app is deployed.
+    freestyle = sandbox == "freestyle" and (n > 0 or agents)
+    return {"kinds": n, "needs": needs, "boat": boat, "freestyle": freestyle, "unread": unread, "store": store}
 
 def say_run_needs(app_id, app, target, say=print, root=None):
     """One line for the offline check: what the run kinds need from the key vault and the command that says whether it is
@@ -998,6 +1010,9 @@ def say_run_needs(app_id, app, target, say=print, root=None):
     parts = [f"{slug} ({plural(ks)}{'; or a Vertex AI service-account key: Claude then runs on Vertex AI' if slug == 'anthropic' else ''})"
              for slug, ks in sorted(r["needs"].items())]
     if r["boat"]: parts.append("boat (the runs' sandboxes on Vercel)")
+    # mold_v0-274: a Key vault key a platform owner sets in the app's own console (Admin › Key vault, Freestyle), never
+    # --set-secret (a FREESTYLE_API_KEY on the server would only be imported into the vault once).
+    if r.get("freestyle"): parts.append("freestyle (the runs' sandboxes are Freestyle VMs: its API key goes in the app's Admin › Key vault, under Freestyle; not --set-secret)")
     if r.get("store"): parts.append(f"object_storage (the workspace store of {plural(r['store'])}, unless the server sets R2_*)")
     what = (f"the run kinds ({r['kinds']}, from the packs' pack.json) need from the key vault: {', '.join(parts)}" if parts
             else f"the run kinds ({r['kinds']}, from the packs' pack.json) need no key from the key vault")

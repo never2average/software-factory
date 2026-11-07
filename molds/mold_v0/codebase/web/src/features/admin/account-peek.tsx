@@ -30,6 +30,7 @@ import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
 import { text } from '@/lib/texts';
 import { tipsOn } from '@/features/journeys/config';
+import { IdentityName } from '@/components/identity-avatar';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
 export type Org = OrgRow & {
@@ -508,7 +509,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
           <section id='peek-people' className='grid scroll-mt-4 gap-6'>
             {org.clerk_org_id && (<>
               <List title='Members' rows={d.members} empty='Nobody has joined yet.' actions={member} cols={[
-                ['Person', (m) => <>{m.email || m.user_id}{m.name && <span className='text-muted-foreground ml-2'>{m.name}</span>}</>],
+                ['Person', (m) => <IdentityName id={m.user_id} name={m.name} email={m.email}>{m.email || m.user_id}{m.name && <span className='text-muted-foreground ml-2'>{m.name}</span>}</IdentityName>],
                 ['Role', (m) => accountRoleLabel(m)],
                 ['Status', (m) => (m.status === 'inactive' ? word('bad', 'suspended') : word(m.status === 'active' || m.status === 'pending' ? 'ok' : 'info', m.status))],
                 ['Joined', (m) => <When d={m.created_at} />]

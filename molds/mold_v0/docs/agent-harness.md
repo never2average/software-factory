@@ -41,7 +41,7 @@ engine** (mold_v0-041), claimed, leased, metered, sandboxed and limited exactly 
 |---|---|
 | Conversation (run) | `harness_sessions` (migration 0044; named apart from the session engine's own `agent_sessions`, a host pack's table): one row per conversation or task, its state, its frozen policy (harness, model, provider, limits, web tools, the resolved hooks), its budget and ledger, its harness session id and checkpoint, its retention deadline. Control plane: `src/harness-sessions.ts` |
 | Attempt / wake | A row of `runs`: the built-in kind `_agent/session` (`runner: "agent-harness"`, `src/agent-harness-config.ts`), not a pack's; listed by `runnableKinds()` for claims and the run sandboxes' demand only when the flag is on (never by `jobKinds()`, so schedules, the developer API, Compute's kinds and the MCP's `start_<kind>` tools do not see it). `runs.harness_session_id` links a wake to its session |
-| Harness runner | `src/agent-harness.ts`, dispatched from `src/run-harness.ts runWorkspaceHarness` for `runner: "agent-harness"`: the same run user per run (`run-users.ts`), the same egress proxy and sandbox lockdown, the same run tools (`claude-code`, pinned in `run-tools.ts`), and the same `RunnerClient` (in process, or over `/api/worker/runs` with the fleet or a run sandbox's token). Runs on boat or docker run sandboxes and on-premises runners unchanged |
+| Harness runner | `src/agent-harness.ts`, dispatched from `src/run-harness.ts runWorkspaceHarness` for `runner: "agent-harness"`: the same run user per run (`run-users.ts`), the same egress proxy and sandbox lockdown, the same run tools (`claude-code`, pinned in `run-tools.ts`), and the same `RunnerClient` (in process, or over `/api/worker/runs` with the fleet or a run sandbox's token). Runs on boat, docker or Freestyle run sandboxes (mold_v0-274: the platform setting Sandbox provider chooses one for every run and wake; MOLD.md "Runs in sandboxes") and on-premises runners unchanged |
 | Flavours and hooks directory | `src/agent-harness-config.ts` `AGENT_FLAVOURS` and `AGENT_HOOKS`: a typed declaration bundled with the server (the API and the runner read the same module, so they cannot disagree, which is the reference's reason for the directory). `claude-code` has `on_start`, `on_resume`, `append_system`; a flavour that reads stdin to EOF is declared `holds_stdin_open: false` and gets no steer (refused at the API, discarded at the runner). The resolved hooks are frozen into the session at start and written to `<scratch>/hooks/<event>/{prompt.md,source}` before the CLI starts |
 | Heartbeat carrying steer, pause, end | `POST /api/worker/runs/:id/agent/beat` (lease-checked like every worker step): renews the lease (`heartbeatRun`), accrues spend, and answers `{steer: [...], pause, end, budget, cancel}`; `/agent/turn`, `/agent/request`, `/agent/checkpoint`, `/agent/end` |
 | stdin ledger, replay echo, idle close, transient retry | `src/agent-harness.ts` (`encodeStdinMessage`, `replayedUuid`, `SteerLedger`, `transientUpstreamError`), pure and unit-tested |
@@ -217,6 +217,21 @@ memory component), the account context and the member role check: "What a sessio
   (`agent.auto_resume`); a declared developer event (`agent.session.*` webhooks) is left for when an app asks for one.
 - **The data audit trail.** Steering is recorded in the session's own tables and the run's events; staff actions on a
   session are in the staff log and, with `audit.platform` on, the platform trail (every `/api/admin` request).
+
+## Where a wake runs (mold_v0-274)
+
+A wake is a run, so it gets its sandbox where every run of the app does: the platform setting **Sandbox provider**
+(`APP_RUN_SANDBOX`: auto, boat, docker or freestyle; its default the app's profile `run_sandbox`) chooses it, and there is
+no per-profile choice. On **Freestyle** each wake is a Freestyle VM (`src/run-sandboxes.ts freestyleProvider`, MOLD.md
+"Runs in sandboxes"): created with its own firewall (nothing in; out only HTTPS, HTTP and DNS), its TTL and deleted when
+it stops; the same set-up script and the same runner as on boat, so the wake runs as a run user of its own behind the
+run's egress proxy and the firewall by that user's uid. What a session's profile gives it is unchanged: its uploads are
+fetched with the lease and written into its scratch workspace by the runner in the VM, executables 0700; its keys are
+delivered with the lease and redacted from every line it posts; its governance policy decides each call in the runner
+and its hosts are the proxy's allowlist (Freestyle's firewall cannot name hosts, so the proxy stays in front). Steer,
+pause, stop and budget go through the beat as before; when the wake ends its VM is deleted at the next tick. The
+Freestyle key itself is never a key a profile may inject. `npm run test:freestyle-sandbox` carries a session's wake end
+to end in a stand-in Freestyle VM.
 
 ## Proofs
 

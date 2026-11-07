@@ -335,6 +335,15 @@ def schema_v0(root):
                 "(an icon in the text colour needs none).")}
         product["allOf"] = [{"x-rule": "agent_icon_dark is the dark variant of an agent_icon: give agent_icon too",
                              "if": {"required": ["agent_icon_dark"]}, "then": {"required": ["agent_icon"]}}]
+    # mold_v0-275: the avatar colours, in the brand (branding/rules.json avatar_palette), optional: derived from the colour
+    if load(os.path.join(root, "molds", "mold_v0", "branding", "rules.json")).get("avatar_palette"):
+        product["properties"]["avatar_colors"] = {
+            "type": "array", "minItems": 3, "maxItems": 8, "uniqueItems": True, "items": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+            "x-hint": "3 to 8 #RRGGBB colours, dark enough for white initials",
+            **D("The colours people's and organisations' avatars are drawn in when they have no picture (optional): 3 to 8 #RRGGBB, each dark enough for white initials (4.5:1). Unset: five derived from the brand colour.",
+                "The colours the console draws people's and organisations' avatars in when they have not uploaded a picture (a soft gradient of two of them, "
+                "chosen from the id, with white initials): 3 to 8 `#RRGGBB`, each dark enough for white initials at 4.5:1 (optional). Unset: five derived "
+                "from `colour` (its hue and its neighbours, never purple unless the brand is). `branding.py <app> set --avatar-colors`.")}
     pack, pdefs = _embed_pack(P)
     defs["pack"] = pack; defs.update(pdefs)
     pid = M["packs"]["pack_id"]; nn = M.get("not_needed") or {}
@@ -378,6 +387,17 @@ def schema_v0(root):
                                     "with `private_network: true` then go to it when the workspace chooses so.\n"
                                     "- `false` or absent: `/api/runners` and `/api/runner` answer not found, no console page, admin tab or guide page for runners "
                                     "appears, enrolment is refused and every run is hosted.\n\nBrief line: `onprem_runners = true` in `## Profile`.")}
+        elif k == "run_sandbox":
+            profile_props[k] = {"type": "string", "enum": list(app_profile.RUN_SANDBOXES), "default": "auto", "title": "Where the runs' sandboxes come from (mold_v0-274)",
+                                **D("auto (boat when its key is in Key vault, else the server's Docker), boat, docker or freestyle (a Freestyle VM per run and per agent wake). "
+                                    "The default of the app's Sandbox provider setting: a staff member's choice and the server's APP_RUN_SANDBOX win over it.",
+                                    "**Where each run's sandbox comes from** (mold_v0-274, the shell's `src/run-sandboxes.ts`): the default of the app's "
+                                    "**Sandbox provider** platform setting (Admin › Agent configuration), which a staff member's choice and the server's "
+                                    "`APP_RUN_SANDBOX` win over.\n\n- `auto` (the default): boat when its key is in Key vault, else the server's Docker.\n"
+                                    "- `boat`: a boat.dev sandbox per run.\n- `docker`: a container on the app's own server.\n"
+                                    "- `freestyle`: a Freestyle VM per run and per agent wake; its API key goes in the app's Key vault (Admin › Key vault, Freestyle), "
+                                    "never in the repository or a pack.\n\nBrief line: `run_sandbox = freestyle` in `## Profile`. "
+                                    "`run_keys.sandbox = freestyle` implies it.")}
         elif k == "source_offer.upstreams":
             profile_props["source_offer"] = {"type": "object", "additionalProperties": False, "required": ["upstreams"], **D("Only its upstreams part is the app's."), "properties": {
                 "upstreams": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": pid}, "additionalProperties": {"const": "licensor_owned"},
@@ -415,12 +435,13 @@ def schema_v0(root):
       **D("Where the keys the pack's job runs need will come from. Names only: the values go into the app's Key vault (its /admin Key vault page) or the server's environment, never here.",
           "Where the keys the packs' **job runs** need come from. **Never a value here**: the operator puts each key in the app's **Key vault** (`/admin` → Key vault), "
           "or in the server's environment.\n\n- `model`: `anthropic` (an Anthropic API key) or `vertex` (a Vertex AI service-account key: Claude then runs on Vertex AI).\n"
-          "- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), "
+          "- `sandbox`: `boat` (boat.dev runs the sandboxes on Vercel) or `freestyle` (Freestyle VMs, on Vercel or a server; its key in the Key vault; "
+          "it also makes Freestyle the app's sandbox provider, `profile.run_sandbox`).\n- `object_storage`: where workspace snapshots go: `vault` (the Key vault's Object storage), "
           "`r2_env` (R2_* on the server) or `storage_dir` (APP_STORAGE_DIR, a server of its own).\n\n"
           "Whether each is set: `provision.py <app> --operator vault-status --dry-run`."),
       "properties": {
         "model": {"type": "string", "enum": ["anthropic", "vertex"], **D("anthropic: an Anthropic API key in the Key vault. vertex: a Vertex AI service-account key; Claude then runs on Vertex AI.")},
-        "sandbox": {"type": "string", "enum": ["boat"], **D("boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds).")},
+        "sandbox": {"type": "string", "enum": ["boat", "freestyle"], **D("boat: the boat.dev key for the runs' sandboxes (needed on Vercel when a pack has job kinds). freestyle: the Freestyle key (mold_v0-274); the runs' sandboxes are then Freestyle VMs.")},
         "object_storage": {"type": "string", "enum": ["vault", "r2_env", "storage_dir"],
                            **D("Where workspace snapshots of agent runs go: vault (the Key vault's Object storage), r2_env (R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY on the server), storage_dir (APP_STORAGE_DIR on a server of its own).")}}}
     s = _base("mold_v0", root, "mold_v0 application spec",
@@ -477,7 +498,7 @@ def schema_v0(root):
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["model", "object_storage"]}}}),
         _rule("a pack has job kinds that keep a workspace between runs", pk(ws_kind),
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["object_storage"]}}}),
-        _rule("job runs on Vercel run in boat.dev sandboxes",
+        _rule("job runs on Vercel run in hosted sandboxes (boat.dev or Freestyle), whose key run_keys.sandbox names",
               {"allOf": [pk(has_kinds), {"properties": {"deploy": {"properties": {"target": {"const": "vercel"}}, "required": ["target"]}}, "required": ["deploy"]}]},
               {"required": ["run_keys"], "properties": {"run_keys": {"required": ["sandbox"]}}}),
         _rule("an app on a server of its own is reached at its own domain",
@@ -621,6 +642,11 @@ def problems(spec, root=ROOT, schema=None):
         f = (spec.get("product") or {}).get(k)
         if isinstance(f, str) and not f.startswith("icon:") and not os.path.isfile(os.path.join(root, f)):
             out.append(("missing", f"product.{k}", f"product.{k}: the file {f} is not on this machine (put the icon there, or name the file that is)"))
+    ac = (spec.get("product") or {}).get("avatar_colors")      # mold_v0-275: white initials must read on each
+    if isinstance(ac, list) and ac and all(isinstance(c, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", c) for c in ac):
+        sys.path.insert(0, HERE); import branding
+        why = branding.avatar_colors_problem([c.upper() for c in ac])
+        if why and "white initials" in why: out.append(("wrong value", "product.avatar_colors", f"product.avatar_colors: {why}"))
     packs = [p for p in full.get("packs") or [] if isinstance(p, dict) and isinstance(p.get("pack"), dict)]
     ids = [p if isinstance(p, str) else (p or {}).get("id") for p in spec.get("packs") or []] if isinstance(spec.get("packs"), list) else []
     if mold == "mold_v0":
@@ -832,6 +858,7 @@ def _profile_lines(spec):
     for k, v in prof.items():
         if k == "member_keys": lines.append(f"member_keys = {'true' if v else 'false'}")
         elif k == "onprem_runners": lines.append(f"onprem_runners = {'true' if v else 'false'}")
+        elif k == "run_sandbox": lines.append(f"run_sandbox = {v}")
         elif k == "email_from_address": lines.append(f"email_from_address = {v}")
         elif k == "email":
             for kk, vv in v.items(): lines.append(f"email.{kk} = {', '.join(vv) if isinstance(vv, list) else vv}" if vv != [] else f"email.{kk} = none")
@@ -854,6 +881,7 @@ def to_brief(spec, app_id):
     if p.get("tagline"): L.append(f"Tagline: {p['tagline']}")
     if p.get("agent_icon"): L.append(f"Agent icon: {p['agent_icon']}")              # mold_v0-252
     if p.get("agent_icon_dark"): L.append(f"Agent icon dark: {p['agent_icon_dark']}")
+    if p.get("avatar_colors"): L.append(f"Avatar colours: {', '.join(p['avatar_colors'])}")      # mold_v0-275
     if p.get("domain"): L.append(f"Domain: {p['domain']}")
     if ids: L.append(f"Packs: {', '.join(ids)}")
     if w.get("name"): L.append(f"Workspace: {w['name']}")
@@ -886,6 +914,7 @@ def _read_back(spec, text, ids):
     p, w = spec.get("product") or {}, spec.get("workspace") or {}
     want = {"mold_id": spec["mold_id"], "product_name": p.get("name"), "brand_name": p.get("name"), "brand_color": p.get("colour"),
             "brand_logo": p.get("logo"), "brand_tagline": p.get("tagline"), "brand_agent_icon": p.get("agent_icon"), "brand_agent_icon_dark": p.get("agent_icon_dark"),
+            "brand_avatar_colors": [c.upper() for c in p["avatar_colors"]] if isinstance(p.get("avatar_colors"), list) else None,
             "custom_domain": p.get("domain"), "packs": ids or None,
             "workspace_name": w.get("name"), "operator_email": (w.get("owner") or "").lower() or None, "members": [m.lower() for m in w.get("members") or []] or None,
             "platform_admins": w.get("platform_admins") or None,
@@ -1031,6 +1060,9 @@ def spec_from_state(app_id, root):
     ai = b.get("agent_icon") if isinstance(b.get("agent_icon"), dict) else {}     # mold_v0-252: "file:<path>" | "icon:<name>"
     if isinstance(ai.get("source"), str): prod["agent_icon"] = ai["source"][5:] if ai["source"].startswith("file:") else ai["source"]
     if isinstance(ai.get("dark_source"), str): prod["agent_icon_dark"] = ai["dark_source"][5:]
+    if isinstance(b.get("avatar_colors"), list) and b["avatar_colors"]:      # mold_v0-275: only colours of the brand's own
+        sys.path.insert(0, HERE); import branding
+        if not (str(b.get("brand_color", "")).startswith("#") and b["avatar_colors"] == branding.avatar_palette(b["brand_color"])): prod["avatar_colors"] = b["avatar_colors"]
     dom = (i.get("vercel") or {}).get("custom_domain") or (i.get("compose_remote") or {}).get("domain") or (i.get("vm_remote") or {}).get("domain")
     if dom: prod["domain"] = dom
     spec = {"app_id": app_id, "mold_id": mold, "product": prod, "deploy": {"target": i.get("target")}, "packs": list(a.get("packs") or [])}
@@ -1114,6 +1146,14 @@ def self_test():
             ok(any("product.agent_icon: the file brands/nowhere/agent.svg is not on this machine" in y for y in msgs), "mold_v0: an agent icon file that is not on this machine is said")
             del x["product"]["agent_icon"]
             ok(any("give agent_icon too" in y[2] for y in problems(x)), "mold_v0: agent_icon_dark without agent_icon is refused")
+            # mold_v0-275: the avatar colours, read back through the brief; light ones and non-colours refused
+            x = copy.deepcopy(spec); x["product"]["avatar_colors"] = ["#1F6F5C", "#2A5D7A", "#4B6B3A"]
+            b3, bp3 = to_brief(x, x["app_id"])
+            ok(problems(x) == [] and bp3 == [] and "Avatar colours: #1F6F5C, #2A5D7A, #4B6B3A" in b3, f"mold_v0: product.avatar_colors read back through the brief ({problems(x)[:2]} {bp3[:2]})")
+            x["product"]["avatar_colors"] = ["#FFFFFF", "#2A5D7A", "#4B6B3A"]
+            ok(any("too light: #FFFFFF" in y[2] for y in problems(x)), "mold_v0: an avatar colour white initials cannot be read on is refused")
+            x["product"]["avatar_colors"] = ["red", "#2A5D7A"]
+            ok(sum("product.avatar_colors" in y[1] for y in problems(x)) >= 2, "mold_v0: fewer than three avatar colours, or one that is not #RRGGBB, is refused")
             x = copy.deepcopy(e); x["developer_surface"]["events"] = [{"name": "record.exploded", "description": "x"}]; x["developer_surface"]["sdk_languages"] = ["go"]
             msgs = [y[2] for y in problems(x)]
             ok(any("record.exploded" in y for y in msgs) and any("not go" in y for y in msgs), "mold_v0: an event it does not emit and an SDK it does not generate are refused")
@@ -1133,6 +1173,9 @@ def self_test():
             lines, _ = _profile_lines({"audit": {"data": True, "platform": False}})
             ok("audit.data = true" in lines and not any("platform" in l for l in lines)
                and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("audit") == {"data": True}, f"{m}: audit.data true is written to profile.audit through the brief")
+            rl, _ = _profile_lines({"profile": {"run_sandbox": "freestyle"}})   # mold_v0-274
+            ok(rl == ["run_sandbox = freestyle"] and (_ap.from_brief("## Profile\n" + "\n".join(rl) + "\n")[0] or {}).get("run_sandbox") == "freestyle",
+               f"{m}: run_sandbox is written to the profile through the brief")
             lines, _ = _profile_lines({"profile": {"onprem_runners": True}})   # mold_v0-205
             ok(lines == ["onprem_runners = true"] and (_ap.from_brief("## Profile\n" + "\n".join(lines) + "\n")[0] or {}).get("onprem_runners") is True
                and _ap.from_brief("## Profile\nonprem_runners = false\n")[0] == {"onprem_runners": False}, f"{m}: onprem_runners is written to the profile through the brief")

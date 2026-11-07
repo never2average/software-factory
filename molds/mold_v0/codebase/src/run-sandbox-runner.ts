@@ -22,6 +22,9 @@
  *   APP_RUN_PACK_DIR                  the pack's directory, relative to the code (programs of the pack's own)
  *   APP_RUN_LOCKDOWN                  "on" (the autoscaler always writes it). "off" runs with no firewall and is
  *                                           refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes (test stand-ins only)
+ *   APP_RUN_TEST_AGENT_CLI            test stand-ins only (with APP_ALLOW_UNSANDBOXED_RUNS=yes; mold_v0-274): a node
+ *                                           script the workspace agent's wakes run instead of the pinned harness CLI
+ *                                           (scripts/fixtures/agent-cli/cli.mjs). Ignored everywhere else
  *   APP_RUN_PRIVATE_ALLOW             only from an on-premises runner (mold_v0-036, src/onprem-runner.ts): the private
  *                                           hosts and networks its owner lets runs reach (orchestrator/core/egress.ts
  *                                           parsePrivateAllow), added to the proxy's allowlist for a run of a kind
@@ -203,7 +206,10 @@ async function main(): Promise<number> {
     await client.events(claim.run.id, claim.lease_token, [{ type: "sandbox_prepared", data: timings }]).catch(() => {});
     // The harness heartbeats from its start (every lease_seconds / 3 too): the lease is never left longer than that.
     keeper.stop();
-    const view = await runWorkspaceHarness(client, claim, { ...iso, egress: lockdown ? "system" : "proxy", packDir, noNewPrivs: lockdown });
+    // Test stand-ins only: the workspace agent's stand-in CLI and a quicker beat (never in a sandbox that locks down).
+    const testAgent: HarnessOptions = unsandboxed && !lockdown && env.APP_RUN_TEST_AGENT_CLI
+      ? { agentCli: { command: process.execPath, args: [env.APP_RUN_TEST_AGENT_CLI] }, beatMs: 300, pollMs: 100 } : {};
+    const view = await runWorkspaceHarness(client, claim, { ...iso, ...testAgent, egress: lockdown ? "system" : "proxy", packDir, noNewPrivs: lockdown });
     log(`run ${claim.run.id}: ${view?.status ?? "lease lost"}`);
     return 0;
   } finally { keeper.stop(); await leased?.release().catch(() => false); }

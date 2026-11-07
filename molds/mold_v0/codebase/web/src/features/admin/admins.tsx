@@ -14,6 +14,7 @@ import { adminApi } from '@/lib/api-client';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole, type AdminRole } from './role';
 import { ErrorBox, FormRow, StatusBadge, When } from './ui';
+import { IdentityName } from '@/components/identity-avatar';
 
 interface Admin { id: string | null; email: string | null; name: string | null; role: AdminRole; role_label: string; source: 'environment' | 'clerk';
   last_sign_in_at: string | null; added_by: string | null; added_at: string | null; editable: boolean }
@@ -33,8 +34,8 @@ export function AdminAdmins({ tabs }: { tabs?: ReactNode } = {}) {
 
   const cols: RecordCol<Admin>[] = [
     { key: 'email', label: 'Admin', className: 'min-w-64', title: true, keep: true, peek: false, type: 'text', value: (a) => a.email, render: (a) => (
-      <span className='flex flex-col gap-1.5'><span className='leading-none font-medium'>{a.email ?? a.id}{a.id && a.id === data?.me && <span className='text-muted-foreground font-normal'> (you)</span>}</span>
-        {a.name && <span className='text-muted-foreground text-xs leading-none'>{a.name}</span>}</span>
+      <IdentityName id={a.id} name={a.name} email={a.email}><span className='flex flex-col gap-1.5'><span className='leading-none font-medium'>{a.email ?? a.id}{a.id && a.id === data?.me && <span className='text-muted-foreground font-normal'> (you)</span>}</span>
+        {a.name && <span className='text-muted-foreground text-xs leading-none'>{a.name}</span>}</span></IdentityName>
     ) },
     { key: 'role', label: 'Role', className: 'w-40', keep: true, type: 'select', value: (a) => a.role_label, options: roles.map((r) => ({ value: r.label })), render: (a) => {
       const role = edit && a.editable && a.id ? (

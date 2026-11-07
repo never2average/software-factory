@@ -11,7 +11,8 @@ import { directKeysAllowed, HARNESS_ENV, ORCHESTRATOR_ONLY_PROVIDERS } from "./g
 import { BOAT, BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { ENV, legacyEnvName } from "./env-names.js";
-import { boatForRuns, RUN_SANDBOXES } from "./run-sandboxes.js";
+import { boatForRuns, missingSandboxKeyText, RUN_SANDBOXES } from "./run-sandboxes.js";
+import { featureSetting } from "./feature-flags.js";
 import { jobKinds } from "./runs.js";
 
 /**
@@ -193,7 +194,15 @@ export interface VerdictFacts {
    * boat key in the vault for APP_RUN_SANDBOX=auto). False: no rule about boat or its key. Absent: true.
    */
   uses_boat?: boolean;
+  /**
+   * mold_v0-274: the provider the runs' sandboxes come from when it is not boat and needs a key (freestyle), and whether
+   * Key vault holds one. Absent: no such provider (boat's key is has_boat_key).
+   */
+  sandbox_key?: { provider: "freestyle"; has_key: boolean };
 }
+
+/** What Health says when the runs' sandbox provider has no key (mold_v0-274): src/run-sandboxes.ts missingSandboxKeyText. */
+export { missingSandboxKeyText };
 
 const mins = (s: number) => Math.max(1, Math.round(s / 60));
 const plural = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
@@ -214,7 +223,8 @@ export function computeVerdict(f: VerdictFacts): Verdict[] {
     add("red", "kick_unconfigured", "This deployment cannot trigger the autoscaler: PUBLIC_URL is not HTTPS or the worker token is unset.", "#environment");
   // Without a key boat is never asked, so "not answering" would only repeat the missing key.
   if (boat && f.has_boat_key && f.boat_error) add("red", "boat_down", `boat.dev is not answering: ${f.boat_error}`, "/admin/keys");
-  if (boat && !f.has_boat_key) add("red", "no_boat_key", "No boat key. Add one in Key vault.", "/admin/keys");
+  if (boat && !f.has_boat_key) add("red", "no_boat_key", engine ? "No boat key. Add one in Key vault." : missingSandboxKeyText("boat"), "/admin/keys");
+  if (!engine && f.sandbox_key && !f.sandbox_key.has_key) add("red", `no_${f.sandbox_key.provider}_key`, missingSandboxKeyText(f.sandbox_key.provider), "/admin/keys");
   if (f.tick.error) add("red", "tick_error", `The last tick failed: ${f.tick.error}`, "/admin/compute?section=decisions&has=error");
   if (f.enabled && queued > 0 && (f.tick.age_s == null || f.tick.age_s > 600)) {
     const what = [f.queue.sessions && plural(f.queue.sessions, "session"), f.queue.research && plural(f.queue.research, "research job")].filter(Boolean).join(" and ");
@@ -332,7 +342,7 @@ const shownName = (n: string) => (sessionEngine() ? legacyEnvName(n) ?? n : n);
 const RUN_KNOBS: { name: string; def: string; meaning: string }[] = [
   { name: "APP_AUTOSCALE", def: "on", meaning: "Kill switch: off launches and deletes nothing; queued {runs} wait." },
   { name: "APP_AUTOSCALE_TICK_SECONDS", def: "15", meaning: "How often the autoscaler ticks on a VM (Vercel ticks on events instead)." },
-  { name: "APP_RUN_SANDBOX", def: "auto", meaning: "Where each {run} runs: boat (a boat.dev sandbox), docker (a container on this server), auto (boat when its key is in Key vault, else docker when this server has Docker) or off." },
+  { name: "APP_RUN_SANDBOX", def: "auto", meaning: "Where each {run} runs: boat (a boat.dev sandbox), docker (a container on this server), freestyle (a Freestyle VM), auto (boat when its key is in Key vault, else docker when this server has Docker) or off. The Sandbox provider setting (Agent configuration) wins over it, except off." },
   { name: "APP_MAX_RUN_SANDBOXES", def: "10", meaning: "Most run sandboxes at once." },
   { name: "APP_RUN_LAUNCHES_PER_TICK", def: "4", meaning: "Most run sandboxes launched in one tick." },
   { name: "APP_RUN_BOOT_MINUTES", def: "10", meaning: "A run sandbox that has not started its {run} after this long is deleted." },
@@ -509,6 +519,9 @@ async function buildSummary(fresh: boolean) {
   // (APP_RUN_SANDBOX=boat, or auto with job kinds or a boat key; not when the deployment names docker or off).
   const runMode = RUN_SANDBOXES.mode();
   const usesBoat = eng || boatForRuns(runMode, jobKinds().length > 0) || (runMode === "auto" && !!key);
+  // mold_v0-274: runs (job kinds, or the workspace agent's wakes) whose sandboxes come from Freestyle need its key.
+  const freestyleRuns = !eng && runMode === "freestyle" && (jobKinds().length > 0 || featureSetting("agent_harness"));
+  const freestyleKey = freestyleRuns ? (await kv.listCredentials() as { provider: string; enabled: boolean }[]).some((c) => c.provider === "freestyle" && c.enabled) : false;
   const [runsNow] = eng ? [{ live: 0 }] : await db.query<{ live: number }>("SELECT count(*)::int AS live FROM run_sandboxes WHERE state IN ('booting', 'running')");
   const facts: VerdictFacts = {
     enabled: AUTOSCALE.enabled(), runtime, kick_configured: kickConfigured(), has_boat_key: !!key, boat_error: key ? sb.error ?? lim.error : null,
@@ -520,6 +533,7 @@ async function buildSummary(fresh: boolean) {
     launch_failures_1h: { count: n(orch?.failed_1h), step: lastFail?.launch_step ?? null, message: lastFail?.launch_error?.slice(0, 160) ?? null },
     missing_keys: missingKeys, leaked_workers: leaked, orphan_deletes_24h: n(orphans?.n), namespace: lib.BOAT_NAMESPACE, idle_orchestrators: idle,
     ...(eng ? {} : { engine: false, uses_boat: usesBoat }),
+    ...(freestyleRuns ? { sandbox_key: { provider: "freestyle" as const, has_key: freestyleKey } } : {}),
   };
 
   const orchSandboxUsd = (n(orch?.seconds_today) / 3600) * (BOAT_PRICE_PER_HOUR[lib.ORCH_SANDBOX_TYPE] ?? 0);

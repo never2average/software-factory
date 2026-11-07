@@ -66,7 +66,7 @@ export function useUser() {
   const user = u ? {
     id: u.id, firstName: u.first_name, lastName: u.last_name,
     fullName: [u.first_name, u.last_name].filter(Boolean).join(' ') || null,
-    imageUrl: '', emailAddresses: [{ emailAddress: u.email ?? '' }], primaryEmailAddress: { emailAddress: u.email ?? '' },
+    imageUrl: '', hasImage: false, emailAddresses: [{ emailAddress: u.email ?? '' }], primaryEmailAddress: { emailAddress: u.email ?? '' },
     externalAccounts: u.google ? [{ id: 'google', provider: 'oauth_google' }] : [],
     update: async (p: { firstName?: string; lastName?: string }) => { await authPost('/profile', { first_name: p.firstName ?? '', last_name: p.lastName ?? '' }); await reload(); },
     reload,

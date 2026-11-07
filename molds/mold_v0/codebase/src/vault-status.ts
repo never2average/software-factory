@@ -11,6 +11,7 @@
  *    display form and its key's metadata are never selected, so no value, prefix, length or digest of one can be printed.
  */
 import { providerCategory, providerInBuild, providerName, runNeeds, sandboxModeSet } from "./vault-providers.js";
+import { ENV } from "./env-names.js";
 
 /** One connection of the caller's own (a pg Client, or PGlite): plain queries, no pooling between them. */
 export interface RawConn { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }> }
@@ -32,7 +33,7 @@ export interface VaultStatus {
   providers: ProviderStatus[];
   hidden: string[];
   runs: {
-    kinds: number; packs: string[]; sandbox_mode: string; sandbox_mode_from: "deployment" | "default"; boat_for_runs: boolean;
+    kinds: number; packs: string[]; sandbox_mode: string; sandbox_mode_from: "setting" | "deployment" | "default"; boat_for_runs: boolean;
     needs: { slug: string; name: string; category: string; set: "yes" | "no"; note: string | null; why: string; kinds: string[]; labels?: string[]; missing_labels?: string[] }[];
     missing: string[];
     /**
@@ -68,6 +69,10 @@ export async function vaultStatus(conn: RawConn, opts: { all?: boolean } = {}): 
 
 async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus> {
   const q = async (sql: string, params?: unknown[]) => (await conn.query(sql, params)).rows;
+  // mold_v0-274: the runs' sandbox provider a staff member chose (the platform setting APP_RUN_SANDBOX) wins over the
+  // deployment's environment: read here, in this transaction, so the report says what the app does.
+  const chosen = await q("SELECT key, value FROM platform_settings WHERE key = 'APP_RUN_SANDBOX'");
+  (await import("./settings.js")).useSettingRows(chosen);
   const providers = await q(
     `SELECT slug, enabled, backend, backend_config->>'credential_provider' AS credential_provider FROM vault_providers ORDER BY slug`);
   const creds = await q(
@@ -140,7 +145,8 @@ async function read(conn: RawConn, opts: { all?: boolean }): Promise<VaultStatus
     read_only: true,
     providers: shown,
     hidden: list.filter((p) => !shown.includes(p) && p.slug !== "github_app").map((p) => p.slug),
-    runs: { kinds: rn.kinds, packs: rn.packs, sandbox_mode: rn.sandbox_mode, sandbox_mode_from: sandboxModeSet() ? "deployment" : "default",
+    runs: { kinds: rn.kinds, packs: rn.packs, sandbox_mode: rn.sandbox_mode,
+            sandbox_mode_from: chosen.length && !["off", "process"].includes(String(ENV.APP_RUN_SANDBOX ?? "").toLowerCase()) ? "setting" : sandboxModeSet() ? "deployment" : "default",
             boat_for_runs: rn.boat_for_runs, needs, missing: needs.filter((n) => n.set === "no").map((n) => n.slug),
             optional: rn.optional.map((o) => ({ ...o, set: bySlug.get("pack_credentials")?.enabled && on("pack_credentials", o.label) ? "yes" as const : "no" as const })) },
     queued: qd,
@@ -163,8 +169,8 @@ export function formatVaultStatus(r: VaultStatus): string {
   out.push("  Keys = turned on / stored. Last changed = when a key was last stored or replaced.");
   out.push("");
   const rn = r.runs;
-  out.push(`Runs: ${rn.kinds} run kind(s)${rn.packs.length ? ` (pack ${rn.packs.join(", ")})` : ""}; sandbox mode ${rn.sandbox_mode} (${rn.sandbox_mode_from === "deployment" ? "the deployment's APP_RUN_SANDBOX" : "the default: APP_RUN_SANDBOX was not handed to this run"})`
-           + `, so the runs' sandboxes ${rn.boat_for_runs ? "come from boat.dev" : "do not come from boat.dev"}.`);
+  out.push(`Runs: ${rn.kinds} run kind(s)${rn.packs.length ? ` (pack ${rn.packs.join(", ")})` : ""}; sandbox mode ${rn.sandbox_mode} (${rn.sandbox_mode_from === "setting" ? "a staff member's choice: Agent configuration, Sandbox provider" : rn.sandbox_mode_from === "deployment" ? "the deployment's APP_RUN_SANDBOX" : "the default: APP_RUN_SANDBOX was not handed to this run"})`
+           + `, so the runs' sandboxes ${rn.boat_for_runs ? "come from boat.dev" : rn.sandbox_mode === "freestyle" ? "come from Freestyle" : "do not come from boat.dev"}.`);
   if (!rn.needs.length) out.push("  The runs need no key from the vault.");
   for (const n of rn.needs) {
     const ks = n.kinds.length > 4 ? `${n.kinds.slice(0, 4).join(", ")} and ${n.kinds.length - 4} more` : n.kinds.join(", ");
