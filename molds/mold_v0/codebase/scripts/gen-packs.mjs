@@ -2594,7 +2594,7 @@ const recordAdminItems = (() => {
   // The shell's staff pages the group may hold, each where the build has it (else: why there is none).
   const PAGES = {
     journeys: journeyFacts || tipFacts ? { title: journeyFacts ? journeyNoun : "Tips", url: "/admin/journeys", icon: "route" } : "no pack turns journeys or tips on (pack.json journeys, tips)",
-    recipes: FEATURE_ON.workspace_recipes ? { title: "Recipes", url: "/admin/recipes", icon: "sparkles" }
+    recipes: FEATURE_ON.workspace_recipes && FEATURE_ON.agent_harness ? { title: "Recipes", url: "/admin/recipes", icon: "sparkles" }
       : !FEATURE_SETTING.workspace_recipes ? "features.workspace_recipes is false" : "the workspace agent is off (features.agent_harness = true turns it on; recipes are its profiles' workspaces)",
     "agent-profiles": FEATURE_ON.agent_harness ? { title: "Agent profiles", url: "/admin/agent-profiles", icon: "userPen" } : "the workspace agent is off (features.agent_harness)",
     repositories: packs.some((p) => Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length) ? { title: "Data repositories", url: "/admin/repositories", icon: "book" } : "no pack declares a data repository",

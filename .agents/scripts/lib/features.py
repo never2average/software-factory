@@ -160,7 +160,7 @@ def problems(profile, docs, root, kind=None, at="profile.features"):
 def self_test(root):
     flags = registry(root); checks = []
     def ok(c, what): checks.append(what); assert c, what
-    ok(len(flags) == 26 and len(set(ids(root))) == 26, "the registry names 26 flags, each once")
+    ok(len(flags) == 27 and len(set(ids(root))) == 27, "the registry names 27 flags, each once")
     ok(all(f.get("short") and f.get("about") and f.get("off") and isinstance(f.get("default"), bool) for f in flags), "every flag has a short name, words for on and off, and a default")
     audit_app_like = [{"id": "m", "credentials": [{"name": "t"}], "email": {"sender": {"allow": True}}, "record_areas": [
         {"name": "a", "scope": "workspace", "due": {"field": "d"}, "fields": []}, {"name": "b", "scope": "workspace", "clocks": [{"name": "c"}], "fields": []}],
@@ -203,5 +203,11 @@ def self_test(root):
     ok(any("nobody could give" in e for e in problems({"features": {"customer_key_vault": False}}, audit_app_like, root)), "the key vault off while a kind needs a credential is refused")
     ok(any("not a flag" in e for e in problems({"features": {"nope": True}}, [], root)), "an unknown flag is refused")
     ok(any("kind is the switch" in e for e in problems({"features": {"developer_surface": True, "audit.platform": True}}, [], root, kind="tool")), "developer_surface true on a tool app is refused (kind is the switch)")
+    # mold_v0-271: workspace recipes, asked for by the staff Records group listing them (a pack's, or the profile's own console), needing the agent
+    listed = [{"id": "m", "console": {"admin_records": {"show": [{"id": "recipes", "label": "Recipes"}, "molds"]}}}]
+    ok("recipes" not in words(effective({"features": {"agent_harness": True}}, [], root)) and "recipes" in words(effective({"features": {"agent_harness": True}}, listed, root))
+       and "recipes" in words(effective({"features": {"agent_harness": True}, "console": {"admin_records": {"show": ["recipes"]}}}, [], root)),
+       "workspace recipes: on when the staff Records group lists them, a pack's or the profile's (mold_v0-271)")
+    ok(any("needs agent_harness" in e for e in problems({}, listed, root)) and not problems({"features": {"agent_harness": True}}, listed, root), "workspace recipes need the workspace agent")
     ok(not requested(next(f for f in flags if f["id"] == "health_history"), [{"host": {"schema": {"tables": list(ENGINE_TABLES)}}}]), "a host pack with the session engine does not ask for health history")
     return checks
