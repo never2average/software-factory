@@ -34,6 +34,7 @@ services:
       APP_VAULT_KEY: ${APP_VAULT_KEY:?run bootstrap.sh}
       DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/app
       PAY_SECRET_KEY: ${PAY_SECRET_KEY:-}
+      CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
       FEATURE: ${FEATURE:-on}
     expose: ["3333"]
   caddy:
@@ -234,11 +235,12 @@ def rehearsal(ok):
 def sign_in_rehearsal(ok):
     """mold_v0-265: Clerk on every deploy (mold.json sign_in_required), through provision.py as subprocesses in a
     REHEARSAL as above. A new app without Clerk's keys: the check and --deploy stop for the operator (exit 3) with
-    Clerk's dashboard steps and one --set-secret line per key, creating nothing; with them all set: ready and deployed;
-    an app already deployed on Clerk keeps redeploying without the JWT key (said, never a stop); one that lost its secret
-    key stops again. Then the server target (offline): the names join the operator's values, the deploy stops for them
-    before anything on the server changes, an app on Clerk keeps going without the JWT key, and a pasted PEM block is
-    read as one line."""
+    Clerk's dashboard steps and one --set-secret line per key, creating nothing; with the secret and publishable keys
+    set: ready and deployed (mold_v0-269: session tokens are verified with Clerk's JWKS, so the PEM public key,
+    CLERK_JWT_KEY, is never asked for, on a first deploy or after); a JWT key set anyway is kept and deployed with; one
+    that lost its secret key stops again, for that key alone. Then the server target (offline): the names join the
+    operator's values, the deploy stops for them before anything on the server changes, a server holding the two keys
+    is deployed with nothing asked (first deploy or not), and a pasted PEM block is read as one line."""
     scripts = os.path.dirname(HERE); fake = os.path.join(scripts, "fixtures", "release", "fake.py")
     t = tempfile.mkdtemp(prefix="single-sign-in-")
     try:
@@ -276,7 +278,8 @@ def sign_in_rehearsal(ok):
             except ValueError: return {}
         W_ = lambda: json.load(open(W)); calls = lambda: open(W + ".calls").read() if os.path.exists(W + ".calls") else ""
         st = lambda: json.load(open(os.path.join(a, "application.json")))
-        want = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"]
+        want = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]   # mold_v0-269: never CLERK_JWT_KEY (Clerk's JWKS)
+        asks_jwt = lambda o: any(w in o for w in ("--set-secret CLERK_JWT_KEY", "PEM public key", "JWT public key", "NOTE: CLERK_JWT_KEY"))   # mold_v0-269: never
         plain = lambda how, n: all(w in how for w in ("https://dashboard.clerk.com", "Create application", "Configure", "API keys", "separate terminal",
                                                       f"provision.py zz_shop --set-secret {n}", "never shown"))
         code, out = go("zz_shop", "--json"); d_ = as_json(out); nd_ = d_.get("needs") or []
@@ -285,7 +288,7 @@ def sign_in_rehearsal(ok):
            f"sign-in: the check of a new app without Clerk's keys stops for the operator (exit 3), each key asked for with Clerk's dashboard steps: {code} {nd_}")
         code, out = go("zz_shop")
         ok(code == 3 and "dashboard.clerk.com" in out and all(f"python3 .claude/scripts/provision.py zz_shop --set-secret {n}" in out for n in want)
-           and "PEM public key" in out and "sk_live_" in out, f"sign-in: ...and says it in plain words, one --set-secret line per key: {out[-900:]}")
+           and "sk_live_" in out and not asks_jwt(out), f"sign-in: ...and says it in plain words, one --set-secret line per key, never the PEM key: {out[-900:]}")
         before = calls(); code, out = go("zz_shop", "--deploy", "--json"); d_ = as_json(out)
         ok(code == 3 and d_.get("status") == "needs_human" and [n_["name"] for n_ in d_.get("needs") or []] == want and plain((d_.get("needs") or [{}])[0].get("how", ""), want[0])
            and set(W_()["projects"]) == {"zz-shop-api"} and "\"deploy\"" not in calls()[len(before):] and st().get("status") != "reverted",
@@ -294,39 +297,46 @@ def sign_in_rehearsal(ok):
         w0 = W_(); w0["projects"]["zz-shop"] = {"id": "prj_zz-shop", "auto": True, "prod": None, "env": dict(clerk_web), "deps": []}
         w0["projects"]["zz-shop-api"]["env"].update(CLERK_SECRET_KEY="sk_standin"); json.dump(w0, open(W, "w"))
         code, out = go("zz_shop", "--json"); d_ = as_json(out)
-        ok(code == 3 and [n_["name"] for n_ in d_.get("needs") or []] == ["CLERK_JWT_KEY"], f"sign-in: a first deploy needs the JWT key too: {code} {d_.get('needs')}")
-        w0 = W_(); w0["projects"]["zz-shop-api"]["env"]["CLERK_JWT_KEY"] = "-----BEGIN PUBLIC KEY----- standin -----END PUBLIC KEY-----"; json.dump(w0, open(W, "w"))
+        ok(code == 0 and not d_.get("needs") and not asks_jwt(out), f"sign-in: a first deploy needs only the secret and publishable keys, never the JWT key: {code} {d_.get('needs')}")
         code, out = go("zz_shop")
-        ok(code == 0 and "Ready" in out and "copied from zz-shop's NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in out, f"sign-in: with every key set the check is ready: {out[-500:]}")
+        ok(code == 0 and "Ready" in out and "copied from zz-shop's NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in out and not asks_jwt(out),
+           f"sign-in: with the two keys set the check is ready, the JWT key never named: {out[-500:]}")
         st_ = st(); st_["status"] = "stamped"; json.dump(st_, open(os.path.join(a, "application.json"), "w"), indent=2)
         code, out = go("zz_shop", "--deploy")
-        ok(code == 0 and json.load(open(os.path.join(a, "infrastructure.json"))).get("deployed_at"), f"sign-in: ...and the deploy goes ahead: {out[-500:]}")
-        # an app deployed on Clerk before the rule, without the JWT key (the live apps' shape): redeploys, said
-        w0 = W_(); w0["projects"]["zz-shop-api"]["env"].pop("CLERK_JWT_KEY"); json.dump(w0, open(W, "w"))
+        ok(code == 0 and json.load(open(os.path.join(a, "infrastructure.json"))).get("deployed_at") and not asks_jwt(out),
+           f"sign-in: ...and the first deploy goes ahead without it: {out[-500:]}")
+        # a JWT key set anyway (an optional override, --set-secret CLERK_JWT_KEY): kept, never a stop, never asked
+        w0 = W_(); w0["projects"]["zz-shop-api"]["env"]["CLERK_JWT_KEY"] = "-----BEGIN PUBLIC KEY----- standin -----END PUBLIC KEY-----"; json.dump(w0, open(W, "w"))
         code, out = go("zz_shop", "--json"); d_ = as_json(out)
-        ok(code == 0 and not d_.get("needs"), f"sign-in: an app already on Clerk without the JWT key: the check is ready: {code} {d_.get('needs')}")
-        code, out = go("zz_shop")
-        ok(code == 0 and "NOTE: CLERK_JWT_KEY is not set yet" in out and "keeps deploying without it" in out, f"sign-in: ...and says the key is still to set: {out[-600:]}")
+        ok(code == 0 and not d_.get("needs"), f"sign-in: an app that set the JWT key anyway: the check is ready: {code} {d_.get('needs')}")
         code, out = go("zz_shop", "--deploy")
-        ok(code == 0, f"sign-in: ...and redeploys: {out[-400:]}")
-        w0 = W_(); w0["projects"]["zz-shop"]["env"].pop("CLERK_SECRET_KEY"); json.dump(w0, open(W, "w"))
+        ok(code == 0 and W_()["projects"]["zz-shop-api"]["env"].get("CLERK_JWT_KEY", "").startswith("-----BEGIN PUBLIC KEY-----"),
+           f"sign-in: ...and redeploys with it kept on the API: {out[-400:]}")
+        w0 = W_(); w0["projects"]["zz-shop"]["env"].pop("CLERK_SECRET_KEY"); w0["projects"]["zz-shop-api"]["env"].pop("CLERK_JWT_KEY"); json.dump(w0, open(W, "w"))
         code, out = go("zz_shop", "--json"); d_ = as_json(out)
-        ok(code == 3 and [n_["name"] for n_ in d_.get("needs") or []] == ["CLERK_SECRET_KEY", "CLERK_JWT_KEY"],
-           f"sign-in: a deployed app that lost Clerk's secret key stops again, the JWT key asked for with it: {code} {d_.get('needs')}")
+        ok(code == 3 and [n_["name"] for n_ in d_.get("needs") or []] == ["CLERK_SECRET_KEY"],
+           f"sign-in: a deployed app that lost Clerk's secret key stops again, for that key alone (never the JWT key): {code} {d_.get('needs')}")
         # the server target (offline): the names are the operator's values at the deploy's hidden prompt
         mx = SS.manifest("mold_vx", t)
-        ok(SS.sign_in_typed(mx, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and SS.sign_in_typed(mx, "vercel") == want
-           and SS.sign_in_names(mx) == ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and SS.sign_in_typed({}, "vercel") == [],
-           "sign-in: the names each target's operator gives (the browser's publishable key on a server, the API's on Vercel, filled from the other)")
+        ok(SS.sign_in_typed(mx, "compose_remote") == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"] and SS.sign_in_typed(mx, "vercel") == want
+           and SS.sign_in_names(mx) == ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_PUBLISHABLE_KEY"] and SS.sign_in_typed({}, "vercel") == []
+           and not SS.sign_in_spec(mx).get("kept_without") and "CLERK_JWT_KEY" not in json.dumps(SS.sign_in_spec(mx).get("ask")),
+           "sign-in: the names each target's operator gives (the browser's publishable key on a server, the API's on Vercel, filled from the other); never the JWT key")
         held = {"env": {"CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"}}
-        ok(SS.sign_in_missing(mx, "compose_remote", held, deployed=False) == (["CLERK_JWT_KEY"], []) and SS.sign_in_missing(mx, "compose_remote", held, deployed=True) == ([], ["CLERK_JWT_KEY"])
-           and SS.sign_in_missing(mx, "compose_remote", {"env": set()}, deployed=True) == (["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"], [])
-           and SS.sign_in_missing({}, "vercel", {}) == ([], []), "sign-in: what is missing, and the JWT key let go only for an app already deployed with the rest")
+        ok(SS.sign_in_missing(mx, "compose_remote", held, deployed=False) == ([], []) and SS.sign_in_missing(mx, "compose_remote", held, deployed=True) == ([], [])
+           and SS.sign_in_missing(mx, "compose_remote", {"env": {"CLERK_SECRET_KEY"}}, deployed=False) == (["CLERK_PUBLISHABLE_KEY"], [])
+           and SS.sign_in_missing(mx, "compose_remote", {"env": set()}, deployed=True) == (["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"], [])
+           and SS.sign_in_missing(mx, "vercel", {"api": {"CLERK_SECRET_KEY"}, "web": {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"}}) == ([], [])
+           and SS.sign_in_missing({}, "vercel", {}) == ([], []), "sign-in: what is missing; the two keys are all a first deploy needs, on either target")
+        # the kept_without mechanism stays for a mold that names one (mold_v0 names none since mold_v0-269)
+        mk = json.loads(json.dumps(mx)); mk["sign_in_required"]["targets"]["compose_remote"]["EXTRA_KEY"] = ["env"]; mk["sign_in_required"]["kept_without"] = ["EXTRA_KEY"]
+        ok(SS.sign_in_missing(mk, "compose_remote", held, deployed=False) == (["EXTRA_KEY"], []) and SS.sign_in_missing(mk, "compose_remote", held, deployed=True) == ([], ["EXTRA_KEY"]),
+           "sign-in: a kept_without name is let go only for an app already deployed with the rest")
         ci = {"target": "compose_remote", "secrets_user": [], "secrets_optional": ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY", "PAY_SECRET_KEY"],
               "compose_remote": {"host": "203.0.113.9", "domain": "shop.example.org"}}
         S = SS.settings("zz_shop", {"app_id": "zz_shop", "mold_id": "mold_vx"}, ci, root=t)
-        ok(S["secrets_user"] == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY", "CLERK_JWT_KEY"] and S["secrets_optional"] == ["PAY_SECRET_KEY"] and not S["deployed"],
-           f"sign-in: on a server Clerk's names are the operator's values (asked for at the deploy), whatever the state lists: {S['secrets_user']} {S['secrets_optional']}")
+        ok(S["secrets_user"] == ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"] and S["secrets_optional"] == ["CLERK_JWT_KEY", "PAY_SECRET_KEY"] and not S["deployed"],
+           f"sign-in: on a server Clerk's two keys are the operator's values (asked for at the deploy), the JWT key stays optional: {S['secrets_user']} {S['secrets_optional']}")
         import agent_result as AR
         F = SS.compose_facts(cb, mx)
         R = Runner({"qualify": (0, GOOD_FACTS), "names": (0, "POSTGRES_PASSWORD\nAPP_VAULT_KEY\n")}); AR.reset(); said = []; err = None
@@ -340,14 +350,16 @@ def sign_in_rehearsal(ok):
            and all("dashboard.clerk.com" in n_["how"] and "--deploy-remote" in n_["how"] for n_ in AR.NOTES["needs"])
            and "env" not in ran and "up" not in ran and "release-dir" not in ran and any("dashboard.clerk.com" in l for l in said),
            f"sign-in: a server deploy with nobody at a terminal stops for Clerk's keys (exit 3) before the release or its env file is touched: {err} {ran} {AR.NOTES['needs'][:1]}")
-        S2 = dict(S, deployed=True); AR.reset(); seen = []
-        R2 = Runner({"qualify": (0, GOOD_FACTS), "names": (0, "POSTGRES_PASSWORD\nAPP_VAULT_KEY\nCLERK_SECRET_KEY\nCLERK_PUBLISHABLE_KEY\n"),
-                     "up": (0, "UP=ok\nSERVING=20261020T000000Z\n"), "health": (0, HEALTHY)}); said = []
-        try: SS.deploy(S2, F, cb, runner=R2, resolver=lambda h: ["203.0.113.9"], say=said.append, secrets_for=lambda m: seen.append(list(m)) or {},
-                       read_public=lambda u: ("200", {"ok": True}, ""), wait=lambda s_: None, read_page=lambda u: ("307", ""), release="20261020T000000Z")
-        except SS.Stop as e: said.append("STOP " + str(e))
-        ok(seen == [] and any("NOTE: CLERK_JWT_KEY is not on the server yet" in l for l in said) and "env" in [c[0] for c in R2.calls],
-           f"sign-in: a server already on Clerk without the JWT key is deployed, nothing asked, the key said as still to set: {seen} {said[-3:]}")
+        for first in (True, False):   # a first deploy, and one already on Clerk: the server holds the two keys, never the JWT key
+            S2 = dict(S, deployed=not first); AR.reset(); seen = []
+            R2 = Runner({"qualify": (0, GOOD_FACTS), "names": (0, "POSTGRES_PASSWORD\nAPP_VAULT_KEY\nCLERK_SECRET_KEY\nCLERK_PUBLISHABLE_KEY\n"),
+                         "up": (0, "UP=ok\nSERVING=20261020T000000Z\n"), "health": (0, HEALTHY)}); said = []; err = None
+            try: SS.deploy(S2, F, cb, runner=R2, resolver=lambda h: ["203.0.113.9"], say=said.append, secrets_for=lambda m: seen.append(list(m)) or {},
+                           read_public=lambda u: ("200", {"ok": True}, ""), wait=lambda s_: None, read_page=lambda u: ("307", ""), release="20261020T000000Z")
+            except SS.Stop as e: said.append("STOP " + str(e))
+            except SS.NeedsHuman as e: err = e
+            ok(seen == [] and err is None and not AR.NOTES["needs"] and not asks_jwt("\n".join(said)) and "env" in [c[0] for c in R2.calls],
+               f"sign-in: a server holding Clerk's two keys is deployed ({'first deploy' if first else 'already on Clerk'}), nothing asked, the JWT key never named: {seen} {err} {said[-3:]}")
         AR.reset()
         # a pasted PEM block (several lines at a hidden prompt) is read as one line an env file holds
         lines = iter(["-----BEGIN PUBLIC KEY-----", "MIIBIjANBgkqhkiG9w0BAQEFAAOC", "AQ8AMIIBCgKCAQEAstandin", "-----END PUBLIC KEY-----", "never read"])
@@ -384,6 +396,11 @@ def run():
     ok("console" not in real["publishers"], f"the console publishes no port (Caddy alone does): {real['publishers']}")
     # mold_v0-004: the console's Clerk keys are optional (the built-in sign-in by default); the required-key path is
     # rehearsed with the fixture's own required names below.
+    rm = SS.manifest("mold_v0"); rK = SS.console_facts(SS.codebase("mold_v0"), rm)
+    ok(all("CLERK_JWT_KEY" in SS.secret_names(real, tg, rK if tg == "vercel" else None)[2] and "CLERK_JWT_KEY" not in SS.sign_in_typed(rm, tg) for tg in ("vercel", "compose_remote"))
+       and "CLERK_JWT_KEY" not in SS.sign_in_names(rm) and not SS.sign_in_spec(rm).get("kept_without") and "CLERK_JWT_KEY" not in json.dumps(SS.sign_in_spec(rm).get("ask"))
+       and "JWKS" in SS.sign_in_spec(rm).get("$comment", ""),
+       "mold_v0-269: Clerk's PEM public key (CLERK_JWT_KEY) is never required or asked on either target (tokens verified via Clerk's JWKS), and stays an optional name")
     ok(RK.get("required") == [] and RK.get("optional") == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"] and SS.secret_names(real, "compose_remote")[0] == []
        and {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} <= set(SS.secret_names(real, "compose_remote")[2]), f"on its own server the console's Clerk keys are optional: {SS.secret_names(real, 'compose_remote')}")
     ctext = open(os.path.join(SS.codebase("mold_v0"), real["file"])).read(); args = []
@@ -406,8 +423,8 @@ def run():
     try:
         cb = fixture_mold(t); man = SS.manifest("mold_vx", t); F = SS.compose_facts(cb, man)
         ok(F["service"] == "app" and F["port"] == "3333" and F["publishers"] == ["caddy"], f"fixture facts: {F['service']} {F['port']} {F['publishers']} (a profile-gated service is not a publisher)")
-        ok(F["required"] == ["APP_VAULT_KEY", "POSTGRES_PASSWORD", "PUBLIC_URL"] and F["optional_secrets"] == ["PAY_SECRET_KEY"], f"required {F['required']} optional secrets {F['optional_secrets']}")
-        u, d, o = SS.secret_names(F, "compose_remote"); ok(u == [] and d == ["APP_VAULT_KEY", "POSTGRES_PASSWORD"] and o == ["PAY_SECRET_KEY"], f"compose_remote names: {u} {d} {o}")
+        ok(F["required"] == ["APP_VAULT_KEY", "POSTGRES_PASSWORD", "PUBLIC_URL"] and F["optional_secrets"] == ["CLERK_JWT_KEY", "PAY_SECRET_KEY"], f"required {F['required']} optional secrets {F['optional_secrets']}")
+        u, d, o = SS.secret_names(F, "compose_remote"); ok(u == [] and d == ["APP_VAULT_KEY", "POSTGRES_PASSWORD"] and o == ["CLERK_JWT_KEY", "PAY_SECRET_KEY"], f"compose_remote names: {u} {d} {o}")
         u, d, o = SS.secret_names(F, "vercel"); ok(u == [] and d == ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"], f"vercel names: nothing typed by hand, the database provisioned: {u} {d}")
         # --- 2. preflight: a missing build input, a name nobody provides, a project that is not the app's own --------
         app = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned"}
@@ -739,6 +756,11 @@ def run():
         R3 = Runner({}); S3 = dict(S, secrets_optional=["PAY_SECRET_KEY"])
         SS.set_secret_remote("zz_shop", S3, "PAY_SECRET_KEY", P, runner=R3, value="sk-standin-abcdef", say=lambda s: None)
         ok(R3.calls[0][2] == "PAY_SECRET_KEY=sk-standin-abcdef\n" and "sk-standin-abcdef" not in " ".join(R3.calls[0][1]), "set-secret sends NAME=value on stdin, never in the command")
+        # mold_v0-269: Clerk's PEM public key is never asked for (JWKS), yet setting it is still accepted (a pasted block, joined)
+        R5 = Runner({}); pem1 = "-----BEGIN PUBLIC KEY----- MIIBIjANBgkqhkiG9w0BAQEFAAOC -----END PUBLIC KEY-----"
+        SS.set_secret_remote("zz_shop", dict(S, secrets_optional=F["optional_secrets"]), "CLERK_JWT_KEY", P, runner=R5, value=pem1, say=lambda s: None)
+        ok("CLERK_JWT_KEY" in F["optional_secrets"] and R5.calls[0][2] == f"CLERK_JWT_KEY={pem1}\n" and pem1 not in " ".join(R5.calls[0][1]),
+           f"--set-secret CLERK_JWT_KEY is still accepted on a server, the value on stdin only: {F['optional_secrets']}")
         R4 = Runner({}); S4 = dict(S, secrets_optional=[F["aliases"][1] + "JOURNEY_SECRET"])
         SS.set_secret_remote("zz_shop", S4, F["aliases"][1] + "JOURNEY_SECRET", P, runner=R4, value="js-standin-1234", say=lambda s: None)
         ok(R4.calls[0][2] == f"{F['aliases'][1]}JOURNEY_SECRET=js-standin-1234\n{F['aliases'][0]}JOURNEY_SECRET=js-standin-1234\n",
@@ -829,6 +851,11 @@ def run():
                and not any(c[0] == "set_env" and c[1] == "zz-shop-api" for c in fp.calls), f"a console sign-in key lands on the console only, made under the team scope: {fp.calls}")
             fp = FakeP(); SS.set_secret_vercel("zz_shop", va, cp(vi), "PAY_SECRET_KEY", fp, root=t, value="sk-standin-xyz")
             ok(("set_env", "zz-shop-api", "PAY_SECRET_KEY") in fp.calls and not any(c[0] == "set_env" and c[1] == "zz-shop" for c in fp.calls), f"an API key lands on the api project only: {fp.calls}")
+            # mold_v0-269: Clerk's PEM public key is never asked for (JWKS), yet setting it is still accepted, onto the API
+            vj = cp(vi); vj["secrets_optional"].append("CLERK_JWT_KEY"); fp = FakeP()
+            SS.set_secret_vercel("zz_shop", va, vj, "CLERK_JWT_KEY", fp, root=t, value="-----BEGIN PUBLIC KEY----- standin -----END PUBLIC KEY-----")
+            ok(SS.project_for(F, K, "CLERK_JWT_KEY") == ["api"] and ("set_env", "zz-shop-api", "CLERK_JWT_KEY") in fp.calls
+               and not any(c[0] == "set_env" and c[1] == "zz-shop" for c in fp.calls), f"--set-secret CLERK_JWT_KEY is still accepted, onto the api project only: {fp.calls}")
             for nm in ("DATABASE_URL", "NOT_READ"):
                 try: SS.set_secret_vercel("zz_shop", va, cp(vi), nm, FakeP(), root=t, value="x1234"); ok(False, f"{nm} is refused by --set-secret")
                 except SS.Stop: ok(True, "")
