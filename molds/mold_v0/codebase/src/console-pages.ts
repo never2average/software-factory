@@ -39,12 +39,14 @@ export const CONSOLE_PAGES = {
   // Each person's own API keys (mold_v0-007; the sidebar's footer link): hidden (mold_v0-171), the link and the page go;
   // the keys made before keep working (the API is never changed). profile.json member_keys false turns the keys off.
   keys: "/app/keys",
+  // The workspace agent (mold_v0-243; a page only while agent_harness is on): a pack's `agent` tab puts it in the sidebar.
+  agent: "/app/agent",
 } as const;
 export type ConsolePage = keyof typeof CONSOLE_PAGES;
 
 /** A declared tab's kind -> the shell page it opens (mold_v0-058: a `usage` tab opens the Activity page). */
 export const TAB_KIND_PAGE: Record<string, ConsolePage> = {
-  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys",
+  usage: "activity", billing: "billing", profile: "profile", credentials: "credentials", schedules: "schedules", notices: "notices", files: "files", keys: "keys", agent: "agent",
 };
 
 /**
