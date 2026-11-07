@@ -6,7 +6,7 @@ address is rewritten by git itself to a local bare repository, and git is told i
 
 Every secret-shaped string below is put together at run time, so this file holds none.
 """
-import contextlib, io, json, os, shutil, stat, subprocess, sys, tempfile, urllib.error, urllib.parse
+import contextlib, fnmatch, io, json, os, shutil, stat, subprocess, sys, tempfile, urllib.error, urllib.parse
 
 GH = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -322,6 +322,20 @@ def run(M):
         ok(len(factory._repositories(two)) == 1 and factory._repositories({"a": two["a"], "c": two["c"]}) == [], "two apps recording one repository must fail validate")
         ok(factory._repository("x", {"infrastructure": {}}) == [], "an app with no repository must validate as before")
         ok(M.status_line({}, "x").startswith("repository: none (ask for one: repo.py x publish") and "auto-push off" in M.status_line({"repository": good}), "mint's one line")
+
+        # ---- mold_v0-262: the in-tree mold holds nothing the gate refuses; its tests build their stand-in keys at run time
+        mold = os.path.join(real_root, "molds", "mold_v0", "codebase")
+        tracked = subprocess.run(["git", "-C", real_root, "ls-files", "-z", "--", "molds/mold_v0/codebase"], capture_output=True, env=real_env)
+        if os.path.isdir(mold) and tracked.returncode == 0 and tracked.stdout:
+            rels = [os.path.relpath(os.path.join(real_root, f.decode()), mold) for f in tracked.stdout.split(b"\0") if f]
+            rels = [r for r in rels if not any(fnmatch.fnmatch(part, pat) for part in r.split(os.sep) for pat in M.LEFT_OUT) and os.path.isfile(os.path.join(mold, r))]
+            hits = M.scan(mold, None, rels)
+            ok(not hits, "the mold's own files must hold no secret-shaped text (build stand-in keys at run time, as scripts/lib/fake-secrets.ts): "
+               + ", ".join(f"{f}:{n} {what}" for f, n, what in hits[:8]))
+        # The same stand-ins, written out as a test writes them at run time, are still caught: nothing was allowlisted.
+        armour = "-" * 5 + "BEGIN RSA " + "PRIVATE KEY" + "-" * 5
+        probe = os.path.join(tmp, "probe"); write(os.path.join(probe, "a.txt"), armour + "\nAAAA\n"); write(os.path.join(probe, "b.txt"), "-".join(["sk", "ant", "api03", "A" * 32]) + "\n")
+        ok(sorted(w for _, _, w in M.scan(probe)) == ["a private key block", "an Anthropic or OpenAI key"], "the gate must still find a key block and a provider key's shape: " + repr(M.scan(probe)))
     finally:
         M.ROOT, M.ENV = real_root, real_env; packs.ROOT, packs.PACKS = real_packs; M.urllib.request.urlopen = real_open
         if os.path.basename(tmp).startswith("sf-repo-selftest-"): shutil.rmtree(tmp, ignore_errors=True)

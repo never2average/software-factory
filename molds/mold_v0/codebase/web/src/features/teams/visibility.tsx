@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
 import { featureOn } from '@/config/features';
-import type { RecordAreaSpec } from '@/config/pack-nav.generated';
+import { recordAreas, type RecordAreaSpec } from '@/config/pack-nav.generated';
 import type { RecordCol } from '@/components/layout/record-view';
 import type { FilterRule } from '@/components/layout/record-filters';
 import { httpError } from '@/features/status/from-error';
@@ -23,7 +23,9 @@ import { cn } from '@/lib/utils';
 
 export type VisibilityMode = 'workspace' | 'team' | 'private';
 /** What a read shows of a record's visibility (src/pack-api.ts RecordVisibility). */
-export interface RecordVisibility { mode: VisibilityMode; team: { id: number; name: string } | null; owner: string | null; collaborators: string[] }
+export interface RecordVisibility { mode: VisibilityMode | 'inherit'; team: { id: number; name: string } | null; owner: string | null; collaborators: string[];
+  /** mold_v0-262: the record an inherited one follows. */
+  parent?: { area: string; key: string } }
 /** What a write sends (src/pack-api.ts VisibilityInput). */
 export interface VisibilityInput { mode: VisibilityMode; team?: number | null; collaborators?: string[] }
 /** An area's declaration, as the generated registry carries it while the flag is on. */
@@ -33,20 +35,32 @@ export interface Person { user_id: string; name: string | null; email: string | 
 export interface TeamsData { teams: TeamSummary[]; mine: { id: number; name: string; role: 'member' | 'lead' }[]; people: Person[]; me: string | null; can_manage: boolean }
 
 /** The area's visibility, while the flag is on and it declares one. */
-export const visibilityOf = (area: Pick<RecordAreaSpec, 'name'> | null | undefined): VisibilityDecl | null =>
-  (featureOn('teams') && area ? ((area as { visibility?: VisibilityDecl }).visibility ?? null) : null);
+export const visibilityOf = (area: Pick<RecordAreaSpec, 'name'> | null | undefined): VisibilityDecl | null => {
+  const v = featureOn('teams') && area ? ((area as { visibility?: VisibilityDecl | { inherit: string } }).visibility ?? null) : null;
+  // mold_v0-262: an area that follows its parent's visibility has none of its own to choose, list or share.
+  return v && 'modes' in v ? v : null;
+};
+/** mold_v0-262: the reference field whose record an area's records follow (flag teams), or null. */
+export const inheritedVisibility = (area: Pick<RecordAreaSpec, 'name'> | null | undefined): string | null => {
+  const v = featureOn('teams') && area ? ((area as { visibility?: { inherit?: string } }).visibility ?? null) : null;
+  return v && typeof v.inherit === 'string' ? v.inherit : null;
+};
 
 export const MODE_WORDS: Record<VisibilityMode, string> = { workspace: 'Everyone in the workspace', team: 'One team', private: 'Only its owner' };
 /** A record's visibility in a few words: "Workspace", "Team: Design", "Private". */
 export const visibilityWords = (v: RecordVisibility | null | undefined) =>
-  !v || v.mode === 'workspace' ? 'Workspace' : v.mode === 'team' ? `Team: ${v.team?.name ?? 'removed'}` : 'Private';
+  !v || v.mode === 'workspace' ? 'Workspace' : v.mode === 'team' ? `Team: ${v.team?.name ?? 'removed'}` : v.mode === 'inherit' ? `As its ${parentWord(v.parent?.area)}` : 'Private';
+const parentWord = (area: string | undefined) => {
+  const l = (area && recordAreas.find((a) => a.name === area)?.label) || 'parent record';
+  return (/ies$/i.test(l) ? l.replace(/ies$/i, 'y') : /ss$/i.test(l) ? l : l.replace(/s$/i, '')).toLowerCase();
+};
 export const personWords = (p: Person | undefined, id: string, me?: string | null) => (id === me ? 'You' : p?.name || p?.email || 'A person of this workspace');
 
 
 /** The visibility as a small badge (the record page's header, an open row). */
 export function VisibilityBadge({ v, className }: { v: RecordVisibility | null | undefined; className?: string }) {
   const mode = v?.mode ?? 'workspace';
-  const Icon = mode === 'private' ? Icons.lock : mode === 'team' ? Icons.teams : Icons.building;
+  const Icon = mode === 'private' ? Icons.lock : mode === 'team' ? Icons.teams : mode === 'inherit' ? Icons.link : Icons.building;
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium', mode === 'private' ? 'border-amber-500/40 text-amber-700 dark:text-amber-300' : mode === 'team' ? 'border-sky-500/40 text-sky-700 dark:text-sky-300' : 'text-muted-foreground', className)}
       data-visibility={mode}>
@@ -80,7 +94,7 @@ export function defaultVisibility(decl: VisibilityDecl, teams: TeamsData | null)
   const mine = teams?.mine ?? [];
   return decl.default === 'team' ? { mode: 'team', team: mine.length === 1 ? mine[0]!.id : null } : { mode: decl.default };
 }
-const asInput = (v: RecordVisibility): VisibilityInput => ({ mode: v.mode, team: v.team?.id ?? null, collaborators: v.collaborators });
+const asInput = (v: RecordVisibility): VisibilityInput => ({ mode: v.mode === 'inherit' ? 'workspace' : v.mode, team: v.team?.id ?? null, collaborators: v.collaborators });
 const sameInput = (a: VisibilityInput, b: VisibilityInput) =>
   a.mode === b.mode && (a.mode !== 'team' || (a.team ?? null) === (b.team ?? null)) && JSON.stringify([...(a.collaborators ?? [])].sort()) === JSON.stringify([...(b.collaborators ?? [])].sort());
 

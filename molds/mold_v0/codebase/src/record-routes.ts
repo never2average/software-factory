@@ -48,7 +48,7 @@ import { mergedPage } from "./record-merge.js";
 import { anyArea, mountFileRoutes } from "./record-files.js";
 import { auditListPurpose } from "./audit-trail.js";
 import { dueAcross } from "./record-clocks.js";
-import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, type RecordArea } from "./record-areas.js";
+import { areaOrThrow, areaSummary, assertMayExport, deletePlatform, detailFor, getPlatform, isReadOnlyArea, listFor, listPlatform, observedProvenance, platformProvenance, putPlatform, recordAreas, withRefTitles, type RecordArea } from "./record-areas.js";
 import { getDb } from "./db.js";
 import { auditStaffRows } from "./audit-trail.js";
 
@@ -90,7 +90,8 @@ export function recordAppRouter(): Router {
     exporting(req, res, tabAreas(tab).map((a) => areaOrThrow(a.area)));
     if (!tab.areas) {
       const a = areaOrThrow(tab.area!);
-      return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), filter: tab.filter }, actor(res))) };
+      const page = await listFor(org(res), a.name, { limit: req.query.limit === undefined ? undefined : Number(req.query.limit), after: req.query.after === undefined ? undefined : String(req.query.after), filter: tab.filter }, actor(res));
+      return { area: areaSummary(a), ...page, records: await withRefTitles(org(res), a, page.records, actor(res)) };
     }
     return mergedPage(org(res), tab, { limit: req.query.limit, after: req.query.after }, actor(res));
   }));
@@ -105,7 +106,9 @@ export function recordAppRouter(): Router {
   r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     exporting(req, res, [a]);
-    return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
+    const page = await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res));
+    // mold_v0-262 (flag record_pages): each row's references' titles (its cells show them).
+    return { area: areaSummary(a), ...page, records: await withRefTitles(org(res), a, page.records, actor(res)) };
   }));
   // A record's files and documents (mold_v0-220, src/record-files.ts): its card's file cards, and each file's bytes.
   mountFileRoutes(r, { base: "/api/records", org, actor, who: (res) => ({ scope: `org-${org(res)}`, person: String(actor(res).userId) }), area: anyArea }, (op) => open(op));

@@ -140,6 +140,13 @@ route, page, table row or action of it answers.
   ceiling (a start or a raise past them refused), its tools (the free list in the frozen policy, the hidden ones refused
   by `/mcp` and by the request and decision steps), a price removed (409).
 
+- **Credentials** (mold_v0-262). A profile's `credentials: ["<pack>/<field>"]` name workspace credentials its sessions
+  receive (a field bound to the workspace, a value pasted in Settings › Credentials: a hosting deploy token, so the agent
+  can deploy). Only a session a workspace owner starts freezes them; each wake fetches them with its lease as a run does
+  (its run's `credentials` event names what it was given, never a value), gets each in its env or file, and everything it
+  writes is redacted of them. A pack's profile naming a credential the build lacks, or one bound to a record, is refused
+  at build; staff's editor refuses the same.
+
 ## Deliberately not copied
 
 - **The reference's product surfaces**: its pipelines, entities, report proposals, checklists, eval datasets and

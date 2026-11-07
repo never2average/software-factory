@@ -389,7 +389,7 @@ interface Row extends Partial<StoredVisibility> { key: string; title: string | n
 /** mold_v0-259: a read's visibility columns, for an area whose records carry theirs (flag teams); else none (as before). */
 const visCols = (area: RecordArea) => (visibilityShown(area) ? `, ${VISIBILITY_COLUMNS}` : "");
 /** The columns a write of a record's visibility sets, in VisibilityWrite's order (0050). */
-const VIS_WRITE = ["visibility", "team_id", "owner_id", "collaborators"] as const;
+const VIS_WRITE = ["visibility", "team_id", "owner_id", "collaborators", "inherit_area", "inherit_key"] as const; // mold_v0-262: a parent's area and key (0053)
 const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOString();
 async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promise<RecordRow> {
   // Sealed values open with the row's own workspace key only (a row sealed before its area stopped being sealed opens
@@ -564,7 +564,7 @@ export function shareFor(orgId: number, name: string, key: string, given: unknow
     assertMay(area, "update", actor);
     if (area.append_only) throw appendOnly(area, key);
     if (given === undefined || given === null) throw new PackError("give `visibility`: {mode: workspace|team|private, team?, collaborators?}", 400);
-    const vis = (await visibilityForWrite(orgId, area, actor, given, prev.stored))!;
+    const vis = (await visibilityForWrite(orgId, area, actor, given, prev.stored, txScope.getStore()?.tx))!;
     const who = writerText(writerOf(actor, null));
     const [r] = await withTenant(orgId, async () => (await q()).query<Row>(
       `UPDATE workspace_records SET visibility = $5, team_id = $6, owner_id = $7, collaborators = $8, updated_by = $9
@@ -703,7 +703,46 @@ async function detailForNow(orgId: number, name: string, key: string, actor: Act
   const written = area.scope === "workspace" ? (await workspaceProvenance(orgId, area, [record.key])).get(record.key) : undefined;
   // mold_v0-259 (flag teams): whether this person may change who sees it (the page's Share).
   const share = record.visibility ? { can_share: !area.append_only && !isReadOnlyArea(area) && may(area, "update", actor) && await mayShare(orgId, area, actor, record.visibility) } : {};
-  return { area: areaSummary(area), record, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}), ...share };
+  // mold_v0-262 (flag record_pages): its references' titles, from the links just read (a fact or a section shows them).
+  const titled = (await import("./features.js")).featureOn("record_pages") && links.length
+    ? (() => { const out: Record<string, Record<string, string>> = {}; for (const l of links) for (const r of l.records) if (r.title) (out[l.field] ??= {})[r.key] = r.title; return Object.keys(out).length ? { ...record, ref_titles: out } : record; })()
+    : record;
+  return { area: areaSummary(area), record: titled, links, ...clockEvents, ...(written && (written.by || written.updated_by) ? { provenance: written } : {}), ...share };
+}
+
+/**
+ * The titles of the records a page of rows names through its references and links (mold_v0-262, flag record_pages):
+ * each row gains `ref_titles` ({field: {key: title}}), so a fact, a cell or a related column shows the record's title
+ * (linking to it) rather than its key. Read as the person (a record they may not see has no title here and keeps its
+ * key; an area they may not read, an area read live from an API and a shared row naming a workspace's are left out),
+ * one query per target area. Off, the rows are as before.
+ */
+export async function withRefTitles<T extends { data: Record<string, unknown> }>(orgId: number | null, area: RecordArea, rows: T[], actor: Actor = SYSTEM_ACTOR): Promise<T[]> {
+  if (!rows.length || !(await import("./features.js")).featureOn("record_pages")) return rows;
+  const links = areaLinks(area).filter((l) => {
+    const t = findArea(l.area);
+    return !!t && !isLive(t) && may(t, "read", actor) && !((area.scope === "platform" || orgId === null) && t.scope === "workspace");
+  });
+  if (!links.length) return rows;
+  const keysOf = (v: unknown) => (Array.isArray(v) ? v : [v]).filter((x): x is string => typeof x === "string" && KEY.test(x));
+  const wanted = new Map<string, Set<string>>();
+  for (const l of links) for (const r of rows) for (const k of keysOf(r.data?.[l.field])) (wanted.get(l.area) ?? wanted.set(l.area, new Set()).get(l.area)!).add(k);
+  const titles = new Map<string, Map<string, string>>();
+  await asViewerOf(actor, async () => {
+    for (const [name, set] of wanted) {
+      const t = findArea(name)!, keys = [...set].slice(0, 2000);
+      const got = t.scope === "platform"
+        ? await (await q()).query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [t.pack, t.name, keys])
+        : await withTenant(orgId!, async () => (await q()).query<{ key: string; title: string | null }>(
+          "SELECT key, title FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, t.pack, t.name, keys]));
+      titles.set(name, new Map(got.filter((x) => x.title).map((x) => [x.key, x.title!])));
+    }
+  });
+  return rows.map((r) => {
+    const out: Record<string, Record<string, string>> = {};
+    for (const l of links) for (const k of keysOf(r.data?.[l.field])) { const t = titles.get(l.area)?.get(k); if (t) (out[l.field] ??= {})[k] = t; }
+    return Object.keys(out).length ? { ...r, ref_titles: out } : r;
+  });
 }
 
 const ownWorkspaceArea = (pack: string, name: string) => {
@@ -794,10 +833,10 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
     const [r] = prev === null
       ? await db.query<Row>(
         // mold_v0-259: a new record's visibility (flag teams, an area that declares one); else the columns stay NULL.
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by${visInto}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12${vis ? ", $13, $14, $15, $16" : ""})
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint, chained, provenance, written_by, updated_by${visInto}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12${vis ? ", $13, $14, $15, $16, $17, $18" : ""})
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at${visCols(area)}`,
         [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null, area.chain === true, kind, kind ? who : null,
-          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators] : [])])
+          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, vis.inherit_area ?? null, vis.inherit_key ?? null] : [])])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
         `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now(),
@@ -805,7 +844,7 @@ async function writeRow(orgId: number, area: RecordArea, key: string, t: string 
             provenance = CASE WHEN $9::text IS NOT NULL THEN 'repository' ELSE provenance END, updated_by = $11${visSet}
           WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at${visCols(area)}`,
         [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null, who,
-          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators] : [])]);
+          ...(vis ? [vis.visibility, vis.team_id, vis.owner_id, vis.collaborators, vis.inherit_area ?? null, vis.inherit_key ?? null] : [])]);
     if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
     auditData(orgId, { action: action ?? (prev === null ? "create" : "update"), pack: area.pack, area: area.name, key }); // mold_v0-197: never the values
     return toRecord(area, r, orgId);
@@ -864,7 +903,8 @@ async function putWorkspaceNow(orgId: number, pack: string, actor: Actor, name: 
   const { input: given, carried } = splitEncryptedInput(area, value?.data, prev?.opened ?? null);
   const t = title(value?.title);
   // mold_v0-259 (flag teams): who sees it, for a new record or a change that names it (else kept); a repository's index none.
-  const vis = meta ? null : await visibilityForWrite(orgId, area, actor, value?.visibility, prev ? prev.stored : null);
+  // mold_v0-262: its lookups on the write's own transaction when it has one (a history section, a batch): never a second.
+  const vis = meta ? null : await visibilityForWrite(orgId, area, actor, value?.visibility, prev ? prev.stored : null, txScope.getStore()?.tx, value?.data);
   if (!area.lifecycle) {
     const data = { ...(await checkRecord(area, given, orgId, actor, undefined, Object.keys(carried))), ...carried }, w = writerOf(actor, meta);
     await onSaveChecks(orgId, area, key, t, data, prev ? "update" : "create", actor);

@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup } from "./lib/test-world.js";
+import { pemBlock } from "./lib/fake-secrets.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ENGINE_KEYS = ["ORCHESTRATOR_MODEL", "MAX_SESSIONS_PER_RUN", "MAX_ORCHESTRATORS", "MAX_JOB_ORCHESTRATORS", "JOB_POD_CAPACITY", "BOAT_SANDBOX_SIZE"];
@@ -58,7 +59,7 @@ try {
       await settings.setSettings("test", { ORCHESTRATOR_MODEL: "claude-test-1" });
       assert.equal(settings.settingText("ORCHESTRATOR_MODEL"), "claude-test-1", "a setting the build does not list may still be set");
       await settings.setSettings("test", { ORCHESTRATOR_MODEL: null });
-      const sa = JSON.stringify({ type: "service_account", project_id: "proj-test-1", client_email: "x@proj-test-1.iam.gserviceaccount.com", private_key: "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n" });
+      const sa = JSON.stringify({ type: "service_account", project_id: "proj-test-1", client_email: "x@proj-test-1.iam.gserviceaccount.com", private_key: pemBlock("AAAA") });
       const saved = await kv.setCredential("vertex", sa);
       assert.ok((await keys()).includes("VERTEX_REGION"), "with a Vertex key: the Vertex AI region");
       await kv.deleteCredential(saved.id);

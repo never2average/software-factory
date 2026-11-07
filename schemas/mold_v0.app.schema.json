@@ -501,8 +501,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "title": "Profile settings",
-      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners, features (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
-      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`, `features`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
+      "description": "The app's own profile settings over the mold's defaults: email, email_from_address, member_keys, source_offer.upstreams, legal, mcp_instructions, landing, audit, onprem_runners, features, team_roles (molds/mold_v0/branding/rules.json app_settable). Limits go in budgets.",
+      "markdownDescription": "The app's own settings over the mold's defaults (`molds/mold_v0/branding/rules.json` `app_settable`): `email`, `email_from_address`, `member_keys`, `source_offer.upstreams`, `legal`, `mcp_instructions`, `landing`, `audit`, `onprem_runners`, `features`, `team_roles`. Limits go in `budgets`. Never a brand word, billing, entitlements or a secret.",
       "properties": {
         "email": {
           "type": "object",
@@ -661,6 +661,47 @@
           "description": "Not supported: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219).",
           "markdownDescription": "**Not supported**: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219).",
           "errorMessage": "Not supported: say the capability flags in the spec's top-level `features` block, which is written to profile.features (mold_v0-219)."
+        },
+        "team_roles": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "description": "A workspace's team roles in the app's words (mold_v0-262, flag teams): each role's id, its label and the level it stands for (lead: also changes who sees the team's records; member: sees them), at least one of each. Absent: Lead and Member.",
+          "markdownDescription": "A workspace's team roles in the app's words (mold_v0-262, flag teams): each role's id, its label and the level it stands for (lead: also changes who sees the team's records; member: sees them), at least one of each. Absent: Lead and Member.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "level"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,23}$",
+                "description": "The role's id: lowercase letters, digits and _.",
+                "markdownDescription": "The role's id: lowercase letters, digits and _."
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n<>{}]+$",
+                "description": "What people read (Lead, Developer, Viewer).",
+                "markdownDescription": "What people read (Lead, Developer, Viewer)."
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "lead",
+                  "member"
+                ],
+                "description": "What the role may do: lead or member.",
+                "markdownDescription": "What the role may do: lead or member."
+              }
+            }
+          }
         },
         "limits": {
           "not": {},
@@ -2097,6 +2138,12 @@
                           ],
                           "additionalProperties": false
                         }
+                      ]
+                    },
+                    "display": {
+                      "type": "string",
+                      "enum": [
+                        "chips"
                       ]
                     }
                   },
@@ -4527,6 +4574,292 @@
                                   }
                                 },
                                 "additionalProperties": false
+                              },
+                              "when": {
+                                "type": "object",
+                                "properties": {
+                                  "field": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "equals": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "not_in": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "empty": {
+                                    "type": "boolean"
+                                  },
+                                  "before": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "after": {
+                                    "type": "string",
+                                    "const": "today"
+                                  },
+                                  "within_days": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3650
+                                  },
+                                  "clock": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                  },
+                                  "is": {
+                                    "type": "string",
+                                    "enum": [
+                                      "overdue",
+                                      "due_soon"
+                                    ]
+                                  },
+                                  "all": {
+                                    "minItems": 1,
+                                    "maxItems": 6,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "field": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "equals": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        },
+                                        "in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "not_in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "empty": {
+                                          "type": "boolean"
+                                        },
+                                        "before": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "after": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "within_days": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 3650
+                                        },
+                                        "clock": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "is": {
+                                          "type": "string",
+                                          "enum": [
+                                            "overdue",
+                                            "due_soon"
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "any": {
+                                    "minItems": 1,
+                                    "maxItems": 6,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "field": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "equals": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            }
+                                          ]
+                                        },
+                                        "in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "not_in": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 200
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "empty": {
+                                          "type": "boolean"
+                                        },
+                                        "before": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "after": {
+                                          "type": "string",
+                                          "const": "today"
+                                        },
+                                        "within_days": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 3650
+                                        },
+                                        "clock": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                        },
+                                        "is": {
+                                          "type": "string",
+                                          "enum": [
+                                            "overdue",
+                                            "due_soon"
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -4566,7 +4899,8 @@
                             "link",
                             "copy_link",
                             "create_record",
-                            "start_agent"
+                            "start_agent",
+                            "open_url"
                           ]
                         },
                         "place": {
@@ -4979,6 +5313,9 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "linked": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -4987,42 +5324,63 @@
                 "additionalProperties": false
               },
               "visibility": {
-                "type": "object",
-                "properties": {
-                  "modes": {
-                    "minItems": 1,
-                    "maxItems": 3,
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "workspace",
-                        "team",
-                        "private"
-                      ]
-                    }
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "modes": {
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "workspace",
+                            "team",
+                            "private"
+                          ]
+                        }
+                      },
+                      "default": {
+                        "type": "string",
+                        "enum": [
+                          "workspace",
+                          "team",
+                          "private"
+                        ]
+                      },
+                      "collaborators": {
+                        "type": "boolean"
+                      },
+                      "$comment": {
+                        "type": "string",
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "modes",
+                      "default"
+                    ],
+                    "additionalProperties": false
                   },
-                  "default": {
-                    "type": "string",
-                    "enum": [
-                      "workspace",
-                      "team",
-                      "private"
-                    ]
-                  },
-                  "collaborators": {
-                    "type": "boolean"
-                  },
-                  "$comment": {
-                    "type": "string",
-                    "maxLength": 2000
+                  {
+                    "type": "object",
+                    "properties": {
+                      "inherit": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "$comment": {
+                        "type": "string",
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "inherit"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "modes",
-                  "default"
-                ],
-                "additionalProperties": false
+                ]
               },
               "samples": {
                 "maxItems": 20,
@@ -5566,6 +5924,12 @@
                               ],
                               "additionalProperties": false
                             }
+                          ]
+                        },
+                        "display": {
+                          "type": "string",
+                          "enum": [
+                            "chips"
                           ]
                         }
                       },
@@ -6130,6 +6494,12 @@
                               ],
                               "additionalProperties": false
                             }
+                          ]
+                        },
+                        "display": {
+                          "type": "string",
+                          "enum": [
+                            "chips"
                           ]
                         }
                       },
@@ -10105,6 +10475,14 @@
                   }
                 ]
               },
+              "credentials": {
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,30}\\/[a-z][a-z0-9_]{1,62}$"
+                }
+              },
               "id": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9-]{1,39}$"
@@ -10126,6 +10504,43 @@
             "required": [
               "id",
               "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "team_roles": {
+          "minItems": 2,
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,23}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^[^\\n\\r{}<>]*$"
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "lead",
+                  "member"
+                ]
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "level"
             ],
             "additionalProperties": false
           }

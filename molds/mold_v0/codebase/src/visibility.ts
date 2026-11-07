@@ -18,19 +18,30 @@
  * a computed fact or column, the record picker, an export, a metric or chart count, a reference check and a write each
  * find only the records that person may see. Narrowing only: an owner's actor inside a person's request never widens it.
  *
+ * The lookups a write makes (the writer's teams, a named team) run on the write's own transaction when it has one
+ * (`tx`, mold_v0-262): a history section makes each write a transaction, and a lookup of its own would wait for a
+ * second connection the embedded database never gives while the first is open (the write hung).
+ *
+ * Inherited (mold_v0-262, sql/migrations/0053): an area declaring `visibility: {inherit: <reference field>}` stores each
+ * record as 'inherit' with the record that field names, and the same policy shows it exactly when its parent is shown.
+ *
  * Writes (src/record-areas.ts putWorkspace): a new record takes the visibility it is given, else its area's default,
  * owned by the person who adds it; a change keeps it unless one is given, which only the record's owner, a lead of its
  * team or a workspace owner may (Share). A person cannot give a record a visibility that would hide it from themselves.
  */
 import type { AccountRole } from "./account-roles.js";
+import type { Queryable } from "./db.js";
 import { featureSetting } from "./feature-flags.js";
-import { PackError, VISIBILITY_MODES, type RecordVisibility, type VisibilityInput, type z, type VisibilitySchema } from "./pack-api.js";
+import { inheritsVisibility, PackError, VISIBILITY_MODES, type InheritVisibilitySchema, type RecordVisibility, type VisibilityInput, type z, type VisibilitySchema } from "./pack-api.js";
 import { currentViewer, withViewer } from "./tenant-scope.js";
 import { findTeam, teamsOf } from "./teams.js";
 
 export type VisibilityMode = (typeof VISIBILITY_MODES)[number];
 type Declared = z.output<typeof VisibilitySchema>;
-interface AreaLike { name: string; label: string; scope: string; visibility?: Declared }
+type Modes = Exclude<Declared, z.output<typeof InheritVisibilitySchema>>;
+interface AreaLike { name: string; label: string; scope: string; visibility?: Declared; fields?: readonly { name: string; to?: string; label?: string }[] }
+/** The modes an area declares (none: it inherits its parent's, mold_v0-262). */
+const modesOf = (a: AreaLike): Modes | null => (a.visibility && !inheritsVisibility(a.visibility) ? (a.visibility as Modes) : null);
 interface Actor { role: AccountRole | null; userId: string | null }
 
 /** The teams flag (src/features.json): off, nothing of this module applies. */
@@ -69,18 +80,25 @@ const seesAll = (a: Actor) => viewerOf(a) === undefined && currentViewer() === n
 // ---------- the stored columns and what a read shows ----------
 
 /** A record's visibility columns (workspace_records, 0050), as stored. */
-export interface StoredVisibility { visibility: string | null; team_id: number | string | null; owner_id: string | null; collaborators: string[] | null; team_name?: string | null }
+export interface StoredVisibility { visibility: string | null; team_id: number | string | null; owner_id: string | null; collaborators: string[] | null; team_name?: string | null;
+  /** mold_v0-262: the parent an 'inherit' record follows (0053). */
+  inherit_area?: string | null; inherit_key?: string | null }
 /** The columns a read selects for an area whose records carry their visibility. */
-export const VISIBILITY_COLUMNS = "visibility, team_id, owner_id, collaborators, (SELECT t.name FROM workspace_teams t WHERE t.org_id = workspace_records.org_id AND t.id = workspace_records.team_id) AS team_name";
+export const VISIBILITY_COLUMNS = "visibility, team_id, owner_id, collaborators, inherit_area, inherit_key, (SELECT t.name FROM workspace_teams t WHERE t.org_id = workspace_records.org_id AND t.id = workspace_records.team_id) AS team_name";
 /** What a read shows: a record written before the flag (all NULL) is open to the workspace. */
 export function visibilityOf(row: StoredVisibility): RecordVisibility {
+  // mold_v0-262: a record that follows its parent's visibility says which record that is.
+  if (row.visibility === "inherit" && row.inherit_area && row.inherit_key)
+    return { mode: "inherit", team: null, owner: row.owner_id ?? null, collaborators: [], parent: { area: row.inherit_area, key: row.inherit_key } };
   const mode = (row.visibility === "team" || row.visibility === "private" ? row.visibility : "workspace") as VisibilityMode;
   const teamId = row.team_id === null || row.team_id === undefined ? null : Number(row.team_id);
   return { mode, team: mode === "team" && teamId !== null ? { id: teamId, name: row.team_name ?? `Team ${teamId}` } : null, owner: row.owner_id ?? null, collaborators: row.collaborators ?? [] };
 }
 
 /** The values a write stores (null: the visibility stays as it is). */
-export interface VisibilityWrite { visibility: VisibilityMode; team_id: number | null; owner_id: string | null; collaborators: string[] | null }
+export interface VisibilityWrite { visibility: VisibilityMode | "inherit"; team_id: number | null; owner_id: string | null; collaborators: string[] | null;
+  /** mold_v0-262: the parent an 'inherit' record follows (else null). */
+  inherit_area?: string | null; inherit_key?: string | null }
 
 const WORDS: Record<VisibilityMode, string> = { workspace: "everyone in the workspace", team: "one team", private: "only its owner" };
 const MAX_COLLABORATORS = 50;
@@ -90,12 +108,12 @@ function parseInput(area: AreaLike, v: unknown): { mode: VisibilityMode; team: u
   const o = v as Record<string, unknown>;
   const extra = Object.keys(o).filter((k) => !["mode", "team", "collaborators"].includes(k));
   if (extra.length) throw new PackError(`\`visibility\` has no ${extra[0]!.slice(0, 40)}: give mode, team and collaborators`, 400);
-  const modes = area.visibility!.modes;
+  const modes = modesOf(area)!.modes;
   if (typeof o.mode !== "string" || !(modes as readonly string[]).includes(o.mode))
     throw new PackError(`\`visibility.mode\`: one of ${modes.join(", ")} (${area.label} records may be seen by ${modes.map((m) => WORDS[m]).join(", or ")})`, 400);
   let collaborators: string[] | undefined;
   if (o.collaborators !== undefined && o.collaborators !== null) {
-    if (!area.visibility!.collaborators) throw new PackError(`${area.label} records name no collaborators`, 400);
+    if (!modesOf(area)!.collaborators) throw new PackError(`${area.label} records name no collaborators`, 400);
     if (!Array.isArray(o.collaborators) || o.collaborators.length > MAX_COLLABORATORS || !o.collaborators.every((x) => typeof x === "string" && PERSON.test(x)))
       throw new PackError(`\`visibility.collaborators\`: up to ${MAX_COLLABORATORS} people's ids`, 400);
     collaborators = [...new Set(o.collaborators as string[])];
@@ -115,16 +133,28 @@ const wouldSee = (w: VisibilityWrite, person: string, myTeams: number[]) =>
  * that does not exist or that the person is not in, collaborators where the area names none, a visibility that would
  * hide the record from the person writing it.
  */
-export async function visibilityForWrite(orgId: number, area: AreaLike, actor: Actor, given: unknown, prev: StoredVisibility | null): Promise<VisibilityWrite | null> {
+export async function visibilityForWrite(orgId: number, area: AreaLike, actor: Actor, given: unknown, prev: StoredVisibility | null, tx?: Queryable, data?: unknown): Promise<VisibilityWrite | null> {
   if (!visibilityShown(area)) return null;
-  const decl = area.visibility!;
+  // mold_v0-262: an area that inherits its visibility: none is chosen; every write follows the record its reference
+  // names now (the reference check, as the person reads, has found it: they see it). Empty: open to the workspace.
+  if (inheritsVisibility(area.visibility)) {
+    const field = area.visibility.inherit, f = area.fields?.find((x) => x.name === field);
+    if (given !== undefined && given !== null)
+      throw new PackError(`${area.label} records are seen by whoever sees the record their ${(f?.label ?? field).toLowerCase()} names: they take no visibility of their own`, 400);
+    const k = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>)[field] : undefined;
+    const owner = prev ? prev.owner_id ?? null : personOf(actor);
+    return typeof k === "string" && k && f?.to
+      ? { visibility: "inherit", team_id: null, owner_id: owner, collaborators: null, inherit_area: f.to, inherit_key: k }
+      : { visibility: "workspace", team_id: null, owner_id: owner, collaborators: null, inherit_area: null, inherit_key: null };
+  }
+  const decl = modesOf(area)!;
   const all = seesAll(actor);
   const person = personOf(actor);
   if (prev && (given === undefined || given === null)) return null;
   // A new record no person adds (a run, the shell, an account key) and that says nothing: open to the workspace, as every
   // record written before the flag.
   if (!prev && (given === undefined || given === null) && !person) return { visibility: "workspace", team_id: null, owner_id: null, collaborators: null };
-  const myTeams = person ? await teamsOf(orgId, person) : [];
+  const myTeams = person ? await teamsOf(orgId, person, tx) : [];
   if (prev) {
     const was = visibilityOf(prev);
     const lead = was.mode === "team" && was.team && myTeams.some((t) => t.id === was.team!.id && t.role === "lead");
@@ -141,7 +171,7 @@ export async function visibilityForWrite(orgId: number, area: AreaLike, actor: A
       else if (myTeams.length === 1) teamId = myTeams[0]!.id;
       else throw new PackError(myTeams.length ? `Choose the team that sees this ${area.label} record: ${myTeams.map((t) => t.name).join(", ")}.` : `You are in no team: choose who sees this ${area.label} record${decl.modes.length > 1 ? ` (${decl.modes.filter((m) => m !== "team").join(" or ")})` : ""}, or ask an owner of the workspace to add you to a team.`, 400);
     } else {
-      const team = await findTeam(orgId, ask.team);
+      const team = await findTeam(orgId, ask.team, tx);
       if (!team) throw new PackError(`no team ${JSON.stringify(String(ask.team).slice(0, 80))} in this workspace`, 400);
       if (!all && !myTeams.some((t) => t.id === team.id)) throw new PackError(`You are not in ${team.name}: share it with a team you are in.`, 403);
       teamId = team.id;
@@ -158,7 +188,7 @@ export async function visibilityForWrite(orgId: number, area: AreaLike, actor: A
 
 /** Whether `actor` may change who sees a record (the page's Share): its owner, a lead of its team, a workspace owner. */
 export async function mayShare(orgId: number, area: AreaLike, actor: Actor, v: RecordVisibility): Promise<boolean> {
-  if (!visibilityShown(area)) return false;
+  if (!visibilityShown(area) || inheritsVisibility(area.visibility)) return false; // mold_v0-262: it follows its parent's
   if (seesAll(actor)) return true;
   const person = personOf(actor);
   if (!person) return false;

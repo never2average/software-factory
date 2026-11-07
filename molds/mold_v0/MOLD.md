@@ -3607,6 +3607,47 @@ a deleted team, leaving the workspace; off again), `npm run test:migrations` (00
 (the probe above), `npm run test:features` (the flag), `npm run test:console-tabs` (a teams build's console typechecks),
 `npm run test:zero-pack`; the fixture `scripts/fixtures/packs/fixture_teams` (projects, notes, places).
 
+## Record pages and platform fixes (mold_v0-262)
+
+Each part under the flag it belongs to (off: as before; with every flag off a build's tools and files are unchanged).
+
+- **A create in an area with `visibility` and a history section** returned only on Postgres: the writer's teams
+  (`src/visibility.ts` `visibilityForWrite` -> `src/teams.ts` `teamsOf`, `findTeam`) were read on a connection of
+  their own while the write's transaction (opened for its history line) held the embedded database's one, so it waited on
+  itself (a full pool would too). They now run on the write's own transaction (`tx`), in a batch likewise.
+- **A workspace agent's wake on the run page** (flags `record_pages`, `agent_harness`): `/api/runs` is mounted when the
+  agent is on, not only when a pack declares a job kind, so a wake (`_agent/session`) has its page for everyone who reads
+  its session; the page names and links its session (`run.session`), the session links each wake to its page.
+- **Reference titles** (flag `record_pages`, `src/record-areas.ts` `withRefTitles`): an area's list, a record's detail
+  and a related list's rows carry `ref_titles` ({field: {key: title}}), read as the person; facts, sections, cells and
+  related columns show the title, linked to the record.
+- **The header at 390 px**: the actions bar wraps inside the header (`web/src/features/records/page-actions.tsx`).
+- **Page actions `open_url`**: opens the web address a url (or text) field holds, in a new tab; disabled with why when it
+  holds none. **Chips**: a json field with `display: "chips"` (a list of strings) shows as chips.
+- **Sections `when`** (the notices' conditions) are drawn only while it holds; a layout's **`linked: false`** hides the
+  Linked records card, which otherwise leaves out the links the page shows as facts or a section's fields.
+- **Inherited visibility** (flag `teams`, `sql/migrations/0053_inherited_visibility.sql` with its rollback): an area's
+  `visibility: {inherit: <single reference field>}` to an area that declares its own modes; each record is stored as
+  `inherit` with its parent's area and key and the same restrictive policy shows it exactly when its parent is shown
+  (`app_record_visible`, run as its owner, the current tenant and viewer only). No visibility, Share or MCP input of its own.
+- **Team roles in the app's words** (flag `teams`, `0054_team_role_names.sql` with its rollback): pack.json or
+  profile.json (`application.json` `profile.team_roles`) `team_roles: [{id, label, level: lead|member}]`, 2 to 6, one of
+  each level at least; a membership keeps its level in `role` (what it may do) and the role's id in `role_name`; a change
+  within a level is a `role_set` change. Absent: Lead and Member.
+- **Credentials for agent sessions** (flag `agent_harness`): an agent profile's `credentials: ["<pack>/<field>"]`, each a
+  workspace-bound pasted credential; frozen into a session only when a workspace owner starts it, fetched by each wake
+  with its lease as a run's are (its `credentials` event names what it was given, never a value), delivered in its env or
+  file and redacted from everything it writes (`src/agent-harness.ts`, `src/credentials.ts` `findCredential`).
+- **The factory**: `branding.py <app> set` writes the workspace tile only into an app whose state has its workspace
+  (never a partial block; it removes the tile-only block an earlier set left); the mold's test fixtures build their stand-in
+  keys at run time (`scripts/lib/fake-secrets.ts`), so `repo.py`'s secret gate passes them with no allowlist;
+  `packs.py lane-copy` carries the app's profile into `build/<app>.lane/` and its feature flags into the default-profile copy.
+
+Proof: `npm run test:teams` (scripts/teams-262-test.ts), `npm run test:record-pages` (scripts/record-pages-262-test.ts),
+`npm run test:run-page` (scripts/run-page-wake-test.ts), `npm run test:agent-harness` (scripts/agent-credentials-test.ts),
+`npm run test:migrations` (0053, 0054 and their rollbacks), and the factory's `branding.py`, `repo.py` and `packs.py`
+self-tests.
+
 ## Generic gaps (mold_v0-260)
 
 Ten capabilities found building apps, each generic and each behind a flag of the registry above, **off by default** and

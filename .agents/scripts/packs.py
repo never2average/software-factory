@@ -461,6 +461,10 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
     _host_packs(build, rules, packs)
     if not lane: _deploy_facts(build, app_id, rules); _app_profile(build, app_id, app)
+    # mold_v0-262: a lane copy carries the app's profile as the deploy copy does (its feature flags above all: a pack that
+    # needs one is refused by the generators without it); the default-profile copy only the flags, its words the mold's.
+    elif default_profile: _lane_features(build, app)
+    else: _app_profile(build, app_id, app)
     _generate(build, rules)
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + (f"; {', '.join(gone)} no longer named, taken out" if gone else "")
@@ -468,6 +472,21 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
           + (f"; the factory's email defaults: {_defaults_said(app, build)}" if not lane and _defaults_said(app, build) else "")
           + f"); {', '.join(' '.join(c) for c in rules['generators'])} regenerated the registry")
     return 0
+
+def _lane_features(build, app):
+    """mold_v0-262: the app's feature flags (application.json profile.features) alone into a default-profile lane copy's
+    profile.json: the packs it carries may need a flag on to build at all, and the rest of it stays the mold's own.
+    -> whether the file changed."""
+    want = (app.get("profile") or {}).get("features") if isinstance(app.get("profile"), dict) else None
+    p = os.path.join(build, "profile.json")
+    if not isinstance(want, dict) or not want or not os.path.isdir(build): return False
+    doc = load(p) if os.path.isfile(p) else {}; cur = doc.get("features") if isinstance(doc.get("features"), dict) else {}
+    merged = {**cur, **want}
+    if merged == cur and "features" in doc: return False
+    doc["features"] = merged
+    if os.path.lexists(p): os.remove(p)                 # never write through a hard link into the mold
+    with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    return True
 
 def _app_profile(build, app_id, app):
     """mold_v0-090: the app's own profile settings (application.json `profile`; lib/app_profile.py) written into a DEPLOY
@@ -655,7 +674,10 @@ def rules_self_test():
                 "mkdirSync('src', { recursive: true });\nconst ids = readdirSync('packs', { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();\n"
                 "if (process.argv.includes('--check')) process.exit(0);\nwriteFileSync('src/packs.generated.ts', JSON.stringify(ids) + '\\n');\n"
                 "const LIMIT_KEYS = {\n  runs: [\"budget_usd_max\", \"kind_month_budget_usd\"],\n};\n")
-            os.makedirs(os.path.join(mold, "branding")); json.dump({"profile": {"file": "profile.json", "app_settable": ["limits", "member_keys", "source_offer.upstreams"]}}, open(os.path.join(mold, "branding", "rules.json"), "w"))
+            os.makedirs(os.path.join(mold, "branding")); json.dump({"profile": {"file": "profile.json", "app_settable": ["limits", "member_keys", "source_offer.upstreams", "features"]}}, open(os.path.join(mold, "branding", "rules.json"), "w"))
+            # mold_v0-262: the flags registry the factory reads (lib/features.py), for an app that sets features
+            reg_f = os.path.join(t, "molds", "mold_v0", "codebase", "src", "features.json")
+            if not os.path.exists(reg_f): os.makedirs(os.path.dirname(reg_f), exist_ok=True); shutil.copyfile(os.path.join(keep[0], "molds", "mold_v0", "codebase", "src", "features.json"), reg_f)
             man = load(os.path.join(keep[0], "molds", "mold_v0", "mold.json"))
             # mold_v0's rules with its registry generator only (the stand-in codebase has no tsx for the others)
             json.dump({"mold_id": "mold_t", "packs": dict(man["packs"], generators=man["packs"]["generators"][:1], verify=man["packs"]["verify"][:1]), "build_copy": man["build_copy"]}, open(os.path.join(mold, "mold.json"), "w"))
@@ -712,7 +734,13 @@ def rules_self_test():
                 json.dump(d_, open(ad, "w"))
             pj = lambda d=b: load(os.path.join(d, "profile.json")) if os.path.isfile(os.path.join(d, "profile.json")) else {}
             prof_app({"limits": lim}); ok(quiet(apply, "zz") == 0 and pj().get("limits") == lim, f"the app's limits in the deploy copy's profile.json: {pj()}")
-            ok(quiet(lane_copies, "zz") == 0 and not any("limits" in pj(os.path.join(t, "build", x)) for x in ("zz.lane", "zz.lane-default")), "never in a lane copy (the mold's defaults are graded there)")
+            # mold_v0-262: the lane copy carries the app's profile as the deploy copy does; the default-profile copy keeps the mold's
+            ok(quiet(lane_copies, "zz") == 0 and pj(os.path.join(t, "build", "zz.lane")).get("limits") == lim and "limits" not in pj(os.path.join(t, "build", "zz.lane-default")),
+               "the app's profile in the lane copy, never in the default-profile copy (the mold's defaults are graded there)")
+            prof_app({"limits": lim, "features": {"record_pages": True}})
+            ok(quiet(lane_copies, "zz") == 0 and all(pj(os.path.join(t, "build", x)).get("features", {}).get("record_pages") is True for x in ("zz.lane", "zz.lane-default"))
+               and "limits" not in pj(os.path.join(t, "build", "zz.lane-default")),
+               f"mold_v0-262: the app's feature flags in both lane copies (a pack needing one builds there), its other settings only in the lane copy: {pj(os.path.join(t, 'build', 'zz.lane-default'))}")
             prof_app(None); ok(quiet(apply, "zz") == 0 and "limits" not in pj(), "a setting taken out of state is taken out of the copy (back to the mold's own)")
             # mold_v0-099: member_keys, and source_offer.upstreams (the app's part) beside the operator's source_offer.app
             json.dump({"defaults": {"source_offer": {"app": "licensor_exception"}}}, open(os.path.join(t, "state", "factory.json"), "w"))

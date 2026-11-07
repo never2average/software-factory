@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
 import { ENV } from "../src/env-names.js";
+import { pemLine } from "./lib/fake-secrets.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
@@ -159,7 +160,7 @@ try {
     runsA.v6 = await run(ca, "write", { write: { "notes.txt": "A six\n" } });
     runsA.v7 = await run(ca, "write", { write: { "notes.txt": "A seven\n" } });
     runsA.v8 = await run(ca, "write", {
-      write: { "notes.txt": "A eight\n<script>alert('x')</script>\n", ".env": "SECRET=1\n", ".git/config": "[core]\n", "keys/server.pem": "-----BEGIN PRIVATE KEY-----\n", "private/plan.txt": "hidden\n",
+      write: { "notes.txt": "A eight\n<script>alert('x')</script>\n", ".env": "SECRET=1\n", ".git/config": "[core]\n", "keys/server.pem": `${pemLine("BEGIN")}\n`, "private/plan.txt": "hidden\n",
         "db/data.sqlite": "x", "access.cfg": "token-file\n", "bin/blob.bin": { base64: Buffer.from([0, 1, 2, 255, 0]).toString("base64") }, "big.txt": "y".repeat(5000), "dir/a/deep.txt": "deep\n" },
     });
     assert.deepEqual(await versionsOf(A.orgId), [1, 2, 3, 4, 5, 6, 7, 8]);

@@ -396,6 +396,14 @@ def schema_v0(root):
                                 **D("What the MCP server tells an AI client about the app: plain text, up to 4000 characters.")}
         elif k == "landing":
             profile_props[k] = {"type": "object", **D("The landing page at / (the shell's src/landing.ts sections): plain text, true/false, numbers and lists. The build checks its sections.")}
+        elif k == "team_roles":
+            profile_props[k] = {"type": "array", "minItems": 2, "maxItems": 6, **D(
+                "A workspace's team roles in the app's words (mold_v0-262, flag teams): each role's id, its label and the level it stands for "
+                "(lead: also changes who sees the team's records; member: sees them), at least one of each. Absent: Lead and Member."), "items": {
+                "type": "object", "additionalProperties": False, "required": ["id", "label", "level"], "properties": {
+                    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,23}$", **D("The role's id: lowercase letters, digits and _.")},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\r\\n<>{}]+$", **D("What people read (Lead, Developer, Viewer).")},
+                    "level": {"type": "string", "enum": ["lead", "member"], **D("What the role may do: lead or member.")}}}}
         else:
             profile_props[top] = {**D(f"{k}: a profile field this mold lets an app set (molds/mold_v0/branding/rules.json); the factory checks it.")}
     profile_props["limits"] = NS("say limits in the spec's top-level `budgets` block, which is written to profile.limits")

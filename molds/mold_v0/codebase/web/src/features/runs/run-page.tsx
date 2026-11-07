@@ -33,7 +33,7 @@ import { formatValue } from '@/features/tabs/charts';
 import { RESULT_LABELS, runStatusText } from '@/features/tabs/run-rows';
 import { cn } from '@/lib/utils';
 
-import { RUN_POLL_MS, costWords, eventLines, ranFor, runTabs, TAB_WORDS, LIVE, type EventLine, type ModelUsage, type Ref, type RunHead, type RunPageData, type RunTab, type Since, type ToolCall } from './run-view';
+import { RUN_POLL_MS, costWords, eventLines, ranFor, runTabs, sessionHref, TAB_WORDS, LIVE, type EventLine, type ModelUsage, type Ref, type RunHead, type RunPageData, type RunTab, type Since, type ToolCall } from './run-view';
 export type { RunPageData } from './run-view';
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -109,7 +109,7 @@ function RunBody({ d, live, reload }: { d: RunPageData; live: boolean; reload: (
         <CardContent className='flex flex-col gap-5 py-5'>
           <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
             <div className='flex min-w-0 flex-col gap-2'>
-              <p className='text-muted-foreground text-xs'>Run · {record ? areaLabel(record.area) : 'This workspace'}</p>
+              <p className='text-muted-foreground text-xs'>Run · {record ? areaLabel(record.area) : r.session ? 'Workspace agent' : 'This workspace'}</p>
               <h1 className='text-xl leading-tight font-semibold tracking-tight break-words md:text-2xl'>{r.label}</h1>
               <div className='flex flex-wrap items-center gap-2 pt-1' data-run-status={r.status}>
                 <ToneBadge color={RUN_STATUS_COLOR[r.status] ?? 'neutral'}>
@@ -141,10 +141,12 @@ function RunBody({ d, live, reload }: { d: RunPageData; live: boolean; reload: (
             </div>
           </div>
           <dl className='grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-5' data-run-facts=''>
-            <Fact label={r.record ? 'Ran on' : r.target ? 'Target' : 'Ran on'}>
+            {r.session ? <Fact label='Session'>
+              <Link href={sessionHref(r.session.id)} className='break-words underline-offset-4 hover:underline' data-run-session={r.session.id}>{r.session.title || 'Agent session'}</Link>
+            </Fact> : <Fact label={r.record ? 'Ran on' : r.target ? 'Target' : 'Ran on'}>
               {record ? recordLink ? <Link href={recordLink} className='underline-offset-4 hover:underline' data-run-record={record.key}>{record.title || record.key}</Link> : <span>{record.title || record.key}</span>
                 : <span className='text-muted-foreground'>No record</span>}
-            </Fact>
+            </Fact>}
             <Fact label='Started by'><span className='break-words'>{r.by}</span></Fact>
             <Fact label='Started'>{r.started_at ?? r.created_at ? <DateText v={r.started_at ?? r.created_at} relative /> : <span className='text-muted-foreground'>—</span>}</Fact>
             <Fact label='Duration'><span className='tabular-nums' data-run-duration=''>{took === null ? (r.status === 'queued' ? 'Waiting to start' : '—') : durationWords(took)}</span></Fact>

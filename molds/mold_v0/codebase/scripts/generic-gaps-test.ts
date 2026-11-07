@@ -26,6 +26,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { pemBlock, pemLine } from "./lib/fake-secrets.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ok = (m: string) => console.log(`✓ ${m}`);
@@ -53,7 +54,7 @@ exec sh -c "$cmd"
 `);
 chmodSync(path.join(BIN, "ssh"), 0o755);
 FIXTURE.upstream.commit = PIN;
-const DEPLOY_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACBexampleexampleexampleexampleexampleexampleAAAA=\n-----END OPENSSH PRIVATE KEY-----\n";
+const DEPLOY_KEY = pemBlock("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACBexampleexampleexampleexampleexampleexampleAAAA=", "OPENSSH");
 const KNOWN = "git.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleHostKeyExampleHostKeyExampleHost";
 
 // ---------- GitHub's stand-in: the installation token, its revoke ----------
@@ -196,7 +197,7 @@ try {
     assert.deepEqual([rep.version, rep.areas.map((x: any) => [x.area, x.created])], [PIN, [["runbooks", 2]]], "over SSH at the pin: indexed");
     const log = readFileSync(SSH_LOG, "utf8");
     assert.match(log, /IdentitiesOnly=yes/); assert.match(log, /StrictHostKeyChecking=yes/); assert.match(log, /BatchMode=yes/);
-    assert.match(log, /MODE 600/, "the key file is the fetch's own, 0600"); assert.match(log, /KEY -----BEGIN OPENSSH PRIVATE KEY-----/, "with the key staff set");
+    assert.match(log, /MODE 600/, "the key file is the fetch's own, 0600"); assert.ok(log.includes(`KEY ${pemLine("BEGIN", "OPENSSH")}`), "with the key staff set");
     F.setFeaturesForTest({ ...ALL, private_catalogs: false });
     await assert.rejects(syncUpstreamCatalog("fixture_gaps", "runbooks"), /features\.private_catalogs/, "off: a private catalog is not fetched");
     F.setFeaturesForTest(ALL);

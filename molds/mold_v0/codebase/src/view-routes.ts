@@ -22,6 +22,7 @@ import { areaOpWithheld, packOpWithheld } from "./mcp-withheld.js";
 import { tabAreas, tabRoles, type SpecTab } from "./metric-spec.js";
 import { packs } from "./packs.js";
 import { featureOn } from "./features.js";
+import { agentHarnessOn } from "./agent-harness-config.js";
 import type { Org } from "./auth.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -77,10 +78,14 @@ export function sparklineAppRouter(): Router {
   return r;
 }
 
-/** /api/runs: mounted when the build has a job kind. The workspace is the session's, never the request's. */
+/**
+ * /api/runs: mounted when the build has a job kind, a pack's or the workspace agent's built-in one (mold_v0-262: a
+ * session's wakes are runs of _agent/session, and their page answered 404 in an app with no kind of its own). The
+ * workspace is the session's, never the request's.
+ */
 export function runAppRouter(): Router {
   const r = express.Router();
-  if (!packs().some((p) => (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0) > 0)) return r;
+  if (!packs().some((p) => (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0) > 0) && !agentHarnessOn()) return r;
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
   r.get("/", answer(async (req, res) => {

@@ -4,6 +4,9 @@
   branding.py <app_id> set --name "Acme Ops" [--color #1F6F5C] [--logo path.png|.svg] [--tagline "..."]
                                             the whole brand from three inputs; everything else is derived
   branding.py --product <product_id> set …  the same, onto a product in state/products.json (future stamps)
+  branding.py <app_id> set --agent-icon <file.svg|.png|.jpg|.webp> | --agent-icon-name <name> [--agent-icon-dark <file>]
+                                            the workspace agent's icon (mold_v0-252; the top bar's agent button and the
+                                            agent pages' heading); --agent-icon none goes back to the console's default
   branding.py <app_id> share-image <file.png>|none
                                             the brand's own share image (what a shared link shows; mold_v0-093), for a
                                             mold whose rules take one: recorded with its sha256, copied by `prepare`
@@ -38,6 +41,18 @@ app its own build directory instead of sharing one.
 The brand lives in the application's own state (`surface.branding`), complete, with the icon inline.
 Products carry a `brand` that intake copies in at stamp time; nothing points at a shared file, so an
 app is readable on its own and cannot change under it.
+
+THE AGENT ICON (mold_v0-252). A mold whose rules.json has `agent_icon` (mold_v0, while its profile turns the workspace
+agent on) draws the agent's top-bar button and the agent pages' heading with it. `set --agent-icon-name robot` takes one
+icon of the console's own icon set (Tabler's outline icons, read from the mold's installed @tabler/icons); `--agent-icon
+<file>` an SVG, PNG, JPG or WebP of at most 256 KB; `--agent-icon-dark <file>` a variant for the dark theme. lib/agent_icon.py
+keeps it in the brand complete (`agent_icon`: its source and, per theme, a cleaned SVG or a PNG): an SVG is sanitised (an
+allowlist of drawing elements and attributes; no script, handler, style sheet, outside link or entity) and, drawn in one
+colour, redrawn in currentColor so it follows the theme's text colour in light and dark; a picture is fitted inside 64 px
+and kept as a PNG, never wrapped in an SVG as base64 (the favicon rule below). `prepare` writes both themes' files to
+web/public/agent-icon/ and the profile's `agent_icon` (their addresses, and whether the console paints it in the text
+colour) before the mold's generator runs; `check` finds a copy without them. Unset, the console's default icon stays, and a
+workspace owner may still bring their own in Settings › Workspace agent (the workspace's, over the app's).
 
 THE SHARE IMAGE (mold_v0-093). A mold whose rules.json has `share_image` draws the picture a shared link shows from
 the app's words and brand. A brand may bring its own instead: `share-image brands/<name>/share-image.png` checks it is a
@@ -295,6 +310,22 @@ def apply_share_image(build_dir, b, rules):
     shutil.copyfile(os.path.join(ROOT, si["file"]) if not os.path.isabs(si["file"]) else si["file"], dst)
     return ["share_image"]
 
+def apply_agent_icon(build_dir, b, rules):
+    """The workspace agent's icon (mold_v0-252): both themes' files into the build copy and their addresses into its profile
+    file, before the mold's generator runs (the overlay's, or prepare's for a brand without a name)."""
+    ai = b.get("agent_icon")
+    if not ai: return []
+    spec = rules.get("agent_icon")
+    if not spec: sys.exit("this mold has no workspace agent icon (its branding/rules.json has no agent_icon); remove it: branding.py <app_id> set --agent-icon none")
+    try: value = agent_icon_lib().write(build_dir, ai, spec)
+    except ValueError as e: sys.exit(f"the brand's agent icon: {e}")
+    p = os.path.join(build_dir, spec["profile_file"])
+    doc = load(p) if os.path.isfile(p) else {}
+    doc[spec["profile_field"]] = value
+    if os.path.lexists(p): os.remove(p)                       # never write through a hard link into the mold
+    with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    return ["agent_icon"]
+
 def share_image_problems(build_dir, b, rules):
     """What is wrong with a prepared copy's share image ([] when the brand has none, or the copy carries it)."""
     si = b.get("share_image"); spec = rules.get("share_image")
@@ -310,7 +341,29 @@ def is_logo_mark(inner):
     return bool(re.search(r"<image\b|<svg\b", inner))
 
 DEFAULT_TAGLINE = "The operations console for forward-deployed teams."
-def normalize(b, name=None, color=None, logo=None, tagline=None):
+def agent_icon_lib():
+    lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if lib not in sys.path: sys.path.insert(0, lib)
+    import agent_icon
+    return agent_icon
+
+def agent_icon_block(icon, dark=None, mold_id="mold_v0"):
+    """--agent-icon <file> | icon:<name> [--agent-icon-dark <file>] -> the brand's `agent_icon` block (lib/agent_icon.py)."""
+    ai = agent_icon_lib(); code = os.path.join(ROOT, "molds", mold_id or "mold_v0", "codebase")
+    rp = os.path.join(ROOT, "molds", mold_id or "mold_v0", "branding", "rules.json")
+    if os.path.isfile(rp) and not load(rp).get("agent_icon"): sys.exit(f"mold {mold_id} has no workspace agent icon to set (its branding/rules.json has no agent_icon). Nothing was written.")
+    def one(src):
+        try:
+            if src.startswith("icon:"): return f"icon:{src[5:]}", ai.entry_from_name(src[5:], code)
+            p = src if os.path.isabs(src) else os.path.join(ROOT, src)
+            return f"file:{os.path.relpath(p, ROOT)}", ai.entry_from_file(p, code)
+        except ValueError as e: sys.exit(f"agent icon {src}: {e}. Nothing was written.")
+    out = {}
+    out["source"], out["light"] = one(icon)
+    if dark: out["dark_source"], out["dark"] = one(dark)
+    return out
+
+def normalize(b, name=None, color=None, logo=None, tagline=None, agent_icon=None, agent_icon_dark=None, mold_id="mold_v0"):
     """The complete brand block from the inputs (name, colour, logo, tagline), with every DERIVED field
     recomputed from them: description, icon colours, neutral tint, the inlined mark. Inputs the caller
     does not name keep their current value. Pinned tokens survive only while the colour is unchanged:
@@ -340,31 +393,57 @@ def normalize(b, name=None, color=None, logo=None, tagline=None):
     elif not b.get("logo") and (color or name or not b.get("icon_svg")):
         b.pop("icon_svg", None); b["icon_svg"] = read_mark(b)[0]     # a fresh monogram in the new colours
     if b.get("brand_color"): palette(b["brand_color"], b.get("neutral_chroma", 0.006))   # contrast guard
+    # mold_v0-252: the workspace agent's icon, kept whole (cleaned SVG or fitted PNG per theme); "none" takes it out
+    if agent_icon == "none": b.pop("agent_icon", None)
+    elif agent_icon: b["agent_icon"] = agent_icon_block(agent_icon, agent_icon_dark, mold_id)
+    elif agent_icon_dark:
+        if not b.get("agent_icon"): sys.exit("--agent-icon-dark is the dark theme's variant of an agent icon: give --agent-icon or --agent-icon-name too")
+        cur = b["agent_icon"]; b["agent_icon"] = agent_icon_block(cur["source"] if cur["source"].startswith("icon:") else cur["source"][5:], agent_icon_dark, mold_id)
     return b
+
+def workspace_tile_only(ws):
+    """A workspace block that holds nothing but the tile's generated mark: what `set` wrote into an app with no workspace
+    before mold_v0-262 (an org with only a monogram logo_url), never an app's own workspace."""
+    if not isinstance(ws, dict) or set(ws) != {"org"} or not isinstance(ws["org"], dict): return False
+    return set(ws["org"]) <= {"logo_url"} and str(ws["org"].get("logo_url", "data:image/svg+xml")).startswith("data:image/svg+xml")
 
 def set_brand(target, args):
     """`set` for an app (state/application/<id>/application.json) or a product (state/products.json)."""
     opt = lambda k: (args[args.index(k) + 1] if k in args and args.index(k) + 1 < len(args) else None)
     kind, ident = target
+    if opt("--agent-icon") and opt("--agent-icon-name"): sys.exit("give --agent-icon <file> or --agent-icon-name <name>, not both")
+    icon = opt("--agent-icon") or (f"icon:{opt('--agent-icon-name')}" if opt("--agent-icon-name") else None)
+    icon_dark = opt("--agent-icon-dark")
     if kind == "app":
         p = os.path.join(ST, "application", ident, "application.json"); doc = load(p)
         cur = doc.setdefault("surface", {}).get("branding") or {}
-        nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"))
+        if (icon or icon_dark) and icon != "none":
+            rp = os.path.join(ROOT, "molds", str(doc.get("mold_id")), "branding", "rules.json")
+            if not os.path.isfile(rp) or not load(rp).get("agent_icon"): sys.exit(f"{ident}: mold {doc.get('mold_id')} has no workspace agent icon to set (its branding/rules.json has no agent_icon). Nothing was written.")
+        nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark, doc.get("mold_id"))
         why = name_problem(nb["product_name"], doc.get("mold_id"))
         if why: sys.exit(why + ". Nothing was written.")
         doc["surface"]["branding"] = nb
-        # the workspace tile follows the mark, unless the source deployment already had one
-        org = doc.setdefault("workspace", {}).setdefault("org", {})
-        if not org.get("logo_url") or org["logo_url"].startswith("data:image/svg+xml"):
-            org["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(nb["icon_svg"].encode()).decode()
+        # the workspace tile follows the mark, unless the source deployment already had one. Only in an app whose state
+        # has its workspace (a mold that seeds one: its org, its members); never a block of its own, which validation
+        # refuses (mold_v0-262: a mold_v0 app has none, and `set` used to leave {"workspace": {"org": {"logo_url"}}}).
+        ws = doc.get("workspace")
+        if workspace_tile_only(ws): doc.pop("workspace")         # what an earlier `set` left: taken out again
+        org = ws.get("org") if isinstance(ws, dict) and "workspace" in doc else None
+        if isinstance(org, dict) and org.get("org_id"):
+            if not org.get("logo_url") or org["logo_url"].startswith("data:image/svg+xml"):
+                org["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(nb["icon_svg"].encode()).decode()
     else:
         p = os.path.join(ST, "products.json"); doc = load(p)
         prods = [x for x in doc["products"] if x["product_id"] == ident]
         if not prods: sys.exit(f"no product {ident!r} in state/products.json")
-        prods[0]["brand"] = nb = normalize(prods[0].get("brand") or {}, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"))
+        prods[0]["brand"] = nb = normalize(prods[0].get("brand") or {}, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"), icon, icon_dark)
     json.dump(doc, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
     mark = "logo file " + nb["logo"] if nb.get("logo") else "a monogram"
-    print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}.")
+    ai = nb.get("agent_icon")
+    agent = (f", agent icon {ai['source']}" + (f" (dark: {ai['dark_source']})" if ai.get("dark_source") else "")
+             + (" in the text colour" if ai["light"].get("follows_color") else "")) if ai else ""
+    print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}{agent}.")
     print(f"  see it: python3 .claude/scripts/branding.py {ident} preview" if kind == "app" else "  stamps of this product from now on carry it; existing apps keep theirs")
 
 def preview(app_id, b, node_cwd=None):
@@ -603,6 +682,7 @@ def prepare(app_id, app, mold_dir, force=False):
     # The brand's own share image (mold_v0-093) goes in before the mold's generator runs (the overlay's, or here for a
     # brand that is only a share image: the app keeps the mold's and its host pack's names, icons and colours).
     applied = apply_share_image(build_dir, b, rules)
+    applied += apply_agent_icon(build_dir, b, rules)
     if b.get("product_name"): applied += apply_overlay(build_dir, b, rules)
     elif applied and rules.get("profile"):
         r = subprocess.run(rules["profile"]["generator"], cwd=build_dir, capture_output=True, text=True)
@@ -619,7 +699,9 @@ def prepare(app_id, app, mold_dir, force=False):
 def check_build(build_dir, b, rules):
     """What is wrong with a prepared copy's brand, as plain sentences ([] when it is right)."""
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
-    if not name: return share_image_problems(build_dir, b, rules)     # a brand that is only a share image (mold_v0-093)
+    if b.get("agent_icon"):
+        bad += agent_icon_lib().problems(build_dir, b["agent_icon"], rules["agent_icon"]) if rules.get("agent_icon") else ["this mold has no workspace agent icon, but the brand sets one"]
+    if not name: return bad + share_image_problems(build_dir, b, rules)     # a brand that is only a share image (mold_v0-093)
     bad += share_image_problems(build_dir, b, rules)
     gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
     if name and rules.get("profile"):
@@ -696,6 +778,8 @@ def self_test():
     the mold's own branded files with the mold's own rules. Nothing here touches build/, state/ or the mold."""
     import tempfile
     fav = favicon_lib(); rc = fav.self_test()
+    if rc: return rc
+    rc = agent_icon_lib().self_test()          # mold_v0-252
     if rc: return rc
     checks = []
     def ok(c, what):
@@ -853,6 +937,49 @@ def self_test_v0(ok):
         r8 = subprocess.run([sys.executable, me, "zz_brand", "share-image", "none"], capture_output=True, text=True)
         ok_(r7.returncode != 0 and "Nothing was written" in r7.stdout + r7.stderr and r8.returncode == 0 and load(appf)["surface"]["branding"] == brand,
             "mold_v0-093: a share image of another size is refused with nothing written; `none` takes it out")
+        # mold_v0-252: the workspace agent's icon: set from a file (sanitised, one colour -> currentColor), prepared into
+        # both themes' files and the console's profile module only, checked; `none` takes it out
+        ai_lib = agent_icon_lib()
+        open(os.path.join(f, "brands", "zz", "agent.svg"), "wb").write(ai_lib.EVIL)
+        r9 = subprocess.run([sys.executable, me, "zz_brand", "set", "--agent-icon", "brands/zz/agent.svg"], capture_output=True, text=True)
+        b9 = load(appf)["surface"]["branding"]; ai9 = b9.get("agent_icon") or {}
+        r10 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
+        r11 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
+        zb9 = os.path.join(f, "build", "zz_brand"); light = os.path.join(zb9, "web", "public", "agent-icon", "light.svg")
+        lt = open(light).read() if os.path.isfile(light) else ""
+        webgen = open(os.path.join(zb9, "web", "src", "config", "profile.generated.ts")).read() if os.path.isdir(zb9) else ""
+        srvgen = open(os.path.join(zb9, "src", "profile.generated.ts")).read() if os.path.isdir(zb9) else ""
+        ok_(r9.returncode == 0 and ai9.get("source") == "file:brands/zz/agent.svg" and ai9["light"]["follows_color"] and "script" not in ai9["light"]["svg"]
+            and {k: v for k, v in b9.items() if k != "agent_icon"} == brand and r10.returncode == 0 and r11.returncode == 0 and "branding ok" in r11.stdout
+            and "currentColor" in lt and "onload" not in lt and os.path.isfile(os.path.join(zb9, "web", "public", "agent-icon", "dark.svg"))
+            and '"agent_icon"' in webgen and '"mask": true' in webgen and "agent_icon" not in srvgen,
+            f"mold_v0-252: set --agent-icon keeps a sanitised SVG in the brand (the rest kept); prepare writes both themes and the console's profile (never the API's); check passes: "
+            f"{(r9.stdout + r9.stderr + r10.stdout + r10.stderr + r11.stdout + r11.stderr)[-500:]}")
+        os.remove(os.path.join(zb9, "web", "public", "agent-icon", "dark.svg"))
+        r12 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
+        ok_(r12.returncode != 0 and "dark.svg is not the brand's agent icon" in r12.stdout, f"mold_v0-252: check finds a copy without the icon: {r12.stdout[-300:]}")
+        r13 = subprocess.run([sys.executable, me, "zz_brand", "set", "--agent-icon", "brands/zz/share-image.png", "--agent-icon-name", "robot"], capture_output=True, text=True)
+        r14 = subprocess.run([sys.executable, me, "zz_brand", "set", "--agent-icon", "none"], capture_output=True, text=True)
+        ok_(r13.returncode != 0 and "not both" in r13.stdout + r13.stderr and r14.returncode == 0 and load(appf)["surface"]["branding"] == brand,
+            "mold_v0-252: a file and a name together are refused; --agent-icon none goes back to the default icon")
+        # mold_v0-262: `set` on an app with no workspace block writes none (validation refuses a partial one), takes out
+        # the tile-only block an earlier `set` left, and still moves the tile of an app that has its workspace
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import factory as _factory
+        app_schema = load(os.path.join(ROOT, "state", "application", "app_id", "application.schema.json"))
+        r15 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        d15 = load(appf)
+        ok_(r15.returncode == 0 and "workspace" not in d15 and _factory._check(d15, app_schema, "application") == [],
+            f"mold_v0-262: set on an app with no workspace writes none, and the state still validates: {_factory._check(d15, app_schema, 'application')} {(r15.stdout + r15.stderr)[-200:]}")
+        d15["workspace"] = {"org": {"logo_url": "data:image/svg+xml;base64,AAAA"}}; json.dump(d15, open(appf, "w"))
+        r16 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        ok_(r16.returncode == 0 and "workspace" not in load(appf), "mold_v0-262: the tile-only workspace block an earlier set wrote is taken out")
+        full = {"org": {"org_id": "acme", "name": "Acme"}, "members": [{"email": "owner@example.com", "role": "owner"}], "operator_self": {"email": "owner@example.com", "name": "Owner"}}
+        d16 = load(appf); d16["workspace"] = json.loads(json.dumps(full)); json.dump(d16, open(appf, "w"))
+        r17 = subprocess.run([sys.executable, me, "zz_brand", "set", "--name", "Acme Ops"], capture_output=True, text=True)
+        w17 = load(appf).get("workspace") or {}
+        ok_(r17.returncode == 0 and str(w17.get("org", {}).get("logo_url", "")).startswith("data:image/svg+xml;base64,") and w17.get("members") == full["members"]
+            and _factory._check(load(appf), app_schema, "application") == [], "mold_v0-262: an app with its own workspace still gets the tile from the mark, the rest kept")
+        d17 = load(appf); d17.pop("workspace"); json.dump(d17, open(appf, "w"))
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import app_profile
         zb = os.path.join(f, "build", "zz_brand"); zp = load(os.path.join(zb, "profile.json")) if os.path.isfile(os.path.join(zb, "profile.json")) else {}
         ok_(zp.get("limits") == lim["limits"] and zp.get("name") == "Acme Ops" and app_profile.check(zb, {"mold_id": "mold_v0", "profile": lim}, f) == []
@@ -998,7 +1125,10 @@ def main(a):
     if step == "show":
         b = resolve(app)
         if not b: return print("no branding on this app")
-        print(json.dumps({k: (v[:60] + "…" if k == "icon_svg" and len(v) > 60 else v) for k, v in b.items()}, indent=2))
+        short = lambda k, v: (v[:60] + "…" if k == "icon_svg" and len(v) > 60 else
+                              {"source": v.get("source"), **({"dark_source": v["dark_source"]} if v.get("dark_source") else {}), "kind": v["light"].get("type"),
+                               "follows_color": bool(v["light"].get("follows_color"))} if k == "agent_icon" and isinstance(v, dict) and isinstance(v.get("light"), dict) else v)
+        print(json.dumps({k: short(k, v) for k, v in b.items()}, indent=2))
         if b.get("brand_color"):
             pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006))
             for scheme in ("light", "dark"):

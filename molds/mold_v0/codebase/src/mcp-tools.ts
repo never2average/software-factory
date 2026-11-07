@@ -30,7 +30,7 @@ import type { Org } from "./auth.js";
 import { adminDataApi, DATA_API_OPERATIONS, dataApi, type DataCaller } from "./data-api.js";
 import { getDb } from "./db.js";
 import { generateCatalog, plain, type CatalogPack, type GeneratedTool } from "./mcp-catalog.js";
-import { AgentJobKindSchema, JobKindSchema, PackError, type PackTool, type PackToolContext, type Workspace } from "./pack-api.js";
+import { AgentJobKindSchema, inheritsVisibility, JobKindSchema, PackError, type PackTool, type PackToolContext, type Workspace } from "./pack-api.js";
 import { declaredRuns, packs, runPackTool, workspaceDb, workspaceOf, type InstalledPack } from "./packs.js";
 import { PROFILE } from "./profile.js";
 import { hosts } from "./host.js";
@@ -358,8 +358,9 @@ export async function startFromConsole(org: Org, t: GeneratedTool, input: unknow
  */
 function withVisibilityInput(t: GeneratedTool): GeneratedTool["input"] {
   const a = t.area && (t.op === "create" || t.op === "update") ? findArea(t.area) : null;
-  if (!a || !visibilityShown(a)) return t.input;
-  const v = a.visibility!;
+  // mold_v0-262: an area that inherits its parent's visibility takes none of its own (its tools are as before).
+  if (!a || !visibilityShown(a) || inheritsVisibility(a.visibility)) return t.input;
+  const v = a.visibility as Exclude<NonNullable<typeof a.visibility>, { inherit: string }>;
   return {
     ...t.input,
     visibility: z.strictObject({

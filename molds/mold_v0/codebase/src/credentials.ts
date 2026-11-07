@@ -42,7 +42,11 @@ export function credentialSpecs(): CredentialSpec[] {
   cache = { from: list, list: list.flatMap((p) => (p.definition.credentials ?? []).map((c) => ({ ...CredentialSchema.parse(c), pack: p.id }))) };
   return cache.list;
 }
-export const findCredential = (pack: string, name: string) => credentialSpecs().find((c) => c.pack === pack && c.name === name) ?? null;
+export const findCredential = (pack: string, name: string) => {
+  // mold_v0-262: a workspace agent's wake names its profile's credentials as "<pack>/<field>" (a workspace binding only).
+  if (pack === "_agent") { const [p, n] = name.split("/"); const c = n ? credentialSpecs().find((x) => x.pack === p && x.name === n) ?? null : null; return c && c.bound_to === "workspace" && !c.entries && !c.github_app && !c.oauth ? c : null; }
+  return credentialSpecs().find((c) => c.pack === pack && c.name === name) ?? null;
+};
 
 const MIN = 8, MAX = 16 * 1024;
 const ENV = /^[a-z][a-z0-9_-]{0,39}$/;

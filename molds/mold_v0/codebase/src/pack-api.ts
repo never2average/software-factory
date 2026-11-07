@@ -98,6 +98,8 @@ export interface RecordRow {
   key: string;
   title: string | null;
   data: Record<string, unknown>;
+  /** mold_v0-262 (flag record_pages, the console's reads): the titles of the records its references name, {field: {key: title}}. */
+  ref_titles?: Record<string, Record<string, string>>;
   /** A platform area's version label (the source it was indexed from); null for workspace areas. */
   version: string | null;
   updated_at: string;
@@ -125,7 +127,9 @@ export interface RecordInput {
 /** A record's visibility as a write gives it (mold_v0-259): a mode, its team (id or name) and its collaborators (people's ids). */
 export interface VisibilityInput { mode: "workspace" | "team" | "private"; team?: number | string | null; collaborators?: string[] }
 /** A record's visibility as a read shows it (mold_v0-259): records written before the flag are open to the workspace. */
-export interface RecordVisibility { mode: "workspace" | "team" | "private"; team: { id: number; name: string } | null; owner: string | null; collaborators: string[] }
+export interface RecordVisibility { mode: "workspace" | "team" | "private" | "inherit"; team: { id: number; name: string } | null; owner: string | null; collaborators: string[];
+  /** mold_v0-262: the record an inherited one follows (mode inherit). */
+  parent?: { area: string; key: string } }
 /**
  * A page of an area (mold_v0-059): `limit` (1-200, default 50); `after` (the previous page's `next`); `sort` (a field, or
  * key, title or updated_at; "-" first for descending; default the key); `filter` ({field: value} or {field: {op: value}},
@@ -419,6 +423,11 @@ export const RecordFieldSchema = z.object({
   copyable: z.boolean().optional(),
   /** mold_v0-260 (flag record_rules): a reference field's condition on the records it may name (ReferenceWhereSchema). */
   where: ReferenceWhereSchema.optional(),
+  /**
+   * mold_v0-262 (flag record_pages): "chips": a json field holding a list of short strings (tags, hosts, stacks) shown
+   * as chips in its list's cells, its record's sections and facts, and the peek (the first four in a cell, then +N).
+   */
+  display: z.enum(["chips"]).optional(),
 }).strict().superRefine((f, ctx) => {
   const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
   if (f.reveal_roles && !f.encrypted) bad("reveal_roles is for an encrypted field", "reveal_roles");
@@ -439,6 +448,7 @@ export const RecordFieldSchema = z.object({
   if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
   if (f.max_length !== undefined && f.type !== "text") bad("max_length is for a text field", "max_length");
   if (f.copyable && (f.encrypted || f.type === "file" || f.type === "json")) bad(`copyable is for a value the page shows in full (not an encrypted, file or json field)`, "copyable");
+  if (f.display === "chips" && (f.type !== "json" || f.encrypted)) bad("display: \"chips\" is for a json field holding a list of strings (not encrypted)", "display");
   if (f.preview && (!["text", "url"].includes(f.type) || f.encrypted)) bad("preview: \"document\" is for a url field, or a text field holding a URL (not encrypted)", "preview");
 });
 const field = RecordFieldSchema;
@@ -1166,6 +1176,11 @@ export const DetailSectionSchema = z.object({
   table: DetailTableSchema.optional(),
   /** mold_v0-256: the record's documents and files as a tree with a preview (DetailFilesSchema). */
   files: DetailFilesSchema.optional(),
+  /**
+   * mold_v0-262: shown only while this condition holds on the record (the notices' condition language; an Error section
+   * only when its build failed), else not drawn at all. Its tab stays.
+   */
+  when: DetailConditionSchema.optional(),
 }).strict();
 /** A tab of the page: its label in the strip (one tab: no strip) and its sections, in order. */
 export const DetailTabSchema = z.object({ label: plainWords(40), sections: z.array(DetailSectionSchema).max(12) }).strict();
@@ -1177,7 +1192,7 @@ export const DetailNoticeSchema = z.object({
   text: plainWords(300),
 }).strict();
 /** The kinds of a page action (mold_v0-254). */
-export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent"] as const;
+export const PAGE_ACTION_KINDS = ["start_run", "move", "edit", "delete", "link", "copy_link", "create_record", "start_agent", "open_url"] as const;
 /** Where a page action sits in the header: the one primary button, an outlined secondary one, or the More menu. */
 export const PAGE_ACTION_PLACES = ["primary", "secondary", "more"] as const;
 export const PAGE_ACTIONS_MAX = 12;
@@ -1205,6 +1220,8 @@ export const inputField = (from: string) => ((RECORD_INPUT_SPECIAL as readonly s
  *   start_agent (mold_v0-261, flag agent_harness) start a workspace agent session with the agent profile `profile` (the
  *              pack's own, or "default"), its first message `first_message` filled from the record ({{key}}, {{title}},
  *              {{<field>}}); the session links back to the record and shows in its runs section
+ *   open_url   (mold_v0-262) open the web address the record's url field (or text field holding one) `field` holds, in
+ *              a new tab ("Open live app", "Open docs"); disabled, with why, while the field holds no http(s) address
  * `label` names it (default from its kind), `roles` narrows who may (never wider than the area's and the kind's own
  * permission), `unavailable` disables it with its reason while a condition on the record holds (shown on hover and
  * focus; the API refuses it too), `confirm` asks before it acts (a delete always asks). Shown only to the roles that may
@@ -1265,6 +1282,12 @@ export const RecordDetailSchema = z.object({
   unplaced: z.enum(["show", "hide"]).optional(),
   /** mold_v0-254: the header's actions (DetailActionSchema): one primary, up to 3 secondary, the rest in its More menu. */
   actions: z.array(DetailActionSchema).max(PAGE_ACTIONS_MAX, `at most ${PAGE_ACTIONS_MAX} actions on a record's page`).optional(),
+  /**
+   * mold_v0-262: the automatic "Linked records" card at the first tab's end (the records its links and references name).
+   * false hides it; left out, it shows the links the page does not show already (a link or reference field placed as a
+   * fact or in a section is left out of it, being shown there by its title).
+   */
+  linked: z.boolean().optional(),
 }).strict();
 export type RecordDetailLayout = z.output<typeof RecordDetailSchema>;
 
@@ -1327,6 +1350,8 @@ export function detailProblems(a: { name?: string; scope?: string; fields: z.out
     if (ids.indexOf(ids[ti]!) !== ti) bad(`tab ${t.label} has the same address as another (?tab=${ids[ti]}): give it another label`, "tabs", ti, "label");
     if (!t.sections.length) bad(`tab ${t.label} is empty: a tab has at least one section`, "tabs", ti, "sections");
     for (const [si, s] of t.sections.entries()) {
+      // mold_v0-262: a section shown only while its condition holds: one over the area's own fields and clocks.
+      if (s.when) condition(s.when, "tabs", ti, "sections", si, "when");
       // mold_v0-254: a related list or the record's runs, in place of fields (checked across the build: detailBuildProblems);
       // mold_v0-256: a log, the change history, a code view, a table or a file browser, likewise.
       const kinds = DETAIL_SECTION_KINDS.filter((k) => s[k] !== undefined);
@@ -1391,7 +1416,7 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
   const ids = actions.map(pageActionId);
   for (const [i, x] of actions.entries()) {
     const only = (k: "job_kind" | "input" | "to" | "field", kinds: readonly string[]) => { if (x[k] !== undefined && !kinds.includes(x.kind)) bad(`${k} is for a ${kinds.join(" or ")} action, not ${x.kind}`, i, k); };
-    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record"]); only("to", ["move"]); only("field", ["link"]);
+    only("job_kind", ["start_run"]); only("input", ["start_run", "create_record"]); only("to", ["move"]); only("field", ["link", "open_url"]);
     if (x.area !== undefined && x.kind !== "create_record") bad(`area is for a create_record action, not ${x.kind}`, i, "area");
     if (x.kind === "create_record" && !x.area) bad("a create_record action names the area it adds a record to", i, "area");
     if (x.target !== undefined && x.kind !== "start_run") bad(`target is for a start_run action, not ${x.kind}`, i, "target");
@@ -1437,8 +1462,14 @@ function actionProblems(a: Parameters<typeof detailProblems>[0], actions: Detail
       if (!x.field) bad("a link action names the field whose record it opens", i, "field");
       else if (!areaLinks({ fields: a.fields, links: a.links }).some((l) => l.field === x.field)) bad(`${x.field} is not a link or reference field of the area: a link action opens the record one names`, i, "field");
     }
+    if (x.kind === "open_url") {
+      const f = x.field ? fieldOf(x.field) : undefined;
+      if (!x.field) bad("an open_url action names the field holding the web address it opens", i, "field");
+      else if (!f) bad(`${x.field} is not one of the area's fields`, i, "field");
+      else if ((f.type !== "url" && f.type !== "text") || f.encrypted) bad(`${x.field} is ${f.encrypted ? "encrypted" : `a ${f.type} field`}: an open_url action opens a url field's address (or a text field holding one)`, i, "field");
+    }
     if (x.kind === "edit" && a.fields.some((f) => f.encrypted)) bad("the edit form never holds an encrypted value: an area with an encrypted field has no edit action", i, "kind");
-    if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
+    if ((x.roles ?? []).includes("viewer") && x.kind !== "link" && x.kind !== "copy_link" && x.kind !== "open_url") bad(`viewer is read-only in the platform: a ${x.kind} action cannot be a viewer's`, i, "roles");
     for (const [j, u] of (x.unavailable ?? []).entries())
       for (const m of conditionIssues(a.fields, (a as { clocks?: { name: string }[] }).clocks ?? [], u.when)) bad(m, i, "unavailable", j, "when", ...(/^\S+ is not one of the area's fields/.test(m) && !u.when.all && !u.when.any ? ["field"] : []));
   }
@@ -1568,8 +1599,31 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
  */
 /** The visibility modes of a record (mold_v0-259), in their order on screen. */
 export const VISIBILITY_MODES = ["workspace", "team", "private"] as const;
+/** The levels a team role stands for (mold_v0-262): a lead also changes who sees the team's records; a member sees them. */
+export const TEAM_ROLE_LEVELS = ["lead", "member"] as const;
+/**
+ * A workspace's team roles in the app's words (mold_v0-262; src/teams.ts): pack.json or profile.json `team_roles`, 2 to 6
+ * roles (lead, dev, viewer), each mapped onto a level. Absent: Lead and Member, as before.
+ */
+export const TeamRolesSchema = z.array(z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_]{0,23}$/, "a role's id: lowercase letters, digits and _, up to 24"),
+  label: z.string().trim().min(1).max(40).regex(/^[^\n\r{}<>]*$/, "plain text on one line"),
+  level: z.enum(TEAM_ROLE_LEVELS),
+  $comment: z.string().max(2000).optional(),
+}).strict()).min(2).max(6).superRefine((v, ctx) => {
+  if (new Set(v.map((r) => r.id)).size !== v.length) ctx.addIssue({ code: "custom", message: "a role id is listed twice" });
+  if (new Set(v.map((r) => r.label.toLowerCase())).size !== v.length) ctx.addIssue({ code: "custom", message: "two roles have one label" });
+  if (!v.some((r) => r.level === "lead") || !v.some((r) => r.level === "member")) ctx.addIssue({ code: "custom", message: "at least one role of each level (lead and member)" });
+});
 /** An area's `visibility` (mold_v0-259; RecordAreaSchema.visibility). */
-export const VisibilitySchema = z.object({
+/**
+ * mold_v0-262: a child area's records seen by whoever sees the record its reference field `inherit` names (a task by
+ * whoever sees its project), enforced by the same policy (sql/migrations/0053_inherited_visibility.sql). The field is a
+ * single reference to a workspace area that declares its own modes; a record whose reference is empty is open to the
+ * workspace. Its records have no visibility of their own to choose or share.
+ */
+export const InheritVisibilitySchema = z.object({ inherit: name, $comment: z.string().max(2000).optional() }).strict();
+const ModesVisibilitySchema = z.object({
   modes: z.array(z.enum(VISIBILITY_MODES)).min(1).max(3),
   default: z.enum(VISIBILITY_MODES),
   /** People may be named on a record (each sees it whatever its mode). Default false. */
@@ -1579,6 +1633,9 @@ export const VisibilitySchema = z.object({
   if (new Set(v.modes).size !== v.modes.length) ctx.addIssue({ code: "custom", message: "a mode is listed twice", path: ["modes"] });
   if (!v.modes.includes(v.default)) ctx.addIssue({ code: "custom", message: `default ${v.default} is not one of modes (${v.modes.join(", ")})`, path: ["default"] });
 });
+export const VisibilitySchema = z.union([ModesVisibilitySchema, InheritVisibilitySchema]);
+/** Whether an area's visibility follows a parent's (mold_v0-262). */
+export const inheritsVisibility = (v: unknown): v is z.output<typeof InheritVisibilitySchema> => !!v && typeof v === "object" && typeof (v as { inherit?: unknown }).inherit === "string";
 
 export const RecordAreaSchema = z.object({
   name,
@@ -1753,6 +1810,11 @@ export const RecordAreaSchema = z.object({
   // mold_v0-259: a record's visibility is a workspace's own row's, written through the record store's doors.
   if (a.visibility && a.scope !== "workspace") bad("`visibility` is for a workspace's own records (a shared area is every workspace's)", "visibility");
   if (a.visibility && a.repository) bad("`visibility` is for records written through the record store: an area fed by a repository has no person who owns its rows", "visibility");
+  if (inheritsVisibility(a.visibility)) {
+    const f = a.fields.find((x) => x.name === (a.visibility as { inherit: string }).inherit);
+    if (!f) bad(`visibility.inherit names ${(a.visibility as { inherit: string }).inherit}, which is not one of the area's fields`, "visibility", "inherit");
+    else if (f.type !== "reference" || f.multiple) bad(`visibility.inherit names ${f.name}: a single reference field (its record's visibility is followed)`, "visibility", "inherit");
+  }
   if (a.action === false && !a.action_reason) bad("action: false says why its lists have no primary action (action_reason)", "action_reason");
   if (a.action_reason !== undefined && a.action !== false) bad("action_reason is for action: false", "action_reason");
   const p = a.permissions;

@@ -27,7 +27,7 @@ export type { FeatureId, FeatureSettings, FeatureSpec } from "./feature-flags.js
 // ---------------------------------------------------------------- what asks for each
 
 type Def = ReturnType<typeof packs>[number]["definition"];
-const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; detail?: unknown; key_from_title?: boolean; list_columns?: unknown[]; on_save?: unknown[]; fields?: { encrypted?: boolean; type?: string; preview?: string; copyable?: boolean; where?: unknown }[] }[];
+const areasOf = (d: Def) => (d.recordAreas ?? []) as { scope?: string; due?: unknown; clocks?: unknown[]; detail?: unknown; key_from_title?: boolean; list_columns?: unknown[]; on_save?: unknown[]; fields?: { encrypted?: boolean; type?: string; preview?: string; copyable?: boolean; where?: unknown; display?: string }[] }[];
 const kindsOf = (d: Def) => [...(d.jobKinds ?? []), ...(d.agentJobKinds ?? [])] as { private_network?: boolean; input_from_record?: unknown }[];
 const tabsOf = (d: Def) => (d.tabs ?? []) as { kind?: string; include?: string[]; columns?: unknown[]; sparklines?: unknown[]; rail?: string[] }[];
 
@@ -63,7 +63,7 @@ export function featureRequested(id: FeatureId): boolean {
     case "no_engine": return !sessionEngine();
     case "documents": return defs().some((d) => areasOf(d).some((a) => (a.fields ?? []).some((f) => f.type === "file" || f.preview === "document")));
     // mold_v0-256: also a tab column computed from related records, or an area whose Key follows its Title.
-    case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true))
+    case "layouts": return defs().some((d) => areasOf(d).some((a) => !!a.detail || a.key_from_title === true || (a.fields ?? []).some((f) => f.copyable === true || f.display === "chips"))
       || ((d.tabs ?? []) as { columns?: unknown[] }[]).some((t) => (t.columns ?? []).some((c) => !!c && typeof c === "object")));
     case "record_inputs": case "private_catalogs": case "wide_lists": case "record_rules": case "credential_sets": case "home_cards": {
       const ask = gapAsks[featureSpec(id).requested_by as keyof typeof gapAsks];

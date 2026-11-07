@@ -33,6 +33,8 @@ export interface DetailSection {
   table?: { field: string; columns?: string[] };
   /** mold_v0-256: the record's documents and files as a tree with a preview. */
   files?: { fields?: string[] };
+  /** mold_v0-262: shown only while this condition holds on the record. */
+  when?: DetailCondition;
 }
 /** A related list (mold_v0-254): another area's records that point back here, through `via`. */
 export interface DetailRelated {
@@ -44,7 +46,7 @@ export interface DetailRelated {
 }
 /** The record's runs (mold_v0-254). */
 export interface DetailRuns { kinds?: string[]; limit?: number }
-export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent';
+export type PageActionKind = 'start_run' | 'move' | 'edit' | 'delete' | 'link' | 'copy_link' | 'create_record' | 'start_agent' | 'open_url';
 export type PageActionPlace = 'primary' | 'secondary' | 'more';
 /** A page action as declared (src/pack-api.ts DetailActionSchema); the server says who may take it, and when (PageAction). */
 export interface DetailActionSpec {
@@ -69,6 +71,8 @@ export interface DetailLayout {
   tabs: DetailTab[];
   unplaced?: 'show' | 'hide';
   actions?: DetailActionSpec[];
+  /** mold_v0-262: false hides the automatic Linked records card. */
+  linked?: boolean;
 }
 /** The console's area spec with its layout (the generated type names `detail` only in a build with record_pages on). */
 export type LaidOutArea = RecordAreaSpec & { detail?: DetailLayout };
@@ -265,12 +269,14 @@ export interface PageAction {
   create?: { area: string; label: string; values: Record<string, unknown>; fields?: PageFormField[]; upload_max?: number | null; key_from_title?: boolean };
   /** start_agent (mold_v0-261, flag agent_harness): the profile it starts, and the first message filled from this record. */
   agent?: { profile: string; name: string; version: number; message: string };
+  /** open_url (mold_v0-262): the web address it opens in a new tab. */
+  url?: string | null;
 }
 /** A related list's rows (GET /api/records/_page/<area>/<key>), or hidden: a role that may not read its area. */
 export type RelatedData = { hidden: true } | { hidden?: false; area: string; via: string; more: boolean;
   /** mold_v0-256: the value matched (this record's key, or its match_field's value); null: nothing to match. */
   match?: string | null;
-  records: { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; actions: PageAction[] }[] };
+  records: { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; actions: PageAction[]; ref_titles?: Record<string, Record<string, string>> }[] };
 /** A record's runs: the newest, and how many in all. */
 export interface RecordRun { id: string; pack: string; kind: string; status: string; error: string | null; cost_usd: number; created_at: string; started_at: string | null; ended_at: string | null; by: string }
 export type RunsData = { total: number; runs: RecordRun[];
@@ -366,3 +372,16 @@ export function createHref(a: Pick<PageAction, 'create'>): string | null {
 }
 /** Whether a layout declares Add <related record> actions (the list's open row offers them: ./row-create.tsx). */
 export const declaresCreate = (layout: DetailLayout | null) => (layout?.actions ?? []).some((a) => a.kind === 'create_record');
+
+/** Whether a section is drawn on this record (mold_v0-262: its `when` holds, or it has none). */
+export const sectionShown = (s: DetailSection, data: Record<string, unknown>, clocks: ClockStates = null) => !s.when || conditionHolds(s.when, data, clocks);
+/**
+ * The link and reference fields the Linked records card lists (mold_v0-262): none when the layout says `linked: false`;
+ * else those the page does not show already (placed as a fact, or as a field of a section of any tab).
+ */
+export function linkedShown(layout: DetailLayout, fields: string[]): string[] {
+  if (layout.linked === false) return [];
+  const placed = new Set<string>([...(layout.header?.facts ?? []).map((f) => f.field).filter((x): x is string => !!x),
+    ...layout.tabs.flatMap((t) => t.sections.flatMap((s) => [...(s.fields ?? []), ...(s.groups ?? []).flatMap((g) => g.fields)]))]);
+  return fields.filter((f) => !placed.has(f));
+}

@@ -669,6 +669,12 @@
                       "additionalProperties": false
                     }
                   ]
+                },
+                "display": {
+                  "type": "string",
+                  "enum": [
+                    "chips"
+                  ]
                 }
               },
               "required": [
@@ -3098,6 +3104,292 @@
                               }
                             },
                             "additionalProperties": false
+                          },
+                          "when": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "equals": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  }
+                                ]
+                              },
+                              "in": {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                }
+                              },
+                              "not_in": {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    }
+                                  ]
+                                }
+                              },
+                              "empty": {
+                                "type": "boolean"
+                              },
+                              "before": {
+                                "type": "string",
+                                "const": "today"
+                              },
+                              "after": {
+                                "type": "string",
+                                "const": "today"
+                              },
+                              "within_days": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 3650
+                              },
+                              "clock": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "is": {
+                                "type": "string",
+                                "enum": [
+                                  "overdue",
+                                  "due_soon"
+                                ]
+                              },
+                              "all": {
+                                "minItems": 1,
+                                "maxItems": 6,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "field": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "equals": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    },
+                                    "in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "not_in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "empty": {
+                                      "type": "boolean"
+                                    },
+                                    "before": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "after": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "within_days": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 3650
+                                    },
+                                    "clock": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "is": {
+                                      "type": "string",
+                                      "enum": [
+                                        "overdue",
+                                        "due_soon"
+                                      ]
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              },
+                              "any": {
+                                "minItems": 1,
+                                "maxItems": 6,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "field": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "equals": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        }
+                                      ]
+                                    },
+                                    "in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "not_in": {
+                                      "minItems": 1,
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 200
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "empty": {
+                                      "type": "boolean"
+                                    },
+                                    "before": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "after": {
+                                      "type": "string",
+                                      "const": "today"
+                                    },
+                                    "within_days": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 3650
+                                    },
+                                    "clock": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                                    },
+                                    "is": {
+                                      "type": "string",
+                                      "enum": [
+                                        "overdue",
+                                        "due_soon"
+                                      ]
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -3137,7 +3429,8 @@
                         "link",
                         "copy_link",
                         "create_record",
-                        "start_agent"
+                        "start_agent",
+                        "open_url"
                       ]
                     },
                     "place": {
@@ -3550,6 +3843,9 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "linked": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -3558,42 +3854,63 @@
             "additionalProperties": false
           },
           "visibility": {
-            "type": "object",
-            "properties": {
-              "modes": {
-                "minItems": 1,
-                "maxItems": 3,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "workspace",
-                    "team",
-                    "private"
-                  ]
-                }
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "modes": {
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "workspace",
+                        "team",
+                        "private"
+                      ]
+                    }
+                  },
+                  "default": {
+                    "type": "string",
+                    "enum": [
+                      "workspace",
+                      "team",
+                      "private"
+                    ]
+                  },
+                  "collaborators": {
+                    "type": "boolean"
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "modes",
+                  "default"
+                ],
+                "additionalProperties": false
               },
-              "default": {
-                "type": "string",
-                "enum": [
-                  "workspace",
-                  "team",
-                  "private"
-                ]
-              },
-              "collaborators": {
-                "type": "boolean"
-              },
-              "$comment": {
-                "type": "string",
-                "maxLength": 2000
+              {
+                "type": "object",
+                "properties": {
+                  "inherit": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  },
+                  "$comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "inherit"
+                ],
+                "additionalProperties": false
               }
-            },
-            "required": [
-              "modes",
-              "default"
-            ],
-            "additionalProperties": false
+            ]
           },
           "samples": {
             "maxItems": 20,
@@ -4137,6 +4454,12 @@
                           ],
                           "additionalProperties": false
                         }
+                      ]
+                    },
+                    "display": {
+                      "type": "string",
+                      "enum": [
+                        "chips"
                       ]
                     }
                   },
@@ -4701,6 +5024,12 @@
                           ],
                           "additionalProperties": false
                         }
+                      ]
+                    },
+                    "display": {
+                      "type": "string",
+                      "enum": [
+                        "chips"
                       ]
                     }
                   },
@@ -8676,6 +9005,14 @@
               }
             ]
           },
+          "credentials": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,30}\\/[a-z][a-z0-9_]{1,62}$"
+            }
+          },
           "id": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{1,39}$"
@@ -8697,6 +9034,43 @@
         "required": [
           "id",
           "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "team_roles": {
+      "minItems": 2,
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,23}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[^\\n\\r{}<>]*$"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "lead",
+              "member"
+            ]
+          },
+          "$comment": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "level"
         ],
         "additionalProperties": false
       }

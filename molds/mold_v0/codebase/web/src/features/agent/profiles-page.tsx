@@ -46,6 +46,8 @@ export interface ProfileConfig {
   files?: { path: string; content: string }[];
   roles?: Role[] | null;
   overrides?: { workspace: string; budget_usd?: number; ceiling_usd?: number; model?: string }[];
+  /** mold_v0-262: the workspace credentials its sessions receive ("<pack>/<field>"), only a workspace owner's sessions. */
+  credentials?: string[];
 }
 interface Summary {
   id: string; name: string; description: string; version: number; status: 'active' | 'archived'; source: 'platform' | 'pack'; pack: string | null; is_default: boolean;
@@ -390,6 +392,7 @@ function ProfileForm({ facts, profile, onDone }: { facts: Facts; profile?: Detai
   const [hosts, setHosts] = useState(c.web?.hosts ? c.web.hosts.join(', ') : '');
   const [hostsSet, setHostsSet] = useState(!!c.web?.hosts);
   const [roles, setRoles] = useState<Role[]>(c.roles ?? []);
+  const [creds, setCreds] = useState((c.credentials ?? []).join(', '));
   const [files, setFiles] = useState(c.files ?? []);
   const [overrides, setOverrides] = useState(c.overrides ?? []);
   const [busy, setBusy] = useState(false);
@@ -402,6 +405,7 @@ function ProfileForm({ facts, profile, onDone }: { facts: Facts; profile?: Detai
     web: { tools: (web || null) as WebTools | null, hosts: hostsSet ? hosts.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean) : null },
     files: files.filter((f) => f.path.trim()).map((f) => ({ path: f.path.trim(), content: f.content })),
     roles: roles.length ? roles : null,
+    credentials: creds.split(',').map((x) => x.trim()).filter(Boolean),
     overrides: overrides.filter((o) => o.workspace).map((o) => ({ workspace: o.workspace, ...(o.budget_usd !== undefined ? { budget_usd: o.budget_usd } : {}), ...(o.ceiling_usd !== undefined ? { ceiling_usd: o.ceiling_usd } : {}), ...(o.model ? { model: o.model } : {}) }))
   });
   const submit = async () => {
@@ -512,6 +516,10 @@ function ProfileForm({ facts, profile, onDone }: { facts: Facts; profile?: Detai
             </label>
           ))}
         </fieldset>
+        <H>Credentials its sessions receive</H>
+        <Row id='pf-credentials' label='Workspace credentials' hint="Comma-separated, as <pack>/<field> (a value the workspace set in Settings › Credentials). Only sessions a workspace owner starts receive them; each wake's run records which it received, and they are hidden from everything it writes.">
+          <Input id='pf-credentials' value={creds} onChange={(e) => setCreds(e.target.value)} placeholder='hosting/deploy_token' className='font-mono text-xs' data-profile-credentials='' />
+        </Row>
         <H>Files given to its workspace</H>
         <div className='flex flex-col gap-3' data-profile-files-form=''>
           {files.map((f, i) => (

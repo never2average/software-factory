@@ -159,10 +159,10 @@ export async function runPage(c: PageCaller, id: string) {
   const agentSpec = spec.agent ?? null;
 
   // ---- the agent: harness, model, turns, usage by model
-  let session: { model: string; provider: string; flavour: string } | null = null;
+  let session: { id: string; title: string; model: string; provider: string; flavour: string } | null = null;
   if (r.harness_session_id) {
-    const [s] = await withTenant(c.orgId, async () => (await getDb()).query<{ model: string; provider: string; flavour: string }>(
-      "SELECT model, provider, flavour FROM harness_sessions WHERE org_id = $1 AND id = $2", [c.orgId, r.harness_session_id])).catch(() => []);
+    const [s] = await withTenant(c.orgId, async () => (await getDb()).query<{ id: string; title: string; model: string; provider: string; flavour: string }>(
+      "SELECT id, title, model, provider, flavour FROM harness_sessions WHERE org_id = $1 AND id = $2", [c.orgId, r.harness_session_id])).catch(() => []);
     session = s ?? null;
   }
   const reported = modelsFromEvents(rows);
@@ -232,6 +232,9 @@ export async function runPage(c: PageCaller, id: string) {
       cost_usd: await liveCost(c.orgId, r), budget_usd: Number(r.budget_usd), created_at: iso(r.created_at)!, started_at: iso(r.started_at), ended_at: iso(r.ended_at),
       by: c.by(r.requested_by), record: r.record_area && r.record_key && readable({ area: r.record_area }) ? { area: r.record_area, key: r.record_key, title: recordTitle } : null,
       target: t && typeof t.area === "string" && typeof t.key === "string" && readable({ area: t.area }) ? { area: t.area, key: String(t.key) } : null,
+      // mold_v0-262: a workspace agent's wake names its session (the page links to it; everyone in the workspace reads
+      // its sessions, as its runs).
+      session: session ? { id: session.id, title: session.title } : null,
     },
     can: { rerun: acts.rerun, stop: acts.stop },
     timeline: { events: timeline, more, last: rows.length ? Number(rows[rows.length - 1]!.id) : 0 },

@@ -393,6 +393,25 @@ def member_keys_off_problems(s, mold_id, root):
     return [f"profile.member_keys false would leave AI clients no way into /mcp: member API keys off, and molds/{mold_id}/codebase has no "
             f"sign-in for /mcp ({' or '.join(str(f) for f in need)}). Leave member_keys out (keys on), or give the mold a sign-in for /mcp first"]
 
+def team_roles_problems(v, at="team_roles"):
+    """mold_v0-262: a workspace's team roles in the app's words (the shell's scripts/gen-packs.mjs teamRolesProblem says
+    the same): 2 to 6 roles, each {id, label, level: lead|member}, ids and labels each once, one of each level at least."""
+    if not isinstance(v, list) or not 2 <= len(v) <= 6: return [f"{at}: a list of 2 to 6 roles, each {{id, label, level: lead|member}}"]
+    out = []
+    for r in v:
+        if not isinstance(r, dict): out.append(f"{at}: each role is {{id, label, level}}"); continue
+        extra = [k for k in r if k not in ("id", "label", "level", "$comment")]
+        if extra: out.append(f"{at}: a role has no {extra[0]} (it is {{id, label, level}})")
+        if not isinstance(r.get("id"), str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,23}", r["id"]): out.append(f"{at}: role id {json.dumps(r.get('id'))[:40]}: lowercase letters, digits and _, up to 24, starting with a letter")
+        lab = r.get("label")
+        if not isinstance(lab, str) or not lab.strip() or len(lab) > 40 or re.search(r"[<>{}\r\n]", lab): out.append(f"{at}: role {r.get('id')}: its label is one line of plain text, up to 40 characters")
+        if r.get("level") not in ("lead", "member"): out.append(f"{at}: role {r.get('id')}: level is lead or member")
+    if out: return out
+    if len({r["id"] for r in v}) != len(v): out.append(f"{at}: a role id is listed twice")
+    if len({r["label"].strip().lower() for r in v}) != len(v): out.append(f"{at}: two roles have one label")
+    if not any(r["level"] == "lead" for r in v) or not any(r["level"] == "member" for r in v): out.append(f"{at}: at least one role of each level (lead and member)")
+    return out
+
 def problems(profile, mold_id, root, packs=None):
     """Sentences: what is wrong with an app's `profile` for its mold ([] when it is right, or absent). `packs`: the app's
     pack ids (application.json packs), when known, for source_offer.upstreams."""
@@ -435,6 +454,7 @@ def problems(profile, mold_id, root, packs=None):
         elif k == "onprem_runners":
             if not isinstance(v, bool): errs.append(f"profile.onprem_runners must be true or false (got {json.dumps(v)[:40]})")
         elif k == "features": errs += _features.block_problems(v, root, "profile.features")
+        elif k == "team_roles": errs += team_roles_problems(v, "profile.team_roles")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
     # The capability flags as a whole (mold_v0-219): legacy keys that disagree, flags another needs, pack declarations a
     # flag would break. Only for a mold with a features registry, and once the block itself is right.
