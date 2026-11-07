@@ -21,6 +21,8 @@ import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
 import { W } from '@/lib/vocabulary';
 import { sessionEngine } from './engine';
+import { AccountAgentIcon } from './account-agent-icon';
+import { featureOn } from '@/config/features';
 
 type Detail = any; // GET /orgs/:slug (src/admin.ts orgDetail)
 /** An account's pack runs (src/admin.ts accountRuns), in a build without the session engine; null with no job kind. */
@@ -101,6 +103,9 @@ export function AdminAccountDetail({ slug }: { slug: string }) {
               </div>
             )}
           </Section>
+
+          {/* mold_v0-262 (flag agent_harness): the account's agent icon, set here by platform staff only. */}
+          {featureOn('agent_harness') && <AccountAgentIcon slug={d.org.slug} />}
 
           <Tabs defaultValue='people'>
             <div className='-mx-4 overflow-x-auto px-4'>

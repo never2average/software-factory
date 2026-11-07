@@ -130,7 +130,7 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     const to = a.fields.find((f) => f.name === v.inherit)?.to, parent = to ? declOf.get(to) : undefined;
     const pv = (parent as { visibility?: unknown } | undefined)?.visibility;
     if (to && parent && (parent.scope !== "workspace" || !pv || inheritsVisibility(pv)))
-      problems.push(`pack ${p.id}: record area ${a.name} inherits its visibility through ${v.inherit} from ${to}, which ${parent.scope !== "workspace" ? "is shared (platform)" : !pv ? "declares no visibility" : "inherits its own"}: the parent declares its modes`);
+      problems.push(`pack ${p.id}: record area ${a.name} takes \`visibility\` from ${to} through ${v.inherit}, which ${parent.scope !== "workspace" ? "is shared (platform)" : !pv ? "declares no \`visibility\`" : "inherits its own"}: the parent declares its modes`);
   }
   // mold_v0-262: the credentials a pack's agent profile gives its sessions: a pack's workspace credential of this build.
   const credOf = new Map<string, { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }>(out.flatMap((p) => (p.definition.credentials ?? []).map((c) => [`${p.id}/${(c as { name: string }).name}`, c as { bound_to?: string; entries?: unknown; github_app?: unknown; oauth?: unknown }] as const)));

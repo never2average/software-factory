@@ -235,7 +235,7 @@ Its three findings were fixed in mold_v0-246:
 ## The agent's icon (mold_v0-252)
 
 Everyone brings their own. The top bar's agent button (the shared outline button) and the agent pages' heading show, in
-order: the workspace's own (an owner uploads it in Settings › Workspace agent: an SVG, PNG, JPG or WebP of at most 256 KB;
+order: the workspace's own (platform staff upload it on the account's page, Admin › Accounts › <account>, since mold_v0-262: an SVG, PNG, JPG or WebP of at most 256 KB;
 `src/agent-icon.ts` sanitises an SVG and resizes a picture, and keeps it sealed under the workspace's prefix), the app's
 (its brand: `branding.py <app> set --agent-icon <file>` or `--agent-icon-name <name>`, light and dark), else the default.
 An icon drawn in one colour follows the theme's text colour. Reset goes back to the app's. See MOLD.md "Workspace agent".

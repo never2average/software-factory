@@ -1813,7 +1813,7 @@ export const RecordAreaSchema = z.object({
   if (inheritsVisibility(a.visibility)) {
     const f = a.fields.find((x) => x.name === (a.visibility as { inherit: string }).inherit);
     if (!f) bad(`visibility.inherit names ${(a.visibility as { inherit: string }).inherit}, which is not one of the area's fields`, "visibility", "inherit");
-    else if (f.type !== "reference" || f.multiple) bad(`visibility.inherit names ${f.name}: a single reference field (its record's visibility is followed)`, "visibility", "inherit");
+    else if (f.type !== "reference" || f.multiple) bad(`visibility.inherit names ${f.name}: a single reference field (whoever sees its record sees this one)`, "visibility", "inherit");
   }
   if (a.action === false && !a.action_reason) bad("action: false says why its lists have no primary action (action_reason)", "action_reason");
   if (a.action_reason !== undefined && a.action !== false) bad("action_reason is for action: false", "action_reason");

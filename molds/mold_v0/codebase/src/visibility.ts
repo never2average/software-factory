@@ -140,7 +140,7 @@ export async function visibilityForWrite(orgId: number, area: AreaLike, actor: A
   if (inheritsVisibility(area.visibility)) {
     const field = area.visibility.inherit, f = area.fields?.find((x) => x.name === field);
     if (given !== undefined && given !== null)
-      throw new PackError(`${area.label} records are seen by whoever sees the record their ${(f?.label ?? field).toLowerCase()} names: they take no visibility of their own`, 400);
+      throw new PackError(`${area.label} records are seen by whoever sees the record their ${(f?.label ?? field).toLowerCase()} names: they take no \`visibility\` of their own`, 400);
     const k = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>)[field] : undefined;
     const owner = prev ? prev.owner_id ?? null : personOf(actor);
     return typeof k === "string" && k && f?.to

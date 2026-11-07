@@ -119,7 +119,7 @@ try {
     assert.deepEqual(await sees(lead), ["t-none", "t-open"], "the team no longer sees the private project's task");
     assert.deepEqual(await sees(dev), ["t-core", "t-none", "t-open"], "its project's owner does");
     // No visibility of its own: none given, none shared, the MCP tool takes none.
-    await assert.rejects(recs(dev).put("tasks", "t-x", { title: "X", data: { project: "p-open" }, visibility: { mode: "private" } }), /take no visibility of their own/, "a task takes no visibility");
+    await assert.rejects(recs(dev).put("tasks", "t-x", { title: "X", data: { project: "p-open" }, visibility: { mode: "private" } }), /take no `visibility` of their own/, "a task takes no visibility");
     assert.equal((await post(dev, "/api/data/tasks/t-open/visibility", { visibility: { mode: "private" } })).status, 400, "nor is it shared");
     assert.equal((await get(dev, "/api/records/tasks/t-open")).body.can_share, false, "its page offers no Share");
     // A task cannot name a project its writer does not see (the reference check, as they read).
@@ -133,7 +133,7 @@ try {
     const orphan = JSON.parse(JSON.stringify(FIXTURE));
     orphan.record_areas.find((x: { name: string }) => x.name === "tasks").fields[0].to = "places";
     orphan.record_areas.find((x: { name: string }) => x.name === "tasks").visibility = { inherit: "project" };
-    assert.throws(() => install(orphan), /inherits its visibility through project from places, which declares no visibility/, "a parent with no visibility of its own is refused at build");
+    assert.throws(() => install(orphan), /takes `visibility` from places through project, which declares no `visibility`/, "a parent with no visibility of its own is refused at build");
     install(FIXTURE);
     ok("inherited visibility: a task is seen by whoever sees its project (its team, its owner, an owner) and nobody else, in the API, a raw query and a count; no project: the workspace's; it follows a move and a private project at once; no visibility, Share or hidden project of its own; the declaration checked");
   }

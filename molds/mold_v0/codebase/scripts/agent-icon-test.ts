@@ -8,9 +8,10 @@
 //     or entity, no viewBox, nothing left to draw, a file over 256 KB, a GIF or a text file are refused; a PNG (every
 //     colour type the browser makes) is trimmed and fitted inside 64 px and re-encoded with nothing of the original's
 //     other chunks; a JPG or WebP is kept only at most 64 px a side; what a file is comes from its bytes.
-//  3. Over HTTP: an owner uploads (PUT), every person of the workspace reads it (GET), a member or viewer may not change
-//     it (403); an oversized body is refused (413) and nothing changes; bytes that are not an icon (400); reset (DELETE)
-//     goes back to none (the app's).
+//  3. Over HTTP (mold_v0-262): platform staff set it on the account's page (PUT /api/admin/onboarding/agent-icon/<slug>,
+//     logged), a staff viewer may not; the workspace's own PUT and DELETE are refused for its owner, member and viewer;
+//     every person of the workspace reads it (GET); an oversized body is refused (413) and nothing changes; bytes that
+//     are not an icon (400); staff's reset (DELETE) goes back to none (the app's).
 //  4. Isolation: workspace B never sees A's icon (its own GET answers none, its reset leaves A's); A's sealed object is
 //     under A's prefix only, does not open as B's (copied under B's prefix it is not B's icon), and holds no readable
 //     byte of the SVG.
@@ -125,45 +126,58 @@ try {
     ok("a JPG or WebP is kept only at most 64 px a side (the console resizes every picture first); its size from its header");
   }
 
-  // ---------- 3 and 4. over HTTP, and isolation ----------
+  // ---------- 3 and 4. over HTTP (mold_v0-262: platform staff set it, on the account's page), and isolation ----------
   F.setFeaturesForTest({ agent_harness: true });
   {
     const A = (await createOrg(`Icon A ${STAMP}`)).org, B = (await createOrg(`Icon B ${STAMP}`)).org;
     const http = await startHttp();
     const ownerA = await http.signIn(A, "owner"), memberA = await http.signIn(A, "member"), viewerA = await http.signIn(A, "viewer");
     const ownerB = await http.signIn(B, "owner");
+    const staff = await http.adminToken("operator"), staffViewer = await http.adminToken("viewer");
     const h = (t: string) => ({ authorization: `Bearer ${t}` });
-    const put = (t: string, body: Buffer | string, type = "application/octet-stream") =>
-      fetch(`${http.base}/api/agent/icon`, { method: "PUT", headers: { ...h(t), "content-type": type, "x-file-type": "image/svg+xml" }, body: typeof body === "string" ? body : new Uint8Array(body) });
+    const at = (org: { slug: string }) => `${http.base}/api/admin/onboarding/agent-icon/${encodeURIComponent(org.slug)}`;
+    const put = (t: string, org: { slug: string }, body: Buffer | string, type = "application/octet-stream") =>
+      fetch(at(org), { method: "PUT", headers: { ...h(t), "content-type": type, "x-file-type": "image/svg+xml" }, body: typeof body === "string" ? body : new Uint8Array(body) });
+    const reset = (t: string, org: { slug: string }) => fetch(at(org), { method: "DELETE", headers: h(t) });
     const get = async (t: string) => { const r = await http.req("GET", "/api/agent/icon", h(t)); assert.equal(r.status, 200); return r.json() as Promise<{ icon: { content_type: string; data: string; sha256: string } | null; can_change: boolean }>; };
+    const said: string[] = [];
+    const realError = console.error;
+    console.error = (...a: unknown[]) => { said.push(a.map(String).join(" ")); realError(...a); };
 
-    assert.deepEqual(await get(ownerA), { icon: null, can_change: true, max_bytes: I.AGENT_ICON_MAX_BYTES });
-    assert.equal((await get(memberA)).can_change, false);
-    let r = await put(memberA, EVIL);
-    assert.equal(r.status, 403, "a member may not change it");
-    r = await put(viewerA, EVIL);
-    assert.equal(r.status, 403, "a viewer may not change it");
-    r = await put(ownerA, EVIL, "image/svg+xml");
+    assert.deepEqual(await get(ownerA), { icon: null, can_change: false, max_bytes: I.AGENT_ICON_MAX_BYTES }, "a workspace reads its icon and may not change it");
+    // The workspace's own doors are closed: an owner, a member and a viewer are refused, nothing changes.
+    for (const [who, t] of [["an owner", ownerA], ["a member", memberA], ["a viewer", viewerA]] as const) {
+      const r = await fetch(`${http.base}/api/agent/icon`, { method: "PUT", headers: { ...h(t), "content-type": "application/octet-stream", "x-pack-request": "1" }, body: EVIL });
+      assert.equal(r.status, 403, `${who} of the workspace may not set it`);
+      assert.match((await r.json() as { error: string }).error, /platform's staff/);
+      assert.equal((await fetch(`${http.base}/api/agent/icon`, { method: "DELETE", headers: { ...h(t), "x-pack-request": "1" } })).status, 403, `${who} may not reset it`);
+    }
+    assert.ok([401, 403].includes((await put(ownerA, A, EVIL)).status), "nor through the staff route");
+    let r = await put(staffViewer, A, EVIL);
+    assert.equal(r.status, 403, "a staff viewer may not set it");
+    r = await put(staff, A, EVIL, "image/svg+xml");
     assert.equal(r.status, 415, "only as application/octet-stream");
-    r = await put(ownerA, EVIL);
+    r = await put(staff, A, EVIL);
     assert.equal(r.status, 200, await r.clone().text());
     const mine = (await r.json() as { icon: { sha256: string; data: string; updated_by: string | null } }).icon;
-    assert.ok(!Buffer.from(mine.data, "base64").toString().includes("script") && mine.updated_by);
+    assert.ok(!Buffer.from(mine.data, "base64").toString().includes("script") && mine.updated_by?.startsWith("staff:"), "sanitised on the way in, kept as staff's");
+    assert.ok(said.some((l) => /agent\.icon_set org=/.test(l) && l.includes(A.slug) && l.includes(mine.sha256)), "in the staff log, with the account and the icon's hash");
     for (const t of [ownerA, memberA, viewerA]) assert.equal((await get(t)).icon?.sha256, mine.sha256, "every person of the workspace sees it");
-    ok("over HTTP: an owner uploads (sanitised on the way in), every person of the workspace reads it, a member or viewer may not change it");
+    assert.equal((await (await fetch(at(A), { headers: h(staffViewer) })).json() as { icon: { sha256: string } }).icon.sha256, mine.sha256, "staff read it on the account's page");
+    assert.equal((await fetch(at({ slug: "no-such-account" }), { method: "PUT", headers: { ...h(staff), "content-type": "application/octet-stream" }, body: EVIL })).status, 404, "an account that is not there");
+    ok("staff set it (sanitised, logged with the account and its hash), a staff viewer may not; a workspace's owner, member and viewer are refused (its PUT and DELETE closed); every person of the workspace sees it");
 
-    r = await put(ownerA, Buffer.alloc(I.AGENT_ICON_MAX_BYTES + 1, 0x20));
+    r = await put(staff, A, Buffer.alloc(I.AGENT_ICON_MAX_BYTES + 1, 0x20));
     assert.equal(r.status, 413, "an oversized file is refused");
     assert.match((await r.json() as { error: string }).error, /at most 256 KB/);
-    r = await put(ownerA, Buffer.from("GIF89a" + "\0".repeat(40)));
+    r = await put(staff, A, Buffer.from("GIF89a" + "\0".repeat(40)));
     assert.equal(r.status, 400);
     assert.equal((await get(ownerA)).icon?.sha256, mine.sha256, "a refused upload changes nothing");
     ok("an oversized file is refused (413) and a file that is no icon (400); the icon kept is unchanged");
 
     // Isolation: B sees none of A's; B's reset leaves A's; A's object is A's alone.
     assert.equal((await get(ownerB)).icon, null, "workspace B never sees A's icon");
-    r = await http.req("DELETE", "/api/agent/icon", h(ownerB));
-    assert.equal(r.status, 200);
+    assert.equal((await reset(staff, B)).status, 200);
     assert.equal((await get(ownerA)).icon?.sha256, mine.sha256, "B's reset does not touch A's");
     const objects = path.join(TMP, "objects");
     const files: string[] = [];
@@ -180,19 +194,19 @@ try {
     ok("isolation: workspace B never sees A's icon (its GET answers none, its reset leaves A's); A's object sits under A's prefix only, sealed, and does not open as B's");
 
     const pngBody = png(128, 128, (x, y) => ((x - 64) ** 2 + (y - 64) ** 2 < 3000 ? [10, 120, 200, 255] : [0, 0, 0, 0]));
-    r = await put(ownerB, pngBody);
+    r = await put(staff, B, pngBody);
     assert.equal(r.status, 200);
     const bIcon = (await r.json() as { icon: { content_type: string; width: number } }).icon;
     assert.ok(bIcon.content_type === "image/png" && bIcon.width <= 64);
     assert.equal((await get(ownerA)).icon?.sha256, mine.sha256, "B's own icon is B's alone");
-    r = await http.req("DELETE", "/api/agent/icon", h(memberA));
-    assert.equal(r.status, 403, "a member may not reset it");
-    r = await http.req("DELETE", "/api/agent/icon", h(ownerA));
-    assert.equal(r.status, 200);
+    assert.equal((await reset(staffViewer, A)).status, 403, "a staff viewer may not reset it");
+    assert.equal((await reset(staff, A)).status, 200);
+    assert.ok(said.some((l) => /agent\.icon_reset org=/.test(l) && l.includes(A.slug)), "the reset in the staff log");
     assert.equal((await get(ownerA)).icon, null, "reset: back to the app's icon");
     assert.ok(!existsSync(path.join(objects, `workspaces/org-${A.orgId}/.agent-icon/icon.wse`)));
     assert.equal((await get(ownerB)).icon?.content_type, "image/png", "A's reset leaves B's");
-    ok("each workspace its own: B's PNG (fitted inside 64 px) is B's alone; an owner's reset goes back to the app's icon, a member's is refused");
+    console.error = realError;
+    ok("each account its own: B's PNG (fitted inside 64 px) is B's alone; staff's reset goes back to the app's icon (logged), a staff viewer's is refused");
     await http.close();
   }
 

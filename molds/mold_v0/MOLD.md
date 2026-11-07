@@ -2965,10 +2965,12 @@ page) out of `console-routes.generated.json`, so the proxy answers them not foun
     field into the console's profile module only, so an app without one builds exactly what it built before. An SVG is
     sanitised and, drawn in one colour, redrawn in currentColor (painted as a mask in the text colour, light and dark); a
     picture is fitted inside 64 px and shipped as a PNG, never wrapped in an SVG.
-  - *A workspace's own*: Settings › Workspace agent (a Settings tab of group Automation, only with the flag on): the two
-    icons in play as the standard full-area table, Upload icon (an owner's) and Reset to the app's icon. `GET /api/agent/icon`
-    (any person of the workspace), `PUT` (an owner; the bytes as `application/octet-stream`, at most 256 KB) and `DELETE`
-    (an owner) in `src/agent-routes.ts`; `src/agent-icon.ts` checks the bytes by what they are: an SVG through the same
+  - *A workspace's own*: since mold_v0-262 set by platform staff only, on the account's page (Admin › Accounts ›
+    <account>, its Agent icon section: light and dark previews, Upload, Replace, Reset to the app's icon).
+    `GET /api/agent/icon` (any person of the workspace; its `PUT` and `DELETE` refuse with 403), and staff's
+    `GET`, `PUT` (the accounts role; the bytes as `application/octet-stream`, at most 256 KB) and `DELETE` at
+    `/api/admin/onboarding/agent-icon/<slug>`, each change in the staff log (`agent.icon_set`, `agent.icon_reset`), in
+    `src/agent-routes.ts`; `src/agent-icon.ts` checks the bytes by what they are: an SVG through the same
     allowlist as the factory's (no script, handler, foreignObject, style sheet, picture, outside link, DOCTYPE or entity),
     a PNG decoded, trimmed, fitted inside 64 px and re-encoded (nothing of the file but its pixels kept), a JPG or WebP
     only at most 64 px a side (the console resizes every picture to a 64 px PNG before it sends it). Kept sealed with the
@@ -3638,6 +3640,9 @@ Each part under the flag it belongs to (off: as before; with every flag off a bu
   workspace-bound pasted credential; frozen into a session only when a workspace owner starts it, fetched by each wake
   with its lease as a run's are (its `credentials` event names what it was given, never a value), delivered in its env or
   file and redacted from everything it writes (`src/agent-harness.ts`, `src/credentials.ts` `findCredential`).
+- **An account's agent icon is the platform's**: staff set, replace and reset it on the account's page (Admin › Accounts ›
+  <account>), with #252's checks and storage (`src/agent-icon.ts`), each change in the staff log; the workspace's own
+  `PUT`/`DELETE /api/agent/icon` refuse (403).
 - **The factory**: `branding.py <app> set` writes the workspace tile only into an app whose state has its workspace
   (never a partial block; it removes the tile-only block an earlier set left); the mold's test fixtures build their stand-in
   keys at run time (`scripts/lib/fake-secrets.ts`), so `repo.py`'s secret gate passes them with no allowlist;
