@@ -447,7 +447,7 @@ export function RecordView<T>({
             <dl>{cols.filter((c) => c.peek !== false).map((c) => <Field key={c.key} label={colName(c)}>{c.render(current)}</Field>)}</dl>
             <Separator className='mb-4' />
           </>)}
-          <div className='pb-4' data-record-body=''>{detail(current, close)}</div>
+          <div key={open!} className='pb-4' data-record-body=''>{detail(current, close)}</div>
         </RecordPanel>
       )}
     </div>

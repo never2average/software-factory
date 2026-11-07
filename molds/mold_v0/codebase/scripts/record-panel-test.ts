@@ -194,7 +194,8 @@ try {
   await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.down();
   await p.mouse.move(box.x - 150, box.y + box.height / 2, { steps: 8 }); await p.mouse.up(); await settle();
   const dragged = await width('[data-slot="detail-panel-host"]');
-  check(Math.abs(dragged - 510) < 4, `a drag resizes it (360 → ${Math.round(dragged)} px)`);
+  const want = 360 + 150 + box.width / 2;
+  check(Math.abs(dragged - want) < 4, `a drag resizes it (360 → ${Math.round(dragged)} px, ${Math.round(want)} wanted)`);
   check(await p.evaluate(() => localStorage.getItem("panel-width:panel-test")) !== null, "the width remembered for this panel type");
 
   // A reload reopens it, at the remembered width.
@@ -278,7 +279,8 @@ try {
   const layer = await m.locator('[data-slot="detail-panel-host"]').evaluate((el: Element) => { const r = el.getBoundingClientRect(); return { pos: getComputedStyle(el).position, w: r.width, top: r.top }; });
   check(layer.pos === "fixed" && Math.round(layer.w) === 390 && layer.top === 64, `a phone: a full-width layer under the top bar (${JSON.stringify(layer)})`);
   check(await m.getByTestId("detail-panel-back").isVisible() && (await m.getByTestId("detail-panel-back").innerText()).includes("Back to list"), "with Back to list");
-  check(!(await m.getByTestId("detail-panel-expand").isVisible()) && (await m.getByRole("separator").count()) === 0 || !(await m.getByRole("separator").isVisible()), "no Expand and no splitter on a phone");
+  const sepShown = (await m.getByRole("separator").count()) > 0 && await m.getByRole("separator").isVisible();
+  check(!(await m.getByTestId("detail-panel-expand").isVisible()) && !sepShown, "no Expand and no splitter on a phone");
   if (SHOTS) await m.screenshot({ path: path.join(SHOTS, "harness-phone-dark-390.png") });
   await m.getByTestId("detail-panel-back").click(); await m.waitForTimeout(250);
   check(!(await m.locator('[data-slot="detail-panel"]').isVisible()) && !/id=/.test(await m.evaluate(() => location.search)), "Back to list closes it");
