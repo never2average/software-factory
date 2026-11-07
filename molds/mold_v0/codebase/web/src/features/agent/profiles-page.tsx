@@ -296,7 +296,7 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
           {keys.map((k) => (
             <Row key={k.row} onRemove={ro ? undefined : () => setKeys((ks) => ks.filter((x) => x.row !== k.row))} what={k.kind === 'workspace' ? k.name : `${k.provider}/${k.label}`}>
               <NativeSelect aria-label='Kind of key' value={k.kind} disabled={ro} className='w-40'
-                onChange={(e) => setKeys((ks) => ks.map((x) => (x.row !== k.row ? x : e.target.value === 'workspace' ? { row: x.row, kind: 'workspace', name: facts.keys.workspace[0]?.name ?? '' } : { row: x.row, kind: 'platform', provider: facts.keys.platform[0]?.provider ?? '', label: facts.keys.platform[0]?.label ?? '', env: '' })))}>
+                onChange={(e) => setKeys((ks) => ks.map((x): Key & { row: number } => (x.row !== k.row ? x : e.target.value === 'workspace' ? { row: x.row, kind: 'workspace' as const, name: facts.keys.workspace[0]?.name ?? '' } : { row: x.row, kind: 'platform' as const, provider: facts.keys.platform[0]?.provider ?? '', label: facts.keys.platform[0]?.label ?? '', env: '' })))}>
                 <NativeSelectOption value='workspace'>Workspace credential</NativeSelectOption>
                 <NativeSelectOption value='platform'>Platform key</NativeSelectOption>
               </NativeSelect>
@@ -317,7 +317,7 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
             </Row>
           ))}
         </Rows>
-        {!ro && <AddButton label='Add key' data='ap-add-key' onClick={() => setKeys((ks) => [...ks, facts.keys.workspace.length ? { row: next(), kind: 'workspace', name: facts.keys.workspace[0]!.name } : { row: next(), kind: 'platform', provider: facts.keys.platform[0]?.provider ?? '', label: facts.keys.platform[0]?.label ?? '', env: '' }])} />}
+        {!ro && <AddButton label='Add key' data='ap-add-key' onClick={() => setKeys((ks) => [...ks, facts.keys.workspace.length ? { row: next(), kind: 'workspace' as const, name: facts.keys.workspace[0]!.name } : { row: next(), kind: 'platform' as const, provider: facts.keys.platform[0]?.provider ?? '', label: facts.keys.platform[0]?.label ?? '', env: '' }])} />}
       </Part>
 
       <Part n={3} title='Workspace upload' hint={`Files and folders written into each session's workspace, programs it needs included (made executable there). At most ${size(facts.upload_max_bytes)} in all.`}>
