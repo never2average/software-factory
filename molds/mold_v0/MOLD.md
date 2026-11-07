@@ -719,7 +719,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   **`freestyle`** (mold_v0-274, `src/freestyle.ts`, `freestyleProvider`): a Freestyle VM per run and per agent wake
   (https://docs.freestyle.sh/docs/vms), through Freestyle's HTTP API version 5 called directly (the shapes of the
   official SDK `freestyle` 0.2.21; no SDK installed). Its API key is the Key vault's **Freestyle** provider (migration
-  0057; a platform owner adds it on Admin › Key vault, listed while the runs' sandboxes come from Freestyle; a
+  0058; a platform owner adds it on Admin › Key vault, listed while the runs' sandboxes come from Freestyle; a
   `FREESTYLE_API_KEY` on the server is imported into the vault once, as every provider key is); never in a pack or the
   repository, never handed to a run or a session (`KEYS_NEVER_INJECTED`, `ORCHESTRATOR_ONLY_PROVIDERS`). The launch is
   boat's (mold_v0-179): `POST /v5/vms` from the base snapshot `freestyle/ubuntu-sm` (Ubuntu 24.04 with node, npm, git,

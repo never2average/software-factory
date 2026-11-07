@@ -1,6 +1,6 @@
--- Rolling back past 0057_freestyle_vault (mold_v0-274), for a release from before it.
+-- Rolling back past 0058_freestyle_vault (mold_v0-274), for a release from before it.
 -- Not a migration (never run by src/migrate.ts). Run it once, on the app's own login, before starting the older release:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0057_freestyle_vault.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f sql/rollback/0058_freestyle_vault.sql
 -- Refused, changing nothing, while the runs' sandboxes come from Freestyle (the platform setting APP_RUN_SANDBOX says
 -- freestyle: the older release has no Freestyle provider, and its runs would wait) or the key vault holds a Freestyle key
 -- (the older release could not list or delete it): choose another sandbox provider in Agent configuration, let the runs
