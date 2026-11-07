@@ -30,7 +30,7 @@ import { AGENT_FLAVOURS, agentHarnessOn, flavourOf, pinnedFlavours } from "./age
 import { activeExceptions, GOVERNANCE_LIMITS, type Governance } from "./agent-governance.js";
 import {
   configProblems, DEFAULT_PROFILE, keyName, normalizeGovernance, PROFILE_ID, PROFILE_LIMITS, ProfileConfigSchema, UPLOAD_ID,
-  type PackAgentProfile, type ProfileConfig, type ProfileKey, type ProfileUpload,
+  type PackAgentProfile, type ProfileConfig, type ProfileKey, type ProfileRecipe, type ProfileUpload,
 } from "./agent-profile-spec.js";
 
 export { DEFAULT_PROFILE } from "./agent-profile-spec.js";
@@ -66,6 +66,8 @@ export interface Effective {
   harness: string; provider: string; model: string; key: string | null;
   keys: ProfileKey[];
   uploads: ProfileUpload[];
+  /** mold_v0-271: the workspace recipes its sessions receive (src/recipes.ts), each expanded into uploads at a start. */
+  recipes: ProfileRecipe[];
   governance: Governance | null;
   from: { harness: "profile" | "setting"; model: "profile" | "setting" };
 }
@@ -78,7 +80,7 @@ export function effectiveOf(c: ProfileConfig): Effective {
   const inf = c.inference ?? null;
   return {
     harness: flavour.id, provider: inf?.provider ?? settingProvider, model: inf?.model ?? settingText("AGENT_MODEL"), key: inf?.key ?? null,
-    keys: [...(c.keys ?? [])], uploads: [...(c.uploads ?? [])], governance: c.governance ?? null,
+    keys: [...(c.keys ?? [])], uploads: [...(c.uploads ?? [])], recipes: [...(c.recipes ?? [])], governance: c.governance ?? null,
     from: { harness: c.harness ? "profile" : "setting", model: inf ? "profile" : "setting" },
   };
 }
@@ -289,9 +291,21 @@ export async function checkConfig(raw: unknown, by = "staff", previous: ProfileC
       if (!f || !f.completed_at) problems.push(`uploads: ${u.path} was not uploaded (or not finished): add it again`);
       else if (f.sha256 !== u.sha256 || Number(f.bytes) !== u.bytes) problems.push(`uploads: ${u.path} is not the file that was uploaded`);
     }
+  }
+  // 4. mold_v0-271: the workspace recipes: each one there, active, with that version; the total within the limit too.
+  let recipeBytes = 0;
+  if (c.recipes?.length) {
+    const R = await import("./recipes.js");
+    for (const x of c.recipes) {
+      const bad = await R.pickProblem(x);
+      if (bad) problems.push(bad);
+      else recipeBytes += (await R.recipeUploads(x)).uploads.filter((u) => !uploads.some((o) => o.path.toLowerCase() === u.path.toLowerCase())).reduce((t, u) => t + u.bytes, 0);
+    }
+  }
+  {
     const max = uploadLimitBytes();
-    const total = uploads.reduce((t, u) => t + u.bytes, 0);
-    if (total > max) problems.push(`uploads: ${mb(total)} in all: at most ${mb(max)} (the platform's AGENT_UPLOAD_MAX_MB)`);
+    const total = uploads.reduce((t, u) => t + u.bytes, 0) + recipeBytes;
+    if (total > max) problems.push(`uploads: ${mb(total)} in all${recipeBytes ? " with its recipes" : ""}: at most ${mb(max)} (the platform's AGENT_UPLOAD_MAX_MB)`);
   }
   // 5. The governance policy: as normalized; a retention no longer than the platform's; each exception dated.
   if (c.governance) {
@@ -480,6 +494,30 @@ export async function readUploadPart(id: string, n: number): Promise<Buffer> {
   return b;
 }
 export const uploadParts = (bytes: number) => partsOf(bytes);
+/**
+ * mold_v0-271: bytes already in hand kept as one finished upload (a file of an agent's recipe proposal, src/recipes.ts),
+ * stored exactly as a staff upload's parts are.
+ */
+export async function storeUploadBytes(by: ProfileActor, data: Buffer): Promise<{ id: string; bytes: number; sha256: string; executable: boolean }> {
+  if (data.length > uploadLimitBytes()) throw new PackError(`That file is ${mb(data.length)}: at most ${mb(uploadLimitBytes())} (the platform's AGENT_UPLOAD_MAX_MB)`, 413);
+  const id = `upl_${randomBytes(18).toString("base64url").replace(/[^A-Za-z0-9]/g, "x")}`, parts = partsOf(data.length);
+  await tx((q) => q.query("INSERT INTO agent_profile_uploads (id, bytes, parts, created_by) VALUES ($1, $2, $3, $4)", [id, data.length, parts, by]));
+  const store = await (await import("./storage.js")).objectStore();
+  for (let n = 0; n < parts; n++) await store.put(partKey(id, n), data.subarray(n * UPLOAD_PART_BYTES, (n + 1) * UPLOAD_PART_BYTES), "application/octet-stream");
+  const sha256 = createHash("sha256").update(data).digest("hex");
+  await tx((q) => q.query("UPDATE agent_profile_uploads SET sha256 = $2, completed_at = now() WHERE id = $1", [id, sha256]));
+  return { id, bytes: data.length, sha256, executable: looksExecutable(data.subarray(0, 8)) };
+}
+/** mold_v0-271: a finished upload's bytes, whole and checked against its sha256 (staff downloading a recipe's file). */
+export async function readUploadBytes(id: string): Promise<Buffer> {
+  const u = await uploadRow(id);
+  if (!u.completed_at || !u.sha256) throw new PackError("this upload is not finished", 409);
+  const parts: Buffer[] = [];
+  for (let n = 0; n < u.parts; n++) parts.push(await readUploadPart(id, n));
+  const data = Buffer.concat(parts);
+  if (createHash("sha256").update(data).digest("hex") !== u.sha256) throw new PackError("this upload's bytes do not match its sha256", 410);
+  return data;
+}
 
 // ---------------------------------------------------------------- starting a session with one
 
@@ -554,7 +592,10 @@ export async function editorChoices() {
   const platform = vault.filter((v) => !(KEYS_NEVER_INJECTED as readonly string[]).includes(v.provider))
     .map((v) => ({ provider: v.provider, provider_name: providerName(v.provider), label: v.label, hint: v.hint, enabled: v.enabled }));
   const s = effectiveOf({});
-  return { harnesses, providers, models, keys: { workspace, platform }, upload_max_bytes: uploadLimitBytes(), part_bytes: UPLOAD_PART_BYTES,
+  // mold_v0-271: the workspace recipes a profile may name (active ones, with their latest version), only while they are on.
+  const R = await import("./recipes.js");
+  const recipes = R.recipesOn() ? (await R.listRecipes()).filter((r) => r.status === "active" && r.version > 0).map((r) => ({ id: r.id, name: r.name, version: r.version, files: r.files, bytes: r.bytes })) : null;
+  return { harnesses, providers, models, keys: { workspace, platform }, upload_max_bytes: uploadLimitBytes(), part_bytes: UPLOAD_PART_BYTES, ...(recipes ? { recipes } : {}),
     retention_days_max: settingNumber("AGENT_RETENTION_DAYS"), exception_days_max: GOVERNANCE_LIMITS.exception_days,
     settings: { harness: s.harness, provider: s.provider, model: s.model, web_tools: settingText("AGENT_WEB_TOOLS"), web_calls_max: settingNumber("AGENT_WEB_CALLS_MAX") } };
 }

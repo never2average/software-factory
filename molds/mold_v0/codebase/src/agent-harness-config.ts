@@ -140,6 +140,11 @@ export interface AgentPolicy {
   inference_key?: string | null;
   /** mold_v0-267: the files uploaded into its workspace (written into the scratch on every wake; executables made so). */
   uploads?: { id: string; path: string; bytes: number; sha256: string; executable: boolean }[];
+  /**
+   * mold_v0-271: the workspace recipes its profile named, each at the version frozen at its start (their files are among
+   * `uploads`). The agent may propose an improved version of one (src/recipes.ts proposeRecipeVersion).
+   */
+  recipes?: { id: string; name: string; version: number }[];
   /** mold_v0-267: its profile's governance policy, frozen (src/agent-governance.ts), with what was approved since. */
   governance?: FrozenGovernance;
 }

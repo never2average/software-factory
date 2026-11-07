@@ -305,6 +305,19 @@
       "since": "mold_v0-260",
       "about": "The customer MCP's get_usage tool: spend, runs and tokens for a period, of the caller's own workspace (billing managers and owners: the whole workspace; anyone else: their own runs).",
       "off": "No get_usage tool is listed (the customer MCP's surface is as before)."
+    },
+    {
+      "id": "workspace_recipes",
+      "short": "recipes",
+      "label": "Workspace recipes",
+      "default": true,
+      "quiet_off": true,
+      "requested_by": "recipes",
+      "requested_words": "the staff Records group lists the recipes page (console.admin_records in a pack.json or the app's profile.json)",
+      "requires": ["agent_harness"],
+      "since": "mold_v0-271",
+      "about": "Reusable agent workspace recipes: named, versioned bundles of files and runtime binaries that staff upload at /admin/recipes (/api/admin/onboarding/recipes), which an agent profile's workspace picks instead of files of its own; the agent of a session may propose an updated version of the recipe it used, an approval request that staff accept as a new version or decline.",
+      "off": "No page, sidebar entry or route; an agent profile names no recipe and a session receives none; the generated files leave the flag out."
     }
   ]
 }

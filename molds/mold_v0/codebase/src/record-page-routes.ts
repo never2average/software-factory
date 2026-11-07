@@ -31,7 +31,8 @@ import { permitted, startFromConsole, startToolOf } from "./mcp-tools.js";
 import { packs } from "./packs.js";
 import { ReferenceWhereSchema, type ReferenceWhere, COMPUTED_COUNT_MAX, conditionHolds, detailTabId, type DetailCondition, inputField, isRelatedColumn, relatedColumnId, linksBack, PackError, pageActionId, areaLinks, type DetailAction, type RecordDetailLayout, type RecordRow } from "./pack-api.js";
 import { changedByWords, recordHistory } from "./record-history.js";
-import { findArea, getFor, isReadOnlyArea, listFor, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
+import { findArea, getFor, getPlatform, isReadOnlyArea, listFor, listPlatform, may, recordAreas, withRefTitles, type Actor, type RecordArea } from "./record-areas.js";
+const listForWorkspace = listFor;
 import { withTenant } from "./tenant-scope.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
@@ -280,11 +281,14 @@ export type ComputedAnswer = { hidden: true } | { op: "count"; value: number; ca
  * those its `where` keeps (at most COMPUTED_COUNT_MAX, then "capped"), or `latest`: its `field` on the first of them by
  * `sort` (default the newest change). An encrypted field is never read (the build refuses one).
  */
-export async function computedFact(org: number, area: RecordArea, record: RecordRow, fact: Fact, actor: Actor): Promise<ComputedAnswer> {
+export async function computedFact(org: number | null, area: RecordArea, record: RecordRow, fact: Fact, actor: Actor): Promise<ComputedAnswer> {
   const c = fact.computed!;
   const target = findArea(c.area);
   const via = target ? viaOf(area.name, target, c) : null;
-  if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
+  // mold_v0-271: staff (org null) read shared areas only, as their own record pages list them.
+  if (org === null) { if (!target || !via || target.scope !== "platform" || areaOpWithheld(target.name, "admin_list")) return { hidden: true }; }
+  else if (!target || !via || !may(target, "read", actor) || areaOpWithheld(target.name, "list")) return { hidden: true };
+  const listFor = (o: number | null, name: string, q: Parameters<typeof listPlatform>[1], a: Actor) => (o === null ? listPlatform(findArea(name)!, q) : listForWorkspace(o, name, q as never, a));
   const filter = pointingAt(target, via, record.key);
   const keeps = (row: RecordRow) => !c.where || holds(c.where, row.data, (row as { clocks?: unknown }).clocks);
   if (c.op === "count") {
@@ -571,3 +575,40 @@ export function recordPageRouter(): Router {
   return r;
 }
 
+
+/**
+ * mold_v0-271 (flag record_pages): a shared record's laid-out page for staff (/admin/records/<area>/<key>): its header's
+ * computed facts and the open tab's related lists, each over the shared areas only (staff read no workspace's records:
+ * a fact or a list of a workspace area is {hidden: true}, and its section is not drawn). No page actions: staff's own
+ * Edit and Remove stand in the header. GET /api/admin/records/_page/<area>/<key>[?tab=<id>] (src/record-routes.ts).
+ */
+export async function staffPageData(areaName: string, key: string, asked: string | null): Promise<{ actions: []; facts: Record<string, ComputedAnswer>; sections: Record<string, unknown> }> {
+  const area = findArea(areaName);
+  const layout = area ? layoutOf(area) : null;
+  if (!area || area.scope !== "platform" || !layout || !featureOn("record_pages") || areaOpWithheld(area.name, "admin_get")) throw new PackError("Not found", 404);
+  const record = await getPlatform(area, key);
+  if (!record) throw new PackError("Not found", 404);
+  const staff: Actor = { role: null, userId: null };
+  const facts: Record<string, ComputedAnswer> = {};
+  for (const [i, f] of (layout.header?.facts ?? []).entries()) if (f.computed) facts[String(i)] = await computedFact(null, area, record, f, staff);
+  const tab = layout.tabs.find((t) => detailTabId(t.label) === asked) ?? layout.tabs[0]!;
+  const ti = layout.tabs.indexOf(tab);
+  const sections: Record<string, unknown> = {};
+  for (const [si, s] of tab.sections.entries()) {
+    if (!s.related) continue;
+    const id = `${ti}-${si}`;
+    const target = findArea(s.related.area);
+    const via = target ? viaOf(area.name, target, s.related) : null;
+    if (!target || !via || target.scope !== "platform" || areaOpWithheld(target.name, "admin_list")) { sections[id] = { hidden: true }; continue; }
+    const matchOn = s.related.match_field !== undefined ? record.data[s.related.match_field] : record.key;
+    const limit = s.related.limit ?? 5;
+    const sortField = s.related.sort?.field ?? "updated_at";
+    const sort = `${(s.related.sort?.direction ?? (s.related.sort ? "asc" : "desc")) === "desc" ? "-" : ""}${sortField}`;
+    if (matchOn == null || matchOn === "" || typeof matchOn === "object") { sections[id] = { area: target.name, via, match: null, more: false, records: [] }; continue; }
+    const page = await listPlatform(target, { filter: s.related.match_field !== undefined ? { [via]: matchOn } : pointingAt(target, via, record.key), sort, limit: limit + 1 } as never);
+    const rows = await withRefTitles(null, target, page.records.slice(0, limit), staff);
+    sections[id] = { area: target.name, via, match: String(matchOn), more: page.records.length > limit,
+      records: rows.map((row) => ({ key: row.key, title: row.title, data: row.data, updated_at: row.updated_at, ...(row.ref_titles ? { ref_titles: row.ref_titles } : {}), actions: [] })) };
+  }
+  return { actions: [], facts, sections };
+}

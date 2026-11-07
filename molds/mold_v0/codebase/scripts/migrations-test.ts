@@ -1360,6 +1360,39 @@ async function suite(kind: "pglite" | "postgres") {
     log(`  ✓ ${kind}: ${v} Freestyle's key vault provider (direct, FREESTYLE_API_KEY imported once); its rollback refused while the runs' sandboxes come from Freestyle or the vault holds its key, then leaves exactly what ${v - 1} left, and it applies again`);
   }
 
+  // The workspace recipes (mold_v0-271, workspace_recipes, found by name): three staff tables the tenant role cannot
+  // reach; a recipe's id, a version once per recipe, a version from an agent naming its proposal, a proposal's decision
+  // and its accepted version checked; its rollback drops them, leaves exactly what the migration before left (the
+  // profile uploads its files are stay), and it applies again.
+  {
+    const v = (await loadMigrations()).find((m) => m.name === "workspace_recipes")!.version;
+    const d = await shellAt(kind, v);
+    const files = JSON.stringify([{ id: "upl_aaaaaaaaaaaaaaaaaaaa", path: "bin/build", bytes: 3, sha256: "0".repeat(64), executable: true }]);
+    await d.query("INSERT INTO workspace_recipes (id, name, created_by, updated_by, version) VALUES ('build-kit', 'Build kit', 's', 's', 1)");
+    await d.query("INSERT INTO workspace_recipe_versions (recipe_id, version, files, source, created_by) VALUES ('build-kit', 1, $1, 'staff', 's')", [files]);
+    await assert.rejects(d.query("INSERT INTO workspace_recipes (id, name, created_by, updated_by) VALUES ('Bad Id', 'x', 's', 's')"), /check constraint/, "a recipe's id is lowercase words");
+    await assert.rejects(d.query("INSERT INTO workspace_recipe_versions (recipe_id, version, files, source, created_by) VALUES ('build-kit', 1, $1, 'staff', 's')", [files]), /duplicate key|unique/, "a version once per recipe");
+    await assert.rejects(d.query("INSERT INTO workspace_recipe_versions (recipe_id, version, files, source, created_by) VALUES ('build-kit', 2, $1, 'agent', 's')", [files]), /check constraint/, "an agent's version names its proposal");
+    await d.query("INSERT INTO workspace_recipe_proposals (id, recipe_id, base_version, files, note) VALUES ('rpp_000000000000000000000001', 'build-kit', 1, $1, 'faster')", [files]);
+    await assert.rejects(d.query("UPDATE workspace_recipe_proposals SET status = 'accepted', decided_at = now() WHERE id = 'rpp_000000000000000000000001'"), /check constraint/, "an accepted proposal names the version it became");
+    await assert.rejects(d.query("INSERT INTO workspace_recipe_proposals (id, recipe_id, base_version, files, note, status) VALUES ('rpp_000000000000000000000002', 'build-kit', 1, $1, 'x', 'declined')", [files]), /check constraint/, "a decided proposal has its time");
+    for (const t of ["workspace_recipes", "workspace_recipe_versions", "workspace_recipe_proposals"]) {
+      const grants = await d.query("SELECT privilege_type FROM information_schema.role_table_grants WHERE table_name = $1 AND grantee = app_tenant_role()", [t]);
+      assert.equal(grants.length, 0, `${t}: the tenant role has no grant on it`);
+    }
+    await d.drop();
+    const r = await shellAt(kind);
+    await rollBackAfter(r, v);
+    const rb = readFileSync(path.join(MIGRATIONS_DIR, "..", "rollback", `${String(v).padStart(4, "0")}_workspace_recipes.sql`), "utf8");
+    await r.exec(rb);
+    const prior = await shellAt(kind, v - 1);
+    sameCatalog(await catalog(r), await catalog(prior), `${kind}: rolled back from ${v}`);
+    await assert.rejects(r.exec(rb), /not applied here/, "a second rollback refused");
+    assert.deepEqual((await runMigrations(r, { packDirs: [] })).applied.filter((m) => m.endsWith("_workspace_recipes")).length, 1, "and it applies again");
+    await r.drop(); await prior.drop();
+    log(`  ✓ ${kind}: ${v} the workspace recipes (three staff tables the tenant role cannot read; ids, a version once, an agent's version naming its proposal, a decided proposal checked); its rollback leaves exactly what ${v - 1} left, and it applies again`);
+  }
+
   // The runner: a new migration applies once; an edited one, a gap or a database newer than the code is refused.
   {
     const dir = path.join(tmp, `dir-${kind}`);

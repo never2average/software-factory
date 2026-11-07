@@ -68,8 +68,10 @@ try {
     assert.deepEqual(F.FEATURE_IDS, ["customer_key_vault", "company_email", "scheduled_alerts", "record_clocks", "audit.data", "audit.platform", "audit.sign",
       "onprem_runners", "developer_surface", "declarative_checks", "encrypted_fields", "health_history", "document_preview", "agent_harness", "record_pages", "side_panel_forms", "teams",
       // mold_v0-260
-      "record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool"]);
-    assert.equal(reg.flags.length, 26);
+      "record_run_inputs", "private_catalogs", "wide_lists", "record_rules", "credential_sets", "overview_cards", "run_analytics", "filters_in_address", "usage_tool",
+      // mold_v0-271
+      "workspace_recipes"]);
+    assert.equal(reg.flags.length, 27);
     for (const f of F.FEATURES) {
       assert.ok(f.short && f.label && f.about && f.off && f.requested_words && f.since, `${f.id}: documented`);
       assert.equal(typeof f.default, "boolean", `${f.id}: a default`);
@@ -87,7 +89,8 @@ try {
     assert.equal(F.featureSetting("onprem_runners", { onprem_runners: true }), true);
     assert.equal(F.featureSetting("company_email", { features: { company_email: false } }), false);
     assert.equal(F.featureSetting("company_email", {}), true);
-    console.log("✓ the registry: 26 flags, each documented with a default; profile.features over the legacy key over the default");
+    assert.equal(F.featureSpec("workspace_recipes").quiet_off, true, "workspace_recipes: quiet while off (asked for only by the staff Records group)");
+    console.log("✓ the registry: 27 flags, each documented with a default; profile.features over the legacy key over the default");
   }
 
   // ---------- 2. zero packs ----------

@@ -37,7 +37,9 @@ interface Upload { id: string; path: string; bytes: number; sha256: string; exec
 interface WebPolicy { enabled: boolean; web_search_enabled: boolean; web_fetch_enabled: boolean; web_fetch_allowed_domains: string[]; max_calls: number }
 interface Exception { domain: string; reason: string; expires_at: string; approved_by?: string }
 interface Governance { web?: WebPolicy; egress_approvals?: boolean; tools?: { allowed: string[]; max_calls: number } | null; exceptions?: Exception[]; retention_days?: number | null }
-export interface ProfileConfig { harness?: string | null; inference?: { provider: string; model: string; key?: string | null } | null; keys?: Key[]; uploads?: Upload[]; governance?: Governance | null }
+export interface ProfileConfig { harness?: string | null; inference?: { provider: string; model: string; key?: string | null } | null; keys?: Key[]; uploads?: Upload[]; recipes?: RecipePick[]; governance?: Governance | null }
+/** mold_v0-271 (flag workspace_recipes): a workspace recipe the profile's sessions receive with its uploads (version null: its latest). */
+interface RecipePick { id: string; version: number | null }
 interface Summary {
   id: string; name: string; description: string; version: number; status: 'active' | 'archived'; source: 'platform' | 'pack'; pack: string | null; is_default: boolean;
   harness: string; model: string; provider: string; keys: number; uploads: number; upload_bytes: number; governance: string; sessions: number; updated_at: string; updated_by: string;
@@ -50,6 +52,8 @@ interface Facts {
   keys: { workspace: { name: string; label: string }[]; platform: { provider: string; provider_name: string; label: string; hint: string; enabled: boolean }[] };
   tools: { name: string; title: string | null; read: boolean }[];
   upload_max_bytes: number; part_bytes: number; retention_days_max: number; exception_days_max: number;
+  /** mold_v0-271: the recipes a profile may name (absent: workspace recipes are off). */
+  recipes?: { id: string; name: string; version: number; files: number; bytes: number }[];
   settings: { harness: string; provider: string; model: string; web_tools: string; web_calls_max: number };
 }
 interface ListAnswer extends Facts { profiles: Summary[] }
@@ -183,6 +187,7 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
   const [inferenceKey, setInferenceKey] = useState(c.inference?.key ?? '');
   const [keys, setKeys] = useState<(Key & { row: number })[]>(() => (c.keys ?? []).map((k) => ({ ...k, row: next() })));
   const [files, setFiles] = useState<FileRow[]>(() => (c.uploads ?? []).map((u) => ({ ...u, row: next(), progress: null, error: null })));
+  const [recipes, setRecipes] = useState<(RecipePick & { row: number })[]>(() => (c.recipes ?? []).map((r) => ({ ...r, row: next() })));
   const [governed, setGoverned] = useState(!!g);
   const [search, setSearch] = useState(!!g?.web?.web_search_enabled);
   const [fetchOn, setFetchOn] = useState(!!g?.web?.web_fetch_enabled);
@@ -239,6 +244,7 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
       ...(provider && model ? { inference: { provider, model, ...(inferenceKey ? { key: inferenceKey } : {}) } } : {}),
       ...(keys.length ? { keys: keys.map(({ row: _r, ...k }) => k as Key) } : {}),
       ...(files.length ? { uploads: files.filter((f) => f.id).map((f) => ({ id: f.id, path: f.path.trim(), bytes: f.bytes, sha256: f.sha256, executable: f.executable })) } : {}),
+      ...(recipes.length ? { recipes: recipes.filter((r) => r.id).map((r) => ({ id: r.id, version: r.version })) } : {}),
       ...(governed ? { governance: {
         web: { enabled, web_search_enabled: search, web_fetch_enabled: fetchOn, web_fetch_allowed_domains: fetchOn ? sites : [], max_calls: enabled ? Number(calls) || 0 : 0 },
         egress_approvals: asks,
@@ -351,6 +357,28 @@ function ProfileForm({ profile, facts, onClose }: { profile: Detail | null; fact
           <AddButton label='Add files' data='ap-add-files' onClick={() => fileInput.current?.click()} />
           <AddButton label='Add folder' data='ap-add-folder' onClick={() => folderInput.current?.click()} />
         </div>}
+        {/* mold_v0-271 (flag workspace_recipes): recipes, each a bundle staff keep in Recipes, written in beside the files above (a file here wins a path both name). */}
+        {facts.recipes && <>
+          <Rows label='Recipes' empty='No recipe: the session receives only the files above.' data='ap-recipes'>
+            {recipes.map((r) => {
+              const known = facts.recipes!.find((x) => x.id === r.id);
+              return (
+                <Row key={r.row} onRemove={ro ? undefined : () => setRecipes((rs) => rs.filter((x) => x.row !== r.row))} what={known?.name ?? (r.id || 'this recipe')}>
+                  <NativeSelect aria-label='Recipe' value={r.id} disabled={ro} className='min-w-0 flex-1' onChange={(e) => setRecipes((rs) => rs.map((x) => (x.row === r.row ? { ...x, id: e.target.value, version: null } : x)))}>
+                    {!known && <NativeSelectOption value={r.id}>{r.id || 'Choose a recipe'}</NativeSelectOption>}
+                    {facts.recipes!.map((x) => <NativeSelectOption key={x.id} value={x.id}>{`${x.name} (${x.files} file${x.files === 1 ? '' : 's'}, ${size(x.bytes)})`}</NativeSelectOption>)}
+                  </NativeSelect>
+                  <NativeSelect aria-label='Version' value={r.version === null ? '' : String(r.version)} disabled={ro || !known} className='w-36'
+                    onChange={(e) => setRecipes((rs) => rs.map((x) => (x.row === r.row ? { ...x, version: e.target.value ? Number(e.target.value) : null } : x)))}>
+                    <NativeSelectOption value=''>Latest{known ? ` (v${known.version})` : ''}</NativeSelectOption>
+                    {known && Array.from({ length: known.version }, (_, i) => known.version - i).map((v) => <NativeSelectOption key={v} value={String(v)}>{`Version ${v}`}</NativeSelectOption>)}
+                  </NativeSelect>
+                </Row>
+              );
+            })}
+          </Rows>
+          {!ro && <AddButton label='Add recipe' data='ap-add-recipe' onClick={() => setRecipes((rs) => [...rs, { id: facts.recipes![0]?.id ?? '', version: null, row: next() }])} />}
+        </>}
       </Part>
 
       <Part n={4} title='Governance policy' hint='What the session may reach and use, who decides what it asks for, and how long its conversation is kept. Off: the platform settings.'>

@@ -3734,6 +3734,57 @@ Proof: `npm run test:teams` (scripts/teams-262-test.ts), `npm run test:record-pa
 `npm run test:migrations` (0053, 0054 and their rollbacks), and the factory's `branding.py`, `repo.py` and `packs.py`
 self-tests.
 
+## Staff Records group, shared files, staff record pages and workspace recipes (mold_v0-271)
+
+- **The staff Records group is configurable.** A pack's `pack.json` or the app's `profile.json` (the profile's wins; two
+  packs may not both say it) declares `console.admin_records`:
+
+  ```json
+  "console": { "admin_records": { "show": [{ "id": "recipes", "label": "Self-improvement recipes" }, "journeys", "papers", "molds"] } }
+  ```
+
+  `show` is the whole group, in its order: a shared (platform-scope) record area by its name, or one of the shell's staff
+  pages by its id (`src/console-pages.ts` `ADMIN_RECORDS_PAGES`: `journeys`, `recipes`, `agent-profiles`,
+  `repositories`), each optionally relabelled (`{"id", "label"}`). `scripts/gen-packs.mjs` resolves it into
+  `recordAdminNav`; refused, with the reason: an unknown name, a workspace area, an area whose staff list is withheld, a
+  page the build lacks (Journeys without `journeys` or `tips`, Recipes without the workspace agent, Agent profiles
+  without it, Data repositories without one), an entry twice, a name that is both. **A shared area left out** is only out
+  of the staff sidebar: its staff list and record pages, the customer's tabs and Records entry, `/api/admin/records`,
+  `/api/records` and its MCP tools are as before, and opened by a link it lights no other entry. **A shell page listed**
+  leaves the group it is otherwise in (`web/src/config/nav-config.ts` `withRecordsPlaced`; a group left empty goes), at
+  the same address, and is lit there. Undeclared, the group is every shared area as before and nothing generated changes.
+  `npm run test:console-sidebar` (section 9).
+- **Files in a shared area** (with `document_preview`). A `file` field of a platform-scope area takes files staff upload
+  from the staff record page's New form (`POST /api/admin/records/<area>/<key>/files/<field>`, the `library` right, as
+  the staff data API; `DELETE` discards one kept but never written, never one the record holds; the staff form's
+  `upload_max`). Kept unsealed under `records/shared/<area>/<key hash>/` (every workspace that reads the area may read
+  them; a workspace's files stay sealed with its key), checked by their sha256 on every read, served by the record's file
+  cards to staff and to a workspace's people alike. A workspace never writes a shared area's files. The staff Edit form
+  keeps a field that holds stored files as it is.
+- **Staff record pages laid out** (with `record_pages`). A shared area with a `detail` layout is laid out on its staff
+  page (`/admin/records/<area>/<key>`) as on a workspace's, staff's Edit and Remove in its header. Its computed facts and
+  related lists read the shared areas only, from `GET /api/admin/records/_page/<area>/<key>[?tab=]`
+  (`src/record-page-routes.ts` `staffPageData`); a fact or list over a workspace area is hidden and its section not drawn
+  (staff read no workspace's records there); runs and history sections stay a workspace's. `npm run test:shared-records`.
+- **Workspace recipes** (flag `workspace_recipes`, default on, asked for when the staff Records group lists `recipes`,
+  needs `agent_harness`; `src/recipes.ts`, `src/recipe-routes.ts`, `web/src/features/agent/recipes-page.tsx`,
+  `sql/migrations/0060_workspace_recipes.sql` with its rollback): reusable bundles of files and runtime binaries an agent
+  works with. Staff keep them at `/admin/recipes` (the standard list under the proposals waiting; a row opens the recipe in the panel beside the list, mold_v0-278, and its own page with
+  its header, Files, Versions and Proposals tabs; New recipe, New version and Edit in one modal each). Their files are
+  agent profile uploads (mold_v0-267: `agent_profile_uploads`, uploaded through `/api/admin/onboarding/agent-profiles/uploads`),
+  a version never changes and the next is saved naming the version edited (409 when a newer one was saved). An agent
+  profile names recipes beside its own uploads, `recipes: [{id, version}]` (version null: its latest at a start), checked
+  on save (there, active, that version, within `AGENT_UPLOAD_MAX_MB` with the profile's files) and picked in the profile
+  modal's Workspace upload. `startSession` expands them into the session's frozen `policy.uploads` (the profile's own
+  file wins a path both name) and records `policy.recipes` ({id, name, version}); the wake, the worker route and the
+  runner are 267's, unchanged. **Self-improvement**: the agent writes `.recipe-proposal/<recipe id>/` in its working
+  directory (`note.md`, `remove.txt`, `files/<path>`, an executable file staying so); its wake sends it as it ends
+  (`POST /api/worker/runs/:id/agent/recipes/:recipe/proposal`, only a recipe its session used), and it is kept as an
+  approval request (`workspace_recipe_proposals`: the version it was made against, what it changes and removes, why, the
+  workspace, session and wake). Staff with the right to change profiles accept it (the recipe's next version, its source
+  the agent, the proposal named) or decline it with a reason; a proposal made against an older version is refused on
+  accept. `npm run test:recipes`.
+
 ## Early access and sign-in editor (mold_v0-266)
 
 Platform staff edit the early-access (request-access) form and the sign-in and sign-up pages' words in the staff console,

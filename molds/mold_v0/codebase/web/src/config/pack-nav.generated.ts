@@ -156,7 +156,7 @@ export const packCharts: PackChartSpec[] = [];
 export interface PackTabSpec {
   pack: string;
   id: string;
-  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections';
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'team' | 'keys' | 'page' | 'files' | 'sections' | 'agent';
   label: string;
   description: string | null;
   icon: string;

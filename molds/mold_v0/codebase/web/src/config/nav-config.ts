@@ -10,7 +10,7 @@ import { featureOn } from './features';
  * /admin: platform staff across every account. /app: one account's people (account admins see management controls).
  * A host pack (mold_v0-039) puts its own entries among these (withHost*Nav); the declarative packs' come after.
  */
-export const adminNav: NavGroup[] = [
+export const adminNav: NavGroup[] = withRecordsPlaced([
   ...withHostAdminNav([
     {
       label: 'Onboarding',
@@ -47,7 +47,18 @@ export const adminNav: NavGroup[] = [
   // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their shared record areas (mold_v0-047).
   ...packAdminNav,
   ...recordAdminNav
-];
+]);
+
+/**
+ * mold_v0-271: a shell staff page the Records group lists (profile.json or pack.json console.admin_records: Journeys,
+ * Recipes, Agent profiles, Data repositories) is there only: it leaves the group it is otherwise in (a group left empty
+ * goes), at the same address. Nothing moves when the group lists record areas alone.
+ */
+function withRecordsPlaced(groups: NavGroup[]): NavGroup[] {
+  const placed = new Set(recordAdminNav.flatMap((g) => g.items).map((i) => i.url).filter((u) => !u.startsWith('/admin/records/')));
+  if (!placed.size) return groups;
+  return groups.map((g) => (g.label === 'Records' && recordAdminNav.includes(g) ? g : { ...g, items: g.items.filter((i) => !placed.has(i.url)) })).filter((g) => g.items.length > 0);
+}
 
 /** A shell page the build hides (mold_v0-130, src/console-pages.ts), or one under it: left out of the sidebar. */
 const hidden = (url: string) => hiddenConsoleUrls.some((h) => url === h || url.startsWith(`${h}/`) || url.startsWith(`${h}?`));
