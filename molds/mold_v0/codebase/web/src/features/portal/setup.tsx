@@ -1,29 +1,30 @@
 'use client';
 // /app Setup & training, every build's home (mold_v0-172: a home tab, an overview tab that includes setup, draws this
-// same layout with its own right-column cards), one flat grid of cells (mold_v0-214). Right column: the connection string
-// (with a live connection test), then the Due soon card (mold_v0-207: records coming due or overdue, from the record clocks; or a home tab's cards: pack.json
-// rail). Main column: the selected journey, under its heading, which is the journey selector (mold_v0-207: a dropdown
-// listing every journey with its progress; ?journey=<id>), then tips. "Get set up"
-// is the setup timeline and recent problems (workflow coverage lives on /app/adoption); the other journeys (managed on
-// /admin, src/playbooks.ts) show their stages, marked from real tool calls. It is one list (mold_v0-146): the shell's
-// setup steps and the packs' onboarding steps, merged in order (setup-steps.ts), every step with its description and,
-// while open, its prompt to copy.
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react';
+// same layout with its own right-column cards), one flat grid of cells (mold_v0-214). Across the top (below a home tab's
+// headline row): Connect (mold_v0-277), one card of its own cells: the connection URL with the AI client dropdown beside
+// it, that client's own way in and Test my connection, and the setup email for the client or clients chosen. Below it,
+// the main column: the selected journey, under its heading, which is the journey selector (mold_v0-207: a dropdown
+// listing every journey with its progress; ?journey=<id>); beside it the rail: the Due soon card (records coming due or
+// overdue, from the record clocks), or a home tab's cards (pack.json rail). "Get set up" is the setup timeline and
+// recent problems (workflow coverage lives on /app/adoption); the other journeys (managed on /admin, src/playbooks.ts)
+// show their stages, marked from real tool calls. It is one list (mold_v0-146): the shell's setup steps and the packs'
+// onboarding steps, merged in order (setup-steps.ts), every step with its description and, while open, its prompt to
+// copy. Connecting a client is never a step (mold_v0-277): it is the Connect card's.
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { useQueryState } from 'nuqs';
-import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/layout/section';
 import { Input } from '@/components/ui/input';
-import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@/components/ui/native-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Switch } from '@/components/ui/switch';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
+import { ClientSelect, ClientWay, SetupEmail, UrlField, type ConnectClient, type SetupEmailText } from '@/features/connect/connect-parts';
 import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
 import { profile } from '@/config/profile.generated';
@@ -31,7 +32,7 @@ import { onboardingAnchor } from '@/features/tabs/empty';
 import { mergeSetupSteps, stepProgress, type ChecklistStep, type PackSetupStep, type ShellSetupStep } from './setup-steps';
 import { text } from '@/lib/texts';
 import { capWord } from '@/lib/words.generated';
-import { journeysOn, launchesWork, tipsOn } from '@/features/journeys/config';
+import { journeysOn, launchesWork } from '@/features/journeys/config';
 import { DueSoonClocksCard } from '@/features/records/due-soon-card';
 import { GridCell } from './grid-cell';
 
@@ -43,17 +44,15 @@ interface Setup {
   live: { at: string; client: string | null } | null;
   /** Set for a viewer: shown where a launch prompt would be. */
   viewer_note?: string | null;
+  /** The person's own address, where Send setup by email sends (mold_v0-277); null for a session without one. */
+  email?: string | null;
 }
-interface Client {
-  id: string; client: string; group: 'chat' | 'agent' | 'editor'; method: 'ui' | 'cli' | 'config' | 'link'; steps: string;
-  command?: string; snippet?: string; file?: string; install_url?: string; verified: boolean; share: number | null;
-}
+type Client = ConnectClient;
 interface Stage { id: string; title: string; why: string; prompt: string; tools: string[]; expect: string; manual?: boolean; link?: { href: string; label: string }; done: boolean; at: string | null }
 interface Journey {
   id: string; name: string; outcome: string; who: string; time: string; example: { title: string; result: string };
   stages: Stage[]; done: number; total: number;
 }
-interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: string | null; link: string | null }[] }
 
 /**
  * The home page's layout (mold_v0-172: every build's, the Setup page's and a home tab's alike). `rail`: the cards below
@@ -61,14 +60,14 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
  * journeys); left out, the journeys slot alone. The journeys slot (mold_v0-207) is the Due soon card, and the journey
  * selector is the main column's heading. Every build has journeys (mold_v0-175): the selector always offers "Get set up"
  * (these setup steps), then the journeys component's when pack.json journeys turns it on; a rail without journeys has
- * neither (the heading reads Get set up). Nothing follows the checklist but the tips (mold_v0-216).
+ * neither (the heading reads Get set up). Nothing follows the checklist (mold_v0-216; no tips, mold_v0-277).
  * Nothing is drawn below both columns (mold_v0-207: a home tab's charts are not drawn on the home page).
  */
 export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; cards?: Record<string, React.ReactNode>; top?: React.ReactNode } = {}) {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
   const pack = usePackSteps();
-  // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys and the
-  // in-chat tips (mold_v0-143: pack.json journeys and tips) are asked for only when on.
+  // The journey picker (mold_v0-175: every build's, Get set up first); the journeys component's own journeys
+  // (mold_v0-143: pack.json journeys) are asked for only when on.
   const showPicker = rail === undefined || rail.includes('journeys');
   const showJourneys = journeysOn() && showPicker;
   const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (showJourneys ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
@@ -83,31 +82,30 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
     if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
   }} /> : 'Get set up';
   const due = <DueSoonClocksCard key='journeys' />;
-  // One flat grid (mold_v0-214): the headline row, the connection card, the steps column and the rail are its cells,
-  // sharing 1px lines (the console's `grid border-t border-l`, each cell `border-r border-b`); no shadows, no floating
-  // cards, nothing pinned, no gaps. In the source order a phone stacks them: the headline numbers (a glance), then
-  // Connect (nothing else on the page works until a client is connected, and it was first on a phone before), then the
-  // steps, then the rail (Due soon: what needs doing once set up). On a wide screen the steps take the left column
-  // beside Connect and, below it, the rail, which stretches to the steps' height so the grid closes square.
+  // One flat grid (mold_v0-214): the headline row, Connect, the steps column and the rail are its cells, sharing 1px
+  // lines (the console's `grid border-t border-l`, each cell `border-r border-b`); no shadows, no floating cards, nothing
+  // pinned, no gaps. In the source order a phone stacks them: the headline numbers (a glance), then Connect (nothing
+  // else on the page works until a client is connected), then the steps, then the rail (Due soon: what needs doing once
+  // set up). On a wide screen Connect runs across both columns (mold_v0-277), the steps take the left column below it and
+  // the rail the right, stretched to the steps' height so the grid closes square.
   const cell = 'min-w-0 border-r border-b';
   return (
     <PageContainer>
-      <div className='grid w-full border-t border-l lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_auto_1fr] xl:grid-cols-[minmax(0,1fr)_24rem]' data-home-grid>
+      <div className='grid w-full border-t border-l lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]' data-home-grid>
         {/* A home tab's headline row (mold_v0-203), across both columns: it loads on its own, at a fixed height. Its
             cards keep their own dividing lines; the strip's top and bottom lines are the grid's. Nothing to show: no cell. */}
         {top && <div className={cn(cell, 'empty:hidden lg:col-span-2 [&_dl]:border-y-0 [&_dl>div]:p-4!')}>{top}</div>}
         {error ? <div className={cn(cell, 'p-4 lg:col-span-2')}><ErrorState error={error} /></div> : !s || !pack.settled ? <div className={cn(cell, 'p-4 lg:col-span-2')}><LoadingCards count={4} /></div> : (<>
-          <ConnectionBox s={s} onConnected={reload} className={cn(cell, 'lg:col-start-2 lg:row-start-2')} />
-          <div className={cn(cell, 'flex flex-col gap-8 p-4 lg:col-start-1 lg:row-span-2 lg:row-start-2')}>
+          <ConnectCard s={s} onConnected={reload} className={cn(cell, 'lg:col-span-2')} />
+          <div className={cn(cell, 'flex flex-col gap-8 p-4 lg:col-start-1')}>
             {selected === 'setup' || !journey ? (<>
               <Checklist steps={steps} title={heading} anchored={pack.data !== null} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} title={heading} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
-            {tipsOn() && <TipsSection />}
           </div>
           {/* The rail: Due soon and a home tab's cards, one cell each, a line between them (a card with nothing to show
               draws nothing). On a wide screen it fills down to the steps' end, so it is drawn even when empty there. */}
-          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2 lg:row-start-3')} data-home-rail>
+          <div className={cn(cell, 'flex flex-col divide-y max-lg:empty:hidden lg:col-start-2')} data-home-rail>
             {rail === undefined ? due : rail.map((x) => (x === 'journeys' ? due : <Fragment key={x}>{cards?.[x]}</Fragment>))}
           </div>
         </>)}
@@ -116,30 +114,70 @@ export function SetupPage({ rail, cards, top }: { rail?: readonly string[]; card
   );
 }
 
-/** The connection string, the grid's first cell beside the steps: copy it, then prove the client reaches the server. */
-function ConnectionBox({ s, onConnected, className }: { s: Setup; onConnected: () => void; className?: string }) {
-  return (
-    <GridCell className={className} title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
-      <ConnectSteps s={s} onConnected={onConnected} />
-    </GridCell>
-  );
-}
-
-/** Pick a client, add the connection URL to it, test it: the panel's three steps. */
-function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void }) {
-  const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+/**
+ * Connect (mold_v0-277): one card of the home grid, its own cells sharing the grid's lines. Left: the connection URL
+ * with the AI client dropdown beside it, then that client's own way in (one-click install, command, config snippet or
+ * its settings steps) and Test my connection. Right: the setup email, for the dropdown's client or several ticked, its
+ * subject and body built by the server for those clients only (POST /api/app/setup/email/preview), previewed, then sent
+ * to the person's own address. Nothing here lists every client: each part is for the clients chosen.
+ */
+function ConnectCard({ s, onConnected, className }: { s: Setup; onConnected: () => void; className?: string }) {
   const clients = s.connect.clients;
-  // The client to show: the last one picked here, else one this person already connected from, else Claude.
+  // The client to show: the last one picked here, else one this person already connected from, else the first.
   const [pick, setPick] = useState<string>(() => {
     try { const saved = localStorage.getItem('oct_client'); if (saved && clients.some((c) => c.id === saved)) return saved; } catch { /* private mode */ }
     const seen = s.clients.map((x) => x.client.toLowerCase());
-    return clients.find((c) => seen.some((x) => x.includes(c.id.replace('-cli', '')) || x.includes(c.client.toLowerCase().split(' ')[0])))?.id ?? clients[0]?.id ?? 'claude';
+    return clients.find((c) => seen.some((x) => x.includes(c.id.replace('-cli', '')) || x.includes(c.client.toLowerCase().split(' ')[0]!)))?.id ?? clients[0]?.id ?? '';
   });
   const choose = (id: string) => { setPick(id); try { localStorage.setItem('oct_client', id); } catch { /* private mode */ } };
   const c = clients.find((x) => x.id === pick) ?? clients[0];
+  return (
+    <section className={cn('grid min-w-0 lg:grid-cols-2', className)} data-connect aria-label='Connect your AI client'>
+      <GridCell className='lg:border-r' title='Connect your AI client' icon={<Icons.plug />}
+        description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
+        <div className='flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center'>
+          <UrlField url={s.connect.connector_url} secret={s.connect.secret} className='sm:flex-1' />
+          <ClientSelect clients={clients} value={c?.id} onChange={choose} id='client-pick' className='sm:w-52 sm:shrink-0' />
+        </div>
+        {c && <ClientWay c={c} />}
+        <ConnectionTest s={s} onConnected={onConnected} />
+      </GridCell>
+      <GridCell className='max-lg:border-t' title='Send setup by email' icon={<Icons.mail />}
+        description={s.email ? `To ${s.email}: the steps for the clients you choose, and the URL.` : 'The steps for the clients you choose, and the URL.'}>
+        <SetupEmail clients={clients} current={c?.id}
+          preview={(ids) => appApi<SetupEmailText>('POST', '/setup/email/preview', { clients: ids })}
+          actions={(e) => <SendSetup email={e} to={s.email ?? null} />} />
+      </GridCell>
+    </section>
+  );
+}
+
+/** Send the previewed setup email to the person's own address. */
+function SendSetup({ email, to }: { email: SetupEmailText; to: string | null }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'sent'>('idle');
+  useEffect(() => setState('idle'), [email]);
+  if (!to) return <span className='text-muted-foreground text-xs'>Sign in with an email address to send it to yourself.</span>;
+  const send = () => {
+    setState('busy');
+    appApi<{ status: string }>('POST', '/setup/email', { clients: email.clients })
+      .then((r) => { setState('sent'); toast.success(r.status === 'duplicate' ? `Already sent to ${to} in the last few minutes` : `Setup email sent to ${to}`); })
+      .catch((e) => { setState('idle'); fail(e); });
+  };
+  return (
+    <>
+      <Button variant='outline' size='sm' onClick={send} disabled={state !== 'idle'} data-email-send>
+        {state === 'busy' ? <Icons.spinner className='animate-spin' /> : state === 'sent' ? <Icons.check /> : <Icons.send />} {state === 'sent' ? 'Sent' : `Send to ${to}`}
+      </Button>
+      <CopyButton text={`Subject: ${email.subject}\n\n${email.body}`} label='Copy email' />
+    </>
+  );
+}
+
+/** Test my connection: watch for this person's next connector request for up to three minutes. */
+function ConnectionTest({ s, onConnected }: { s: Setup; onConnected: () => void }) {
+  const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
-  // Live connection test: watch for this person's next connector request for up to three minutes.
   const test = () => {
     if (timer.current) return;
     appApi<{ since: string }>('POST', '/setup/test').then(({ since }) => {
@@ -159,93 +197,22 @@ function ConnectSteps({ s, onConnected }: { s: Setup; onConnected: () => void })
       }, 3000);
     }).catch(fail);
   };
-  const groups: [Client['group'], string][] = [['chat', 'Chat apps'], ['agent', 'Coding agents'], ['editor', 'Editors']];
-  const url = s.connect.connector_url;
-  const [show, setShow] = useState(!s.connect.secret);
-  // Already connected (a client reached us before, or the test just passed): the test button is then secondary.
   const connected = live?.kind === 'ok' || s.clients.length > 0;
-  const masked = url.replace(/([?&](?:key|token|k)=)[^&]+/i, '$1••••••••').replace(/(oct_[A-Za-z0-9]{4})[A-Za-z0-9_-]+/, '$1••••••••');
   return (
-      <ol className='flex flex-col gap-4'>
-          <NumberedStep n={1} title='Pick your client'>
-            <NativeSelect id='client-pick' aria-label='Your AI client' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
-              {groups.map(([g, label]) => (
-                <NativeSelectOptGroup key={g} label={label}>
-                  {clients.filter((x) => x.group === g).map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.client}</NativeSelectOption>)}
-                </NativeSelectOptGroup>
-              ))}
-            </NativeSelect>
-          </NumberedStep>
-          <NumberedStep n={2} title={c ? `Add ${profile.name} to ${c.client}` : `Add ${profile.name}`}>
-            <div className='flex flex-col gap-2'>
-              <div className='bg-background flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5'>
-                <code className='min-w-0 flex-1 truncate font-mono text-xs select-all' title={show ? url : undefined}>{show ? url : masked}</code>
-                {s.connect.secret && (
-                  <Button variant='ghost' size='icon-sm' onClick={() => setShow(!show)} aria-label={show ? 'Hide the URL' : 'Show the URL'} title={show ? 'Hide' : 'Show'}>
-                    {show ? <Icons.eyeOff className='size-4' /> : <Icons.eye className='size-4' />}
-                  </Button>
-                )}
-                <CopyButton text={url} label='Copy URL' variant='ghost' />
-              </div>
-              {c && <ClientSteps c={c} />}
-            </div>
-          </NumberedStep>
-          <NumberedStep n={3} title='Check it works'>
-            <Button className='w-full' variant={connected ? 'outline' : 'default'} onClick={test} disabled={live?.kind === 'wait'}>
-              {live?.kind === 'wait' ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} {live?.kind === 'wait' ? 'Waiting for your client…' : 'Test my connection'}
-            </Button>
-            {live && (
-              <Alert variant={live.kind === 'bad' ? 'destructive' : 'default'} role='status' aria-live='polite'
-                className={cn('mt-2', live.kind === 'ok' && 'border-emerald-500/40 text-emerald-700 dark:text-emerald-400')}>
-                {live.kind === 'ok' ? <Icons.circleCheck /> : live.kind === 'wait' ? <Icons.clock /> : <Icons.warning />}
-                <AlertDescription className={cn(live.kind === 'ok' && 'text-emerald-700 dark:text-emerald-400')}>{live.text}</AlertDescription>
-              </Alert>
-            )}
-          </NumberedStep>
-        </ol>
-  );
-}
-
-/** A numbered step in the connection panel. */
-function NumberedStep({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
-  return (
-    <li className='flex gap-3'>
-      <span className='border-border text-muted-foreground flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums'>{n}</span>
-      <div className='min-w-0 flex-1 space-y-2'>
-        <div className='text-sm leading-5 font-medium'>{title}</div>
-        {children}
+    <div className='flex min-w-0 flex-col gap-2 border-t pt-3'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <Button variant='outline' size='sm' onClick={test} disabled={live?.kind === 'wait'} data-connection-test>
+          {live?.kind === 'wait' ? <Icons.spinner className='animate-spin' /> : <Icons.plug />} {live?.kind === 'wait' ? 'Waiting for your client…' : 'Test my connection'}
+        </Button>
+        {!live && <span className='text-muted-foreground text-xs'>{connected ? `Connected before${s.clients[0] ? ` from ${s.clients[0].client}` : ''}.` : 'Not connected yet.'}</span>}
       </div>
-    </li>
-  );
-}
-
-
-/** The selected client's way in: one-click install, a command, a config snippet, or steps in its settings. */
-function ClientSteps({ c }: { c: Client }) {
-  return (
-    <div className='space-y-2 text-sm'>
-      {c.install_url && (
-        <Button size='sm' render={<a href={c.install_url} />}><Icons.add /> Add to {c.client}</Button>
+      {live && (
+        <Alert variant={live.kind === 'bad' ? 'destructive' : 'default'} role='status' aria-live='polite'
+          className={cn(live.kind === 'ok' && 'border-emerald-500/40 text-emerald-700 dark:text-emerald-400')}>
+          {live.kind === 'ok' ? <Icons.circleCheck /> : live.kind === 'wait' ? <Icons.clock /> : <Icons.warning />}
+          <AlertDescription className={cn(live.kind === 'ok' && 'text-emerald-700 dark:text-emerald-400')}>{live.text}</AlertDescription>
+        </Alert>
       )}
-      {c.command && <CodeLine text={c.command} label='Command' />}
-      {c.snippet && (
-        <div className='space-y-1'>
-          {c.file && <div className='text-muted-foreground text-xs'>{c.command || c.install_url ? 'Or add to ' : 'In '}<code className='font-mono'>{c.file}</code></div>}
-          <div className='relative'>
-            <pre className='bg-background overflow-x-auto rounded-md border p-2.5 pr-20 font-mono text-xs whitespace-pre-wrap break-all'>{c.snippet}</pre>
-            <div className='absolute top-1 right-1'><CopyButton text={c.snippet} variant='ghost' /></div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CodeLine({ text, label }: { text: string; label: string }) {
-  return (
-    <div className='flex items-center gap-2'>
-      <code className='bg-background min-w-0 flex-1 overflow-x-auto rounded-md border px-2.5 py-2 font-mono text-xs break-all whitespace-pre-wrap' aria-label={label}>{text}</code>
-      <CopyButton text={text} />
     </div>
   );
 }
@@ -476,42 +443,6 @@ function Checklist({ steps, title, anchored }: {
   const { done, total } = stepProgress(steps);
   // No caption under the steps (mold_v0-216): they tick themselves, and Journeys is in the selector above.
   return <TimelineSection title={title} done={done} total={total} noun='steps' items={items} footer={null} />;
-}
-
-function TipsSection() {
-  const [t, setT] = useState<Tips | null>(null);
-  const load = useCallback(() => appApi<Tips>('GET', '/nudges').then(setT).catch(() => {}), []);
-  useEffect(() => { void load(); }, [load]);
-  if (!t || (!t.nudges.length && !t.muted)) return null;
-  const setShow = (on: boolean) =>
-    appApi('POST', '/nudges/mute', { muted: !on }).then(() => { toast.success(on ? 'Tips on' : 'Tips off in your AI client'); return load(); }).catch(fail);
-  const safe = (l: string) => (/^\/app/.test(l) || /^https:\/\//.test(l) ? l : '#');
-  return (
-    <Section title={<span className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Tips for you</span>} description={`Suggestions to get more out of ${profile.name}.`}>
-      <div className='space-y-3'>
-        <label className='flex items-center justify-between gap-3 text-sm'>
-          <span>Show tips in my AI client</span>
-          <Switch checked={!t.muted} onCheckedChange={(v) => setShow(Boolean(v))} />
-        </label>
-        {t.nudges.length ? t.nudges.map((n) => (
-          <div key={n.id} className='bg-primary/5 border-primary space-y-2 border-l-2 py-2 pr-2 pl-3 text-sm'>
-            <p>{n.message}</p>
-            {n.prompt && (
-              <div className='flex items-center gap-2'>
-                <code className='bg-background flex-1 truncate rounded px-2 py-1 text-xs' title={n.prompt}>{n.prompt}</code>
-                <CopyButton text={n.prompt} />
-              </div>
-            )}
-            <div className='flex items-center gap-2'>
-              {n.link && <Button variant='outline' size='xs' render={<a href={safe(n.link)} />}>Open</Button>}
-              <span className='flex-1' />
-              <Button variant='ghost' size='sm' onClick={() => appApi('POST', `/nudges/${n.id}/dismiss`).then(load).catch(fail)}>Dismiss</Button>
-            </div>
-          </div>
-        )) : <p className='text-muted-foreground text-sm'>No tips right now.</p>}
-      </div>
-    </Section>
-  );
 }
 
 function Problems({ errors }: { errors: Setup['errors'] }) {

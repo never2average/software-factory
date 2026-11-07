@@ -1,110 +1,91 @@
 'use client';
 // What happens after approve / create / invite / issue-key / rotate: the Clerk invitation, or a legacy key shown once,
-// with per-client setup and a ready-to-send email.
-import { useEffect, useState } from 'react';
+// then the connection (mold_v0-277, features/connect/connect-parts.tsx): the connector URL with the AI client dropdown
+// beside it and that client's own way in, and the setup email for the client or clients chosen, built by the server for
+// those clients only (POST /setup-email; the key's place a placeholder, pasted over here), previewed, then copied or
+// opened in the staff member's own mail app.
+import { useState } from 'react';
 import { buttonVariants, Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
-import type { InviteResult } from './lib';
+import { ClientSelect, ClientWay, SetupEmail, UrlField } from '@/features/connect/connect-parts';
+import { post, type InviteResult } from './lib';
 import { copyText, CopyField, Notice, When } from './ui';
 
+/** Where the API key goes in the server's text (src/admin.ts KEY_PLACEHOLDER): a mailto link never carries the key. */
+const KEY_PLACEHOLDER = '[paste the API key here]';
+
 export function ResultDialog({ result, title, onClose }: { result: InviteResult | null; title: string; onClose: () => void }) {
-  const [client, setClient] = useState('0');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  useEffect(() => {
-    if (result) {
-      setClient('0');
-      setSubject(result.email.subject);
-      setBody(result.email.body);
-    }
-  }, [result]);
-  const legacy = Boolean(result?.key);
-  const c = result?.clients[Number(client)];
-  // A mailto link is a URL (webmail opens it as an https one): the key never goes in it; paste it into the mail yourself.
-  const mailBody = result?.key ? body.replaceAll(result.key, '[paste the API key here]') : body;
-  const mailto = result?.email.to ? `mailto:${encodeURIComponent(result.email.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(mailBody)}` : null;
   return (
     <Dialog open={Boolean(result)} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>Connector URL, client setup and an email you can send.</DialogDescription>
+          <DialogDescription>The connector URL, the setup for the AI client you choose, and an email for those clients.</DialogDescription>
         </DialogHeader>
-        {result && (
-          <div className='grid gap-4'>
-            {legacy && (
-              <Notice>
-                <b>Shown once.</b> Only a hash is stored. Copy the key or the email now; if it is lost, rotate the key. The key goes in a header (each client's setup below), never in the URL.
-              </Notice>
-            )}
-            {result.invitation ? (
-              <Notice tone='ok'>
-                <b>Clerk sent an invitation to {result.invitation.email}</b>
-                {result.invitation.expires_at && (
-                  <>
-                    {' '}(expires <When d={result.invitation.expires_at} />)
-                  </>
-                )}
-                . The connector URL has no secret in it: they sign in when their client asks.
-              </Notice>
-            ) : (
-              !legacy && (
-                <Notice tone='ok'>
-                  <b>Account created.</b> Nobody is invited yet: invite people from the account.
-                </Notice>
-              )
-            )}
-            <div className='grid gap-1.5'>
-              <Label>Connector URL</Label>
-              <CopyField value={result.connector_url} />
-            </div>
-            {result.key && (
-              <div className='grid gap-1.5'>
-                <Label>API key</Label>
-                <CopyField value={result.key} />
-              </div>
-            )}
-            <div className='grid gap-2'>
-              <Label>Client setup</Label>
-              <Tabs value={client} onValueChange={(v) => setClient(String(v))}>
-                <TabsList className='h-auto flex-wrap'>
-                  {result.clients.map((x, i) => (
-                    <TabsTrigger key={x.client} value={String(i)}>
-                      {x.client}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              {c && (
-                <div className='text-sm'>
-                  <p>{c.steps}</p>
-                  {c.snippet && <pre className='bg-muted mt-2 overflow-x-auto rounded-md p-3 font-mono text-xs'>{c.snippet}</pre>}
-                </div>
-              )}
-            </div>
-            <div className='grid gap-1.5'>
-              <Label htmlFor='rd-subject'>{legacy ? 'Email with the key (send it yourself)' : 'Optional follow-up email (Clerk already sent the invitation)'}</Label>
-              <Input id='rd-subject' value={subject} onChange={(e) => setSubject(e.target.value)} />
-              <Textarea aria-label='Email body' className='min-h-56 font-mono text-xs' value={body} onChange={(e) => setBody(e.target.value)} />
-            </div>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant='outline' onClick={() => copyText(body, 'Email copied')}>
-            Copy email
-          </Button>
-          {mailto && (
-            <a className={buttonVariants()} href={mailto} target='_blank' rel='noopener noreferrer'>
-              Open in email
-            </a>
-          )}
-        </DialogFooter>
+        {result && <ResultBody key={`${result.org.slug}:${result.connector_url}:${result.key ?? ''}`} result={result} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ResultBody({ result }: { result: InviteResult }) {
+  const legacy = Boolean(result.key);
+  const [pick, setPick] = useState(result.clients[0]?.id ?? '');
+  const c = result.clients.find((x) => x.id === pick) ?? result.clients[0];
+  const withKey = (t: string) => (result.key ? t.replaceAll(KEY_PLACEHOLDER, result.key) : t);
+  return (
+    <div className='grid gap-4'>
+      {legacy && (
+        <Notice>
+          <b>Shown once.</b> Only a hash is stored. Copy the key or the email now; if it is lost, rotate the key. The key goes in a header (each client's setup below), never in the URL.
+        </Notice>
+      )}
+      {result.invitation ? (
+        <Notice tone='ok'>
+          <b>Clerk sent an invitation to {result.invitation.email}</b>
+          {result.invitation.expires_at && <> (expires <When d={result.invitation.expires_at} />)</>}
+          . The connector URL has no secret in it: they sign in when their client asks.
+        </Notice>
+      ) : (
+        !legacy && result.created !== undefined && (
+          <Notice tone='ok'>
+            <b>Account created.</b> Nobody is invited yet: invite people from the account.
+          </Notice>
+        )
+      )}
+      <div className='grid gap-1.5'>
+        <Label htmlFor='rd-client'>Connector URL</Label>
+        <div className='flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center'>
+          <UrlField url={result.connector_url} secret={false} className='sm:flex-1' />
+          <ClientSelect clients={result.clients} value={c?.id} onChange={setPick} id='rd-client' className='sm:w-52 sm:shrink-0' />
+        </div>
+      </div>
+      {result.key && (
+        <div className='grid gap-1.5'>
+          <Label>API key</Label>
+          <CopyField value={result.key} />
+        </div>
+      )}
+      {c && <ClientWay c={c} />}
+      <div className='grid gap-1.5 border-t pt-4'>
+        <Label>Setup email{result.email.to ? ` to ${result.email.to}` : ''}</Label>
+        <SetupEmail clients={result.clients} current={c?.id}
+          preview={(ids) => post('/setup-email', { clients: ids, ...(legacy ? { key: true } : {}) })}
+          actions={(e) => (
+            <>
+              <Button variant='outline' size='sm' onClick={() => copyText(withKey(`Subject: ${e.subject}\n\n${e.body}`), 'Email copied')}>Copy email</Button>
+              {result.email.to && (
+                <a className={buttonVariants({ variant: 'outline', size: 'sm' })} target='_blank' rel='noopener noreferrer'
+                  href={`mailto:${encodeURIComponent(result.email.to)}?subject=${encodeURIComponent(e.subject)}&body=${encodeURIComponent(e.body)}`}>
+                  Open in email
+                </a>
+              )}
+              {legacy && <span className='text-muted-foreground text-xs'>Open in email leaves the key out: paste it over {KEY_PLACEHOLDER}.</span>}
+            </>
+          )} />
+      </div>
+    </div>
   );
 }
 

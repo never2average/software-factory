@@ -750,6 +750,9 @@ export function createApp() {
   ob.post("/requests/:id/approve", need("requests"), async (req, res) => void res.status(201).json(await onboarding.approveRequest(adminActor(req, res), Number(req.params.id), req.body ?? {})));
   ob.post("/requests/:id/decline", need("requests"), async (req, res) => done(res, await onboarding.declineRequest(adminActor(req, res), Number(req.params.id), req.body?.reason)));
   ob.post("/requests/:id/reopen", need("requests"), async (req, res) => done(res, await onboarding.reopenRequest(adminActor(req, res), Number(req.params.id))));
+  // The setup email for the clients a staff member picks (mold_v0-277, src/setup-email.ts): never a list of every client.
+  // With `key: true` (a legacy key just shown) the key's place is KEY_PLACEHOLDER: the key itself is never sent back here.
+  ob.post("/setup-email", need("invite"), async (req, res) => void res.json(onboarding.setupEmail(req.body?.clients, req.body?.key === true ? onboarding.KEY_PLACEHOLDER : undefined)));
   ob.get("/orgs", async (_req, res) => void res.json(await onboarding.listOrgs()));
   ob.post("/orgs", need("requests"), async (req, res) => void res.status(201).json(await onboarding.createAccount(adminActor(req, res), req.body ?? {})));
   ob.get("/orgs/:slug", async (req, res) => void res.json(await onboarding.orgDetail(slug(req))));
