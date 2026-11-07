@@ -68,7 +68,7 @@ export function AgentProfilesPage() {
     { key: 'name', label: 'Profile', title: true, keep: true, type: 'text', className: 'min-w-60', value: (p) => p.name,
       render: (p) => <span className='flex min-w-0 flex-col gap-1'><span className='leading-snug font-medium'>{p.name}</span>{p.description && <span className='text-muted-foreground line-clamp-2 text-xs whitespace-normal'>{p.description}</span>}</span> },
     { key: 'status', label: 'Status', type: 'select', keep: true, options: [{ value: 'active', label: 'Active' }, { value: 'archived', label: 'Archived' }], value: (p) => p.status, render: (p) => <StatusBadges p={p} /> },
-    { key: 'harness', label: 'Harness', type: 'text', value: (p) => p.harness },
+    { key: 'harness', label: 'Harness', type: 'text', value: (p) => p.harness, render: (p) => p.harness },
     { key: 'model', label: 'Model', type: 'text', value: (p) => p.model, render: (p) => <span className='font-mono text-xs'>{p.model}</span> },
     { key: 'keys', label: 'Keys', type: 'number', value: (p) => p.keys, render: (p) => <span className='tabular-nums'>{p.keys}</span> },
     { key: 'uploads', label: 'Uploads', type: 'number', value: (p) => p.uploads, render: (p) => <span className='tabular-nums'>{p.uploads ? `${p.uploads} (${size(p.upload_bytes)})` : '0'}</span> },
