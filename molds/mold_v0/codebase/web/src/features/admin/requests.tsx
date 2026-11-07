@@ -21,7 +21,7 @@ import { Icons } from '@/components/icons';
 import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction, type InviteResult, type OrgList, type OrgRow } from './lib';
 import { useResult } from './result-dialog';
-import { ActionsMenu, Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
+import { Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
 import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
@@ -228,10 +228,7 @@ export function AdminRequests({ tabs }: { tabs?: ReactNode } = {}) {
           if (list.length) copyText(emails(list), `${list.length} emails copied`); else toast.info('No requests in this view');
         } }]}
         empty='No pending requests.'
-        detailActions={(q) => (<>
-          {q.status === 'pending' && <Gate need='requests'><Button size='sm' onClick={() => setApproving(q)}><Icons.check /> Approve</Button></Gate>}
-          <ActionsMenu items={[...statusActions(q), copyEmail(q)]} />
-        </>)}
+        panelActions={(q) => [...(q.status === 'pending' ? [lock({ label: 'Approve', icon: <Icons.check />, onSelect: () => setApproving(q) }, 'requests')] : []), ...statusActions(q), copyEmail(q)]}
         detail={(q) => <RequestPeek q={q} fields={answerFields} match={matches.get(q.id) ?? null} onResearch={() => runResearch(q)} />}
       />
       </div>

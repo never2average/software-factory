@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { featureOn } from '@/config/features';
+import { closeRecordPanel, useInRecordPanel } from '@/components/layout/detail-panel';
 import { ConfirmDialog } from '@/features/admin/ui';
 import type { CardContext } from './tab-action';
 
@@ -25,7 +26,9 @@ export function FormHost({ card, panel = false, children }: { card: ReactNode; p
   const [expanded, setExpanded] = useState(false);
   const open = !!card;
   useEffect(() => { if (!open) setExpanded(false); }, [open]);
-  const inPanel = open && panel && featureOn('side_panel_forms') && !expanded;
+  // mold_v0-278: inside a list's record panel the form opens in the panel's place (one panel at a time).
+  const inRecordPanel = useInRecordPanel();
+  const inPanel = open && panel && featureOn('side_panel_forms') && !expanded && !inRecordPanel;
   return (
     <PanelCtx.Provider value={{ inPanel, expand: () => setExpanded(true) }}>
       {card}
@@ -54,6 +57,8 @@ export function SidePanelForm({ c, form, onSubmit, submit, children }: {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
+    // mold_v0-278: one panel at a time: a list's record panel closes as this form's panel opens.
+    closeRecordPanel();
     const before = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';

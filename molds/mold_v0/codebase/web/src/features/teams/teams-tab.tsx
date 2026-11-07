@@ -60,7 +60,7 @@ export function TeamsTab() {
       toolbarAction={data?.can_manage ? <ToolbarAction label='New team' icon={<Icons.add />} onClick={() => setAdding(true)} /> : undefined}
       empty={<p className='text-muted-foreground text-sm' data-teams-empty=''>{data?.can_manage ? 'No teams yet. New team adds one; a record shared with a team is seen by its people.' : 'No teams yet. The workspace\'s owners add them.'}</p>}
       detailTitle={(t) => t.name}
-      detailActions={(t) => <Button variant='outline' size='sm' render={<Link href={teamUrl(t.id)} />}>Open team</Button>}
+      pageHref={(t) => teamUrl(t.id)}
       detail={(t) => (
         <dl className='grid gap-3 text-sm'>
           {t.description && <div><dt className='text-muted-foreground'>About</dt><dd>{t.description}</dd></div>}

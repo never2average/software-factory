@@ -5,6 +5,8 @@
 // createHref: ?new=1&<field>=<value>), in the side panel when side_panel_forms is on.
 import Link from 'next/link';
 import { Icons } from '@/components/icons';
+import { PanelMenu } from '@/components/layout/detail-panel';
+import type { RowAction } from '@/components/layout/record-filters';
 import { Button } from '@/components/ui/button';
 import { featureOn } from '@/config/features';
 import type { RecordAreaSpec } from '@/config/pack-nav.generated';
@@ -25,4 +27,17 @@ export function RowCreateActions({ area, recordKey }: { area: RecordAreaSpec; re
       </Button>
     ))}
   </>);
+}
+
+/** mold_v0-278: a record panel's ⋯ menu: `items`, then the Add <related record> actions its page declares (flag record_pages). */
+export function RowCreateMenu({ area, recordKey, items, name }: { area: RecordAreaSpec; recordKey: string; items: RowAction[]; name: string }) {
+  const wanted = featureOn('record_pages') && declaresCreate(layoutOf(area));
+  const { data } = useOrgLoad(() => (wanted
+    ? fetch(`/api/records/_page/${encodeURIComponent(area.name)}/${encodeURIComponent(recordKey)}`, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+      .then((r) => (r.ok ? (r.json() as Promise<PageData>) : null)).catch(() => null)
+    : Promise.resolve(null)), [wanted, area.name, recordKey]);
+  const creates: RowAction[] = (data?.actions ?? []).filter((a) => a.kind === 'create_record' && !a.disabled && createHref(a))
+    .map((a) => ({ label: a.label, icon: <Icons.add aria-hidden />, href: createHref(a)! }));
+  const own = items.filter((x) => !x.href);
+  return <PanelMenu name={name} items={[...own, ...creates.map((a, i) => (i === 0 && own.length ? { ...a, separator: true } : a)), ...items.filter((x) => x.href)]} />;
 }

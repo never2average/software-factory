@@ -124,7 +124,7 @@ export function NoticesPage() {
           }} /></div>}
           actions={(n) => [{ label: 'Dismiss', onSelect: () => void dismiss(n) }]}
           detailTitle={(n) => n.title ?? n.key}
-          detailActions={(n) => <Button variant='outline' size='sm' render={<a href={href(n)} />}>Open record</Button>}
+          pageHref={(n) => href(n)}
           detail={(n) => <Button variant='ghost' size='sm' onClick={() => void dismiss(n)}>Dismiss<span className='sr-only'> {n.title ?? n.key}</span></Button>}
         />
       )}

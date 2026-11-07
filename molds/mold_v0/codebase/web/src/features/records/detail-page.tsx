@@ -520,15 +520,17 @@ async function getPage(url: string): Promise<PageData> {
   return body;
 }
 
-export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false }: {
+export function LaidOutRecord({ area, base, layout, record, links, clockEvents, provenance, where, credentials, onChanged, canShare = false, tabParam = 'tab' }: {
   area: RecordAreaSpec; base: 'app' | 'admin'; layout: DetailLayout; record: RecordRow; links: Links; clockEvents?: ClockEvent[];
   provenance?: { by: string | null } | null; where: string; credentials: ReactNode;
   /** Read the record again (mold_v0-254: after an action changed it). */
   onChanged?: () => void;
   /** mold_v0-259 (flag teams): this person may change who sees it (the header's Share). */
   canShare?: boolean;
+  /** The address parameter of its tab (mold_v0-278: `panelTab` in a list's record panel, so the list's own `tab` stays). */
+  tabParam?: string;
 }) {
-  const [asked, setAsked] = useQueryState('tab');
+  const [asked, setAsked] = useQueryState(tabParam);
   const tab = openTab(layout, asked);
   const first = tab === layout.tabs[0];
   const ti = layout.tabs.indexOf(tab);

@@ -41,7 +41,8 @@ export interface RecordCol<T> {
 
 /** One entry in a ⋯ menu; `separator` draws a line before it. */
 /** `hint`: a short note shown next to a disabled action (say, the role it needs). */
-export interface RowAction { label: string; icon?: ReactNode; onSelect: () => void; destructive?: boolean; disabled?: boolean; separator?: boolean; hint?: string }
+/** A row's or a record panel's action; `href` (mold_v0-278): a link (a record panel's "Open in its own page"). */
+export interface RowAction { label: string; icon?: ReactNode; onSelect?: () => void; href?: string; destructive?: boolean; disabled?: boolean; separator?: boolean; hint?: string }
 
 export type Op =
   | 'contains' | 'not_contains' | 'is' | 'is_not' | 'empty' | 'not_empty'
