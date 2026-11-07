@@ -2,7 +2,7 @@
   "phase": "mold_v0-271: a configurable staff Records group, shared-area files and staff record pages, workspace recipes; with every flag off for Octillion (no console.admin_records, so workspace_recipes is not asked for). What Octillion's people and AI clients see (the MCP surface, the landing, every customer page) is unchanged; the staff console gains the Recipes routes (not found while the flag is off) and the schema its three tables",
   "allow": [
     { "key": "generated::web/src/config/console-routes.generated.json::routes", "reason": "the console's route list gains /admin/recipes and /admin/recipes/[id] (pages of the build only with workspace_recipes on; off they answer not found)" },
-    { "key": "api::/api/admin/onboarding/health/status::body::release::**", "reason": "the schema is at 0057_workspace_recipes" },
+    { "key": "api::/api/admin/onboarding/health/status::body::release::**", "reason": "the schema is at 0058_workspace_recipes" },
     { "key": "api::/api/admin/onboarding/spend/storage::**", "reason": "the database's size with the three new (empty) recipe tables" },
     { "key": "pages::/admin/recipes", "reason": "the route exists in every build; with workspace_recipes off it answers not found, as /admin/agent-profiles does without the workspace agent" }
   ]

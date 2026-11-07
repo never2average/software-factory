@@ -205,6 +205,12 @@ export function createApp() {
 
   // 5-minute backstop for the event-driven autoscaler on Vercel (vercel.json crons; Vercel sends CRON_SECRET as a
   // bearer). It also prunes the autoscaler's history (src/autoscaler-ticks.ts), which a VM does from its ticking loop.
+  // The factory's read of Health › Sign-in (mold_v0-270; .claude/scripts/lib/sign_in_check.py): the same report, with the
+  // public client ids it probes the providers with from the front door it is about to use. CRON_SECRET only.
+  app.get("/api/cron/sign-in-check", async (req, res) => {
+    if (!cronSecretOk(req.headers.authorization)) return void res.status(401).json({ error: "unauthorized" });
+    res.set("Cache-Control", "no-store").json(await (await import("./sign-in-check.js")).signInReport({ factory: true, refresh: req.query.refresh === "1" }));
+  });
   app.get("/api/cron/autoscale", async (req, res) => {
     // CRON_SECRET only (Vercel sends it): no fallback to an admin credential.
     if (!cronSecretOk(req.headers.authorization)) return void res.status(401).json({ error: "unauthorized" });
@@ -783,6 +789,9 @@ export function createApp() {
     res.json(await h.healthWebhooks(req.query as Record<string, unknown>));
   });
   ob.get("/health/status", async (_req, res) => void res.json(await (await import("./health-tabs.js")).healthStatus()));
+  // Health › Sign-in (mold_v0-270, src/sign-in-check.ts): every sign-in's return address against the front door, at most an
+  // hour old; ?refresh=1 checks again (at most once a minute). Never a secret or a client id (a fingerprint).
+  ob.get("/health/sign-in", async (req, res) => void res.json(await (await import("./sign-in-check.js")).signInReport({ refresh: req.query.refresh === "1" })));
   // Health › Status's graphs (mold_v0-210, src/health-samples.ts): ?range=24h|7d|30d, the samples in buckets.
   ob.get("/health/history", async (req, res) => void res.json(await (await import("./health-samples.js")).healthHistory(req.query as Record<string, unknown>)));
   // A host pack's console routes (src/host.ts; the product's journeys, libraries, agent mix and settings, loss reasons),

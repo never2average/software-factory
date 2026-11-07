@@ -14,6 +14,7 @@ python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-
 python3 .claude/scripts/provision.py <app_id> --rollback          # every project back to its previous production deployment (Vercel)
 python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now (Vercel or its own server); then the Google sign-in check
 python3 .claude/scripts/provision.py <app_id> --google-signin     # does "Continue with Google" work there: directly, through a hub, or NOT (with the steps); reads only
+python3 .claude/scripts/provision.py <app_id> --sign-in-check     # mold_v0: every sign-in's return address (Clerk, Google, the GitHub App, connections, AI clients) at its provider: pass / fail / unknown, the exact address, where to click; reads only
 python3 .claude/scripts/provision.py <app_id> --google-hub <other_app>|off [--dry-run]   # let an app whose Google sign-in works do the Google part for this one; state only, deploys nothing
 python3 .claude/scripts/provision.py <app_id> --operator <script> --dry-run -- <args>   # one of the mold's operator:* scripts: the exact command, nothing run
 python3 .claude/scripts/lib/deploy_gate.py <mold_id>              # did the mold source's CI pass for the pinned commit? read-only
@@ -187,6 +188,11 @@ reads the mold's health path (`/healthz`) through the console on the domain and 
 `switch` (once Vercel files the domain under the console project) writes `OCTILLION_CONSOLE_URL` on the API project
 instead of `WEB_ORIGIN` (sign-in codes, invitations, emailed links and Clerk's accepted sign-in origins are built on
 it), moves `production_url`, and says a redeploy is needed for the API to read it.
+Before it switches anything, `switch` prints every sign-in return address made of the front door that changes, old and
+new, and where each is registered (`switch --dry-run` prints only that): give the operator those addresses first.
+After the switch it asks each provider about the new addresses (lib/sign_in_check.py, mold_v0-270); one still missing
+ends the run as needs_human (exit 3) with the plain ask. The same reading is printed by the check and after every
+deploy (exit 3 when one fails; the deploy stands), and `provision.py <app_id> --sign-in-check` gives the steps again.
 
 **Keys the app's profile needs (mold_v0-227; `lib/ledger_key.py`, `mold.json` `profile_secrets`).** With
 `audit.sign` on in the app's profile (chain and sign, mold_v0-195), the app needs `APP_LEDGER_SIGNING_KEY`, an Ed25519

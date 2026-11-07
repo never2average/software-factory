@@ -20,6 +20,9 @@ import { consoleUrl } from "./console-url.js";
 import { adminDisconnect, adminView, beginConnect, completeConnect, ConnectRefused, disconnect, listConnections, oauthFields, providerSummaries, redirectUri } from "./oauth-connections.js";
 import { PackError } from "./pack-api.js";
 import { featureOn } from "./features.js";
+import { browserOrigin } from "./builtin-auth.js";
+import { stateData } from "./oauth-state.js";
+import { noteCallback } from "./sign-in-check.js";
 
 const answerWith = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await fn(req, res)); }
@@ -34,6 +37,14 @@ export function oauthRouter(): Router {
   r.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) => {
     if (!err) return next();
     res.status(err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? "The request is too large" : "The request body must be JSON" });
+  });
+  // Health › Sign-in (mold_v0-270): where the provider sent the browser back, and an error it sent, before any session.
+  r.get("/callback", async (req, _res, next) => {
+    const q = req.query as Record<string, unknown>;
+    const d = await stateData(q.state, "oauth").catch(() => null);
+    if (d && typeof d.pack === "string" && typeof d.provider === "string")
+      await noteCallback(`oauth.${d.pack}.${d.provider}`.toLowerCase().replace(/[^a-z0-9_.-]/g, "_").slice(0, 120), "oauth", q, browserOrigin(req)).catch(() => {});
+    next();
   });
   r.use(customerSession);
   r.use((req, res, next) => (req.method !== "GET" && req.method !== "HEAD" && res.locals.viaCookie && req.get("x-pack-request") !== "1"

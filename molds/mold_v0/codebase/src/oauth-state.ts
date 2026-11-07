@@ -37,6 +37,37 @@ export async function issueState(orgId: number, userId: string, purpose: string,
   return { state: `${payload}.${signState(payload)}`, expires_at: new Date(exp).toISOString() };
 }
 
+/**
+ * Whether `state` is one this server signed for `purpose` (mold_v0-270, Health › Sign-in): the signature and the purpose
+ * only, read-only (nothing is used up, no session is needed), and not older than a day past its expiry. A provider's
+ * error that comes back with such a state was sent by that provider for a sign-in this app started, not made up by a
+ * passer-by, so it may count as evidence; anything else is ignored.
+ */
+export function stateSigned(state: unknown, purpose: string): boolean {
+  const s = typeof state === "string" ? state : "";
+  const [payload, sig] = s.split(".");
+  if (!payload || !sig || s.length > 1000) return false;
+  let want: Buffer;
+  try { want = Buffer.from(signState(payload)); } catch { return false; }
+  const got = Buffer.from(sig);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return false;
+  try {
+    const p = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { v?: number; p?: string; e?: number };
+    return p.v === 1 && p.p === purpose && typeof p.e === "number" && p.e > Date.now() - 86_400_000;
+  } catch { return false; }
+}
+
+/** What a signed state was issued with (read only, nothing used up), or null: which provider a return is for. */
+export async function stateData(state: unknown, purpose: string): Promise<Record<string, unknown> | null> {
+  if (!stateSigned(state, purpose)) return null;
+  let p: { n?: unknown; o?: unknown };
+  try { p = JSON.parse(Buffer.from(String(state).split(".")[0]!, "base64url").toString("utf8")); } catch { return null; }
+  if (typeof p.n !== "string" || !Number.isSafeInteger(p.o)) return null;
+  const [row] = await asPlatform(async () => (await getDb()).query<{ data: Record<string, unknown> }>(
+    "SELECT data FROM oauth_states WHERE nonce_sha256 = $1 AND purpose = $2 AND org_id = $3", [sha256(p.n as string), purpose, p.o]));
+  return row?.data ?? null;
+}
+
 /** Check a state that came back for the signed-in `who`, and use it up. Returns the data stored with it. */
 export async function consumeState(state: unknown, who: { org: number; user: string }, purpose: string): Promise<Record<string, unknown>> {
   const s = typeof state === "string" ? state : "";
