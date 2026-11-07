@@ -303,12 +303,13 @@ directory or sandbox name with a short form fails anywhere. A pack's own files a
   adapters. Details: `codebase/docs/accounts.md`, "Sign-in: built-in or Clerk".
 - Sign-in at deploy time (operator decision, mold_v0-265): every deployed app is on Clerk. `mold.json`
   `sign_in_required` names the keys each target must hold (Vercel: `CLERK_SECRET_KEY` on both projects,
-  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console, `CLERK_JWT_KEY` on the API, whose `CLERK_PUBLISHABLE_KEY` is
-  copied from the console's; a server: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` and `CLERK_JWT_KEY` in its env
-  file). provision.py's check and deploy and mint.py's keys station stop for the operator (exit 3) until they are set,
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on the console, the API's `CLERK_PUBLISHABLE_KEY` copied from the console's; a
+  server: `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY` in its env file). provision.py's check and deploy and mint.py's keys station stop for the operator (exit 3) until they are set,
   with Clerk's dashboard steps (Configure, then API keys) and the `--set-secret` line for each. The built-in sign-in
-  stays the default of the codebase itself, so the lanes, local runs and tests run without Clerk. An app already
-  deployed on Clerk keeps redeploying without `CLERK_JWT_KEY` (said as still to set).
+  stays the default of the codebase itself, so the lanes, local runs and tests run without Clerk. Session tokens are
+  verified against Clerk's JWKS, fetched with the secret key and cached (`src/clerk.ts`), so Clerk's PEM public key is
+  never asked for (operator decision, mold_v0-269): `CLERK_JWT_KEY` stays an optional override, settable with
+  `--set-secret CLERK_JWT_KEY` (a pasted PEM block is joined to one line), never required.
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
 - Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
@@ -3821,8 +3822,9 @@ DNS check, key pair, hidden prompt and env file, then:
 4. copies the source into a new release directory beside the serving one;
 5. writes `DOMAIN` and `PUBLIC_URL` from state into `/etc/software-factory/<app>/env` (root, mode 600), then mints every
    name still missing (the database password and the product's keys) with the product's own `bootstrap.sh`, on the
-   server, in a private temp directory that sees names and never values. Clerk's keys (`CLERK_SECRET_KEY`,
-   `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_KEY`; mold.json `sign_in_required`, mold_v0-265) are required at every deploy:
+   server, in a private temp directory that sees names and never values. Clerk's keys (`CLERK_SECRET_KEY` and
+   `CLERK_PUBLISHABLE_KEY`; mold.json `sign_in_required`, mold_v0-265; never `CLERK_JWT_KEY`, mold_v0-269, tokens being
+   verified via Clerk's JWKS) are required at every deploy:
    the deploy asks for each the server lacks at a hidden prompt (or the operator sets it with
    `provision.py <app> --set-secret NAME` once the server has its env file), and with nobody at a terminal it stops
    with exit 3 before the release or the env file changes. Other optional keys (billing, analytics, Google sign-in) stay off until the operator sets one;
@@ -3861,7 +3863,7 @@ typed by hand, and nothing in the snapshot changes:
   never a minted key. The only other names it reads are its sign-in keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
   `CLERK_SECRET_KEY`, mold.json `operator_env`), set by the operator with `provision.py <app> --set-secret NAME`, which
   writes a name to every project that reads it (`CLERK_SECRET_KEY` to both, the publishable key to the console only).
-  Since mold_v0-265 a deploy requires them (with `CLERK_JWT_KEY` on the API; mold.json `sign_in_required`): the check
+  Since mold_v0-265 a deploy requires them (mold.json `sign_in_required`; never `CLERK_JWT_KEY`, mold_v0-269): the check
   and the deploy stop with exit 3 until both projects hold them. The codebase itself still runs the built-in sign-in
   without them (an emailed code, Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set on the API; the
   console's `src/proxy.ts` only sends a visitor without a session cookie to `/auth/sign-in`), which is what the lanes,
